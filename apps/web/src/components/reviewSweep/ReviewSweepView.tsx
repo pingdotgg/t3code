@@ -4,11 +4,21 @@ import {
   scopeProjectRef,
 } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
-import { ArrowRightIcon, ListChecksIcon, RotateCcwIcon, XIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArrowRightIcon,
+  CircleAlertIcon,
+  ListChecksIcon,
+  LoaderIcon,
+  PencilLineIcon,
+  RotateCcwIcon,
+  XIcon,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
+import { useClientSettings } from "../../hooks/useSettings";
 import {
   applyAllSweepRecommendations,
   applySweepSettle,
@@ -22,9 +32,15 @@ import {
   useReviewSweepStore,
   type SweepItem,
 } from "../../reviewSweepStore";
-import { useClientSettings } from "../../hooks/useSettings";
-import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
+import {
+  readThreadShell,
+  useProjects,
+  useServerConfigs,
+  useThreadShells,
+} from "../../state/entities";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { ProjectFavicon } from "../ProjectFavicon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -32,31 +48,179 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
 import { Spinner } from "../ui/spinner";
 
-function SweepRecommendationBadge({ item }: { item: SweepItem }) {
-  if (item.status === "error") {
-    return <Badge variant="error">Review failed</Badge>;
-  }
-  if (item.status !== "done" || item.result === null) {
-    return null;
-  }
-  if (item.result.recommendSettle) {
-    return item.settleApplied ? (
-      <Badge variant="outline">Settled</Badge>
-    ) : (
-      <Badge variant="success">Recommend settle</Badge>
-    );
-  }
-  return <Badge variant="secondary">Keep active</Badge>;
+// ---------------------------------------------------------------------------
+// Triage buckets: ordered by "how fast can you clear this" — one-click
+// settles first, quick title fixes second, then threads that need real
+// reading, then no-action-possible tails.
+// ---------------------------------------------------------------------------
+
+type SweepBucket = "settle" | "title" | "attention" | "inFlight" | "failed" | "reviewing";
+
+const BUCKET_ORDER: readonly SweepBucket[] = [
+  "settle",
+  "title",
+  "attention",
+  "inFlight",
+  "failed",
+  "reviewing",
+];
+
+const BUCKET_META: Record<
+  SweepBucket,
+  { title: string; hint: string; accent: string; icon: typeof ArchiveIcon }
+> = {
+  settle: {
+    title: "Ready to settle",
+    hint: "Work concluded — one click clears each from your active list.",
+    accent: "border-s-emerald-500/70",
+    icon: ArchiveIcon,
+  },
+  title: {
+    title: "Title fixes",
+    hint: "Still in progress, but the name no longer matches the work.",
+    accent: "border-s-sky-500/70",
+    icon: PencilLineIcon,
+  },
+  attention: {
+    title: "Needs your attention",
+    hint: "Waiting on you — review, input, or a decision.",
+    accent: "border-s-amber-500/70",
+    icon: CircleAlertIcon,
+  },
+  inFlight: {
+    title: "In flight",
+    hint: "Agents are still working; nothing to do yet.",
+    accent: "border-s-border",
+    icon: LoaderIcon,
+  },
+  failed: {
+    title: "Review failed",
+    hint: "The reviewer couldn't process these — retry or open them directly.",
+    accent: "border-s-red-500/70",
+    icon: CircleAlertIcon,
+  },
+  reviewing: {
+    title: "Still reviewing",
+    hint: "",
+    accent: "border-s-border",
+    icon: LoaderIcon,
+  },
+};
+
+function classifySweepItem(item: SweepItem): SweepBucket {
+  if (item.status === "error") return "failed";
+  if (item.status !== "done" || item.result === null) return "reviewing";
+  if (item.result.recommendSettle && !item.settleApplied) return "settle";
+  if (item.result.suggestedTitle && !item.titleApplied) return "title";
+  // Live shell wins over review-time knowledge: a thread blocked on the user
+  // right now belongs in "attention" even if the review predates the block.
+  const shell = readThreadShell(item.ref);
+  const working = shell?.session?.status === "running" || shell?.session?.status === "starting";
+  const blocked = shell?.hasPendingApprovals === true || shell?.hasPendingUserInput === true;
+  if (blocked) return "attention";
+  if (working) return "inFlight";
+  return "attention";
 }
 
-function SweepItemCard({ item }: { item: SweepItem }) {
+function DiffStatsLabel({ item }: { item: SweepItem }) {
+  const stats = item.result?.diffStats;
+  if (!stats || stats.files === 0) return null;
+  return (
+    <span className="flex items-center gap-1 font-mono text-[11px]">
+      <span className="text-emerald-500">+{stats.additions}</span>
+      <span className="text-red-400">−{stats.deletions}</span>
+      <span className="text-muted-foreground/70">
+        · {stats.files} {stats.files === 1 ? "file" : "files"}
+      </span>
+    </span>
+  );
+}
+
+function SweepItemMetaRow({
+  item,
+  projectTitle,
+  workspaceRoot,
+}: {
+  item: SweepItem;
+  projectTitle: string;
+  workspaceRoot: string | null;
+}) {
+  const age = formatRelativeTimeLabel(item.lastActivityAt);
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      <span className="flex min-w-0 items-center gap-1.5">
+        {workspaceRoot ? (
+          <ProjectFavicon
+            environmentId={item.ref.environmentId}
+            cwd={workspaceRoot}
+            className="size-3.5 shrink-0"
+          />
+        ) : null}
+        <span className="truncate">{projectTitle}</span>
+      </span>
+      {item.branch ? (
+        <span className="max-w-56 truncate font-mono text-[11px] text-muted-foreground/80">
+          {item.branch}
+        </span>
+      ) : null}
+      {age ? <span className="shrink-0">{age}</span> : null}
+      <DiffStatsLabel item={item} />
+    </div>
+  );
+}
+
+function SweepItemCard({
+  item,
+  bucket,
+  projectTitle,
+  workspaceRoot,
+}: {
+  item: SweepItem;
+  bucket: SweepBucket;
+  projectTitle: string;
+  workspaceRoot: string | null;
+}) {
   const key = scopedThreadKey(item.ref);
-  const [applyingTitle, setApplyingTitle] = useState(false);
-  const [applyingSettle, setApplyingSettle] = useState(false);
+  const [applying, setApplying] = useState(false);
   const result = item.result;
+  const meta = BUCKET_META[bucket];
+
+  const primaryAction =
+    bucket === "settle" ? (
+      <Button
+        size="xs"
+        variant="outline"
+        className="shrink-0"
+        disabled={applying}
+        onClick={() => {
+          setApplying(true);
+          void applySweepSettle(key).finally(() => setApplying(false));
+        }}
+      >
+        <ArchiveIcon className="me-1 size-3.5" />
+        Settle
+      </Button>
+    ) : bucket === "title" ? (
+      <Button
+        size="xs"
+        variant="outline"
+        className="shrink-0"
+        disabled={applying}
+        onClick={() => {
+          setApplying(true);
+          void applySweepTitle(key).finally(() => setApplying(false));
+        }}
+      >
+        Apply title
+      </Button>
+    ) : bucket === "failed" ? (
+      <Button size="xs" variant="outline" className="shrink-0" onClick={() => retrySweepItem(key)}>
+        Retry
+      </Button>
+    ) : null;
 
   return (
-    <Card className="gap-2 p-4">
+    <Card className={cn("gap-1.5 border-s-2 p-3", meta.accent)}>
       <div className="flex items-center gap-2">
         {item.status === "pending" || item.status === "running" ? (
           <Spinner className="size-3.5 shrink-0 text-muted-foreground" />
@@ -64,86 +228,52 @@ function SweepItemCard({ item }: { item: SweepItem }) {
         <Link
           to="/$environmentId/$threadId"
           params={buildThreadRouteParams(item.ref)}
-          className="truncate text-sm font-medium text-foreground hover:underline"
+          className="min-w-0 truncate text-sm font-medium text-foreground hover:underline"
         >
           {item.threadTitle}
         </Link>
-        <SweepRecommendationBadge item={item} />
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          className="ms-auto shrink-0 text-muted-foreground"
-          aria-label="Dismiss recommendation"
-          onClick={() => dismissSweepItem(key)}
-        >
-          <XIcon className="size-3.5" />
-        </Button>
-      </div>
-
-      {item.status === "error" ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span className="min-w-0 flex-1 truncate">{item.errorMessage}</span>
-          <Button size="xs" variant="outline" onClick={() => retrySweepItem(key)}>
-            Retry
+        {bucket === "settle" && item.settleApplied ? (
+          <Badge variant="outline">Settled</Badge>
+        ) : null}
+        <div className="ms-auto flex shrink-0 items-center gap-1.5">
+          {primaryAction}
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            className="text-muted-foreground"
+            aria-label="Dismiss recommendation"
+            onClick={() => dismissSweepItem(key)}
+          >
+            <XIcon className="size-3.5" />
           </Button>
         </div>
-      ) : null}
+      </div>
 
-      {result !== null ? (
+      <SweepItemMetaRow item={item} projectTitle={projectTitle} workspaceRoot={workspaceRoot} />
+
+      {item.status === "error" ? (
+        <p className="text-sm text-red-400/90">{item.errorMessage}</p>
+      ) : result !== null ? (
         <p className="text-sm text-muted-foreground">{result.summary}</p>
-      ) : item.status !== "error" ? (
+      ) : (
         <p className="text-sm text-muted-foreground/60">Reviewing…</p>
+      )}
+
+      {bucket === "settle" && result?.settleReason ? (
+        <p className="text-xs italic text-muted-foreground/80">{result.settleReason}</p>
       ) : null}
 
-      {result?.suggestedTitle && !item.titleApplied ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
-            Title
-          </span>
-          <span className="text-muted-foreground line-through">{item.threadTitle}</span>
+      {bucket === "title" && result?.suggestedTitle ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-muted-foreground/70 line-through">{item.threadTitle}</span>
           <ArrowRightIcon className="size-3.5 text-muted-foreground/70" />
           <span className="font-medium text-foreground">{result.suggestedTitle}</span>
-          <Button
-            size="xs"
-            variant="outline"
-            className="ms-auto"
-            disabled={applyingTitle}
-            onClick={() => {
-              setApplyingTitle(true);
-              void applySweepTitle(key).finally(() => setApplyingTitle(false));
-            }}
-          >
-            Apply title
-          </Button>
         </div>
       ) : null}
       {result?.suggestedTitle && item.titleApplied ? (
-        <div className="text-sm text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Renamed to <span className="font-medium text-foreground">{result.suggestedTitle}</span>.
-        </div>
-      ) : null}
-
-      {result?.recommendSettle && !item.settleApplied ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
-            Settle
-          </span>
-          <span className="italic text-muted-foreground">
-            {result.settleReason ?? "Work appears concluded."}
-          </span>
-          <Button
-            size="xs"
-            variant="outline"
-            className="ms-auto"
-            disabled={applyingSettle}
-            onClick={() => {
-              setApplyingSettle(true);
-              void applySweepSettle(key).finally(() => setApplyingSettle(false));
-            }}
-          >
-            Settle thread
-          </Button>
-        </div>
+        </p>
       ) : null}
     </Card>
   );
@@ -263,15 +393,15 @@ export function ReviewSweepView() {
 
   // Projects are only unique per (environmentId, projectId) — ids can
   // collide across connected environments.
-  const projectTitles = useMemo(() => {
-    const titles = new Map<string, string>();
+  const projectsByKey = useMemo(() => {
+    const byKey = new Map<string, { title: string; workspaceRoot: string }>();
     for (const project of projects) {
-      titles.set(
-        scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
-        project.title,
-      );
+      byKey.set(scopedProjectKey(scopeProjectRef(project.environmentId, project.id)), {
+        title: project.title,
+        workspaceRoot: project.workspaceRoot,
+      });
     }
-    return titles;
+    return byKey;
   }, [projects]);
 
   const visibleItems = useMemo(
@@ -281,18 +411,33 @@ export function ReviewSweepView() {
         .filter((item): item is SweepItem => item !== undefined && !item.dismissed),
     [items, order],
   );
-  const groups = useMemo(() => {
-    const byProject = new Map<string, SweepItem[]>();
+
+  const buckets = useMemo(() => {
+    const grouped = new Map<SweepBucket, SweepItem[]>();
     for (const item of visibleItems) {
-      const key = scopedProjectKey(scopeProjectRef(item.ref.environmentId, item.projectId));
-      const group = byProject.get(key);
+      const bucket = classifySweepItem(item);
+      const group = grouped.get(bucket);
       if (group) {
         group.push(item);
       } else {
-        byProject.set(key, [item]);
+        grouped.set(bucket, [item]);
       }
     }
-    return [...byProject.entries()];
+    // Within a bucket, smallest diff first — clear the easy ones, build
+    // momentum. Unknown diff sizes sink to the bottom.
+    for (const group of grouped.values()) {
+      group.sort((a, b) => {
+        const sizeOf = (item: SweepItem) => {
+          const stats = item.result?.diffStats;
+          return stats ? stats.additions + stats.deletions : Number.MAX_SAFE_INTEGER;
+        };
+        return sizeOf(a) - sizeOf(b);
+      });
+    }
+    return BUCKET_ORDER.flatMap((bucket) => {
+      const group = grouped.get(bucket);
+      return group && group.length > 0 ? [[bucket, group] as const] : [];
+    });
   }, [visibleItems]);
 
   const reviewedCount = visibleItems.filter(
@@ -373,21 +518,45 @@ export function ReviewSweepView() {
                   were skipped this run.
                 </p>
               ) : null}
-              {groups.map(([projectKey, groupItems]) => (
-                <section key={projectKey} className="flex flex-col gap-2">
-                  <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
-                    {projectTitles.get(projectKey) ?? "Unknown project"}
-                    <span className="ms-2 font-normal normal-case tracking-normal">
-                      · {groupItems.length} {groupItems.length === 1 ? "thread" : "threads"}
-                    </span>
-                  </h2>
-                  <div className="flex flex-col gap-2.5">
-                    {groupItems.map((item) => (
-                      <SweepItemCard key={scopedThreadKey(item.ref)} item={item} />
-                    ))}
-                  </div>
-                </section>
-              ))}
+              {buckets.map(([bucket, bucketItems]) => {
+                const meta = BUCKET_META[bucket];
+                const BucketIcon = meta.icon;
+                return (
+                  <section key={bucket} className="flex flex-col gap-2">
+                    <div className="flex items-baseline gap-2">
+                      <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground/80">
+                        <BucketIcon className="size-3.5" />
+                        {meta.title}
+                        <span className="font-normal text-muted-foreground">
+                          · {bucketItems.length}
+                        </span>
+                      </h2>
+                      {meta.hint ? (
+                        <span className="truncate text-xs text-muted-foreground/70">
+                          {meta.hint}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {bucketItems.map((item) => {
+                        const projectKey = scopedProjectKey(
+                          scopeProjectRef(item.ref.environmentId, item.projectId),
+                        );
+                        const project = projectsByKey.get(projectKey);
+                        return (
+                          <SweepItemCard
+                            key={scopedThreadKey(item.ref)}
+                            item={item}
+                            bucket={bucket}
+                            projectTitle={project?.title ?? "Unknown project"}
+                            workspaceRoot={project?.workspaceRoot ?? null}
+                          />
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           )}
         </div>

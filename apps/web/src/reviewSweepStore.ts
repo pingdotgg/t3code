@@ -50,6 +50,9 @@ export interface SweepItem {
   readonly ref: ScopedThreadRef;
   readonly projectId: ProjectId;
   readonly threadTitle: string;
+  readonly branch: string | null;
+  /** Last activity (falls back to createdAt) for the age label. */
+  readonly lastActivityAt: string;
   readonly status: SweepItemStatus;
   readonly result: ReviewThreadSummaryResult | null;
   readonly errorMessage: string | null;
@@ -224,6 +227,8 @@ export function startReviewSweep(): void {
       ref: scopeThreadRef(shell.environmentId, shell.id),
       projectId: shell.projectId,
       threadTitle: shell.title,
+      branch: shell.branch,
+      lastActivityAt: threadLastActivityAt(shell) ?? shell.createdAt,
       status: "pending",
       result: null,
       errorMessage: null,

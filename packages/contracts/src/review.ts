@@ -44,6 +44,15 @@ export const ReviewThreadSummaryInput = Schema.Struct({
 });
 export type ReviewThreadSummaryInput = typeof ReviewThreadSummaryInput.Type;
 
+/** Size of the thread's latest ready checkpoint diff — a cheap effort proxy
+    for the review UI ("how big is this thread's change"). */
+export const ReviewThreadDiffStats = Schema.Struct({
+  files: Schema.Int,
+  additions: Schema.Int,
+  deletions: Schema.Int,
+});
+export type ReviewThreadDiffStats = typeof ReviewThreadDiffStats.Type;
+
 export const ReviewThreadSummaryResult = Schema.Struct({
   threadId: ThreadId,
   summary: TrimmedNonEmptyString,
@@ -51,6 +60,8 @@ export const ReviewThreadSummaryResult = Schema.Struct({
   suggestedTitle: Schema.NullOr(TrimmedNonEmptyString),
   recommendSettle: Schema.Boolean,
   settleReason: Schema.NullOr(TrimmedNonEmptyString),
+  /** Absent when the thread has no ready checkpoint (or pre-diff servers). */
+  diffStats: Schema.optionalKey(ReviewThreadDiffStats),
 });
 export type ReviewThreadSummaryResult = typeof ReviewThreadSummaryResult.Type;
 

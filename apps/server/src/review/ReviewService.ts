@@ -247,12 +247,27 @@ export const make = Effect.gen(function* () {
     // Belt and braces on top of prompt rules + normalizeThreadReview: an
     // active thread must never carry a settle recommendation.
     const recommendSettle = generated.recommendSettle && canSettleNow;
+
+    // Latest ready checkpoint approximates the thread's cumulative diff —
+    // checkpoints stack per turn, so the newest one reflects total change.
+    const latestCheckpoint = thread.checkpoints
+      .toReversed()
+      .find((checkpoint) => checkpoint.status === "ready");
+    const diffStats = latestCheckpoint
+      ? {
+          files: latestCheckpoint.files.length,
+          additions: latestCheckpoint.files.reduce((sum, file) => sum + file.additions, 0),
+          deletions: latestCheckpoint.files.reduce((sum, file) => sum + file.deletions, 0),
+        }
+      : undefined;
+
     return {
       threadId: input.threadId,
       summary: generated.summary,
       suggestedTitle: generated.suggestedTitle,
       recommendSettle,
       settleReason: recommendSettle ? generated.settleReason : null,
+      ...(diffStats !== undefined ? { diffStats } : {}),
     };
   });
 
