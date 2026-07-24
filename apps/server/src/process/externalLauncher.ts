@@ -21,6 +21,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
@@ -78,6 +79,18 @@ const DETACHED_IGNORE_STDIO_OPTIONS = {
   stdout: "ignore",
   stderr: "ignore",
 } as const satisfies ChildProcess.CommandOptions;
+
+const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(3);
+
+type EditorCommandAvailability = (
+  command: string,
+  env: NodeJS.ProcessEnv,
+) => Effect.Effect<boolean>;
+
+interface ExternalLauncherOptions {
+  readonly editorCommandAvailability?: EditorCommandAvailability;
+  readonly editorDiscoveryTimeout?: Duration.Input;
+}
 
 const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
   Object.fromEntries(
@@ -160,13 +173,20 @@ function resolveEditorArgs(
 const resolveAvailableCommand = Effect.fn("externalLauncher.resolveAvailableCommand")(function* (
   commands: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
-): Effect.fn.Return<Option.Option<string>, never, FileSystem.FileSystem | Path.Path> {
-  for (const command of commands) {
-    if (yield* isCommandAvailable(command, { env })) {
-      return Option.some(command);
-    }
+  commandAvailability: EditorCommandAvailability,
+): Effect.fn.Return<Option.Option<string>> {
+  if (commands.length === 0) {
+    return Option.none();
   }
-  return Option.none();
+
+  return yield* Effect.raceAll(
+    commands.map((command) =>
+      commandAvailability(command, env).pipe(
+        Effect.filterOrFail((available) => available),
+        Effect.as(command),
+      ),
+    ),
+  ).pipe(Effect.option);
 });
 
 function encodeUtf16LeBase64(input: string): string {
@@ -263,25 +283,33 @@ function buildBrowserLaunch(
 const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors")(function* (
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
-): Effect.fn.Return<ReadonlyArray<EditorId>, never, FileSystem.FileSystem | Path.Path> {
-  const available: EditorId[] = [];
+  commandAvailability: EditorCommandAvailability,
+  timeout: Duration.Input,
+): Effect.fn.Return<ReadonlyArray<EditorId>> {
+  const results = yield* Effect.forEach(
+    EDITORS,
+    (editor) => {
+      const probe =
+        editor.commands === null
+          ? commandAvailability(fileManagerCommandForPlatform(platform), env)
+          : Effect.raceAll(
+              editor.commands.map((command) =>
+                commandAvailability(command, env).pipe(
+                  Effect.filterOrFail((available) => available),
+                ),
+              ),
+            ).pipe(Effect.orElseSucceed(() => false));
 
-  for (const editor of EDITORS) {
-    if (editor.commands === null) {
-      const command = fileManagerCommandForPlatform(platform);
-      if (yield* isCommandAvailable(command, { env })) {
-        available.push(editor.id);
-      }
-      continue;
-    }
+      return probe.pipe(
+        Effect.timeoutOption(timeout),
+        Effect.map(Option.getOrElse(() => false)),
+        Effect.map((available) => (available ? Option.some(editor.id) : Option.none<EditorId>())),
+      );
+    },
+    { concurrency: "unbounded" },
+  );
 
-    const command = yield* resolveAvailableCommand(editor.commands, env);
-    if (Option.isSome(command)) {
-      available.push(editor.id);
-    }
-  }
-
-  return available;
+  return results.flatMap(Option.toArray);
 });
 
 const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(function* (
@@ -292,10 +320,13 @@ const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(
   return buildBrowserLaunch(target, platform, env);
 });
 
-const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* () {
+const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* (
+  commandAvailability: EditorCommandAvailability,
+  timeout: Duration.Input,
+) {
   const platform = yield* HostProcessPlatform;
   const env = yield* readCommandLookupEnv;
-  return yield* buildAvailableEditors(platform, env);
+  return yield* buildAvailableEditors(platform, env, commandAvailability, timeout);
 });
 
 /**
@@ -322,6 +353,7 @@ export class ExternalLauncher extends Context.Service<
 
 const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   input: LaunchEditorInput,
+  commandAvailability: EditorCommandAvailability,
 ): Effect.fn.Return<EditorLaunch, ExternalLauncherError, FileSystem.FileSystem | Path.Path> {
   const platform = yield* HostProcessPlatform;
   const env = yield* readCommandLookupEnv;
@@ -337,7 +369,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 
   if (editorDef.commands) {
     const command = Option.getOrElse(
-      yield* resolveAvailableCommand(editorDef.commands, env),
+      yield* resolveAvailableCommand(editorDef.commands, env, commandAvailability),
       () => editorDef.commands[0],
     );
     return {
@@ -393,13 +425,14 @@ const launchBrowser = Effect.fn("externalLauncher.launchBrowser")(function* (
 
 const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(function* (
   launch: EditorLaunch,
+  commandAvailability: EditorCommandAvailability,
 ): Effect.fn.Return<
   void,
   ExternalLauncherError,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
   const env = yield* readCommandLookupEnv;
-  if (!(yield* isCommandAvailable(launch.command, { env }))) {
+  if (!(yield* commandAvailability(launch.command, env))) {
     return yield* new ExternalLauncherCommandNotFoundError({
       editor: launch.editor,
       command: launch.command,
@@ -430,7 +463,9 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
   );
 });
 
-export const make = Effect.gen(function* () {
+export const makeWithOptions = Effect.fn("ExternalLauncher.makeWithOptions")(function* (
+  options: ExternalLauncherOptions = {},
+) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -443,21 +478,30 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
+  const editorCommandAvailability =
+    options.editorCommandAvailability ??
+    ((command: string, env: NodeJS.ProcessEnv) =>
+      provideCommandResolutionServices(isCommandAvailable(command, { env })));
+  const editorDiscoveryTimeout = options.editorDiscoveryTimeout ?? EDITOR_DISCOVERY_TIMEOUT;
+
   return ExternalLauncher.of({
-    resolveAvailableEditors: () => provideCommandResolutionServices(resolveAvailableEditors()),
+    resolveAvailableEditors: () =>
+      resolveAvailableEditors(editorCommandAvailability, editorDiscoveryTimeout),
     launchBrowser: (target) =>
       launchBrowser(target).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       ),
     launchEditor: (input) =>
       provideCommandResolutionServices(
-        Effect.flatMap(resolveEditorLaunch(input), (launch) =>
-          launchEditorProcess(launch).pipe(
+        Effect.flatMap(resolveEditorLaunch(input, editorCommandAvailability), (launch) =>
+          launchEditorProcess(launch, editorCommandAvailability).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           ),
         ),
       ),
   });
 });
+
+export const make = makeWithOptions();
 
 export const layer = Layer.effect(ExternalLauncher, make);
