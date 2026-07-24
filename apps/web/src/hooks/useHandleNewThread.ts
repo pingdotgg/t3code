@@ -130,38 +130,44 @@ export function useNewThreadHandler() {
         : null;
       if (reusableStoredDraftThread) {
         return (async () => {
-          if (
+          const isDraftAlreadyOpen =
+            currentRouteTarget?.kind === "draft" &&
+            currentRouteTarget.draftId === reusableStoredDraftThread.draftId;
+          const hasExplicitWorkspaceOption =
             hasBranchOption ||
             hasWorktreePathOption ||
             hasEnvModeOption ||
-            hasStartFromOriginOption
-          ) {
+            hasStartFromOriginOption;
+          // Resurrecting a stored draft must not resurrect its stale context:
+          // explicit workspace options win outright; otherwise the env context
+          // resets to the configured defaults so drafts seeded before a
+          // defaults change (or by the old carry-over behavior) stop landing
+          // on "current checkout" branches forever. Composer text is
+          // preserved. When the draft is already open and no options were
+          // passed, leave it alone entirely — the user may have just picked a
+          // branch in the composer.
+          const defaultEnvMode = primaryServerSettings.defaultThreadEnvMode;
+          const workspaceContext = hasExplicitWorkspaceOption
+            ? {
+                ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
+                ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+                ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+                ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
+              }
+            : isDraftAlreadyOpen
+              ? null
+              : {
+                  branch: null,
+                  worktreePath: null,
+                  envMode: defaultEnvMode,
+                  startFromOrigin: resolveNewDraftStartFromOrigin({
+                    envMode: defaultEnvMode,
+                    newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+                  }),
+                };
+          if (workspaceContext) {
             setDraftThreadContext(reusableStoredDraftThread.draftId, {
-              ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
-              ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-              ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
-              ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
-            });
-          } else if (
-            currentRouteTarget?.kind !== "draft" ||
-            currentRouteTarget.draftId !== reusableStoredDraftThread.draftId
-          ) {
-            // Resurrecting a stored draft must not resurrect its stale env
-            // context: drafts seeded before a defaults change (or by the old
-            // carry-over behavior) would otherwise keep landing on "current
-            // checkout" branches forever. Composer text is preserved; only
-            // the env context resets to the configured defaults. When the
-            // draft is already open, leave it alone — the user may have just
-            // picked a branch in the composer.
-            const defaultEnvMode = primaryServerSettings.defaultThreadEnvMode;
-            setDraftThreadContext(reusableStoredDraftThread.draftId, {
-              branch: null,
-              worktreePath: null,
-              envMode: defaultEnvMode,
-              startFromOrigin: resolveNewDraftStartFromOrigin({
-                envMode: defaultEnvMode,
-                newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
-              }),
+              ...workspaceContext,
               ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             });
