@@ -1,10 +1,35 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  createTerminalInputSourceClassifier,
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalSelectionMouseUp,
   terminalSelectionActionDelayForClickCount,
 } from "./ThreadTerminalDrawer";
+
+describe("createTerminalInputSourceClassifier", () => {
+  it("classifies xterm key data as physical terminal input", () => {
+    const classifier = createTerminalInputSourceClassifier();
+    classifier.recordKey("\u001b");
+
+    expect(classifier.classifyData("\u001b")).toBe("terminal");
+  });
+
+  it("classifies xterm capability replies as renderer input", () => {
+    const classifier = createTerminalInputSourceClassifier();
+
+    expect(classifier.classifyData("\u001b[?1;2c")).toBe("renderer");
+    expect(classifier.classifyData("\u001b]11;rgb:1616/1616/1616\u001b\\")).toBe("renderer");
+  });
+
+  it("does not reuse a stale physical-key marker for later renderer data", () => {
+    const classifier = createTerminalInputSourceClassifier();
+    classifier.recordKey("q");
+
+    expect(classifier.classifyData("\u001b[?2026;2$y")).toBe("renderer");
+    expect(classifier.classifyData("q")).toBe("renderer");
+  });
+});
 
 describe("resolveTerminalSelectionActionPosition", () => {
   it("prefers the selection rect over the last pointer position", () => {

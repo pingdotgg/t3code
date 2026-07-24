@@ -3387,7 +3387,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     // replies arriving in that gap must refresh foreground ownership before we
     // decide whether to relay them; otherwise the now-idle shell receives a
     // whole response burst and prompt redraws amplify it into a feedback loop.
-    const alwaysFilterTerminalResponses = input.inputSource === "keyboard";
+    const alwaysFilterTerminalResponses =
+      input.inputSource === "keyboard" || input.inputSource === "renderer";
     if (
       !alwaysFilterTerminalResponses &&
       !session.shellForeground &&

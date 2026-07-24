@@ -1165,75 +1165,73 @@ it.layer(
       }),
   );
 
-  it.effect(
-    "strips outer-terminal replies from keyboard input while a git diff pager owns the PTY",
-    () =>
-      Effect.gen(function* () {
-        const inspect = {
-          hasRunningSubprocess: true,
-          childCommand: "less",
-          processIds: [100],
-          shellForeground: false,
-        };
-        const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
-          subprocessInspector: () => Effect.succeed(inspect),
-          subprocessPollIntervalMs: 20,
-        });
-        yield* manager.open(openInput());
-        const process = ptyAdapter.processes[0];
-        expect(process).toBeDefined();
-        if (!process) return;
+  it.effect("strips xterm renderer replies while a git diff pager owns the PTY", () =>
+    Effect.gen(function* () {
+      const inspect = {
+        hasRunningSubprocess: true,
+        childCommand: "less",
+        processIds: [100],
+        shellForeground: false,
+      };
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+        subprocessInspector: () => Effect.succeed(inspect),
+        subprocessPollIntervalMs: 20,
+      });
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
 
-        yield* waitFor(
-          Effect.map(getEvents, (events) =>
-            events.some((event) => event.type === "activity" && event.hasRunningSubprocess),
-          ),
-          "1200 millis",
-        );
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some((event) => event.type === "activity" && event.hasRunningSubprocess),
+        ),
+        "1200 millis",
+      );
 
-        // Reproduced by feeding the queries emitted around `git diff`/less
-        // through xterm and by inspecting the persisted failing PTY log. These
-        // replies belong to the OUTER renderer, not to less, even though less
-        // currently owns the embedded PTY. Relaying them makes less display
-        // `ESC...` and starts the feedback flood.
-        for (const data of [
-          "\x1b[?69;0$y",
-          "\x1b[?2026;2$y",
-          "\x1b[?2027;0$y",
-          "\x1b[?2031;0$y",
-          "\x1b[?2048;0$y",
-          "\x1b[?1;2c",
-          "\x1b]11;rgb:1616/1616/1616\x1b\\",
-          "\x1b[0n",
-          "\x1b[I",
-        ]) {
-          yield* manager.write({
-            threadId: "thread-1",
-            terminalId: DEFAULT_TERMINAL_ID,
-            data,
-            inputSource: "keyboard",
-          });
-        }
-
-        // Ordinary pager input still passes through the same keyboard stream.
-        // In particular, a bare Escape must not be held as an incomplete reply
-        // prefix: keyboard events are already complete units when they arrive
-        // in one terminal.write RPC.
+      // Reproduced by feeding the queries emitted around `git diff`/less
+      // through xterm and by inspecting the persisted failing PTY log. These
+      // replies belong to the OUTER renderer, not to less, even though less
+      // currently owns the embedded PTY. Relaying them makes less display
+      // `ESC...` and starts the feedback flood.
+      for (const data of [
+        "\x1b[?69;0$y",
+        "\x1b[?2026;2$y",
+        "\x1b[?2027;0$y",
+        "\x1b[?2031;0$y",
+        "\x1b[?2048;0$y",
+        "\x1b[?1;2c",
+        "\x1b]11;rgb:1616/1616/1616\x1b\\",
+        "\x1b[0n",
+        "\x1b[I",
+      ]) {
         yield* manager.write({
           threadId: "thread-1",
           terminalId: DEFAULT_TERMINAL_ID,
-          data: "\x1b",
-          inputSource: "keyboard",
+          data,
+          inputSource: "renderer",
         });
-        yield* manager.write({
-          threadId: "thread-1",
-          terminalId: DEFAULT_TERMINAL_ID,
-          data: "q",
-          inputSource: "keyboard",
-        });
+      }
 
-        expect(process.writes).toEqual(["\x1b", "q"]);
-      }),
+      // Ordinary pager input still passes through xterm's physical-key path.
+      // In particular, a bare Escape must not be held as an incomplete reply
+      // prefix: keyboard events are already complete units when they arrive
+      // in one terminal.write RPC.
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "\x1b",
+        inputSource: "terminal",
+      });
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "q",
+        inputSource: "terminal",
+      });
+
+      expect(process.writes).toEqual(["\x1b", "q"]);
+    }),
   );
 
   it.effect("serializes overlapping reply writes through the per-thread lock", () =>

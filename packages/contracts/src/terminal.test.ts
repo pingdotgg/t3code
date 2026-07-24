@@ -145,13 +145,24 @@ describe("TerminalWriteInput", () => {
     ).toBe(true);
   });
 
+  it("accepts an explicit renderer input source", () => {
+    expect(
+      decodes(TerminalWriteInput, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "\u001b[?1;2c",
+        inputSource: "renderer",
+      }),
+    ).toBe(true);
+  });
+
   it("rejects an unknown input source", () => {
     expect(
       decodes(TerminalWriteInput, {
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
         data: "q",
-        inputSource: "renderer",
+        inputSource: "automation",
       }),
     ).toBe(false);
   });
