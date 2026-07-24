@@ -136,7 +136,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
           displayName: "Codex (work)",
           enabled: false,
           config: makeCodexConfig({
-            binaryPath: "/opt/codex-work/bin/codex",
+            binaryPath: "/home/julius/.codex/packages/standalone/current/bin/codex",
             homePath: "/home/julius/.codex",
             customModels: ["work-preview"],
           }),
@@ -181,6 +181,15 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(workSnapshot.driver).toBe(codexDriverKind);
       expect(workSnapshot.enabled).toBe(false);
       expect(workSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
+      expect(work!.snapshot.maintenanceCapabilities).toMatchObject({
+        packageName: "@openai/codex",
+        update: {
+          command: "codex update",
+          executable: "/home/julius/.codex/packages/standalone/current/bin/codex",
+          args: ["update"],
+          lockKey: "codex-native",
+        },
+      });
 
       // Nothing goes to the unavailable bucket — both drivers are registered.
       const unavailable = yield* registry.listUnavailable;
