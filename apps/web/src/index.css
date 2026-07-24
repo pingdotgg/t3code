@@ -77,6 +77,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 :root {
   --app-scrollbar-width: 6px;
+  --glass-blur: 12px;
+  --glass-opacity: 80%;
+  --glass-saturation: 1.14;
   --desktop-window-right-resize-inset: 0px;
   --workspace-topbar-height: 52px;
   --workspace-controls-top: 0px;
@@ -85,6 +88,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-native-controls-inset: 0px;
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
+}
+
+.dark {
+  --glass-blur: 16px;
+  --glass-saturation: 1.08;
 }
 
 [data-slot="sidebar-wrapper"] {
@@ -303,6 +311,47 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     align-items: center;
   }
 
+  /* Fade rows themselves as they pass beneath the top chrome. A mask remains
+     visible even when the header and timeline share the same background. */
+  .chat-timeline-scroll-fade,
+  .settings-page-scroll-fade {
+    --topbar-scroll-fade-height: 2.5rem;
+    -webkit-mask-image:
+      linear-gradient(
+        to bottom,
+        transparent 0%,
+        rgb(0 0 0 / 10%) 10%,
+        rgb(0 0 0 / 30%) 24%,
+        rgb(0 0 0 / 58%) 42%,
+        rgb(0 0 0 / 82%) 62%,
+        rgb(0 0 0 / 96%) 82%,
+        black 100%
+      ),
+      linear-gradient(black, black);
+    -webkit-mask-position: top, bottom;
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-size:
+      100% var(--topbar-scroll-fade-height),
+      100% calc(100% - var(--topbar-scroll-fade-height));
+    mask-image:
+      linear-gradient(
+        to bottom,
+        transparent 0%,
+        rgb(0 0 0 / 10%) 10%,
+        rgb(0 0 0 / 30%) 24%,
+        rgb(0 0 0 / 58%) 42%,
+        rgb(0 0 0 / 82%) 62%,
+        rgb(0 0 0 / 96%) 82%,
+        black 100%
+      ),
+      linear-gradient(black, black);
+    mask-position: top, bottom;
+    mask-repeat: no-repeat;
+    mask-size:
+      100% var(--topbar-scroll-fade-height),
+      100% calc(100% - var(--topbar-scroll-fade-height));
+  }
+
   .workspace-titlebar-controls {
     position: absolute;
     top: var(--workspace-controls-top);
@@ -323,59 +372,371 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .chat-composer-glass {
-    background: var(--surface-raised);
+    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   }
 
-  /* Mix from --background (not --card): the lower chrome is a full-width
-     strip over the main view, and a card-tinted wash reads as a lighter
-     seam against it when no content is scrolled underneath. The backdrop
-     blur, not the tint, carries the frosted effect. */
-  .chat-composer-lower-chrome {
-    background: color-mix(in srgb, var(--background) 20%, transparent);
+  .chat-composer-glass-shell {
+    --chat-composer-glass-surface: var(--card);
+    --chat-composer-outline: rgb(0 0 0 / 8%);
+
+    position: relative;
+    isolation: isolate;
   }
 
-  /* The translucent lower chrome lets the composer's shadow taper naturally
-     into the message canvas. Above the terminal drawer that same shadow reads
-     as a dirty light-to-black gradient, so end the workspace on an opaque
-     surface and let the drawer's border define the boundary instead. */
-  .chat-composer-lower-chrome[data-terminal-open="true"] {
-    background: var(--background);
+  .chat-composer-glass-shell::before {
+    pointer-events: none;
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    border-radius: 22px;
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-glass-surface) var(--glass-opacity),
+      transparent
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    content: "";
   }
 
-  .chat-composer-glass {
-    box-shadow:
-      0 18px 48px -20px rgb(0 0 0 / 28%),
-      0 4px 14px -7px rgb(0 0 0 / 22%);
+  .chat-composer-glass-shell-with-context {
+    --chat-composer-context-extension: 2.25rem;
   }
 
-  .chat-composer-shared-blur {
-    -webkit-backdrop-filter: blur(16px);
-    backdrop-filter: blur(16px);
-  }
-
-  .dark .chat-composer-glass {
-    background: var(--surface-raised);
-  }
-
-  .dark .chat-composer-lower-chrome {
-    background: color-mix(in srgb, var(--background) 45%, transparent);
-  }
-
-  .dark .chat-composer-lower-chrome[data-terminal-open="true"] {
-    background: var(--background);
-  }
-
-  .dark .chat-composer-glass {
-    box-shadow: none;
-  }
-
-  .chat-composer-lower-chrome {
-    margin-top: -1px;
-    margin-inline-end: var(--app-scrollbar-width);
-    padding-top: 1px;
+  .chat-composer-glass-shell-with-context::before {
+    border-radius: 0;
+    /*
+     * One continuous glass layer: a 22px composer joined to a 16px strip,
+     * whose visible sides align with the composer's bottom tangents.
+     */
+    clip-path: shape(
+      from 0 22px,
+      curve to 22px 0 with 0 9.85px / 9.85px 0,
+      line to calc(100% - 22px) 0,
+      curve to 100% 22px with calc(100% - 9.85px) 0 / 100% 9.85px,
+      line to 100% calc(100% - var(--chat-composer-context-extension) - 22px),
+      curve to calc(100% - 22px) calc(100% - var(--chat-composer-context-extension)) with 100%
+        calc(100% - var(--chat-composer-context-extension) - 9.85px) / calc(100% - 9.85px)
+        calc(100% - var(--chat-composer-context-extension)),
+      line to calc(100% - 22px) calc(100% - 16px),
+      curve to calc(100% - 38px) 100% with calc(100% - 22px) calc(100% - 7.16px) /
+        calc(100% - 29.16px) 100%,
+      line to 38px 100%,
+      curve to 22px calc(100% - 16px) with 29.16px 100% / 22px calc(100% - 7.16px),
+      line to 22px calc(100% - var(--chat-composer-context-extension)),
+      curve to 0 calc(100% - var(--chat-composer-context-extension) - 22px) with 9.85px
+        calc(100% - var(--chat-composer-context-extension)) / 0
+        calc(100% - var(--chat-composer-context-extension) - 9.85px),
+      line to 0 22px,
+      close
+    );
   }
 
   @media (min-width: 40rem) {
+    .chat-composer-glass-shell-with-context {
+      /* The xs toolbar controls shrink by 4px at Tailwind's sm breakpoint. */
+      --chat-composer-context-extension: 2rem;
+    }
+  }
+
+  .chat-composer-glass-host {
+    position: relative;
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+  }
+
+  .chat-composer-glass-host::after {
+    pointer-events: none;
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-outline);
+    border-radius: inherit;
+    content: "";
+  }
+
+  .chat-composer-glass-shell-with-context .chat-composer-glass-host::after {
+    /* Keep the attachment seam open; the strip continues the outer outline below. */
+    clip-path: polygon(
+      0 0,
+      100% 0,
+      100% 100%,
+      calc(100% - 22px) 100%,
+      calc(100% - 22px) calc(100% - 2px),
+      22px calc(100% - 2px),
+      22px 100%,
+      0 100%
+    );
+  }
+
+  .chat-composer-context-strip {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .chat-composer-context-strip::before {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-outline);
+    border-radius: 0 0 16px 16px;
+    /* Start the strip outline exactly where the composer's 22px curve reaches its tangent. */
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
+    mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+    content: "";
+  }
+
+  .dark .chat-composer-glass-shell {
+    --chat-composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
+    --chat-composer-outline: color-mix(in srgb, var(--color-white) 5%, transparent);
+    --chat-composer-highlight: rgb(255 255 255 / 3%);
+  }
+
+  .dark .chat-composer-glass-host {
+    box-shadow: none;
+  }
+
+  .dark .chat-composer-glass-host::after {
+    box-shadow: inset 0 1px var(--chat-composer-highlight);
+  }
+
+  .dark .chat-composer-context-strip::before {
+    border-color: rgb(255 255 255 / 7%);
+    background:
+      linear-gradient(
+        to bottom,
+        transparent 0 1rem,
+        rgb(0 0 0 / 18%) 1rem,
+        transparent calc(1rem + 10px)
+      ),
+      rgb(255 255 255 / 2%);
+    box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
+  }
+
+  @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
+    .chat-composer-glass-shell-with-context::before {
+      inset-block-end: var(--chat-composer-context-extension);
+      border-radius: 22px;
+      clip-path: none;
+    }
+
+    .chat-composer-context-strip::before {
+      background: color-mix(
+        in srgb,
+        var(--chat-composer-glass-surface) var(--glass-opacity),
+        transparent
+      );
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    }
+
+    .dark .chat-composer-context-strip::before {
+      background:
+        linear-gradient(
+          to bottom,
+          transparent 0 1rem,
+          rgb(0 0 0 / 18%) 1rem,
+          transparent calc(1rem + 10px)
+        ),
+        linear-gradient(rgb(255 255 255 / 2%), rgb(255 255 255 / 2%)),
+        color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent);
+    }
+  }
+
+  .alert-glass {
+    --alert-glass-tint: transparent;
+
+    background:
+      linear-gradient(
+        color-mix(in srgb, var(--alert-glass-tint) 4%, transparent),
+        color-mix(in srgb, var(--alert-glass-tint) 4%, transparent)
+      ),
+      color-mix(in srgb, var(--background) var(--glass-opacity), transparent) !important;
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  }
+
+  .alert-glass[data-variant="error"] {
+    --alert-glass-tint: var(--destructive);
+  }
+
+  .alert-glass[data-variant="info"] {
+    --alert-glass-tint: var(--info);
+  }
+
+  .alert-glass[data-variant="success"] {
+    --alert-glass-tint: var(--success);
+  }
+
+  .alert-glass[data-variant="warning"] {
+    --alert-glass-tint: var(--warning);
+  }
+
+  .dropdown-glass,
+  .dialog-glass {
+    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  }
+
+  .dialog-backdrop {
+    background: color-mix(in srgb, var(--background) 60%, transparent);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+  }
+
+  .dropdown-glass {
+    border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+    box-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%);
+  }
+
+  .dialog-glass {
+    border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
+    box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
+  }
+
+  .dark .dropdown-glass {
+    box-shadow: 0 18px 44px -18px rgb(0 0 0 / 80%);
+  }
+
+  .dark .model-picker-surface.model-picker-surface {
+    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+  }
+
+  .dark .dialog-glass {
+    border-color: color-mix(in srgb, var(--color-white) 8%, transparent);
+    box-shadow:
+      inset 0 1px rgb(255 255 255 / 4%),
+      0 24px 72px -20px rgb(0 0 0 / 90%);
+  }
+
+  .dark .dialog-backdrop {
+    background: color-mix(in srgb, var(--background) 64%, transparent);
+  }
+
+  .glass-opacity-slider {
+    --glass-slider-progress: 0%;
+    --glass-slider-fill-offset: 0.5rem;
+    --glass-slider-fill-position: calc(
+      var(--glass-slider-progress) + var(--glass-slider-fill-offset)
+    );
+    appearance: none;
+    height: 1.5rem;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .glass-opacity-slider::-webkit-slider-runnable-track {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: linear-gradient(
+      to right,
+      var(--primary) 0 var(--glass-slider-fill-position),
+      color-mix(in srgb, var(--muted-foreground) 22%, transparent) var(--glass-slider-fill-position)
+        100%
+    );
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+  }
+
+  .glass-opacity-slider::-moz-range-track {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--muted-foreground) 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+  }
+
+  .glass-opacity-slider::-moz-range-progress {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: var(--primary);
+  }
+
+  .glass-opacity-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    margin-top: -0.3125rem;
+    border: 2px solid var(--primary);
+    border-radius: 9999px;
+    background: var(--background);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .glass-opacity-slider::-moz-range-thumb {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--primary);
+    border-radius: 9999px;
+    background: var(--background);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .glass-opacity-slider:hover::-webkit-slider-thumb {
+    transform: scale(1.08);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
+  }
+
+  .glass-opacity-slider:hover::-moz-range-thumb {
+    transform: scale(1.08);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
+  }
+
+  .glass-opacity-slider:active::-webkit-slider-thumb {
+    transform: scale(0.94);
+  }
+
+  .glass-opacity-slider:active::-moz-range-thumb {
+    transform: scale(0.94);
+  }
+
+  .glass-opacity-slider:focus-visible {
+    outline: none;
+  }
+
+  .glass-opacity-slider:focus-visible::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 3px var(--background),
+      0 0 0 5px var(--ring);
+  }
+
+  .glass-opacity-slider:focus-visible::-moz-range-thumb {
+    box-shadow:
+      0 0 0 3px var(--background),
+      0 0 0 5px var(--ring);
+  }
+
+  @media (forced-colors: active) {
+    .glass-opacity-slider {
+      appearance: auto;
+      accent-color: Highlight;
+    }
+
+    .glass-opacity-slider::-webkit-slider-runnable-track,
+    .glass-opacity-slider::-webkit-slider-thumb {
+      all: revert;
+    }
+
+    .glass-opacity-slider::-moz-range-track,
+    .glass-opacity-slider::-moz-range-progress,
+    .glass-opacity-slider::-moz-range-thumb {
+      all: revert;
+    }
+  }
+
+  @media (min-width: 40rem) {
+    .chat-timeline-scroll-fade,
+    .settings-page-scroll-fade {
+      --topbar-scroll-fade-height: 3rem;
+    }
+
     .chat-composer-horizontal-inset {
       padding-inline-start: calc(env(safe-area-inset-left) + 1.25rem);
       padding-inline-end: calc(env(safe-area-inset-right) + 1.25rem);
@@ -383,12 +744,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-    .chat-composer-glass {
-      background: var(--card);
+    .chat-composer-glass,
+    .alert-glass {
+      background: var(--background) !important;
     }
 
-    .chat-composer-lower-chrome {
-      background: var(--background);
+    .chat-composer-glass-shell::before {
+      background: var(--chat-composer-glass-surface);
+    }
+
+    .dialog-glass,
+    .dropdown-glass {
+      background: var(--popover) !important;
     }
   }
 }
@@ -457,35 +824,38 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
   --warning-foreground: var(--color-amber-700);
-  /* Fallbacks for standalone sidebar primitives. App sidebars override these
-     roles on their own root so the surface hierarchy stays out of page content. */
-  --sidebar: var(--card);
+  /* Keep every sidebar primitive on the same light surface hierarchy, including
+     portaled mobile sheets and settings navigation outside the app sidebar. */
+  --sidebar: var(--color-zinc-50);
   --sidebar-foreground: var(--foreground);
   --sidebar-muted-foreground: var(--muted-foreground);
-  --sidebar-control-surface: var(--accent);
-  --sidebar-row-hover: var(--accent);
-  --sidebar-row-active: var(--accent);
-  --sidebar-row-selected: var(--muted);
+  --sidebar-control-surface: var(--color-zinc-100);
+  --sidebar-row-hover: var(--color-zinc-25);
+  --sidebar-row-active: var(--color-white);
+  --sidebar-row-selected: var(--color-white);
   --sidebar-border: var(--border);
+  --sidebar-stage-fade: var(--sidebar);
 
   @variant dark {
     color-scheme: dark;
-    --background: var(--color-zinc-950);
+    /* Keep the workspace in the same neutral-black family as sidebar v2.
+       Surfaces lift from this base instead of starting from a milky gray. */
+    --background: var(--color-neutral-950);
     --app-chrome-background: var(--background);
-    --surface-raised: color-mix(in srgb, var(--card) 45%, transparent);
-    --foreground: var(--color-zinc-100);
-    --card: var(--color-zinc-900);
-    --card-foreground: var(--color-zinc-100);
-    --popover: var(--color-zinc-900);
-    --popover-foreground: var(--color-zinc-100);
+    --surface-raised: var(--secondary);
+    --foreground: var(--color-neutral-100);
+    --card: color-mix(in srgb, var(--background) 97%, var(--color-white));
+    --card-foreground: var(--color-neutral-100);
+    --popover: color-mix(in srgb, var(--background) 94%, var(--color-white));
+    --popover-foreground: var(--color-neutral-100);
     --primary: oklch(0.588 0.217 264);
     --primary-foreground: var(--color-white);
-    --secondary: var(--color-zinc-900);
-    --secondary-foreground: var(--color-zinc-100);
-    --muted: var(--color-zinc-900);
-    --muted-foreground: var(--color-zinc-400);
-    --accent: var(--color-zinc-900);
-    --accent-foreground: var(--color-zinc-100);
+    --secondary: --alpha(var(--color-white) / 4%);
+    --secondary-foreground: var(--color-neutral-100);
+    --muted: --alpha(var(--color-white) / 4%);
+    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
+    --accent: --alpha(var(--color-white) / 4%);
+    --accent-foreground: var(--color-neutral-100);
     --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
     --border: --alpha(var(--color-white) / 6%);
     --input: --alpha(var(--color-white) / 8%);
@@ -497,10 +867,34 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --success-foreground: var(--color-emerald-400);
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
+    --sidebar: var(--card);
+    --sidebar-foreground: var(--foreground);
+    --sidebar-muted-foreground: var(--muted-foreground);
+    --sidebar-control-surface: var(--muted);
+    --sidebar-row-hover: var(--accent);
+    --sidebar-row-active: var(--accent);
+    --sidebar-row-selected: var(--muted);
+    --sidebar-border: var(--border);
+    --sidebar-stage-fade: var(--card);
   }
 }
 
-[data-app-sidebar] {
+/* Keep both navigation implementations on the same quiet zinc hierarchy:
+   zinc-50 navigation, zinc-25 hover, and white selected/raised surfaces.
+   The version attribute remains useful for layout-specific styling without
+   changing the color system when the beta is toggled. */
+[data-sidebar-version="v1"],
+[data-sidebar-version="v2"] {
+  --background: var(--color-zinc-25);
+  --foreground: var(--color-zinc-800);
+  --card: var(--color-white);
+  --card-foreground: var(--color-zinc-800);
+  --accent: var(--color-zinc-100);
+  --accent-foreground: var(--color-zinc-900);
+  --muted: var(--color-zinc-50);
+  --muted-foreground: var(--color-zinc-500);
+  --border: var(--color-zinc-200);
+  --input: var(--color-zinc-300);
   --sidebar: var(--color-zinc-50);
   --sidebar-foreground: var(--color-zinc-800);
   --sidebar-muted-foreground: var(--color-zinc-500);
@@ -510,17 +904,33 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar-row-selected: var(--color-white);
   --sidebar-border: var(--color-zinc-200);
   --sidebar-stage-fade: var(--sidebar);
+  background-color: var(--sidebar);
 }
 
-.dark [data-app-sidebar] {
-  --sidebar: var(--color-zinc-950);
-  --sidebar-foreground: var(--color-zinc-100);
-  --sidebar-muted-foreground: var(--color-zinc-400);
-  --sidebar-control-surface: var(--color-zinc-800);
-  --sidebar-row-hover: var(--color-zinc-900);
-  --sidebar-row-active: var(--color-zinc-900);
-  --sidebar-row-selected: var(--color-zinc-900);
-  --sidebar-border: var(--color-zinc-800);
+.dark [data-sidebar-version="v1"],
+.dark [data-sidebar-version="v2"] {
+  --background: #000;
+  --foreground: #f1f3f7;
+  --card: #000;
+  --card-foreground: var(--foreground);
+  --accent: #191a1d;
+  --accent-foreground: #f7f9ff;
+  --muted: #0a0a0a;
+  --muted-foreground: #a3a3a3;
+  --border: rgb(255 255 255 / 8%);
+  --input: rgb(255 255 255 / 18%);
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--muted);
+  --sidebar-row-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --sidebar-row-active: color-mix(in srgb, var(--foreground) 11%, transparent);
+  --sidebar-row-selected: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --sidebar-border: var(--border);
+  /* The stage-channel header art must ramp to THIS panel's surface, not the
+     global chrome background, or the fade shows a seam (same rule as the
+     light palette above). */
+  --sidebar-stage-fade: var(--card);
 }
 
 body {

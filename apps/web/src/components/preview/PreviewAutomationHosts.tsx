@@ -10,6 +10,8 @@ import {
   type PreviewAutomationOpenInput,
   type PreviewAutomationResizeInput,
   type PreviewAutomationResizeResult,
+  type PreviewAutomationSetColorSchemeInput,
+  type PreviewAutomationSetColorSchemeResult,
   type PreviewAutomationHost as PreviewAutomationHostState,
   type PreviewAutomationRequest,
   type PreviewAutomationStatus,
@@ -450,6 +452,15 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               setting,
               viewport,
             } satisfies PreviewAutomationResizeResult;
+          }
+          case "setColorScheme": {
+            const ready = await requireReadyTab();
+            const input = request.input as PreviewAutomationSetColorSchemeInput;
+            await ready.bridge.setColorScheme(ready.tabId, input.colorScheme);
+            return {
+              tabId: ready.tabId,
+              colorScheme: input.colorScheme,
+            } satisfies PreviewAutomationSetColorSchemeResult;
           }
           case "snapshot": {
             const ready = await requireReadyTab();

@@ -42,14 +42,14 @@ function MenuPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        className="z-50"
+        className="z-[60]"
         data-slot="menu-positioner"
         side={side}
         sideOffset={sideOffset}
       >
         <MenuPrimitive.Popup
           className={cn(
-            "relative flex not-[class*='w-']:min-w-32 origin-(--transform-origin) rounded-lg border bg-popover not-dark:bg-clip-padding shadow-lg/5 outline-none before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] focus:outline-none dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+            "dropdown-glass relative flex not-[class*='w-']:min-w-32 origin-(--transform-origin) rounded-lg outline-none focus:outline-none",
             className,
           )}
           data-slot="menu-popup"
@@ -150,7 +150,7 @@ function MenuRadioGroup(props: MenuPrimitive.RadioGroup.Props) {
 function MenuRadioItem({
   className,
   children,
-  hideIndicator = false,
+  hideIndicator: _hideIndicator = false,
   ...props
 }: MenuPrimitive.RadioItem.Props & {
   hideIndicator?: boolean;
@@ -158,31 +158,13 @@ function MenuRadioItem({
   return (
     <MenuPrimitive.RadioItem
       className={cn(
-        "grid min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-default items-center gap-2 rounded-sm py-1 text-base text-foreground outline-none data-disabled:pointer-events-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
-        hideIndicator ? "grid-cols-[1fr] ps-3 pe-3" : "grid-cols-[1rem_1fr] ps-2 pe-4",
+        "flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-default items-center rounded-sm px-2 py-1 text-base text-foreground outline-none data-checked:bg-foreground/[0.08] data-disabled:pointer-events-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
         className,
       )}
       data-slot="menu-radio-item"
       {...props}
     >
-      {hideIndicator ? null : (
-        <MenuPrimitive.RadioItemIndicator className="col-start-1">
-          <svg
-            fill="none"
-            height="24"
-            stroke="currentColor"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth="2"
-            viewBox="0 0 24 24"
-            width="24"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path d="M5.252 12.7 10.2 18.63 18.748 5.37" />
-          </svg>
-        </MenuPrimitive.RadioItemIndicator>
-      )}
-      <span className={hideIndicator ? "col-start-1" : "col-start-2"}>{children}</span>
+      <span className="min-w-0 flex-1">{children}</span>
     </MenuPrimitive.RadioItem>
   );
 }

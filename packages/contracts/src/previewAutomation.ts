@@ -45,6 +45,7 @@ export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
 export const PREVIEW_AUTOMATION_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
   "resize",
+  "setColorScheme",
 ] as const;
 
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_OPERATIONS);
@@ -253,6 +254,29 @@ export const PreviewAutomationResizeResult = Schema.Struct({
   viewport: PreviewRenderedViewportSize,
 });
 export type PreviewAutomationResizeResult = typeof PreviewAutomationResizeResult.Type;
+
+/** Mirrors DesktopPreviewColorScheme; declared here to keep this module free of ipc.ts imports. */
+export const PreviewAutomationColorScheme = Schema.Literals(["system", "light", "dark"]);
+export type PreviewAutomationColorScheme = typeof PreviewAutomationColorScheme.Type;
+
+export const PreviewAutomationSetColorSchemeInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  colorScheme: PreviewAutomationColorScheme.annotate({
+    description:
+      "Emulated prefers-color-scheme for the page: light, dark, or system to follow the OS appearance.",
+  }),
+}).annotate({
+  description:
+    "Emulates prefers-color-scheme in the active browser tab without changing the OS or app theme.",
+});
+export type PreviewAutomationSetColorSchemeInput = typeof PreviewAutomationSetColorSchemeInput.Type;
+
+export const PreviewAutomationSetColorSchemeResult = Schema.Struct({
+  tabId: PreviewTabId,
+  colorScheme: PreviewAutomationColorScheme,
+});
+export type PreviewAutomationSetColorSchemeResult =
+  typeof PreviewAutomationSetColorSchemeResult.Type;
 
 const Locator = TrimmedNonEmptyString.annotate({
   description:

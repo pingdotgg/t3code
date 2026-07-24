@@ -7,6 +7,7 @@
  */
 import type {
   DesktopPreviewAnnotationTheme,
+  DesktopPreviewColorScheme,
   DesktopPreviewPointerEvent,
   PreviewAnnotationPayload,
   PreviewAnnotationRect,
@@ -84,6 +85,7 @@ export interface PreviewTabState {
   canGoBack: boolean;
   canGoForward: boolean;
   zoomFactor: number;
+  colorScheme: DesktopPreviewColorScheme;
   controller: "human" | "agent" | "none";
   updatedAt: string;
 }
@@ -1288,6 +1290,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         canGoBack: false,
         canGoForward: false,
         zoomFactor: DEFAULT_ZOOM_FACTOR,
+        colorScheme: "system",
         controller: "none",
         updatedAt,
       };
@@ -1320,6 +1323,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       canGoBack: false,
       canGoForward: false,
       zoomFactor: DEFAULT_ZOOM_FACTOR,
+      colorScheme: "system",
       controller: "none",
       updatedAt,
     };
@@ -1386,7 +1390,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             wc.getZoomFactor(),
           );
     yield* attachListeners(tabId, wc);
-    runFork(ensureControlSession(wc).pipe(Effect.ignore));
+    runFork(restoreControlSession(tabId, wc));
     const registeredAt = yield* currentIso;
     const registration = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
       const current = tabs.get(tabId);
@@ -1457,6 +1461,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         canGoBack: current?.canGoBack ?? false,
         canGoForward: current?.canGoForward ?? false,
         zoomFactor: current?.zoomFactor ?? DEFAULT_ZOOM_FACTOR,
+        colorScheme: current?.colorScheme ?? "system",
         controller: current?.controller ?? "none",
         updatedAt,
       };
@@ -1525,7 +1530,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* detachControlSession(wc.id);
     yield* attempt({ operation: "openDevTools", tabId, webContentsId: wc.id }, () => {
       wc.once("devtools-closed", () => {
-        if (!wc.isDestroyed()) runFork(ensureControlSession(wc).pipe(Effect.ignore));
+        if (!wc.isDestroyed()) runFork(restoreControlSession(tabId, wc));
       });
       wc.openDevTools({ mode: "detach" });
     });
@@ -1682,6 +1687,65 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }
     }
     yield* update(tabId, { zoomFactor: next });
+  });
+
+  // Emulated media lives on the CDP debugger session, not the WebContents, so
+  // it is lost whenever the session detaches (webview swap, DevTools
+  // open/close) and must be re-applied after every (re)attach.
+  const applyColorScheme = Effect.fn("PreviewManager.applyColorScheme")(function* (
+    tabId: string,
+    wc: Electron.WebContents,
+    colorScheme: DesktopPreviewColorScheme,
+  ) {
+    yield* ensureControlSession(wc);
+    yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
+      wc.debugger.sendCommand("Emulation.setEmulatedMedia", {
+        features: [
+          {
+            name: "prefers-color-scheme",
+            // An empty value clears the override so the page follows the OS.
+            value: colorScheme === "system" ? "" : colorScheme,
+          },
+        ],
+      }),
+    );
+  });
+
+  // Re-establish the control session after a detach, restoring any
+  // color-scheme override the tab carries. The scheme is read after the
+  // session attaches so a concurrent setColorScheme is not overwritten with
+  // a stale snapshot.
+  const restoreControlSession = (tabId: string, wc: Electron.WebContents) =>
+    ensureControlSession(wc).pipe(
+      Effect.andThen(SynchronizedRef.get(tabsRef)),
+      Effect.flatMap((tabs) => {
+        const colorScheme = tabs.get(tabId)?.colorScheme ?? "system";
+        return colorScheme === "system" ? Effect.void : applyColorScheme(tabId, wc, colorScheme);
+      }),
+      Effect.ignore,
+    );
+
+  const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
+    tabId: string,
+    colorScheme: DesktopPreviewColorScheme,
+  ) {
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!tab) {
+      return yield* new PreviewTabNotFoundError({ tabId });
+    }
+    if (tab.colorScheme !== colorScheme) {
+      // Record the choice even when the CDP call below can't run yet (no
+      // webview, DevTools holding the debugger) — it is re-applied on the
+      // next control-session (re)attach.
+      yield* update(tabId, { colorScheme });
+    }
+    // Re-read after the update: registerWebview may have swapped the guest
+    // in the meantime and the override must land on the current one.
+    const webContentsId = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.webContentsId;
+    if (webContentsId == null) return;
+    const wc = webContents.fromId(webContentsId);
+    if (!wc || wc.isDestroyed()) return;
+    yield* applyColorScheme(tabId, wc, colorScheme);
   });
 
   const captureScreenshot = Effect.fn("PreviewManager.captureScreenshot")(function* (
@@ -2526,6 +2590,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     revealArtifact,
     saveRecording,
     setAnnotationTheme,
+    setColorScheme,
     setMainWindow,
     startRecording,
     stopRecording,
@@ -2830,6 +2895,10 @@ export class PreviewManager extends Context.Service<
     readonly zoomOut: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly resetZoom: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly hardReload: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly setColorScheme: (
+      tabId: string,
+      colorScheme: DesktopPreviewColorScheme,
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: () => Effect.Effect<void, PreviewManagerError>;
     readonly clearCache: () => Effect.Effect<void, PreviewManagerError>;
@@ -2921,6 +2990,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     zoomOut: operations.zoomOut,
     resetZoom: operations.resetZoom,
     hardReload: operations.hardReload,
+    setColorScheme: operations.setColorScheme,
     openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* () {
       yield* browserSession
