@@ -1,5 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, describe } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -12,7 +14,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
-import { splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
+import {
+  isStaleGitTemporaryPackFile,
+  splitNullSeparatedGitStdoutPaths,
+} from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -94,6 +99,46 @@ const initRepoWithCommit = (
     const initialBranch = yield* git(cwd, ["branch", "--show-current"]);
     return { initialBranch };
   });
+
+describe("isStaleGitTemporaryPackFile", () => {
+  it("only selects temporary packs older than the cleanup grace period", () => {
+    const nowMs = 10_000;
+    const staleAfterMs = 1_000;
+
+    assert.isTrue(
+      isStaleGitTemporaryPackFile({
+        entry: "tmp_pack_stale",
+        modifiedAtMs: 9_000,
+        nowMs,
+        staleAfterMs,
+      }),
+    );
+    assert.isFalse(
+      isStaleGitTemporaryPackFile({
+        entry: "tmp_pack_active",
+        modifiedAtMs: 9_001,
+        nowMs,
+        staleAfterMs,
+      }),
+    );
+    assert.isFalse(
+      isStaleGitTemporaryPackFile({
+        entry: "pack-complete.pack",
+        modifiedAtMs: 1_000,
+        nowMs,
+        staleAfterMs,
+      }),
+    );
+    assert.isFalse(
+      isStaleGitTemporaryPackFile({
+        entry: "tmp_pack_unknown",
+        modifiedAtMs: null,
+        nowMs,
+        staleAfterMs,
+      }),
+    );
+  });
+});
 
 it.effect("uses stable diagnostics for every parsed non-repository command", () => {
   const commands: Array<{ readonly args: ReadonlyArray<string>; readonly lcAll?: string }> = [];
@@ -416,6 +461,154 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* git(updater, ["add", "remote.txt"]);
         yield* git(updater, ["commit", "-m", "remote commit"]);
         yield* git(updater, ["push", "origin", initialBranch]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const cachedStatus = yield* driver.statusDetailsRemote(cwd, {
+          refreshUpstream: false,
+        });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const gitCommonDirRaw = yield* git(cwd, ["rev-parse", "--git-common-dir"]);
+        const gitCommonDir = pathService.isAbsolute(gitCommonDirRaw)
+          ? gitCommonDirRaw
+          : pathService.resolve(cwd, gitCommonDirRaw);
+        const isolatedFetchRoot = pathService.join(gitCommonDir, "objects", "t3-status-fetch");
+        const staleFetchRoot = pathService.join(isolatedFetchRoot, "stale-fetch");
+        yield* fileSystem.makeDirectory(pathService.join(staleFetchRoot, "objects"), {
+          recursive: true,
+        });
+        const now = yield* DateTime.now;
+        const staleTime = DateTime.toDateUtc(DateTime.subtractDuration(now, Duration.hours(2)));
+        yield* fileSystem.utimes(staleFetchRoot, staleTime, staleTime);
+
+        const refreshedStatus = yield* driver.statusDetailsRemote(cwd);
+        const isolatedFetchEntries = (yield* fileSystem.exists(isolatedFetchRoot))
+          ? yield* fileSystem.readDirectory(isolatedFetchRoot, { recursive: false })
+          : [];
+        const temporaryRefs = yield* git(cwd, [
+          "for-each-ref",
+          "--format=%(refname)",
+          "refs/t3-status-fetch",
+        ]);
+
+        assert.equal(cachedStatus.behindCount, 0);
+        assert.equal(refreshedStatus.behindCount, 1);
+        assert.deepStrictEqual(isolatedFetchEntries, []);
+        assert.equal(temporaryRefs, "");
+      }),
+    );
+
+    it.effect("honors custom upstream fetch refspecs", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["checkout", "-b", "feature/custom-upstream"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature commit"]);
+        yield* git(cwd, ["push", "origin", "HEAD:refs/pull/123/head"]);
+        yield* git(cwd, [
+          "config",
+          "remote.origin.fetch",
+          "+refs/pull/*/head:refs/remotes/origin/pr/*",
+        ]);
+        yield* git(cwd, ["fetch", "origin"]);
+        yield* git(cwd, ["config", "branch.feature/custom-upstream.remote", "origin"]);
+        yield* git(cwd, ["config", "branch.feature/custom-upstream.merge", "refs/pull/123/head"]);
+
+        yield* git(updater, ["init"]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* git(updater, ["remote", "add", "origin", remote]);
+        yield* git(updater, ["fetch", "origin", "refs/pull/123/head"]);
+        yield* git(updater, ["checkout", "-b", "custom-upstream", "FETCH_HEAD"]);
+        yield* writeTextFile(updater, "remote.txt", "remote\n");
+        yield* git(updater, ["add", "remote.txt"]);
+        yield* git(updater, ["commit", "-m", "remote commit"]);
+        yield* git(updater, ["push", "origin", "HEAD:refs/pull/123/head"]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const cachedStatus = yield* driver.statusDetailsRemote(cwd, {
+          refreshUpstream: false,
+        });
+        const refreshedStatus = yield* driver.statusDetailsRemote(cwd);
+
+        assert.equal(cachedStatus.behindCount, 0);
+        assert.equal(refreshedStatus.upstreamRef, "origin/pr/123");
+        assert.equal(refreshedStatus.behindCount, 1);
+      }),
+    );
+
+    it.effect("refreshes the default branch with a feature upstream", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", "main"]);
+        yield* git(remote, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+        yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+        yield* git(cwd, ["checkout", "-b", "feature/default-refresh"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature commit"]);
+        yield* git(cwd, ["push", "-u", "origin", "feature/default-refresh"]);
+
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* writeTextFile(updater, "remote.txt", "remote\n");
+        yield* git(updater, ["add", "remote.txt"]);
+        yield* git(updater, ["commit", "-m", "remote commit"]);
+        yield* git(updater, ["push", "origin", "main"]);
+        const remoteMain = yield* git(updater, ["rev-parse", "HEAD"]);
+
+        const localMainBefore = yield* git(cwd, ["rev-parse", "refs/remotes/origin/main"]);
+        yield* (yield* GitVcsDriver.GitVcsDriver).statusDetailsRemote(cwd);
+        const localMainAfter = yield* git(cwd, ["rev-parse", "refs/remotes/origin/main"]);
+
+        assert.notEqual(localMainBefore, remoteMain);
+        assert.equal(localMainAfter, remoteMain);
+      }),
+    );
+
+    it.effect("refreshes the upstream when the configured default branch is missing", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", "main"]);
+        yield* git(remote, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+        yield* git(cwd, [
+          "symbolic-ref",
+          "refs/remotes/origin/HEAD",
+          "refs/remotes/origin/missing",
+        ]);
+        yield* git(cwd, ["checkout", "-b", "feature/missing-default"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature commit"]);
+        yield* git(cwd, ["push", "-u", "origin", "feature/missing-default"]);
+
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* git(updater, ["checkout", "feature/missing-default"]);
+        yield* writeTextFile(updater, "remote.txt", "remote\n");
+        yield* git(updater, ["add", "remote.txt"]);
+        yield* git(updater, ["commit", "-m", "remote commit"]);
+        yield* git(updater, ["push", "origin", "feature/missing-default"]);
 
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const cachedStatus = yield* driver.statusDetailsRemote(cwd, {
