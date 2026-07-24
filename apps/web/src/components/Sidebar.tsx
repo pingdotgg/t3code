@@ -22,6 +22,7 @@ import {
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { ThreadLabelBadgesForThread, ThreadLabelPickerDialog } from "./ThreadLabels";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -177,6 +178,7 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
+  resolveSelectedThreadEntries,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -729,6 +731,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               </TooltipPopup>
             </Tooltip>
           )}
+          {renamingThreadKey === threadKey ? null : (
+            <ThreadLabelBadgesForThread threadKey={threadKey} compact maxVisible={1} />
+          )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {discoveredPorts.length > 0 && (
@@ -1201,6 +1206,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [confirmingArchiveThreadKey, setConfirmingArchiveThreadKey] = useState<string | null>(null);
+  const [threadLabelPickerTarget, setThreadLabelPickerTarget] = useState<{
+    threadKeys: readonly string[];
+    targetLabel: string;
+  } | null>(null);
   const [projectRenameTarget, setProjectRenameTarget] = useState<SidebarProjectGroupMember | null>(
     null,
   );
@@ -1765,12 +1774,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (!api) return;
       const threadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
       if (threadKeys.length === 0) return;
-      const count = threadKeys.length;
-      const selectedThreadEntries = threadKeys.flatMap((threadKey) => {
+      const selectedThreadEntries = resolveSelectedThreadEntries(threadKeys, (threadKey) => {
         const threadRef = parseScopedThreadKey(threadKey);
         const thread = threadRef ? readThreadShell(threadRef) : null;
-        return threadRef && thread ? [{ threadKey, threadRef, thread }] : [];
+        return threadRef && thread ? { threadKey, threadRef, thread } : null;
       });
+      if (selectedThreadEntries.length === 0) return;
+      const count = selectedThreadEntries.length;
       const hasRunningThread = selectedThreadEntries.some(
         ({ thread }) => thread.session?.status === "running" && thread.session.activeTurnId != null,
       );
@@ -1779,6 +1789,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         buildMultiSelectThreadContextMenuItems({ count, hasRunningThread }),
         position,
       );
+
+      if (clicked === "add-label") {
+        setThreadLabelPickerTarget({
+          threadKeys: selectedThreadEntries.map(({ threadKey }) => threadKey),
+          targetLabel: `${count} selected chats`,
+        });
+        return;
+      }
 
       if (clicked === "mark-unread") {
         for (const { threadKey, thread } of selectedThreadEntries) {
@@ -2165,6 +2183,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
+          { id: "add-label", label: "Add label" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
@@ -2175,6 +2194,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "rename") {
         startThreadRename(threadKey, thread.title);
+        return;
+      }
+
+      if (clicked === "add-label") {
+        setThreadLabelPickerTarget({
+          threadKeys: [threadKey],
+          targetLabel: `“${thread.title}”`,
+        });
         return;
       }
 
@@ -2379,6 +2406,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         openPrLink={openPrLink}
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
+      />
+
+      <ThreadLabelPickerDialog
+        open={threadLabelPickerTarget !== null}
+        threadKeys={threadLabelPickerTarget?.threadKeys ?? []}
+        targetLabel={threadLabelPickerTarget?.targetLabel ?? "this chat"}
+        onOpenChange={(open) => {
+          if (!open) {
+            setThreadLabelPickerTarget(null);
+          }
+        }}
       />
 
       <Dialog

@@ -14,6 +14,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveSelectedThreadEntries,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
@@ -152,6 +153,12 @@ describe("archiveSelectedThreadEntries", () => {
 });
 
 describe("buildMultiSelectThreadContextMenuItems", () => {
+  it("offers bulk labels with the selected count", () => {
+    expect(
+      buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),
+    ).toContainEqual({ id: "add-label", label: "Add label (3)" });
+  });
+
   it("offers bulk archive with the selected count", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),
@@ -162,6 +169,32 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
+  });
+});
+
+describe("resolveSelectedThreadEntries", () => {
+  it("keeps only entries that still resolve so bulk counts match actionable threads", () => {
+    const entries = resolveSelectedThreadEntries(
+      ["thread-one", "stale-thread", "thread-two"],
+      (threadKey) =>
+        threadKey === "stale-thread"
+          ? null
+          : {
+              threadKey,
+            },
+    );
+
+    expect(entries).toEqual([{ threadKey: "thread-one" }, { threadKey: "thread-two" }]);
+    expect(
+      buildMultiSelectThreadContextMenuItems({
+        count: entries.length,
+        hasRunningThread: false,
+      }),
+    ).toContainEqual({ id: "add-label", label: "Add label (2)" });
+  });
+
+  it("returns an empty actionable set when every selected thread is stale", () => {
+    expect(resolveSelectedThreadEntries(["stale-thread"], () => null)).toEqual([]);
   });
 });
 

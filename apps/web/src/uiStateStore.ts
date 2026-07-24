@@ -1,6 +1,13 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
+import {
+  createThreadLabelId,
+  normalizeThreadLabelColor,
+  normalizeThreadLabelName,
+  sanitizeThreadLabels,
+  type ThreadLabel,
+} from "./threadLabels";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const LEGACY_PERSISTED_STATE_KEYS = [
@@ -25,6 +32,8 @@ export interface PersistedUiState {
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  threadLabels?: ThreadLabel[];
+  threadLabelIdsByThreadKey?: Record<string, string[]>;
 }
 
 export interface UiProjectState {
@@ -37,17 +46,25 @@ export interface UiThreadState {
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
 
+export interface UiThreadLabelState {
+  threadLabels: ThreadLabel[];
+  threadLabelIdsByThreadKey: Record<string, string[]>;
+}
+
 export interface UiEndpointState {
   defaultAdvertisedEndpointKey: string | null;
 }
 
-export interface UiState extends UiProjectState, UiThreadState, UiEndpointState {}
+export interface UiState
+  extends UiProjectState, UiThreadState, UiThreadLabelState, UiEndpointState {}
 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
+  threadLabels: [],
+  threadLabelIdsByThreadKey: {},
   defaultAdvertisedEndpointKey: null,
 };
 
@@ -96,6 +113,34 @@ function sanitizeTimestampRecord(value: unknown): Record<string, string> {
   );
 }
 
+function sanitizeThreadLabelAssignments(
+  value: unknown,
+  labels: readonly ThreadLabel[],
+): Record<string, string[]> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const knownLabelIds = new Set(labels.map((label) => label.id));
+  const assignments: Record<string, string[]> = {};
+  for (const [threadKey, candidateIds] of Object.entries(value)) {
+    if (!threadKey || !Array.isArray(candidateIds)) {
+      continue;
+    }
+    const labelIds = [
+      ...new Set(
+        candidateIds.filter(
+          (candidate): candidate is string =>
+            typeof candidate === "string" && knownLabelIds.has(candidate),
+        ),
+      ),
+    ];
+    if (labelIds.length > 0) {
+      assignments[threadKey] = labelIds;
+    }
+  }
+  return assignments;
+}
+
 export function parsePersistedState(parsed: PersistedUiState): UiState {
   const projectExpandedById =
     parsed.projectExpandedById === undefined
@@ -119,6 +164,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     parsed.projectOrder === undefined
       ? sanitizeStringArray(parsed.projectOrderCwds).map(legacyProjectCwdPreferenceKey)
       : sanitizeStringArray(parsed.projectOrder);
+  const threadLabels = sanitizeThreadLabels(parsed.threadLabels);
 
   return {
     projectExpandedById,
@@ -126,6 +172,11 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
       parsed.threadChangedFilesExpandedById,
+    ),
+    threadLabels,
+    threadLabelIdsByThreadKey: sanitizeThreadLabelAssignments(
+      parsed.threadLabelIdsByThreadKey,
+      threadLabels,
     ),
     defaultAdvertisedEndpointKey:
       typeof parsed.defaultAdvertisedEndpointKey === "string" &&
@@ -211,6 +262,8 @@ export function persistState(state: UiState): void {
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
+        threadLabels: state.threadLabels,
+        threadLabelIdsByThreadKey: state.threadLabelIdsByThreadKey,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -334,6 +387,119 @@ export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | nu
   };
 }
 
+export function addThreadLabel(state: UiState, label: ThreadLabel): UiState {
+  const id = label.id.trim();
+  const name = normalizeThreadLabelName(label.name);
+  const color = normalizeThreadLabelColor(label.color);
+  if (!id || !name || !color) {
+    return state;
+  }
+  const normalizedName = name.toLocaleLowerCase();
+  if (
+    state.threadLabels.some(
+      (existing) => existing.id === id || existing.name.toLocaleLowerCase() === normalizedName,
+    )
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    threadLabels: [...state.threadLabels, { id, name, color }],
+  };
+}
+
+export function updateThreadLabel(
+  state: UiState,
+  labelId: string,
+  name: string,
+  color: string,
+): UiState {
+  const labelIndex = state.threadLabels.findIndex((label) => label.id === labelId);
+  const normalizedName = normalizeThreadLabelName(name);
+  const normalizedColor = normalizeThreadLabelColor(color);
+  if (labelIndex < 0 || !normalizedName || !normalizedColor) {
+    return state;
+  }
+  const duplicateName = state.threadLabels.some(
+    (label) =>
+      label.id !== labelId && label.name.toLocaleLowerCase() === normalizedName.toLocaleLowerCase(),
+  );
+  if (duplicateName) {
+    return state;
+  }
+  const currentLabel = state.threadLabels[labelIndex]!;
+  if (currentLabel.name === normalizedName && currentLabel.color === normalizedColor) {
+    return state;
+  }
+  const threadLabels = [...state.threadLabels];
+  threadLabels[labelIndex] = {
+    ...currentLabel,
+    name: normalizedName,
+    color: normalizedColor,
+  };
+  return {
+    ...state,
+    threadLabels,
+  };
+}
+
+export function deleteThreadLabel(state: UiState, labelId: string): UiState {
+  if (!state.threadLabels.some((label) => label.id === labelId)) {
+    return state;
+  }
+  const threadLabelIdsByThreadKey: Record<string, string[]> = {};
+  for (const [threadKey, labelIds] of Object.entries(state.threadLabelIdsByThreadKey)) {
+    const nextLabelIds = labelIds.filter((candidate) => candidate !== labelId);
+    if (nextLabelIds.length > 0) {
+      threadLabelIdsByThreadKey[threadKey] = nextLabelIds;
+    }
+  }
+  return {
+    ...state,
+    threadLabels: state.threadLabels.filter((label) => label.id !== labelId),
+    threadLabelIdsByThreadKey,
+  };
+}
+
+export function setThreadLabelAssigned(
+  state: UiState,
+  threadKeys: string | readonly string[],
+  labelId: string,
+  assigned: boolean,
+): UiState {
+  if (!state.threadLabels.some((label) => label.id === labelId)) {
+    return state;
+  }
+  const keys = [
+    ...new Set((typeof threadKeys === "string" ? [threadKeys] : threadKeys).filter(Boolean)),
+  ];
+  if (keys.length === 0) {
+    return state;
+  }
+
+  let changed = false;
+  const threadLabelIdsByThreadKey = { ...state.threadLabelIdsByThreadKey };
+  for (const threadKey of keys) {
+    const currentIds = threadLabelIdsByThreadKey[threadKey] ?? [];
+    const currentlyAssigned = currentIds.includes(labelId);
+    if (currentlyAssigned === assigned) {
+      continue;
+    }
+    changed = true;
+    if (assigned) {
+      threadLabelIdsByThreadKey[threadKey] = [...currentIds, labelId];
+      continue;
+    }
+    const nextIds = currentIds.filter((candidate) => candidate !== labelId);
+    if (nextIds.length === 0) {
+      delete threadLabelIdsByThreadKey[threadKey];
+    } else {
+      threadLabelIdsByThreadKey[threadKey] = nextIds;
+    }
+  }
+  return changed ? { ...state, threadLabelIdsByThreadKey } : state;
+}
+
 export function resolveProjectExpanded(
   projectExpandedById: Readonly<Record<string, boolean>>,
   preferenceKeys: readonly string[],
@@ -416,6 +582,14 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
+  createThreadLabel: (name: string, color: string) => string | null;
+  updateThreadLabel: (labelId: string, name: string, color: string) => boolean;
+  deleteThreadLabel: (labelId: string) => void;
+  setThreadLabelAssigned: (
+    threadKeys: string | readonly string[],
+    labelId: string,
+    assigned: boolean,
+  ) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
@@ -424,7 +598,7 @@ interface UiStateStore extends UiState {
   ) => void;
 }
 
-export const useUiStateStore = create<UiStateStore>((set) => ({
+export const useUiStateStore = create<UiStateStore>((set, get) => ({
   ...readPersistedState(),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
@@ -434,6 +608,34 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
+  createThreadLabel: (name, color) => {
+    const normalizedName = normalizeThreadLabelName(name);
+    const normalizedColor = normalizeThreadLabelColor(color);
+    if (!normalizedName || !normalizedColor) {
+      return null;
+    }
+    const existing = get().threadLabels.find(
+      (label) => label.name.toLocaleLowerCase() === normalizedName.toLocaleLowerCase(),
+    );
+    if (existing) {
+      return existing.id;
+    }
+    const id = createThreadLabelId();
+    set((state) => addThreadLabel(state, { id, name: normalizedName, color: normalizedColor }));
+    return id;
+  },
+  updateThreadLabel: (labelId, name, color) => {
+    const currentState = get();
+    const nextState = updateThreadLabel(currentState, labelId, name, color);
+    if (nextState === currentState) {
+      return false;
+    }
+    set(nextState);
+    return true;
+  },
+  deleteThreadLabel: (labelId) => set((state) => deleteThreadLabel(state, labelId)),
+  setThreadLabelAssigned: (threadKeys, labelId, assigned) =>
+    set((state) => setThreadLabelAssigned(state, threadKeys, labelId, assigned)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
