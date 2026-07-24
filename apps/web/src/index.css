@@ -611,6 +611,23 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     box-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%);
   }
 
+  .panel-glass {
+    position: relative;
+    isolation: isolate;
+    border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+    box-shadow: inset 0 1px rgb(255 255 255 / 8%);
+  }
+
+  .panel-glass::before {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+    content: "";
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  }
+
   .dialog-glass {
     border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
     box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
@@ -618,6 +635,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .dark .dropdown-glass {
     box-shadow: 0 18px 44px -18px rgb(0 0 0 / 80%);
+  }
+
+  .dark .panel-glass {
+    box-shadow: inset 0 1px rgb(255 255 255 / 4%);
   }
 
   .dark .model-picker-surface.model-picker-surface {
@@ -780,7 +801,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
 
     .dialog-glass,
-    .dropdown-glass {
+    .dropdown-glass,
+    .panel-glass::before {
       background: var(--popover) !important;
     }
   }
