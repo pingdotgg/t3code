@@ -100,6 +100,98 @@ export const clearPersistedServerRuntimeState = (path: string) =>
     );
   });
 
+export class ServerStateDirConflictError extends Schema.TaggedErrorClass<ServerStateDirConflictError>()(
+  "ServerStateDirConflictError",
+  {
+    stateDir: Schema.String,
+    statePath: Schema.String,
+    pid: Schema.Int,
+    port: Schema.Int,
+    origin: Schema.String,
+  },
+) {
+  override get message(): string {
+    return (
+      `Another T3 server (pid ${this.pid}) already owns the state directory ${this.stateDir} ` +
+      `and is listening at ${this.origin} (port ${this.port}). ` +
+      `Refusing to start a second server against the same state directory, since two servers ` +
+      `sharing one state directory corrupt shared SQLite/discovery state. ` +
+      `Stop the other server, or start this one with a different --base-dir / T3CODE_HOME.`
+    );
+  }
+}
+
+/**
+ * Returns whether a pid refers to a live process. `process.kill(pid, 0)` does not
+ * send a signal; it only checks for the process' existence and our permission to
+ * signal it. EPERM means the process exists but is owned by another user, which we
+ * still treat as alive.
+ */
+export const isPidAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+export type ServerRuntimeStartupDecision =
+  | { readonly _tag: "proceed" }
+  | { readonly _tag: "conflict"; readonly state: PersistedServerRuntimeState };
+
+/**
+ * Pure decision for whether it is safe to start a server against a state directory
+ * given whatever discovery file it currently holds. Proceed when the file is absent,
+ * when it records our own pid (a same-process restart path must not self-block), or
+ * when the recorded pid is dead (stale file). Otherwise report a conflict.
+ */
+export const decideServerRuntimeStartup = (input: {
+  readonly existing: Option.Option<PersistedServerRuntimeState>;
+  readonly ownPid: number;
+  readonly isPidAlive: (pid: number) => boolean;
+}): ServerRuntimeStartupDecision => {
+  if (Option.isNone(input.existing)) {
+    return { _tag: "proceed" };
+  }
+  const state = input.existing.value;
+  if (state.pid === input.ownPid) {
+    return { _tag: "proceed" };
+  }
+  return input.isPidAlive(state.pid) ? { _tag: "conflict", state } : { _tag: "proceed" };
+};
+
+/**
+ * Best-effort single-instance guard on a state directory. Reads any existing
+ * discovery file and fails startup when a live process already owns it. This does
+ * NOT close the race between two servers that start simultaneously (both may read an
+ * empty/stale file before either writes) — it only rejects a startup when a
+ * previously-recorded, still-live server already owns the directory.
+ */
+export const ensureExclusiveStateDir = (input: {
+  readonly statePath: string;
+  readonly stateDir: string;
+  readonly ownPid?: number;
+  readonly isPidAlive?: (pid: number) => boolean;
+}) =>
+  Effect.gen(function* () {
+    const existing = yield* readPersistedServerRuntimeState(input.statePath);
+    const decision = decideServerRuntimeStartup({
+      existing,
+      ownPid: input.ownPid ?? process.pid,
+      isPidAlive: input.isPidAlive ?? isPidAlive,
+    });
+    if (decision._tag === "conflict") {
+      return yield* new ServerStateDirConflictError({
+        stateDir: input.stateDir,
+        statePath: input.statePath,
+        pid: decision.state.pid,
+        port: decision.state.port,
+        origin: decision.state.origin,
+      });
+    }
+  });
+
 export const readPersistedServerRuntimeState = (path: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

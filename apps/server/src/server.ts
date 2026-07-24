@@ -87,6 +87,7 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
   clearPersistedServerRuntimeState,
+  ensureExclusiveStateDir,
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
@@ -373,6 +374,15 @@ export const makeRoutesLayer = Layer.mergeAll(
 export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
+
+    // Refuse startup (before binding or writing the discovery file) when another
+    // live T3 server already owns this state directory. Platform services are
+    // provided locally so this guard does not leak a FileSystem requirement past
+    // the "only ServerConfig" boundary below.
+    yield* ensureExclusiveStateDir({
+      statePath: config.serverRuntimeStatePath,
+      stateDir: config.stateDir,
+    }).pipe(Effect.provide(PlatformServicesLive));
 
     yield* fixPath();
 

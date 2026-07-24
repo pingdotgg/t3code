@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as ServerRuntimeState from "./serverRuntimeState.ts";
 
 const isServerRuntimeStateError = Schema.is(ServerRuntimeState.ServerRuntimeStateError);
+const isServerStateDirConflictError = Schema.is(ServerRuntimeState.ServerStateDirConflictError);
 
 interface CapturedLog {
   readonly message: unknown;
@@ -163,5 +164,151 @@ describe("serverRuntimeState", () => {
         assert.deepInclude(error.cause, { _tag: "PlatformError" });
       }
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("decideServerRuntimeStartup", () => {
+  const state: ServerRuntimeState.PersistedServerRuntimeState = {
+    version: 1,
+    pid: 4_242,
+    host: "127.0.0.1",
+    port: 4_971,
+    origin: "http://127.0.0.1:4971",
+    startedAt: "2026-06-20T00:00:00.000Z",
+  };
+  const alwaysAlive = () => true;
+  const alwaysDead = () => false;
+
+  it("proceeds when no discovery file exists", () => {
+    const decision = ServerRuntimeState.decideServerRuntimeStartup({
+      existing: Option.none(),
+      ownPid: 999,
+      isPidAlive: alwaysAlive,
+    });
+    assert.equal(decision._tag, "proceed");
+  });
+
+  it("reports a conflict when the recorded pid is alive", () => {
+    const decision = ServerRuntimeState.decideServerRuntimeStartup({
+      existing: Option.some(state),
+      ownPid: 999,
+      isPidAlive: alwaysAlive,
+    });
+    assert.equal(decision._tag, "conflict");
+    if (decision._tag === "conflict") {
+      assert.deepEqual(decision.state, state);
+    }
+  });
+
+  it("proceeds when the recorded pid is dead (stale file)", () => {
+    const decision = ServerRuntimeState.decideServerRuntimeStartup({
+      existing: Option.some(state),
+      ownPid: 999,
+      isPidAlive: alwaysDead,
+    });
+    assert.equal(decision._tag, "proceed");
+  });
+
+  it("proceeds when the recorded pid is our own (same-process restart)", () => {
+    const decision = ServerRuntimeState.decideServerRuntimeStartup({
+      existing: Option.some(state),
+      ownPid: state.pid,
+      // Would report a conflict if own-pid were not special-cased.
+      isPidAlive: alwaysAlive,
+    });
+    assert.equal(decision._tag, "proceed");
+  });
+});
+
+describe("ensureExclusiveStateDir", () => {
+  const state: ServerRuntimeState.PersistedServerRuntimeState = {
+    version: 1,
+    pid: 4_242,
+    host: "127.0.0.1",
+    port: 4_971,
+    origin: "http://127.0.0.1:4971",
+    startedAt: "2026-06-20T00:00:00.000Z",
+  };
+
+  it.effect("fails with a typed conflict error naming pid, port, origin, and state dir", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-state-dir-guard-test-",
+      });
+      const statePath = path.join(stateDir, "server-runtime.json");
+      yield* ServerRuntimeState.persistServerRuntimeState({ path: statePath, state });
+
+      const error = yield* ServerRuntimeState.ensureExclusiveStateDir({
+        statePath,
+        stateDir,
+        ownPid: 999,
+        isPidAlive: () => true,
+      }).pipe(Effect.flip);
+
+      assert.isTrue(isServerStateDirConflictError(error));
+      assert.equal(error.pid, state.pid);
+      assert.equal(error.port, state.port);
+      assert.equal(error.origin, state.origin);
+      assert.equal(error.stateDir, stateDir);
+      assert.include(error.message, String(state.pid));
+      assert.include(error.message, stateDir);
+      assert.include(error.message, "--base-dir");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("proceeds when the recorded pid is dead", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-state-dir-guard-test-",
+      });
+      const statePath = path.join(stateDir, "server-runtime.json");
+      yield* ServerRuntimeState.persistServerRuntimeState({ path: statePath, state });
+
+      yield* ServerRuntimeState.ensureExclusiveStateDir({
+        statePath,
+        stateDir,
+        ownPid: 999,
+        isPidAlive: () => false,
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("proceeds when the discovery file is missing or corrupt", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-state-dir-guard-test-",
+      });
+      const missingPath = path.join(stateDir, "server-runtime.json");
+
+      // Missing file: proceed.
+      yield* ServerRuntimeState.ensureExclusiveStateDir({
+        statePath: missingPath,
+        stateDir,
+        ownPid: 999,
+        isPidAlive: () => true,
+      });
+
+      // Corrupt file: read returns none, so proceed even against a "live" pid.
+      yield* fileSystem.writeFileString(missingPath, "{not json");
+      yield* ServerRuntimeState.ensureExclusiveStateDir({
+        statePath: missingPath,
+        stateDir,
+        ownPid: 999,
+        isPidAlive: () => true,
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          NodeServices.layer,
+          Logger.layer([Logger.make(() => {})], { mergeWithExisting: false }),
+        ),
+      ),
+    ),
   );
 });
