@@ -502,10 +502,10 @@ export const ProviderRegistryLive = Layer.effect(
       const instance = Array.from((yield* Ref.get(liveSubsRef)).values()).find(
         (candidate) => candidate.instanceId === instanceId,
       );
-      return (
-        instance?.snapshot.maintenanceCapabilities ??
-        makeManualProviderMaintenanceCapabilities(provider)
-      );
+      if (!instance) {
+        return makeManualProviderMaintenanceCapabilities(provider);
+      }
+      return yield* instance.snapshot.getMaintenanceCapabilities;
     });
 
     /**

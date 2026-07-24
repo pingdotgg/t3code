@@ -43,9 +43,13 @@ import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
+  makeCodexMaintenanceEnvironment,
+  selectCodexProviderMaintenanceCapabilities,
+} from "../codexMaintenance.ts";
+import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
-  resolveProviderMaintenanceCapabilitiesEffect,
+  resolveProviderMaintenanceCapabilitiesWithPathsEffect,
 } from "../providerMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -144,10 +148,28 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         enabled,
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
-      const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-        binaryPath: effectiveConfig.binaryPath,
-        env: processEnv,
+      const maintenanceResolution = yield* resolveProviderMaintenanceCapabilitiesWithPathsEffect(
+        UPDATE,
+        {
+          binaryPath: effectiveConfig.binaryPath,
+          env: processEnv,
+        },
+      );
+      const legacyMaintenanceCapabilities = maintenanceResolution.capabilities;
+      const maintenanceEnvironment = makeCodexMaintenanceEnvironment({
+        environment: processEnv,
+        effectiveHomePath: effectiveConfig.homePath || null,
+        realExecutablePath:
+          maintenanceResolution.realCommandPath ?? maintenanceResolution.resolvedCommandPath,
+        sharedHomePath: homeLayout.sharedHomePath,
       });
+      const resolveMaintenanceCapabilities = (snapshot: ServerProvider) =>
+        selectCodexProviderMaintenanceCapabilities({
+          installedVersion: snapshot.version,
+          legacyCapabilities: legacyMaintenanceCapabilities,
+          executable: effectiveConfig.binaryPath,
+          environment: maintenanceEnvironment,
+        });
 
       // `makeCodexAdapter` and `makeCodexTextGeneration` have `never` error
       // channels at construction time — their failure modes are all on the
@@ -172,14 +194,15 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       );
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CodexSettings>>({
-        maintenanceCapabilities,
+        maintenanceCapabilities: legacyMaintenanceCapabilities,
+        resolveMaintenanceCapabilities,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
           makePendingCodexProvider(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
+        enrichSnapshot: ({ settings, snapshot, maintenanceCapabilities, publishSnapshot }) =>
           enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
             enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
           }).pipe(

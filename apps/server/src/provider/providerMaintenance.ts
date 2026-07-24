@@ -3,7 +3,7 @@ import {
   type ServerProvider,
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
-import { compareSemverVersions } from "@t3tools/shared/semver";
+import { compareSemverVersions, isValidSemverVersion } from "@t3tools/shared/semver";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -48,6 +48,7 @@ export interface ProviderMaintenanceCommandAction {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly lockKey: string;
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 export interface ProviderMaintenanceCapabilityResolutionOptions {
@@ -61,6 +62,12 @@ export interface ProviderMaintenanceCapabilitiesResolver {
   readonly resolve: (
     options?: ProviderMaintenanceCapabilityResolutionOptions,
   ) => ProviderMaintenanceCapabilities;
+}
+
+export interface ProviderMaintenanceCapabilitiesResolution {
+  readonly capabilities: ProviderMaintenanceCapabilities;
+  readonly resolvedCommandPath: string | null;
+  readonly realCommandPath: string | null;
 }
 
 export interface PackageManagedProviderMaintenanceDefinition {
@@ -100,6 +107,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly updateExecutable: string | null;
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
+  readonly updateEnv?: NodeJS.ProcessEnv;
 }): ProviderMaintenanceCapabilities {
   const update =
     input.updateExecutable === null || input.updateLockKey === null
@@ -109,12 +117,43 @@ export function makeProviderMaintenanceCapabilities(input: {
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
+          ...(input.updateEnv ? { env: input.updateEnv } : {}),
         };
   return {
     provider: input.provider,
     packageName: input.packageName,
     update,
   };
+}
+
+export function selectVersionGatedProviderMaintenanceCapabilities(input: {
+  readonly currentVersion: string | null | undefined;
+  readonly minimumVersion: string;
+  readonly legacyCapabilities: ProviderMaintenanceCapabilities;
+  readonly nativeUpdate: {
+    readonly executable: string;
+    readonly args: ReadonlyArray<string>;
+    readonly lockKey: string;
+    readonly env?: NodeJS.ProcessEnv;
+  };
+}): ProviderMaintenanceCapabilities {
+  const currentVersion = nonEmptyString(input.currentVersion);
+  if (
+    !currentVersion ||
+    !isValidSemverVersion(currentVersion) ||
+    compareSemverVersions(currentVersion, input.minimumVersion) < 0
+  ) {
+    return input.legacyCapabilities;
+  }
+
+  return makeProviderMaintenanceCapabilities({
+    provider: input.legacyCapabilities.provider,
+    packageName: input.legacyCapabilities.packageName,
+    updateExecutable: input.nativeUpdate.executable,
+    updateArgs: input.nativeUpdate.args,
+    updateLockKey: input.nativeUpdate.lockKey,
+    ...(input.nativeUpdate.env ? { updateEnv: input.nativeUpdate.env } : {}),
+  });
 }
 
 export function makeManualOnlyProviderMaintenanceCapabilities(input: {
@@ -343,15 +382,19 @@ function makeManualProviderMaintenanceCapabilities(
   });
 }
 
-export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
-  "resolveProviderMaintenanceCapabilitiesEffect",
+export const resolveProviderMaintenanceCapabilitiesWithPathsEffect = Effect.fn(
+  "resolveProviderMaintenanceCapabilitiesWithPathsEffect",
 )(function* (
   resolver: ProviderMaintenanceCapabilitiesResolver,
   options?: Omit<ProviderMaintenanceCapabilityResolutionOptions, "realCommandPath">,
 ) {
   const binaryPath = nonEmptyString(options?.binaryPath);
   if (!binaryPath) {
-    return resolver.resolve(options);
+    return {
+      capabilities: resolver.resolve(options),
+      resolvedCommandPath: null,
+      realCommandPath: null,
+    } satisfies ProviderMaintenanceCapabilitiesResolution;
   }
 
   const env = options?.env ?? (yield* readCommandLookupEnv);
@@ -360,19 +403,37 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
       Effect.catchTag("CommandResolutionError", () => Effect.succeed(null)),
     )) ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
   if (!resolvedCommandPath) {
-    return resolver.resolve(options);
+    return {
+      capabilities: resolver.resolve(options),
+      resolvedCommandPath: null,
+      realCommandPath: null,
+    } satisfies ProviderMaintenanceCapabilitiesResolution;
   }
 
   const fileSystem = yield* FileSystem.FileSystem;
   const realCommandPath = yield* fileSystem
     .realPath(resolvedCommandPath)
     .pipe(Effect.orElseSucceed(() => resolvedCommandPath));
-  return resolver.resolve({
-    ...options,
-    env,
+  return {
     resolvedCommandPath,
     realCommandPath,
-  });
+    capabilities: resolver.resolve({
+      ...options,
+      env,
+      resolvedCommandPath,
+      realCommandPath,
+    }),
+  } satisfies ProviderMaintenanceCapabilitiesResolution;
+});
+
+export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
+  "resolveProviderMaintenanceCapabilitiesEffect",
+)(function* (
+  resolver: ProviderMaintenanceCapabilitiesResolver,
+  options?: Omit<ProviderMaintenanceCapabilityResolutionOptions, "realCommandPath">,
+) {
+  return (yield* resolveProviderMaintenanceCapabilitiesWithPathsEffect(resolver, options))
+    .capabilities;
 });
 
 function deriveVersionAdvisory(input: {
