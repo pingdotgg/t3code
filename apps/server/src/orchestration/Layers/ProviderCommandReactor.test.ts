@@ -158,6 +158,9 @@ describe("ProviderCommandReactor", () => {
     readonly initialSession?: OrchestrationSession;
     readonly runtimeBindings?: ReadonlyArray<ProviderRuntimeBindingWithMetadata>;
     readonly runtimeBindingsAfterInitialRead?: ReadonlyArray<ProviderRuntimeBindingWithMetadata>;
+    readonly runtimeBindingsByRead?: ReadonlyArray<
+      ReadonlyArray<ProviderRuntimeBindingWithMetadata>
+    >;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -370,11 +373,16 @@ describe("ProviderCommandReactor", () => {
       getBinding: () => Effect.succeed(Option.none()),
       listThreadIds: () => Effect.succeed([]),
       listBindings: () =>
-        Effect.succeed(
-          runtimeBindingReadCount++ > 0 && input?.runtimeBindingsAfterInitialRead
+        Effect.sync(() => {
+          const readIndex = runtimeBindingReadCount++;
+          const bindingsByRead = input?.runtimeBindingsByRead;
+          if (bindingsByRead && bindingsByRead.length > 0) {
+            return bindingsByRead[Math.min(readIndex, bindingsByRead.length - 1)]!;
+          }
+          return readIndex > 0 && input?.runtimeBindingsAfterInitialRead
             ? input.runtimeBindingsAfterInitialRead
-            : (input?.runtimeBindings ?? []),
-        ),
+            : (input?.runtimeBindings ?? []);
+        }),
     });
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
@@ -593,6 +601,42 @@ describe("ProviderCommandReactor", () => {
       initialSession,
       runtimeBindings: [stoppedBinding],
       runtimeBindingsAfterInitialRead: [{ ...stoppedBinding, status: "running" }],
+    });
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe("orchestration-turn-1");
+  });
+
+  it("checks the binding again immediately before settling the projected session", async () => {
+    const runningAt = "2026-01-01T00:01:00.000Z";
+    const stoppedAt = "2026-01-01T00:02:00.000Z";
+    const initialSession: OrchestrationSession = {
+      threadId: ThreadId.make("thread-1"),
+      status: "running",
+      providerName: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeMode: "approval-required",
+      activeTurnId: asTurnId("orchestration-turn-1"),
+      lastError: null,
+      updatedAt: runningAt,
+    };
+    const stoppedBinding: ProviderRuntimeBindingWithMetadata = {
+      threadId: ThreadId.make("thread-1"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "stopped",
+      runtimeMode: "approval-required",
+      lastSeenAt: stoppedAt,
+    };
+    const harness = await createHarness({
+      initialSession,
+      runtimeBindingsByRead: [
+        [stoppedBinding],
+        [stoppedBinding],
+        [{ ...stoppedBinding, status: "running" }],
+      ],
     });
 
     const readModel = await harness.readModel();

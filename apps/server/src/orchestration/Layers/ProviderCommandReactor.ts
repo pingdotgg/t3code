@@ -338,24 +338,34 @@ const make = Effect.gen(function* () {
               return;
             }
 
+            // Re-read immediately before dispatch. Runtime recovery can update
+            // the persisted binding while projection/session checks are in
+            // flight; never settle from a stopped snapshot that has already
+            // been replaced by a live binding.
+            const finalBindings = yield* providerSessionDirectory.listBindings();
+            const finalBinding = finalBindings.find((entry) => entry.threadId === thread.id);
+            if (!finalBinding || !canReconcileStoppedRuntimeBinding(latestSession, finalBinding)) {
+              return;
+            }
+
             yield* setThreadSession({
               threadId: thread.id,
               session: {
                 ...latestSession,
                 status: "stopped",
                 activeTurnId: null,
-                updatedAt: latestBinding.lastSeenAt,
+                updatedAt: finalBinding.lastSeenAt,
               },
-              createdAt: latestBinding.lastSeenAt,
+              createdAt: finalBinding.lastSeenAt,
             }).pipe(
               Effect.tap(() =>
                 Effect.logWarning("provider.session.reconciled-stopped-runtime", {
                   threadId: thread.id,
                   previousStatus: latestSession.status,
                   activeTurnId: latestSession.activeTurnId,
-                  provider: latestBinding.provider,
-                  providerInstanceId: latestBinding.providerInstanceId,
-                  stoppedAt: latestBinding.lastSeenAt,
+                  provider: finalBinding.provider,
+                  providerInstanceId: finalBinding.providerInstanceId,
+                  stoppedAt: finalBinding.lastSeenAt,
                 }),
               ),
             );
