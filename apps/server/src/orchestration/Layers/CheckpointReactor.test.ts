@@ -280,6 +280,7 @@ describe("CheckpointReactor", () => {
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
     readonly gitStatusRefreshCalls?: Array<string>;
+    readonly startReactor?: boolean;
   }) {
     const cwd = createGitRepository();
     tempDirs.push(cwd);
@@ -350,8 +351,12 @@ describe("CheckpointReactor", () => {
     const checkpointStore = await runtime.runPromise(
       Effect.service(CheckpointStore.CheckpointStore),
     );
-    scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
+    const reactorScope = await Effect.runPromise(Scope.make("sequential"));
+    scope = reactorScope;
+    const start = () => Effect.runPromise(reactor.start().pipe(Scope.provide(reactorScope)));
+    if (options?.startReactor ?? true) {
+      await start();
+    }
     const drain = () => Effect.runPromise(reactor.drain);
 
     const createdAt = "2026-01-01T00:00:00.000Z";
@@ -416,8 +421,47 @@ describe("CheckpointReactor", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       provider,
       cwd,
+      start,
       drain,
     };
+  }
+
+  async function createEarlyCheckpointHarness() {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const turnId = asTurnId("turn-1");
+    const checkpointRef = checkpointRefForThreadTurn(threadId, 1);
+    const capturedAt = "2026-01-01T00:01:00.000Z";
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-early-checkpoint"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId,
+      turnId,
+    });
+    await waitForGitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 0));
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-placeholder-early-checkpoint"),
+        threadId,
+        turnId,
+        completedAt: capturedAt,
+        checkpointRef,
+        status: "missing",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt: capturedAt,
+      }),
+    );
+    await harness.drain();
+    expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("v2\n");
+
+    return { harness, threadId, turnId, checkpointRef, capturedAt };
   }
 
   it("captures pre-turn baseline on turn.started and post-turn checkpoint on turn.completed", async () => {
@@ -495,6 +539,135 @@ describe("CheckpointReactor", () => {
       ),
     ).toBe("v2\n");
   });
+
+  it("refreshes an early checkpoint when the turn completes", async () => {
+    const { harness, threadId, turnId, checkpointRef } = await createEarlyCheckpointHarness();
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v3\n", "utf8");
+    const completedAt = "2026-01-01T00:02:00.000Z";
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-refresh"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: completedAt,
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("v3\n");
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === threadId);
+    expect(thread?.checkpoints).toHaveLength(1);
+    expect(thread?.checkpoints[0]?.checkpointTurnCount).toBe(1);
+    expect(thread?.checkpoints[0]?.completedAt).toBe(completedAt);
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v4\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-refresh-duplicate"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: completedAt,
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("v3\n");
+  });
+
+  it("preserves a newer placeholder when an older completion arrives", async () => {
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      startReactor: false,
+    });
+    const threadId = ThreadId.make("thread-1");
+    const turnId = asTurnId("turn-stale-completion");
+    const checkpointRef = checkpointRefForThreadTurn(threadId, 1);
+    const placeholderAt = "2026-01-01T00:02:00.000Z";
+    const dispatchPlaceholder = (commandId: string) =>
+      Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.make(commandId),
+          threadId,
+          turnId,
+          completedAt: placeholderAt,
+          checkpointRef,
+          status: "missing",
+          files: [],
+          checkpointTurnCount: 1,
+          createdAt: placeholderAt,
+        }),
+      );
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    await dispatchPlaceholder("cmd-placeholder-before-reactor-start");
+    await harness.start();
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-stale"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:01:00.000Z",
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    const snapshotBeforeCapture = await harness.readModel();
+    const placeholder = snapshotBeforeCapture.threads
+      .find((entry) => entry.id === threadId)
+      ?.checkpoints.find((checkpoint) => checkpoint.turnId === turnId);
+    expect(placeholder?.status).toBe("missing");
+    expect(placeholder?.completedAt).toBe(placeholderAt);
+    expect(gitRefExists(harness.cwd, checkpointRef)).toBe(false);
+
+    await dispatchPlaceholder("cmd-placeholder-after-stale-completion");
+    await harness.drain();
+
+    expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("v2\n");
+    const snapshotAfterCapture = await harness.readModel();
+    const checkpoint = snapshotAfterCapture.threads
+      .find((entry) => entry.id === threadId)
+      ?.checkpoints.find((entry) => entry.turnId === turnId);
+    expect(checkpoint?.status).toBe("ready");
+    expect(checkpoint?.completedAt).toBe(placeholderAt);
+  });
+
+  it.each(["cancelled", "interrupted"] as const)(
+    "preserves an early ready checkpoint when completion is %s",
+    async (state) => {
+      const { harness, threadId, turnId, checkpointRef, capturedAt } =
+        await createEarlyCheckpointHarness();
+      const snapshotBefore = await harness.readModel();
+      const checkpointBefore = snapshotBefore.threads
+        .find((entry) => entry.id === threadId)
+        ?.checkpoints.find((checkpoint) => checkpoint.turnId === turnId);
+
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v3\n", "utf8");
+      harness.provider.emit({
+        type: "turn.completed",
+        eventId: EventId.make(`evt-turn-completed-${state}`),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:02:00.000Z",
+        threadId,
+        turnId,
+        payload: { state },
+      });
+      await harness.drain();
+
+      expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("v2\n");
+      const snapshotAfter = await harness.readModel();
+      const checkpointAfter = snapshotAfter.threads
+        .find((entry) => entry.id === threadId)
+        ?.checkpoints.find((checkpoint) => checkpoint.turnId === turnId);
+      expect(checkpointBefore?.completedAt).toBe(capturedAt);
+      expect(checkpointAfter).toEqual(checkpointBefore);
+    },
+  );
 
   it("refreshes local git status state on turn completion using the session cwd", async () => {
     const gitStatusRefreshCalls: string[] = [];

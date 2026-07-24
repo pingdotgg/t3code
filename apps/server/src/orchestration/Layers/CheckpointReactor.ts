@@ -366,13 +366,17 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      // Only skip if a real (non-placeholder) checkpoint already exists for this turn.
-      // ProviderRuntimeIngestion may insert placeholder entries with status "missing"
-      // before this reactor runs; those must not prevent real git capture.
+      const existingCheckpoint = thread.checkpoints.find(
+        (checkpoint) => checkpoint.turnId === turnId,
+      );
+      const checkpointStatus = checkpointStatusFromRuntime(event.payload.state);
+      // A diff update can capture a ready checkpoint while the turn is still running.
+      // Refresh older final captures, preserve newer placeholders, and keep real refs
+      // synchronized when interrupted completions map to a missing checkpoint.
       if (
-        thread.checkpoints.some(
-          (checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing",
-        )
+        existingCheckpoint &&
+        (existingCheckpoint.completedAt.localeCompare(event.createdAt) >= 0 ||
+          (existingCheckpoint.status !== "missing" && checkpointStatus === "missing"))
       ) {
         return;
       }
@@ -388,17 +392,12 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      // If a placeholder checkpoint exists for this turn, reuse its turn count
-      // instead of incrementing past it.
-      const existingPlaceholder = thread.checkpoints.find(
-        (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
-      );
       const currentTurnCount = thread.checkpoints.reduce(
         (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
         0,
       );
-      const nextTurnCount = existingPlaceholder
-        ? existingPlaceholder.checkpointTurnCount
+      const nextTurnCount = existingCheckpoint
+        ? existingCheckpoint.checkpointTurnCount
         : currentTurnCount + 1;
 
       yield* captureAndDispatchCheckpoint({
@@ -407,7 +406,7 @@ const make = Effect.gen(function* () {
         thread,
         cwd: checkpointCwd,
         turnCount: nextTurnCount,
-        status: checkpointStatusFromRuntime(event.payload.state),
+        status: checkpointStatus,
         assistantMessageId: undefined,
         createdAt: event.createdAt,
       });
