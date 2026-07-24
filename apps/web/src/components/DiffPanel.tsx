@@ -3,7 +3,13 @@ import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/reac
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import type { DiffFile, DiffSnapshot, ReviewFinding, TurnId } from "@t3tools/contracts";
+import type {
+  DiffFile,
+  DiffSnapshot,
+  ReviewFinding,
+  ReviewSnapshotScope,
+  TurnId,
+} from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -56,6 +62,17 @@ const EMPTY_REVIEW_ANNOTATIONS: DiffLineAnnotation<ReviewFinding>[] = [];
 
 function diffZoomFontSizePx(zoom: number, basePx: number): number {
   return Math.round((basePx * zoom) / 100);
+}
+
+function reviewSnapshotScopeLabel(scope: ReviewSnapshotScope): string {
+  switch (scope.kind) {
+    case "uncommitted":
+      return "All uncommitted";
+    case "against-base":
+      return "All branch changes";
+    case "pull-request":
+      return `PR #${scope.number}`;
+  }
 }
 
 function ReviewFindingPopover({
@@ -392,8 +409,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       ? (diffSearch.diffTurnId ?? readyTurnDiffSummaries[0]?.turnId ?? null)
       : null;
   const showReviewSnapshot = selectedView === "uncommitted";
-  const reviewSnapshotLabel =
-    reviewSnapshot?.scope.kind === "uncommitted" ? "All uncommitted" : "All branch changes";
+  const reviewSnapshotLabel = reviewSnapshot
+    ? reviewSnapshotScopeLabel(reviewSnapshot.scope)
+    : null;
   const reviewResult =
     activeThread?.reviewResult?.status === "parsed" ? activeThread.reviewResult : null;
   const selectedReviewFinding =
