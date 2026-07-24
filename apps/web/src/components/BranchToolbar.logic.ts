@@ -1,5 +1,6 @@
 import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { toSortableTimestamp } from "../lib/threadSort";
 export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
@@ -63,6 +64,53 @@ export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null):
 
 export function resolveLockedWorkspaceLabel(activeWorktreePath: string | null): string {
   return activeWorktreePath ? "Worktree" : "Local checkout";
+}
+
+export interface PreviousWorktreeSeed {
+  branch: string | null;
+  worktreePath: string;
+}
+
+// The most recently touched worktree in the project that the composer isn't
+// already pointing at. Backs the "Previous worktree" entry in the workspace
+// selector so a follow-up thread can hop back into the worktree you just
+// worked in without hunting for its branch. Archived threads don't compete —
+// the rest of the UI hides them, so their worktrees shouldn't resurface here.
+export function resolvePreviousWorktreeSeed(input: {
+  threads: ReadonlyArray<{
+    branch: string | null;
+    worktreePath: string | null;
+    updatedAt: string;
+    archivedAt?: string | null;
+  }>;
+  currentWorktreePath: string | null;
+}): PreviousWorktreeSeed | null {
+  let latest: { branch: string | null; worktreePath: string; updatedAt: number } | null = null;
+  for (const thread of input.threads) {
+    if (
+      !thread.worktreePath ||
+      thread.worktreePath === input.currentWorktreePath ||
+      (thread.archivedAt ?? null) !== null
+    ) {
+      continue;
+    }
+    const updatedAt = toSortableTimestamp(thread.updatedAt);
+    if (updatedAt === null) {
+      continue;
+    }
+    if (latest === null || updatedAt > latest.updatedAt) {
+      latest = {
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        updatedAt,
+      };
+    }
+  }
+  return latest === null ? null : { branch: latest.branch, worktreePath: latest.worktreePath };
+}
+
+export function resolvePreviousWorktreeLabel(seed: PreviousWorktreeSeed): string {
+  return seed.branch ? `Previous worktree (${seed.branch})` : "Previous worktree";
 }
 
 export function resolveEffectiveEnvMode(input: {

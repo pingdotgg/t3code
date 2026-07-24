@@ -6,12 +6,13 @@ import {
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
+  HistoryIcon,
   MonitorIcon,
 } from "lucide-react";
-import { memo, useMemo } from "react";
+import { memo, useCallback, useMemo } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
-import { useProject, useThread } from "../state/entities";
+import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
 import { useIsMobile } from "../hooks/useMediaQuery";
 import {
   type EnvMode,
@@ -20,6 +21,8 @@ import {
   resolveEnvModeLabel,
   resolveEffectiveEnvMode,
   resolveLockedWorkspaceLabel,
+  resolvePreviousWorktreeLabel,
+  resolvePreviousWorktreeSeed,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
@@ -66,6 +69,8 @@ interface MobileRunContextSelectorProps {
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
+  previousWorktreeLabel: string | null;
+  onUsePreviousWorktree: () => void;
 }
 
 const MobileRunContextSelector = memo(function MobileRunContextSelector({
@@ -79,6 +84,8 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   effectiveEnvMode,
   activeWorktreePath,
   onEnvModeChange,
+  previousWorktreeLabel,
+  onUsePreviousWorktree,
 }: MobileRunContextSelectorProps) {
   const activeEnvironment = useMemo(
     () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
@@ -166,7 +173,13 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
           <MenuGroupLabel>Workspace</MenuGroupLabel>
           <MenuRadioGroup
             value={effectiveEnvMode}
-            onValueChange={(value) => onEnvModeChange(value as EnvMode)}
+            onValueChange={(value) => {
+              if (value === "previous-worktree") {
+                onUsePreviousWorktree();
+                return;
+              }
+              onEnvModeChange(value as EnvMode);
+            }}
           >
             <MenuRadioItem disabled={envModeLocked} value="local">
               <span className="flex min-w-0 items-center gap-1.5">
@@ -186,6 +199,14 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                 <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
               </span>
             </MenuRadioItem>
+            {previousWorktreeLabel ? (
+              <MenuRadioItem disabled={envModeLocked} value="previous-worktree">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <HistoryIcon className="size-3" />
+                  <span className="min-w-0 truncate">{previousWorktreeLabel}</span>
+                </span>
+              </MenuRadioItem>
+            ) : null}
           </MenuRadioGroup>
         </MenuGroup>
       </MenuPopup>
@@ -217,6 +238,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const activeProjectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
     : draftThread
@@ -233,6 +255,40 @@ export const BranchToolbar = memo(function BranchToolbar({
       draftThreadEnvMode: draftThread?.envMode,
     });
   const envModeLocked = envLocked || (serverThread !== null && activeWorktreePath !== null);
+
+  // "Previous worktree" hops a draft into the most recently active worktree
+  // of this project — the "keep going where I just was" follow-up flow. Only
+  // drafts can hop; started server threads have their workspace pinned.
+  const canUsePreviousWorktree = draftThread !== null && serverThread === null && !envModeLocked;
+  const projectRefsForWorktreeLookup = useMemo(
+    () => (canUsePreviousWorktree && activeProjectRef ? [activeProjectRef] : []),
+    [canUsePreviousWorktree, activeProjectRef],
+  );
+  const projectThreads = useThreadShellsForProjectRefs(projectRefsForWorktreeLookup);
+  const previousWorktreeSeed = useMemo(
+    () =>
+      canUsePreviousWorktree
+        ? resolvePreviousWorktreeSeed({
+            threads: projectThreads,
+            currentWorktreePath: activeWorktreePath,
+          })
+        : null,
+    [activeWorktreePath, canUsePreviousWorktree, projectThreads],
+  );
+  const previousWorktreeLabel = previousWorktreeSeed
+    ? resolvePreviousWorktreeLabel(previousWorktreeSeed)
+    : null;
+  const onUsePreviousWorktree = useCallback(() => {
+    if (!previousWorktreeSeed || !activeProjectRef) return;
+    // Same shape the branch selector writes when picking a branch that
+    // already lives in a worktree: point the draft at the existing tree.
+    setDraftThreadContext(draftId ?? threadRef, {
+      branch: previousWorktreeSeed.branch,
+      worktreePath: previousWorktreeSeed.worktreePath,
+      envMode: "worktree",
+      projectRef: activeProjectRef,
+    });
+  }, [activeProjectRef, draftId, previousWorktreeSeed, setDraftThreadContext, threadRef]);
 
   const showEnvironmentPicker = Boolean(
     availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
@@ -261,6 +317,8 @@ export const BranchToolbar = memo(function BranchToolbar({
           effectiveEnvMode={effectiveEnvMode}
           activeWorktreePath={activeWorktreePath}
           onEnvModeChange={onEnvModeChange}
+          previousWorktreeLabel={previousWorktreeLabel}
+          onUsePreviousWorktree={onUsePreviousWorktree}
         />
       ) : (
         <div className="flex min-w-0 shrink-0 items-center gap-1">
@@ -280,6 +338,8 @@ export const BranchToolbar = memo(function BranchToolbar({
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
+            previousWorktreeLabel={previousWorktreeLabel}
+            onUsePreviousWorktree={onUsePreviousWorktree}
           />
         </div>
       )}
