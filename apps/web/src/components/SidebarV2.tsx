@@ -879,10 +879,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               ) : (
                 <span className="flex-1" />
               )}
-              <span className="relative ml-auto flex h-5 min-w-8 shrink-0 items-center justify-end pl-1 text-xs">
+              <span className="ml-auto grid h-5 min-w-8 shrink-0 grid-cols-1 grid-rows-1 items-center justify-items-end pl-1 text-xs">
                 <span
                   className={cn(
-                    "tabular-nums text-muted-foreground/65 transition-opacity group-hover/v2-row:opacity-0",
+                    "col-start-1 row-start-1 tabular-nums text-muted-foreground/65 transition-opacity group-hover/v2-row:opacity-0",
                     snoozeMenuOpen && "opacity-0",
                   )}
                 >
@@ -917,7 +917,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 {props.settlementSupported || showSnoozeButton ? (
                   <span
                     className={cn(
-                      "absolute inset-y-0 right-0 flex items-stretch gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
+                      "col-start-1 row-start-1 flex items-stretch gap-0.5 self-stretch opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
                       snoozeMenuOpen && "opacity-100",
                     )}
                   >
