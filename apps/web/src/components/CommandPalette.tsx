@@ -102,6 +102,7 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
+  shouldHandleCommandPaletteShortcut,
 } from "./CommandPalette.logic";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -408,7 +409,18 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           terminalOpen,
         },
       });
-      if (command !== "commandPalette.toggle" && command !== "project.add") {
+      const target =
+        event.target instanceof Element
+          ? event.target.closest(
+              'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+            )
+          : null;
+      if (
+        !shouldHandleCommandPaletteShortcut({
+          command,
+          editableTarget: target !== null,
+        })
+      ) {
         return;
       }
       event.preventDefault();
