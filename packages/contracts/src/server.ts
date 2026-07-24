@@ -92,6 +92,25 @@ export const ServerProviderSkill = Schema.Struct({
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
+const ServerProviderUsagePercent = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)).check(
+  Schema.isLessThanOrEqualTo(100),
+);
+
+export const ServerProviderUsageWindow = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  usedPercent: ServerProviderUsagePercent,
+  resetsAt: Schema.optional(IsoDateTime),
+  windowDurationMins: Schema.optional(NonNegativeInt),
+});
+export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
+
+export const ServerProviderUsageLimits = Schema.Struct({
+  source: Schema.Literals(["codexAppServer", "claudePrint"]),
+  checkedAt: IsoDateTime,
+  windows: Schema.Array(ServerProviderUsageWindow),
+});
+export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
+
 /**
  * Availability of a configured provider instance from the runtime's POV.
  *
@@ -188,6 +207,7 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
 });

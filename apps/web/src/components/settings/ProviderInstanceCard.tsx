@@ -22,6 +22,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -43,6 +44,7 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { ProviderUsageRows, ProviderUsageSummary } from "../providerUsage/ProviderUsageRows";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -349,6 +351,7 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  readonly timestampFormat: TimestampFormat;
 }
 
 /**
@@ -393,6 +396,7 @@ export function ProviderInstanceCard({
   onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
+  timestampFormat,
 }: ProviderInstanceCardProps) {
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
@@ -705,6 +709,9 @@ export function ProviderInstanceCard({
               {titleTailNode}
             </div>
             {authRowNode}
+            {enabled && liveProvider?.usageLimits ? (
+              <ProviderUsageSummary usageLimits={liveProvider.usageLimits} />
+            ) : null}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
             <Button
@@ -730,6 +737,15 @@ export function ProviderInstanceCard({
       <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>
         <CollapsibleContent>
           <div className="space-y-5 px-3 pb-4 pt-2 sm:px-4">
+            {enabled && liveProvider?.usageLimits ? (
+              <div className="grid max-w-lg gap-2.5">
+                <p className="text-xs font-medium text-foreground">Provider usage</p>
+                <ProviderUsageRows
+                  usageLimits={liveProvider.usageLimits}
+                  timestampFormat={timestampFormat}
+                />
+              </div>
+            ) : null}
             <div>
               <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
                 <span className="text-xs font-medium text-foreground">Display name</span>
