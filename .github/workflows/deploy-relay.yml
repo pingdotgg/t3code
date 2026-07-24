@@ -37,7 +37,7 @@ jobs:
       ALCHEMY_TELEMETRY_DISABLED: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: useblacksmith/checkout@v1
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1

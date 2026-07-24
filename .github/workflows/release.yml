@@ -35,7 +35,7 @@ jobs:
       has_changes: ${{ steps.check.outputs.has_changes }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: useblacksmith/checkout@v1
         with:
           fetch-depth: 0
 
@@ -81,7 +81,7 @@ jobs:
       ref: ${{ github.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: useblacksmith/checkout@v1
         with:
           fetch-depth: 0
 
@@ -189,7 +189,7 @@ jobs:
       CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.CLERK_CLI_OAUTH_CLIENT_ID }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: useblacksmith/checkout@v1
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
@@ -266,7 +266,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: useblacksmith/checkout@v1
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           fetch-depth: 0
@@ -678,7 +678,7 @@ jobs:
           owner: ${{ github.repository_owner }}
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: useblacksmith/checkout@v1
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
@@ -799,7 +799,7 @@ jobs:
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: useblacksmith/checkout@v1
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
@@ -909,7 +909,7 @@ jobs:
           owner: ${{ github.repository_owner }}
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: useblacksmith/checkout@v1
         with:
           ref: main
           fetch-depth: 0
@@ -982,7 +982,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: useblacksmith/checkout@v1
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 

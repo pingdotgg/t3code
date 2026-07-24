@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: useblacksmith/checkout@v1
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: useblacksmith/checkout@v1
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
@@ -88,7 +88,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: useblacksmith/checkout@v1
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
