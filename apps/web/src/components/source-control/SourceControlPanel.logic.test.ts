@@ -12,6 +12,7 @@ import {
   drainPanelRefreshQueue,
   failPanelFileDiffLoad,
   formatRelativeDate,
+  isFederatedSourceControlTargetExpanded,
   mergeChangeGroups,
   namedBranchOperationCwd,
   resolveFederatedSourceControlTargets,
@@ -350,6 +351,27 @@ describe("SourceControlPanel refresh stability logic", () => {
 });
 
 describe("SourceControlPanel environment federation", () => {
+  it("always expands the current environment and collapses other environments by default", () => {
+    expect(
+      isFederatedSourceControlTargetExpanded(
+        { active: true, environmentId: PRIMARY_ENVIRONMENT_ID },
+        new Set(),
+      ),
+    ).toBe(true);
+    expect(
+      isFederatedSourceControlTargetExpanded(
+        { active: false, environmentId: REMOTE_ENVIRONMENT_ID },
+        new Set(),
+      ),
+    ).toBe(false);
+    expect(
+      isFederatedSourceControlTargetExpanded(
+        { active: false, environmentId: REMOTE_ENVIRONMENT_ID },
+        new Set([REMOTE_ENVIRONMENT_ID]),
+      ),
+    ).toBe(true);
+  });
+
   it("omits disconnected environments and keeps the active checkout first", () => {
     expect(
       resolveFederatedSourceControlTargets({

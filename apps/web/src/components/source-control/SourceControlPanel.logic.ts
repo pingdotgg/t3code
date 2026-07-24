@@ -43,6 +43,13 @@ export interface FederatedSourceControlTarget extends SourceControlEnvironmentCa
   readonly worktreePath: string | null;
 }
 
+export function isFederatedSourceControlTargetExpanded(
+  target: Pick<FederatedSourceControlTarget, "active" | "environmentId">,
+  expandedEnvironmentIds: ReadonlySet<EnvironmentId>,
+): boolean {
+  return target.active || expandedEnvironmentIds.has(target.environmentId);
+}
+
 export function resolveFederatedSourceControlTargets(input: {
   readonly activeEnvironmentId: EnvironmentId;
   readonly activeCwd: string;
