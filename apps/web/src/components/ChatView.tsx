@@ -43,6 +43,7 @@ import {
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
@@ -2090,6 +2091,25 @@ function ChatViewContent(props: ChatViewProps) {
     threadError,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const pendingBackgroundTasks = useMemo(() => {
+    if (serverProjection === null || serverProjection === undefined) {
+      return [];
+    }
+    const latestRun =
+      serverProjection.runs.length === 0
+        ? null
+        : serverProjection.runs.reduce((latest, candidate) =>
+            candidate.ordinal > latest.ordinal ? candidate : latest,
+          );
+    return [
+      ...derivePendingBackgroundWork({
+        latestRun,
+        providerThreads: serverProjection.providerThreads,
+        turnItems: serverProjection.turnItems,
+        activeProviderThreadId: serverProjection.thread.activeProviderThreadId,
+      }),
+    ];
+  }, [serverProjection]);
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestRun,
     activeRuntime,
@@ -5799,6 +5819,7 @@ function ChatViewContent(props: ChatViewProps) {
                 isWorking={isWorking}
                 activeTurnInProgress={isWorking || !latestRunSettled}
                 activeTurnStartedAt={activeWorkStartedAt}
+                pendingBackgroundTasks={pendingBackgroundTasks}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
                 latestRun={activeLatestRun}

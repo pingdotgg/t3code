@@ -69,6 +69,50 @@ function nonterminalRuns(projection: OrchestrationV2ThreadProjection) {
   });
 }
 
+function isBackgroundCapableTurnItemType(type: string): boolean {
+  return type === "command_execution" || type === "dynamic_tool" || type === "subagent";
+}
+
+function isNonterminalTurnItemStatus(status: string): boolean {
+  return status === "pending" || status === "running" || status === "waiting";
+}
+
+function providerThreadHasPendingBackgroundTasks(
+  providerThread: OrchestrationV2ThreadProjection["providerThreads"][number],
+): boolean {
+  return (providerThread.pendingBackgroundTasks?.length ?? 0) > 0;
+}
+
+/**
+ * Resolve providerInstanceId for a stale background-capable turn item whose
+ * run is missing/null (or not found). Prefer an existing run, then a subagent
+ * item's own instance id, then the item's provider thread, then a last-resort
+ * first provider thread.
+ */
+function resolveStaleBackgroundItemProviderInstanceId(
+  item: OrchestrationV2ThreadProjection["turnItems"][number],
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection["providerThreads"][number]["providerInstanceId"] | undefined {
+  if (item.runId !== null) {
+    const run = projection.runs.find((candidate) => candidate.id === item.runId);
+    if (run !== undefined) {
+      return run.providerInstanceId;
+    }
+  }
+  if (item.type === "subagent") {
+    return item.providerInstanceId;
+  }
+  if (item.providerThreadId !== null && item.providerThreadId !== undefined) {
+    const providerThread = projection.providerThreads.find(
+      (candidate) => candidate.id === item.providerThreadId,
+    );
+    if (providerThread !== undefined) {
+      return providerThread.providerInstanceId;
+    }
+  }
+  return projection.providerThreads[0]?.providerInstanceId;
+}
+
 export const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
@@ -253,9 +297,45 @@ export const make = Effect.gen(function* () {
           });
         }
       }
-      for (const providerThread of projection.providerThreads.filter(
-        (candidate) => candidate.status === "active",
-      )) {
+      // Process loss also orphans background-capable turn items on already-
+      // settled runs (e.g. post-settle Waiting work). Skip items already
+      // cancelled above for recovered nonterminal runs to avoid duplicate
+      // cancellation events.
+      const recoveredNonterminalRunIds = new Set(runs.map((run) => run.id));
+      for (const item of projection.turnItems ?? []) {
+        if (item.runId !== null && recoveredNonterminalRunIds.has(item.runId)) {
+          continue;
+        }
+        if (!isBackgroundCapableTurnItemType(item.type)) {
+          continue;
+        }
+        if (!isNonterminalTurnItemStatus(item.status)) {
+          continue;
+        }
+        const providerInstanceId = resolveStaleBackgroundItemProviderInstanceId(item, projection);
+        if (providerInstanceId === undefined) {
+          continue;
+        }
+        events.push({
+          id: yield* allocateEventId(),
+          type: "turn-item.updated",
+          threadId: projection.thread.id,
+          ...(item.runId === null ? {} : { runId: item.runId }),
+          ...(item.nodeId === null || item.nodeId === undefined ? {} : { nodeId: item.nodeId }),
+          providerInstanceId,
+          occurredAt: now,
+          payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+        });
+      }
+      // All provider processes are gone on startup/shutdown: clear any
+      // persisted Waiting roster (including idle threads from settled roots)
+      // and idle active threads without resurrecting active status.
+      for (const providerThread of projection.providerThreads ?? []) {
+        const needsIdle = providerThread.status === "active";
+        const needsRosterClear = providerThreadHasPendingBackgroundTasks(providerThread);
+        if (!needsIdle && !needsRosterClear) {
+          continue;
+        }
         events.push({
           id: yield* allocateEventId(),
           type: "provider-thread.updated",
@@ -263,7 +343,12 @@ export const make = Effect.gen(function* () {
           driver: providerThread.driver,
           providerInstanceId: providerThread.providerInstanceId,
           occurredAt: now,
-          payload: { ...providerThread, status: "idle", updatedAt: now },
+          payload: {
+            ...providerThread,
+            status: needsIdle ? "idle" : providerThread.status,
+            pendingBackgroundTasks: [],
+            updatedAt: now,
+          },
         });
       }
       for (const session of projection.providerSessions.filter(

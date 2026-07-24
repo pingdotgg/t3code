@@ -4640,6 +4640,20 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                   if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
                   if (yield* Ref.get(continuationRequested)) return true;
                   if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
+                  // Projected post-settle Grok subagents can outlive the root
+                  // turn via carryover; keep the ACP process pinned until they
+                  // terminalize or teardown clears the carryover.
+                  const carryover = yield* Ref.get(carryoverSubagents);
+                  if (carryover !== null) {
+                    for (const subagent of carryover.subagents) {
+                      if (
+                        subagent.task.status === "running" ||
+                        subagent.task.status === "pending"
+                      ) {
+                        return true;
+                      }
+                    }
+                  }
                   return false;
                 }),
               }

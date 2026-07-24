@@ -697,7 +697,26 @@ export const layer: Layer.Layer<
             const terminal = yield* Ref.get(terminalEvent);
             if (terminal !== null && terminal.status === "completed") {
               const backgroundItems = yield* Ref.get(activeBackgroundTurnItems);
-              return backgroundItems.size === 0;
+              if (backgroundItems.size > 0) {
+                return false;
+              }
+              // Claude background Bash has no turn-item projection. Keep the
+              // stream open while this root's provider thread still reports
+              // pending roster work so late empty updates can clear Waiting.
+              // Use only the thread-scoped probe: session-wide pending work
+              // (siblings, wake buffers, session subagents) must not pin this
+              // root subscription. Session idle release still uses
+              // hasPendingBackgroundWork via ProviderSessionManager.
+              const latestProviderThreadSnapshot = yield* Ref.get(latestProviderThread);
+              if (input.session.hasPendingBackgroundWorkForThread !== undefined) {
+                const hasPendingWork = yield* input.session
+                  .hasPendingBackgroundWorkForThread(latestProviderThreadSnapshot)
+                  .pipe(Effect.catchCause(() => Effect.succeed(false)));
+                if (hasPendingWork) {
+                  return false;
+                }
+              }
+              return true;
             }
             return true;
           });
@@ -713,6 +732,10 @@ export const layer: Layer.Layer<
               Effect.gen(function* () {
                 let storedEventCount = 0;
                 if (shouldDeliverProviderEvent(event, assistantStreamingEnabled)) {
+                  // After the root turn terminals the run leaves "running", so
+                  // writeIfRunCurrent would drop late provider_thread.updated
+                  // roster clears. Only gate pre-terminal root-thread updates.
+                  const rootTerminalAlreadySeen = yield* Ref.get(rootTerminalSeen);
                   const storedEvents = yield* providerEventIngestor.ingestNormalized({
                     providerSessionId: input.providerSessionId,
                     providerInstanceId: input.run.providerInstanceId,
@@ -721,7 +744,8 @@ export const layer: Layer.Layer<
                     nodeId: input.rootNode.id,
                     event,
                     ...(event.type === "provider_thread.updated" &&
-                    event.providerThread.id === input.providerThread.id
+                    event.providerThread.id === input.providerThread.id &&
+                    !rootTerminalAlreadySeen
                       ? {
                           writeIfRunCurrent: {
                             runId: input.run.id,
