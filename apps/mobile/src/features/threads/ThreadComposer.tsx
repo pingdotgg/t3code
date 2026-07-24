@@ -115,6 +115,7 @@ export interface ThreadComposerProps {
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
   readonly onReconnectEnvironment: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
+  readonly onWorkspaceSkillsLookupActiveChange?: (active: boolean) => void;
 }
 
 /**
@@ -360,6 +361,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
     return detectComposerTrigger(props.draftMessage, composerSelection.end);
   }, [composerSelection, props.draftMessage]);
+  const workspaceSkillsLookupActive = composerTrigger?.kind === "skill";
+  const { onWorkspaceSkillsLookupActiveChange } = props;
+  useEffect(() => {
+    onWorkspaceSkillsLookupActiveChange?.(workspaceSkillsLookupActive);
+    return () => onWorkspaceSkillsLookupActiveChange?.(false);
+  }, [onWorkspaceSkillsLookupActiveChange, workspaceSkillsLookupActive]);
   const pathSearch = useComposerPathSearch({
     environmentId: props.environmentId,
     cwd: composerTrigger?.kind === "path" ? props.projectCwd : null,
