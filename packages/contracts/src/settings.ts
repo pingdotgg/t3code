@@ -2,10 +2,14 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { EnvironmentId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
-import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceConfig,
+  ProviderInstanceId,
+} from "./providerInstance.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -20,6 +24,34 @@ export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "upda
 export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
+
+export const SidebarThreadFilterStatus = Schema.Literals([
+  "needs_attention",
+  "unread",
+  "working",
+  "done",
+]);
+export type SidebarThreadFilterStatus = typeof SidebarThreadFilterStatus.Type;
+export const SIDEBAR_THREAD_FILTER_STATUSES: readonly SidebarThreadFilterStatus[] = [
+  "needs_attention",
+  "unread",
+  "working",
+  "done",
+];
+export const SidebarThreadFilters = Schema.Struct({
+  statuses: Schema.Array(SidebarThreadFilterStatus).pipe(
+    Schema.withDecodingDefault(Effect.succeed([...SIDEBAR_THREAD_FILTER_STATUSES])),
+  ),
+  environmentIds: Schema.Array(EnvironmentId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  sources: Schema.Array(ProviderDriverKind).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  recentOnly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  attentionOnly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  includeArchived: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type SidebarThreadFilters = typeof SidebarThreadFilters.Type;
+export const DEFAULT_SIDEBAR_THREAD_FILTERS: SidebarThreadFilters = Schema.decodeSync(
+  SidebarThreadFilters,
+)({});
 
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
@@ -110,6 +142,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
+  ),
+  sidebarThreadFilters: SidebarThreadFilters.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_FILTERS)),
   ),
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
@@ -602,6 +637,7 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
+  sidebarThreadFilters: Schema.optionalKey(SidebarThreadFilters),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
   timestampFormat: Schema.optionalKey(TimestampFormat),
