@@ -228,7 +228,14 @@ const scenarioExpectations = {
     approvalRequestCount: 0,
   },
   turn_interrupt_mid_tool: {
-    outgoing: ["initialize", "initialized", "thread/start", "turn/start", "turn/interrupt"],
+    outgoing: [
+      "initialize",
+      "initialized",
+      "thread/start",
+      "turn/start",
+      "turn/interrupt",
+      "thread/backgroundTerminals/terminate",
+    ],
     incoming: ["turn/started", "item/started", "turn/completed"],
     turnStartCount: 1,
     turnCompletedCount: 1,

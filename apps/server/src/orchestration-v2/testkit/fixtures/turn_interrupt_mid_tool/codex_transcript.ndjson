@@ -30,4 +30,6 @@
 {"type":"emit_inbound","label":"turn/interrupt","frame":{"id":4,"result":{}}}
 {"type":"emit_inbound","label":"thread/status/changed","frame":{"method":"thread/status/changed","params":{"threadId":"019e03b8-9e5c-7b32-88ab-f742a29b75b8","status":{"type":"idle"}}}}
 {"type":"emit_inbound","label":"turn/completed","frame":{"method":"turn/completed","params":{"threadId":"019e03b8-9e5c-7b32-88ab-f742a29b75b8","turn":{"id":"019e03b8-9f34-7bb1-8267-ad79b7e2e69a","items":[],"status":"interrupted","error":null,"startedAt":1778178891,"completedAt":1778178895,"durationMs":3792}}}}
+{"type":"expect_outbound","label":"thread/backgroundTerminals/terminate","frame":{"id":5,"method":"thread/backgroundTerminals/terminate","params":{"threadId":"019e03b8-9e5c-7b32-88ab-f742a29b75b8","processId":"4275"}}}
+{"type":"emit_inbound","label":"thread/backgroundTerminals/terminate","frame":{"id":5,"result":{"terminated":true}}}
 {"type":"runtime_exit","status":"success"}
