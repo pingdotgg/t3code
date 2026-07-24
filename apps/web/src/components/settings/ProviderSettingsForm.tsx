@@ -167,7 +167,7 @@ function FieldFrame(props: {
   readonly children: ReactNode;
 }) {
   if (props.variant === "card") {
-    return <div className="border-t border-border/60 px-4 py-3 sm:px-5">{props.children}</div>;
+    return <div>{props.children}</div>;
   }
   return <div className="grid gap-1.5">{props.children}</div>;
 }

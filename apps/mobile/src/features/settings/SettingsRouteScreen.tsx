@@ -119,9 +119,13 @@ function LocalSettingsRouteScreen() {
           />
         </SettingsSection>
 
+        <GeneralSettingsSection />
+
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
+
+        <BetaSettingsSection />
 
         <ArchivedThreadsSettingsSection />
 
@@ -502,14 +506,66 @@ function ConfiguredSettingsRouteScreen() {
           />
         </SettingsSection>
 
+        <GeneralSettingsSection />
+
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
+
+        <BetaSettingsSection />
 
         <ArchivedThreadsSettingsSection />
 
         <AppSettingsSection />
       </ScrollView>
+    </View>
+  );
+}
+
+function GeneralSettingsSection() {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const projectGroupingEnabled = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.projectGroupingEnabled !== false
+    : true;
+
+  return (
+    <SettingsSection title="General">
+      <SettingsSwitchRow
+        icon="folder"
+        label="Project Grouping"
+        value={projectGroupingEnabled}
+        onValueChange={(value) => savePreferences({ projectGroupingEnabled: value })}
+      />
+    </SettingsSection>
+  );
+}
+
+/**
+ * Device-local beta toggles. Mobile has no client-settings sync, so this is
+ * the counterpart of web's Settings → Beta backed by mobile preferences.
+ */
+function BetaSettingsSection() {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const threadListV2Enabled = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.threadListV2Enabled === true
+    : false;
+
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Beta">
+        <SettingsSwitchRow
+          icon="sidebar.left"
+          label="Thread List v2"
+          value={threadListV2Enabled}
+          onValueChange={(value) => savePreferences({ threadListV2Enabled: value })}
+        />
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        One flat thread list in creation order. Active work renders as cards; settled threads
+        collapse to compact rows. Switch back any time.
+      </Text>
     </View>
   );
 }

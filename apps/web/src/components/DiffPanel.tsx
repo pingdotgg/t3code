@@ -178,13 +178,19 @@ const DIFF_PANEL_UNSAFE_CSS = `
 interface DiffPanelProps {
   mode?: DiffPanelMode;
   composerDraftTarget: ScopedThreadRef | DraftId;
+  initialGitScope: "branch" | "unstaged";
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
-export default function DiffPanel({ mode = "inline", composerDraftTarget }: DiffPanelProps) {
+export default function DiffPanel({
+  mode = "inline",
+  composerDraftTarget,
+  initialGitScope: initialGitScopeProp,
+}: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
+  const [initialGitScope] = useState(initialGitScopeProp);
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
@@ -199,9 +205,6 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
   });
-  const diffSelection = useDiffPanelStore((state) =>
-    selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
-  );
   const activeThreadId = routeThreadRef?.threadId ?? null;
   const activeThread = useThread(routeThreadRef);
   const activeProjectId = activeThread?.projectId ?? null;
@@ -228,6 +231,13 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
           input: { cwd: activeCwd },
         })
       : null,
+  );
+  const diffSelection = useDiffPanelStore((state) =>
+    selectThreadDiffPanelSelection(
+      state.byThreadKey,
+      routeThreadRef,
+      initialGitScope === "unstaged",
+    ),
   );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
@@ -511,27 +521,37 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
             <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-60">
-            <DropdownMenuItem onClick={() => selectGitScope("unstaged")}>
+            <DropdownMenuItem
+              className={
+                selectedTurnId === null && selectedGitScope === "unstaged"
+                  ? "bg-foreground/[0.08]"
+                  : undefined
+              }
+              onClick={() => selectGitScope("unstaged")}
+            >
               <span>Working tree</span>
-              {selectedTurnId === null && selectedGitScope === "unstaged" && (
-                <CheckIcon className="ml-auto" />
-              )}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => selectGitScope("branch")}>
-              <span>Branch changes</span>
-              {selectedTurnId === null && selectedGitScope === "branch" && (
-                <CheckIcon className="ml-auto" />
-              )}
             </DropdownMenuItem>
             <DropdownMenuItem
+              className={
+                selectedTurnId === null && selectedGitScope === "branch"
+                  ? "bg-foreground/[0.08]"
+                  : undefined
+              }
+              onClick={() => selectGitScope("branch")}
+            >
+              <span>Branch changes</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className={
+                selectedTurnId !== null && selectedTurn?.turnId === latestTurn?.turnId
+                  ? "bg-foreground/[0.08]"
+                  : undefined
+              }
               onClick={() => {
                 if (latestTurn) selectTurn(latestTurn.turnId);
               }}
             >
               <span>Latest turn</span>
-              {selectedTurnId !== null && selectedTurn?.turnId === latestTurn?.turnId && (
-                <CheckIcon className="ml-auto" />
-              )}
             </DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>Turn</DropdownMenuSubTrigger>
@@ -544,13 +564,15 @@ export default function DiffPanel({ mode = "inline", composerDraftTarget }: Diff
                   return (
                     <DropdownMenuItem
                       key={summary.turnId}
+                      className={
+                        summary.turnId === selectedTurn?.turnId ? "bg-foreground/[0.08]" : undefined
+                      }
                       onClick={() => selectTurn(summary.turnId)}
                     >
                       <span>Turn {turnCount}</span>
                       <span className="ml-auto text-xs tabular-nums text-muted-foreground">
                         {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                       </span>
-                      {summary.turnId === selectedTurn?.turnId && <CheckIcon className="ml-1" />}
                     </DropdownMenuItem>
                   );
                 })}
