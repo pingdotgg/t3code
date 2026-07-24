@@ -553,7 +553,7 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
 function timelineItem(input: {
   readonly row: OrchestrationV2ThreadProjection["visibleTurnItems"][number];
   readonly maxChars: number;
-  readonly projection: OrchestrationV2ThreadProjection;
+  readonly messagesByThreadId: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection["messages"]>;
 }): OrchestratorMcpThreadTimelineItem {
   const text = turnItemText(input.row.item);
   const textTruncated = text !== null && text.length > input.maxChars;
@@ -564,7 +564,9 @@ function timelineItem(input: {
   const message =
     messageId === null
       ? undefined
-      : input.projection.messages.find((candidate) => candidate.id === messageId);
+      : input.messagesByThreadId
+          .get(input.row.sourceThreadId)
+          ?.find((candidate) => candidate.id === messageId);
   return {
     position: input.row.position,
     visibility: input.row.visibility,
@@ -1323,13 +1325,34 @@ const make = Effect.gen(function* () {
               row.item.type === "proposed_plan",
           );
         const page = matching.slice(0, limit);
+        const sourceThreadIds = [
+          ...new Set(
+            page
+              .filter(
+                (row) => row.item.type === "user_message" || row.item.type === "assistant_message",
+              )
+              .map((row) => row.sourceThreadId)
+              .filter((threadId) => threadId !== target.thread.id),
+          ),
+        ];
+        const sourceProjections = yield* Effect.forEach(
+          sourceThreadIds,
+          (sourceThreadId) => loadProjectThread(target.thread.projectId, sourceThreadId),
+          { concurrency: 8 },
+        );
+        const messagesByThreadId = new Map<ThreadId, OrchestrationV2ThreadProjection["messages"]>([
+          [target.thread.id, target.messages],
+          ...sourceProjections.map(
+            (projection) => [projection.thread.id, projection.messages] as const,
+          ),
+        ]);
         return {
           thread: threadDetail(target),
           recentRuns: target.runs
             .toSorted((left, right) => right.ordinal - left.ordinal)
             .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
             .map(threadRun),
-          items: page.map((row) => timelineItem({ row, maxChars, projection: target })),
+          items: page.map((row) => timelineItem({ row, maxChars, messagesByThreadId })),
           nextPosition: page.at(-1)?.position ?? null,
           hasMore: page.length < matching.length,
         } satisfies OrchestratorMcpThreadReadResult;
