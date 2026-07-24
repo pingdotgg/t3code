@@ -282,6 +282,37 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("includes untracked files before the repository has its first commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* writeTextFile(cwd, "first.txt", "first\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+
+        assert.include(diff, "diff --git a/first.txt b/first.txt");
+        assert.include(diff, "+first");
+      }),
+    );
+
+    it.effect("includes staged files before the repository has its first commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* writeTextFile(cwd, "staged.txt", "staged\n");
+        yield* git(cwd, ["add", "staged.txt"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+
+        assert.include(diff, "diff --git a/staged.txt b/staged.txt");
+        assert.include(diff, "+staged");
+      }),
+    );
+
     it.effect("honors whitespace filtering for worktree and branch previews", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -314,6 +345,143 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           ignored.sources.find((source) => source.kind === "branch-range")?.diff,
           "",
         );
+      }),
+    );
+
+    it.effect("detects an unstaged rename with edits as one working-tree diff", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(
+          cwd,
+          "before.ts",
+          [
+            "export const first = 1;",
+            "export const second = 2;",
+            "export const third = 3;",
+            "export const fourth = 4;",
+            "",
+          ].join("\n"),
+        );
+        yield* git(cwd, ["add", "before.ts"]);
+        yield* git(cwd, ["commit", "-m", "add source file"]);
+        yield* fileSystem.rename(
+          pathService.join(cwd, "before.ts"),
+          pathService.join(cwd, "after.ts"),
+        );
+        yield* writeTextFile(
+          cwd,
+          "after.ts",
+          [
+            "export const first = 1;",
+            "export const second = 2;",
+            "export const third = 30;",
+            "export const fourth = 4;",
+            "",
+          ].join("\n"),
+        );
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+
+        assert.include(diff, "rename from before.ts");
+        assert.include(diff, "rename to after.ts");
+        assert.include(diff, "-export const third = 3;");
+        assert.include(diff, "+export const third = 30;");
+        assert.notInclude(diff, "--- /dev/null");
+        assert.notInclude(diff, "+++ /dev/null");
+      }),
+    );
+
+    it.effect("preserves sparse-checkout entries in the working-tree diff", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "included/file.ts", "export const included = 1;\n");
+        yield* writeTextFile(cwd, "excluded/file.ts", "export const excluded = 1;\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add sparse files"]);
+        yield* git(cwd, ["sparse-checkout", "set", "included"]);
+        yield* writeTextFile(cwd, "included/file.ts", "export const included = 2;\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+
+        assert.include(diff, "diff --git a/included/file.ts b/included/file.ts");
+        assert.include(diff, "+export const included = 2;");
+        assert.notInclude(diff, "excluded/file.ts");
+      }),
+    );
+
+    it.effect("includes staged index-only deletions in the working-tree diff", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, ".gitignore", "secret.env\n");
+        yield* writeTextFile(cwd, "secret.env", "SECRET=value\n");
+        yield* git(cwd, ["add", "-f", ".gitignore", "secret.env"]);
+        yield* git(cwd, ["commit", "-m", "add ignored tracked file"]);
+        yield* git(cwd, ["rm", "--cached", "secret.env"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+
+        assert.include(diff, "diff --git a/secret.env b/secret.env");
+        assert.include(diff, "deleted file mode");
+        assert.include(diff, "-SECRET=value");
+      }),
+    );
+
+    it.effect("detects a committed rename with edits in the branch diff", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(
+          cwd,
+          "before.ts",
+          [
+            "export const first = 1;",
+            "export const second = 2;",
+            "export const third = 3;",
+            "export const fourth = 4;",
+            "",
+          ].join("\n"),
+        );
+        yield* git(cwd, ["add", "before.ts"]);
+        yield* git(cwd, ["commit", "-m", "add source file"]);
+        yield* git(cwd, ["checkout", "-b", "feature/rename"]);
+        yield* git(cwd, ["mv", "before.ts", "after.ts"]);
+        yield* writeTextFile(
+          cwd,
+          "after.ts",
+          [
+            "export const first = 1;",
+            "export const second = 2;",
+            "export const third = 30;",
+            "export const fourth = 4;",
+            "",
+          ].join("\n"),
+        );
+        yield* git(cwd, ["add", "after.ts"]);
+        yield* git(cwd, ["commit", "-m", "rename source file"]);
+
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          ignoreWhitespace: false,
+        });
+        const diff = preview.sources.find((source) => source.kind === "branch-range")?.diff ?? "";
+
+        assert.include(diff, "rename from before.ts");
+        assert.include(diff, "rename to after.ts");
+        assert.include(diff, "-export const third = 3;");
+        assert.include(diff, "+export const third = 30;");
       }),
     );
   });
