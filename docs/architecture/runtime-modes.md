@@ -37,17 +37,13 @@ Default is `default`.
   as a plan card. It does not implement. This is prompt-level only: plan mode
   does **not** change the sandbox, so a `full-access` plan thread can still
   write if the model ignores its instructions.
-- **`advisor`** — Advisor/Planner: the agent answers, explains, reviews,
-  recommends, and is steered to prefer advising over editing. When a per-thread
-  executor model is configured, it may delegate implementation to sub-agents
-  that inherit the thread's stored runtime mode. Permissions are not forced —
-  Full Access and Auto-accept Edits remain available. See
-  [advisor-mode.md](./advisor-mode.md).
+
+Historical wire/DB values may still carry `"advisor"` from the removed
+Advisor/Planner mode; those decode as `"default"`.
 
 ## Where the two axes meet
 
 The two axes are independent. Interaction mode never rewrites the permission
 axis: `ProviderCommandReactor` starts the provider session with the thread's
 stored `runtimeMode` for every interaction mode. Sub-agents always inherit that
-same stored mode. Advisor "don't edit yourself" behaviour is prompt-level
-guidance only.
+same stored mode.

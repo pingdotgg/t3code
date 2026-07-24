@@ -771,9 +771,9 @@ it.effect("decodes composer payload weight metadata", () =>
   }),
 );
 
-it.effect("accepts advisor as a thread interaction mode", () =>
+it.effect("maps legacy advisor interaction mode to default", () =>
   Effect.gen(function* () {
     const decoded = yield* decodeProviderInteractionMode("advisor");
-    assert.strictEqual(decoded, "advisor");
+    assert.strictEqual(decoded, "default");
   }),
 );

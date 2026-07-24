@@ -123,7 +123,20 @@ export const RuntimeMode = Schema.Literals([
 ]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-export const ProviderInteractionMode = Schema.Literals(["default", "plan", "advisor"]);
+/**
+ * Interaction mode for a thread. Historical wire/DB values may still carry
+ * `"advisor"` from the removed Advisor/Planner mode; those decode as
+ * `"default"`.
+ */
+export const ProviderInteractionMode = Schema.Literals(["default", "plan", "advisor"]).pipe(
+  Schema.decodeTo(
+    Schema.Literals(["default", "plan"]),
+    SchemaTransformation.transformOrFail({
+      decode: (mode) => Effect.succeed(mode === "advisor" ? ("default" as const) : mode),
+      encode: (mode) => Effect.succeed(mode),
+    }),
+  ),
+);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
@@ -427,10 +440,8 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   /**
-   * Per-thread executor model for Advisor/Planner mode. When set, sub-agents
-   * spawned from an advisor thread run on this model. Spawned sub-agents always
-   * inherit the parent thread's stored runtime mode. Null means advise only
-   * (no specific executor binding for spawns).
+   * Legacy field from the removed Advisor/Planner mode. Always null for new
+   * threads; retained so historical snapshots/events still decode.
    */
   executorModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -678,15 +689,6 @@ const ThreadInteractionModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-const ThreadExecutorModelSetCommand = Schema.Struct({
-  type: Schema.Literal("thread.executor-model.set"),
-  commandId: CommandId,
-  threadId: ThreadId,
-  /** Null clears the per-thread executor model (advise-only advisor). */
-  executorModelSelection: Schema.NullOr(ModelSelection),
-  createdAt: IsoDateTime,
-});
-
 const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
@@ -816,7 +818,6 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
-  ThreadExecutorModelSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadTaskStopCommand,
@@ -841,7 +842,6 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
-  ThreadExecutorModelSetCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadTaskStopCommand,
@@ -1064,6 +1064,7 @@ export const ThreadInteractionModeSetPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+/** Legacy event payload from the removed Advisor/Planner executor model. */
 export const ThreadExecutorModelSetPayload = Schema.Struct({
   threadId: ThreadId,
   executorModelSelection: Schema.NullOr(ModelSelection),
