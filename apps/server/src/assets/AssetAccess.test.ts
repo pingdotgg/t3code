@@ -48,6 +48,14 @@ describe("AssetAccess", () => {
     ).toBe('<svg viewBox="0 0 1 1"><path /></svg>');
   });
 
+  it("preserves nested SVG elements inside the first root document", () => {
+    expect(
+      extractSvgDocument(
+        '<svg viewBox="0 0 2 2"><svg viewBox="0 0 1 1"><path /></svg><circle /></svg><script>unsafe()</script>',
+      ),
+    ).toBe('<svg viewBox="0 0 2 2"><svg viewBox="0 0 1 1"><path /></svg><circle /></svg>');
+  });
+
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
