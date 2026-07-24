@@ -37,6 +37,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+import { resolveWorktreePathTemplate } from "./worktreePathTemplate.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -2266,18 +2267,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     "createWorktree",
   )(function* (input) {
     const targetBranch = input.newRefName ?? input.refName;
-    const sanitizedBranch = targetBranch.replace(/\//g, "-");
-    const repoName = path.basename(input.cwd);
     const worktreePath =
       input.path ??
-      path.resolve(
-        input.cwd,
-        (input.pathTemplate ?? DEFAULT_WORKTREE_PATH_TEMPLATE)
-          .replaceAll("{worktreesDir}", worktreesDir)
-          .replaceAll("{repoRoot}", input.cwd)
-          .replaceAll("{repoName}", repoName)
-          .replaceAll("{branch}", sanitizedBranch),
-      );
+      resolveWorktreePathTemplate(path, {
+        cwd: input.cwd,
+        worktreesDir,
+        template: input.pathTemplate ?? DEFAULT_WORKTREE_PATH_TEMPLATE,
+        branch: targetBranch,
+      });
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];

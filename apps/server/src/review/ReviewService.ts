@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import {
+  DEFAULT_WORKTREE_PATH_TEMPLATE,
   VcsRepositoryDetectionError,
   VcsUnsupportedOperationError,
   type ReviewDiffPreviewError,
@@ -14,8 +15,10 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { matchesWorktreePathTemplate } from "../vcs/worktreePathTemplate.ts";
 
 export class ReviewService extends Context.Service<
   ReviewService,
@@ -30,6 +33,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
 
@@ -66,7 +70,27 @@ export const make = Effect.gen(function* () {
       canonicalizePath(config.worktreesDir),
     ]);
 
-    if (isWithinRoot(candidate, workspaceRoot) || isWithinRoot(candidate, worktreesRoot)) {
+    const worktreePathTemplate = yield* serverSettings.getSettings.pipe(
+      Effect.map((settings) => settings.worktreePathTemplate),
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to read worktree path template for review validation", {
+          cause,
+        }).pipe(Effect.as(DEFAULT_WORKTREE_PATH_TEMPLATE)),
+      ),
+    );
+    const matchesConfiguredWorktreePath = matchesWorktreePathTemplate(path, {
+      candidate,
+      cwd: workspaceRoot,
+      worktreesDir: worktreesRoot,
+      template: worktreePathTemplate,
+      branch: "__configured_branch__",
+    });
+
+    if (
+      isWithinRoot(candidate, workspaceRoot) ||
+      isWithinRoot(candidate, worktreesRoot) ||
+      matchesConfiguredWorktreePath
+    ) {
       return;
     }
 

@@ -14,6 +14,7 @@ import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
 import { splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import { resolveWorktreePathTemplate } from "./worktreePathTemplate.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-vcs-driver-test-",
@@ -94,6 +95,23 @@ const initRepoWithCommit = (
     const initialBranch = yield* git(cwd, ["branch", "--show-current"]);
     return { initialBranch };
   });
+
+it.effect("resolves repoRoot templates from an absolute form of a relative cwd", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const relativeCwd = path.join("repos", "example");
+
+    assert.equal(
+      resolveWorktreePathTemplate(path, {
+        cwd: relativeCwd,
+        worktreesDir: path.resolve("central-worktrees"),
+        template: "{repoRoot}/.worktrees/{branch}",
+        branch: "feature/relative-cwd",
+      }),
+      path.resolve(relativeCwd, ".worktrees", "feature-relative-cwd"),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect("uses stable diagnostics for every parsed non-repository command", () => {
   const commands: Array<{ readonly args: ReadonlyArray<string>; readonly lcAll?: string }> = [];
