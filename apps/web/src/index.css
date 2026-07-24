@@ -1432,6 +1432,52 @@ label:has(> select#reasoning-effort) select {
   margin-top: 0.125rem;
 }
 
+/* Prompt-stash save moment: one-shot, event-driven (retriggered by React
+   key remount on each stash) — not a continuous animation. A ghost of the
+   prompt flies from the composer into the stash badge while the badge count
+   pops. Both settle to their final state and stop. */
+@keyframes prompt-stash-ghost-fly {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(1);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--stash-fly-x, 120px), var(--stash-fly-y, -40px)) scale(0.1);
+  }
+}
+
+@keyframes prompt-stash-badge-pop {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.3);
+  }
+}
+
+.prompt-stash-ghost {
+  animation: prompt-stash-ghost-fly 550ms cubic-bezier(0.4, 0, 0.7, 0) forwards;
+}
+
+.prompt-stash-badge-pop {
+  animation: prompt-stash-badge-pop 300ms ease 250ms both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-stash-ghost {
+    animation: none;
+    opacity: 0;
+  }
+  .prompt-stash-badge-pop {
+    animation: none;
+  }
+}
+
 @keyframes provider-update-pill-countdown {
   from {
     transform: scaleX(1);
