@@ -19,13 +19,14 @@ function makeThreadCheckpointContext(input: {
   readonly checkpointTurnCount: number;
   readonly checkpointRef: CheckpointRef;
   readonly turnFiles?: ProjectionThreadCheckpointContext["checkpoints"][number]["turnFiles"];
+  readonly checkpoints?: ProjectionThreadCheckpointContext["checkpoints"];
 }): ProjectionThreadCheckpointContext {
   return {
     threadId: input.threadId,
     projectId: input.projectId,
     workspaceRoot: input.workspaceRoot,
     worktreePath: input.worktreePath,
-    checkpoints: [
+    checkpoints: input.checkpoints ?? [
       {
         turnId: TurnId.make("turn-1"),
         checkpointTurnCount: input.checkpointTurnCount,
@@ -61,6 +62,7 @@ describe("CheckpointDiffQueryLive", () => {
       worktreePath: null,
       checkpointTurnCount: 1,
       checkpointRef: toCheckpointRef,
+      turnFiles: [{ path: "src/app.ts", kind: "modified", additions: 1, deletions: 0 }],
     });
 
     const checkpointStore: CheckpointStoreShape = {
@@ -125,6 +127,7 @@ describe("CheckpointDiffQueryLive", () => {
         cwd: "/tmp/workspace",
         fromCheckpointRef: expectedFromRef,
         toCheckpointRef,
+        paths: ["src/app.ts"],
       },
     ]);
     expect(result).toEqual({
@@ -316,7 +319,7 @@ describe("CheckpointDiffQueryLive", () => {
     expect(snapshotRequested).toBe(false);
   });
 
-  it("allows snapshot-scoped diffs across wider checkpoint ranges", async () => {
+  it("filters snapshot-scoped diffs to chat-attributed files in the requested range", async () => {
     const projectId = ProjectId.make("project-1");
     const threadId = ThreadId.make("thread-1");
     const diffCheckpointsCalls: Array<{
@@ -332,6 +335,35 @@ describe("CheckpointDiffQueryLive", () => {
       worktreePath: null,
       checkpointTurnCount: 2,
       checkpointRef: toCheckpointRef,
+      checkpoints: [
+        {
+          turnId: TurnId.make("turn-1"),
+          checkpointTurnCount: 1,
+          checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+          status: "ready",
+          files: [],
+          agentTouchedPaths: ["src/before-range.ts"],
+          turnFiles: [
+            { path: "src/before-range.ts", kind: "modified", additions: 1, deletions: 0 },
+          ],
+          assistantMessageId: null,
+          completedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          turnId: TurnId.make("turn-2"),
+          checkpointTurnCount: 2,
+          checkpointRef: toCheckpointRef,
+          status: "ready",
+          files: [{ path: "src/unrelated.ts", kind: "modified", additions: 50, deletions: 0 }],
+          agentTouchedPaths: ["src/second.ts"],
+          turnFiles: [
+            { path: "src/first.ts", kind: "modified", additions: 1, deletions: 1 },
+            { path: "src/second.ts", kind: "modified", additions: 2, deletions: 0 },
+          ],
+          assistantMessageId: null,
+          completedAt: "2026-01-01T00:01:00.000Z",
+        },
+      ],
     });
     const checkpointStore: CheckpointStoreShape = {
       isGitRepository: () => Effect.succeed(true),
@@ -385,6 +417,7 @@ describe("CheckpointDiffQueryLive", () => {
       {
         fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
         toCheckpointRef,
+        paths: ["src/first.ts", "src/second.ts"],
       },
     ]);
     expect(result.diff).toBe("snapshot patch");

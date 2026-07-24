@@ -2184,6 +2184,58 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("starts review in the draft root thread", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.workflowRun) {
+          return {
+            status: "started",
+            runId: "review-run",
+            threadId: THREAD_ID,
+            commandId: "review-command",
+            messageId: "review-message",
+            sequence: 2,
+            createdAt: NOW_ISO,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      (await waitForButtonByText("Review uncommitted changes")).click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.find(
+              (request) =>
+                request._tag === WS_METHODS.workflowRun && request.threadId === THREAD_ID,
+            ),
+          ).toMatchObject({
+            workflowId: "review-changes",
+            projectId: PROJECT_ID,
+            destinationMode: "same-chat",
+          });
+          expect(
+            wsRequests.some(
+              (request) =>
+                request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+                request.type === "thread.create",
+            ),
+          ).toBe(false);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("runs project scripts from worktree draft threads at the worktree cwd", async () => {
     useComposerDraftStore.setState({
       draftThreadsByThreadKey: {

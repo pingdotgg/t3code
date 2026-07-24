@@ -117,6 +117,7 @@ import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import { SidebarStateLive } from "./sidebarState.ts";
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -646,6 +647,7 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provideMerge(authTestLayer),
+      Layer.provideMerge(SidebarStateLive.pipe(Layer.provide(SqlitePersistenceMemory))),
       Layer.provideMerge(CloudHttpRuntimeLayerLive.pipe(Layer.provide(authTestLayer))),
       Layer.provide(_workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),

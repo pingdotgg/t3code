@@ -139,6 +139,7 @@ import {
   ServerUpsertKeybindingResult,
 } from "./server.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
+import { SidebarStateError, SidebarStateMutation, SidebarStateSnapshot } from "./sidebarState.ts";
 import {
   VcsCreateRefInput,
   VcsCreateRefResult,
@@ -268,6 +269,10 @@ export const WS_METHODS = {
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
 
+  // Sidebar state
+  sidebarGetState: "sidebar.getState",
+  sidebarUpdateState: "sidebar.updateState",
+
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -280,6 +285,7 @@ export const WS_METHODS = {
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
+  subscribeSidebarState: "subscribeSidebarState",
   subscribePreviewEvents: "subscribePreviewEvents",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
 } as const;
@@ -330,6 +336,18 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: ServerSettingsError,
+});
+
+export const WsSidebarGetStateRpc = Rpc.make(WS_METHODS.sidebarGetState, {
+  payload: Schema.Struct({}),
+  success: SidebarStateSnapshot,
+  error: SidebarStateError,
+});
+
+export const WsSidebarUpdateStateRpc = Rpc.make(WS_METHODS.sidebarUpdateState, {
+  payload: SidebarStateMutation,
+  success: SidebarStateSnapshot,
+  error: SidebarStateError,
 });
 
 export const WsServerExportThreadMarkdownRpc = Rpc.make(WS_METHODS.serverExportThreadMarkdown, {
@@ -669,6 +687,13 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
   stream: true,
 });
 
+export const WsSubscribeSidebarStateRpc = Rpc.make(WS_METHODS.subscribeSidebarState, {
+  payload: Schema.Struct({}),
+  success: SidebarStateSnapshot,
+  error: SidebarStateError,
+  stream: true,
+});
+
 export const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
   success: PreviewEvent,
@@ -846,6 +871,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsSidebarGetStateRpc,
+  WsSidebarUpdateStateRpc,
   WsServerExportThreadMarkdownRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsListEntriesRpc,
@@ -890,6 +917,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
+  WsSubscribeSidebarStateRpc,
   WsSubscribePreviewEventsRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,

@@ -4,6 +4,7 @@ import { ConfigProvider, Effect, FileSystem, Option, Path } from "effect";
 
 import {
   canReuseInstalledElectronDistribution,
+  createBuildConfig,
   hasReusableElectronDistribution,
   resolveBuildOptions,
   resolveDesktopAppId,
@@ -117,6 +118,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopAppId("dev"), "com.t3tools.t3code.dev");
     assert.equal(resolveDesktopArtifactName("alpha"), "T3-Code-${version}-${arch}.${ext}");
     assert.equal(resolveDesktopArtifactName("dev"), "T3-Code-Dev-${version}-${arch}.${ext}");
+  });
+
+  it("writes the flavor product name into packaged runtime metadata", async () => {
+    const config = await Effect.runPromise(
+      createBuildConfig("mac", "dir", "0.0.17", "dev", false, false, undefined, undefined),
+    );
+
+    assert.deepStrictEqual(config.extraMetadata, {
+      productName: "T3 Code (Dev)",
+    });
   });
 
   it("keys staged dependencies by dependency and toolchain inputs, not app code", () => {

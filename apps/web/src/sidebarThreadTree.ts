@@ -29,6 +29,8 @@ export function expandSidebarThreadsWithAgentRuns(input: {
 }): SidebarThreadSummary[] {
   const dismissedAgentRunKeys = input.dismissedAgentRunKeys ?? {};
   return input.threads.flatMap((thread) => {
+    if (thread.archivedAt !== null) return [thread];
+
     const threadKey = getThreadKey(thread);
     const agentRuns = input.agentRunsByThreadKey.get(threadKey) ?? thread.backgroundAgentRuns;
     if (!agentRuns?.length) return [thread];

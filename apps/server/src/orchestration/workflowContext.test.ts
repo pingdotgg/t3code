@@ -57,4 +57,13 @@ describe("workflow context artifacts", () => {
     );
     expect(renderWorkflowContextArtifact(artifact)).not.toContain("Do not expose");
   });
+
+  it("omits the parent-context heading when the artifact has no content", () => {
+    const artifact = buildWorkflowContextArtifact({
+      parent,
+      policy: "selected-messages",
+    });
+
+    expect(renderWorkflowContextArtifact(artifact)).toBe("");
+  });
 });

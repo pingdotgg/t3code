@@ -100,6 +100,10 @@
       "types": "./src/workflows/reviewChanges.ts",
       "import": "./src/workflows/reviewChanges.ts"
     },
+    "./workflows/fixReviewIssues": {
+      "types": "./src/workflows/fixReviewIssues.ts",
+      "import": "./src/workflows/fixReviewIssues.ts"
+    },
     "./searchRanking": {
       "types": "./src/searchRanking.ts",
       "import": "./src/searchRanking.ts"

@@ -71,7 +71,7 @@ export function buildWorkflowContextArtifact(
 }
 
 export function renderWorkflowContextArtifact(artifact: WorkflowInputArtifact): string {
-  const sections = ["Workflow parent context:"];
+  const sections: string[] = [];
   if (artifact.summary) {
     sections.push(`Summary:\n${artifact.summary}`);
   }
@@ -84,5 +84,5 @@ export function renderWorkflowContextArtifact(artifact: WorkflowInputArtifact): 
   if (artifact.truncated) {
     sections.push("Context was truncated to the workflow context budget.");
   }
-  return sections.join("\n\n");
+  return sections.length > 0 ? ["Workflow parent context:", ...sections].join("\n\n") : "";
 }

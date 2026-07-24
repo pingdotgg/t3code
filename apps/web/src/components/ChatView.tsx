@@ -119,6 +119,7 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { REVIEW_CHANGES_WORKFLOW_ID } from "@t3tools/shared/workflows/reviewChanges";
+import { FIX_REVIEW_ISSUES_WORKFLOW_ID } from "@t3tools/shared/workflows/fixReviewIssues";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { BranchToolbar } from "./BranchToolbar";
@@ -165,6 +166,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ReviewFindingsCard } from "./chat/ReviewFindingsCard";
+import { formatReviewFindings } from "../lib/reviewFindingFormat";
 import { ChatHeader } from "./chat/ChatHeader";
 import {
   type AgentWorkflowHeaderAction,
@@ -3864,13 +3866,25 @@ function ChatViewBody(
         });
         return;
       }
+      if (
+        workflowId === FIX_REVIEW_ISSUES_WORKFLOW_ID &&
+        !settings.agentWorkflows.fixReviewIssues.enabled
+      ) {
+        toastManager.add({
+          type: "error",
+          title: "Fix Review Issues is disabled",
+        });
+        return;
+      }
 
       const sendCtx = composerRef.current?.getSendContext();
       const workflowModelSelection =
         workflowId === REVIEW_CHANGES_WORKFLOW_ID
           ? settings.agentWorkflows.reviewChanges.modelSelection
-          : settings.agentWorkflows.customWorkflows.find((workflow) => workflow.id === workflowId)
-              ?.modelSelection;
+          : workflowId === FIX_REVIEW_ISSUES_WORKFLOW_ID
+            ? settings.agentWorkflows.fixReviewIssues.modelSelection
+            : settings.agentWorkflows.customWorkflows.find((workflow) => workflow.id === workflowId)
+                ?.modelSelection;
       const modelSelection =
         workflowModelSelection ??
         sendCtx?.selectedModelSelection ??
@@ -3878,22 +3892,24 @@ function ChatViewBody(
         activeThread.modelSelection;
 
       setStartingWorkflowId(workflowId);
-      void api.workflow
-        .run({
+      void (async () => {
+        return api.workflow.run({
           workflowId,
           threadId: activeThread.id,
           projectId: activeProject.id,
           cwd: gitCwd ?? activeProject.cwd,
           ...(request.input !== undefined ? { input: request.input } : {}),
-          ...(request.destinationMode !== undefined
-            ? { destinationMode: request.destinationMode }
-            : {}),
+          destinationMode:
+            !isServerThread && workflowId === REVIEW_CHANGES_WORKFLOW_ID
+              ? "same-chat"
+              : request.destinationMode,
           trigger: "manual",
           idempotencyKey: crypto.randomUUID(),
           modelSelection,
           runtimeMode: DEFAULT_RUNTIME_MODE,
           interactionMode: DEFAULT_INTERACTION_MODE,
-        })
+        });
+      })()
         .then(async (result) => {
           if (result.status === "skipped") {
             toastManager.add({
@@ -3935,11 +3951,27 @@ function ChatViewBody(
       activeThread,
       environmentId,
       gitCwd,
+      isServerThread,
       navigate,
+      settings.agentWorkflows.fixReviewIssues,
       settings.agentWorkflows.reviewChanges,
       startingWorkflowId,
     ],
   );
+
+  const onFixReviewFindings = useCallback(() => {
+    const result = activeThread?.reviewResult;
+    if (result?.status !== "parsed" || result.findings.length === 0) {
+      return;
+    }
+    onRunWorkflow({
+      workflowId: FIX_REVIEW_ISSUES_WORKFLOW_ID,
+      destinationMode: "child-chat",
+      input: {
+        issues: formatReviewFindings(result.findings),
+      },
+    });
+  }, [activeThread?.reviewResult, onRunWorkflow]);
 
   const listOpenPullRequests = useCallback(async () => {
     const api = readEnvironmentApi(environmentId);
@@ -4182,6 +4214,13 @@ function ChatViewBody(
                 <ReviewFindingsCard
                   result={activeThread.reviewResult}
                   onSelectFinding={onSelectReviewFinding}
+                  onFix={
+                    settings.agentWorkflows.fixReviewIssues.enabled
+                      ? onFixReviewFindings
+                      : undefined
+                  }
+                  isFixDisabled={startingWorkflowId !== null}
+                  isFixing={startingWorkflowId === FIX_REVIEW_ISSUES_WORKFLOW_ID}
                 />
               </div>
             ) : null}

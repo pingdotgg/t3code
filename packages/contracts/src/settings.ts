@@ -345,6 +345,13 @@ const AgentWorkflowSettingsPatch = Schema.Struct({
       promptTemplate: Schema.optionalKey(Schema.String),
     }),
   ),
+  fixReviewIssues: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+      promptTemplate: Schema.optionalKey(Schema.String),
+    }),
+  ),
   builtInOverrides: Schema.optionalKey(
     Schema.Record(
       TrimmedNonEmptyString,

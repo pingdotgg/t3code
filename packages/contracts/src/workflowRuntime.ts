@@ -17,6 +17,10 @@ Return findings only in the required JSON response; do not add Markdown, a summa
 Follow repository rules, including using bun run test rather than bun test; code changes would additionally require bun fmt, bun lint, and bun typecheck.
 Use the code-review skill's systematic review workflow.`;
 
+export const DEFAULT_FIX_REVIEW_ISSUES_PROMPT_TEMPLATE = `Review each issue below and verify whether it is valid and needs to be fixed.
+For every valid issue, make the necessary code changes. If an issue is not valid, explain why.
+After addressing all valid issues, run the repository's required validation and create a pull request with the completed fixes.`;
+
 export const ReviewChangesWorkflowSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
@@ -28,6 +32,15 @@ export const ReviewChangesWorkflowSettings = Schema.Struct({
   ),
 });
 export type ReviewChangesWorkflowSettings = typeof ReviewChangesWorkflowSettings.Type;
+
+export const FixReviewIssuesWorkflowSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  promptTemplate: Schema.String.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_FIX_REVIEW_ISSUES_PROMPT_TEMPLATE)),
+  ),
+});
+export type FixReviewIssuesWorkflowSettings = typeof FixReviewIssuesWorkflowSettings.Type;
 
 export const DEFAULT_AGENT_WORKFLOW_AUTOMATION_COOLDOWN_MS = 5 * 60 * 1000;
 export const DEFAULT_AGENT_WORKFLOW_MAX_RUNS_PER_THREAD = 1;
@@ -48,6 +61,9 @@ export type CustomAgentWorkflowAutomationSettings =
 
 export const AgentWorkflowSettings = Schema.Struct({
   reviewChanges: ReviewChangesWorkflowSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  fixReviewIssues: FixReviewIssuesWorkflowSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   builtInOverrides: Schema.Record(
     TrimmedNonEmptyString,
     Schema.Struct({

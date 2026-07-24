@@ -5,6 +5,7 @@ import {
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamEvent,
   type ServerConfig,
+  type SidebarStateSnapshot,
   type TerminalEvent,
   ThreadId,
 } from "@t3tools/contracts";
@@ -58,7 +59,11 @@ import {
   selectThreadsAcrossEnvironments,
 } from "~/store";
 import { useTerminalStateStore } from "~/terminalStateStore";
-import { useUiStateStore } from "~/uiStateStore";
+import {
+  markLegacySidebarPinsMigrated,
+  readLegacyPinnedThreadsForEnvironment,
+  useUiStateStore,
+} from "~/uiStateStore";
 import { WsTransport } from "../../rpc/wsTransport";
 import { createWsRpcClient, type WsRpcClient } from "../../rpc/wsRpcClient";
 import {
@@ -754,6 +759,12 @@ function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: En
 
 function createEnvironmentConnectionHandlers() {
   return {
+    applySidebarStateSnapshot: (snapshot: SidebarStateSnapshot) => {
+      useUiStateStore.getState().applySidebarStateSnapshot(snapshot);
+    },
+    readLegacyPinnedThreads: (environmentId: EnvironmentId) =>
+      readLegacyPinnedThreadsForEnvironment(useUiStateStore.getState(), environmentId),
+    markLegacySidebarPinsMigrated,
     applyShellEvent,
     syncShellSnapshot: (snapshot: OrchestrationShellSnapshot, environmentId: EnvironmentId) => {
       if (

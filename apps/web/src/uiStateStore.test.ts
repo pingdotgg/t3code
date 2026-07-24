@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   clearThreadUi,
+  applySidebarStateSnapshot,
   createThreadExpandedOverridesSelector,
   hydratePersistedProjectState,
   markThreadVisited,
@@ -232,7 +233,7 @@ describe("uiStateStore pure functions", () => {
     expect(next.pinnedThreadKeysByProjectId[projectId]).toEqual([thread2, thread3, thread1]);
   });
 
-  it("syncThreads prunes pinned thread keys for deleted threads", () => {
+  it("syncThreads preserves authoritative pins for threads that are not loaded yet", () => {
     const projectId = ProjectId.make("project-1");
     const thread1 = ThreadId.make("thread-1");
     const thread2 = ThreadId.make("thread-2");
@@ -244,7 +245,28 @@ describe("uiStateStore pure functions", () => {
 
     const next = syncThreads(initialState, [{ key: thread2 }]);
 
-    expect(next.pinnedThreadKeysByProjectId[projectId]).toEqual([thread2]);
+    expect(next.pinnedThreadKeysByProjectId[projectId]).toEqual([thread1, thread2]);
+  });
+
+  it("preserves cross-environment pin order from the primary authority", () => {
+    const state = makeUiState({
+      pinnedThreadKeysByProjectId: {
+        project: ["env-a:thread-old", "env-b:thread-b"],
+      },
+    });
+
+    const next = applySidebarStateSnapshot(state, {
+      revision: 2,
+      pinnedThreadKeysByProjectKey: {
+        project: ["env-a:thread-new", "env-b:thread-b", "env-a:thread-other"],
+      },
+    });
+
+    expect(next.pinnedThreadKeysByProjectId.project).toEqual([
+      "env-a:thread-new",
+      "env-b:thread-b",
+      "env-a:thread-other",
+    ]);
   });
 
   it("reorderProjects places group after target when dragged from before a non-last target", () => {
@@ -724,5 +746,21 @@ describe("uiStateStore persistence round-trip", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(persisted.dismissedAgentRunKeys).toEqual([dismissedKey]);
+  });
+
+  it("does not persist server-authoritative pins in browser localStorage", () => {
+    persistState(
+      makeUiState({
+        pinnedThreadKeysByProjectId: {
+          project: ["env:thread"],
+        },
+      }),
+    );
+
+    const persisted = JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    expect(persisted).not.toHaveProperty("pinnedThreadKeysByProjectId");
   });
 });

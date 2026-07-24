@@ -708,7 +708,7 @@ export const hasReusableElectronDistribution = Effect.fn("hasReusableElectronDis
   },
 );
 
-const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
   version: string,
@@ -718,9 +718,14 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   mockUpdateServerPort: number | undefined,
   electronDist: string | undefined,
 ) {
+  const productName = resolveDesktopProductName(version, flavor);
   const buildConfig: Record<string, unknown> = {
     appId: resolveDesktopAppId(flavor),
-    productName: resolveDesktopProductName(version, flavor),
+    productName,
+    // Electron reads app.getName() from the packaged package.json. Keep it in
+    // sync with electron-builder's bundle name so runtime flavor detection
+    // selects the Dev profile instead of contending with Alpha's LevelDB.
+    extraMetadata: { productName },
     artifactName: resolveDesktopArtifactName(flavor),
     directories: {
       buildResources: "apps/desktop/resources",

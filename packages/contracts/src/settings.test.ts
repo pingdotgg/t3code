@@ -14,11 +14,39 @@ import {
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
+import { DEFAULT_FIX_REVIEW_ISSUES_PROMPT_TEMPLATE } from "./workflowRuntime.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+
+describe("ServerSettings.agentWorkflows", () => {
+  it("defaults the Fix Review Issues workflow on for legacy settings", () => {
+    const decoded = decodeServerSettings({});
+
+    expect(decoded.agentWorkflows.fixReviewIssues).toEqual({
+      enabled: true,
+      promptTemplate: DEFAULT_FIX_REVIEW_ISSUES_PROMPT_TEMPLATE,
+    });
+  });
+
+  it("accepts partial Fix Review Issues workflow patches", () => {
+    const patch = decodeServerSettingsPatch({
+      agentWorkflows: {
+        fixReviewIssues: {
+          enabled: false,
+          promptTemplate: "Validate and fix these findings.",
+        },
+      },
+    });
+
+    expect(patch.agentWorkflows?.fixReviewIssues).toEqual({
+      enabled: false,
+      promptTemplate: "Validate and fix these findings.",
+    });
+  });
+});
 
 describe("ClientSettings.codeFont", () => {
   it("defaults to the existing monospace stack selection", () => {

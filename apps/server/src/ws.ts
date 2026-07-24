@@ -37,6 +37,7 @@ import {
   WorkflowRunError,
   type WorkflowRunInput,
   type WorkflowRunResult,
+  type WorkflowWorkerConfig,
   WorkflowRunId,
   WorkflowArtifactId,
   WorkflowNodeId,
@@ -50,6 +51,10 @@ import {
   buildReviewChangesPrompt,
   REVIEW_CHANGES_WORKFLOW_ID,
 } from "@t3tools/shared/workflows/reviewChanges";
+import {
+  buildFixReviewIssuesPrompt,
+  FIX_REVIEW_ISSUES_WORKFLOW_ID,
+} from "@t3tools/shared/workflows/fixReviewIssues";
 import {
   gitCheckoutResultToVcs,
   gitCommandErrorToVcs,
@@ -96,6 +101,7 @@ import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import { listCopilotPreconnectionCommands } from "./provider/copilotPreconnectionCommands.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
+import { SidebarState } from "./sidebarState.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
 import { listServerSkills } from "./skills/skillCatalog.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
@@ -201,6 +207,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
+      const sidebarState = yield* SidebarState;
       const startup = yield* ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem;
@@ -375,6 +382,65 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         createdAt: new Date().toISOString(),
       });
 
+      const dispatchSingleNodeWorkflow = (input: {
+        readonly request: WorkflowRunInput;
+        readonly runId: WorkflowRunId;
+        readonly workflowId: string;
+        readonly title: string;
+        readonly prompt: string;
+        readonly nodeId: WorkflowNodeId;
+        readonly workerConfig: WorkflowWorkerConfig;
+        readonly createdAt: string;
+      }) =>
+        Effect.gen(function* () {
+          const threadId = ThreadId.make(`workflow:${input.runId}:node:${input.nodeId}:worker`);
+          const commandId = CommandId.make(`workflow:${input.runId}:request`);
+          const messageId = MessageId.make(`workflow:${input.runId}:node:${input.nodeId}:input`);
+          const dispatchResult = yield* orchestrationEngine.dispatch({
+            type: "workflow.run.request",
+            commandId,
+            runId: input.runId,
+            parentThreadId: input.request.threadId,
+            definition: {
+              id: input.workflowId,
+              name: input.title,
+              nodes: [
+                {
+                  id: input.nodeId,
+                  title: input.title,
+                  prompt: input.prompt,
+                  contextPolicy: "none",
+                },
+              ],
+            },
+            workerConfig: input.workerConfig,
+            inputArtifact: {
+              id: WorkflowArtifactId.make(`workflow:${input.runId}:input`),
+              runId: input.runId,
+              nodeId: input.nodeId,
+              producerThreadId: input.request.threadId,
+              payload: {
+                kind: "input-context",
+                contextPolicy: "none",
+                parentThreadId: input.request.threadId,
+                messages: [],
+                truncated: false,
+              },
+              createdAt: input.createdAt,
+            },
+            createdAt: input.createdAt,
+          });
+          return {
+            status: "started" as const,
+            runId: input.runId,
+            threadId,
+            commandId,
+            messageId,
+            sequence: dispatchResult.sequence,
+            createdAt: input.createdAt,
+          } satisfies WorkflowRunResult;
+        });
+
       const parseReviewScope = (value: unknown) =>
         value === "uncommitted" || value === "against-base" ? value : null;
 
@@ -383,25 +449,166 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           const runId = WorkflowRunId.make(input.idempotencyKey);
           const createdAt = new Date().toISOString();
 
-          if (input.workflowId !== REVIEW_CHANGES_WORKFLOW_ID) {
+          if (
+            input.workflowId !== REVIEW_CHANGES_WORKFLOW_ID &&
+            input.workflowId !== FIX_REVIEW_ISSUES_WORKFLOW_ID
+          ) {
             return workflowSkipped(input, "workflow-not-found", "Workflow not found.");
           }
-          if (input.destinationMode !== undefined && input.destinationMode !== "child-chat") {
+          if (
+            input.destinationMode !== undefined &&
+            input.destinationMode !== "child-chat" &&
+            !(
+              input.workflowId === REVIEW_CHANGES_WORKFLOW_ID &&
+              input.destinationMode === "same-chat"
+            )
+          ) {
             return yield* new WorkflowRunError({
-              message: "Review Code workflow currently supports only the child-chat destination.",
+              message:
+                "Built-in workflows currently support only child-chat and review same-chat destinations.",
             });
           }
 
           const settings = yield* serverSettings.getSettings;
           const reviewSettings = settings.agentWorkflows.reviewChanges;
-          const override = settings.agentWorkflows.builtInOverrides[REVIEW_CHANGES_WORKFLOW_ID];
-          const enabled = override?.enabled ?? reviewSettings.enabled;
+          const fixSettings = settings.agentWorkflows.fixReviewIssues;
+          const override = settings.agentWorkflows.builtInOverrides[input.workflowId];
+          const workflowSettings =
+            input.workflowId === FIX_REVIEW_ISSUES_WORKFLOW_ID ? fixSettings : reviewSettings;
+          const enabled = override?.enabled ?? workflowSettings.enabled;
           if (!enabled) {
-            return workflowSkipped(input, "workflow-disabled", "Review Code workflow is disabled.");
+            return workflowSkipped(
+              input,
+              "workflow-disabled",
+              input.workflowId === FIX_REVIEW_ISSUES_WORKFLOW_ID
+                ? "Fix Review Issues workflow is disabled."
+                : "Review Code workflow is disabled.",
+            );
           }
 
           const threadOption = yield* projectionSnapshotQuery.getThreadShellById(input.threadId);
           if (Option.isNone(threadOption)) {
+            if (
+              input.workflowId === REVIEW_CHANGES_WORKFLOW_ID &&
+              input.destinationMode === "same-chat" &&
+              input.projectId !== undefined &&
+              input.modelSelection !== undefined &&
+              input.runtimeMode !== undefined &&
+              input.interactionMode !== undefined
+            ) {
+              const projectOption = yield* projectionSnapshotQuery.getProjectShellById(
+                input.projectId,
+              );
+              if (Option.isNone(projectOption)) {
+                return workflowSkipped(input, "project-not-found", "Project not found.");
+              }
+              const project = projectOption.value;
+              const cwd = input.cwd ?? project.workspaceRoot;
+              const requestedScope =
+                parseReviewScope(input.input?.scope) ??
+                parseReviewScope(override?.defaultInput?.scope) ??
+                reviewSettings.defaultScope ??
+                DEFAULT_REVIEW_CHANGES_SCOPE;
+              const reviewContext = yield* git.resolveReviewChangesContext({
+                cwd,
+                scope: requestedScope,
+                ...(requestedScope === "pull-request" &&
+                typeof input.input?.pullRequestNumber === "number" &&
+                Number.isSafeInteger(input.input.pullRequestNumber) &&
+                input.input.pullRequestNumber > 0
+                  ? { pullRequestNumber: input.input.pullRequestNumber }
+                  : {}),
+              });
+              if (!reviewContext.hasReviewableChanges) {
+                return workflowSkipped(
+                  input,
+                  "no-reviewable-changes",
+                  reviewContext.scope === "against-base"
+                    ? "No changes against base branch."
+                    : reviewContext.scope === "pull-request"
+                      ? "This pull request has no changes."
+                      : "No uncommitted changes.",
+                );
+              }
+              if (reviewContext.snapshot === undefined) {
+                return yield* new WorkflowRunError({
+                  message: "Unable to capture an immutable review snapshot.",
+                });
+              }
+              const title =
+                input.title ??
+                (reviewContext.scope === "against-base"
+                  ? `Review changes against ${reviewContext.baseBranch}`
+                  : reviewContext.scope === "pull-request"
+                    ? `Review PR #${reviewContext.pullRequest.number}: ${reviewContext.pullRequest.title}`
+                    : "Review uncommitted changes");
+              const prompt = buildReviewChangesPrompt({
+                context:
+                  reviewContext.scope === "against-base"
+                    ? {
+                        scope: "against-base",
+                        baseBranch: reviewContext.baseBranch,
+                        mergeBaseSha: reviewContext.mergeBaseSha,
+                      }
+                    : reviewContext.scope === "pull-request"
+                      ? {
+                          scope: "pull-request",
+                          number: reviewContext.pullRequest.number,
+                          title: reviewContext.pullRequest.title,
+                          baseBranch: reviewContext.pullRequest.baseBranch,
+                          headBranch: reviewContext.pullRequest.headBranch,
+                        }
+                      : { scope: "uncommitted" },
+                settings: {
+                  promptTemplate: override?.promptTemplate ?? reviewSettings.promptTemplate,
+                },
+              });
+              const createCommandId = CommandId.make(`workflow:${runId}:create-parent`);
+              const messageId = MessageId.make(`workflow:${runId}:input`);
+              yield* orchestrationEngine.dispatch({
+                type: "thread.create",
+                commandId: createCommandId,
+                threadId: input.threadId,
+                projectId: project.id,
+                parentThreadId: null,
+                title,
+                modelSelection:
+                  reviewSettings.modelSelection ??
+                  input.modelSelection ??
+                  project.defaultModelSelection ??
+                  input.modelSelection,
+                runtimeMode: input.runtimeMode,
+                interactionMode: input.interactionMode,
+                branch: reviewContext.branch,
+                worktreePath: cwd === project.workspaceRoot ? null : cwd,
+                reviewSnapshot: reviewContext.snapshot,
+                createdAt,
+              });
+              const commandId = CommandId.make(`workflow:${runId}:request`);
+              const dispatchResult = yield* orchestrationEngine.dispatch({
+                type: "thread.turn.start",
+                commandId,
+                threadId: input.threadId,
+                message: {
+                  messageId,
+                  role: "user",
+                  text: prompt,
+                  attachments: [],
+                },
+                runtimeMode: input.runtimeMode,
+                interactionMode: input.interactionMode,
+                createdAt,
+              });
+              return {
+                status: "started" as const,
+                runId,
+                threadId: input.threadId,
+                commandId,
+                messageId,
+                sequence: dispatchResult.sequence,
+                createdAt,
+              } satisfies WorkflowRunResult;
+            }
             return workflowSkipped(input, "thread-not-found", "Thread not found.");
           }
           const thread = threadOption.value;
@@ -412,13 +619,50 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             return workflowSkipped(input, "project-not-found", "Project not found.");
           }
           const project = projectOption.value;
+          const cwd = input.cwd ?? thread.worktreePath ?? project.workspaceRoot;
+
+          if (input.workflowId === FIX_REVIEW_ISSUES_WORKFLOW_ID) {
+            const issues = typeof input.input?.issues === "string" ? input.input.issues.trim() : "";
+            if (issues.length === 0) {
+              return yield* new WorkflowRunError({
+                message: "Fix Review Issues requires at least one review issue.",
+              });
+            }
+
+            const title = input.title ?? "Fix review issues";
+            const nodeId = WorkflowNodeId.make(FIX_REVIEW_ISSUES_WORKFLOW_ID);
+            return yield* dispatchSingleNodeWorkflow({
+              request: input,
+              runId,
+              workflowId: FIX_REVIEW_ISSUES_WORKFLOW_ID,
+              title,
+              prompt: buildFixReviewIssuesPrompt({
+                issues,
+                settings: {
+                  promptTemplate: override?.promptTemplate ?? fixSettings.promptTemplate,
+                },
+              }),
+              nodeId,
+              workerConfig: {
+                modelSelection:
+                  fixSettings.modelSelection ??
+                  input.modelSelection ??
+                  project.defaultModelSelection ??
+                  thread.modelSelection,
+                runtimeMode: input.runtimeMode ?? thread.runtimeMode,
+                interactionMode: input.interactionMode ?? thread.interactionMode,
+                branch: thread.branch,
+                worktreePath: cwd === project.workspaceRoot ? null : cwd,
+              },
+              createdAt,
+            });
+          }
 
           const requestedScope =
             parseReviewScope(input.input?.scope) ??
             parseReviewScope(override?.defaultInput?.scope) ??
             reviewSettings.defaultScope ??
             DEFAULT_REVIEW_CHANGES_SCOPE;
-          const cwd = input.cwd ?? thread.worktreePath ?? project.workspaceRoot;
           const reviewContext = yield* git.resolveReviewChangesContext({
             cwd,
             scope: requestedScope,
@@ -476,9 +720,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             },
           });
           const nodeId = WorkflowNodeId.make("review-changes");
-          const threadId = ThreadId.make(`workflow:${runId}:node:${nodeId}:worker`);
-          const commandId = CommandId.make(`workflow:${runId}:request`);
-          const messageId = MessageId.make(`workflow:${runId}:node:${nodeId}:input`);
           const modelSelection =
             reviewSettings.modelSelection ??
             input.modelSelection ??
@@ -486,23 +727,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             thread.modelSelection;
           const runtimeMode = input.runtimeMode ?? thread.runtimeMode;
           const interactionMode = input.interactionMode ?? thread.interactionMode;
-          const dispatchResult = yield* orchestrationEngine.dispatch({
-            type: "workflow.run.request",
-            commandId,
+          return yield* dispatchSingleNodeWorkflow({
+            request: input,
             runId,
-            parentThreadId: input.threadId,
-            definition: {
-              id: REVIEW_CHANGES_WORKFLOW_ID,
-              name: title,
-              nodes: [
-                {
-                  id: nodeId,
-                  title,
-                  prompt,
-                  contextPolicy: "none",
-                },
-              ],
-            },
+            workflowId: REVIEW_CHANGES_WORKFLOW_ID,
+            title,
+            prompt,
+            nodeId,
             workerConfig: {
               modelSelection,
               runtimeMode,
@@ -511,31 +742,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               worktreePath: cwd === project.workspaceRoot ? null : cwd,
               reviewSnapshot: reviewContext.snapshot,
             },
-            inputArtifact: {
-              id: WorkflowArtifactId.make(`workflow:${runId}:input`),
-              runId,
-              nodeId,
-              producerThreadId: input.threadId,
-              payload: {
-                kind: "input-context",
-                contextPolicy: "none",
-                parentThreadId: input.threadId,
-                messages: [],
-                truncated: false,
-              },
-              createdAt,
-            },
             createdAt,
           });
-          return {
-            status: "started" as const,
-            runId,
-            threadId,
-            commandId,
-            messageId,
-            sequence: dispatchResult.sequence,
-            createdAt,
-          } satisfies WorkflowRunResult;
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -906,6 +1114,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.sidebarGetState]: (_input) =>
+          observeRpcEffect(WS_METHODS.sidebarGetState, sidebarState.get, {
+            "rpc.aggregate": "sidebar",
+          }),
+        [WS_METHODS.sidebarUpdateState]: (input) =>
+          observeRpcEffect(WS_METHODS.sidebarUpdateState, sidebarState.update(input), {
+            "rpc.aggregate": "sidebar",
+          }),
         [WS_METHODS.workflowRun]: (input) =>
           observeRpcEffect(WS_METHODS.workflowRun, runWorkflow(input), {
             "rpc.aggregate": "workflow",
@@ -1595,6 +1811,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             }),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.subscribeSidebarState]: (_input) =>
+          observeRpcStream(WS_METHODS.subscribeSidebarState, sidebarState.changes, {
+            "rpc.aggregate": "sidebar",
+          }),
         [WS_METHODS.subscribeAuthAccess]: (_input) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeAuthAccess,

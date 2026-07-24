@@ -16,6 +16,17 @@ function createTestClient() {
     reconnect: vi.fn(async () => {
       shellResubscribe?.();
     }),
+    sidebar: {
+      getState: vi.fn(async () => ({
+        revision: 0,
+        pinnedThreadKeysByProjectKey: {},
+      })),
+      updateState: vi.fn(async () => ({
+        revision: 0,
+        pinnedThreadKeysByProjectKey: {},
+      })),
+      onState: vi.fn(() => () => undefined),
+    },
     server: {
       getConfig: vi.fn(async () => ({
         environment: {
@@ -165,6 +176,9 @@ describe("createEnvironmentConnection", () => {
       applyShellEvent: vi.fn(),
       syncShellSnapshot,
       applyTerminalEvent: vi.fn(),
+      applySidebarStateSnapshot: vi.fn(),
+      readLegacyPinnedThreads: vi.fn(() => ({})),
+      markLegacySidebarPinsMigrated: vi.fn(),
     });
 
     await connection.ensureBootstrapped();
@@ -197,6 +211,9 @@ describe("createEnvironmentConnection", () => {
       applyShellEvent: vi.fn(),
       syncShellSnapshot: vi.fn(),
       applyTerminalEvent: vi.fn(),
+      applySidebarStateSnapshot: vi.fn(),
+      readLegacyPinnedThreads: vi.fn(() => ({})),
+      markLegacySidebarPinsMigrated: vi.fn(),
     });
 
     const bootstrapped = connection.ensureBootstrapped();
@@ -235,6 +252,9 @@ describe("createEnvironmentConnection", () => {
       applyShellEvent: vi.fn(),
       syncShellSnapshot,
       applyTerminalEvent: vi.fn(),
+      applySidebarStateSnapshot: vi.fn(),
+      readLegacyPinnedThreads: vi.fn(() => ({})),
+      markLegacySidebarPinsMigrated: vi.fn(),
     });
 
     await connection.ensureBootstrapped();

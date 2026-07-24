@@ -1,8 +1,19 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import type { TurnDiffScope } from "@t3tools/contracts";
 import { create } from "zustand";
+import type {
+  EnvironmentId,
+  PinnedThreadKeysByProjectKey,
+  SidebarStateSnapshot,
+} from "@t3tools/contracts";
+import { dispatchReorderPinnedThreads, dispatchSetThreadPinned } from "./sidebarStateSync";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
+export const SIDEBAR_PINS_MIGRATED_KEY_PREFIX = "t3code:sidebar-pins-migrated:v1";
+
+function sidebarPinsMigratedKey(environmentId: EnvironmentId): string {
+  return `${SIDEBAR_PINS_MIGRATED_KEY_PREFIX}:${environmentId}`;
+}
 const LEGACY_PERSISTED_STATE_KEYS = [
   "t3code:renderer-state:v8",
   "t3code:renderer-state:v7",
@@ -294,11 +305,6 @@ export function persistState(state: UiState): void {
         return Object.keys(nextTurns).length > 0 ? [[threadId, nextTurns]] : [];
       }),
     );
-    const pinnedThreadKeysByProjectId = Object.fromEntries(
-      Object.entries(state.pinnedThreadKeysByProjectId).flatMap(([projectId, threadKeys]) =>
-        threadKeys.length > 0 ? [[projectId, threadKeys]] : [],
-      ),
-    );
     const threadExpandedById = Object.fromEntries(
       Object.entries(state.threadExpandedById).filter(
         ([, expanded]) => typeof expanded === "boolean",
@@ -310,7 +316,6 @@ export function persistState(state: UiState): void {
         collapsedProjectCwds,
         expandedProjectCwds,
         projectOrderCwds,
-        pinnedThreadKeysByProjectId,
         threadExpandedById,
         threadChangedFilesExpandedById,
         changedFilesDiffScope: state.changedFilesDiffScope,
@@ -562,16 +567,9 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
       retainedThreadIds.has(threadId),
     ),
   );
-  const nextPinnedThreadKeysByProjectId = Object.fromEntries(
-    Object.entries(state.pinnedThreadKeysByProjectId).flatMap(([projectId, threadKeys]) => {
-      const retainedThreadKeys = threadKeys.filter((threadKey) => retainedThreadIds.has(threadKey));
-      return retainedThreadKeys.length > 0 ? [[projectId, retainedThreadKeys]] : [];
-    }),
-  );
   if (
     recordsEqual(state.threadLastVisitedAtById, nextThreadLastVisitedAtById) &&
     recordsEqual(state.threadExpandedById, nextThreadExpandedById) &&
-    arrayRecordsEqual(state.pinnedThreadKeysByProjectId, nextPinnedThreadKeysByProjectId) &&
     nestedBooleanRecordsEqual(
       state.threadChangedFilesExpandedById,
       nextThreadChangedFilesExpandedById,
@@ -581,7 +579,6 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
   }
   return {
     ...state,
-    pinnedThreadKeysByProjectId: nextPinnedThreadKeysByProjectId,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadExpandedById: nextThreadExpandedById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
@@ -885,6 +882,45 @@ export function reorderPinnedThreads(
   };
 }
 
+export function readLegacyPinnedThreadsForEnvironment(
+  state: Pick<UiState, "pinnedThreadKeysByProjectId">,
+  environmentId: EnvironmentId,
+): PinnedThreadKeysByProjectKey {
+  if (
+    typeof window !== "undefined" &&
+    window.localStorage.getItem(sidebarPinsMigratedKey(environmentId)) === "1"
+  ) {
+    return {};
+  }
+  return state.pinnedThreadKeysByProjectId;
+}
+
+export function markLegacySidebarPinsMigrated(environmentId: EnvironmentId): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(sidebarPinsMigratedKey(environmentId), "1");
+    persistState(useUiStateStore.getState());
+  } catch {
+    // A failed marker is safe: the server-side import is idempotent.
+  }
+}
+
+export function applySidebarStateSnapshot(state: UiState, snapshot: SidebarStateSnapshot): UiState {
+  return arrayRecordsEqual(state.pinnedThreadKeysByProjectId, snapshot.pinnedThreadKeysByProjectKey)
+    ? state
+    : {
+        ...state,
+        pinnedThreadKeysByProjectId: Object.fromEntries(
+          Object.entries(snapshot.pinnedThreadKeysByProjectKey).map(([projectKey, threadKeys]) => [
+            projectKey,
+            [...threadKeys],
+          ]),
+        ),
+      };
+}
+
 export function setAgentRunDismissed(
   state: UiState,
   agentRunKey: string,
@@ -927,10 +963,11 @@ interface UiStateStore extends UiState {
     draggedThreadId: string,
     targetThreadId: string,
   ) => void;
+  applySidebarStateSnapshot: (snapshot: SidebarStateSnapshot) => void;
   setAgentRunDismissed: (agentRunKey: string, dismissed: boolean) => void;
 }
 
-export const useUiStateStore = create<UiStateStore>((set) => ({
+export const useUiStateStore = create<UiStateStore>((set, get) => ({
   ...readPersistedState(),
   syncProjects: (projects) => set((state) => syncProjects(state, projects)),
   syncThreads: (threads) => set((state) => syncThreads(state, threads)),
@@ -938,7 +975,15 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
-  clearThreadUi: (threadId) => set((state) => clearThreadUi(state, threadId)),
+  clearThreadUi: (threadId) => {
+    const pinnedProjectIds = Object.entries(get().pinnedThreadKeysByProjectId)
+      .filter(([, threadKeys]) => threadKeys.includes(threadId))
+      .map(([projectId]) => projectId);
+    set((state) => clearThreadUi(state, threadId));
+    for (const projectId of pinnedProjectIds) {
+      dispatchSetThreadPinned(projectId, threadId, false);
+    }
+  },
   setThreadExpanded: (threadId, expanded) =>
     set((state) => setThreadExpanded(state, threadId, expanded)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
@@ -949,10 +994,16 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setProjectExpanded(state, projectId, expanded)),
   reorderProjects: (draggedProjectIds, targetProjectIds) =>
     set((state) => reorderProjects(state, draggedProjectIds, targetProjectIds)),
-  setThreadPinned: (projectId, threadId, pinned) =>
-    set((state) => setThreadPinned(state, projectId, threadId, pinned)),
-  reorderPinnedThreads: (projectId, draggedThreadId, targetThreadId) =>
-    set((state) => reorderPinnedThreads(state, projectId, draggedThreadId, targetThreadId)),
+  setThreadPinned: (projectId, threadId, pinned) => {
+    set((state) => setThreadPinned(state, projectId, threadId, pinned));
+    dispatchSetThreadPinned(projectId, threadId, pinned);
+  },
+  reorderPinnedThreads: (projectId, draggedThreadId, targetThreadId) => {
+    set((state) => reorderPinnedThreads(state, projectId, draggedThreadId, targetThreadId));
+    dispatchReorderPinnedThreads(projectId, draggedThreadId, targetThreadId);
+  },
+  applySidebarStateSnapshot: (snapshot) =>
+    set((state) => applySidebarStateSnapshot(state, snapshot)),
   setAgentRunDismissed: (agentRunKey, dismissed) => {
     set((state) => setAgentRunDismissed(state, agentRunKey, dismissed));
     // Archiving an agent run is a deliberate, low-frequency action the user

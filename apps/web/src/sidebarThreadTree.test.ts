@@ -109,6 +109,26 @@ describe("buildSidebarThreadRows", () => {
     expect(threads.map((candidate) => candidate.title)).toEqual([parent.title, visibleRun.name]);
   });
 
+  it("does not resurrect agent runs from archived parent threads", () => {
+    const archivedParent = thread("thread-1", {
+      archivedAt: "2026-01-01T00:00:03.000Z",
+    });
+    const agentRun: AgentRun = {
+      taskId: "agent-archived",
+      name: "Archived nested run",
+      startedAt: "2026-01-01T00:00:02.000Z",
+      status: "completed",
+      entries: [],
+    };
+
+    const visibleThreads = expandSidebarThreadsWithAgentRuns({
+      threads: [archivedParent],
+      agentRunsByThreadKey: new Map([[key(archivedParent.id), [agentRun]]]),
+    }).filter((candidate) => candidate.archivedAt === null);
+
+    expect(visibleThreads).toEqual([]);
+  });
+
   it("renders child chats indented directly below expanded parents", () => {
     const parent = thread("thread-1");
     const child = thread("thread-2", { parentThreadId: parent.id });

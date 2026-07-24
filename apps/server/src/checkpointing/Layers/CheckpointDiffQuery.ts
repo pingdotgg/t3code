@@ -142,8 +142,21 @@ const make = Effect.gen(function* () {
       const toCheckpoint = threadContext.value.checkpoints.find(
         (checkpoint) => checkpoint.checkpointTurnCount === input.toTurnCount,
       );
-      const turnScopedPaths = input.scope === "turn" ? (toCheckpoint?.turnFiles ?? []) : null;
-      if (turnScopedPaths !== null && turnScopedPaths.length === 0) {
+      const diffPaths = Array.from(
+        new Set(
+          (input.scope === "turn"
+            ? (toCheckpoint?.turnFiles ?? [])
+            : threadContext.value.checkpoints
+                .filter(
+                  (checkpoint) =>
+                    checkpoint.checkpointTurnCount > input.fromTurnCount &&
+                    checkpoint.checkpointTurnCount <= input.toTurnCount,
+                )
+                .flatMap((checkpoint) => checkpoint.turnFiles)
+          ).map((file) => file.path),
+        ),
+      );
+      if (diffPaths.length === 0) {
         const turnDiff: OrchestrationGetTurnDiffResultType = {
           threadId: input.threadId,
           fromTurnCount: input.fromTurnCount,
@@ -164,9 +177,7 @@ const make = Effect.gen(function* () {
         fromCheckpointRef,
         toCheckpointRef,
         fallbackFromToHead: false,
-        ...(turnScopedPaths !== null
-          ? { paths: Array.from(new Set(turnScopedPaths.map((file) => file.path))) }
-          : {}),
+        paths: diffPaths,
       });
 
       const turnDiff: OrchestrationGetTurnDiffResultType = {

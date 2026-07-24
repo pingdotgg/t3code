@@ -10,6 +10,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  DEFAULT_FIX_REVIEW_ISSUES_PROMPT_TEMPLATE,
   DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE,
   DEFAULT_REVIEW_CHANGES_SCOPE,
   type AgentWorkflowDestinationMode,
@@ -345,12 +346,16 @@ function isAgentWorkflowDestinationMode(value: unknown): value is AgentWorkflowD
   return WORKFLOW_DESTINATION_OPTIONS.some((option) => option.value === value);
 }
 
-function ReviewPromptTemplateEditor({
+function WorkflowPromptTemplateEditor({
   value,
   onCommit,
+  placeholder,
+  ariaLabel,
 }: {
   value: string;
   onCommit: (nextValue: string) => void;
+  placeholder: string;
+  ariaLabel: string;
 }) {
   const [draft, setDraft] = useState(value);
 
@@ -375,8 +380,8 @@ function ReviewPromptTemplateEditor({
           event.currentTarget.blur();
         }
       }}
-      placeholder={DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE}
-      aria-label="Review Code prompt template"
+      placeholder={placeholder}
+      aria-label={ariaLabel}
       spellCheck={false}
       rows={9}
     />
@@ -2345,6 +2350,18 @@ export function AgentWorkflowsSettingsPanel() {
     [settings.agentWorkflows.reviewChanges, updateAgentWorkflows],
   );
 
+  const updateFixReviewIssuesWorkflow = useCallback(
+    (patch: Partial<typeof settings.agentWorkflows.fixReviewIssues>) => {
+      updateAgentWorkflows({
+        fixReviewIssues: {
+          ...settings.agentWorkflows.fixReviewIssues,
+          ...patch,
+        },
+      });
+    },
+    [settings.agentWorkflows.fixReviewIssues, updateAgentWorkflows],
+  );
+
   const updateCustomWorkflows = useCallback(
     (nextCustomWorkflows: typeof customWorkflows) => {
       updateAgentWorkflows({ customWorkflows: nextCustomWorkflows });
@@ -2503,9 +2520,72 @@ export function AgentWorkflowsSettingsPanel() {
             ) : null
           }
         >
-          <ReviewPromptTemplateEditor
+          <WorkflowPromptTemplateEditor
             value={settings.agentWorkflows.reviewChanges.promptTemplate}
             onCommit={(promptTemplate) => updateReviewChangesWorkflow({ promptTemplate })}
+            placeholder={DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE}
+            ariaLabel="Review Code prompt template"
+          />
+        </SettingsRow>
+
+        <SettingsRow
+          title="Fix Review Issues"
+          description="Show a Fix button on review results and allow it to create a child chat."
+          resetAction={
+            settings.agentWorkflows.fixReviewIssues.enabled !==
+            DEFAULT_UNIFIED_SETTINGS.agentWorkflows.fixReviewIssues.enabled ? (
+              <SettingResetButton
+                label="Fix Review Issues workflow enabled state"
+                onClick={() =>
+                  updateFixReviewIssuesWorkflow({
+                    enabled: DEFAULT_UNIFIED_SETTINGS.agentWorkflows.fixReviewIssues.enabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.agentWorkflows.fixReviewIssues.enabled}
+              onCheckedChange={(checked) =>
+                updateFixReviewIssuesWorkflow({ enabled: Boolean(checked) })
+              }
+              aria-label="Enable Fix Review Issues workflow"
+            />
+          }
+        >
+          <div className="mt-4">
+            <WorkflowModelControls
+              modelSelection={settings.agentWorkflows.fixReviewIssues.modelSelection}
+              onModelSelectionChange={(modelSelection) =>
+                updateFixReviewIssuesWorkflow({ modelSelection })
+              }
+            />
+          </div>
+        </SettingsRow>
+
+        <SettingsRow
+          title="Fix prompt"
+          description="Instructions placed before the review issues. Leave blank to use the built-in default prompt."
+          resetAction={
+            settings.agentWorkflows.fixReviewIssues.promptTemplate !==
+            DEFAULT_FIX_REVIEW_ISSUES_PROMPT_TEMPLATE ? (
+              <SettingResetButton
+                label="Fix Review Issues prompt"
+                onClick={() =>
+                  updateFixReviewIssuesWorkflow({
+                    promptTemplate: DEFAULT_FIX_REVIEW_ISSUES_PROMPT_TEMPLATE,
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <WorkflowPromptTemplateEditor
+            value={settings.agentWorkflows.fixReviewIssues.promptTemplate}
+            onCommit={(promptTemplate) => updateFixReviewIssuesWorkflow({ promptTemplate })}
+            placeholder={DEFAULT_FIX_REVIEW_ISSUES_PROMPT_TEMPLATE}
+            ariaLabel="Fix Review Issues prompt template"
           />
         </SettingsRow>
       </SettingsSection>
@@ -2671,11 +2751,13 @@ export function AgentWorkflowsSettingsPanel() {
                     />
                   </label>
                 </div>
-                <ReviewPromptTemplateEditor
+                <WorkflowPromptTemplateEditor
                   value={workflow.promptTemplate}
                   onCommit={(promptTemplate) =>
                     updateCustomWorkflow(workflow.id, { promptTemplate })
                   }
+                  placeholder="Enter workflow instructions"
+                  ariaLabel={`${workflow.name} prompt template`}
                 />
               </SettingsRow>
             </div>

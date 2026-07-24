@@ -1,5 +1,5 @@
 import type { ReviewResult } from "@t3tools/contracts";
-import { AlertCircleIcon, MessageSquareTextIcon } from "lucide-react";
+import { AlertCircleIcon, LoaderIcon, MessageSquareTextIcon, WrenchIcon } from "lucide-react";
 
 import { formatReviewFinding, formatReviewFindings } from "~/lib/reviewFindingFormat";
 import { Badge } from "../ui/badge";
@@ -20,9 +20,15 @@ function priorityVariant(priority: keyof typeof PRIORITY_LABELS) {
 export function ReviewFindingsCard({
   result,
   onSelectFinding,
+  onFix,
+  isFixDisabled,
+  isFixing,
 }: {
   readonly result: ReviewResult;
   readonly onSelectFinding: (findingId: string) => void;
+  readonly onFix: (() => void) | undefined;
+  readonly isFixDisabled: boolean;
+  readonly isFixing: boolean;
 }) {
   if (result.status === "invalid-output") {
     return (
@@ -45,14 +51,32 @@ export function ReviewFindingsCard({
             {result.findings.length} {result.findings.length === 1 ? "comment" : "comments"}
           </span>
         </div>
-        {result.findings.length > 0 && (
-          <MessageCopyButton
-            size="icon-xs"
-            variant="ghost"
-            className="shrink-0 text-muted-foreground"
-            text={formatReviewFindings(result.findings)}
-          />
-        )}
+        {result.findings.length > 0 ? (
+          <div className="flex shrink-0 items-center gap-1">
+            {onFix ? (
+              <Button
+                size="icon-xs"
+                variant="outline"
+                disabled={isFixDisabled}
+                onClick={onFix}
+                aria-label="Fix review issues in a child chat"
+                title="Fix review issues"
+              >
+                {isFixing ? (
+                  <LoaderIcon className="size-3.5 animate-spin" />
+                ) : (
+                  <WrenchIcon className="size-3.5" />
+                )}
+              </Button>
+            ) : null}
+            <MessageCopyButton
+              size="icon-xs"
+              variant="ghost"
+              className="shrink-0 text-muted-foreground"
+              text={formatReviewFindings(result.findings)}
+            />
+          </div>
+        ) : null}
       </div>
       <p className="px-3 pb-2 pt-2 text-[length:var(--app-chat-font-size)] text-muted-foreground">
         {result.summary}

@@ -33,7 +33,8 @@ export interface CheckpointDiffQueryShape {
   /**
    * Read the full patch diff across a thread range of checkpoints.
    *
-   * Delegates to turn diff with `fromTurnCount = 0`.
+   * Delegates to snapshot diff with `fromTurnCount = 0`, filtered to files
+   * attributed to the thread's completed turns.
    */
   readonly getFullThreadDiff: (
     input: OrchestrationGetFullThreadDiffInput,

@@ -4,11 +4,14 @@ import type {
   OrchestrationShellStreamEvent,
   ServerConfig,
   ServerLifecycleWelcomePayload,
+  SidebarStateSnapshot,
+  PinnedThreadKeysByProjectKey,
   TerminalEvent,
 } from "@t3tools/contracts";
 import type { KnownEnvironment } from "@t3tools/client-runtime";
 
 import type { WsRpcClient } from "~/rpc/wsRpcClient";
+import { registerSidebarStateClient } from "~/sidebarStateSync";
 
 export interface EnvironmentConnection {
   readonly kind: "primary" | "saved";
@@ -30,6 +33,12 @@ interface OrchestrationHandlers {
     environmentId: EnvironmentId,
   ) => void;
   readonly applyTerminalEvent: (event: TerminalEvent, environmentId: EnvironmentId) => void;
+  readonly applySidebarStateSnapshot: (
+    snapshot: SidebarStateSnapshot,
+    environmentId: EnvironmentId,
+  ) => void;
+  readonly readLegacyPinnedThreads: (environmentId: EnvironmentId) => PinnedThreadKeysByProjectKey;
+  readonly markLegacySidebarPinsMigrated: (environmentId: EnvironmentId) => void;
 }
 
 interface EnvironmentConnectionInput extends OrchestrationHandlers {
@@ -87,6 +96,20 @@ export function createEnvironmentConnection(
   let fatalError: Error | null = null;
   const bootstrapGate = createBootstrapGate();
   const unsubscribers: Array<() => void> = [];
+  if (input.kind === "primary") {
+    const sidebarStateRegistration = registerSidebarStateClient({
+      environmentId,
+      getState: input.client.sidebar.getState,
+      updateState: input.client.sidebar.updateState,
+      applySnapshot: (snapshot) => input.applySidebarStateSnapshot(snapshot, environmentId),
+      readLegacyPins: () => input.readLegacyPinnedThreads(environmentId),
+      markLegacyPinsMigrated: () => input.markLegacySidebarPinsMigrated(environmentId),
+    });
+    unsubscribers.push(sidebarStateRegistration.dispose);
+
+    const unsubSidebarState = input.client.sidebar.onState(sidebarStateRegistration.handleSnapshot);
+    unsubscribers.push(unsubSidebarState);
+  }
 
   const cleanup = () => {
     if (disposed) {

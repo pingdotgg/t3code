@@ -35,6 +35,10 @@ Write only the small, concise amount of code needed to solve the problem; avoid 
 - macOS native sidebar vibrancy can leave stale/ghosted row pixels when translucent sidebar rows animate opacity/transform/color over the visual-effect backing; keep vibrancy stable across focus changes and isolate native-vibrancy thread rows with paint containment, compositor promotion, and disabled row transitions.
 - External-store selectors must return a referentially stable snapshot when their input state is unchanged; fresh arrays or wrapper objects can trigger React error #185 (maximum update depth exceeded).
 - Checkpoint finalization must wait for provider runtime ingestion of the matching `turn.completed` event; independent subscribers can otherwise snapshot before queued tool activities are projected.
+- Full-thread diffs must filter checkpoint snapshots to the union of chat-attributed `turnFiles`; raw shared-worktree snapshots include unrelated changes from other chats.
+- Retried sidebar mutations need durable mutation IDs; a lost response can hide a committed reorder, and replaying it without server deduplication can move the thread twice.
+- Packaged Dev builds must write their flavor-specific `productName` into ASAR metadata; Electron derives `app.getName()` from it, and a stale Alpha name makes Dev reuse Alpha's Chromium profile.
+- Do not synthesize active virtual agent-run rows for archived parent threads; the sidebar filters archived parents after expansion, which otherwise resurrects their former nested runs as roots on startup.
 
 ## Keep This File Updated
 
