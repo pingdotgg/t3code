@@ -3056,6 +3056,7 @@ describe("ProviderRuntimeIngestion", () => {
     const harness = await createHarness();
     const itemId = asItemId("item-fallback-delta-retry");
     const now = "2026-01-01T00:00:00.000Z";
+    const fallbackText = "fallback survives the retry ".repeat(120);
     const getDeltaFailureCount = harness.failDispatches(
       3,
       (command) => command.type === "thread.message.assistant.delta",
@@ -3071,7 +3072,7 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         itemType: "assistant_message",
         status: "completed",
-        detail: "fallback survives the retry",
+        detail: fallbackText,
       },
     });
 
@@ -3082,7 +3083,7 @@ describe("ProviderRuntimeIngestion", () => {
           (message: ProviderRuntimeTestMessage) =>
             message.id === "assistant:item-fallback-delta-retry" &&
             !message.streaming &&
-            message.text === "fallback survives the retry",
+            message.text === fallbackText,
         ),
       5000,
     );
@@ -3092,7 +3093,23 @@ describe("ProviderRuntimeIngestion", () => {
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-fallback-delta-retry",
       )?.text,
-    ).toBe("fallback survives the retry");
+    ).toBe(fallbackText);
+
+    const events = await runtime!.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      ),
+    );
+    const persistedChunks = events
+      .filter(
+        (event): event is Extract<(typeof events)[number], { type: "thread.message-sent" }> =>
+          event.type === "thread.message-sent" &&
+          event.payload.messageId === "assistant:item-fallback-delta-retry" &&
+          event.payload.streaming,
+      )
+      .map((event) => event.payload.text);
+    expect(Math.max(...persistedChunks.map((text) => text.length))).toBeLessThanOrEqual(512);
+    expect(persistedChunks.join("")).toBe(fallbackText);
   });
 
   it("keeps retained streaming chunks bounded while dispatch retries", async () => {
@@ -3741,6 +3758,85 @@ describe("ProviderRuntimeIngestion", () => {
     expect(assistantCompletionIndex).toBeGreaterThanOrEqual(0);
     expect(turnReadyIndex).toBeGreaterThan(assistantCompletionIndex);
     expect(completionEvents).toHaveLength(1);
+  });
+
+  it("keeps a request boundary behind deferred pause finalization", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-deferred-request-finalization");
+    const itemId = asItemId("item-deferred-request-finalization");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-deferred-request-finalization"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-content-delta-deferred-request-finalization"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { streamKind: "assistant_text", delta: "before approval" },
+    });
+    const getCompleteFailureCount = harness.failDispatches(
+      3,
+      (command) => command.type === "thread.message.assistant.complete",
+    );
+    harness.emit({
+      type: "request.opened",
+      eventId: asEventId("evt-request-opened-deferred-request-finalization"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      requestId: ApprovalRequestId.make("req-deferred-request-finalization"),
+      payload: {
+        requestType: "command_execution_approval",
+        detail: "pwd",
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-deferred-request-finalization" && !message.streaming,
+        ) &&
+        thread.activities.some(
+          (activity: ProviderRuntimeTestActivity) =>
+            activity.id === "evt-request-opened-deferred-request-finalization",
+        ),
+      5000,
+    );
+    expect(getCompleteFailureCount()).toBe(3);
+
+    const events = await runtime!.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      ),
+    );
+    const assistantCompletionIndex = events.findIndex(
+      (event) =>
+        event.type === "thread.message-sent" &&
+        event.payload.messageId === "assistant:item-deferred-request-finalization" &&
+        !event.payload.streaming,
+    );
+    const requestActivityIndex = events.findIndex(
+      (event) =>
+        event.type === "thread.activity-appended" &&
+        event.payload.activity.id === "evt-request-opened-deferred-request-finalization",
+    );
+    expect(assistantCompletionIndex).toBeGreaterThanOrEqual(0);
+    expect(requestActivityIndex).toBeGreaterThan(assistantCompletionIndex);
   });
 
   it("keeps a terminal session boundary behind fallback item finalization", async () => {
