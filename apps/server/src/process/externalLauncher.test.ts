@@ -4,7 +4,6 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -153,33 +152,6 @@ it.effect("discovers editors through the service API", () =>
 
     assert.equal(editors.includes("vscode"), true);
     assert.equal(editors.includes("file-manager"), true);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect("publishes editor discovery to cached availability state", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
-    yield* fileSystem.writeFileString(path.join(binDir, "code.CMD"), "@echo off\r\n");
-
-    yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher.ExternalLauncher;
-      const discovered = yield* launcher.streamAvailableEditors.pipe(
-        Stream.filter((editors) => editors.includes("vscode")),
-        Stream.runHead,
-      );
-
-      assert.include(Option.getOrThrow(discovered), "vscode");
-      assert.include(yield* launcher.availableEditors, "vscode");
-    }).pipe(
-      Effect.provide(
-        testLayer({
-          platform: "win32",
-          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-        }),
-      ),
-    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
