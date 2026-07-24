@@ -191,7 +191,7 @@ struct SubagentTaskStatusIcon: View {
         switch task.state {
         case .running: .secondary
         case .paused: .secondary
-        case .completed: .green
+        case .completed: AlpineTheme.statusSuccess
         case .failed: .red
         case .stopped: .secondary
         }

@@ -10,7 +10,8 @@ The primary mark is `passportPeak`: a stamp ring enclosing twin peaks. The case 
 
 ## Palette
 
-- Alpine moss accent: `#4C7559` (`AlpineTheme.accent`)
+- Alpine sage accent: `#91C9A3` (`AlpineTheme.accent`)
+- Success status: `#448A59` light / `#78B88C` dark (`AlpineTheme.statusSuccess`, appearance-aware pastel meadow)
 - Snow: `#F2F7FB`
 - `dolomitesGradientPairs` duotones: dawn limestone, glacier melt, high meadow, larch dusk, scree, spruce shade
 
