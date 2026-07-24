@@ -73,6 +73,15 @@ const emptyBackendObservabilitySettings: BackendObservabilitySettings = {
   otlpMetricsUrl: Option.none(),
 };
 
+const STORAGE_ENV_NAMES = [
+  "T3CODE_HOME",
+  "T3CODE_CONFIG_DIR",
+  "T3CODE_DATA_DIR",
+  "T3CODE_STATE_DIR",
+  "T3CODE_CACHE_DIR",
+  "T3CODE_RUNTIME_DIR",
+] as const;
+
 const DESKTOP_BACKEND_ENV_NAMES = [
   "T3CODE_PORT",
   "T3CODE_MODE",
@@ -84,6 +93,7 @@ const DESKTOP_BACKEND_ENV_NAMES = [
   "T3CODE_DESKTOP_HTTPS_ENDPOINTS",
   "T3CODE_TAILSCALE_SERVE",
   "T3CODE_TAILSCALE_SERVE_PORT",
+  ...STORAGE_ENV_NAMES,
 ] as const;
 
 // Sensitive env vars that the WSL backend needs but Windows process.env won't
@@ -91,6 +101,7 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 // handled separately via a `--dev-url` CLI flag because WSLENV translation of
 // URL-shaped values (colons / slashes) is unreliable.
 const WSL_FORWARDED_ENV_NAMES = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
+const WINDOWS_STORAGE_ENV_NAMES = new Set<string>(STORAGE_ENV_NAMES);
 
 const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
@@ -340,7 +351,25 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       mode: "desktop" as const,
       noBrowser: true,
       port: backendExposure.port,
-      t3Home: environment.baseDir,
+      storageRoots:
+        environment.storageLayout === "legacy"
+          ? {
+              layout: "legacy" as const,
+              configDir: environment.configDir,
+              dataDir: environment.dataDir,
+              stateDir: environment.stateDir,
+              cacheDir: environment.cacheDir,
+              runtimeDir: environment.runtimeDir,
+              legacyBaseDir: environment.baseDir,
+            }
+          : {
+              layout: "split" as const,
+              configDir: environment.configDir,
+              dataDir: environment.dataDir,
+              stateDir: environment.stateDir,
+              cacheDir: environment.cacheDir,
+              runtimeDir: environment.runtimeDir,
+            },
       host: backendExposure.bindHost,
       desktopBootstrapToken: input.bootstrapToken,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
@@ -470,24 +499,22 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     }
   }
 
-  // Build an explicit copy of process.env minus T3CODE_HOME (dev-runner
-  // exports the Windows-side base dir for the primary; if it leaks into
-  // the WSL backend the Linux side ends up sharing C:\Users\...\.t3 via
-  // /mnt/c, which means both backends read/write the same database and
-  // their env-ids collide).
-  const parentEnvWithoutT3Home: Record<string, string | undefined> = {};
+  // Do not leak Windows-side storage overrides into the Linux backend. Paths
+  // that are valid for the primary can resolve through /mnt/c in WSL, causing
+  // both backends to share a database and environment identity.
+  const parentEnvWithoutStorageOverrides: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (key === "T3CODE_HOME") continue;
-    parentEnvWithoutT3Home[key] = value;
+    if (WINDOWS_STORAGE_ENV_NAMES.has(key)) continue;
+    parentEnvWithoutStorageOverrides[key] = value;
   }
-  const wslEnv = mergeWslEnv(parentEnvWithoutT3Home.WSLENV, forwardedEnvNames);
+  const wslEnv = mergeWslEnv(parentEnvWithoutStorageOverrides.WSLENV, forwardedEnvNames);
 
   const baseConfig = {
     executablePath: "wsl.exe",
     entryPath: wslEntryPath,
     cwd: environment.backendCwd,
     env: {
-      ...parentEnvWithoutT3Home,
+      ...parentEnvWithoutStorageOverrides,
       ...backendChildEnvPatch(),
       ...forwardedEnv,
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),

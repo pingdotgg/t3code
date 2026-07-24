@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as LogLevel from "effect/LogLevel";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { resolveLegacyT3StorageRoots, type T3StorageRoots } from "@t3tools/shared/storagePaths";
 
 export const DEFAULT_PORT = 3773;
 
@@ -25,8 +26,7 @@ export type StartupPresentation = typeof StartupPresentation.Type;
 /**
  * ServerDerivedPaths - Derived paths from the base directory.
  */
-export interface ServerDerivedPaths {
-  readonly stateDir: string;
+export interface ServerDerivedPaths extends T3StorageRoots {
   readonly dbPath: string;
   readonly keybindingsConfigPath: string;
   readonly settingsPath: string;
@@ -69,6 +69,7 @@ export class ServerConfig extends Context.Service<
     readonly port: number;
     readonly host: string | undefined;
     readonly cwd: string;
+    /** @deprecated Compatibility alias for dataDir. */
     readonly baseDir: string;
     readonly staticDir: string | undefined;
     readonly devUrl: URL | undefined;
@@ -97,23 +98,34 @@ export const deriveServerPaths = Effect.fn(function* (
   devUrl: ServerConfig["Service"]["devUrl"],
   options: DeriveServerPathsOptions = {},
 ): Effect.fn.Return<ServerDerivedPaths, never, Path.Path> {
-  const { join } = yield* Path.Path;
-  const stateDir = join(
-    baseDir,
-    devUrl !== undefined && !options.baseDirIsExplicit ? "dev" : "userdata",
+  const path = yield* Path.Path;
+  return yield* deriveServerPathsFromRoots(
+    resolveLegacyT3StorageRoots({
+      baseDir,
+      stateDirectoryName: devUrl !== undefined && !options.baseDirIsExplicit ? "dev" : "userdata",
+      path,
+    }),
   );
+});
+
+export const deriveServerPathsFromRoots = Effect.fn(function* (
+  roots: T3StorageRoots,
+): Effect.fn.Return<ServerDerivedPaths, never, Path.Path> {
+  const { join } = yield* Path.Path;
+  const { cacheDir, configDir, dataDir, runtimeDir, stateDir } = roots;
   const dbPath = join(stateDir, "state.sqlite");
-  const attachmentsDir = join(stateDir, "attachments");
+  const attachmentsDir = join(roots.layout === "legacy" ? stateDir : dataDir, "attachments");
   const logsDir = join(stateDir, "logs");
   const providerLogsDir = join(logsDir, "provider");
-  const providerStatusCacheDir = join(baseDir, "caches");
+  const providerStatusCacheDir =
+    roots.layout === "legacy" ? cacheDir : join(cacheDir, "provider-status");
   return {
-    stateDir,
+    ...roots,
     dbPath,
-    keybindingsConfigPath: join(stateDir, "keybindings.json"),
-    settingsPath: join(stateDir, "settings.json"),
+    keybindingsConfigPath: join(configDir, "keybindings.json"),
+    settingsPath: join(configDir, "settings.json"),
     providerStatusCacheDir,
-    worktreesDir: join(baseDir, "worktrees"),
+    worktreesDir: join(dataDir, "worktrees"),
     attachmentsDir,
     logsDir,
     serverLogPath: join(logsDir, "server.log"),
@@ -123,7 +135,7 @@ export const deriveServerPaths = Effect.fn(function* (
     terminalLogsDir: join(logsDir, "terminals"),
     anonymousIdPath: join(stateDir, "anonymous-id"),
     environmentIdPath: join(stateDir, "environment-id"),
-    serverRuntimeStatePath: join(stateDir, "server-runtime.json"),
+    serverRuntimeStatePath: join(runtimeDir, "server-runtime.json"),
     secretsDir: join(stateDir, "secrets"),
   };
 });
@@ -134,7 +146,11 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
 
   yield* Effect.all(
     [
+      fs.makeDirectory(derivedPaths.configDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.dataDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.stateDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.cacheDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.runtimeDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.logsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.providerLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.terminalLogsDir, { recursive: true }),

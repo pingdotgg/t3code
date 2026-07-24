@@ -123,6 +123,31 @@ it("renders a systemd unit with absolute paths and append-mode logging", () => {
   );
 });
 
+it("pins every split storage root in the background service environment", () => {
+  const unit = BootService.renderBootServiceUnit({
+    nodePath: "/usr/bin/node",
+    t3EntryPath: "/home/alice/.local/share/t3code/runtime/t3.mjs",
+    baseDir: "/home/alice/.local/share/t3code",
+    storageRoots: {
+      layout: "split",
+      configDir: "/home/alice/.config/t3code",
+      dataDir: "/home/alice/.local/share/t3code",
+      stateDir: "/home/alice/.local/state/t3code",
+      cacheDir: "/home/alice/.cache/t3code",
+      runtimeDir: "/run/user/1000/t3code",
+    },
+    logPath: "/home/alice/.local/state/t3code/logs/boot-service.log",
+    unitPath: "/home/alice/.config/systemd/user/t3code.service",
+  });
+
+  assert.include(unit, "Environment=T3CODE_CONFIG_DIR=/home/alice/.config/t3code");
+  assert.include(unit, "Environment=T3CODE_DATA_DIR=/home/alice/.local/share/t3code");
+  assert.include(unit, "Environment=T3CODE_STATE_DIR=/home/alice/.local/state/t3code");
+  assert.include(unit, "Environment=T3CODE_CACHE_DIR=/home/alice/.cache/t3code");
+  assert.include(unit, "Environment=T3CODE_RUNTIME_DIR=/run/user/1000/t3code");
+  assert.notInclude(unit, "Environment=T3CODE_HOME=");
+});
+
 it("quotes systemd values containing spaces and escapes percent specifiers", () => {
   assert.equal(BootService.quoteSystemdValue("/plain/path"), "/plain/path");
   assert.equal(BootService.quoteSystemdValue("/home/me/T3 Data"), '"/home/me/T3 Data"');

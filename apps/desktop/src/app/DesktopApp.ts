@@ -229,6 +229,9 @@ const startup = Effect.gen(function* () {
   yield* shellEnvironment.installIntoProcess;
   const userDataPath = yield* appIdentity.resolveUserDataPath;
   yield* electronApp.setPath("userData", userDataPath);
+  if (environment.storageLayout === "split") {
+    yield* electronApp.setPath("cache", environment.electronCachePath);
+  }
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
   yield* desktopSettings.load;
 
