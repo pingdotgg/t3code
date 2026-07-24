@@ -31,7 +31,9 @@ describe("layout-scoped open state", () => {
     const mobileClosed = { layout: "mobile", value: false } as const;
 
     expect(updateLayoutScopedState(mobileClosed, "desktop", true)).toBe(mobileClosed);
-    expect(updateLayoutScopedState(mobileClosed, "desktop", (open) => !open)).toBe(mobileClosed);
+    expect(updateLayoutScopedState<string, boolean>(mobileClosed, "desktop", (open) => !open)).toBe(
+      mobileClosed,
+    );
   });
 
   it("applies direct and functional updates for the current layout", () => {
