@@ -695,22 +695,15 @@ describe("SourceControlPanelService", () => {
     );
   });
 
-  it.effect("surfaces a native dependency failure without waiting for Git to time out", () => {
+  it.effect("does not abort a successful commit because of hook diagnostics", () => {
     const calls: ExecuteGitInput[] = [];
     return Effect.gen(function* () {
       const service = yield* SourceControlPanelService;
 
-      const error = yield* service
-        .commitStaged({
-          cwd: "/repo",
-          message: "Commit selected file",
-        })
-        .pipe(Effect.flip);
-
-      assert.equal(
-        error.detail,
-        "The Git pre-commit hook could not load a required native dependency. Reinstall the repository dependencies and try again.",
-      );
+      yield* service.commitStaged({
+        cwd: "/repo",
+        message: "Commit selected file",
+      });
       assert.deepStrictEqual(
         calls.map((call) => call.args),
         [["commit", "-m", "Commit selected file"]],
@@ -727,7 +720,37 @@ describe("SourceControlPanelService", () => {
               input.progress?.onStderrLine?.("VITE+ - pre-commit script failed (code 1)") ??
                 Effect.void
             );
-            return yield* Effect.never;
+            yield* Effect.yieldNow;
+            return success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("enriches a failed commit with detected hook diagnostics", () => {
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const error = yield* service
+        .commitStaged({
+          cwd: "/repo",
+          message: "Commit selected file",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(
+        error.detail,
+        "The Git pre-commit hook could not load a required native dependency. Reinstall the repository dependencies and try again.",
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.gen(function* () {
+            yield* (
+              input.progress?.onStderrLine?.("Error: Cannot find native binding") ?? Effect.void
+            );
+            return failure("pre-commit hook failed");
           }),
         ),
       ),

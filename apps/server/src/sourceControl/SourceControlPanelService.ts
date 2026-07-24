@@ -1,6 +1,5 @@
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -2518,18 +2517,16 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     env?: NodeJS.ProcessEnv,
   ) {
     const args = ["commit", "-m", message] as const;
-    const failureDetected = yield* Deferred.make<CommitFailureHint>();
     let failureHint: CommitFailureHint | null = null;
     const recordFailureHint = (line: string) =>
-      Effect.gen(function* () {
+      Effect.sync(() => {
         const nextHint = commitFailureHintFromOutputLine(line);
         if (nextHint !== null && (nextHint === "native-dependency" || failureHint === null)) {
           failureHint = nextHint;
-          yield* Deferred.succeed(failureDetected, nextHint).pipe(Effect.ignore);
         }
       });
 
-    const commit = run("vcs.panel.commitStaged", cwd, args, {
+    yield* run("vcs.panel.commitStaged", cwd, args, {
       ...(env === undefined ? {} : { env }),
       progress: {
         onStdoutLine: recordFailureHint,
@@ -2544,19 +2541,6 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       }),
       Effect.asVoid,
     );
-
-    const detectedFailure = Deferred.await(failureDetected).pipe(
-      Effect.flatMap((hint) =>
-        gitError(
-          "vcs.panel.commitStaged",
-          cwd,
-          args,
-          commitFailureDetail(hint) ?? COMMIT_HOOK_FAILURE_DETAIL,
-        ),
-      ),
-    );
-
-    yield* Effect.raceFirst(commit, detectedFailure);
   });
 
   const commitStaged: SourceControlPanelService["Service"]["commitStaged"] = Effect.fn(
