@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { normalizeLayoutScopedState, readLayoutScopedState } from "./useLayoutScopedOpenState";
+import {
+  normalizeLayoutScopedState,
+  readLayoutScopedState,
+  updateLayoutScopedState,
+} from "./useLayoutScopedOpenState";
 
 describe("layout-scoped open state", () => {
   it("hides stale open state immediately and resets it for future remounts", () => {
@@ -21,5 +25,23 @@ describe("layout-scoped open state", () => {
     const open = { layout: "expanded", value: true } as const;
     expect(normalizeLayoutScopedState(open, "expanded", false)).toBe(open);
     expect(readLayoutScopedState(open, "expanded", false)).toBe(true);
+  });
+
+  it("ignores a stale setter after another layout becomes current", () => {
+    const mobileClosed = { layout: "mobile", value: false } as const;
+
+    expect(updateLayoutScopedState(mobileClosed, "desktop", true)).toBe(mobileClosed);
+    expect(updateLayoutScopedState(mobileClosed, "desktop", (open) => !open)).toBe(mobileClosed);
+  });
+
+  it("applies direct and functional updates for the current layout", () => {
+    const closed = { layout: "desktop", value: false } as const;
+    const open = updateLayoutScopedState(closed, "desktop", true);
+
+    expect(open).toEqual({ layout: "desktop", value: true });
+    expect(updateLayoutScopedState(open, "desktop", (value) => !value)).toEqual({
+      layout: "desktop",
+      value: false,
+    });
   });
 });

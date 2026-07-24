@@ -21,6 +21,21 @@ export function readLayoutScopedState<Layout, Value>(
   return Object.is(state.layout, layout) ? state.value : initialValue;
 }
 
+export function updateLayoutScopedState<Layout, Value>(
+  state: LayoutScopedState<Layout, Value>,
+  layout: Layout,
+  nextValue: SetStateAction<Value>,
+): LayoutScopedState<Layout, Value> {
+  if (!Object.is(state.layout, layout)) {
+    return state;
+  }
+  const resolvedValue =
+    typeof nextValue === "function"
+      ? (nextValue as (current: Value) => Value)(state.value)
+      : nextValue;
+  return Object.is(state.value, resolvedValue) ? state : { layout, value: resolvedValue };
+}
+
 /**
  * State that resets as soon as its rendered layout changes.
  *
@@ -45,19 +60,9 @@ export function useLayoutScopedState<Layout, Value>(
 
   const setValue = useCallback<Dispatch<SetStateAction<Value>>>(
     (nextValue) => {
-      setState((current) => {
-        const currentValue = readLayoutScopedState(current, layout, initialValue);
-        const resolvedValue =
-          typeof nextValue === "function"
-            ? (nextValue as (current: Value) => Value)(currentValue)
-            : nextValue;
-        if (Object.is(current.layout, layout) && Object.is(current.value, resolvedValue)) {
-          return current;
-        }
-        return { layout, value: resolvedValue };
-      });
+      setState((current) => updateLayoutScopedState(current, layout, nextValue));
     },
-    [initialValue, layout],
+    [layout],
   );
 
   return [value, setValue] as const;
