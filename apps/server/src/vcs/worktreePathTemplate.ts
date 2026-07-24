@@ -7,6 +7,8 @@ interface WorktreePathTemplateInput {
   readonly branch: string;
 }
 
+const WORKTREE_PATH_PLACEHOLDER = /\{(worktreesDir|repoRoot|repoName|branch)\}/g;
+
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const literalPathPattern = (value: string) =>
@@ -21,42 +23,31 @@ export function resolveWorktreePathTemplate(
 ): string {
   const repoRoot = path.resolve(input.cwd);
   const branch = input.branch.replace(/\//g, "-");
-  const expanded = input.template
-    .replaceAll("{worktreesDir}", path.resolve(input.worktreesDir))
-    .replaceAll("{repoRoot}", repoRoot)
-    .replaceAll("{repoName}", path.basename(repoRoot))
-    .replaceAll("{branch}", branch);
+  const placeholders = {
+    worktreesDir: path.resolve(input.worktreesDir),
+    repoRoot,
+    repoName: path.basename(repoRoot),
+    branch,
+  } as const;
+  const expanded = input.template.replace(
+    WORKTREE_PATH_PLACEHOLDER,
+    (_placeholder, name: keyof typeof placeholders) => placeholders[name],
+  );
 
   return path.resolve(repoRoot, expanded);
 }
 
 export function matchesWorktreePathTemplate(
   path: Path.Path,
-  input: WorktreePathTemplateInput & { readonly candidate: string },
+  input: Omit<WorktreePathTemplateInput, "branch"> & { readonly candidate: string },
 ): boolean {
-  const repoRootMarker = path.resolve(
-    path.sep,
-    "__t3_worktree_repo_parent__",
-    "__t3_worktree_repo_name__",
-  );
   const branchMarker = "__t3_worktree_branch__";
   const resolvedTemplate = resolveWorktreePathTemplate(path, {
     ...input,
-    cwd: repoRootMarker,
     branch: branchMarker,
-  })
-    .replaceAll(repoRootMarker, "{repoRoot}")
-    .replaceAll("__t3_worktree_repo_name__", "{repoName}")
-    .replaceAll(branchMarker, "{branch}");
+  });
 
-  const pattern = resolvedTemplate
-    .split(/(\{repoRoot\}|\{repoName\}|\{branch\})/)
-    .map((part) => {
-      if (part === "{repoRoot}") return ".+?";
-      if (part === "{repoName}" || part === "{branch}") return "[^\\\\/]+";
-      return literalPathPattern(part);
-    })
-    .join("");
+  const pattern = resolvedTemplate.split(branchMarker).map(literalPathPattern).join("[^\\\\/]+");
 
   return new RegExp(`^${pattern}$`).test(path.resolve(input.candidate));
 }

@@ -113,6 +113,24 @@ it.effect("resolves repoRoot templates from an absolute form of a relative cwd",
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("expands path template placeholders in a single pass", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const cwd = path.resolve("repos", "example");
+    const worktreesDir = path.resolve("central-worktrees", "{branch}");
+
+    assert.equal(
+      resolveWorktreePathTemplate(path, {
+        cwd,
+        worktreesDir,
+        template: "{worktreesDir}/{repoName}/{branch}",
+        branch: "feature/single-pass",
+      }),
+      path.join(worktreesDir, "example", "feature-single-pass"),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("uses stable diagnostics for every parsed non-repository command", () => {
   const commands: Array<{ readonly args: ReadonlyArray<string>; readonly lcAll?: string }> = [];
   const spawner = ChildProcessSpawner.make((command) =>

@@ -96,7 +96,10 @@ describe("ReviewService", () => {
 
       const result = yield* Effect.gen(function* () {
         const review = yield* ReviewService.ReviewService;
-        return yield* review.getDiffPreview({ cwd: worktreeRoot });
+        return yield* review.getDiffPreview({
+          cwd: worktreeRoot,
+          repositoryRoots: [repositoryRoot],
+        });
       }).pipe(
         Effect.provide(
           makeLayer({
@@ -111,6 +114,46 @@ describe("ReviewService", () => {
       assert.strictEqual(result.cwd, worktreeRoot);
       assert.deepStrictEqual(result.sources, []);
       assert.deepStrictEqual(detectCalls, [{ cwd: worktreeRoot }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects configured-template paths outside known repository roots", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const knownRepositoryRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-review-known-repo-",
+      });
+      const unknownRepositoryRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-review-unknown-repo-",
+      });
+      const unknownWorktreeRoot = path.join(unknownRepositoryRoot, ".worktrees", "feature-local");
+      const detectCalls: Array<{ readonly cwd: string }> = [];
+      yield* fs.makeDirectory(unknownWorktreeRoot, { recursive: true });
+
+      const error = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review
+          .getDiffPreview({
+            cwd: unknownWorktreeRoot,
+            repositoryRoots: [knownRepositoryRoot],
+          })
+          .pipe(Effect.flip);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            detectCalls,
+            worktreePathTemplate: "{repoRoot}/.worktrees/{branch}",
+          }),
+        ),
+      );
+
+      assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
+      assert.deepStrictEqual(detectCalls, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

@@ -1864,9 +1864,24 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.reviewGetDiffPreview]: (input) =>
-          observeRpcEffect(WS_METHODS.reviewGetDiffPreview, review.getDiffPreview(input), {
-            "rpc.aggregate": "review",
-          }),
+          observeRpcEffect(
+            WS_METHODS.reviewGetDiffPreview,
+            Effect.gen(function* () {
+              const repositoryRoots = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
+                Effect.map((snapshot) => snapshot.projects.map((project) => project.workspaceRoot)),
+                Effect.catch((cause) =>
+                  Effect.logWarning(
+                    "Failed to read project roots for review workspace validation",
+                    { cause },
+                  ).pipe(Effect.as([])),
+                ),
+              );
+              return yield* review.getDiffPreview({ ...input, repositoryRoots });
+            }),
+            {
+              "rpc.aggregate": "review",
+            },
+          ),
         [WS_METHODS.terminalOpen]: (input) =>
           observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
             "rpc.aggregate": "terminal",

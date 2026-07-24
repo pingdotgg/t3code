@@ -24,7 +24,7 @@ export class ReviewService extends Context.Service<
   ReviewService,
   {
     readonly getDiffPreview: (
-      input: ReviewDiffPreviewInput,
+      input: ReviewDiffPreviewInput & { readonly repositoryRoots?: ReadonlyArray<string> },
     ) => Effect.Effect<ReviewDiffPreviewResult, ReviewDiffPreviewError>;
   }
 >()("t3/review/ReviewService") {}
@@ -62,8 +62,9 @@ export const make = Effect.gen(function* () {
   };
 
   const assertWorkspaceBoundCwd = Effect.fn("ReviewService.assertWorkspaceBoundCwd")(function* (
-    cwd: string,
+    input: ReviewDiffPreviewInput & { readonly repositoryRoots?: ReadonlyArray<string> },
   ) {
+    const { cwd } = input;
     const [candidate, workspaceRoot, worktreesRoot] = yield* Effect.all([
       canonicalizePath(cwd),
       canonicalizePath(config.cwd),
@@ -78,13 +79,14 @@ export const make = Effect.gen(function* () {
         }).pipe(Effect.as(DEFAULT_WORKTREE_PATH_TEMPLATE)),
       ),
     );
-    const matchesConfiguredWorktreePath = matchesWorktreePathTemplate(path, {
-      candidate,
-      cwd: workspaceRoot,
-      worktreesDir: worktreesRoot,
-      template: worktreePathTemplate,
-      branch: "__configured_branch__",
-    });
+    const matchesConfiguredWorktreePath = (input.repositoryRoots ?? []).some((repositoryRoot) =>
+      matchesWorktreePathTemplate(path, {
+        candidate,
+        cwd: repositoryRoot,
+        worktreesDir: worktreesRoot,
+        template: worktreePathTemplate,
+      }),
+    );
 
     if (
       isWithinRoot(candidate, workspaceRoot) ||
@@ -104,7 +106,7 @@ export const make = Effect.gen(function* () {
   const getDiffPreview: ReviewService["Service"]["getDiffPreview"] = Effect.fn(
     "ReviewService.getDiffPreview",
   )(function* (input) {
-    yield* assertWorkspaceBoundCwd(input.cwd);
+    yield* assertWorkspaceBoundCwd(input);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
     if (!handle) {
