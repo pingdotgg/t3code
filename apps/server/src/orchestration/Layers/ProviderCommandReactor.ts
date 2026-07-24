@@ -32,6 +32,10 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import {
+  ProviderSessionDirectory,
+  type ProviderRuntimeBindingWithMetadata,
+} from "../../provider/Services/ProviderSessionDirectory.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -115,6 +119,24 @@ function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolea
     : false;
 }
 
+function canReconcileStoppedRuntimeBinding(
+  session: OrchestrationSession,
+  binding: ProviderRuntimeBindingWithMetadata,
+): boolean {
+  const bindingLastSeenAt = Date.parse(binding.lastSeenAt);
+  const sessionUpdatedAt = Date.parse(session.updatedAt);
+  return (
+    (session.status === "running" || session.status === "starting") &&
+    binding.status === "stopped" &&
+    (session.providerName === null || session.providerName === binding.provider) &&
+    (session.providerInstanceId === undefined ||
+      session.providerInstanceId === binding.providerInstanceId) &&
+    !Number.isNaN(bindingLastSeenAt) &&
+    !Number.isNaN(sessionUpdatedAt) &&
+    bindingLastSeenAt >= sessionUpdatedAt
+  );
+}
+
 function findProviderAdapterRequestError(
   cause: Cause.Cause<ProviderServiceError>,
 ): ProviderAdapterRequestError | undefined {
@@ -192,6 +214,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
+  const providerSessionDirectory = yield* ProviderSessionDirectory;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
@@ -281,6 +304,85 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  const reconcileStoppedRuntimeBindings = Effect.fn("reconcileStoppedRuntimeBindings")(
+    function* () {
+      const [snapshot, bindings] = yield* Effect.all([
+        projectionSnapshotQuery.getShellSnapshot(),
+        providerSessionDirectory.listBindings(),
+      ]);
+      const bindingByThreadId = new Map(bindings.map((binding) => [binding.threadId, binding]));
+
+      yield* Effect.forEach(
+        snapshot.threads,
+        (thread) => {
+          const session = thread.session;
+          const binding = bindingByThreadId.get(thread.id);
+          if (!session || !binding || !canReconcileStoppedRuntimeBinding(session, binding)) {
+            return Effect.void;
+          }
+
+          return Effect.gen(function* () {
+            const [latestThreadOption, latestBindings] = yield* Effect.all([
+              projectionSnapshotQuery.getThreadShellById(thread.id),
+              providerSessionDirectory.listBindings(),
+            ]);
+            const latestThread = Option.getOrUndefined(latestThreadOption);
+            const latestSession = latestThread?.session;
+            const latestBinding = latestBindings.find((entry) => entry.threadId === thread.id);
+            if (
+              !latestSession ||
+              !latestBinding ||
+              !canReconcileStoppedRuntimeBinding(latestSession, latestBinding)
+            ) {
+              return;
+            }
+
+            // Re-read immediately before dispatch. Runtime recovery can update
+            // the persisted binding while projection/session checks are in
+            // flight; never settle from a stopped snapshot that has already
+            // been replaced by a live binding.
+            const finalBindings = yield* providerSessionDirectory.listBindings();
+            const finalBinding = finalBindings.find((entry) => entry.threadId === thread.id);
+            const finalThread = yield* projectionSnapshotQuery
+              .getThreadShellById(thread.id)
+              .pipe(Effect.map(Option.getOrUndefined));
+            const finalSession = finalThread?.session;
+            if (
+              !finalSession ||
+              !finalBinding ||
+              !canReconcileStoppedRuntimeBinding(finalSession, finalBinding)
+            ) {
+              return;
+            }
+
+            yield* setThreadSession({
+              threadId: thread.id,
+              session: {
+                ...finalSession,
+                status: "stopped",
+                activeTurnId: null,
+                updatedAt: finalBinding.lastSeenAt,
+              },
+              createdAt: finalBinding.lastSeenAt,
+            }).pipe(
+              Effect.tap(() =>
+                Effect.logWarning("provider.session.reconciled-stopped-runtime", {
+                  threadId: thread.id,
+                  previousStatus: finalSession.status,
+                  activeTurnId: finalSession.activeTurnId,
+                  provider: finalBinding.provider,
+                  providerInstanceId: finalBinding.providerInstanceId,
+                  stoppedAt: finalBinding.lastSeenAt,
+                }),
+              ),
+            );
+          });
+        },
+        { concurrency: 1, discard: true },
+      );
+    },
+  );
 
   const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
@@ -1098,6 +1200,13 @@ const make = Effect.gen(function* () {
       }
     });
 
+    yield* reconcileStoppedRuntimeBindings().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider.session.startup-reconciliation-failed", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
     );

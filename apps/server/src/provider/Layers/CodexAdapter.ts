@@ -26,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -70,6 +71,7 @@ const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 const PROVIDER = ProviderDriverKind.make("codex");
+const MAX_TURN_COMPLETION_RECONCILIATION_FAILURES = 3;
 
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -83,6 +85,9 @@ export interface CodexAdapterLiveOptions {
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly turnCompletionRecoveryGraceMs?: number;
+  readonly turnCompletionRecoveryPollMs?: number;
+  readonly turnCompletionRecoveryMaxPollMs?: number;
 }
 
 interface CodexAdapterSessionContext {
@@ -1373,6 +1378,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const turnCompletionRecoveryGraceMs = Math.max(
+    1,
+    options?.turnCompletionRecoveryGraceMs ?? 30_000,
+  );
+  const turnCompletionRecoveryPollMs = Math.max(1, options?.turnCompletionRecoveryPollMs ?? 10_000);
+  const turnCompletionRecoveryMaxPollMs = Math.max(
+    turnCompletionRecoveryPollMs,
+    options?.turnCompletionRecoveryMaxPollMs ?? 60_000,
+  );
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -1447,10 +1461,23 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
 
+        const settledTurnIds = new Set<string>();
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId).filter(
+              (runtimeEvent) => {
+                if (runtimeEvent.type !== "turn.completed") {
+                  return true;
+                }
+                const turnId = String(runtimeEvent.turnId);
+                if (settledTurnIds.has(turnId)) {
+                  return false;
+                }
+                settledTurnIds.add(turnId);
+                return true;
+              },
+            );
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,
@@ -1544,7 +1571,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getCodexServiceTierOptionValue(input.modelSelection)
         : undefined;
-    return yield* session.runtime
+    const turn = yield* session.runtime
       .sendTurn({
         ...(input.input !== undefined ? { input: input.input } : {}),
         ...(input.modelSelection?.instanceId === boundInstanceId
@@ -1560,6 +1587,57 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));
+
+    // Each "active" poll costs a full `thread/read` (there is no lighter
+    // provider read), so the cadence backs off geometrically for legitimately
+    // long turns instead of holding the initial interval.
+    const pollTurnCompletion = (
+      consecutiveFailures = 0,
+      pollDelayMs = turnCompletionRecoveryPollMs,
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const currentSession = sessions.get(input.threadId);
+        if (currentSession !== session || session.stopped) {
+          return;
+        }
+        const outcome = yield* session.runtime
+          .reconcileTurnCompletion(turn.turnId)
+          .pipe(Effect.exit);
+        if (Exit.isFailure(outcome)) {
+          const failureCount = consecutiveFailures + 1;
+          yield* Effect.logWarning("codex.turn-completion.reconciliation-failed", {
+            threadId: input.threadId,
+            turnId: turn.turnId,
+            failureCount,
+            maxFailures: MAX_TURN_COMPLETION_RECONCILIATION_FAILURES,
+            cause: outcome.cause,
+          });
+          if (failureCount >= MAX_TURN_COMPLETION_RECONCILIATION_FAILURES) {
+            yield* Effect.logWarning("codex.turn-completion.reconciliation-abandoned", {
+              threadId: input.threadId,
+              turnId: turn.turnId,
+              failureCount,
+            });
+            return;
+          }
+          yield* Effect.sleep(Duration.millis(pollDelayMs));
+          return yield* pollTurnCompletion(failureCount, pollDelayMs);
+        }
+        if (outcome.value !== "active") {
+          return;
+        }
+        yield* Effect.sleep(Duration.millis(pollDelayMs));
+        return yield* pollTurnCompletion(
+          0,
+          Math.min(pollDelayMs * 2, turnCompletionRecoveryMaxPollMs),
+        );
+      });
+
+    yield* Effect.sleep(Duration.millis(turnCompletionRecoveryGraceMs)).pipe(
+      Effect.andThen(pollTurnCompletion()),
+      Effect.forkIn(session.scope),
+    );
+    return turn;
   });
 
   const requireSession = Effect.fn("requireSession")(function* (threadId: ThreadId) {

@@ -123,12 +123,17 @@ export interface CodexSessionRuntimeSendTurnInput {
 export interface CodexThreadTurnSnapshot {
   readonly id: TurnId;
   readonly items: ReadonlyArray<CodexThreadItem>;
+  readonly status: EffectCodexSchema.V2ThreadReadResponse__TurnStatus;
+  readonly completedAt?: number | null;
+  readonly errorMessage?: string;
 }
 
 export interface CodexThreadSnapshot {
   readonly threadId: string;
   readonly turns: ReadonlyArray<CodexThreadTurnSnapshot>;
 }
+
+export type CodexTurnCompletionReconciliation = "active" | "settled" | "obsolete";
 
 export interface CodexSessionRuntimeShape {
   readonly start: () => Effect.Effect<ProviderSession, CodexSessionRuntimeError>;
@@ -138,6 +143,9 @@ export interface CodexSessionRuntimeShape {
   ) => Effect.Effect<ProviderTurnStartResult, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
+  readonly reconcileTurnCompletion: (
+    turnId: TurnId,
+  ) => Effect.Effect<CodexTurnCompletionReconciliation, CodexSessionRuntimeError>;
   readonly rollbackThread: (
     numTurns: number,
   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
@@ -695,6 +703,25 @@ function updateSession(
   });
 }
 
+export function applyTurnCompletionToSession(input: {
+  readonly session: ProviderSession;
+  readonly turnId: TurnId;
+  readonly status: EffectCodexSchema.V2ThreadReadResponse__TurnStatus;
+  readonly errorMessage?: string;
+  readonly updatedAt: string;
+}): ProviderSession {
+  if (input.status === "inProgress" || input.session.activeTurnId !== input.turnId) {
+    return input.session;
+  }
+  return {
+    ...input.session,
+    status: input.status === "failed" ? "error" : "ready",
+    activeTurnId: undefined,
+    ...(input.errorMessage ? { lastError: input.errorMessage } : {}),
+    updatedAt: input.updatedAt,
+  };
+}
+
 function parseThreadSnapshot(
   response: EffectCodexSchema.V2ThreadReadResponse | EffectCodexSchema.V2ThreadRollbackResponse,
 ): CodexThreadSnapshot {
@@ -703,6 +730,9 @@ function parseThreadSnapshot(
     turns: response.thread.turns.map((turn) => ({
       id: TurnId.make(turn.id),
       items: turn.items,
+      status: turn.status,
+      ...(turn.completedAt !== undefined ? { completedAt: turn.completedAt } : {}),
+      ...(turn.error?.message ? { errorMessage: turn.error.message } : {}),
     })),
   };
 }
@@ -930,20 +960,27 @@ export const makeCodexSessionRuntime = (
 
     yield* client.handleServerNotification("turn/completed", (payload) =>
       currentSessionProviderThreadId.pipe(
-        Effect.flatMap((providerThreadId) => {
-          if (providerThreadId && payload.threadId !== providerThreadId) {
-            return Effect.void;
-          }
-          const lastError =
-            payload.turn.status === "failed" && "error" in payload.turn && payload.turn.error
-              ? payload.turn.error.message
-              : undefined;
-          return updateSession(sessionRef, {
-            status: payload.turn.status === "failed" ? "error" : "ready",
-            activeTurnId: undefined,
-            ...(lastError ? { lastError } : {}),
-          });
-        }),
+        Effect.flatMap((providerThreadId) =>
+          Effect.gen(function* () {
+            if (providerThreadId && payload.threadId !== providerThreadId) {
+              return;
+            }
+            const errorMessage =
+              payload.turn.status === "failed" && "error" in payload.turn && payload.turn.error
+                ? payload.turn.error.message
+                : undefined;
+            const updatedAt = yield* nowIso;
+            yield* Ref.update(sessionRef, (session) =>
+              applyTurnCompletionToSession({
+                session,
+                turnId: TurnId.make(payload.turn.id),
+                status: payload.turn.status,
+                ...(errorMessage ? { errorMessage } : {}),
+                updatedAt,
+              }),
+            );
+          }),
+        ),
       ),
     );
 
@@ -1253,6 +1290,56 @@ export const makeCodexSessionRuntime = (
       return providerThreadId;
     });
 
+    const reconcileTurnCompletion: CodexSessionRuntimeShape["reconcileTurnCompletion"] = Effect.fn(
+      "CodexSessionRuntime.reconcileTurnCompletion",
+    )(function* (turnId) {
+      const sessionBeforeRead = yield* Ref.get(sessionRef);
+      if (sessionBeforeRead.status !== "running" || sessionBeforeRead.activeTurnId !== turnId) {
+        return "obsolete";
+      }
+
+      const providerThreadId = yield* readProviderThreadId;
+      const response = yield* client.request("thread/read", {
+        threadId: providerThreadId,
+        includeTurns: true,
+      });
+      const turn = response.thread.turns.find((candidate) => candidate.id === turnId);
+      if (!turn || turn.status === "inProgress") {
+        return "active";
+      }
+
+      // Recovery settles only the turn's terminal state. Item notifications
+      // missed alongside the completion are not replayed, so content produced
+      // during the outage may be absent from the projection.
+      yield* emitEvent({
+        kind: "notification",
+        threadId: options.threadId,
+        method: "turn/completed",
+        turnId,
+        payload: {
+          threadId: providerThreadId,
+          turn,
+        },
+      });
+      const recoveredAt = yield* nowIso;
+      yield* Ref.update(sessionRef, (session) =>
+        applyTurnCompletionToSession({
+          session,
+          turnId,
+          status: turn.status,
+          ...(turn.error?.message ? { errorMessage: turn.error.message } : {}),
+          updatedAt: recoveredAt,
+        }),
+      );
+      yield* Effect.logWarning("codex.turn-completion.recovered", {
+        threadId: options.threadId,
+        providerThreadId,
+        turnId,
+        turnStatus: turn.status,
+      });
+      return "settled";
+    });
+
     const close = Effect.gen(function* () {
       const alreadyClosed = yield* Ref.getAndSet(closedRef, true);
       if (alreadyClosed) {
@@ -1348,6 +1435,7 @@ export const makeCodexSessionRuntime = (
         });
         return parseThreadSnapshot(response);
       }),
+      reconcileTurnCompletion,
       rollbackThread: (numTurns) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
