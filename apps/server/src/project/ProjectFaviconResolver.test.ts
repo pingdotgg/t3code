@@ -133,6 +133,53 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect("resolves favicon files from monorepo apps in stable order", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "apps/zeta/favicon.svg", "<svg>zeta</svg>");
+        yield* writeTextFile(cwd, "apps/alpha/public/favicon.png", "alpha");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("apps/alpha/public/favicon.png");
+      }),
+    );
+
+    it.effect("resolves icon hrefs from monorepo app source files", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "apps/dashboard/index.html",
+          '<link rel="icon" href="/brand/logo.svg">',
+        );
+        yield* writeTextFile(cwd, "apps/dashboard/public/brand/logo.svg", "<svg>brand</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("apps/dashboard/public/brand/logo.svg");
+      }),
+    );
+
+    it.effect("keeps root favicon metadata ahead of monorepo candidates", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="/brand.svg">');
+        yield* writeTextFile(cwd, "public/brand.svg", "<svg>root</svg>");
+        yield* writeTextFile(cwd, "apps/dashboard/favicon.svg", "<svg>app</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("public/brand.svg");
+      }),
+    );
+
     it.effect("returns null when no icon is present", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;

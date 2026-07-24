@@ -91,7 +91,22 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = { readonly kind: "file"; readonly path: string };
+export type ResolvedAsset =
+  | { readonly kind: "file"; readonly path: string }
+  | {
+      readonly kind: "text";
+      readonly body: string;
+      readonly contentType: "image/svg+xml";
+    };
+
+export function extractSvgDocument(source: string): string | null {
+  const documentMatch = source.match(/<svg\b[\s\S]*<\/svg\s*>/i);
+  if (documentMatch) {
+    return documentMatch[0];
+  }
+  const selfClosingMatch = source.match(/<svg\b[^>]*\/\s*>/i);
+  return selfClosingMatch?.[0] ?? null;
+}
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -394,7 +409,30 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       workspaceRoot: claims.workspaceRoot,
       relativePath: claims.relativePath,
     });
-    return faviconPath ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset) : null;
+    if (!faviconPath) return null;
+    const path = yield* Path.Path;
+    if (path.extname(faviconPath).toLowerCase() !== ".svg") {
+      return { kind: "file", path: faviconPath } satisfies ResolvedAsset;
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    const source = yield* fileSystem.readFileString(faviconPath).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to read project SVG favicon.", {
+          path: faviconPath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    if (source === null) return null;
+    const svg = extractSvgDocument(source);
+    return svg
+      ? ({
+          kind: "text",
+          body: svg,
+          contentType: "image/svg+xml",
+        } satisfies ResolvedAsset)
+      : ({ kind: "file", path: faviconPath } satisfies ResolvedAsset);
   }
 
   const decodedPath = decodeRelativePath(relativePath);
