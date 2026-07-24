@@ -22,7 +22,7 @@ import {
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
-import { RunExecutionServiceV2 } from "./RunExecutionService.ts";
+import { canRouteRelatedSubagent, RunExecutionServiceV2 } from "./RunExecutionService.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 
 export class ProviderTurnStartError extends Schema.TaggedErrorClass<ProviderTurnStartError>()(
@@ -403,6 +403,9 @@ export const layer: Layer.Layer<
       if (!runningWrite.committed) {
         return;
       }
+      const routableSubagents = projection.subagents.filter((subagent) =>
+        canRouteRelatedSubagent(subagent.status),
+      );
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
@@ -414,10 +417,10 @@ export const layer: Layer.Layer<
         providerThread: runningProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,
-        relatedThreadIds: projection.subagents.flatMap((subagent) =>
+        relatedThreadIds: routableSubagents.flatMap((subagent) =>
           subagent.childThreadId === null ? [] : [subagent.childThreadId],
         ),
-        relatedProviderThreadIds: projection.subagents.flatMap((subagent) =>
+        relatedProviderThreadIds: routableSubagents.flatMap((subagent) =>
           subagent.providerThreadId === null ? [] : [subagent.providerThreadId],
         ),
         providerTurnOrdinal:
