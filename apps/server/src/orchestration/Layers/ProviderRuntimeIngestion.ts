@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationMessage,
@@ -60,7 +61,11 @@ const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
+const BUFFERED_REASONING_TEXT_BY_TURN_CACHE_CAPACITY = 10_000;
+const BUFFERED_REASONING_TEXT_BY_TURN_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+/** Cap reasoning activity payload so a long Grok thought stream cannot bloat SQLite. */
+const MAX_REASONING_ACTIVITY_CHARS = 8_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 // tool.updated / task.progress / context-window.updated are full-snapshot
 // latest-wins payloads that stream at token-ish rates. task.updated is a
@@ -113,6 +118,9 @@ function activityCoalesceKey(
       const taskId = (activity.payload as { readonly taskId?: string } | undefined)?.taskId;
       return taskId ? `task:${activity.kind}:${taskId}` : null;
     }
+    case "turn.reasoning":
+      // One live reasoning row per turn; successive deltas replace in place.
+      return event.turnId ? `reasoning:${event.turnId}` : `reasoning:${activity.id}`;
     case "context-window.updated":
       return `ctx:${event.turnId ?? "thread"}`;
     default:
@@ -312,6 +320,74 @@ function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string
 
 function hasRenderableAssistantText(text: string | undefined): boolean {
   return (text?.trim().length ?? 0) > 0;
+}
+
+function hasRenderableAssistantContentForTurn(
+  messages: ReadonlyArray<OrchestrationMessage>,
+  turnId: TurnId,
+): boolean {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (
+      message?.role === "assistant" &&
+      message.turnId === turnId &&
+      hasRenderableAssistantText(message.text)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function countToolActivitiesForTurn(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  turnId: TurnId,
+): number {
+  // Prefer completed tool rows; fall back to started when a turn ends mid-call.
+  let completed = 0;
+  let started = 0;
+  for (let index = 0; index < activities.length; index += 1) {
+    const activity = activities[index];
+    if (!activity || activity.turnId !== turnId) {
+      continue;
+    }
+    if (activity.kind === "tool.completed") {
+      completed += 1;
+    } else if (activity.kind === "tool.started") {
+      started += 1;
+    }
+  }
+  return completed > 0 ? completed : started;
+}
+
+function fallbackCompletionText(input: {
+  readonly turnState: "completed" | "failed" | "interrupted" | "cancelled";
+  readonly stopReason: string | null | undefined;
+  readonly errorMessage: string | undefined;
+  readonly toolCallCount: number;
+}): string {
+  const { turnState, stopReason, errorMessage, toolCallCount } = input;
+  if (turnState === "failed") {
+    return `Task failed: ${errorMessage?.trim() || "Turn failed"}`;
+  }
+  if (turnState === "cancelled" || turnState === "interrupted") {
+    return toolCallCount > 0
+      ? `Task cancelled after executing ${toolCallCount} tool(s).`
+      : "Task cancelled.";
+  }
+  if (stopReason === "max_tokens") {
+    return "Response truncated due to length limit.";
+  }
+  if (toolCallCount > 0) {
+    return `Completed task (executed ${toolCallCount} tool call${toolCallCount !== 1 ? "s" : ""}).`;
+  }
+  return "Task completed.";
+}
+
+function reasoningActivityId(threadId: ThreadId, turnId: TurnId | undefined): EventId {
+  return EventId.make(
+    turnId !== undefined ? `reasoning:${threadId}:${turnId}` : `reasoning:${threadId}:no-turn`,
+  );
 }
 
 function proposedPlanIdForTurn(threadId: ThreadId, turnId: TurnId): string {
@@ -1042,6 +1118,13 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
 
+  /** Accumulated reasoning_text / reasoning_summary_text per turn for live activity rows. */
+  const bufferedReasoningTextByTurnKey = yield* Cache.make<string, string>({
+    capacity: BUFFERED_REASONING_TEXT_BY_TURN_CACHE_CAPACITY,
+    timeToLive: BUFFERED_REASONING_TEXT_BY_TURN_TTL,
+    lookup: () => Effect.succeed(""),
+  });
+
   const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
       .getThreadDetailById(threadId)
@@ -1231,8 +1314,107 @@ const make = Effect.gen(function* () {
   const clearBufferedProposedPlan = (planId: string) =>
     Cache.invalidate(bufferedProposedPlanById, planId);
 
+  const appendBufferedReasoningText = (
+    threadId: ThreadId,
+    turnId: TurnId | undefined,
+    delta: string,
+  ) => {
+    const key = turnId !== undefined ? providerTurnKey(threadId, turnId) : `${threadId}:no-turn`;
+    return Cache.getOption(bufferedReasoningTextByTurnKey, key).pipe(
+      Effect.flatMap((existingText) =>
+        Effect.gen(function* () {
+          const nextText = Option.match(existingText, {
+            onNone: () => delta,
+            onSome: (text) => `${text}${delta}`,
+          });
+          // Keep the latest window when the stream exceeds the activity cap.
+          const stored =
+            nextText.length <= MAX_REASONING_ACTIVITY_CHARS
+              ? nextText
+              : nextText.slice(nextText.length - MAX_REASONING_ACTIVITY_CHARS);
+          yield* Cache.set(bufferedReasoningTextByTurnKey, key, stored);
+          return stored;
+        }),
+      ),
+    );
+  };
+
+  const clearBufferedReasoningText = (threadId: ThreadId, turnId: TurnId | undefined) => {
+    const key = turnId !== undefined ? providerTurnKey(threadId, turnId) : `${threadId}:no-turn`;
+    return Cache.invalidate(bufferedReasoningTextByTurnKey, key);
+  };
+
   const clearAssistantMessageState = (messageId: MessageId) =>
     clearBufferedAssistantText(messageId);
+
+  const generateFallbackCompletionMessage = (input: {
+    event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>;
+    threadId: ThreadId;
+    turnId: TurnId;
+    detailedThread: OrchestrationThread | null;
+    createdAt: string;
+  }) =>
+    Effect.gen(function* () {
+      const turnState = normalizeRuntimeTurnState(input.event.payload.state);
+      const stopReason = input.event.payload.stopReason;
+      const errorMessage = input.event.payload.errorMessage;
+      const toolCallCount = countToolActivitiesForTurn(
+        input.detailedThread?.activities ?? [],
+        input.turnId,
+      );
+      const fallbackText = fallbackCompletionText({
+        turnState,
+        stopReason,
+        errorMessage,
+        toolCallCount,
+      });
+
+      const messageId = MessageId.make(`assistant:fallback:${input.turnId}`);
+      yield* orchestrationEngine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: yield* providerCommandId(input.event, "fallback-completion-message"),
+        threadId: input.threadId,
+        messageId,
+        delta: fallbackText,
+        turnId: input.turnId,
+        createdAt: input.createdAt,
+      });
+      yield* orchestrationEngine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: yield* providerCommandId(input.event, "fallback-completion-finalize"),
+        threadId: input.threadId,
+        messageId,
+        turnId: input.turnId,
+        createdAt: input.createdAt,
+      });
+      yield* orchestrationEngine.dispatch({
+        type: "thread.activity.append",
+        commandId: yield* providerCommandId(input.event, "fallback-message-activity"),
+        threadId: input.threadId,
+        createdAt: input.createdAt,
+        activity: {
+          id: EventId.make(`fallback:${input.turnId}`),
+          tone: "info",
+          kind: "task.completed",
+          summary: "Generated completion summary",
+          payload: {
+            detail:
+              "No assistant text was received from provider; generated summary based on tool activity.",
+            toolCallCount,
+            ...(stopReason !== undefined && stopReason !== null ? { stopReason } : {}),
+          },
+          turnId: input.turnId,
+          createdAt: input.createdAt,
+        },
+      });
+      yield* Effect.logInfo("Generated fallback completion message", {
+        threadId: input.threadId,
+        turnId: input.turnId,
+        provider: input.event.provider,
+        stopReason,
+        toolCallCount,
+      });
+    });
 
   const flushBufferedAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -1466,6 +1648,7 @@ const make = Effect.gen(function* () {
       const turnKeys = Array.from(yield* Cache.keys(turnMessageIdsByTurnKey));
       const assistantSegmentKeys = Array.from(yield* Cache.keys(assistantSegmentStateByTurnKey));
       const proposedPlanKeys = Array.from(yield* Cache.keys(bufferedProposedPlanById));
+      const reasoningKeys = Array.from(yield* Cache.keys(bufferedReasoningTextByTurnKey));
       yield* Effect.forEach(
         turnKeys,
         (key) =>
@@ -1498,6 +1681,14 @@ const make = Effect.gen(function* () {
         (key) =>
           key.startsWith(proposedPlanPrefix)
             ? Cache.invalidate(bufferedProposedPlanById, key)
+            : Effect.void,
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      yield* Effect.forEach(
+        reasoningKeys,
+        (key) =>
+          key.startsWith(prefix)
+            ? Cache.invalidate(bufferedReasoningTextByTurnKey, key)
             : Effect.void,
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
@@ -1749,6 +1940,12 @@ const make = Effect.gen(function* () {
         event.type === "content.delta" && event.payload.streamKind === "assistant_text"
           ? event.payload.delta
           : undefined;
+      const reasoningDelta =
+        event.type === "content.delta" &&
+        (event.payload.streamKind === "reasoning_text" ||
+          event.payload.streamKind === "reasoning_summary_text")
+          ? event.payload.delta
+          : undefined;
       const proposedPlanDelta =
         event.type === "turn.proposed.delta" ? event.payload.delta : undefined;
 
@@ -1789,6 +1986,49 @@ const make = Effect.gen(function* () {
             delta: assistantDelta,
             ...(turnId ? { turnId } : {}),
             createdAt: now,
+          });
+        }
+      }
+
+      if (reasoningDelta && reasoningDelta.length > 0) {
+        const turnId = toTurnId(event.turnId);
+        const accumulated = yield* appendBufferedReasoningText(thread.id, turnId, reasoningDelta);
+        // Project as a coalesced activity so mac/mobile can show live thinking
+        // without inventing a new orchestration message role.
+        const reasoningActivity: OrchestrationThreadActivity = {
+          id: reasoningActivityId(thread.id, turnId),
+          createdAt: now,
+          tone: "info",
+          kind: "turn.reasoning",
+          summary: "Reasoning",
+          payload: {
+            detail: accumulated,
+            streamKind:
+              event.type === "content.delta" ? event.payload.streamKind : "reasoning_text",
+          },
+          turnId: turnId ?? null,
+        };
+        const pendingKey = activityCoalesceKey(event, reasoningActivity);
+        if (pendingKey !== null) {
+          const threadPending =
+            pendingActivities.get(thread.id) ?? new Map<string, PendingActivity>();
+          const incoming: PendingActivity = {
+            threadId: thread.id,
+            activity: reasoningActivity,
+            event,
+          };
+          const existing = threadPending.get(pendingKey);
+          threadPending.set(
+            pendingKey,
+            existing !== undefined ? mergePendingActivity(existing, incoming) : incoming,
+          );
+          pendingActivities.set(thread.id, threadPending);
+        } else {
+          yield* flushPendingActivities(thread.id);
+          yield* dispatchActivity({
+            threadId: thread.id,
+            activity: reasoningActivity,
+            event,
           });
         }
       }
@@ -1932,6 +2172,10 @@ const make = Effect.gen(function* () {
         const proposedPlans = detailedThread?.proposedPlans ?? [];
         const turnId = toTurnId(event.turnId);
         if (turnId) {
+          // Flush any coalesced reasoning row before turn-final work so the
+          // transcript reflects thinking that arrived with the last tokens.
+          yield* flushPendingActivities(thread.id);
+
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
             assistantMessageIds,
@@ -1950,6 +2194,7 @@ const make = Effect.gen(function* () {
           ).pipe(Effect.asVoid);
           yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
+          yield* clearBufferedReasoningText(thread.id, turnId);
 
           yield* finalizeBufferedProposedPlan({
             event,
@@ -1959,6 +2204,24 @@ const make = Effect.gen(function* () {
             turnId,
             updatedAt: now,
           });
+
+          // Grok (and other providers) can complete with only tool activity or
+          // late-arriving content that never projected. Surface a synthetic
+          // assistant summary so agent_wait and the UI are not empty.
+          // Drop the per-event detail cache so we observe messages written by
+          // the finalizers above.
+          loadedThreadDetail = undefined;
+          const refreshedThread = yield* getLoadedThreadDetail();
+          const messagesAfter = refreshedThread?.messages ?? messages;
+          if (!hasRenderableAssistantContentForTurn(messagesAfter, turnId)) {
+            yield* generateFallbackCompletionMessage({
+              event,
+              threadId: thread.id,
+              turnId,
+              detailedThread: refreshedThread ?? detailedThread,
+              createdAt: now,
+            });
+          }
         }
       }
 

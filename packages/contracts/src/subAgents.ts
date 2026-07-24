@@ -31,6 +31,42 @@ export const SubAgentStatus = Schema.Literals(["running", "completed", "interrup
 export type SubAgentStatus = typeof SubAgentStatus.Type;
 
 /**
+ * One point-in-time snapshot of a sub-agent's provider/model configuration.
+ * Used to separate what the caller asked for from what policy resolved and
+ * (optionally) what the provider session reports as running.
+ */
+export const SubAgentConfigurationSnapshot = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  model: Schema.String,
+  effort: Schema.optional(Schema.String),
+  options: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        value: Schema.Unknown,
+      }),
+    ),
+  ),
+});
+export type SubAgentConfigurationSnapshot = typeof SubAgentConfigurationSnapshot.Type;
+
+/**
+ * Requested → resolved → actual configuration trail for diagnostics when a
+ * sub-agent ends up on a different model/effort than the caller expected.
+ */
+export const SubAgentConfigurationHistory = Schema.Struct({
+  /** What the caller explicitly requested (or advisor executor override). */
+  requested: SubAgentConfigurationSnapshot,
+  /** After policy enforcement and fallback resolution. */
+  resolved: SubAgentConfigurationSnapshot,
+  /** What the provider session actually reports running, when known. */
+  actual: Schema.optional(SubAgentConfigurationSnapshot),
+  /** Policy notices explaining any differences. */
+  policyNotices: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type SubAgentConfigurationHistory = typeof SubAgentConfigurationHistory.Type;
+
+/**
  * Strip C0/C1 control characters (including newlines) and collapse internal
  * whitespace so agent names are safe for thread titles like `Agent: <name>`.
  */
@@ -83,6 +119,8 @@ export const SubAgentSpawnedSummary = Schema.Struct({
    * status matches the operation (see tool errors for invalid-status).
    */
   status: SubAgentStatus,
+  /** Optional requested/resolved/actual configuration trail for diagnostics. */
+  configuration: Schema.optional(SubAgentConfigurationHistory),
 });
 export type SubAgentSpawnedSummary = typeof SubAgentSpawnedSummary.Type;
 
@@ -133,6 +171,8 @@ export const SubAgentSpawnResult = Schema.Struct({
   name: Schema.optional(SubAgentName),
   status: SubAgentStatus,
   policyNotices: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Requested vs resolved (and optional actual) configuration trail. */
+  configuration: Schema.optional(SubAgentConfigurationHistory),
 });
 export type SubAgentSpawnResult = typeof SubAgentSpawnResult.Type;
 

@@ -48,6 +48,11 @@ public enum ActivityKind {
     /// Payload is `SessionExitedActivityPayload`; only emitted when a
     /// `stderrTail` was captured (quiet exits produce no activity).
     public static let sessionExited = "session.exited"
+    /// Tone `.info`: accumulated provider reasoning / thought stream for the
+    /// active turn (`reasoning_text` / `reasoning_summary_text` content.delta).
+    /// Payload carries `{ detail: String }` with the full text so far; rows
+    /// share a stable id per turn so successive deltas replace in place.
+    public static let turnReasoning = "turn.reasoning"
 }
 
 // MARK: - session.health

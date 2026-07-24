@@ -245,6 +245,11 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
     expect(result.model).toBe("default-model");
     expect(result.title).toBe("Agent: Review the auth module for bugs.");
     expect(result.name).toBeUndefined();
+    expect(result.configuration?.requested.providerInstanceId).toBe("codex");
+    expect(result.configuration?.requested.model).toBe("default-model");
+    expect(result.configuration?.resolved.providerInstanceId).toBe("codex");
+    expect(result.configuration?.resolved.model).toBe("default-model");
+    expect(result.configuration?.policyNotices).toEqual(result.policyNotices);
 
     expect(harness.dispatched).toHaveLength(3);
     const [create, turnStart, activity] = harness.dispatched;
@@ -487,6 +492,7 @@ it.effect("names a spawned agent and surfaces it on agent_list", () =>
         providerInstanceId: "codex",
         model: "default-model",
         status: "running",
+        configuration: result.configuration,
       },
     ]);
 
@@ -1212,16 +1218,16 @@ it.effect("lists a completed agent with its terminal status", () =>
     expect(waited.status).toBe("completed");
 
     const listed = yield* coordinator.list(makeScope());
-    expect(listed.agents).toEqual([
-      {
-        threadId: spawned.threadId,
-        name: "finisher",
-        title: "Agent: finisher",
-        providerInstanceId: "codex",
-        model: "default-model",
-        status: "completed",
-      },
-    ]);
+    expect(listed.agents).toHaveLength(1);
+    expect(listed.agents[0]).toMatchObject({
+      threadId: spawned.threadId,
+      name: "finisher",
+      title: "Agent: finisher",
+      providerInstanceId: "codex",
+      model: "default-model",
+      status: "completed",
+    });
+    expect(listed.agents[0]?.configuration?.resolved.model).toBe("default-model");
   }),
 );
 
