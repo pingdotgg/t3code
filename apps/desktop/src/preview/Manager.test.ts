@@ -552,14 +552,19 @@ describe("PreviewManager", () => {
           .closeTab("tab_close_register_race")
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(closeCleanupPaused);
+        const recreateFiber = yield* manager
+          .createTab("tab_close_register_race")
+          .pipe(Effect.forkChild({ startImmediately: true }));
         const registrationFiber = yield* manager
           .registerWebview("tab_close_register_race", 43)
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Effect.yieldNow;
         expect(replacementListenerSpies.on).not.toHaveBeenCalled();
+        yield* manager.closeTab("tab_close_register_race");
         const recordingExit = yield* Effect.exit(manager.startRecording("tab_close_register_race"));
         yield* Deferred.succeed(continueCloseCleanup, undefined);
         yield* Fiber.join(closeFiber);
+        const recreated = yield* Fiber.join(recreateFiber);
         const registrationExit = yield* Fiber.await(registrationFiber);
 
         for (const exit of [registrationExit, recordingExit]) {
@@ -574,6 +579,7 @@ describe("PreviewManager", () => {
         expect(replacementListenerSpies.off).not.toHaveBeenCalled();
         expect(replacementListenerSpies.ipc.off).not.toHaveBeenCalled();
         expect(capturePage).toHaveBeenCalledOnce();
+        expect(recreated.webContentsId).toBeNull();
       }),
     ),
   );

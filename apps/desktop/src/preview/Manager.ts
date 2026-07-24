@@ -475,6 +475,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     string,
     { readonly semaphore: Semaphore.Semaphore; users: number }
   >();
+  const tabLifecycleGenerations = new Map<string, number>();
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -1347,86 +1348,105 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
   });
 
-  const createTab = Effect.fn("PreviewManager.createTab")(function* (tabId: string) {
+  const createTabUnlocked = Effect.fn("PreviewManager.createTabUnlocked")(function* (
+    tabId: string,
+  ) {
     const updatedAt = yield* currentIso;
-    const state = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
-      const existing = tabs.get(tabId);
-      if (existing) return [existing, tabs] as const;
-      const initial: PreviewTabState = {
-        tabId,
-        webContentsId: null,
-        navStatus: { kind: "Idle" },
-        canGoBack: false,
-        canGoForward: false,
-        zoomFactor: DEFAULT_ZOOM_FACTOR,
-        pictureInPicture: false,
-        colorScheme: "system",
-        controller: "none",
-        updatedAt,
-      };
-      return [
-        initial,
-        replaceMap(tabs, (copy) => {
-          copy.set(tabId, initial);
-        }),
-      ] as const;
-    });
-    yield* emit(tabId, state);
-    return state;
+    const result = yield* SynchronizedRef.modify(
+      tabsRef,
+      (
+        tabs,
+      ): readonly [
+        { readonly state: PreviewTabState; readonly created: boolean },
+        ReadonlyMap<string, PreviewTabState>,
+      ] => {
+        const existing = tabs.get(tabId);
+        if (existing) return [{ state: existing, created: false }, tabs] as const;
+        const initial: PreviewTabState = {
+          tabId,
+          webContentsId: null,
+          navStatus: { kind: "Idle" },
+          canGoBack: false,
+          canGoForward: false,
+          zoomFactor: DEFAULT_ZOOM_FACTOR,
+          pictureInPicture: false,
+          colorScheme: "system",
+          controller: "none",
+          updatedAt,
+        };
+        return [
+          { state: initial, created: true },
+          replaceMap(tabs, (copy) => {
+            copy.set(tabId, initial);
+          }),
+        ] as const;
+      },
+    );
+    if (result.created) {
+      tabLifecycleGenerations.set(tabId, (tabLifecycleGenerations.get(tabId) ?? 0) + 1);
+    }
+    yield* emit(tabId, result.state);
+    return result.state;
+  });
+
+  const createTab = Effect.fn("PreviewManager.createTab")(function* (tabId: string) {
+    return yield* withTabLifecycleLock(tabId, createTabUnlocked(tabId));
   });
 
   const closeTabUnlocked = Effect.fn("PreviewManager.closeTabUnlocked")(function* (tabId: string) {
+    if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) return;
+    yield* Effect.all(
+      [
+        cancelPickElement(tabId),
+        closePictureInPicture(tabId),
+        stopFrameCapture(tabId, "recording"),
+      ],
+      {
+        concurrency: 3,
+        discard: true,
+      },
+    );
+    const tab = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+      const current = tabs.get(tabId);
+      if (!current) return [Option.none<PreviewTabState>(), tabs] as const;
+      return [
+        Option.some(current),
+        replaceMap(tabs, (copy) => {
+          copy.delete(tabId);
+        }),
+      ] as const;
+    });
+    if (Option.isNone(tab)) return;
+    const closedTab = tab.value;
+    if (closedTab.webContentsId != null) {
+      yield* Effect.all(
+        [detachControlSession(closedTab.webContentsId), detachListeners(closedTab.webContentsId)],
+        { concurrency: 2, discard: true },
+      );
+    }
+    const updatedAt = yield* currentIso;
+    const closed: PreviewTabState = {
+      ...closedTab,
+      webContentsId: null,
+      navStatus: { kind: "Idle" },
+      canGoBack: false,
+      canGoForward: false,
+      zoomFactor: DEFAULT_ZOOM_FACTOR,
+      pictureInPicture: false,
+      colorScheme: "system",
+      controller: "none",
+      updatedAt,
+    };
+    yield* emit(tabId, closed);
+  });
+
+  const closeTab = Effect.fn("PreviewManager.closeTab")(function* (tabId: string) {
     const claimed = yield* Ref.modify(closingTabIdsRef, (closingTabIds) => {
       if (closingTabIds.has(tabId)) return [false, closingTabIds] as const;
       return [true, new Set([...closingTabIds, tabId])] as const;
     });
     if (!claimed) return;
-    return yield* Effect.gen(function* () {
-      if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) return;
-      yield* Effect.all(
-        [
-          cancelPickElement(tabId),
-          closePictureInPicture(tabId),
-          stopFrameCapture(tabId, "recording"),
-        ],
-        {
-          concurrency: 3,
-          discard: true,
-        },
-      );
-      const tab = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
-        const current = tabs.get(tabId);
-        if (!current) return [Option.none<PreviewTabState>(), tabs] as const;
-        return [
-          Option.some(current),
-          replaceMap(tabs, (copy) => {
-            copy.delete(tabId);
-          }),
-        ] as const;
-      });
-      if (Option.isNone(tab)) return;
-      const closedTab = tab.value;
-      if (closedTab.webContentsId != null) {
-        yield* Effect.all(
-          [detachControlSession(closedTab.webContentsId), detachListeners(closedTab.webContentsId)],
-          { concurrency: 2, discard: true },
-        );
-      }
-      const updatedAt = yield* currentIso;
-      const closed: PreviewTabState = {
-        ...closedTab,
-        webContentsId: null,
-        navStatus: { kind: "Idle" },
-        canGoBack: false,
-        canGoForward: false,
-        zoomFactor: DEFAULT_ZOOM_FACTOR,
-        pictureInPicture: false,
-        colorScheme: "system",
-        controller: "none",
-        updatedAt,
-      };
-      yield* emit(tabId, closed);
-    }).pipe(
+    return yield* withTabLifecycleLock(tabId, closeTabUnlocked(tabId)).pipe(
       Effect.ensuring(
         Ref.update(closingTabIdsRef, (closingTabIds) => {
           if (!closingTabIds.has(tabId)) return closingTabIds;
@@ -1438,16 +1458,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
-  const closeTab = Effect.fn("PreviewManager.closeTab")(function* (tabId: string) {
-    return yield* withTabLifecycleLock(tabId, closeTabUnlocked(tabId));
-  });
-
   const registerWebviewUnlocked = Effect.fn("PreviewManager.registerWebviewUnlocked")(function* (
     tabId: string,
     webContentsId: number,
+    expectedGeneration: number | undefined,
   ) {
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-    if (!tab || (yield* Ref.get(closingTabIdsRef)).has(tabId)) {
+    if (
+      !tab ||
+      tabLifecycleGenerations.get(tabId) !== expectedGeneration ||
+      (yield* Ref.get(closingTabIdsRef)).has(tabId)
+    ) {
       return yield* new PreviewTabNotFoundError({ tabId });
     }
     const wc = webContents.fromId(webContentsId);
@@ -1501,7 +1522,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const registration = yield* SynchronizedRef.modifyEffect(tabsRef, (tabs) =>
       Effect.gen(function* () {
         const current = tabs.get(tabId);
-        if (!current || (yield* Ref.get(closingTabIdsRef)).has(tabId)) {
+        if (
+          !current ||
+          tabLifecycleGenerations.get(tabId) !== expectedGeneration ||
+          (yield* Ref.get(closingTabIdsRef)).has(tabId)
+        ) {
           return [
             Option.none<{ readonly state: PreviewTabState; readonly pendingUrl: string | null }>(),
             tabs,
@@ -1560,7 +1585,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     webContentsId: number,
   ) {
-    return yield* withTabLifecycleLock(tabId, registerWebviewUnlocked(tabId, webContentsId));
+    const expectedGeneration = tabLifecycleGenerations.get(tabId);
+    return yield* withTabLifecycleLock(
+      tabId,
+      registerWebviewUnlocked(tabId, webContentsId, expectedGeneration),
+    );
   });
 
   const navigate = Effect.fn("PreviewManager.navigate")(function* (tabId: string, rawUrl: string) {
