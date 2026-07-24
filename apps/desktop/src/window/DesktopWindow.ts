@@ -13,6 +13,7 @@ import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
+import * as ElectronSpelling from "../electron/ElectronSpelling.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
@@ -46,6 +47,7 @@ type DesktopWindowRuntimeServices =
   | DesktopAppSettings.DesktopAppSettings
   | ElectronMenu.ElectronMenu
   | ElectronShell.ElectronShell
+  | ElectronSpelling.ElectronSpelling
   | ElectronTheme.ElectronTheme
   | ElectronWindow.ElectronWindow
   | PreviewManager.PreviewManager;
@@ -242,6 +244,7 @@ export const make = Effect.gen(function* () {
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const electronShell = yield* ElectronShell.ElectronShell;
+  const electronSpelling = yield* ElectronSpelling.ElectronSpelling;
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
@@ -443,52 +446,78 @@ export const make = Effect.gen(function* () {
       webPreferences.contextIsolation = false;
     });
 
+    let contextMenuRequestVersion = 0;
     window.webContents.on("context-menu", (event, params) => {
       event.preventDefault();
+      const requestVersion = ++contextMenuRequestVersion;
 
-      const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
+      void runPromise(
+        Effect.gen(function* () {
+          const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
 
-      if (params.misspelledWord) {
-        for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
-          menuTemplate.push({
-            label: suggestion,
-            click: () => window.webContents.replaceMisspelling(suggestion),
-          });
-        }
-        if (params.dictionarySuggestions.length === 0) {
-          menuTemplate.push({ label: "No suggestions", enabled: false });
-        }
-        menuTemplate.push({ type: "separator" });
-      }
+          if (params.misspelledWord) {
+            // Chromium sometimes flags a word through the macOS checker but
+            // supplies no suggestions to Electron. Recover the OS checker's
+            // guesses before falling back to "No suggestions".
+            const suggestions =
+              params.dictionarySuggestions.length > 0
+                ? params.dictionarySuggestions
+                : yield* electronSpelling.platformSuggestionsFor(params.misspelledWord);
+            if (requestVersion !== contextMenuRequestVersion) {
+              return;
+            }
+            for (const suggestion of suggestions.slice(0, 5)) {
+              menuTemplate.push({
+                label: suggestion,
+                click: () => {
+                  if (requestVersion !== contextMenuRequestVersion) {
+                    return;
+                  }
+                  window.webContents.replaceMisspelling(suggestion);
+                  window.webContents.focus();
+                },
+              });
+            }
+            if (suggestions.length === 0) {
+              menuTemplate.push({ label: "No suggestions", enabled: false });
+            }
+            menuTemplate.push({ type: "separator" });
+          }
 
-      if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
-        menuTemplate.push(
-          {
-            label: "Copy Link",
-            click: () => {
-              void runPromise(electronShell.copyText(params.linkURL));
-            },
-          },
-          { type: "separator" },
-        );
-      }
+          if (window.isDestroyed()) {
+            return;
+          }
 
-      if (params.mediaType === "image") {
-        menuTemplate.push({
-          label: "Copy Image",
-          click: () => window.webContents.copyImageAt(params.x, params.y),
-        });
-        menuTemplate.push({ type: "separator" });
-      }
+          if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
+            menuTemplate.push(
+              {
+                label: "Copy Link",
+                click: () => {
+                  void runPromise(electronShell.copyText(params.linkURL));
+                },
+              },
+              { type: "separator" },
+            );
+          }
 
-      menuTemplate.push(
-        { role: "cut", enabled: params.editFlags.canCut },
-        { role: "copy", enabled: params.editFlags.canCopy },
-        { role: "paste", enabled: params.editFlags.canPaste },
-        { role: "selectAll", enabled: params.editFlags.canSelectAll },
+          if (params.mediaType === "image") {
+            menuTemplate.push({
+              label: "Copy Image",
+              click: () => window.webContents.copyImageAt(params.x, params.y),
+            });
+            menuTemplate.push({ type: "separator" });
+          }
+
+          menuTemplate.push(
+            { role: "cut", enabled: params.editFlags.canCut },
+            { role: "copy", enabled: params.editFlags.canCopy },
+            { role: "paste", enabled: params.editFlags.canPaste },
+            { role: "selectAll", enabled: params.editFlags.canSelectAll },
+          );
+
+          yield* electronMenu.popupTemplate({ window, template: menuTemplate });
+        }),
       );
-
-      void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
     });
 
     window.webContents.setWindowOpenHandler(({ url }) => {
