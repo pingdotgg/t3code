@@ -58,6 +58,7 @@ const shellSnapshotWithSummaries: OrchestrationV2ShellSnapshot = {
         updatedAt: v2Now,
       },
       latestUserMessageAt: v2Now,
+      settledAt: v2Now,
     },
   ],
 };
@@ -91,6 +92,11 @@ describe("orchestration cache envelopes", () => {
         threadShell?.latestUserMessageAt === null || threadShell?.latestUserMessageAt === undefined
           ? null
           : DateTime.formatIso(threadShell.latestUserMessageAt),
+      ).toBe("2026-06-20T00:00:00.000Z");
+      expect(
+        threadShell?.settledAt === null || threadShell?.settledAt === undefined
+          ? null
+          : DateTime.formatIso(threadShell.settledAt),
       ).toBe("2026-06-20T00:00:00.000Z");
       expect(DateTime.formatIso(thread.snapshot.projection.thread.updatedAt)).toBe(
         "2026-06-20T00:00:00.000Z",
