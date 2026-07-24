@@ -1,5 +1,6 @@
 import {
   EnvironmentAuthInvalidError,
+  EnvironmentResourceNotFoundError,
   type AuthBrowserSessionResult,
   type AuthCreatePairingCredentialInput,
   type AuthSessionState,
@@ -104,6 +105,15 @@ async function installAuthApi(input: {
     readonly label?: string;
     readonly expiresAt: DateTime.Utc;
   }>;
+  readonly devPairingCredential?: () => Effect.Effect<
+    {
+      readonly id: string;
+      readonly credential: string;
+      readonly label?: string;
+      readonly expiresAt: DateTime.Utc;
+    },
+    EnvironmentResourceNotFoundError
+  >;
 }) {
   const testApi = await installEnvironmentHttpTest({
     ...(input.session ? { session: () => Effect.succeed(input.session!()) } : {}),
@@ -113,9 +123,22 @@ async function installAuthApi(input: {
     ...(input.pairingCredential
       ? { pairingCredential: (payload) => input.pairingCredential!(payload) }
       : {}),
+    // Vitest runs with import.meta.env.DEV, so unauthenticated web scenarios
+    // attempt silent dev pairing; default to "not available" (the production
+    // shape) unless a test opts in.
+    devPairingCredential:
+      input.devPairingCredential ?? (() => Effect.fail(devPairingNotAvailableError())),
   });
   disposeHttpTest = testApi.dispose;
   return testApi;
+}
+
+function devPairingNotAvailableError() {
+  return new EnvironmentResourceNotFoundError({
+    code: "not_found",
+    reason: "dev_pairing_not_available",
+    traceId: "test-trace",
+  });
 }
 
 describe("resolveInitialServerAuthGateState", () => {
@@ -238,6 +261,114 @@ describe("resolveInitialServerAuthGateState", () => {
     });
   });
 
+  it("silently pairs through the dev pairing endpoint when the server offers it", async () => {
+    const nextSession = sequence(
+      unauthenticatedSession(LOOPBACK_AUTH),
+      authenticatedSession(LOOPBACK_AUTH),
+    );
+    const testApi = await installAuthApi({
+      session: nextSession,
+      browserSession: () => Effect.succeed(browserSession(["orchestration:read", "access:write"])),
+      devPairingCredential: () =>
+        Effect.succeed({
+          id: "dev-auto-1",
+          credential: "DEV-AUTO-CREDENTIAL",
+          expiresAt: SESSION_EXPIRES_AT,
+        }),
+    });
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "authenticated",
+    });
+    expect(testApi.calls.devPairingCredential).toBe(1);
+    expect(testApi.calls.browserSession).toEqual([{ credential: "DEV-AUTO-CREDENTIAL" }]);
+  });
+
+  it("falls back to the pairing screen silently when dev pairing is not available", async () => {
+    const testApi = await installAuthApi({
+      session: () => unauthenticatedSession(LOOPBACK_AUTH),
+    });
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: LOOPBACK_AUTH,
+    });
+    expect(testApi.calls.devPairingCredential).toBe(1);
+    expect(testApi.calls.browserSession).toEqual([]);
+  });
+
+  it("skips dev pairing when an explicit pairing token is present in the URL", async () => {
+    const testApi = await installAuthApi({
+      session: () => unauthenticatedSession(LOOPBACK_AUTH),
+    });
+    installTestBrowser("http://localhost:5733/pair#token=EXPLICIT");
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: LOOPBACK_AUTH,
+    });
+    expect(testApi.calls.devPairingCredential).toBe(0);
+  });
+
+  it("skips dev pairing in desktop-bridge contexts", async () => {
+    const testApi = await installAuthApi({
+      session: () => unauthenticatedSession(DESKTOP_AUTH),
+    });
+    const testWindow = installTestBrowser("http://127.0.0.1:5733/");
+    testWindow.desktopBridge = {
+      getLocalEnvironmentBootstraps: () => [],
+    } as unknown as DesktopBridge;
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: DESKTOP_AUTH,
+    });
+    expect(testApi.calls.devPairingCredential).toBe(0);
+  });
+
+  it("retries dev pairing after a reauthentication reset", async () => {
+    const nextSession = sequence(
+      unauthenticatedSession(LOOPBACK_AUTH),
+      unauthenticatedSession(LOOPBACK_AUTH),
+      authenticatedSession(LOOPBACK_AUTH),
+    );
+    let available = false;
+    const testApi = await installAuthApi({
+      session: nextSession,
+      browserSession: () => Effect.succeed(browserSession(["orchestration:read"])),
+      devPairingCredential: () =>
+        available
+          ? Effect.succeed({
+              id: "dev-auto-2",
+              credential: "DEV-AUTO-RETRY",
+              expiresAt: SESSION_EXPIRES_AT,
+            })
+          : Effect.fail(devPairingNotAvailableError()),
+    });
+
+    const { resolveInitialServerAuthGateState, reauthenticatePrimaryEnvironment } =
+      await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: LOOPBACK_AUTH,
+    });
+
+    available = true;
+    await expect(reauthenticatePrimaryEnvironment()).resolves.toEqual({
+      status: "authenticated",
+    });
+    expect(testApi.calls.devPairingCredential).toBe(2);
+  });
+
   it("retries transient auth session bootstrap failures after restart", async () => {
     vi.useFakeTimers();
     let attempts = 0;
@@ -266,7 +397,8 @@ describe("resolveInitialServerAuthGateState", () => {
       status: "requires-auth",
       auth: LOOPBACK_AUTH,
     });
-    expect(attempts).toBe(4);
+    // 3 transient failures + 1 session success + 1 silent dev-pairing attempt.
+    expect(attempts).toBe(5);
   });
 
   it("takes a pairing token from the location hash and strips it immediately", async () => {

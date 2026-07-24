@@ -3428,6 +3428,201 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  const DEV_PAIRING_PATH = "/api/auth/dev-pairing-token";
+  const devPairingEligibleConfig = {
+    mode: "web",
+    host: "127.0.0.1",
+    devUrl: new URL("http://localhost:5733"),
+    desktopBootstrapToken: undefined,
+  } as const;
+  const devOriginHeaders = {
+    "content-type": "application/json",
+    origin: "http://localhost:5733",
+  } as const;
+
+  const postDevPairing = (headers: Record<string, string>) =>
+    Effect.gen(function* () {
+      const url = yield* getHttpServerUrl(DEV_PAIRING_PATH);
+      return yield* fetchEffect(url, {
+        method: "POST",
+        headers,
+        body: jsonRequestBody({}),
+      });
+    });
+
+  it.effect("mints an admin-scope dev pairing credential for the dev origin", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({ config: devPairingEligibleConfig });
+
+      const response = yield* postDevPairing({ ...devOriginHeaders });
+      const body = (yield* response.json) as {
+        readonly credential: string;
+        readonly expiresAt: string;
+      };
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers["cache-control"], "no-store");
+      assert.isTrue(body.credential.length > 0);
+
+      // The credential exchanges into a session with administrative scopes.
+      const sessionCookie = yield* getAuthenticatedSessionCookieHeader(body.credential);
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: sessionCookie },
+        body: yield* HttpBody.json({}),
+      });
+      assert.equal(pairingResponse.status, 200);
+
+      // One-time: a second exchange of the same credential fails.
+      const reused = yield* bootstrapBrowserSession(body.credential);
+      assert.equal(reused.response.status, 401);
+
+      // The dev-auto subject is excluded from the pairing-link listing.
+      const listResponse = yield* HttpClient.get("/api/auth/pairing-links", {
+        headers: { cookie: sessionCookie },
+      });
+      const listedLinks = (yield* listResponse.json) as ReadonlyArray<{
+        readonly subject: string;
+      }>;
+      assert.equal(listResponse.status, 200);
+      assert.isFalse(listedLinks.some((entry) => entry.subject === "dev-auto-bootstrap"));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects dev pairing requests with a missing or foreign Origin", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({ config: devPairingEligibleConfig });
+
+      for (const origin of [undefined, "https://evil.example", "null"]) {
+        const response = yield* postDevPairing({
+          "content-type": "application/json",
+          ...(origin === undefined ? {} : { origin }),
+        });
+        const body = (yield* response.json) as {
+          readonly _tag: string;
+          readonly reason: string;
+        };
+        assert.equal(response.status, 403, String(origin));
+        assert.equal(body._tag, "EnvironmentOperationForbiddenError");
+        assert.equal(body.reason, "dev_pairing_request_rejected");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects dev pairing requests whose Host header is not loopback", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({ config: devPairingEligibleConfig });
+      const url = new URL(yield* getHttpServerUrl(DEV_PAIRING_PATH));
+
+      // fetch() silently drops forbidden Host overrides, so drive node:http
+      // directly to simulate the DNS-rebinding request shape.
+      const rebound = yield* Effect.promise(async () => {
+        const NodeHttp = await import("node:http");
+        return await new Promise<{ status: number; body: string }>((resolve, reject) => {
+          const request = NodeHttp.request(
+            {
+              host: url.hostname,
+              port: url.port,
+              path: url.pathname,
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                origin: devOriginHeaders.origin,
+                host: "evil.example",
+              },
+            },
+            (response) => {
+              const chunks: Buffer[] = [];
+              response.on("data", (chunk) =>
+                chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+              );
+              response.on("end", () =>
+                resolve({
+                  status: response.statusCode ?? 0,
+                  body: Buffer.concat(chunks).toString("utf8"),
+                }),
+              );
+            },
+          );
+          request.on("error", reject);
+          request.end(JSON.stringify({}));
+        });
+      });
+
+      assert.equal(rebound.status, 403);
+      assert.include(rebound.body, "dev_pairing_request_rejected");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("answers not_found for dev pairing outside eligible dev configurations", () =>
+    Effect.gen(function* () {
+      const assertNotAvailable = Effect.fn(function* () {
+        const response = yield* postDevPairing({ ...devOriginHeaders });
+        const body = (yield* response.json) as {
+          readonly _tag: string;
+          readonly reason: string;
+        };
+        assert.equal(response.status, 404);
+        assert.equal(body._tag, "EnvironmentResourceNotFoundError");
+        assert.equal(body.reason, "dev_pairing_not_available");
+      });
+
+      // Production shape: no devUrl.
+      yield* buildAppUnderTest({
+        config: { ...devPairingEligibleConfig, devUrl: undefined },
+      });
+      yield* assertNotAvailable();
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("answers not_found for dev pairing on remote-reachable and desktop servers", () =>
+    Effect.gen(function* () {
+      const assertNotAvailable = Effect.fn(function* () {
+        const response = yield* postDevPairing({ ...devOriginHeaders });
+        assert.equal(response.status, 404);
+      });
+
+      yield* buildAppUnderTest({
+        config: { ...devPairingEligibleConfig, host: "0.0.0.0" },
+      });
+      yield* assertNotAvailable();
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("answers not_found for dev pairing with a non-loopback dev URL", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          ...devPairingEligibleConfig,
+          devUrl: new URL("https://some-site.example"),
+        },
+      });
+
+      const response = yield* postDevPairing({
+        "content-type": "application/json",
+        origin: "https://some-site.example",
+      });
+      assert.equal(response.status, 404);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("answers not_found for dev pairing in desktop mode", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          mode: "desktop",
+          host: "127.0.0.1",
+          devUrl: new URL("http://127.0.0.1:5733"),
+        },
+      });
+
+      const response = yield* postDevPairing({
+        "content-type": "application/json",
+        origin: "http://127.0.0.1:5733",
+      });
+      assert.equal(response.status, 404);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("rejects pairing credential requests without access management scope", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({

@@ -13,6 +13,23 @@
   - Subagents must not independently launch dev servers or repeat integrated client verification unless their delegated task explicitly requires it.
   - Stop dev servers, watchers, and other long-running verification processes when the focused verification is complete.
 
+## Verifying Changes in the Browser
+
+Starting a dev server to verify changes is expected and allowed:
+
+- `T3CODE_DEV_INSTANCE=<worktree-name> bun run dev` runs an isolated instance
+  with deterministic port offsets (server base `13773`, web base `5733`; the
+  runner probes for free ports and prints the chosen pair).
+- On localhost dev servers the web UI authenticates automatically — no pairing
+  code needed. Just load the printed web port (e.g. `http://localhost:5733`).
+  This applies to fresh/headless browser profiles too.
+- Dev instances sharing the default `T3CODE_HOME` (`~/.t3`) share state under
+  `~/.t3/dev`; a browser session carries across instances on the same hostname.
+  Use `localhost` consistently — it does not share cookies with `127.0.0.1`.
+
+See `docs/reference/scripts.md` for parallel-instance details and
+`docs/cloud/environment-auth.md` for how dev auto-auth is secured.
+
 ## Package Roles
 
 - `apps/server`: Node.js WebSocket server. Wraps Codex app-server (JSON-RPC over stdio), serves the React web app, and manages provider sessions.

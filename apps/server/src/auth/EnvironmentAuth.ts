@@ -37,6 +37,7 @@ import { layerConfig as SqlitePersistenceLayer } from "../persistence/Layers/Sql
 
 export const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
+export const INTERNAL_DEV_AUTO_BOOTSTRAP_SUBJECT = "dev-auto-bootstrap";
 
 export interface IssuedPairingLink {
   readonly id: string;
@@ -446,6 +447,10 @@ export class EnvironmentAuth extends Context.Service<
       AuthPairingCredentialResult,
       ServerAuthInternalError
     >;
+    readonly issueDevAutoPairingCredential: () => Effect.Effect<
+      AuthPairingCredentialResult,
+      ServerAuthInternalError
+    >;
     readonly listPairingLinks: (input?: {
       readonly excludeSubjects?: ReadonlyArray<string>;
     }) => Effect.Effect<ReadonlyArray<AuthPairingLink>, ServerAuthInternalError>;
@@ -793,6 +798,7 @@ export const make = Effect.gen(function* () {
       Effect.map((pairingLinks) => {
         const excludedSubjects = input?.excludeSubjects ?? [
           INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
+          INTERNAL_DEV_AUTO_BOOTSTRAP_SUBJECT,
         ];
         return pairingLinks
           .filter((pairingLink) => !excludedSubjects.includes(pairingLink.subject))
@@ -873,6 +879,17 @@ export const make = Effect.gen(function* () {
         scopes: AuthAdministrativeScopes,
         subject: INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
       }).pipe(Effect.withSpan("EnvironmentAuth.issueStartupPairingCredential"));
+
+  // Same administrative grant as startup pairing, under its own subject so
+  // dev-auto sessions are identifiable and excluded from pairing-link
+  // listings. Only reachable through the guarded dev-only HTTP endpoint.
+  const issueDevAutoPairingCredential: EnvironmentAuth["Service"]["issueDevAutoPairingCredential"] =
+    () =>
+      issuePairingCredentialForSubject({
+        scopes: AuthAdministrativeScopes,
+        subject: INTERNAL_DEV_AUTO_BOOTSTRAP_SUBJECT,
+        label: "dev-auto",
+      }).pipe(Effect.withSpan("EnvironmentAuth.issueDevAutoPairingCredential"));
 
   const listClientSessions: EnvironmentAuth["Service"]["listClientSessions"] = (currentSessionId) =>
     listSessions().pipe(
@@ -964,6 +981,7 @@ export const make = Effect.gen(function* () {
     createPairingLink,
     issuePairingCredential,
     issueStartupPairingCredential,
+    issueDevAutoPairingCredential,
     listPairingLinks,
     revokePairingLink,
     issueSession,

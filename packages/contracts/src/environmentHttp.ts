@@ -67,6 +67,7 @@ export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.T
 
 export const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
+  "dev_pairing_request_rejected",
 ]);
 export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
@@ -77,6 +78,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "access_token_issuance_failed",
   "websocket_ticket_issuance_failed",
   "pairing_credential_issuance_failed",
+  "dev_pairing_credential_issuance_failed",
   "pairing_links_load_failed",
   "pairing_link_revoke_failed",
   "client_sessions_load_failed",
@@ -158,7 +160,10 @@ export class EnvironmentInternalError extends Schema.TaggedErrorClass<Environmen
   }
 }
 
-export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export const EnvironmentResourceNotFoundReason = Schema.Literals([
+  "thread_not_found",
+  "dev_pairing_not_available",
+]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
 export class EnvironmentResourceNotFoundError extends Schema.TaggedErrorClass<EnvironmentResourceNotFoundError>()(
@@ -356,6 +361,13 @@ export const EnvironmentCloudPreferencesRequest = Schema.Struct({
 });
 export type EnvironmentCloudPreferencesRequest = typeof EnvironmentCloudPreferencesRequest.Type;
 
+// Dev-only silent pairing (see docs/cloud/environment-auth.md). The payload is
+// deliberately a JSON object so the request is non-simple: browsers preflight
+// it and always attach an Origin header, which the server verifies against the
+// configured dev origin before minting.
+export const AuthDevPairingRequest = Schema.Struct({});
+export type AuthDevPairingRequest = typeof AuthDevPairingRequest.Type;
+
 export const AuthPairingLinkRevokeResult = Schema.Struct({
   revoked: Schema.Boolean,
 });
@@ -406,6 +418,17 @@ export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       success: AuthWebSocketTicketResult,
       error: [EnvironmentInternalError],
     }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("devPairingCredential", "/api/auth/dev-pairing-token", {
+      payload: AuthDevPairingRequest,
+      success: AuthPairingCredentialResult,
+      error: [
+        EnvironmentResourceNotFoundError,
+        EnvironmentOperationForbiddenError,
+        EnvironmentInternalError,
+      ],
+    }),
   )
   .add(
     HttpApiEndpoint.post("pairingCredential", "/api/auth/pairing-token", {

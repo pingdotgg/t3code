@@ -6,6 +6,9 @@ import { HttpServer } from "effect/unstable/http";
 
 import { ServerConfig } from "./config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import { formatHostForUrl, isWildcardHost, normalizeHost } from "./netHost.ts";
+
+export { isLoopbackHost, isWildcardHost, formatHostForUrl } from "./netHost.ts";
 
 export interface HeadlessServeAccessInfo {
   readonly connectionString: string;
@@ -14,29 +17,6 @@ export interface HeadlessServeAccessInfo {
 }
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
-
-export const isLoopbackHost = (host: string | undefined): boolean => {
-  if (!host || host.length === 0) {
-    return true;
-  }
-
-  return (
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "::1" ||
-    host === "[::1]" ||
-    host.startsWith("127.")
-  );
-};
-
-export const isWildcardHost = (host: string | undefined): boolean =>
-  host === "0.0.0.0" || host === "::" || host === "[::]";
-
-export const formatHostForUrl = (host: string): string =>
-  host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-
-const normalizeHost = (host: string): string =>
-  host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 
 const isIpv4Family = (family: string | number): boolean => family === "IPv4" || family === 4;
 

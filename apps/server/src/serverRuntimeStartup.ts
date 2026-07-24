@@ -40,6 +40,7 @@ import {
   isWildcardHost,
   issueHeadlessServeAccessInfo,
 } from "./startupAccess.ts";
+import { isDevPairingEligible } from "./auth/devPairing.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedErrorClass<ServerRuntimeStartupError>()(
   "ServerRuntimeStartupError",
@@ -249,7 +250,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   } as const;
 });
 
-const resolveStartupBrowserTarget = Effect.gen(function* () {
+export const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const localUrl = `http://localhost:${serverConfig.port}`;
@@ -258,11 +259,22 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
       ? `http://${formatHostForUrl(serverConfig.host)}:${serverConfig.port}`
       : localUrl;
   const baseTarget = serverConfig.devUrl?.toString() ?? bindUrl;
-  return yield* Effect.succeed(serverConfig.mode === "desktop" ? baseTarget : undefined).pipe(
-    Effect.flatMap((target) =>
-      target ? Effect.succeed(target) : serverAuth.issueStartupPairingUrl(baseTarget),
-    ),
-  );
+  if (serverConfig.mode === "desktop") {
+    return { target: baseTarget, requiresPairing: false };
+  }
+  // Silent-pairing-eligible dev servers self-authenticate on page load, so
+  // open the plain URL. Minting a /pair#token URL here would leave an
+  // unconsumed administrative credential in the URL and terminal scrollback:
+  // the silent path authenticates before /pair could consume the token, and
+  // /pair redirects away from authenticated sessions without exchanging it.
+  const descriptor = yield* serverAuth.getDescriptor();
+  if (isDevPairingEligible(serverConfig, descriptor)) {
+    return { target: baseTarget, requiresPairing: false };
+  }
+  return {
+    target: yield* serverAuth.issueStartupPairingUrl(baseTarget),
+    requiresPairing: true,
+  };
 });
 
 const maybeOpenBrowser = (target: string) =>
@@ -456,13 +468,17 @@ export const make = Effect.gen(function* () {
         );
       } else {
         yield* Effect.logDebug("startup phase: browser open check");
-        const startupBrowserTarget = yield* resolveStartupBrowserTarget;
+        const startupBrowser = yield* resolveStartupBrowserTarget;
         if (serverConfig.mode !== "desktop") {
-          yield* Effect.logInfo(
-            "Authentication required. Open T3 Code using the pairing URL.",
-          ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
+          yield* startupBrowser.requiresPairing
+            ? Effect.logInfo("Authentication required. Open T3 Code using the pairing URL.").pipe(
+                Effect.annotateLogs({ pairingUrl: startupBrowser.target }),
+              )
+            : Effect.logInfo("T3 Code dev server ready.").pipe(
+                Effect.annotateLogs({ url: startupBrowser.target }),
+              );
         }
-        yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
+        yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowser.target));
       }
       yield* Effect.logDebug("startup phase: complete");
     }),

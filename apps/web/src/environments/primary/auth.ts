@@ -21,6 +21,7 @@ import {
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { isHostedStaticApp } from "../../hostedPairing";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
@@ -317,6 +318,51 @@ function isTransientBootstrapError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+// Dev-only silent pairing: local web-dev servers expose a guarded endpoint
+// that mints a one-time pairing credential for the dev origin, so fresh
+// browser contexts authenticate without a pairing code. Any failure means
+// "not available" (prod, remote, guard rejection) and the caller falls back
+// to the normal pairing screen — never surface an error for this path.
+// import.meta.env.DEV keeps the request out of production bundles entirely.
+function shouldAttemptDevPairing(auth: AuthSessionState["auth"]): boolean {
+  return (
+    import.meta.env.DEV &&
+    auth.policy === "loopback-browser" &&
+    !isHostedStaticApp() &&
+    window.desktopBridge === undefined &&
+    peekPairingTokenFromUrl() === null
+  );
+}
+
+async function fetchDevPairingCredential(): Promise<string | null> {
+  try {
+    const result = await runPrimaryHttp(
+      PrimaryEnvironmentHttpClient.pipe(
+        Effect.flatMap((client) => client.auth.devPairingCredential({ payload: {} })),
+      ),
+    );
+    return typeof result.credential === "string" && result.credential.length > 0
+      ? result.credential
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function attemptSilentDevPairing(): Promise<boolean> {
+  const credential = await fetchDevPairingCredential();
+  if (credential === null) {
+    return false;
+  }
+  try {
+    await exchangeBootstrapCredential(credential);
+    await waitForAuthenticatedSessionAfterBootstrap();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
   const bootstrapCredential = getDesktopBootstrapCredential();
   const currentSession = await fetchSessionState();
@@ -325,6 +371,9 @@ async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
   }
 
   if (!bootstrapCredential) {
+    if (shouldAttemptDevPairing(currentSession.auth) && (await attemptSilentDevPairing())) {
+      return { status: "authenticated" };
+    }
     return {
       status: "requires-auth",
       auth: currentSession.auth,

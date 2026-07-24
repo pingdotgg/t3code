@@ -82,6 +82,39 @@ currently dispatches an orchestration operation, so clients performing it also
 need `orchestration:operate`. Creating a ticket is not
 authorization to call every RPC method.
 
+### Dev-Mode Silent Pairing
+
+`POST /api/auth/dev-pairing-token` lets the web app authenticate automatically
+against a **local development** server, so contributors and coding agents never
+handle pairing codes in dev. It mints an ordinary one-time, five-minute
+bootstrap credential (administrative scopes, subject `dev-auto-bootstrap`,
+hidden from the pairing-links listing) that the client immediately exchanges
+through the normal browser-session flow.
+
+The endpoint answers `404 dev_pairing_not_available` unless all of the
+following hold:
+
+- the server runs in web mode with a configured dev URL (`bun run dev`),
+- the dev URL's hostname is loopback (`--dev-url` never becomes an auth root),
+- the auth policy is exactly `loopback-browser` (excludes desktop dev and any
+  non-loopback bind host).
+
+Eligible requests are then authenticated per-request: the browser-attached
+`Origin` header must exactly equal the dev origin (this survives the Vite dev
+proxy, which rewrites `Host` but not `Origin`), and the parsed `Host` header
+must be loopback (DNS-rebinding defense for direct requests). Failures answer
+`403 dev_pairing_request_rejected`. Because the payload is JSON, the request is
+preflighted, so unauthorized web origins cannot even trigger credential
+issuance. Local non-browser processes can forge these headers, but they can
+already read the dev state directory directly, so no privilege is gained.
+
+When silent pairing is eligible, server startup opens the plain dev URL instead
+of minting a `/pair#token=...` startup credential (the silent path would leave
+that administrative token unconsumed in the URL and terminal scrollback). All
+other startup shapes are unchanged, and the `/pair` screen remains the flow for
+production, remote access, and explicit pairing links; an explicit `#token` in
+the URL always takes precedence over silent pairing.
+
 ## Standards Alignment
 
 - Bearer access tokens are used through the `Authorization: Bearer` scheme from

@@ -39,6 +39,8 @@ import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { isDevPairingEligible, validateDevPairingRequestHeaders } from "./devPairing.ts";
+import * as ServerConfig from "../config.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -125,7 +127,9 @@ export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope
   );
 }
 
-function failEnvironmentOperationForbidden(reason: "current_session_revoke_not_allowed") {
+function failEnvironmentOperationForbidden(
+  reason: "current_session_revoke_not_allowed" | "dev_pairing_request_rejected",
+) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(
@@ -328,6 +332,45 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("websocket_ticket_issuance_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "devPairingCredential",
+        Effect.fn("environment.auth.devPairingCredential")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const config = yield* ServerConfig.ServerConfig;
+            const descriptor = yield* serverAuth.getDescriptor();
+
+            // Ineligible configurations answer not_found so the endpoint is
+            // indistinguishable from absent outside local web dev. The
+            // handler must exist unconditionally: unregistered paths fall
+            // into the SPA/redirect wildcard route, not a 404.
+            if (!isDevPairingEligible(config, descriptor) || config.devUrl === undefined) {
+              return yield* failEnvironmentNotFound("dev_pairing_not_available");
+            }
+
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const rejection = validateDevPairingRequestHeaders({
+              originHeader: request.headers["origin"],
+              hostHeader: request.headers["host"],
+              devUrl: config.devUrl,
+            });
+            if (rejection !== null) {
+              yield* Effect.logWarning("rejected dev pairing request", {
+                rejection,
+                origin: request.headers["origin"] ?? null,
+                host: request.headers["host"] ?? null,
+              });
+              return yield* failEnvironmentOperationForbidden("dev_pairing_request_rejected");
+            }
+
+            yield* appendCredentialResponseHeaders;
+            return yield* serverAuth.issueDevAutoPairingCredential();
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("dev_pairing_credential_issuance_failed", error),
           ),
         ),
       )

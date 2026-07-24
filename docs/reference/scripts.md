@@ -4,7 +4,7 @@
 - `vp run dev:server` — Starts just the WebSocket server. The server process runs on Bun (`@effect/platform-bun` + `BunPtyAdapter`), but task running uses `vp run`.
 - `vp run dev:web` — Starts just the Vite dev server for the web app.
 - Dev commands implicitly use `~/.t3/dev`, keeping development state separate from `~/.t3/userdata`. An explicit `--home-dir <path>` stores state under `<path>/userdata`; the base directory remains available for caches, worktrees, and other shared data.
-- Web dev commands do not auto-open a browser. Open the one-time pairing URL printed by the server so the first browser navigation is authenticated. Set `T3CODE_NO_BROWSER=0` only when interactive auto-open is intentional.
+- Web dev commands do not auto-open a browser. Local web-dev servers authenticate the UI automatically, so open the plain dev URL printed by the server. Set `T3CODE_NO_BROWSER=0` only when interactive auto-open is intentional.
 - Pass dev-runner flags directly after the root task name, for example:
   `vp run dev --home-dir /tmp/t3code-dev`
 - `vp run start` — Runs the production server (serves built web app as static files).
@@ -45,3 +45,14 @@ Set `T3CODE_DEV_INSTANCE` to any value to deterministically shift all dev ports 
 - Example: `T3CODE_DEV_INSTANCE=branch-a vp run dev:desktop`
 
 If you want full control instead of hashing, set `T3CODE_PORT_OFFSET` to a numeric offset.
+
+### Authentication across dev instances
+
+Local web-dev servers support silent pairing: the web app authenticates
+automatically on load, with no pairing code (see the dev-mode section in
+`docs/cloud/environment-auth.md` for the guards). Additionally, all dev
+instances sharing a `T3CODE_HOME` share the session store and signing secret
+under `<T3CODE_HOME>/dev`, so a browser session created against one instance
+verifies against every other. Cookies are host-scoped: sessions carry across
+ports on the same hostname, but `localhost` and `127.0.0.1` do not share
+cookies — use one hostname consistently.

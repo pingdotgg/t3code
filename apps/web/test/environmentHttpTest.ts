@@ -12,6 +12,7 @@ import {
   type AuthSessionState,
   type ExecutionEnvironmentDescriptor,
   type EnvironmentAuthInvalidError,
+  type EnvironmentResourceNotFoundError,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import type * as Context from "effect/Context";
@@ -35,6 +36,10 @@ interface EnvironmentHttpTestScenario {
   readonly pairingCredential?: (
     payload: AuthCreatePairingCredentialInput,
   ) => Effect.Effect<AuthPairingCredentialResult>;
+  readonly devPairingCredential?: () => Effect.Effect<
+    AuthPairingCredentialResult,
+    EnvironmentResourceNotFoundError
+  >;
 }
 
 export interface EnvironmentHttpTestCalls {
@@ -42,6 +47,7 @@ export interface EnvironmentHttpTestCalls {
   session: number;
   browserSession: Array<AuthBrowserSessionRequest>;
   pairingCredential: Array<AuthCreatePairingCredentialInput>;
+  devPairingCredential: number;
 }
 
 const unexpectedEndpoint = (endpoint: string) =>
@@ -66,6 +72,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
     session: 0,
     browserSession: [],
     pairingCredential: [],
+    devPairingCredential: 0,
   };
 
   const client = await Effect.runPromise(
@@ -101,6 +108,16 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
             )
             .handle("token", () => unexpectedEndpoint("auth.token"))
             .handle("webSocketTicket", () => unexpectedEndpoint("auth.webSocketTicket"))
+            .handle(
+              "devPairingCredential",
+              Effect.fn("test.environment.auth.devPairingCredential")(function* () {
+                calls.devPairingCredential += 1;
+                return yield* (
+                  scenario.devPairingCredential?.() ??
+                    unexpectedEndpoint("auth.devPairingCredential")
+                );
+              }),
+            )
             .handle(
               "pairingCredential",
               Effect.fn("test.environment.auth.pairingCredential")(function* ({ payload }) {

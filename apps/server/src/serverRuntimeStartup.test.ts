@@ -11,6 +11,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -105,6 +106,115 @@ it.effect("launchStartupHeartbeat does not block the caller while counts are loa
       );
     }),
   ),
+);
+
+const startupTargetAuthMock = (input: {
+  readonly policy: "loopback-browser" | "remote-reachable" | "desktop-managed-local";
+  readonly onIssueStartupPairingUrl?: (baseUrl: string) => void;
+}) =>
+  ({
+    getDescriptor: () =>
+      Effect.succeed({
+        policy: input.policy,
+        bootstrapMethods: ["one-time-token"],
+        sessionMethods: ["browser-session-cookie", "bearer-access-token", "dpop-access-token"],
+        sessionCookieName: "t3_session",
+      }),
+    issueStartupPairingUrl: (baseUrl: string) => {
+      input.onIssueStartupPairingUrl?.(baseUrl);
+      return Effect.succeed(`${baseUrl}pair#token=STARTUP`);
+    },
+  }) as never;
+
+it.effect(
+  "opens the plain dev URL without minting a credential when silent pairing is eligible",
+  () =>
+    Effect.gen(function* () {
+      const result = yield* ServerRuntimeStartup.resolveStartupBrowserTarget.pipe(
+        Effect.provideService(ServerConfig.ServerConfig, {
+          mode: "web",
+          host: "127.0.0.1",
+          port: 13773,
+          devUrl: new URL("http://localhost:5733/"),
+        } as never),
+        Effect.provideService(
+          EnvironmentAuth.EnvironmentAuth,
+          startupTargetAuthMock({
+            policy: "loopback-browser",
+            onIssueStartupPairingUrl: () => {
+              throw new Error("must not mint a startup credential in eligible dev");
+            },
+          }),
+        ),
+      );
+
+      assert.deepStrictEqual(result, {
+        target: "http://localhost:5733/",
+        requiresPairing: false,
+      });
+    }),
+);
+
+it.effect("still mints a startup pairing URL for non-dev web servers", () =>
+  Effect.gen(function* () {
+    const result = yield* ServerRuntimeStartup.resolveStartupBrowserTarget.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, {
+        mode: "web",
+        host: "127.0.0.1",
+        port: 3773,
+        devUrl: undefined,
+      } as never),
+      Effect.provideService(
+        EnvironmentAuth.EnvironmentAuth,
+        startupTargetAuthMock({ policy: "loopback-browser" }),
+      ),
+    );
+
+    assert.isTrue(result.requiresPairing);
+    assert.include(result.target, "pair#token=STARTUP");
+  }),
+);
+
+it.effect("still mints a startup pairing URL for remote-reachable dev servers", () =>
+  Effect.gen(function* () {
+    const result = yield* ServerRuntimeStartup.resolveStartupBrowserTarget.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, {
+        mode: "web",
+        host: "0.0.0.0",
+        port: 13773,
+        devUrl: new URL("http://localhost:5733/"),
+      } as never),
+      Effect.provideService(
+        EnvironmentAuth.EnvironmentAuth,
+        startupTargetAuthMock({ policy: "remote-reachable" }),
+      ),
+    );
+
+    assert.isTrue(result.requiresPairing);
+    assert.include(result.target, "pair#token=STARTUP");
+  }),
+);
+
+it.effect("desktop startup keeps the plain target without pairing", () =>
+  Effect.gen(function* () {
+    const result = yield* ServerRuntimeStartup.resolveStartupBrowserTarget.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, {
+        mode: "desktop",
+        host: "127.0.0.1",
+        port: 13773,
+        devUrl: new URL("http://127.0.0.1:5733/"),
+      } as never),
+      Effect.provideService(
+        EnvironmentAuth.EnvironmentAuth,
+        startupTargetAuthMock({ policy: "desktop-managed-local" }),
+      ),
+    );
+
+    assert.deepStrictEqual(result, {
+      target: "http://127.0.0.1:5733/",
+      requiresPairing: false,
+    });
+  }),
 );
 
 it.effect("resolveWelcomeBase derives cwd and project name from server config", () =>
