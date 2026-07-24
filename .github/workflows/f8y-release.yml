@@ -183,7 +183,7 @@ jobs:
             exit 1
           fi
           "$cli" remote --help | grep -F "Use the supported remote orchestration API."
-          "$cli" serve --help | grep -F "Run the T3 Code server without opening a browser."
+          "$cli" serve --help | grep -F "Run the T3 Code server without opening a browser and print headless pairing details."
           "$cli" service --help | grep -F "Manage the T3 Code background service."
           codesign --force --sign - "$cli"
           codesign --verify --strict --verbose=2 "$cli"
@@ -262,7 +262,7 @@ jobs:
             exit 1
           fi
           "$cli" remote --help | grep -F "Use the supported remote orchestration API."
-          "$cli" serve --help | grep -F "Run the T3 Code server without opening a browser."
+          "$cli" serve --help | grep -F "Run the T3 Code server without opening a browser and print headless pairing details."
           "$cli" service --help | grep -F "Manage the T3 Code background service."
 
           mkdir -p release-publish
