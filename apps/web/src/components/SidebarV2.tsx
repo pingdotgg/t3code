@@ -236,6 +236,10 @@ function SidebarV2ThreadTooltip({
       align="start"
       sideOffset={8}
       className="dropdown-glass max-w-80 border-0! text-left whitespace-normal shadow-lg/10 before:hidden dark:shadow-none"
+      style={{
+        background:
+          "color-mix(in srgb, var(--popover) 18%, color-mix(in srgb, var(--popover) var(--glass-opacity), transparent))",
+      }}
     >
       <div className="flex max-w-80 flex-col gap-2 p-2">
         <div className="whitespace-nowrap text-sm font-medium text-foreground">{thread.title}</div>
