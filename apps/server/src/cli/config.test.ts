@@ -127,6 +127,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const xdgDataHome = path.join(root, "data");
       const xdgConfigHome = path.join(root, "config");
       yield* fs.makeDirectory(legacyConfigDir, { recursive: true });
+      yield* fs.writeFileString(path.join(legacyConfigDir, "state.sqlite"), "");
+      yield* fs.writeFileString(path.join(legacyConfigDir, "settings.json"), "{}");
 
       const resolved = yield* resolveServerConfig(
         {
@@ -166,6 +168,67 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       assert.equal(resolved.stateDir, legacyConfigDir);
       assert.equal(resolved.keybindingsConfigPath, path.join(legacyConfigDir, "keybindings.json"));
       assert.equal(resolved.settingsPath, path.join(legacyConfigDir, "settings.json"));
+    }),
+  );
+
+  it.effect("does not let development XDG artifacts hide legacy production storage", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-config-xdg-dev-production-",
+      });
+      const homeDirectory = path.join(root, "home");
+      const legacyProductionDir = path.join(homeDirectory, ".t3", "userdata");
+      const xdgDataHome = path.join(root, "data");
+      const xdgConfigHome = path.join(root, "config");
+      const xdgDevelopmentDataDir = path.join(xdgDataHome, "t3code", "dev");
+      const xdgDevelopmentConfigDir = path.join(xdgConfigHome, "t3code", "dev");
+      yield* fs.makeDirectory(legacyProductionDir, { recursive: true });
+      yield* fs.makeDirectory(xdgDevelopmentDataDir, { recursive: true });
+      yield* fs.makeDirectory(xdgDevelopmentConfigDir, { recursive: true });
+      yield* fs.writeFileString(path.join(legacyProductionDir, "state.sqlite"), "");
+      yield* fs.writeFileString(path.join(legacyProductionDir, "settings.json"), "{}");
+      yield* fs.writeFileString(path.join(xdgDevelopmentDataDir, "state.sqlite"), "");
+      yield* fs.writeFileString(path.join(xdgDevelopmentConfigDir, "settings.json"), "{}");
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.none(),
+          port: Option.none(),
+          host: Option.none(),
+          baseDir: Option.none(),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+        { homeDirectory },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  XDG_CONFIG_HOME: xdgConfigHome,
+                  XDG_DATA_HOME: xdgDataHome,
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+        Effect.provideService(HostProcessPlatform, "linux"),
+      );
+
+      assert.equal(resolved.baseDir, path.join(homeDirectory, ".t3"));
+      assert.equal(resolved.stateDir, legacyProductionDir);
+      assert.equal(resolved.settingsPath, path.join(legacyProductionDir, "settings.json"));
     }),
   );
 
@@ -516,6 +579,65 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       assert.equal(resolved.settingsPath, path.join(configDir, "settings.json"));
       assert.equal(resolved.keybindingsConfigPath, path.join(configDir, "keybindings.json"));
       expect(resolved).toMatchObject(derivedPaths);
+    }),
+  );
+
+  it.effect("treats a blank bootstrap home as unset instead of explicit", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-config-blank-bootstrap-home-",
+      });
+      const homeDirectory = path.join(root, "home");
+      const xdgDataHome = path.join(root, "data");
+      const xdgConfigHome = path.join(root, "config");
+      const fd = yield* openBootstrapFd(
+        makeDesktopBootstrap({
+          t3Home: "  ",
+          t3HomeIsExplicit: true,
+          configDir: undefined,
+        }),
+      );
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.none(),
+          port: Option.none(),
+          host: Option.none(),
+          baseDir: Option.none(),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+        { homeDirectory },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  T3CODE_BOOTSTRAP_FD: String(fd),
+                  XDG_CONFIG_HOME: xdgConfigHome,
+                  XDG_DATA_HOME: xdgDataHome,
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+        Effect.provideService(HostProcessPlatform, "linux"),
+      );
+
+      assert.equal(resolved.baseDir, path.join(xdgDataHome, "t3code"));
+      assert.equal(resolved.stateDir, path.join(xdgDataHome, "t3code", "userdata"));
+      assert.equal(resolved.settingsPath, path.join(xdgConfigHome, "t3code", "settings.json"));
     }),
   );
 

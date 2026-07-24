@@ -149,6 +149,8 @@ describe("DesktopEnvironment", () => {
       const homeDirectory = path.join(root, "home");
       const legacyConfigDir = path.join(homeDirectory, ".t3", "userdata");
       yield* fileSystem.makeDirectory(legacyConfigDir, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(legacyConfigDir, "state.sqlite"), "");
+      yield* fileSystem.writeFileString(path.join(legacyConfigDir, "settings.json"), "{}");
 
       const environment = yield* makeEnvironment(
         {
@@ -164,6 +166,44 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.baseDir, path.join(homeDirectory, ".t3"));
       assert.equal(environment.stateDir, legacyConfigDir);
       assert.equal(environment.configDir, legacyConfigDir);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not let initialized development XDG storage hide legacy production data", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-xdg-dev-production-",
+      });
+      const homeDirectory = path.join(root, "home");
+      const legacyProductionDir = path.join(homeDirectory, ".t3", "userdata");
+      const xdgDataBaseDir = path.join(root, "data", "t3code");
+      const xdgConfigBaseDir = path.join(root, "config", "t3code");
+      const xdgDevelopmentDataDir = path.join(xdgDataBaseDir, "dev");
+      const xdgDevelopmentConfigDir = path.join(xdgConfigBaseDir, "dev");
+      yield* fileSystem.makeDirectory(legacyProductionDir, { recursive: true });
+      yield* fileSystem.makeDirectory(xdgDevelopmentDataDir, { recursive: true });
+      yield* fileSystem.makeDirectory(xdgDevelopmentConfigDir, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(legacyProductionDir, "state.sqlite"), "");
+      yield* fileSystem.writeFileString(path.join(legacyProductionDir, "settings.json"), "{}");
+      yield* fileSystem.writeFileString(path.join(xdgDevelopmentDataDir, "state.sqlite"), "");
+      yield* fileSystem.writeFileString(path.join(xdgDevelopmentConfigDir, "settings.json"), "{}");
+
+      const environment = yield* makeEnvironment(
+        {
+          homeDirectory,
+          platform: "linux",
+        },
+        {
+          XDG_CONFIG_HOME: path.join(root, "config"),
+          XDG_DATA_HOME: path.join(root, "data"),
+        },
+      );
+
+      assert.equal(environment.baseDir, path.join(homeDirectory, ".t3"));
+      assert.equal(environment.stateDir, legacyProductionDir);
+      assert.equal(environment.configDir, legacyProductionDir);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

@@ -88,6 +88,7 @@ export const resolveBaseDir = Effect.fn(function* (
   raw: string | undefined,
   xdgDataHome: string | undefined,
   homeDirectory = NodeOS.homedir(),
+  stateDirectoryName = "userdata",
 ) {
   const path = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
@@ -101,11 +102,13 @@ export const resolveBaseDir = Effect.fn(function* (
     return selectT3XdgDirectory({
       xdgDirectory,
       legacyDirectory,
-      xdgDirectoryExists:
+      xdgStorageInitialized:
         xdgDirectory !== undefined &&
-        (yield* fileSystem.exists(xdgDirectory).pipe(Effect.orElseSucceed(() => false))),
-      legacyDirectoryExists: yield* fileSystem
-        .exists(legacyDirectory)
+        (yield* fileSystem
+          .exists(path.join(xdgDirectory, stateDirectoryName, "state.sqlite"))
+          .pipe(Effect.orElseSucceed(() => false))),
+      legacyStorageInitialized: yield* fileSystem
+        .exists(path.join(legacyDirectory, stateDirectoryName, "state.sqlite"))
         .pipe(Effect.orElseSucceed(() => false)),
     });
   }

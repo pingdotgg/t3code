@@ -159,6 +159,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const configuredBaseDir = config.t3Home;
   const baseDirIsExplicit = Option.isSome(configuredBaseDir);
   const legacyBaseDir = path.join(homeDirectory, ".t3");
+  const stateDirectoryName = isDevelopment && !baseDirIsExplicit ? "dev" : "userdata";
   const xdgBaseDir = resolveT3XdgBaseDir({
     platform: input.platform,
     xdgHome: Option.getOrUndefined(config.xdgDataHome),
@@ -169,11 +170,13 @@ const make = Effect.fn("desktop.environment.make")(function* (
     : selectT3XdgDirectory({
         xdgDirectory: xdgBaseDir,
         legacyDirectory: legacyBaseDir,
-        xdgDirectoryExists:
+        xdgStorageInitialized:
           xdgBaseDir !== undefined &&
-          (yield* fileSystem.exists(xdgBaseDir).pipe(Effect.orElseSucceed(() => false))),
-        legacyDirectoryExists: yield* fileSystem
-          .exists(legacyBaseDir)
+          (yield* fileSystem
+            .exists(path.join(xdgBaseDir, stateDirectoryName, "state.sqlite"))
+            .pipe(Effect.orElseSucceed(() => false))),
+        legacyStorageInitialized: yield* fileSystem
+          .exists(path.join(legacyBaseDir, stateDirectoryName, "state.sqlite"))
           .pipe(Effect.orElseSucceed(() => false)),
       });
   const rootDir = path.resolve(input.dirname, "../../..");
@@ -183,7 +186,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     appVersion: input.appVersion,
   });
   const displayName = branding.displayName;
-  const stateDir = path.join(baseDir, isDevelopment && !baseDirIsExplicit ? "dev" : "userdata");
+  const stateDir = path.join(baseDir, stateDirectoryName);
   const xdgConfigDir = resolveT3XdgBaseDir({
     platform: input.platform,
     xdgHome: Option.getOrUndefined(config.xdgConfigHome),
@@ -204,12 +207,32 @@ const make = Effect.fn("desktop.environment.make")(function* (
     : selectT3XdgDirectory({
         xdgDirectory: preferredConfigDir,
         legacyDirectory: legacyConfigDir,
-        xdgDirectoryExists:
+        xdgStorageInitialized:
           preferredConfigDir !== undefined &&
-          (yield* fileSystem.exists(preferredConfigDir).pipe(Effect.orElseSucceed(() => false))),
-        legacyDirectoryExists: yield* fileSystem
-          .exists(legacyConfigDir)
-          .pipe(Effect.orElseSucceed(() => false)),
+          (yield* Effect.all(
+            [
+              "desktop-settings.json",
+              "client-settings.json",
+              "settings.json",
+              "keybindings.json",
+            ].map((fileName) =>
+              fileSystem
+                .exists(path.join(preferredConfigDir, fileName))
+                .pipe(Effect.orElseSucceed(() => false)),
+            ),
+          ).pipe(Effect.map((results) => results.some(Boolean)))),
+        legacyStorageInitialized: yield* Effect.all(
+          [
+            "desktop-settings.json",
+            "client-settings.json",
+            "settings.json",
+            "keybindings.json",
+          ].map((fileName) =>
+            fileSystem
+              .exists(path.join(legacyConfigDir, fileName))
+              .pipe(Effect.orElseSucceed(() => false)),
+          ),
+        ).pipe(Effect.map((results) => results.some(Boolean))),
       });
   const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
   const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";

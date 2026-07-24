@@ -58,13 +58,13 @@ export function resolveDefaultT3BaseDir(
 export function selectT3XdgDirectory(input: {
   readonly xdgDirectory: string | undefined;
   readonly legacyDirectory: string;
-  readonly xdgDirectoryExists: boolean;
-  readonly legacyDirectoryExists: boolean;
+  readonly xdgStorageInitialized: boolean;
+  readonly legacyStorageInitialized: boolean;
 }): string {
   if (input.xdgDirectory === undefined) {
     return input.legacyDirectory;
   }
-  if (input.xdgDirectoryExists || !input.legacyDirectoryExists) {
+  if (input.xdgStorageInitialized || !input.legacyStorageInitialized) {
     return input.xdgDirectory;
   }
   return input.legacyDirectory;

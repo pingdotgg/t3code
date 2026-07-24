@@ -222,11 +222,13 @@ function resolveBaseDir(
     return selectT3XdgDirectory({
       xdgDirectory,
       legacyDirectory,
-      xdgDirectoryExists:
+      xdgStorageInitialized:
         xdgDirectory !== undefined &&
-        (yield* fileSystem.exists(xdgDirectory).pipe(Effect.orElseSucceed(() => false))),
-      legacyDirectoryExists: yield* fileSystem
-        .exists(legacyDirectory)
+        (yield* fileSystem
+          .exists(path.join(xdgDirectory, "dev", "state.sqlite"))
+          .pipe(Effect.orElseSucceed(() => false))),
+      legacyStorageInitialized: yield* fileSystem
+        .exists(path.join(legacyDirectory, "dev", "state.sqlite"))
         .pipe(Effect.orElseSucceed(() => false)),
     });
   });

@@ -113,8 +113,8 @@ describe("path helpers", () => {
       selectT3XdgDirectory({
         xdgDirectory: "/home/alice/.local/share/t3code",
         legacyDirectory: "/home/alice/.t3",
-        xdgDirectoryExists: false,
-        legacyDirectoryExists: true,
+        xdgStorageInitialized: false,
+        legacyStorageInitialized: true,
       }),
     ).toBe("/home/alice/.t3");
 
@@ -122,8 +122,8 @@ describe("path helpers", () => {
       selectT3XdgDirectory({
         xdgDirectory: "/home/alice/.local/share/t3code",
         legacyDirectory: "/home/alice/.t3",
-        xdgDirectoryExists: true,
-        legacyDirectoryExists: true,
+        xdgStorageInitialized: true,
+        legacyStorageInitialized: true,
       }),
     ).toBe("/home/alice/.local/share/t3code");
   });
@@ -133,8 +133,8 @@ describe("path helpers", () => {
       selectT3XdgDirectory({
         xdgDirectory: "/home/alice/.config/t3code",
         legacyDirectory: "/home/alice/.t3/userdata",
-        xdgDirectoryExists: false,
-        legacyDirectoryExists: false,
+        xdgStorageInitialized: false,
+        legacyStorageInitialized: false,
       }),
     ).toBe("/home/alice/.config/t3code");
 
@@ -142,8 +142,8 @@ describe("path helpers", () => {
       selectT3XdgDirectory({
         xdgDirectory: undefined,
         legacyDirectory: "/home/alice/.t3/userdata",
-        xdgDirectoryExists: false,
-        legacyDirectoryExists: true,
+        xdgStorageInitialized: false,
+        legacyStorageInitialized: true,
       }),
     ).toBe("/home/alice/.t3/userdata");
   });

@@ -276,18 +276,24 @@ export const resolveServerConfig = (
       normalizedFlags.baseDir,
       Option.fromUndefinedOr(env.t3Home),
     ).pipe(Option.filter((value) => value.trim().length > 0));
+    const rawBootstrapBaseDir = bootstrap?.t3Home?.trim();
+    const bootstrapBaseDir =
+      rawBootstrapBaseDir === undefined || rawBootstrapBaseDir.length === 0
+        ? undefined
+        : rawBootstrapBaseDir;
     const selectedBaseDir = resolveOptionPrecedence(
       explicitBaseDir,
-      Option.fromUndefinedOr(bootstrap?.t3Home),
-    ).pipe(Option.filter((value) => value.trim().length > 0));
+      Option.fromUndefinedOr(bootstrapBaseDir),
+    );
     const homeDirectory = options?.homeDirectory ?? NodeOS.homedir();
     const baseDir = yield* resolveBaseDir(
       Option.getOrUndefined(selectedBaseDir),
       env.xdgDataHome,
       homeDirectory,
+      devUrl === undefined ? "userdata" : "dev",
     );
     const bootstrapBaseDirIsExplicit =
-      bootstrap?.t3Home === undefined ? false : (bootstrap.t3HomeIsExplicit ?? true);
+      bootstrapBaseDir === undefined ? false : (bootstrap?.t3HomeIsExplicit ?? true);
     const baseDirIsExplicit = Option.isSome(explicitBaseDir) || bootstrapBaseDirIsExplicit;
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
@@ -319,12 +325,22 @@ export const resolveServerConfig = (
         : selectT3XdgDirectory({
             xdgDirectory: preferredConfigDir,
             legacyDirectory: legacyConfigDir,
-            xdgDirectoryExists:
+            xdgStorageInitialized:
               preferredConfigDir !== undefined &&
-              (yield* fs.exists(preferredConfigDir).pipe(Effect.orElseSucceed(() => false))),
-            legacyDirectoryExists: yield* fs
-              .exists(legacyConfigDir)
-              .pipe(Effect.orElseSucceed(() => false)),
+              (yield* Effect.all(
+                ["settings.json", "keybindings.json"].map((fileName) =>
+                  fs
+                    .exists(path.join(preferredConfigDir, fileName))
+                    .pipe(Effect.orElseSucceed(() => false)),
+                ),
+              ).pipe(Effect.map((results) => results.some(Boolean)))),
+            legacyStorageInitialized: yield* Effect.all(
+              ["settings.json", "keybindings.json"].map((fileName) =>
+                fs
+                  .exists(path.join(legacyConfigDir, fileName))
+                  .pipe(Effect.orElseSucceed(() => false)),
+              ),
+            ).pipe(Effect.map((results) => results.some(Boolean))),
           });
     const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
       baseDirIsExplicit,
