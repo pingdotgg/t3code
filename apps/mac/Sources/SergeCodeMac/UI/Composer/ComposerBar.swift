@@ -252,6 +252,7 @@ public struct ComposerBar: View {
                         // second plate behind the draft.
                         .frame(minHeight: 22, maxHeight: 120)
                         .fixedSize(horizontal: false, vertical: true)
+                        .background(ComposerDropTargetConfigurator())
                         .overlay(alignment: .topLeading) {
                             if draft.isEmpty {
                                 // Matches NSTextView's text origin (no top
@@ -388,7 +389,7 @@ public struct ComposerBar: View {
             }
         }
         .onPasteCommand(of: [.image], perform: handlePasteProviders)
-        .onDrop(of: [.image], isTargeted: nil, perform: handleDropProviders)
+        .onDrop(of: [.fileURL, .image], isTargeted: nil, perform: handleDropProviders)
         // TextEditor's NSTextView owns Cmd+V and swallows image-only pastes
         // before `.onPasteCommand` runs. Intercept while the composer editor
         // is focused so screenshots and image files still attach.
@@ -772,90 +773,27 @@ public struct ComposerBar: View {
 
     // MARK: - Attachments
 
-    /// Reads and base64-encodes files picked from the file importer. The
-    /// actual work runs off the main actor (see `encodeFromFiles`) since
-    /// `Data(contentsOf:)` + base64 on up to 8×10 MB files is slow enough to
-    /// stall the UI if it ran here directly. A new call supersedes any
-    /// in-flight one — its result is discarded once cancelled.
+    /// Reads and base64-encodes files picked from the file importer or
+    /// dropped onto the composer. Validation and encoding run off the main
+    /// actor in `AttachmentFileEncoder` since `Data(contentsOf:)` + base64 on
+    /// up to 8×10 MB files is slow enough to stall the UI if it ran here
+    /// directly. A new call supersedes any in-flight one — its result is
+    /// discarded once cancelled.
     private func attach(urls: [URL], to threadID: String) {
         attachmentEncodeTask?.cancel()
         attachmentError = nil
         attachmentEncodeTask = Task {
-            let existingCount = model.composerDraft(for: threadID).attachments.count
-            let (encoded, error) = await Self.encodeFromFiles(urls: urls, existingCount: existingCount)
+            let existing = model.composerDraft(for: threadID).attachments
+            let (encoded, error) = await AttachmentFileEncoder.encodeFromFiles(
+                urls: urls, existing: existing,
+                maxAttachments: Self.maxAttachments,
+                maxAttachmentBytes: Self.maxAttachmentBytes)
             guard !Task.isCancelled else { return }
             if let error { attachmentError = error }
             guard !encoded.isEmpty else { return }
             let current = model.composerDraft(for: threadID).attachments
             model.setComposerDraftAttachments(current + encoded, for: threadID)
         }
-    }
-
-    /// Off-main-actor file read + base64 encode. `nonisolated` so calling it
-    /// via `await` from the (actor-inferred) view hops off the main actor;
-    /// only `Sendable` state (URLs, the two size/count constants) crosses in.
-    nonisolated private static func encodeFromFiles(
-        urls: [URL], existingCount: Int
-    ) async -> (attachments: [OutgoingAttachment], error: String?) {
-        var staged: [OutgoingAttachment] = []
-        var error: String?
-        var count = existingCount
-        for url in urls {
-            guard count < maxAttachments else {
-                error = "At most \(maxAttachments) attachments per message."
-                break
-            }
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else {
-                error = "Could not read \(url.lastPathComponent)."
-                continue
-            }
-            guard data.count <= maxAttachmentBytes else {
-                error = "\(url.lastPathComponent) is over the 10 MB attachment limit."
-                continue
-            }
-            let mimeType =
-                UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "image/png"
-            guard mimeType.hasPrefix("image/") else {
-                error = "\(url.lastPathComponent) is not an image."
-                continue
-            }
-            staged.append(
-                OutgoingAttachment(
-                    id: UUID().uuidString, name: url.lastPathComponent, mimeType: mimeType,
-                    sizeBytes: data.count,
-                    dataURL: "data:\(mimeType);base64,\(data.base64EncodedString())"))
-            count += 1
-        }
-        return (staged, error)
-    }
-
-    /// Off-main-actor encode for already-in-memory image bytes (paste/drop),
-    /// reusing the same size/count caps as file attachments.
-    nonisolated private static func encodeFromData(
-        _ items: [(name: String, mimeType: String, data: Data)], existingCount: Int
-    ) async -> (attachments: [OutgoingAttachment], error: String?) {
-        var staged: [OutgoingAttachment] = []
-        var error: String?
-        var count = existingCount
-        for item in items {
-            guard count < maxAttachments else {
-                error = "At most \(maxAttachments) attachments per message."
-                break
-            }
-            guard item.data.count <= maxAttachmentBytes else {
-                error = "\(item.name) is over the 10 MB attachment limit."
-                continue
-            }
-            staged.append(
-                OutgoingAttachment(
-                    id: UUID().uuidString, name: item.name, mimeType: item.mimeType,
-                    sizeBytes: item.data.count,
-                    dataURL: "data:\(item.mimeType);base64,\(item.data.base64EncodedString())"))
-            count += 1
-        }
-        return (staged, error)
     }
 
     /// Shared handler for pasted/dropped image providers: loads each
@@ -880,9 +818,11 @@ public struct ComposerBar: View {
                     let ext = UTType(mimeType: mimeType)?.preferredFilenameExtension ?? "png"
                     let name = provider.suggestedName.map { "\($0).\(ext)" }
                         ?? "Pasted image \(index + 1).\(ext)"
-                    let (encoded, encodeError) = await Self.encodeFromData(
+                    let (encoded, encodeError) = await AttachmentFileEncoder.encodeFromData(
                         [(name: name, mimeType: mimeType, data: data)],
-                        existingCount: existingCount + encodedAttachments.count)
+                        existingCount: existingCount + encodedAttachments.count,
+                        maxAttachments: Self.maxAttachments,
+                        maxAttachmentBytes: Self.maxAttachmentBytes)
                     if let encodeError {
                         loadError = encodeError
                     }
@@ -935,14 +875,62 @@ public struct ComposerBar: View {
         attachFromProviders(imageProviders, to: threadID)
     }
 
+    /// Drop entry point for the composer (`.onDrop(of: [.fileURL, .image])`).
+    /// Dragged files become real attachments through the same pipeline as the
+    /// paperclip picker — claimed here so the editor never falls back to
+    /// inserting the file's absolute path as text. Dragged text and non-file
+    /// URLs carry no `.fileURL` payload, so returning false for them preserves
+    /// normal text insertion.
     private func handleDropProviders(_ providers: [NSItemProvider]) -> Bool {
         guard let threadID = model.selectedThreadID else { return false }
+        // A dragged image *file* conforms to both .fileURL and .image; check
+        // files first so it attaches via its URL instead of re-encoded bytes.
+        let fileProviders = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+        }
+        guard fileProviders.isEmpty else {
+            attachDroppedFiles(fileProviders, to: threadID)
+            return true
+        }
         let imageProviders = providers.filter {
             $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
         }
         guard !imageProviders.isEmpty, attachments.count < Self.maxAttachments else { return false }
         attachFromProviders(imageProviders, to: threadID)
         return true
+    }
+
+    /// Loads the file URL from each dropped item in drop order (deterministic
+    /// attachment ordering), then routes them through `attach(urls:to:)`.
+    /// Items that fail to yield a URL are skipped; a drop with no usable URLs
+    /// (e.g. a cancelled drag) leaves the draft untouched.
+    private func attachDroppedFiles(_ providers: [NSItemProvider], to threadID: String) {
+        Task {
+            var urls: [URL] = []
+            for provider in providers {
+                if let url = try? await Self.loadFileURL(from: provider) {
+                    urls.append(url)
+                }
+            }
+            guard !Task.isCancelled, !urls.isEmpty else { return }
+            attach(urls: urls, to: threadID)
+        }
+    }
+
+    /// Same bridging constraint as `loadImageData`: this SDK only exposes the
+    /// completion-handler overload, and `NSItemProvider` isn't `Sendable`, so
+    /// this stays on the caller's actor — the load itself runs inside the
+    /// framework off the calling thread.
+    private static func loadFileURL(from provider: NSItemProvider) async throws -> URL {
+        try await withCheckedThrowingContinuation { continuation in
+            _ = provider.loadObject(ofClass: URL.self) { item, error in
+                if let url = item as? URL {
+                    continuation.resume(returning: url)
+                } else {
+                    continuation.resume(throwing: error ?? CocoaError(.fileReadUnknown))
+                }
+            }
+        }
     }
 
     /// Cmd+V while the draft editor is focused: claim image pasteboards so
@@ -963,8 +951,10 @@ public struct ComposerBar: View {
             let existingCount = model.composerDraft(for: threadID).attachments.count
             guard existingCount < ComposerBar.maxAttachments else { return event }
             Task { @MainActor in
-                let (encoded, _) = await ComposerBar.encodeFromData(
-                    images, existingCount: existingCount)
+                let (encoded, _) = await AttachmentFileEncoder.encodeFromData(
+                    images, existingCount: existingCount,
+                    maxAttachments: ComposerBar.maxAttachments,
+                    maxAttachmentBytes: ComposerBar.maxAttachmentBytes)
                 guard !encoded.isEmpty else { return }
                 let current = model.composerDraft(for: threadID).attachments
                 // Re-check cap against any concurrent attach (paperclip/drop).
@@ -982,6 +972,66 @@ public struct ComposerBar: View {
             NSEvent.removeMonitor(pasteMonitor)
             self.pasteMonitor = nil
         }
+    }
+}
+
+// MARK: - Drop-target configuration
+
+/// SwiftUI's `TextEditor` is backed by an NSTextView that registers itself as
+/// a drag destination for file URLs (and images). Left alone, a file dropped
+/// on the composer is consumed by that text view — which inserts the file's
+/// absolute path as text — before SwiftUI's `.onDrop` ever sees the drag.
+/// This representable finds the backing text view once the composer is in a
+/// window and narrows its drag registration to text formats only, so file and
+/// image drops fall through to the composer's `.onDrop` and become real
+/// attachments. Dragged text keeps working (`.string` stays registered), and
+/// non-file URL drags from browsers still insert as text because those
+/// pasteboards also carry a string representation.
+private struct ComposerDropTargetConfigurator: NSViewRepresentable {
+    /// Text formats the editor may still accept as drops. Deliberately no
+    /// `.URL`: `public.file-url` conforms to `public.url`, so registering it
+    /// would re-claim file drags and insert paths again.
+    private static let textDragTypes: [NSPasteboard.PasteboardType] = [.string, .rtf, .rtfd, .html]
+
+    func makeNSView(context: Context) -> NSView {
+        let anchor = NSView(frame: .zero)
+        DispatchQueue.main.async { Self.retuneEditorDragTypes(anchoredAt: anchor) }
+        return anchor
+    }
+
+    func updateNSView(_ anchor: NSView, context: Context) {
+        // SwiftUI rebuilds can swap or re-register the backing text view, so
+        // the retune is idempotent and reapplied on updates.
+        DispatchQueue.main.async { Self.retuneEditorDragTypes(anchoredAt: anchor) }
+    }
+
+    private static func retuneEditorDragTypes(anchoredAt anchor: NSView) {
+        guard let textView = editorTextView(anchoredAt: anchor),
+            textView.registeredDraggedTypes != textDragTypes
+        else { return }
+        textView.unregisterDraggedTypes()
+        textView.registerForDraggedTypes(textDragTypes)
+    }
+
+    /// The anchor sits inside the composer's editor container, so the nearest
+    /// ancestor subtree containing an NSTextView is the composer's own.
+    /// Transcript text views live in sibling subtrees the climb never reaches
+    /// because it stops at the first match.
+    private static func editorTextView(anchoredAt anchor: NSView) -> NSTextView? {
+        var ancestor = anchor.superview
+        while let current = ancestor {
+            if let textView = firstTextView(in: current) { return textView }
+            ancestor = current.superview
+        }
+        return nil
+    }
+
+    private static func firstTextView(in view: NSView) -> NSTextView? {
+        if let textView = view as? NSTextView { return textView }
+        for subview in view.subviews {
+            if let found = firstTextView(in: subview) { return found }
+        }
+        return nil
     }
 }
 
