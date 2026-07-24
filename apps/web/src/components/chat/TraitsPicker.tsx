@@ -399,6 +399,10 @@ export const TraitsPicker = memo(function TraitsPicker({
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const completeSelection = useCallback(() => {
+    setIsMenuOpen(false);
+    onSelectionComplete?.();
+  }, [onSelectionComplete]);
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
@@ -485,7 +489,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           onPromptChange={onPromptChange}
           modelOptions={modelOptions}
           allowPromptInjectedEffort={allowPromptInjectedEffort}
-          {...(onSelectionComplete ? { onSelectionComplete } : {})}
+          onSelectionComplete={completeSelection}
           {...persistence}
         />
       </MenuPopup>

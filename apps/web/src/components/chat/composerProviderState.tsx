@@ -11,7 +11,7 @@ import {
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
-import type { ReactNode } from "react";
+import type { ReactElement } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
@@ -84,7 +84,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
 function renderTraitsControl(
   Component: typeof TraitsMenuContent | typeof TraitsPicker,
   input: TraitsRenderInput,
-): ReactNode {
+): ReactElement | null {
   const {
     provider,
     instanceId,
@@ -120,10 +120,10 @@ function renderTraitsControl(
   );
 }
 
-export function renderProviderTraitsMenuContent(input: TraitsRenderInput): ReactNode {
+export function renderProviderTraitsMenuContent(input: TraitsRenderInput): ReactElement | null {
   return renderTraitsControl(TraitsMenuContent, input);
 }
 
-export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactNode {
+export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactElement | null {
   return renderTraitsControl(TraitsPicker, input);
 }
