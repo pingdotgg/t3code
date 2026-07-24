@@ -71,6 +71,8 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
   const scriptSources = [
     "'self'",
     "'unsafe-inline'",
+    // Required to compile the ghostty-web terminal's WebAssembly module.
+    "'wasm-unsafe-eval'",
     ...(clerkOrigin ? [clerkOrigin] : []),
     "https://challenges.cloudflare.com",
   ];
@@ -79,7 +81,8 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
   // the build-configured Clerk, relay, and OTLP endpoints. Those environment
   // origins are not known when this response policy is created, so restrict
   // connections by the network schemes the client supports instead of by host.
-  const connectSources = ["'self'", "http:", "https:", "ws:", "wss:"];
+  // data: allows ghostty-web to fetch its embedded WebAssembly payload.
+  const connectSources = ["'self'", "data:", "http:", "https:", "ws:", "wss:"];
 
   return [
     "default-src 'self'",

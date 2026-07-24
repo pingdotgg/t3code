@@ -407,6 +407,28 @@ export const ServerSignalProcessResult = Schema.Struct({
 });
 export type ServerSignalProcessResult = typeof ServerSignalProcessResult.Type;
 
+/** Terminal colors parsed from the user's Ghostty theme (hex strings like "#1e1e2e"). */
+export const ServerTerminalThemeColors = Schema.Struct({
+  background: Schema.optional(TrimmedNonEmptyString),
+  foreground: Schema.optional(TrimmedNonEmptyString),
+  cursor: Schema.optional(TrimmedNonEmptyString),
+  selectionBackground: Schema.optional(TrimmedNonEmptyString),
+  selectionForeground: Schema.optional(TrimmedNonEmptyString),
+  /** ANSI palette slots 0-15; empty string for slots the theme does not define. */
+  palette: Schema.optional(Schema.Array(Schema.String)),
+});
+export type ServerTerminalThemeColors = typeof ServerTerminalThemeColors.Type;
+
+/** Terminal appearance derived from the user's local Ghostty config, when present. */
+export const ServerTerminalStyle = Schema.Struct({
+  /** font-family fallback chain in config order. */
+  fontFamily: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  fontSize: Schema.optional(Schema.Number),
+  light: Schema.optional(ServerTerminalThemeColors),
+  dark: Schema.optional(ServerTerminalThemeColors),
+});
+export type ServerTerminalStyle = typeof ServerTerminalStyle.Type;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -422,6 +444,8 @@ export const ServerConfig = Schema.Struct({
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /** Whether thread subscriptions can emit an opt-in catch-up completion marker. */
   threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /** Absent when no Ghostty config exists or it cannot be read. */
+  terminalStyle: Schema.optional(ServerTerminalStyle),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 

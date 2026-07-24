@@ -82,6 +82,7 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { loadGhosttyTerminalStyle } from "./terminal/ghosttyStyle.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -1068,6 +1069,7 @@ const makeWsRpcLayer = (
 
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
+        const terminalStyle = yield* loadGhosttyTerminalStyle;
         const providers = yield* providerRegistry.getProviders;
         const settings = ServerSettings.redactServerSettingsForClient(
           yield* serverSettings.getSettings,
@@ -1084,6 +1086,7 @@ const makeWsRpcLayer = (
           issues: keybindingsConfig.issues,
           providers,
           availableEditors: yield* externalLauncher.resolveAvailableEditors(),
+          ...(terminalStyle !== undefined ? { terminalStyle } : {}),
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,
