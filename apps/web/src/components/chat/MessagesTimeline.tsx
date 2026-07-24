@@ -397,17 +397,30 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
     const measure = () => {
       const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
-      const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(viewportWidth);
+      const contentElement = timelineViewportElement.querySelector<HTMLElement>(
+        '[data-timeline-root="true"]',
+      );
+      const contentWidth = contentElement?.getBoundingClientRect().width ?? viewportWidth;
+      const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(
+        viewportWidth,
+        contentWidth,
+      );
       setMinimapHasPersistentGutter((current) =>
         current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
       );
-      setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth));
+      setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
     };
 
     const frame = requestAnimationFrame(measure);
 
     const observer = new ResizeObserver(measure);
     observer.observe(timelineViewportElement);
+    const contentElement = timelineViewportElement.querySelector<HTMLElement>(
+      '[data-timeline-root="true"]',
+    );
+    if (contentElement) {
+      observer.observe(contentElement);
+    }
 
     return () => {
       cancelAnimationFrame(frame);
