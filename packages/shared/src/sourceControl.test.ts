@@ -76,3 +76,34 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     });
   });
 });
+
+describe("forgejo support", () => {
+  it("resolves Forgejo presentation", () => {
+    const p = resolveChangeRequestPresentation({
+      kind: "forgejo",
+      name: "Forgejo",
+      baseUrl: "https://codeberg.org",
+    });
+    expect(p.icon).toBe("forgejo");
+    expect(p.providerName).toBe("Forgejo");
+    expect(p.shortName).toBe("PR");
+  });
+
+  it("detects codeberg.org as forgejo", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@codeberg.org:owner/repo.git")?.kind,
+    ).toBe("forgejo");
+  });
+
+  it("detects a host containing 'forgejo' as forgejo", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://forgejo.example.org/owner/repo.git")?.kind,
+    ).toBe("forgejo");
+  });
+
+  it("leaves an arbitrary self-hosted host as unknown (refined later via fj)", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://git.example.org/owner/repo.git")?.kind,
+    ).toBe("unknown");
+  });
+});

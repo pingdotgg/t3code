@@ -7,12 +7,14 @@ import * as Layer from "effect/Layer";
 import {
   SourceControlProviderError,
   type SourceControlProviderDiscoveryItem,
+  type SourceControlProviderInfo,
 } from "@t3tools/contracts";
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
+import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
@@ -57,6 +59,11 @@ export class SourceControlProviderRegistry extends Context.Service<
       SourceControlProvider.SourceControlProvider["Service"],
       SourceControlProviderError
     >;
+    readonly refineRemoteProvider: (input: {
+      readonly cwd: string;
+      readonly remoteName: string;
+      readonly remoteUrl: string;
+    }) => Effect.Effect<SourceControlProviderInfo | null>;
     readonly discover: Effect.Effect<ReadonlyArray<SourceControlProviderDiscoveryItem>>;
   }
 >()("t3/sourceControl/SourceControlProviderRegistry") {}
@@ -269,6 +276,18 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       get,
       resolveHandle,
       resolve: (input) => resolveHandle(input).pipe(Effect.map((handle) => handle.provider)),
+      refineRemoteProvider: (input) => {
+        const provider = detectSourceControlProviderFromRemoteUrl(input.remoteUrl);
+        if (provider === null) {
+          return Effect.succeed(null);
+        }
+        return refineUnknownRemoteProvider({
+          specs: discoverySpecs,
+          process,
+          cwd: input.cwd,
+          context: { provider, remoteName: input.remoteName, remoteUrl: input.remoteUrl },
+        }).pipe(Effect.map((context) => context?.provider ?? provider));
+      },
       discover: Effect.all(
         discoverySpecs.map((spec) =>
           probeSourceControlProvider({
@@ -288,6 +307,7 @@ export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabSourceControlProvider.make;
   const bitbucket = yield* BitbucketSourceControlProvider.make;
   const bitbucketDiscovery = yield* BitbucketSourceControlProvider.makeDiscovery;
+  const forgejo = yield* ForgejoSourceControlProvider.make;
   const azureDevOps = yield* AzureDevOpsSourceControlProvider.make;
   return yield* makeWithProviders([
     {
@@ -309,6 +329,11 @@ export const make = Effect.gen(function* () {
       kind: "bitbucket",
       provider: bitbucket,
       discovery: bitbucketDiscovery,
+    },
+    {
+      kind: "forgejo",
+      provider: forgejo,
+      discovery: ForgejoSourceControlProvider.discovery,
     },
   ]);
 });

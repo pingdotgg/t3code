@@ -106,7 +106,7 @@ import {
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
-import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
+import { AzureDevOpsIcon, BitbucketIcon, ForgejoIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
@@ -166,7 +166,7 @@ interface AddProjectEnvironmentOption {
 
 type AddProjectRemoteProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "bitbucket" | "azure-devops" | "forgejo"
 >;
 type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
@@ -191,12 +191,14 @@ const REMOTE_PROJECT_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "gitlab",
   "bitbucket",
   "azure-devops",
+  "forgejo",
 ];
 const REMOTE_PROJECT_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
   "github",
   "gitlab",
   "bitbucket",
   "azure-devops",
+  "forgejo",
 ];
 
 function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
@@ -209,6 +211,8 @@ function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
       return "Bitbucket";
     case "azure-devops":
       return "Azure DevOps";
+    case "forgejo":
+      return "Forgejo";
     case "url":
       return "Git URL";
   }
@@ -224,6 +228,8 @@ function remoteProjectSourcePathHint(source: AddProjectRemoteSource): string {
       return "workspace/repository";
     case "azure-devops":
       return "project/repository";
+    case "forgejo":
+      return "host/owner/repo";
     case "url":
       return "URL";
   }
@@ -245,6 +251,8 @@ function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: stri
       return <BitbucketIcon className={className} />;
     case "azure-devops":
       return <AzureDevOpsIcon className={className} />;
+    case "forgejo":
+      return <ForgejoIcon className={className} />;
     case "url":
       return <LinkIcon className={className} />;
   }
@@ -294,6 +302,7 @@ function buildAddProjectRemoteSourceReadiness(
     gitlab: unavailable,
     bitbucket: unavailable,
     "azure-devops": unavailable,
+    forgejo: unavailable,
   };
 
   if (!discovery) {
