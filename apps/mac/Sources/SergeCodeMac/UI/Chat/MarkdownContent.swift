@@ -700,8 +700,16 @@ struct AssistantMarkdownView: View {
     let style: MarkdownRenderStyle
     let showsRoleChrome: Bool
     // Parsing belongs in init, not body: body is evaluated for every timeline
-    // mutation while the view value can remain otherwise unchanged.
+    // mutation while the view value can remain otherwise unchanged. (The
+    // streaming path is the exception — see `usesStreamingReveal`.)
     private let renderedBlocks: [MarkdownRenderedBlock]
+
+    /// Streaming assistant text renders through `StreamingMarkdownBlocks`,
+    /// which reveals the incoming markdown a few bytes per display frame and
+    /// parses the revealed prefix incrementally in its own body.
+    private var usesStreamingReveal: Bool {
+        isStreaming && style == .assistant && !messageID.isEmpty
+    }
 
     init(
         markdown: String,
@@ -721,17 +729,19 @@ struct AssistantMarkdownView: View {
         self.at = at
         self.style = style
         self.showsRoleChrome = showsRoleChrome
+        // Uses the raw parameters: `usesStreamingReveal` can't run here because
+        // `renderedBlocks` isn't initialized yet. Keep the two in sync.
         if isStreaming && style == .assistant && !messageID.isEmpty {
-            // Incremental parse: settled prefix cached per (thread, message)
-            // session; only the tail past the last safe boundary reparses.
-            // Scope the thread key (like TimelineDisplayCache) so local/remote
-            // ids can't alias across devices in MultiDeviceModel.
-            let document = StreamingMarkdownCache.document(
-                threadID: model.scopedThreadKey(threadID), messageID: messageID, markdown: markdown)
-            self.renderedBlocks = Self.renderedBlocks(from: document)
+            // Streaming text renders through `StreamingMarkdownBlocks`, which
+            // reveals the incoming markdown a few bytes per display frame
+            // (see StreamingReveal.swift) and parses the revealed prefix
+            // incrementally. Nothing to parse eagerly here.
+            self.renderedBlocks = []
         } else {
             if !messageID.isEmpty {
                 StreamingMarkdownCache.finish(
+                    threadID: model.scopedThreadKey(threadID), messageID: messageID)
+                StreamingRevealStore.finish(
                     threadID: model.scopedThreadKey(threadID), messageID: messageID)
             }
             // Keyed by messageID so a finished message's parse is memoized
@@ -740,7 +750,7 @@ struct AssistantMarkdownView: View {
             // skip that whole-document short-circuit.
             let document = MarkdownBlockCache.document(
                 for: markdown, messageID: messageID.isEmpty ? nil : messageID)
-            self.renderedBlocks = Self.renderedBlocks(from: document)
+            self.renderedBlocks = MarkdownBlocksView.renderedBlocks(from: document)
         }
     }
 
@@ -755,23 +765,21 @@ struct AssistantMarkdownView: View {
                 if showsRoleChrome && style == .assistant {
                     assistantRoleLine
                 }
-                ForEach(Array(renderedBlocks.enumerated()), id: \.element.id) { index, entry in
-                    markdownBlockView(
-                        entry.block,
-                        allowsHighlight: markdownBlockAllowsHighlight(
-                            style: style,
-                            isStreaming: isStreaming,
-                            sourceKey: entry.sourceKey,
-                            lastSourceKey: renderedBlocks.last?.sourceKey))
-                        .padding(.top, blockGap(at: index))
-                }
-                if showsRoleChrome && style == .assistant && isStreaming {
-                    Image(systemName: "ellipsis")
-                        .symbolEffect(.variableColor.iterative, isActive: !Motion.reduceMotion)
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Assistant is responding")
-                        .transition(.opacity)
-                        .padding(.top, streamingIndicatorGap)
+                if usesStreamingReveal {
+                    StreamingMarkdownBlocks(
+                        markdown: markdown,
+                        threadID: threadID,
+                        messageID: messageID,
+                        model: model,
+                        style: style,
+                        showsStreamingIndicator: showsRoleChrome)
+                } else {
+                    MarkdownBlocksView(
+                        renderedBlocks: renderedBlocks,
+                        style: style,
+                        isStreaming: isStreaming,
+                        showsStreamingIndicator: showsRoleChrome
+                            && style == .assistant && isStreaming)
                 }
             }
             .frame(
@@ -849,37 +857,6 @@ struct AssistantMarkdownView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private static func renderedBlocks(from document: ParsedMarkdownDocument) -> [MarkdownRenderedBlock] {
-        var occurrences: [String: Int] = [:]
-        return document.blocks.indices.map { index in
-            let sourceKey = document.blockKeys[index]
-            let occurrence = occurrences[sourceKey, default: 0]
-            occurrences[sourceKey] = occurrence + 1
-            // One top-level Markdown node can expand into several blocks. Keep
-            // its stable source key while disambiguating those siblings.
-            return MarkdownRenderedBlock(
-                id: "\(sourceKey)\u{0}\(occurrence)",
-                sourceKey: sourceKey,
-                block: document.blocks[index])
-        }
-    }
-
-    private func blockGap(at index: Int) -> CGFloat {
-        let before = MarkdownTheme.kind(of: renderedBlocks[index].block)
-        let after = index > 0
-            ? MarkdownTheme.kind(of: renderedBlocks[index - 1].block)
-            : nil
-        return MarkdownTheme.gap(after: after, before: before)
-    }
-
-    private var streamingIndicatorGap: CGFloat {
-        guard let last = renderedBlocks.last else {
-            return MarkdownTheme.gap(after: .paragraph, before: .paragraph)
-        }
-        return MarkdownTheme.gap(
-            after: MarkdownTheme.kind(of: last.block), before: .paragraph)
-    }
-
     private func openFile(path: String, line: Int?, with editor: ExternalEditor) async {
         await model.openInEditor(threadID: threadID, subpath: path, editor: editor)
     }
@@ -931,6 +908,69 @@ struct AssistantMarkdownView: View {
             NSMenu.popUpContextMenu(menu, with: event, for: event.window?.contentView ?? NSView())
         }
     }
+}
+
+/// Renders parsed markdown blocks with the theme's inter-block gaps and,
+/// while streaming, the trailing "assistant is responding" ellipsis. Shared
+/// by `AssistantMarkdownView`'s settled path and `StreamingMarkdownBlocks` so
+/// streaming and finished messages are pixel-identical block-for-block.
+private struct MarkdownBlocksView: View {
+    let renderedBlocks: [MarkdownRenderedBlock]
+    let style: MarkdownRenderStyle
+    let isStreaming: Bool
+    let showsStreamingIndicator: Bool
+
+    var body: some View {
+        ForEach(Array(renderedBlocks.enumerated()), id: \.element.id) { index, entry in
+            markdownBlockView(
+                entry.block,
+                allowsHighlight: markdownBlockAllowsHighlight(
+                    style: style,
+                    isStreaming: isStreaming,
+                    sourceKey: entry.sourceKey,
+                    lastSourceKey: renderedBlocks.last?.sourceKey))
+                .padding(.top, blockGap(at: index))
+        }
+        if showsStreamingIndicator {
+            Image(systemName: "ellipsis")
+                .symbolEffect(.variableColor.iterative, isActive: !Motion.reduceMotion)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Assistant is responding")
+                .transition(.opacity)
+                .padding(.top, streamingIndicatorGap)
+        }
+    }
+
+    static func renderedBlocks(from document: ParsedMarkdownDocument) -> [MarkdownRenderedBlock] {
+        var occurrences: [String: Int] = [:]
+        return document.blocks.indices.map { index in
+            let sourceKey = document.blockKeys[index]
+            let occurrence = occurrences[sourceKey, default: 0]
+            occurrences[sourceKey] = occurrence + 1
+            // One top-level Markdown node can expand into several blocks. Keep
+            // its stable source key while disambiguating those siblings.
+            return MarkdownRenderedBlock(
+                id: "\(sourceKey)\u{0}\(occurrence)",
+                sourceKey: sourceKey,
+                block: document.blocks[index])
+        }
+    }
+
+    private func blockGap(at index: Int) -> CGFloat {
+        let before = MarkdownTheme.kind(of: renderedBlocks[index].block)
+        let after = index > 0
+            ? MarkdownTheme.kind(of: renderedBlocks[index - 1].block)
+            : nil
+        return MarkdownTheme.gap(after: after, before: before)
+    }
+
+    private var streamingIndicatorGap: CGFloat {
+        guard let last = renderedBlocks.last else {
+            return MarkdownTheme.gap(after: .paragraph, before: .paragraph)
+        }
+        return MarkdownTheme.gap(
+            after: MarkdownTheme.kind(of: last.block), before: .paragraph)
+    }
 
     @ViewBuilder
     private func markdownBlockView(_ block: MarkdownBlock, allowsHighlight: Bool) -> some View {
@@ -981,6 +1021,59 @@ struct AssistantMarkdownView: View {
             } else {
                 MarkdownTableView(table: table)
             }
+        }
+    }
+}
+
+/// Streaming assistant text, revealed smoothly a few bytes per display frame
+/// instead of jumping once per ~30 Hz delta flush. A vsync-aligned
+/// `TimelineView` advances `StreamingRevealStore`; the revealed prefix is
+/// parsed through `StreamingMarkdownCache`, whose incremental settled-prefix
+/// cache means each frame only re-parses the small growing tail. Under
+/// Reduce Motion the policy snaps straight to the full target and this
+/// renders exactly like the settled path.
+private struct StreamingMarkdownBlocks: View {
+    let markdown: String
+    let threadID: String
+    let messageID: String
+    let model: AppModel
+    let style: MarkdownRenderStyle
+    let showsStreamingIndicator: Bool
+
+    /// Bumped when the store's revealed text changes; the store itself is not
+    /// observable, so this is what re-renders the blocks on a tick.
+    @UIState private var revealGeneration = 0
+
+    private var threadKey: String { model.scopedThreadKey(threadID) }
+
+    var body: some View {
+        let reduceMotion = Motion.reduceMotion
+        let revealed = reduceMotion
+            ? markdown
+            : StreamingRevealStore.revealed(
+                threadID: threadKey, messageID: messageID, target: markdown)
+        // Read so SwiftUI observes the bump above as a change to this body.
+        let _ = revealGeneration
+        let blocks = MarkdownBlocksView.renderedBlocks(
+            from: StreamingMarkdownCache.document(
+                threadID: threadKey, messageID: messageID, markdown: revealed))
+
+        TimelineView(.animation(paused: reduceMotion || revealed == markdown)) { timeline in
+            MarkdownBlocksView(
+                renderedBlocks: blocks,
+                style: style,
+                isStreaming: true,
+                showsStreamingIndicator: showsStreamingIndicator)
+                .onChange(of: timeline.date, initial: true) { _, date in
+                    guard StreamingRevealStore.advance(
+                        threadID: threadKey,
+                        messageID: messageID,
+                        target: markdown,
+                        at: date,
+                        policy: StreamingRevealPolicy(reduceMotion: reduceMotion))
+                    else { return }
+                    revealGeneration += 1
+                }
         }
     }
 }
