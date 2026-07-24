@@ -161,7 +161,11 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { buildDraftThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
+import {
+  buildDraftThreadRouteParams,
+  resolveThreadRouteTarget,
+  shouldKeepActiveThreadVisitOnUnmount,
+} from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -1765,14 +1769,20 @@ function ChatViewContent(props: ChatViewProps) {
       const currentRouteParams =
         router.state.matches[router.state.matches.length - 1]?.params ?? {};
       const currentRouteTarget = resolveThreadRouteTarget(currentRouteParams);
-      if (currentRouteTarget?.kind === "server") {
+      if (
+        shouldKeepActiveThreadVisitOnUnmount({
+          currentRouteTarget,
+          routeThreadKey,
+          draftId,
+        })
+      ) {
         return;
       }
       if (useUiStateStore.getState().activeThreadVisit?.threadId === routeThreadKey) {
         markActiveThreadVisited(null, null);
       }
     },
-    [markActiveThreadVisited, routeThreadKey, router],
+    [draftId, markActiveThreadVisited, routeThreadKey, router],
   );
 
   const selectedProviderByThreadId = composerActiveProvider ?? null;
