@@ -8,9 +8,17 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  isExplicitProviderInstanceOnly,
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
 } from "./SettingsPanels.logic";
+
+describe("provider instance materialization", () => {
+  it("requires Hermes instances to be explicitly enrolled", () => {
+    expect(isExplicitProviderInstanceOnly(ProviderDriverKind.make("hermes"))).toBe(true);
+    expect(isExplicitProviderInstanceOnly(ProviderDriverKind.make("codex"))).toBe(false);
+  });
+});
 
 describe("project grouping toggle", () => {
   it("enables repository grouping and disables into separate projects", () => {

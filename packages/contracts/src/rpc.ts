@@ -66,6 +66,10 @@ import {
   HermesGatewayInstanceStatus,
   HermesGatewayListInstancesResult,
   HermesGatewayManagementError,
+  HermesGatewayRemoveInstanceInput,
+  HermesGatewayRemoveInstanceResult,
+  HermesGatewayRenameInstanceInput,
+  HermesGatewayRenameInstanceResult,
   HermesGatewayRevokeInstanceInput,
   HermesGatewayRevokeInstanceResult,
 } from "./hermesGateway.ts";
@@ -233,7 +237,9 @@ export const WS_METHODS = {
   hermesGatewayCreateEnrollment: "hermesGateway.createEnrollment",
   hermesGatewayGetInstanceStatus: "hermesGateway.getInstanceStatus",
   hermesGatewayListInstances: "hermesGateway.listInstances",
+  hermesGatewayRenameInstance: "hermesGateway.renameInstance",
   hermesGatewayRevokeInstance: "hermesGateway.revokeInstance",
+  hermesGatewayRemoveInstance: "hermesGateway.removeInstance",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -374,9 +380,21 @@ export const WsHermesGatewayListInstancesRpc = Rpc.make(WS_METHODS.hermesGateway
   error: Schema.Union([HermesGatewayManagementError, EnvironmentAuthorizationError]),
 });
 
+export const WsHermesGatewayRenameInstanceRpc = Rpc.make(WS_METHODS.hermesGatewayRenameInstance, {
+  payload: HermesGatewayRenameInstanceInput,
+  success: HermesGatewayRenameInstanceResult,
+  error: Schema.Union([HermesGatewayManagementError, EnvironmentAuthorizationError]),
+});
+
 export const WsHermesGatewayRevokeInstanceRpc = Rpc.make(WS_METHODS.hermesGatewayRevokeInstance, {
   payload: HermesGatewayRevokeInstanceInput,
   success: HermesGatewayRevokeInstanceResult,
+  error: Schema.Union([HermesGatewayManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsHermesGatewayRemoveInstanceRpc = Rpc.make(WS_METHODS.hermesGatewayRemoveInstance, {
+  payload: HermesGatewayRemoveInstanceInput,
+  success: HermesGatewayRemoveInstanceResult,
   error: Schema.Union([HermesGatewayManagementError, EnvironmentAuthorizationError]),
 });
 
@@ -762,7 +780,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsHermesGatewayCreateEnrollmentRpc,
   WsHermesGatewayGetInstanceStatusRpc,
   WsHermesGatewayListInstancesRpc,
+  WsHermesGatewayRenameInstanceRpc,
   WsHermesGatewayRevokeInstanceRpc,
+  WsHermesGatewayRemoveInstanceRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,

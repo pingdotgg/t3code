@@ -84,6 +84,7 @@ import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  isExplicitProviderInstanceOnly,
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   readLastEnabledProjectGroupingMode,
@@ -1125,11 +1126,12 @@ export function ProviderSettingsPanel() {
   );
   const visibleProviderSettings = PROVIDER_SETTINGS.filter(
     (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some(
-        (provider) =>
-          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
-      ),
+      !isExplicitProviderInstanceOnly(providerSettings.provider) &&
+      (providerSettings.provider !== "cursor" ||
+        serverProviders.some(
+          (provider) =>
+            provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
+        )),
   );
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenInstanceId = textGenerationModelSelection.instanceId;
@@ -1320,6 +1322,13 @@ export function ProviderSettingsPanel() {
     });
   };
 
+  const cleanupRemovedProviderInstancePreferences = (id: ProviderInstanceId) => {
+    updateSettings({
+      providerModelPreferences: withoutProviderInstanceKey(settings.providerModelPreferences, id),
+      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], id),
+    });
+  };
+
   const updateProviderModelPreferences = (
     instanceId: ProviderInstanceId,
     next: {
@@ -1499,6 +1508,7 @@ export function ProviderSettingsPanel() {
                 }
               }}
               onDelete={row.isDefault ? undefined : () => deleteProviderInstance(row.instanceId)}
+              onHermesRemoved={() => cleanupRemovedProviderInstancePreferences(row.instanceId)}
               headerAction={headerAction}
               hiddenModels={modelPreferences.hiddenModels}
               favoriteModels={favoriteModels}

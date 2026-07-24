@@ -9,6 +9,37 @@ const INSTANCE_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
 export const ADD_PROVIDER_WIZARD_STEPS = ["Driver", "Identity", "Config"] as const;
 
+/**
+ * Hermes thread bindings outlive a removed gateway, so a new gateway must
+ * never derive its routing identity from a reusable display name. The UUID is
+ * generated once by the dialog and remains stable across enrollment retries.
+ */
+export function createHermesProviderInstanceId(label: string, randomUuid: () => string) {
+  const suffix = randomUuid()
+    .replace(/[^a-zA-Z0-9]/gu, "")
+    .toLowerCase();
+  if (suffix.length === 0) {
+    throw new Error("Could not generate a Hermes instance ID.");
+  }
+  const labelSlug = label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "")
+    .slice(0, 44);
+  const shortSuffix = suffix.slice(0, 12);
+  return labelSlug ? `hermes-${labelSlug}-${shortSuffix}` : `hermes-${shortSuffix}`;
+}
+
+export function isHermesInstanceRemovedError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "instance-removed"
+  );
+}
+
 export function isOwnedHermesEnrollmentRetry(input: {
   readonly driver: ProviderDriverKind;
   readonly instanceId: string;

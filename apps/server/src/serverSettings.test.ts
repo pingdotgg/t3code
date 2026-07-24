@@ -90,6 +90,55 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(settingsLayer));
   });
 
+  it.effect("does not report post-commit materialization failure as an update failure", () => {
+    const platformCause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "readFile",
+      pathOrDescriptor: "provider environment secret",
+      description: "Secret backend unavailable after settings commit.",
+    });
+    const cause = new ServerSecretStore.SecretStoreReadError({
+      resource: "provider environment secret",
+      cause: platformCause,
+    });
+    const configLayer = Layer.fresh(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3code-server-settings-post-commit-failure-test-",
+      }),
+    );
+    const settingsLayer = ServerSettingsModule.layer.pipe(
+      Layer.provide(makeFailingSecretStoreLayer(cause)),
+      Layer.provideMerge(configLayer),
+    );
+
+    return Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const hermesId = ProviderInstanceId.make("hermes_remote");
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"providerInstances":{"hermes_remote":{"driver":"hermes","displayName":"Remote Hermes","config":{}},"codex_personal":{"driver":"codex","environment":[{"name":"OPENROUTER_API_KEY","value":"","sensitive":true,"valueRedacted":true}],"config":{}}}}',
+      );
+
+      const next = yield* serverSettings.updateSettingsWith((current) => {
+        const providerInstances = { ...current.providerInstances };
+        delete providerInstances[hermesId];
+        return { providerInstances };
+      });
+
+      assert.isUndefined(next.providerInstances[hermesId]);
+      assert.equal(
+        next.providerInstances[ProviderInstanceId.make("codex_personal")]?.environment?.[0]?.value,
+        "",
+      );
+      const persisted = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(persisted, "hermes_remote");
+      assert.include(persisted, "codex_personal");
+    }).pipe(Effect.provide(settingsLayer));
+  });
+
   it.effect("decodes nested settings patches", () =>
     Effect.gen(function* () {
       assert.deepEqual(

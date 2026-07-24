@@ -2,9 +2,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   HERMES_GATEWAY_PROTOCOL_VERSION,
+  HERMES_DRIVER_KIND,
   HermesGatewayCredential,
   HermesGatewayRequestId,
   HermesGatewaySessionId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   type HermesGatewayConnectionHello,
@@ -19,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { HermesDriver } from "../Drivers/HermesDriver.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
@@ -30,6 +33,9 @@ import { HermesGatewayBrokerLive, makeHermesGatewayBroker } from "./HermesGatewa
 
 const instanceId = ProviderInstanceId.make("hermes_remote");
 const otherInstanceId = ProviderInstanceId.make("hermes_other");
+const defaultHermesInstanceId = ProviderInstanceId.make("hermes");
+const metadataSecretNameForTest = (id: ProviderInstanceId) =>
+  `hermes-gateway-metadata-${Buffer.from(id, "utf8").toString("base64url")}`;
 class HermesTestInstance extends Context.Service<HermesTestInstance, ProviderInstance>()(
   "t3/provider/Layers/HermesGatewayBroker.test/HermesTestInstance",
 ) {}
@@ -60,6 +66,11 @@ const makeBroker = (secrets: ServerSecretStore.ServerSecretStore["Service"]) =>
     Effect.provide(
       ServerSettings.layerTest({
         providerInstances: {
+          [defaultHermesInstanceId]: {
+            driver: "hermes",
+            displayName: "Hermes",
+            config: {},
+          },
           [instanceId]: { driver: "hermes", displayName: "Remote", config: {} },
           [otherInstanceId]: { driver: "hermes", displayName: "Other", config: {} },
         },
@@ -87,7 +98,7 @@ it.effect("authenticates before applying incompatible connection state", () =>
     const secrets = makeSecretStore();
     const broker = yield* makeBroker(secrets);
     yield* broker.createEnrollment({
-      instanceId: ProviderInstanceId.make("hermes"),
+      instanceId: defaultHermesInstanceId,
       nickname: "Default Hermes",
       connectorUrl: "https://t3.example.test",
     });
@@ -314,7 +325,7 @@ it.effect("atomically reserves normalized nicknames across concurrent enrollment
     const secondEnrollment = yield* broker
       .createEnrollment({
         instanceId: otherInstanceId,
-        nickname: "  Shared Hermes  ",
+        nickname: "  SHARED HERMES  ",
         connectorUrl: "https://t3.example.test",
       })
       .pipe(Effect.forkChild({ startImmediately: true }));
@@ -541,4 +552,573 @@ it.effect("checks nickname uniqueness from persisted metadata after restart", ()
     );
     assert.equal(error.code, "nickname-conflict");
   }),
+);
+
+it.effect(
+  "renames the display label while preserving instance identity and normalized uniqueness",
+  () =>
+    Effect.gen(function* () {
+      const broker = yield* makeHermesGatewayBroker;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* broker.createEnrollment({
+        instanceId,
+        nickname: "Remote Hermes",
+        connectorUrl: "https://t3.example.test",
+      });
+      yield* broker.createEnrollment({
+        instanceId: otherInstanceId,
+        nickname: "Other Hermes",
+        connectorUrl: "https://t3.example.test",
+      });
+
+      const renamed = yield* broker.renameInstance({
+        instanceId,
+        nickname: "Research Hermes",
+      });
+      assert.equal(renamed.instanceId, instanceId);
+      assert.equal(renamed.nickname, "Research Hermes");
+      assert.equal(
+        (yield* settings.getSettings).providerInstances[instanceId]?.displayName,
+        "Research Hermes",
+      );
+
+      const conflict = yield* Effect.flip(
+        broker.renameInstance({
+          instanceId: otherInstanceId,
+          nickname: "  RESEARCH HERMES  ",
+        }),
+      );
+      assert.equal(conflict.operation, "rename-instance");
+      assert.equal(conflict.code, "nickname-conflict");
+      assert.equal((yield* broker.getInstanceStatus(otherInstanceId)).nickname, "Other Hermes");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({
+            providerInstances: {
+              [instanceId]: { driver: "hermes", displayName: "Remote", config: {} },
+              [otherInstanceId]: { driver: "hermes", displayName: "Other", config: {} },
+            },
+          }),
+          Layer.succeed(ServerSecretStore.ServerSecretStore, makeSecretStore()),
+          NodeServices.layer,
+        ),
+      ),
+    ),
+);
+
+it.effect("preserves concurrent provider settings edits during rename and removal", () =>
+  Effect.gen(function* () {
+    const storedSecrets = makeSecretStore();
+    let metadataGate:
+      | {
+          readonly started: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        }
+      | undefined;
+    const secrets: ServerSecretStore.ServerSecretStore["Service"] = {
+      ...storedSecrets,
+      set: (name, value) => {
+        const gate = metadataGate;
+        if (!gate || !name.startsWith("hermes-gateway-metadata-")) {
+          return storedSecrets.set(name, value);
+        }
+        metadataGate = undefined;
+        return Effect.gen(function* () {
+          yield* Deferred.succeed(gate.started, undefined);
+          yield* Deferred.await(gate.release);
+          yield* storedSecrets.set(name, value);
+        });
+      },
+    };
+    const broker = yield* makeHermesGatewayBroker.pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+    );
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* broker.createEnrollment({
+      instanceId,
+      nickname: "Concurrent Hermes",
+      connectorUrl: "https://t3.example.test",
+    });
+
+    const renameStarted = yield* Deferred.make<void>();
+    const releaseRename = yield* Deferred.make<void>();
+    metadataGate = { started: renameStarted, release: releaseRename };
+    const rename = yield* broker
+      .renameInstance({ instanceId, nickname: "Concurrent Research" })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(renameStarted);
+    yield* settings.updateSettingsWith((current) => ({
+      providerInstances: {
+        ...current.providerInstances,
+        codex_concurrent: { driver: "codex", displayName: "Concurrent Codex", config: {} },
+      },
+    }));
+    yield* Deferred.succeed(releaseRename, undefined);
+    yield* Fiber.join(rename);
+    assert.equal(
+      (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex_concurrent")]
+        ?.displayName,
+      "Concurrent Codex",
+    );
+
+    yield* broker.revokeInstance(instanceId);
+    const removeStarted = yield* Deferred.make<void>();
+    const releaseRemove = yield* Deferred.make<void>();
+    metadataGate = { started: removeStarted, release: releaseRemove };
+    const remove = yield* broker
+      .removeInstance(instanceId)
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(removeStarted);
+    yield* settings.updateSettingsWith((current) => ({
+      providerInstances: {
+        ...current.providerInstances,
+        claude_concurrent: {
+          driver: "claudeAgent",
+          displayName: "Concurrent Claude",
+          config: {},
+        },
+      },
+    }));
+    yield* Deferred.succeed(releaseRemove, undefined);
+    yield* Fiber.join(remove);
+    const finalSettings = yield* settings.getSettings;
+    assert.equal(
+      finalSettings.providerInstances[ProviderInstanceId.make("codex_concurrent")]?.displayName,
+      "Concurrent Codex",
+    );
+    assert.equal(
+      finalSettings.providerInstances[ProviderInstanceId.make("claude_concurrent")]?.displayName,
+      "Concurrent Claude",
+    );
+    assert.isUndefined(finalSettings.providerInstances[instanceId]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [instanceId]: { driver: "hermes", displayName: "Remote", config: {} },
+            [otherInstanceId]: { driver: "hermes", displayName: "Other", config: {} },
+          },
+        }),
+        NodeServices.layer,
+      ),
+    ),
+  ),
+);
+
+it.effect("tombstones removed instance ids while freeing their nickname", () =>
+  Effect.gen(function* () {
+    const broker = yield* makeHermesGatewayBroker;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const enrollment = yield* broker.createEnrollment({
+      instanceId,
+      nickname: "Disposable Hermes",
+      connectorUrl: "https://t3.example.test",
+    });
+    const transport: HermesGatewayTransport = {
+      send: () => Effect.void,
+      close: () => Effect.void,
+    };
+    const registration = yield* broker.registerConnection(
+      hello({ type: "enrollment-token", token: enrollment.oneTimeToken }),
+      transport,
+    );
+    const staleCredential = registration.accepted.credential;
+    if (!staleCredential) {
+      return yield* Effect.die(new Error("enrollment did not issue a credential"));
+    }
+
+    const liveError = yield* Effect.flip(broker.removeInstance(instanceId));
+    assert.equal(liveError.operation, "remove-instance");
+    assert.equal(liveError.code, "instance-not-revoked");
+
+    yield* broker.revokeInstance(instanceId);
+    assert.deepEqual(yield* broker.removeInstance(instanceId), { instanceId });
+    assert.isUndefined((yield* settings.getSettings).providerInstances[instanceId]);
+    assert.isFalse(
+      (yield* broker.listInstances).some((status) => status.instanceId === instanceId),
+    );
+    const missing = yield* Effect.flip(broker.getInstanceStatus(instanceId));
+    assert.equal(missing.code, "instance-not-found");
+
+    yield* settings.updateSettingsWith((current) => ({
+      providerInstances: {
+        ...current.providerInstances,
+        [instanceId]: { driver: "hermes", displayName: "Reused Hermes", config: {} },
+      },
+    }));
+    const tombstoneError = yield* Effect.flip(
+      broker.createEnrollment({
+        instanceId,
+        nickname: "Reused Hermes",
+        connectorUrl: "https://t3.example.test",
+      }),
+    );
+    assert.equal(tombstoneError.code, "instance-removed");
+    assert.isUndefined((yield* settings.getSettings).providerInstances[instanceId]);
+    assert.isFalse(
+      (yield* broker.listInstances).some((status) => status.instanceId === instanceId),
+    );
+    const staleConnection = yield* Effect.flip(
+      broker.registerConnection(
+        hello({
+          type: "instance-credential",
+          instanceId,
+          credential: staleCredential,
+        }),
+        transport,
+      ),
+    );
+    assert.equal(staleConnection.code, "invalid-authentication");
+
+    yield* settings.updateSettingsWith((current) => ({
+      providerInstances: {
+        ...current.providerInstances,
+        [instanceId]: { driver: "hermes", displayName: "Reused Again", config: {} },
+      },
+    }));
+    const restartedBroker = yield* makeHermesGatewayBroker;
+    const restartedError = yield* Effect.flip(
+      restartedBroker.createEnrollment({
+        instanceId,
+        nickname: "Reused Hermes",
+        connectorUrl: "https://t3.example.test",
+      }),
+    );
+    assert.equal(restartedError.code, "instance-removed");
+    assert.isUndefined((yield* settings.getSettings).providerInstances[instanceId]);
+
+    const replacement = yield* broker.createEnrollment({
+      instanceId: otherInstanceId,
+      nickname: "disposable hermes",
+      connectorUrl: "https://t3.example.test",
+    });
+    assert.equal(replacement.instanceId, otherInstanceId);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [instanceId]: { driver: "hermes", displayName: "Remote", config: {} },
+            [otherInstanceId]: { driver: "hermes", displayName: "Other", config: {} },
+          },
+        }),
+        Layer.succeed(ServerSecretStore.ServerSecretStore, makeSecretStore()),
+        NodeServices.layer,
+      ),
+    ),
+  ),
+);
+
+it.effect("keeps the in-memory tombstone when credential cleanup fails", () =>
+  Effect.gen(function* () {
+    const storedSecrets = makeSecretStore();
+    let failCredentialCleanup = false;
+    const secrets: ServerSecretStore.ServerSecretStore["Service"] = {
+      ...storedSecrets,
+      remove: (name) =>
+        failCredentialCleanup && name.startsWith("hermes-gateway-credential-")
+          ? Effect.fail(
+              new ServerSecretStore.SecretStoreRemoveError({
+                resource: `secret ${name}`,
+                cause: new Error("forced credential cleanup failure"),
+              }),
+            )
+          : storedSecrets.remove(name),
+    };
+    const broker = yield* makeHermesGatewayBroker.pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+    );
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* broker.createEnrollment({
+      instanceId,
+      nickname: "Cleanup Failure Hermes",
+      connectorUrl: "https://t3.example.test",
+    });
+    yield* broker.revokeInstance(instanceId);
+
+    failCredentialCleanup = true;
+    assert.deepEqual(yield* broker.removeInstance(instanceId), { instanceId });
+    yield* settings.updateSettingsWith((current) => ({
+      providerInstances: {
+        ...current.providerInstances,
+        [instanceId]: { driver: "hermes", displayName: "Forbidden Reuse", config: {} },
+      },
+    }));
+    const error = yield* Effect.flip(
+      broker.createEnrollment({
+        instanceId,
+        nickname: "Forbidden Reuse",
+        connectorUrl: "https://t3.example.test",
+      }),
+    );
+    assert.equal(error.code, "instance-removed");
+    assert.isUndefined((yield* settings.getSettings).providerInstances[instanceId]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [instanceId]: { driver: "hermes", displayName: "Cleanup Failure Hermes", config: {} },
+          },
+        }),
+        NodeServices.layer,
+      ),
+    ),
+  ),
+);
+
+it.effect("keeps the tombstone when settings post-commit materialization degrades", () => {
+  const storedSecrets = makeSecretStore();
+  const sensitiveInstanceId = ProviderInstanceId.make("codex_sensitive");
+  let providerEnvironmentReadsBeforeFailure = Number.POSITIVE_INFINITY;
+  const secrets: ServerSecretStore.ServerSecretStore["Service"] = {
+    ...storedSecrets,
+    get: (name) => {
+      if (!name.startsWith("provider-env-")) return storedSecrets.get(name);
+      if (providerEnvironmentReadsBeforeFailure <= 0) {
+        return Effect.fail(
+          new ServerSecretStore.SecretStoreReadError({
+            resource: `secret ${name}`,
+            cause: new Error("forced post-commit materialization failure"),
+          }),
+        );
+      }
+      providerEnvironmentReadsBeforeFailure -= 1;
+      return storedSecrets.get(name);
+    },
+  };
+  const secretLayer = Layer.succeed(ServerSecretStore.ServerSecretStore, secrets);
+  const configLayer = Layer.fresh(
+    ServerConfig.layerTest(process.cwd(), {
+      prefix: "t3code-hermes-post-commit-settings-test-",
+    }),
+  ).pipe(Layer.provide(NodeServices.layer));
+  const settingsLayer = ServerSettings.layer.pipe(
+    Layer.provide(secretLayer),
+    Layer.provideMerge(configLayer),
+    Layer.provide(NodeServices.layer),
+  );
+
+  return Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* settings.updateSettings({
+      providerInstances: {
+        [instanceId]: {
+          driver: HERMES_DRIVER_KIND,
+          displayName: "Post Commit Hermes",
+          config: {},
+        },
+        [sensitiveInstanceId]: {
+          driver: ProviderDriverKind.make("codex"),
+          environment: [
+            {
+              name: "OPENROUTER_API_KEY",
+              value: "secret",
+              sensitive: true,
+            },
+          ],
+          config: {},
+        },
+      },
+    });
+    const broker = yield* makeHermesGatewayBroker;
+    yield* broker.createEnrollment({
+      instanceId,
+      nickname: "Post Commit Hermes",
+      connectorUrl: "https://t3.example.test",
+    });
+    yield* broker.revokeInstance(instanceId);
+    providerEnvironmentReadsBeforeFailure = 1;
+    assert.deepEqual(yield* broker.removeInstance(instanceId), { instanceId });
+
+    providerEnvironmentReadsBeforeFailure = Number.POSITIVE_INFINITY;
+    yield* settings.updateSettingsWith((current) => ({
+      providerInstances: {
+        ...current.providerInstances,
+        [instanceId]: {
+          driver: HERMES_DRIVER_KIND,
+          displayName: "Forbidden Reuse",
+          config: {},
+        },
+      },
+    }));
+    const error = yield* Effect.flip(
+      broker.createEnrollment({
+        instanceId,
+        nickname: "Forbidden Reuse",
+        connectorUrl: "https://t3.example.test",
+      }),
+    );
+    assert.equal(error.code, "instance-removed");
+  }).pipe(
+    Effect.provide(Layer.mergeAll(settingsLayer, secretLayer, configLayer, NodeServices.layer)),
+  );
+});
+
+it.effect("migrates legacy default metadata into an explicit visible provider instance", () =>
+  Effect.gen(function* () {
+    const broker = yield* makeHermesGatewayBroker;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* broker.createEnrollment({
+      instanceId: defaultHermesInstanceId,
+      nickname: "Legacy Hermes",
+      connectorUrl: "https://t3.example.test",
+    });
+    yield* settings.updateSettingsWith((current) => {
+      const providerInstances = { ...current.providerInstances };
+      delete providerInstances[defaultHermesInstanceId];
+      return { providerInstances };
+    });
+    assert.isUndefined((yield* settings.getSettings).providerInstances[defaultHermesInstanceId]);
+
+    yield* makeHermesGatewayBroker;
+    assert.deepEqual((yield* settings.getSettings).providerInstances[defaultHermesInstanceId], {
+      driver: HERMES_DRIVER_KIND,
+      displayName: "Legacy Hermes",
+      enabled: true,
+      config: {},
+    });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [defaultHermesInstanceId]: {
+              driver: "hermes",
+              displayName: "Hermes",
+              enabled: true,
+              config: {},
+            },
+          },
+        }),
+        Layer.succeed(ServerSecretStore.ServerSecretStore, makeSecretStore()),
+        NodeServices.layer,
+      ),
+    ),
+  ),
+);
+
+it.effect("removes an explicitly configured Hermes instance that was never enrolled", () =>
+  Effect.gen(function* () {
+    const broker = yield* makeHermesGatewayBroker;
+    const settings = yield* ServerSettings.ServerSettingsService;
+
+    assert.deepEqual(yield* broker.removeInstance(instanceId), { instanceId });
+    assert.isUndefined((yield* settings.getSettings).providerInstances[instanceId]);
+    assert.equal(
+      (yield* Effect.flip(broker.getInstanceStatus(instanceId))).code,
+      "instance-not-found",
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [instanceId]: { driver: "hermes", displayName: "Never Enrolled", config: {} },
+          },
+        }),
+        Layer.succeed(ServerSecretStore.ServerSecretStore, makeSecretStore()),
+        NodeServices.layer,
+      ),
+    ),
+  ),
+);
+
+it.effect("fails closed when tombstone metadata cannot be read", () =>
+  Effect.gen(function* () {
+    const storedSecrets = makeSecretStore();
+    let failMetadataReads = false;
+    const secrets: ServerSecretStore.ServerSecretStore["Service"] = {
+      ...storedSecrets,
+      get: (name) =>
+        failMetadataReads && name === metadataSecretNameForTest(instanceId)
+          ? Effect.fail(
+              new ServerSecretStore.SecretStoreReadError({
+                resource: `secret ${name}`,
+                cause: new Error("forced metadata read failure"),
+              }),
+            )
+          : storedSecrets.get(name),
+    };
+    const broker = yield* makeHermesGatewayBroker.pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+    );
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* broker.createEnrollment({
+      instanceId,
+      nickname: "Read Failure Hermes",
+      connectorUrl: "https://t3.example.test",
+    });
+    yield* broker.revokeInstance(instanceId);
+    yield* broker.removeInstance(instanceId);
+    yield* settings.updateSettingsWith((current) => ({
+      providerInstances: {
+        ...current.providerInstances,
+        [instanceId]: { driver: "hermes", displayName: "Reused Hermes", config: {} },
+      },
+    }));
+
+    failMetadataReads = true;
+    const restarted = yield* makeHermesGatewayBroker.pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+    );
+    const error = yield* Effect.flip(
+      restarted.createEnrollment({
+        instanceId,
+        nickname: "Reused Hermes",
+        connectorUrl: "https://t3.example.test",
+      }),
+    );
+    assert.equal(error.code, "persistence-failed");
+    assert.equal(
+      (yield* settings.getSettings).providerInstances[instanceId]?.displayName,
+      "Reused Hermes",
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [instanceId]: { driver: "hermes", displayName: "Original Hermes", config: {} },
+          },
+        }),
+        NodeServices.layer,
+      ),
+    ),
+  ),
+);
+
+it.effect("fails closed when present Hermes metadata is malformed", () =>
+  Effect.gen(function* () {
+    const secrets = makeSecretStore();
+    yield* secrets.set(
+      metadataSecretNameForTest(instanceId),
+      new TextEncoder().encode("{not-valid-json"),
+    );
+    const broker = yield* makeHermesGatewayBroker.pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+    );
+
+    const error = yield* Effect.flip(
+      broker.createEnrollment({
+        instanceId,
+        nickname: "Malformed Hermes",
+        connectorUrl: "https://t3.example.test",
+      }),
+    );
+    assert.equal(error.code, "persistence-failed");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [instanceId]: { driver: "hermes", displayName: "Malformed Hermes", config: {} },
+          },
+        }),
+        NodeServices.layer,
+      ),
+    ),
+  ),
 );

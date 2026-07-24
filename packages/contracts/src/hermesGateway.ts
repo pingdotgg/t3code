@@ -164,6 +164,9 @@ export const HermesGatewayRenameInstanceInput = Schema.Struct({
 });
 export type HermesGatewayRenameInstanceInput = typeof HermesGatewayRenameInstanceInput.Type;
 
+export const HermesGatewayRenameInstanceResult = HermesGatewayInstanceStatus;
+export type HermesGatewayRenameInstanceResult = typeof HermesGatewayRenameInstanceResult.Type;
+
 export const HermesGatewayRevokeInstanceInput = Schema.Struct({
   instanceId: ProviderInstanceId,
 });
@@ -172,11 +175,23 @@ export type HermesGatewayRevokeInstanceInput = typeof HermesGatewayRevokeInstanc
 export const HermesGatewayRevokeInstanceResult = HermesGatewayInstanceStatus;
 export type HermesGatewayRevokeInstanceResult = typeof HermesGatewayRevokeInstanceResult.Type;
 
+export const HermesGatewayRemoveInstanceInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+});
+export type HermesGatewayRemoveInstanceInput = typeof HermesGatewayRemoveInstanceInput.Type;
+
+export const HermesGatewayRemoveInstanceResult = Schema.Struct({
+  instanceId: ProviderInstanceId,
+});
+export type HermesGatewayRemoveInstanceResult = typeof HermesGatewayRemoveInstanceResult.Type;
+
 export const HermesGatewayManagementOperation = Schema.Literals([
   "create-enrollment",
   "get-status",
   "list-instances",
+  "rename-instance",
   "revoke-instance",
+  "remove-instance",
 ]);
 export type HermesGatewayManagementOperation = typeof HermesGatewayManagementOperation.Type;
 
@@ -185,6 +200,8 @@ export const HermesGatewayManagementErrorCode = Schema.Literals([
   "nickname-conflict",
   "invalid-connector-url",
   "instance-revoked",
+  "instance-removed",
+  "instance-not-revoked",
   "persistence-failed",
   "internal-error",
 ]);

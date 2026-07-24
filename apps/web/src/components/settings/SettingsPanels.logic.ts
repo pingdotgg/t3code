@@ -20,6 +20,15 @@ export function projectGroupingModeFromToggle(
   return lastEnabledMode === "repository_path" ? "repository_path" : "repository";
 }
 
+/**
+ * Gateway-backed Hermes instances only exist after enrollment creates an
+ * explicit provider instance. Unlike local CLI drivers, Hermes has no useful
+ * built-in default process to synthesize from legacy provider settings.
+ */
+export function isExplicitProviderInstanceOnly(driver: ProviderDriverKind): boolean {
+  return driver === "hermes";
+}
+
 const LAST_ENABLED_PROJECT_GROUPING_MODE_KEY = "t3code:last-enabled-project-grouping-mode";
 
 export function readLastEnabledProjectGroupingMode(): SidebarProjectGroupingMode {

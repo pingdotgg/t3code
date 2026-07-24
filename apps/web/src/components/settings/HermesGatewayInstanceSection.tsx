@@ -7,7 +7,14 @@ import {
   type HermesGatewayInstanceStatus,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
-import { CheckIcon, CopyIcon, LoaderIcon, RefreshCwIcon, UnplugIcon } from "lucide-react";
+import {
+  CheckIcon,
+  CopyIcon,
+  LoaderIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+  UnplugIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -21,7 +28,9 @@ import { toastManager } from "../ui/toast";
 import {
   defaultHermesConnectorUrl,
   formatHermesLastConnected,
+  hermesGatewayLifecycleAction,
   hermesGatewayStatusLabel,
+  isHermesInstanceNotFoundError,
   messageFromUnknownError,
   shouldApplyHermesConnectorStatusUrl,
 } from "./HermesGatewayInstanceSection.logic";
@@ -45,6 +54,7 @@ function browserDefaultConnectorUrl() {
 export function HermesGatewayInstanceSection(props: {
   readonly instanceId: ProviderInstanceId;
   readonly nickname: string;
+  readonly onRemoved?: (() => void) | undefined;
 }) {
   const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
   const getStatus = useAtomCommand(serverEnvironment.hermesGatewayGetInstanceStatus, {
@@ -56,11 +66,17 @@ export function HermesGatewayInstanceSection(props: {
   const revokeInstance = useAtomCommand(serverEnvironment.hermesGatewayRevokeInstance, {
     reportFailure: false,
   });
+  const removeInstance = useAtomCommand(serverEnvironment.hermesGatewayRemoveInstance, {
+    reportFailure: false,
+  });
   const [connectorUrl, setConnectorUrl] = useState(browserDefaultConnectorUrl);
   const [status, setStatus] = useState<HermesGatewayInstanceStatus | null>(null);
   const [enrollment, setEnrollment] = useState<HermesGatewayEnrollmentResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<"status" | "enroll" | "revoke" | null>(null);
+  const [instanceNotFound, setInstanceNotFound] = useState(false);
+  const [pendingAction, setPendingAction] = useState<
+    "status" | "enroll" | "revoke" | "remove" | null
+  >(null);
   const connectorUrlHasLocalEditsRef = useRef(false);
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: "Hermes enrollment command",
@@ -83,12 +99,20 @@ export function HermesGatewayInstanceSection(props: {
       });
       if (result._tag === "Success") {
         setStatus(result.value);
+        setInstanceNotFound(false);
         if (shouldApplyHermesConnectorStatusUrl(connectorUrlHasLocalEditsRef.current)) {
           setConnectorUrl(result.value.connectorUrl);
         }
         setError(null);
-      } else if (!quiet) {
-        setError(messageFromUnknownError(squashAtomCommandFailure(result)));
+      } else {
+        const failure = squashAtomCommandFailure(result);
+        if (isHermesInstanceNotFoundError(failure)) {
+          setStatus(null);
+          setInstanceNotFound(true);
+          setError(null);
+        } else if (!quiet) {
+          setError(messageFromUnknownError(failure));
+        }
       }
       if (!quiet) setPendingAction(null);
     },
@@ -120,6 +144,7 @@ export function HermesGatewayInstanceSection(props: {
       connectorUrlHasLocalEditsRef.current = false;
       setConnectorUrl(result.value.connectorUrl);
       setEnrollment(result.value);
+      setInstanceNotFound(false);
       setStatus((current) =>
         current
           ? { ...current, connectorUrl: result.value.connectorUrl, status: "offline" }
@@ -148,7 +173,34 @@ export function HermesGatewayInstanceSection(props: {
     setPendingAction(null);
   };
 
+  const handleRemove = async () => {
+    if (environmentId === null) return;
+    setPendingAction("remove");
+    setError(null);
+    const result = await removeInstance({
+      environmentId,
+      input: { instanceId: props.instanceId },
+    });
+    if (result._tag === "Success") {
+      props.onRemoved?.();
+      toastManager.add({
+        type: "success",
+        title: instanceNotFound ? "Hermes setup removed" : "Hermes instance removed",
+        description:
+          "Existing threads remain readable and stay bound to this unavailable instance.",
+      });
+    } else {
+      setError(messageFromUnknownError(squashAtomCommandFailure(result)));
+      setPendingAction(null);
+    }
+  };
+
   const connectionState = status?.status ?? "offline";
+  const lifecycleAction = hermesGatewayLifecycleAction({
+    status: connectionState,
+    instanceNotFound,
+  });
+  const canRemove = lifecycleAction !== "revoke";
   const isBusy = pendingAction !== null;
 
   return (
@@ -246,9 +298,14 @@ export function HermesGatewayInstanceSection(props: {
       ) : null}
 
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
+      {instanceNotFound ? (
+        <p className="text-xs text-muted-foreground">
+          This setup has no enrolled Hermes gateway. Create an enrollment or remove the setup.
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
-        {connectionState !== "revoked" ? (
+        {lifecycleAction !== "remove-instance" ? (
           <Button
             type="button"
             size="sm"
@@ -260,16 +317,29 @@ export function HermesGatewayInstanceSection(props: {
             {enrollment ? "Retry enrollment" : "Create enrollment"}
           </Button>
         ) : null}
-        <Button
-          type="button"
-          size="sm"
-          variant="destructive-outline"
-          disabled={isBusy || connectionState === "revoked" || environmentId === null}
-          onClick={() => void handleRevoke()}
-        >
-          {pendingAction === "revoke" ? <LoaderIcon className="animate-spin" /> : <UnplugIcon />}
-          Revoke
-        </Button>
+        {canRemove ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="destructive-outline"
+            disabled={isBusy || environmentId === null}
+            onClick={() => void handleRemove()}
+          >
+            {pendingAction === "remove" ? <LoaderIcon className="animate-spin" /> : <Trash2Icon />}
+            {lifecycleAction === "remove-setup" ? "Remove setup" : "Remove instance"}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            variant="destructive-outline"
+            disabled={isBusy || environmentId === null}
+            onClick={() => void handleRevoke()}
+          >
+            {pendingAction === "revoke" ? <LoaderIcon className="animate-spin" /> : <UnplugIcon />}
+            Revoke
+          </Button>
+        )}
       </div>
     </section>
   );

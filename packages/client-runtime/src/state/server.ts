@@ -327,9 +327,17 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:hermes-gateway-list-instances",
       tag: WS_METHODS.hermesGatewayListInstances,
     }),
+    hermesGatewayRenameInstance: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:hermes-gateway-rename-instance",
+      tag: WS_METHODS.hermesGatewayRenameInstance,
+    }),
     hermesGatewayRevokeInstance: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:hermes-gateway-revoke-instance",
       tag: WS_METHODS.hermesGatewayRevokeInstance,
+    }),
+    hermesGatewayRemoveInstance: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:hermes-gateway-remove-instance",
+      tag: WS_METHODS.hermesGatewayRemoveInstance,
     }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",

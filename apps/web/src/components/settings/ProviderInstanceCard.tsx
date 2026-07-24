@@ -138,7 +138,7 @@ export function deriveProviderModelsForDisplay(input: {
 }
 
 export function isProviderInstanceDisplayNameEditable(driver: string): boolean {
-  return driver !== "hermes";
+  return driver.length > 0;
 }
 
 function ProviderAuthEmail(props: {
@@ -345,6 +345,7 @@ interface ProviderInstanceCardProps {
    * `{ onDelete: undefined }` are treated as distinct shapes.
    */
   readonly onDelete?: (() => void) | undefined;
+  readonly onHermesRemoved?: (() => void) | undefined;
   /**
    * Optional outer reset button rendered next to the driver icon. Built-in
    * default slots supply a reset-to-factory control here; custom instances
@@ -394,6 +395,7 @@ export function ProviderInstanceCard({
   onExpandedChange,
   onUpdate,
   onDelete,
+  onHermesRemoved,
   headerAction,
   hiddenModels,
   favoriteModels,
@@ -405,10 +407,10 @@ export function ProviderInstanceCard({
   isUpdating = false,
 }: ProviderInstanceCardProps) {
   const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
-  const revokeHermesInstance = useAtomCommand(serverEnvironment.hermesGatewayRevokeInstance, {
+  const renameHermesInstance = useAtomCommand(serverEnvironment.hermesGatewayRenameInstance, {
     reportFailure: false,
   });
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
   // "disabled"/"warning" based on the local `enabled` flag so the dot
@@ -439,7 +441,7 @@ export function ProviderInstanceCard({
           .replace(/[-_]+/g, " ")
           .trim());
   const displayName = isHermes
-    ? instanceId === "hermes" || hermesNickname === "Hermes"
+    ? hermesNickname === "Hermes"
       ? "Hermes"
       : `Hermes · ${hermesNickname}`
     : configuredDisplayName || driverOption?.label || String(instance.driver);
@@ -482,6 +484,40 @@ export function ProviderInstanceCard({
 
   const updateDisplayName = (value: string) => {
     const trimmed = value.trim();
+    if (isHermes) {
+      if (trimmed.length === 0) {
+        toastManager.add({
+          type: "error",
+          title: "Hermes name is required",
+          description: "Choose a unique name for this Hermes instance.",
+        });
+        return;
+      }
+      if (environmentId === null) {
+        toastManager.add({
+          type: "error",
+          title: "Could not rename Hermes instance",
+          description: "Reconnect this browser to the T3 server and try again.",
+        });
+        return;
+      }
+      void (async () => {
+        setIsRenaming(true);
+        const result = await renameHermesInstance({
+          environmentId,
+          input: { instanceId, nickname: trimmed },
+        });
+        if (result._tag === "Failure") {
+          toastManager.add({
+            type: "error",
+            title: "Could not rename Hermes instance",
+            description: messageFromUnknownError(squashAtomCommandFailure(result)),
+          });
+        }
+        setIsRenaming(false);
+      })();
+      return;
+    }
     const { displayName: _omit, ...rest } = instance;
     onUpdate(
       trimmed.length > 0
@@ -527,49 +563,6 @@ export function ProviderInstanceCard({
         ? ({ ...rest, environment: cleaned } as ProviderInstanceConfig)
         : (rest as ProviderInstanceConfig),
     );
-  };
-
-  const handleDelete = async () => {
-    if (!onDelete || isDeleting) return;
-    if (!isHermes) {
-      onDelete();
-      return;
-    }
-    if (environmentId === null) {
-      toastManager.add({
-        type: "error",
-        title: "Could not delete Hermes instance",
-        description: "Reconnect this browser to the T3 server so its gateway can be revoked first.",
-      });
-      return;
-    }
-    setIsDeleting(true);
-    const result = await revokeHermesInstance({
-      environmentId,
-      input: { instanceId },
-    });
-    if (result._tag === "Success") {
-      onDelete();
-      setIsDeleting(false);
-      return;
-    }
-    const failure = squashAtomCommandFailure(result);
-    const wasNeverEnrolled =
-      typeof failure === "object" &&
-      failure !== null &&
-      "code" in failure &&
-      failure.code === "instance-not-found";
-    if (wasNeverEnrolled) {
-      onDelete();
-      setIsDeleting(false);
-      return;
-    }
-    toastManager.add({
-      type: "error",
-      title: "Could not delete Hermes instance",
-      description: `${messageFromUnknownError(failure)} The instance was kept so a live gateway credential is not orphaned.`,
-    });
-    setIsDeleting(false);
   };
 
   const titleIconNode = driverKind ? (
@@ -625,7 +618,7 @@ export function ProviderInstanceCard({
           {headerAction}
         </span>
       ) : null}
-      {onDelete ? (
+      {onDelete && !isHermes ? (
         <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
           <Tooltip>
             <TooltipTrigger
@@ -634,15 +627,10 @@ export function ProviderInstanceCard({
                   size="icon-xs"
                   variant="ghost"
                   className="size-5 rounded-sm p-0 text-muted-foreground hover:text-destructive"
-                  disabled={isDeleting}
-                  onClick={() => void handleDelete()}
+                  onClick={onDelete}
                   aria-label={`Delete provider instance ${instanceId}`}
                 >
-                  {isDeleting ? (
-                    <LoaderIcon className="size-3 animate-spin" />
-                  ) : (
-                    <Trash2Icon className="size-3" />
-                  )}
+                  <Trash2Icon className="size-3" />
                 </Button>
               }
             />
@@ -809,7 +797,9 @@ export function ProviderInstanceCard({
             {isProviderInstanceDisplayNameEditable(String(instance.driver)) ? (
               <div>
                 <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
-                  <span className="text-xs font-medium text-foreground">Display name</span>
+                  <span className="text-xs font-medium text-foreground">
+                    {isHermes ? "Hermes name" : "Display name"}
+                  </span>
                   <DraftInput
                     id={`provider-instance-${instanceId}-display-name`}
                     className="mt-1.5"
@@ -817,27 +807,16 @@ export function ProviderInstanceCard({
                     onCommit={updateDisplayName}
                     placeholder={driverOption?.label ?? "Instance label"}
                     spellCheck={false}
+                    disabled={isRenaming}
                   />
                   <span className="mt-1 block text-xs text-muted-foreground">
-                    Optional label shown in the provider list.
+                    {isHermes
+                      ? "Shown in provider and model pickers. The instance binding does not change."
+                      : "Optional label shown in the provider list."}
                   </span>
                 </label>
               </div>
-            ) : (
-              <div>
-                <span className="text-xs font-medium text-foreground">Hermes nickname</span>
-                <div
-                  className="mt-1.5 rounded-md border border-border/70 bg-muted/35 px-3 py-2 text-sm text-foreground"
-                  data-hermes-nickname-readonly="true"
-                >
-                  {displayName}
-                </div>
-                <span className="mt-1 block text-xs text-muted-foreground">
-                  Fixed after creation because this nickname identifies the paired Hermes instance.
-                  Delete and re-add the instance to choose a different nickname.
-                </span>
-              </div>
-            )}
+            ) : null}
 
             <div>
               <ProviderAccentColorPicker
@@ -850,7 +829,11 @@ export function ProviderInstanceCard({
             </div>
 
             {isHermes ? (
-              <HermesGatewayInstanceSection instanceId={instanceId} nickname={hermesNickname} />
+              <HermesGatewayInstanceSection
+                instanceId={instanceId}
+                nickname={hermesNickname}
+                onRemoved={onHermesRemoved}
+              />
             ) : (
               <div>
                 <ProviderEnvironmentSection

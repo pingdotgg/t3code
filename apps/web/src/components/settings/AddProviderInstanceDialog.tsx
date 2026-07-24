@@ -13,7 +13,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
-import { cn } from "../../lib/utils";
+import { cn, randomUUID } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
 import { ACPRegistryIcon, Gemini, GithubCopilotIcon, PiAgentIcon, type Icon } from "../Icons";
@@ -34,6 +34,8 @@ import { ProviderSettingsForm, deriveProviderSettingsFields } from "./ProviderSe
 import { AnimatedHeight } from "../AnimatedHeight";
 import {
   ADD_PROVIDER_WIZARD_STEPS,
+  createHermesProviderInstanceId,
+  isHermesInstanceRemovedError,
   isOwnedHermesEnrollmentRetry,
   resolveWizardNavigation,
   type WizardNavigation,
@@ -61,9 +63,9 @@ const PROVIDER_ACCENT_SWATCHES = [
 /**
  * Normalize a user-provided label into a slug suffix for the instance id.
  * The full id is formed by prefixing the driver slug — e.g. label "Work" on
- * driver "codex" becomes `codex_work`. Output is trimmed to 48 chars so the
- * final composed id stays under the 64-char slug cap enforced by
- * `ProviderInstanceId` in `@t3tools/contracts`.
+ * driver "codex" becomes `codex_work`. Hermes uses a random durable identity
+ * instead because its historical thread bindings must never target a newly
+ * created gateway with the same display name.
  */
 function slugifyLabel(value: string): string {
   return value
@@ -76,9 +78,6 @@ function slugifyLabel(value: string): string {
 
 function deriveInstanceId(driver: ProviderDriverKind, label: string): string {
   const slug = slugifyLabel(label);
-  if (driver === "hermes") {
-    return slug ? `hermes-${slug.replaceAll("_", "-")}` : "";
-  }
   return slug ? `${driver}_${slug}` : "";
 }
 
@@ -135,6 +134,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   const [label, setLabel] = useState("");
   const [accentColor, setAccentColor] = useState<string>("");
   const [instanceIdOverride, setInstanceIdOverride] = useState<string | null>(null);
+  const [hermesIdentityNonce, setHermesIdentityNonce] = useState(randomUUID);
   // Driver-specific config drafts keyed by driver so toggling between drivers
   // during the same dialog session does not lose in-progress input.
   const [configByDriver, setConfigByDriver] = useState<Record<string, Record<string, unknown>>>({});
@@ -167,6 +167,19 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
 
   useEffect(() => {
     if (open) return;
+    setWizardStep(0);
+    setDriver(DEFAULT_DRIVER_KIND);
+    setLabel("");
+    setAccentColor("");
+    setInstanceIdOverride(null);
+    setHermesIdentityNonce(randomUUID());
+    setConfigByDriver({});
+    setHasAttemptedSubmit(false);
+    setHermesConnectorUrl(
+      typeof window === "undefined"
+        ? "http://localhost/api/hermes-gateway/ws"
+        : defaultHermesConnectorUrl(window.location.origin),
+    );
     setHermesEnrollment(null);
     setSaveError(null);
     setIsSaving(false);
@@ -179,7 +192,10 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   );
 
   const driverOption = DRIVER_OPTION_BY_VALUE[driver] ?? DEFAULT_DRIVER_OPTION;
-  const instanceId = instanceIdOverride ?? deriveInstanceId(driver, label);
+  const instanceId =
+    driver === "hermes"
+      ? createHermesProviderInstanceId(label, () => hermesIdentityNonce)
+      : (instanceIdOverride ?? deriveInstanceId(driver, label));
   const driverSettingsFields = useMemo(
     () => deriveProviderSettingsFields(driverOption),
     [driverOption],
@@ -283,7 +299,12 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
           },
         });
         if (enrollmentResult._tag === "Failure") {
-          throw squashAtomCommandFailure(enrollmentResult);
+          const enrollmentError = squashAtomCommandFailure(enrollmentResult);
+          if (isHermesInstanceRemovedError(enrollmentError)) {
+            setCreatedHermesIdentity(null);
+            setHermesIdentityNonce(randomUUID());
+          }
+          throw enrollmentError;
         }
         setHermesEnrollment(enrollmentResult.value);
         toastManager.add({
@@ -455,15 +476,19 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                     placeholder={`${driver}_work`}
                     value={instanceId}
                     onChange={(event) => {
+                      if (driver === "hermes") return;
                       setInstanceIdOverride(event.target.value);
                     }}
+                    readOnly={driver === "hermes"}
                     aria-invalid={showInstanceIdError}
                   />
                   {showInstanceIdError ? (
                     <span className="text-[11px] text-destructive">{instanceIdError}</span>
                   ) : (
                     <span className="text-[11px] text-muted-foreground">
-                      Routing key used by threads and sessions. Letters, digits, '-', or '_'.
+                      {driver === "hermes"
+                        ? "Generated once for this gateway so historical threads can never be rebound."
+                        : "Routing key used by threads and sessions. Letters, digits, '-', or '_'."}
                     </span>
                   )}
                 </label>

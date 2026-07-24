@@ -25,6 +25,27 @@ export function hermesGatewayStatusLabel(status: HermesGatewayConnectionState): 
   }
 }
 
+export function canRemoveHermesGatewayInstance(status: HermesGatewayConnectionState): boolean {
+  return status === "revoked";
+}
+
+export function isHermesInstanceNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "instance-not-found"
+  );
+}
+
+export function hermesGatewayLifecycleAction(input: {
+  readonly status: HermesGatewayConnectionState;
+  readonly instanceNotFound: boolean;
+}): "revoke" | "remove-instance" | "remove-setup" {
+  if (input.instanceNotFound) return "remove-setup";
+  return canRemoveHermesGatewayInstance(input.status) ? "remove-instance" : "revoke";
+}
+
 export function formatHermesLastConnected(value: string | null): string {
   if (value === null) return "Never";
   const date = new Date(value);

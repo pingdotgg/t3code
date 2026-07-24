@@ -4,6 +4,9 @@ import type {
   HermesGatewayEnrollmentResult,
   HermesGatewayInstanceStatus,
   HermesGatewayPluginToT3Message,
+  HermesGatewayRemoveInstanceResult,
+  HermesGatewayRenameInstanceInput,
+  HermesGatewayRenameInstanceResult,
   HermesGatewayRevokeInstanceResult,
   HermesGatewayT3ToPluginMessage,
   ProviderInstanceId,
@@ -47,9 +50,15 @@ export interface HermesGatewayBrokerShape {
     ReadonlyArray<HermesGatewayInstanceStatus>,
     HermesGatewayManagementError
   >;
+  readonly renameInstance: (
+    input: HermesGatewayRenameInstanceInput,
+  ) => Effect.Effect<HermesGatewayRenameInstanceResult, HermesGatewayManagementError>;
   readonly revokeInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<HermesGatewayRevokeInstanceResult, HermesGatewayManagementError>;
+  readonly removeInstance: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<HermesGatewayRemoveInstanceResult, HermesGatewayManagementError>;
   readonly registerConnection: (
     hello: HermesGatewayConnectionHello,
     transport: HermesGatewayTransport,
@@ -87,7 +96,9 @@ export const HermesGatewayBroker = Context.Reference<HermesGatewayBrokerShape>(
       createEnrollment: unavailable,
       getInstanceStatus: unavailable,
       listInstances: unavailable(),
+      renameInstance: unavailable,
       revokeInstance: unavailable,
+      removeInstance: unavailable,
       registerConnection: unavailable,
       receive: unavailable,
       disconnect: unavailable,

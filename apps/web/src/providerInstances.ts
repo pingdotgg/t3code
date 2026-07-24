@@ -165,7 +165,6 @@ function resolveInstanceDisplayName(
   const trimmedSnapshotName = snapshot.displayName?.trim();
   const kindLabel = driverKindLabel(driverKind);
   if (driverKind === "hermes") {
-    if (isDefault) return "Hermes";
     const candidate =
       trimmedSnapshotName && trimmedSnapshotName !== kindLabel
         ? trimmedSnapshotName

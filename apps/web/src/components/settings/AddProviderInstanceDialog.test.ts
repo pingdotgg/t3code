@@ -3,10 +3,44 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
 import {
+  createHermesProviderInstanceId,
+  isHermesInstanceRemovedError,
   isOwnedHermesEnrollmentRetry,
   resolveWizardNavigation,
   validateProviderInstanceIdForWizard,
 } from "./AddProviderInstanceDialog.logic";
+
+describe("Hermes provider instance identity", () => {
+  it("keeps the readable label prefix while adding a stable random suffix", () => {
+    expect(
+      createHermesProviderInstanceId("Research Team", () => "019f99cc-30d4-72c4-b3dd-2ee59cecb856"),
+    ).toBe("hermes-research-team-019f99cc30d4");
+  });
+
+  it("never reuses an ID when a later dialog uses the same label", () => {
+    expect(
+      createHermesProviderInstanceId("Research", () => "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    ).not.toBe(
+      createHermesProviderInstanceId("Research", () => "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+    );
+  });
+
+  it("stays within the provider instance ID length limit for long labels", () => {
+    const instanceId = createHermesProviderInstanceId(
+      "A very long research Hermes display name that should be truncated before persistence",
+      () => "019f99cc-30d4-72c4-b3dd-2ee59cecb856",
+    );
+
+    expect(instanceId.length).toBeLessThanOrEqual(64);
+    expect(instanceId).toMatch(/^hermes-[a-z0-9-]+-[a-z0-9]{12}$/u);
+  });
+
+  it("recognizes a server tombstone rejection so the dialog can rotate its nonce", () => {
+    expect(isHermesInstanceRemovedError({ code: "instance-removed" })).toBe(true);
+    expect(isHermesInstanceRemovedError({ code: "nickname-conflict" })).toBe(false);
+    expect(isHermesInstanceRemovedError(new Error("instance removed"))).toBe(false);
+  });
+});
 
 describe("resolveWizardNavigation", () => {
   const invalidId = { instanceIdError: "Instance ID is required." };

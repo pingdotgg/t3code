@@ -18,7 +18,8 @@
  * `defaultInstanceIdForDriver(driverKind)` — literally the driver kind as a
  * routing slug), we synthesize an envelope from the legacy field. The
  * registry decodes both flavours through the same `configSchema` and ends
- * up with one uniform `ProviderInstance` per entry.
+ * up with one uniform `ProviderInstance` per entry. Drivers such as Hermes
+ * that require an explicitly paired remote instance opt out of synthesis.
  *
  * Explicit `providerInstances` entries always win — users can already
  * override the legacy `providers.<kind>` blob by authoring a
@@ -43,6 +44,7 @@
  */
 import {
   defaultInstanceIdForDriver,
+  HERMES_DRIVER_KIND,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
   ServerSettings,
@@ -62,9 +64,10 @@ import { ProviderInstanceRegistryMutableLayer } from "./ProviderInstanceRegistry
  *
  * Strategy:
  *   1. Copy all explicit `settings.providerInstances` entries verbatim.
- *   2. For each built-in driver whose `defaultInstanceIdForDriver(id)` key
- *      is *not* already in the explicit map, synthesize an entry from the
- *      matching legacy `settings.providers.<kind>` blob.
+ *   2. For each legacy-compatible built-in driver whose
+ *      `defaultInstanceIdForDriver(id)` key is *not* already in the explicit
+ *      map, synthesize an entry from the matching legacy
+ *      `settings.providers.<kind>` blob.
  *
  * The returned map is the input the registry consumes; pure & exported
  * separately so the hydration logic can be exercised by unit tests
@@ -80,6 +83,12 @@ export const deriveProviderInstanceConfigMap = (
     if (instanceId in merged) {
       // Explicit `providerInstances` entry for this slot — user-authored
       // config always wins over the legacy mirror.
+      continue;
+    }
+    if (driver.driverKind === HERMES_DRIVER_KIND) {
+      // Hermes is configured only through explicit gateway instances. A
+      // synthesized legacy default would resurrect a revoked-and-removed
+      // instance in settings and provider pickers.
       continue;
     }
 

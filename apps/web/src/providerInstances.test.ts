@@ -219,6 +219,19 @@ describe("deriveProviderInstanceEntries", () => {
       "Hermes · Lab",
     ]);
   });
+
+  it("shows an edited name for an explicit Hermes instance using the legacy default id", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("hermes"),
+        instanceId: "hermes",
+        displayName: "Research",
+      }),
+    ]);
+
+    expect(entry?.displayName).toBe("Hermes · Research");
+    expect(entry?.instanceId).toBe("hermes");
+  });
 });
 
 describe("resolveSelectableProviderInstance", () => {

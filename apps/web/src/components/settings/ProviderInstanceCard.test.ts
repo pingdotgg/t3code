@@ -39,8 +39,8 @@ describe("deriveProviderModelsForDisplay", () => {
 });
 
 describe("isProviderInstanceDisplayNameEditable", () => {
-  it("keeps Hermes nicknames immutable without changing other providers", () => {
-    expect(isProviderInstanceDisplayNameEditable("hermes")).toBe(false);
+  it("allows Hermes display names to change without changing the instance id", () => {
+    expect(isProviderInstanceDisplayNameEditable("hermes")).toBe(true);
     expect(isProviderInstanceDisplayNameEditable("codex")).toBe(true);
     expect(isProviderInstanceDisplayNameEditable("claudeAgent")).toBe(true);
   });

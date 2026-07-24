@@ -311,7 +311,9 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.hermesGatewayCreateEnrollment, AuthOrchestrationOperateScope],
   [WS_METHODS.hermesGatewayGetInstanceStatus, AuthOrchestrationReadScope],
   [WS_METHODS.hermesGatewayListInstances, AuthOrchestrationReadScope],
+  [WS_METHODS.hermesGatewayRenameInstance, AuthOrchestrationOperateScope],
   [WS_METHODS.hermesGatewayRevokeInstance, AuthOrchestrationOperateScope],
+  [WS_METHODS.hermesGatewayRemoveInstance, AuthOrchestrationOperateScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
@@ -1545,10 +1547,22 @@ const makeWsRpcLayer = (
             hermesGatewayBroker.listInstances,
             { "rpc.aggregate": "hermes-gateway" },
           ),
+        [WS_METHODS.hermesGatewayRenameInstance]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.hermesGatewayRenameInstance,
+            hermesGatewayBroker.renameInstance(input),
+            { "rpc.aggregate": "hermes-gateway" },
+          ),
         [WS_METHODS.hermesGatewayRevokeInstance]: ({ instanceId }) =>
           observeRpcEffect(
             WS_METHODS.hermesGatewayRevokeInstance,
             hermesGatewayBroker.revokeInstance(instanceId),
+            { "rpc.aggregate": "hermes-gateway" },
+          ),
+        [WS_METHODS.hermesGatewayRemoveInstance]: ({ instanceId }) =>
+          observeRpcEffect(
+            WS_METHODS.hermesGatewayRemoveInstance,
+            hermesGatewayBroker.removeInstance(instanceId),
             { "rpc.aggregate": "hermes-gateway" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
