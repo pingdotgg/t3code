@@ -14,9 +14,10 @@ Each release contains seven assets:
 - a self-contained Linux x86_64 CLI named `t3-<version>-linux-x64`
 - the Linux CLI's SHA-256 checksum
 
-Versions use the next patch after the checked-in desktop version followed by the UTC date and GitHub
-Actions run number, for example `0.0.29-f8y.20260720.42`. Android uses the workflow run number as its
-monotonically increasing `versionCode`.
+Versions preserve the numeric core of the checked-in desktop version and append the UTC date and
+GitHub Actions run number, for example checked-in `0.0.28` produces
+`0.0.28-f8y.20260720.42`. The complete derived version is shared by the Git tag and every release
+artifact. Android uses the workflow run number as its monotonically increasing `versionCode`.
 
 ## Android signing setup
 

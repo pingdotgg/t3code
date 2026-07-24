@@ -73,15 +73,14 @@ const decodeDesktopPackageJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(DesktopPackageJsonSchema),
 );
 
-export const resolveF8yReleaseTargetVersion = (version: string) => {
+export const resolveF8yReleaseBaseVersion = (version: string) => {
   const stableCore = version.replace(/[-+].*$/, "");
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(stableCore);
   if (!match) {
     return Effect.fail(new InvalidF8yReleaseBaseVersionError({ version }));
   }
 
-  const [, major, minor, patch] = match;
-  return Effect.succeed(`${major}.${minor}.${Number(patch) + 1}`);
+  return Effect.succeed(stableCore);
 };
 
 export function resolveF8yReleaseMetadata(
@@ -129,7 +128,7 @@ export const readF8yReleaseBaseVersion = Effect.fn("readF8yReleaseBaseVersion")(
         }),
     ),
   );
-  return yield* resolveF8yReleaseTargetVersion(packageJson.version);
+  return yield* resolveF8yReleaseBaseVersion(packageJson.version);
 });
 
 export const writeF8yReleaseMetadata = Effect.fn("writeF8yReleaseMetadata")(function* (
