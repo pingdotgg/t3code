@@ -2,12 +2,12 @@ import SwiftUI
 
 // MARK: - Toolbar chip chrome
 
-/// App-shaped glass chip for window-toolbar content. Replaces the over-rounded
-/// system Liquid Glass capsule after `.sharedBackgroundVisibility(.hidden)`.
-/// Glass is intentional here: toolbar sits over scenery photos.
+/// Capsule glass chip for window-toolbar content, matching the circular
+/// Liquid Glass controls it sits next to. Glass is intentional here: the
+/// toolbar sits over scenery photos.
 extension View {
-    /// Squared continuous glass chip (height 28). When `interactive` is true,
-    /// draws a hover wash animated with `Motion.feedback`.
+    /// Capsule glass chip (height 28). When `interactive` is true, draws a
+    /// hover wash animated with `Motion.feedback`.
     func alpineToolbarChip(interactive: Bool = false) -> some View {
         modifier(AlpineToolbarChipModifier(interactive: interactive))
     }
@@ -19,23 +19,16 @@ private struct AlpineToolbarChipModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .padding(.horizontal, 9)
+            .padding(.horizontal, 10)
             .frame(height: 28)
-            .contentShape(
-                RoundedRectangle(
-                    cornerRadius: AlpineTheme.Corners.control, style: .continuous))
+            .contentShape(Capsule())
             .background {
                 if interactive, isHovering {
-                    RoundedRectangle(
-                        cornerRadius: AlpineTheme.Corners.control, style: .continuous
-                    )
-                    .fill(Color.primary.opacity(0.07))
+                    Capsule()
+                        .fill(Color.primary.opacity(0.07))
                 }
             }
-            .glassEffect(
-                .regular,
-                in: .rect(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
-            )
+            .glassEffect(.regular, in: Capsule())
             .onHover { hovering in
                 guard interactive else { return }
                 isHovering = hovering
@@ -46,7 +39,8 @@ private struct AlpineToolbarChipModifier: ViewModifier {
 
 // MARK: - Icon button style
 
-/// 28×28 glass icon chip for toolbar icon buttons (Inspector).
+/// 28×28 circular glass icon button for the window toolbar (Inspector, New
+/// Session split control).
 struct AlpineToolbarIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         AlpineToolbarIconButtonBody(configuration: configuration)
@@ -62,23 +56,16 @@ private struct AlpineToolbarIconButtonBody: View {
         configuration.label
             .labelStyle(.iconOnly)
             .frame(width: 28, height: 28)
-            .contentShape(
-                RoundedRectangle(
-                    cornerRadius: AlpineTheme.Corners.control, style: .continuous))
+            .contentShape(Circle())
             .background {
                 let opacity: Double =
                     configuration.isPressed ? 0.11 : (isHovering ? 0.07 : 0)
                 if opacity > 0 {
-                    RoundedRectangle(
-                        cornerRadius: AlpineTheme.Corners.control, style: .continuous
-                    )
-                    .fill(Color.primary.opacity(opacity))
+                    Circle()
+                        .fill(Color.primary.opacity(opacity))
                 }
             }
-            .glassEffect(
-                .regular,
-                in: .rect(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
-            )
+            .glassEffect(.regular, in: Circle())
             .opacity(isEnabled ? 1 : 0.4)
             .onHover { isHovering = $0 }
             .animation(Motion.feedback, value: isHovering)
@@ -88,77 +75,35 @@ private struct AlpineToolbarIconButtonBody: View {
 
 // MARK: - New session split control
 
-/// Plus button + disclosure chevron sharing one squared glass chip. Primary
-/// click on plus opens the full chooser; the chevron menu keeps the quick
-/// same-project / other-provider shortcuts.
-struct NewSessionSplitControl<MenuContent: View>: View {
+/// Two circular glass buttons: plus opens the full chooser directly, the
+/// chevron presents a custom Alpine popover (never a native macOS menu) with
+/// the quick same-project / other-provider shortcuts. The popover content
+/// receives the presentation binding so rows can dismiss it.
+struct NewSessionSplitControl<PopoverContent: View>: View {
     let onNewSession: () -> Void
-    @ViewBuilder let menuContent: () -> MenuContent
+    @ViewBuilder let popoverContent: (Binding<Bool>) -> PopoverContent
 
-    @UIState private var plusHovering = false
-    @UIState private var chevronHovering = false
+    @UIState private var isPresented = false
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 6) {
             Button(action: onNewSession) {
-                Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-                    .background {
-                        if plusHovering {
-                            RoundedRectangle(
-                                cornerRadius: AlpineTheme.Corners.compact,
-                                style: .continuous
-                            )
-                            .fill(Color.primary.opacity(0.07))
-                        }
-                    }
+                Label("New Session", systemImage: "plus")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AlpineToolbarIconButtonStyle())
             .help("New Session")
-            .accessibilityLabel("New Session")
-            .onHover { plusHovering = $0 }
 
-            Rectangle()
-                .fill(.separator)
-                .frame(width: 1, height: 14)
-                .padding(.horizontal, 1)
-
-            // `.menuStyle(.button)` + plain button style aims to drop the
-            // system Menu bezel so only our glass chip frames the chevron.
-            // If a bezel reappears under a future SDK, fall back to
-            // Button + `.popover` (see `RunProfileMenu`).
-            Menu {
-                menuContent()
+            Button {
+                isPresented.toggle()
             } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-                    .frame(width: 22, height: 26)
-                    .contentShape(Rectangle())
-                    .background {
-                        if chevronHovering {
-                            RoundedRectangle(
-                                cornerRadius: AlpineTheme.Corners.compact,
-                                style: .continuous
-                            )
-                            .fill(Color.primary.opacity(0.07))
-                        }
-                    }
+                Label("New Session options", systemImage: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
+            .buttonStyle(AlpineToolbarIconButtonStyle())
             .help("New Session options")
-            .accessibilityLabel("New Session options")
-            .onHover { chevronHovering = $0 }
+            .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+                popoverContent($isPresented)
+            }
         }
-        .padding(.horizontal, 3)
-        .frame(height: 28)
-        .glassEffect(
-            .regular,
-            in: .rect(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
-        )
-        .animation(Motion.feedback, value: plusHovering)
-        .animation(Motion.feedback, value: chevronHovering)
     }
 }
