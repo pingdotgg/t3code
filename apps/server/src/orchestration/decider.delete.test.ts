@@ -102,6 +102,78 @@ const seedReadModel = Effect.gen(function* () {
   });
 });
 
+const seedReadModelWithArchivedThreadOnly = Effect.gen(function* () {
+  const now = "2026-01-01T00:00:00.000Z";
+  const initial = createEmptyReadModel(now);
+  const withProject = yield* projectEvent(initial, {
+    sequence: 1,
+    eventId: asEventId("evt-project-create"),
+    aggregateKind: "project",
+    aggregateId: asProjectId("project-delete"),
+    type: "project.created",
+    occurredAt: now,
+    commandId: asCommandId("cmd-project-create"),
+    causationEventId: null,
+    correlationId: asCommandId("cmd-project-create"),
+    metadata: {},
+    payload: {
+      projectId: asProjectId("project-delete"),
+      title: "Project Delete",
+      workspaceRoot: "/tmp/project-delete",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
+
+  const withThread = yield* projectEvent(withProject, {
+    sequence: 2,
+    eventId: asEventId("evt-thread-create-1"),
+    aggregateKind: "thread",
+    aggregateId: asThreadId("thread-delete-1"),
+    type: "thread.created",
+    occurredAt: now,
+    commandId: asCommandId("cmd-thread-create-1"),
+    causationEventId: null,
+    correlationId: asCommandId("cmd-thread-create-1"),
+    metadata: {},
+    payload: {
+      threadId: asThreadId("thread-delete-1"),
+      projectId: asProjectId("project-delete"),
+      title: "Thread Delete 1",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      branch: null,
+      worktreePath: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
+
+  return yield* projectEvent(withThread, {
+    sequence: 3,
+    eventId: asEventId("evt-thread-archive-1"),
+    aggregateKind: "thread",
+    aggregateId: asThreadId("thread-delete-1"),
+    type: "thread.archived",
+    occurredAt: now,
+    commandId: asCommandId("cmd-thread-archive-1"),
+    causationEventId: null,
+    correlationId: asCommandId("cmd-thread-archive-1"),
+    metadata: {},
+    payload: {
+      threadId: asThreadId("thread-delete-1"),
+      archivedAt: now,
+      updatedAt: now,
+    },
+  });
+});
+
 type PlannedEvent = Omit<OrchestrationEvent, "sequence">;
 
 function normalizeDeleteEvent(event: PlannedEvent | ReadonlyArray<PlannedEvent>) {
@@ -212,6 +284,26 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
       }
 
       expect(normalizeDeleteEvent(forcedResult)).toEqual(normalizeDeleteEvent(sequentialEvents));
+    }),
+  );
+
+  // Regression for #2866: archived threads are hidden from the user and excluded
+  // from the client's project view, so the client sees the project as empty and
+  // sends project.delete without force=true. The server must not reject this — it
+  // should delete the project, cascading the archived threads so none are orphaned.
+  it.effect("deletes a project whose only threads are archived, without force", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModelWithArchivedThreadOnly;
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.delete",
+          commandId: asCommandId("cmd-project-delete-archived-only"),
+          projectId: asProjectId("project-delete"),
+        },
+        readModel,
+      });
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((event) => event.type)).toEqual(["thread.deleted", "project.deleted"]);
     }),
   );
 });
