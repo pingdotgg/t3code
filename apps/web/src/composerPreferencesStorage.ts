@@ -32,6 +32,10 @@ function normalizeProviderInstanceId(value: unknown): ProviderInstanceId | null 
     : null;
 }
 
+function normalizeProviderDriverKind(value: unknown): ProviderDriverKind | null {
+  return isProviderDriverKind(value) ? value : null;
+}
+
 function coerceProviderOptionSelections(
   value: unknown,
 ): ReadonlyArray<ProviderOptionSelection> | undefined {
@@ -91,17 +95,16 @@ function migratePreV3ComposerPreferences(
     !Array.isArray(legacyState.stickyModelSelection)
       ? (legacyState.stickyModelSelection as Record<string, unknown>)
       : {};
-  const selectionInstanceId = normalizeProviderInstanceId(
-    selectionCandidate.instanceId ??
-      selectionCandidate.provider ??
-      legacyState.stickyProvider ??
-      "codex",
-  );
-  const driverHintCandidate =
-    selectionCandidate.provider ?? legacyState.stickyProvider ?? selectionInstanceId;
-  const driverHint = isProviderDriverKind(driverHintCandidate)
-    ? driverHintCandidate
-    : ProviderDriverKind.make("codex");
+  const selectionInstanceId =
+    normalizeProviderInstanceId(selectionCandidate.instanceId) ??
+    normalizeProviderInstanceId(selectionCandidate.provider) ??
+    normalizeProviderInstanceId(legacyState.stickyProvider) ??
+    ProviderInstanceId.make("codex");
+  const driverHint =
+    normalizeProviderDriverKind(selectionCandidate.provider) ??
+    normalizeProviderDriverKind(legacyState.stickyProvider) ??
+    normalizeProviderDriverKind(selectionInstanceId) ??
+    ProviderDriverKind.make("codex");
   const rawModel = selectionCandidate.model ?? legacyState.stickyModel;
   const model = typeof rawModel === "string" ? normalizeModelSlug(rawModel, driverHint) : undefined;
   const selectionProviderKind =
@@ -198,6 +201,7 @@ export function readLegacyComposerPreferences(
       if (isPersistedComposerPreferences(preferences)) {
         return preferences;
       }
+      return null;
     }
     return migratePreV3ComposerPreferences(legacyState);
   } catch {

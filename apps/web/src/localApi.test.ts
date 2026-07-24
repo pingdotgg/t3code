@@ -220,10 +220,59 @@ describe("LocalApi", () => {
     expect(testWindow().localStorage.getItem("t3code:composer-drafts:v1")).toBe(legacyDrafts);
   });
 
+  it("persists browser-only legacy composer conversion to the dedicated preference key", async () => {
+    const legacyDrafts = JSON.stringify({
+      version: 8,
+      state: {
+        stickyModelSelectionByProvider: {
+          codex: {
+            instanceId: "codex",
+            model: "gpt-5.6-sol",
+          },
+        },
+        stickyActiveProvider: "codex",
+      },
+    });
+    testWindow().localStorage.setItem("t3code:composer-drafts:v1", legacyDrafts);
+
+    const { createLocalApi } = await import("./localApi");
+    const migrated = await createLocalApi().persistence.getRendererState("composer-preferences");
+
+    expect(migrated).not.toBeNull();
+    expect(testWindow().localStorage.getItem("t3code:composer-preferences:v1")).toBe(migrated);
+    expect(testWindow().localStorage.getItem("t3code:composer-drafts:v1")).toBe(legacyDrafts);
+  });
+
+  it("rejects malformed dedicated composer preference objects", async () => {
+    const getRendererState = vi.fn().mockResolvedValue(null);
+    const setRendererState = vi.fn().mockResolvedValue(undefined);
+    const malformed = JSON.stringify({
+      version: 1,
+      stickyModelSelectionByProvider: {
+        codex: { instanceId: "codex", model: "" },
+      },
+      stickyActiveProvider: "codex",
+    });
+    testWindow().localStorage.setItem("t3code:composer-preferences:v1", malformed);
+    testWindow().desktopBridge = {
+      getRendererState,
+      setRendererState,
+    } as unknown as DesktopBridge;
+
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(
+      createLocalApi().persistence.getRendererState("composer-preferences"),
+    ).resolves.toBeNull();
+    expect(setRendererState).not.toHaveBeenCalled();
+    expect(testWindow().localStorage.getItem("t3code:composer-preferences:v1")).toBe(malformed);
+  });
+
   it("keeps renderer state in localStorage when no desktop bridge is present", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi();
-    const rawState = '{"state":{"stickyActiveProvider":"codex"},"version":8}';
+    const rawState =
+      '{"version":1,"stickyModelSelectionByProvider":{},"stickyActiveProvider":"codex"}';
 
     await api.persistence.setRendererState("composer-preferences", rawState);
 

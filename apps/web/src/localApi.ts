@@ -9,6 +9,7 @@ import {
 } from "./clientPersistenceStorage";
 import {
   COMPOSER_PREFERENCES_STORAGE_KEY,
+  parsePersistedComposerPreferences,
   readLegacyComposerPreferences,
 } from "./composerPreferencesStorage";
 
@@ -46,12 +47,16 @@ function readValidBrowserRendererState(
 
   try {
     const parsed: unknown = JSON.parse(raw);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? {
-          raw,
-          cleanupKey: rendererStateStorageKeys[key],
-        }
-      : null;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return null;
+    }
+    if (key === "composer-preferences" && parsePersistedComposerPreferences(raw) === null) {
+      return null;
+    }
+    return {
+      raw,
+      cleanupKey: rendererStateStorageKeys[key],
+    };
   } catch {
     return null;
   }
@@ -147,7 +152,18 @@ function createBrowserLocalApi(): LocalApi {
           }
           return browserState.raw;
         }
-        return readValidBrowserRendererState(key)?.raw ?? null;
+        const browserState = readValidBrowserRendererState(key);
+        if (browserState === null) {
+          return null;
+        }
+        if (browserState.cleanupKey === null) {
+          try {
+            window.localStorage.setItem(rendererStateStorageKeys[key], browserState.raw);
+          } catch {
+            // Returning the converted state still keeps the current session usable.
+          }
+        }
+        return browserState.raw;
       },
       setRendererState: async (key, value) => {
         if (window.desktopBridge) {
