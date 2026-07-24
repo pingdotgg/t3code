@@ -30,6 +30,7 @@ import { expect } from "vite-plus/test";
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
 import {
+  hasReplyUnawareForegroundProcess,
   sanitizePersistedTerminalHistory,
   sanitizeTerminalHistoryChunk,
   sanitizeTerminalInputChunk,
@@ -1220,6 +1221,16 @@ it.layer(
         terminalId: DEFAULT_TERMINAL_ID,
         data: "q",
       });
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "\x1b[1;2",
+      });
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "R",
+      });
 
       for (const data of [
         "\x1b[?",
@@ -1259,6 +1270,48 @@ it.layer(
       });
 
       expect(process.writes).toEqual(["q", "\x1b", "q"]);
+    }),
+  );
+
+  it.effect("refreshes stale pager ownership before routing a terminal reply", () =>
+    Effect.gen(function* () {
+      let inspect = {
+        hasRunningSubprocess: true,
+        childCommand: "git",
+        processIds: [100, 101],
+        hasTerminalReplyUnawareSubprocess: true,
+        shellForeground: false,
+      };
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+        subprocessInspector: () => Effect.succeed(inspect),
+        subprocessPollIntervalMs: 20,
+      });
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some((event) => event.type === "activity" && event.hasRunningSubprocess),
+        ),
+        "1200 millis",
+      );
+      inspect = {
+        hasRunningSubprocess: true,
+        childCommand: "vim",
+        processIds: [100, 102],
+        hasTerminalReplyUnawareSubprocess: false,
+        shellForeground: false,
+      };
+
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "\x1b[1;2R",
+      });
+
+      expect(process.writes).toEqual(["\x1b[1;2R"]);
     }),
   );
 
@@ -2430,6 +2483,69 @@ it.layer(
       expect(process.killSignals).toContain("SIGKILL");
     }).pipe(Effect.provide(TestClock.layer())),
   );
+});
+
+describe("hasReplyUnawareForegroundProcess", () => {
+  it("detects a nested pager in the foreground process group", () => {
+    expect(
+      hasReplyUnawareForegroundProcess({
+        platform: "linux",
+        foregroundProcessGroupId: 200,
+        shellForeground: false,
+        childPid: 101,
+        childCommand: "git",
+        processes: [
+          { pid: 101, processGroupId: 200, command: "git" },
+          { pid: 102, processGroupId: 200, command: "less" },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores a background pager when an interactive app owns the foreground group", () => {
+    expect(
+      hasReplyUnawareForegroundProcess({
+        platform: "linux",
+        foregroundProcessGroupId: 300,
+        shellForeground: false,
+        childPid: 101,
+        childCommand: "vim",
+        processes: [
+          { pid: 101, processGroupId: 300, command: "vim" },
+          { pid: 102, processGroupId: 200, command: "less" },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("does not use the direct-pager fallback when another foreground group is observed", () => {
+    expect(
+      hasReplyUnawareForegroundProcess({
+        platform: "linux",
+        foregroundProcessGroupId: 300,
+        shellForeground: false,
+        childPid: 101,
+        childCommand: "less",
+        processes: [
+          { pid: 101, processGroupId: undefined, command: "" },
+          { pid: 102, processGroupId: 300, command: "vim" },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("falls back to a known direct pager when tree metadata is unavailable", () => {
+    expect(
+      hasReplyUnawareForegroundProcess({
+        platform: "linux",
+        foregroundProcessGroupId: 200,
+        shellForeground: false,
+        childPid: 101,
+        childCommand: "less",
+        processes: [{ pid: 101, processGroupId: undefined, command: "" }],
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("sanitizeTerminalHistoryChunk", () => {
