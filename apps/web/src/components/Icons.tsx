@@ -211,6 +211,23 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const DevinIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    className={cn("stroke-[#0F0F0F] dark:stroke-[#F5F5F5]", className)}
+    strokeWidth="2.2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    {/* Simplified Devin wing mark: three sweeping strokes */}
+    <path d="M3 5c5.5 0 9.5 2.5 12 7" />
+    <path d="M5 10c4 0 7 2 9 5.5" />
+    <path d="M7.5 15c2.6 0 4.6 1.3 6 3.8" />
+  </svg>
+);
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}

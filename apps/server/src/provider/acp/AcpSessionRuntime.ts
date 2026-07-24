@@ -69,6 +69,12 @@ export interface AcpSessionRuntimeOptions {
     readonly version: string;
   };
   readonly authMethodId: string;
+  /**
+   * Optional `_meta` payload attached to the `authenticate` request. Some
+   * agents (e.g. Devin) accept credentials such as API keys through
+   * authenticate metadata instead of environment variables.
+   */
+  readonly authenticateMeta?: Readonly<Record<string, unknown>>;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
@@ -543,6 +549,7 @@ export const make = (
 
       const authenticatePayload = {
         methodId: options.authMethodId,
+        ...(options.authenticateMeta ? { _meta: options.authenticateMeta } : {}),
       } satisfies EffectAcpSchema.AuthenticateRequest;
 
       yield* runLoggedRequest(
