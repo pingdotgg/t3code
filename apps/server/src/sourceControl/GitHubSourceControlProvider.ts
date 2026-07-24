@@ -7,6 +7,7 @@ import {
   type ChangeRequest,
   type ChangeRequestState,
 } from "@t3tools/contracts";
+import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@t3tools/shared/git";
 
 import * as GitHubCli from "./GitHubCli.ts";
 import { findAuthenticatedGitHubAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
@@ -19,6 +20,26 @@ import {
   type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
 } from "./SourceControlProviderDiscovery.ts";
+
+function repositoryFromContext(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): string | undefined {
+  return parseGitHubRepositoryNameWithOwnerFromRemoteUrl(context?.remoteUrl ?? null) ?? undefined;
+}
+
+function repositoryOption(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): { readonly repository?: string } {
+  const repository = repositoryFromContext(context);
+  return repository === undefined ? {} : { repository };
+}
+
+function repositoryArgs(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): ReadonlyArray<string> {
+  const repository = repositoryFromContext(context);
+  return repository === undefined ? [] : ["--repo", repository];
+}
 
 function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeRequest {
   return {
@@ -105,6 +126,7 @@ export const make = Effect.gen(function* () {
             cwd: input.cwd,
             headSelector: input.headSelector,
             ...(input.limit !== undefined ? { limit: input.limit } : {}),
+            ...repositoryOption(input.context),
           })
           .pipe(
             Effect.map((items) => items.map(toChangeRequest)),
@@ -138,6 +160,7 @@ export const make = Effect.gen(function* () {
             stateArg,
             "--limit",
             String(input.limit ?? 20),
+            ...repositoryArgs(input.context),
             "--json",
             "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
           ],
@@ -188,23 +211,29 @@ export const make = Effect.gen(function* () {
     kind: "github",
     listChangeRequests,
     getChangeRequest: (input) =>
-      github.getPullRequest(input).pipe(
-        Effect.map(toChangeRequest),
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "github",
-              operation: "getChangeRequest",
-              command: error.command,
-              cwd: input.cwd,
-              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.reference,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+      github
+        .getPullRequest({
+          cwd: input.cwd,
+          reference: input.reference,
+          ...repositoryOption(input.context),
+        })
+        .pipe(
+          Effect.map(toChangeRequest),
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "getChangeRequest",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.reference,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
         ),
-      ),
     createChangeRequest: (input) =>
       github
         .createPullRequest({
@@ -213,6 +242,7 @@ export const make = Effect.gen(function* () {
           headSelector: input.headSelector,
           title: input.title,
           bodyFile: input.bodyFile,
+          ...repositoryOption(input.context),
         })
         .pipe(
           Effect.mapError(
@@ -265,36 +295,48 @@ export const make = Effect.gen(function* () {
         ),
       ),
     getDefaultBranch: (input) =>
-      github.getDefaultBranch(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "github",
-              operation: "getDefaultBranch",
-              command: error.command,
-              cwd: input.cwd,
-              detail: error.detail,
-              cause: error,
-            }),
+      github
+        .getDefaultBranch({
+          cwd: input.cwd,
+          ...repositoryOption(input.context),
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "getDefaultBranch",
+                command: error.command,
+                cwd: input.cwd,
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
         ),
-      ),
     checkoutChangeRequest: (input) =>
-      github.checkoutPullRequest(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "github",
-              operation: "checkoutChangeRequest",
-              command: error.command,
-              cwd: input.cwd,
-              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.reference,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+      github
+        .checkoutPullRequest({
+          cwd: input.cwd,
+          reference: input.reference,
+          ...(input.force !== undefined ? { force: input.force } : {}),
+          ...repositoryOption(input.context),
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "checkoutChangeRequest",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.reference,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
         ),
-      ),
   });
 });
 

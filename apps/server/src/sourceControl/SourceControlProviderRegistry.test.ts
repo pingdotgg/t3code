@@ -39,6 +39,7 @@ function makeRegistry(input: {
     readonly url: string;
   }>;
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
+  readonly github?: Partial<GitHubCli.GitHubCli["Service"]>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
 }) {
   const driver = {
@@ -90,7 +91,7 @@ function makeRegistry(input: {
         processLayer,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
-        Layer.mock(GitHubCli.GitHubCli)({}),
+        Layer.mock(GitHubCli.GitHubCli)(input.github ?? {}),
         Layer.mock(GitLabCli.GitLabCli)({}),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
@@ -109,6 +110,30 @@ it.effect("routes GitHub remotes to the GitHub provider", () =>
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "github");
+  }),
+);
+
+it.effect("binds GitHub operations to origin instead of upstream", () =>
+  Effect.gen(function* () {
+    let repository: string | undefined;
+    const registry = yield* makeRegistry({
+      remotes: [
+        { name: "origin", url: "https://github.com/totalolage/t3code.git" },
+        { name: "upstream", url: "https://github.com/pingdotgg/t3code.git" },
+      ],
+      github: {
+        getDefaultBranch: (input) => {
+          repository = input.repository;
+          return Effect.succeed("main");
+        },
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+    const defaultBranch = yield* provider.getDefaultBranch({ cwd: "/repo" });
+
+    assert.strictEqual(defaultBranch, "main");
+    assert.strictEqual(repository, "totalolage/t3code");
   }),
 );
 
