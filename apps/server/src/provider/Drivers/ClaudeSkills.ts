@@ -24,29 +24,32 @@ type ClaudeSkillScope = "user" | "project";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
-function parseSkillFrontmatter(contents: string): {
-  readonly name?: string;
-  readonly description?: string;
-} {
+type SkillFrontmatter =
+  | { readonly kind: "missing" }
+  | { readonly kind: "malformed" }
+  | { readonly kind: "parsed"; readonly name?: string; readonly description?: string };
+
+function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   const match = FRONTMATTER_PATTERN.exec(contents);
   if (!match) {
-    return {};
+    return { kind: "missing" };
   }
 
   let parsed: unknown;
   try {
     parsed = parseYamlDocument(match[1] ?? "");
   } catch {
-    return {};
+    return { kind: "malformed" };
   }
   if (typeof parsed !== "object" || parsed === null) {
-    return {};
+    return { kind: "malformed" };
   }
 
   const record = parsed as Record<string, unknown>;
   const name = typeof record.name === "string" ? record.name.trim() : "";
   const description = typeof record.description === "string" ? record.description.trim() : "";
   return {
+    kind: "parsed",
     ...(name ? { name } : {}),
     ...(description ? { description } : {}),
   };
@@ -111,7 +114,14 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       }
 
       const frontmatter = parseSkillFrontmatter(contents);
-      const name = frontmatter.name ?? entry.trim();
+      // Malformed frontmatter means the skill won't load in Claude Code
+      // either — skip it rather than surfacing a broken entry under its
+      // directory name.
+      if (frontmatter.kind === "malformed") {
+        continue;
+      }
+
+      const name = (frontmatter.kind === "parsed" ? frontmatter.name : undefined) ?? entry.trim();
       if (!name) {
         continue;
       }
@@ -121,7 +131,9 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         path: skillPath,
         enabled: true,
         scope: root.scope,
-        ...(frontmatter.description ? { description: frontmatter.description } : {}),
+        ...(frontmatter.kind === "parsed" && frontmatter.description
+          ? { description: frontmatter.description }
+          : {}),
       });
     }
   }

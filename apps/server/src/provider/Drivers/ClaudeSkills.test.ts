@@ -93,7 +93,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("falls back to the directory name and tolerates malformed frontmatter", () =>
+  it.effect("falls back to the directory name and skips malformed frontmatter", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -109,14 +109,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined);
 
+      // A skill with no frontmatter falls back to its directory name; a skill
+      // whose frontmatter fails to parse is skipped entirely (Claude Code
+      // won't load it either).
       assert.deepEqual(
         skills.map((skill) => skill.name),
-        ["broken-yaml", "no-frontmatter"],
+        ["no-frontmatter"],
       );
-      assert.equal(
-        skills.every((skill) => skill.description === undefined),
-        true,
-      );
+      assert.equal(skills[0]?.description, undefined);
     }),
   );
 
