@@ -65,6 +65,7 @@ import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
+import { refreshVcsRefsOnMenuOpen } from "./vcsRefMenuRefresh";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -593,7 +594,10 @@ export default function DiffPanel({
               filteredItems={filteredBaseRefItems}
               value={selectedBaseRef ?? AUTOMATIC_BASE_REF}
               onOpenChange={(open) => {
-                if (!open) setBaseRefQuery("");
+                if (!open) {
+                  setBaseRefQuery("");
+                }
+                refreshVcsRefsOnMenuOpen(open, localBranchRefs.refresh, remoteBranchRefs.refresh);
               }}
               onValueChange={(value) => {
                 if (!value) return;

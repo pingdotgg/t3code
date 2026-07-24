@@ -1964,13 +1964,10 @@ const makeWsRpcLayer = (
             WS_METHODS.subscribeDiscoveredLocalServers,
             Stream.callback<DiscoveredLocalServerList>((queue) =>
               Effect.gen(function* () {
+                // Retention performs one immediate scan when discovery was
+                // idle. Subscribe replays that snapshot to every connection,
+                // including connections that join an already-retained scanner.
                 yield* portDiscovery.retain;
-                const initial = yield* portDiscovery.scan();
-                const initialScannedAt = DateTime.formatIso(yield* DateTime.now);
-                yield* Queue.offer(queue, {
-                  servers: initial,
-                  scannedAt: initialScannedAt,
-                });
                 yield* portDiscovery.subscribe((servers) =>
                   Effect.gen(function* () {
                     const scannedAt = DateTime.formatIso(yield* DateTime.now);
