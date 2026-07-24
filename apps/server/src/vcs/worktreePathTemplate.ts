@@ -2,6 +2,7 @@ import type * as Path from "effect/Path";
 
 interface WorktreePathTemplateInput {
   readonly cwd: string;
+  readonly resolvedRepoRoot?: string;
   readonly worktreesDir: string;
   readonly template: string;
   readonly branch: string;
@@ -21,12 +22,13 @@ export function resolveWorktreePathTemplate(
   path: Path.Path,
   input: WorktreePathTemplateInput,
 ): string {
-  const repoRoot = path.resolve(input.cwd);
+  const lexicalRepoRoot = path.resolve(input.cwd);
+  const repoRoot = path.resolve(input.resolvedRepoRoot ?? lexicalRepoRoot);
   const branch = input.branch.replace(/\//g, "-");
   const placeholders = {
     worktreesDir: path.resolve(input.worktreesDir),
     repoRoot,
-    repoName: path.basename(repoRoot),
+    repoName: path.basename(lexicalRepoRoot),
     branch,
   } as const;
   const expanded = input.template.replace(

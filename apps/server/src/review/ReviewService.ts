@@ -79,16 +79,30 @@ export const make = Effect.gen(function* () {
         }).pipe(Effect.as(DEFAULT_WORKTREE_PATH_TEMPLATE)),
       ),
     );
-    const repositoryRoots = yield* Effect.forEach(input.repositoryRoots ?? [], canonicalizePath, {
-      concurrency: "unbounded",
-    });
+    const repositoryRoots = yield* Effect.forEach(
+      input.repositoryRoots ?? [],
+      (repositoryRoot) =>
+        canonicalizePath(repositoryRoot).pipe(
+          Effect.map((resolvedRepoRoot) => ({ repositoryRoot, resolvedRepoRoot })),
+          Effect.catch((cause) =>
+            Effect.logWarning("Skipping repository root that could not be resolved", {
+              cause,
+              repositoryRoot,
+            }).pipe(Effect.as(null)),
+          ),
+        ),
+      { concurrency: "unbounded" },
+    );
     const matchesConfiguredWorktreePath = repositoryRoots.some((repositoryRoot) =>
-      matchesWorktreePathTemplate(path, {
-        candidate,
-        cwd: repositoryRoot,
-        worktreesDir: worktreesRoot,
-        template: worktreePathTemplate,
-      }),
+      repositoryRoot === null
+        ? false
+        : matchesWorktreePathTemplate(path, {
+            candidate,
+            cwd: repositoryRoot.repositoryRoot,
+            resolvedRepoRoot: repositoryRoot.resolvedRepoRoot,
+            worktreesDir: worktreesRoot,
+            template: worktreePathTemplate,
+          }),
     );
 
     if (
