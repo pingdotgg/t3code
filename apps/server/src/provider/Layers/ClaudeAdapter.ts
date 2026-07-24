@@ -157,8 +157,21 @@ interface PendingApproval {
 
 interface PendingUserInput {
   readonly questions: ReadonlyArray<UserInputQuestion>;
-  readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+  readonly resolution: Deferred.Deferred<PendingUserInputResolution>;
+  readonly requested: Deferred.Deferred<void>;
+  readonly published: Deferred.Deferred<void>;
+  readonly providerItemId?: string;
 }
+
+type PendingUserInputResolution =
+  | {
+      readonly _tag: "answered";
+      readonly answers: ProviderUserInputAnswers;
+    }
+  | {
+      readonly _tag: "cancelled";
+      readonly answers: ProviderUserInputAnswers;
+    };
 
 interface ToolInFlight {
   readonly itemId: string;
@@ -3024,6 +3037,56 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  const settlePendingUserInput = Effect.fn("settlePendingUserInput")(function* (
+    context: ClaudeSessionContext,
+    requestId: ApprovalRequestId,
+    pending: PendingUserInput,
+    resolution: PendingUserInputResolution,
+  ) {
+    const didSettle = yield* Deferred.succeed(pending.resolution, resolution);
+    if (!didSettle) {
+      // Another terminal path won the race. Wait until it publishes the
+      // matching resolved event so session teardown cannot overtake it.
+      yield* Deferred.await(pending.published);
+      return false;
+    }
+
+    // A teardown may race the request callback between registration and
+    // publication. Preserve requested -> resolved ordering for projections.
+    yield* Deferred.await(pending.requested);
+    yield* Effect.gen(function* () {
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "user-input.resolved",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        requestId: asRuntimeRequestId(requestId),
+        payload: { answers: resolution.answers },
+        providerRefs: nativeProviderRefs(context, {
+          providerItemId: pending.providerItemId,
+        }),
+        raw: {
+          source: "claude.sdk.permission",
+          method:
+            resolution._tag === "answered"
+              ? "canUseTool/AskUserQuestion/resolved"
+              : "canUseTool/AskUserQuestion/cancelled",
+          payload: { answers: resolution.answers },
+        },
+      });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => context.pendingUserInputs.delete(requestId)).pipe(
+          Effect.andThen(Deferred.succeed(pending.published, undefined)),
+        ),
+      ),
+    );
+    return true;
+  }, Effect.uninterruptible);
+
   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
     context: ClaudeSessionContext,
     options?: { readonly emitExitEvent?: boolean },
@@ -3051,6 +3114,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
     context.pendingApprovals.clear();
+
+    for (const [requestId, pending] of context.pendingUserInputs) {
+      const answers = {} as ProviderUserInputAnswers;
+      const resolution: PendingUserInputResolution = { _tag: "cancelled", answers };
+      yield* settlePendingUserInput(context, requestId, pending, resolution);
+    }
+    context.pendingUserInputs.clear();
 
     if (context.turnState) {
       yield* completeTurn(context, "interrupted", "Session stopped.");
@@ -3228,86 +3298,86 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           }),
         );
 
-        const answersDeferred = yield* Deferred.make<ProviderUserInputAnswers>();
-        let aborted = false;
+        const resolutionDeferred = yield* Deferred.make<PendingUserInputResolution>();
+        const requestedDeferred = yield* Deferred.make<void>();
+        const publishedDeferred = yield* Deferred.make<void>();
         const pendingInput: PendingUserInput = {
           questions,
-          answers: answersDeferred,
+          resolution: resolutionDeferred,
+          requested: requestedDeferred,
+          published: publishedDeferred,
+          ...(callbackOptions.toolUseID ? { providerItemId: callbackOptions.toolUseID } : {}),
         };
 
         // Emit user-input.requested so the UI can present the questions.
         const requestedStamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
-          type: "user-input.requested",
-          eventId: requestedStamp.eventId,
-          provider: PROVIDER,
-          createdAt: requestedStamp.createdAt,
-          threadId: context.session.threadId,
-          ...(context.turnState
-            ? {
-                turnId: asCanonicalTurnId(context.turnState.turnId),
-              }
-            : {}),
-          requestId: asRuntimeRequestId(requestId),
-          payload: { questions },
-          providerRefs: nativeProviderRefs(context, {
-            providerItemId: callbackOptions.toolUseID,
-          }),
-          raw: {
-            source: "claude.sdk.permission",
-            method: "canUseTool/AskUserQuestion",
-            payload: {
-              toolName: "AskUserQuestion",
-              input: toolInput,
-            },
-          },
-        });
+        const didRegister = yield* Effect.gen(function* () {
+          const registered = yield* Effect.sync(() => {
+            if (context.stopped || callbackOptions.signal.aborted) {
+              return false;
+            }
+            pendingUserInputs.set(requestId, pendingInput);
+            return true;
+          });
+          if (!registered) {
+            return false;
+          }
 
-        pendingUserInputs.set(requestId, pendingInput);
+          yield* offerRuntimeEvent({
+            type: "user-input.requested",
+            eventId: requestedStamp.eventId,
+            provider: PROVIDER,
+            createdAt: requestedStamp.createdAt,
+            threadId: context.session.threadId,
+            ...(context.turnState
+              ? {
+                  turnId: asCanonicalTurnId(context.turnState.turnId),
+                }
+              : {}),
+            requestId: asRuntimeRequestId(requestId),
+            payload: { questions },
+            providerRefs: nativeProviderRefs(context, {
+              providerItemId: callbackOptions.toolUseID,
+            }),
+            raw: {
+              source: "claude.sdk.permission",
+              method: "canUseTool/AskUserQuestion",
+              payload: {
+                toolName: "AskUserQuestion",
+                input: toolInput,
+              },
+            },
+          }).pipe(Effect.ensuring(Deferred.succeed(requestedDeferred, undefined)));
+          return true;
+        }).pipe(Effect.uninterruptible);
+        if (!didRegister) {
+          return {
+            behavior: "deny",
+            message: "Claude session context is unavailable or stopped.",
+          } satisfies PermissionResult;
+        }
 
         // Handle abort (e.g. turn interrupted while waiting for user input).
         const onAbort = () => {
-          if (!pendingUserInputs.has(requestId)) {
-            return;
-          }
-          aborted = true;
-          pendingUserInputs.delete(requestId);
-          runFork(Deferred.succeed(answersDeferred, {} as ProviderUserInputAnswers));
+          const resolution: PendingUserInputResolution = {
+            _tag: "cancelled",
+            answers: {} as ProviderUserInputAnswers,
+          };
+          runFork(settlePendingUserInput(context, requestId, pendingInput, resolution));
         };
         callbackOptions.signal.addEventListener("abort", onAbort, {
           once: true,
         });
+        if (callbackOptions.signal.aborted) {
+          onAbort();
+        }
 
         // Block until the user provides answers.
-        const answers = yield* Deferred.await(answersDeferred);
-        pendingUserInputs.delete(requestId);
+        const resolution = yield* Deferred.await(resolutionDeferred);
+        const answers = resolution.answers;
+        callbackOptions.signal.removeEventListener("abort", onAbort);
 
-        // Emit user-input.resolved so the UI knows the interaction completed.
-        const resolvedStamp = yield* makeEventStamp();
-        yield* offerRuntimeEvent({
-          type: "user-input.resolved",
-          eventId: resolvedStamp.eventId,
-          provider: PROVIDER,
-          createdAt: resolvedStamp.createdAt,
-          threadId: context.session.threadId,
-          ...(context.turnState
-            ? {
-                turnId: asCanonicalTurnId(context.turnState.turnId),
-              }
-            : {}),
-          requestId: asRuntimeRequestId(requestId),
-          payload: { answers },
-          providerRefs: nativeProviderRefs(context, {
-            providerItemId: callbackOptions.toolUseID,
-          }),
-          raw: {
-            source: "claude.sdk.permission",
-            method: "canUseTool/AskUserQuestion/resolved",
-            payload: { answers },
-          },
-        });
-
-        if (aborted) {
+        if (resolution._tag === "cancelled") {
           return {
             behavior: "deny",
             message: "User cancelled tool execution.",
@@ -3331,10 +3401,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         callbackOptions: Parameters<CanUseTool>[2],
       ) {
         const context = yield* Ref.get(contextRef);
-        if (!context) {
+        if (!context || context.stopped) {
           return {
             behavior: "deny",
-            message: "Claude session context is unavailable.",
+            message: "Claude session context is unavailable or stopped.",
           } satisfies PermissionResult;
         }
 
@@ -3877,8 +3947,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
-    context.pendingUserInputs.delete(requestId);
-    yield* Deferred.succeed(pending.answers, answers);
+    const resolution: PendingUserInputResolution = { _tag: "answered", answers };
+    const didSettle = yield* settlePendingUserInput(context, requestId, pending, resolution);
+    if (!didSettle) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "item/tool/respondToUserInput",
+        detail: `User-input request already resolved: ${requestId}`,
+      });
+    }
   });
 
   const stopSession: ClaudeAdapterShape["stopSession"] = Effect.fn("stopSession")(

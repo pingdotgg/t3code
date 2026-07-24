@@ -4,6 +4,7 @@ import {
   ApprovalRequestId,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
+  type OrchestrationSessionStatus,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   ProviderDriverKind,
@@ -460,7 +461,14 @@ function parseUserInputQuestions(
 
 export function derivePendingUserInputs(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
+  sessionStatus?: OrchestrationSessionStatus | null,
 ): PendingUserInput[] {
+  // A stopped provider cannot service a persisted callback. This also clears
+  // prompts left behind by older builds that did not project a resolved event.
+  if (sessionStatus === "stopped") {
+    return [];
+  }
+
   const openByRequestId = new Map<ApprovalRequestId, PendingUserInput>();
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
 
