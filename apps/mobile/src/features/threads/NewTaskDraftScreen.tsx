@@ -1053,7 +1053,16 @@ export function NewTaskDraftScreen(props: {
         <NativeStackScreenOptions options={{ headerShown: false }} />
         <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
 
-        <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
+        <KeyboardAvoidingView
+          automaticOffset
+          behavior="padding"
+          className="flex-1"
+          // Android lays this screen through the edge-to-edge navigation area,
+          // but the IME overlap reported to KeyboardAvoidingView stops above
+          // it. Include that inset so the expanded editor and its toolbar both
+          // remain above the keyboard.
+          keyboardVerticalOffset={insets.bottom}
+        >
           <View className="flex-1" />
 
           <View
