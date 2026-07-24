@@ -1089,10 +1089,38 @@ label:has(> select#reasoning-effort) select {
 }
 
 /* Chat markdown rendering */
+[data-transcript-width="narrow"] {
+  --chat-content-max-width: 40rem;
+}
+
+[data-transcript-width="medium"] {
+  --chat-content-max-width: 48rem;
+}
+
+[data-transcript-width="wide"] {
+  --chat-content-max-width: 64rem;
+}
+
+[data-transcript-text-size="small"] {
+  --transcript-text-size: 0.8125rem;
+  --transcript-compact-text-size: 0.6875rem;
+}
+
+[data-transcript-text-size="medium"] {
+  --transcript-text-size: 0.875rem;
+  --transcript-compact-text-size: 0.75rem;
+}
+
+[data-transcript-text-size="large"] {
+  --transcript-text-size: 1rem;
+  --transcript-compact-text-size: 0.875rem;
+}
+
 .chat-markdown {
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
+  font-size: var(--transcript-text-size, 0.875rem);
 }
 
 .chat-markdown > :first-child {
@@ -1125,21 +1153,21 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown h1 {
-  font-size: 1.25rem;
+  font-size: 1.4286em;
 }
 
 .chat-markdown h2 {
-  font-size: 1.125rem;
+  font-size: 1.2857em;
 }
 
 .chat-markdown h3 {
-  font-size: 1rem;
+  font-size: 1.1429em;
 }
 
 .chat-markdown h4,
 .chat-markdown h5,
 .chat-markdown h6 {
-  font-size: 0.875rem;
+  font-size: 1em;
 }
 
 .chat-markdown h6 {
@@ -1222,7 +1250,7 @@ label:has(> select#reasoning-effort) select {
   border-top: 1px solid var(--border);
   padding-top: 0.75rem;
   color: var(--muted-foreground);
-  font-size: 0.75rem;
+  font-size: var(--transcript-compact-text-size, 0.75rem);
 }
 
 .chat-markdown section[data-footnotes] ol {
@@ -1252,7 +1280,7 @@ label:has(> select#reasoning-effort) select {
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--foreground);
-  font-size: 0.75rem;
+  font-size: var(--transcript-compact-text-size, 0.75rem);
 }
 
 .chat-markdown a.chat-markdown-file-link {
@@ -1283,7 +1311,7 @@ label:has(> select#reasoning-effort) select {
   border: none;
   background: transparent;
   padding: 0;
-  font-size: 0.75rem;
+  font-size: var(--transcript-compact-text-size, 0.75rem);
 }
 
 .chat-markdown pre {
@@ -1390,7 +1418,7 @@ label:has(> select#reasoning-effort) select {
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
-  font-size: 0.75rem;
+  font-size: var(--transcript-compact-text-size, 0.75rem);
 }
 
 .chat-markdown th,

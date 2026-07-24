@@ -460,7 +460,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
+      <div
+        className="mx-auto w-full min-w-0 max-w-[var(--chat-content-max-width,48rem)] overflow-x-clip"
+        data-timeline-root="true"
+      >
         <TimelineRowContent row={item} />
       </div>
     ),
@@ -1585,7 +1588,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         }
 
         return (
-          <div className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground">
+          <div className="whitespace-pre-wrap wrap-break-word text-[length:var(--transcript-text-size,0.875rem)] leading-relaxed text-foreground">
             {inlineNodes}
           </div>
         );
@@ -1623,7 +1626,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     }
 
     return (
-      <div className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground">
+      <div className="whitespace-pre-wrap wrap-break-word text-[length:var(--transcript-text-size,0.875rem)] leading-relaxed text-foreground">
         {inlineNodes}
       </div>
     );
@@ -1664,7 +1667,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
         </div>
       </div>
       {comment.text.length > 0 && (
-        <div className="whitespace-pre-wrap wrap-break-word text-sm">
+        <div className="whitespace-pre-wrap wrap-break-word text-[length:var(--transcript-text-size,0.875rem)]">
           <SkillInlineText text={comment.text} skills={ctx.skills} />
         </div>
       )}

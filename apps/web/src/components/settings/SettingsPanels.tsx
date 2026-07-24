@@ -69,6 +69,7 @@ import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
@@ -112,6 +113,18 @@ const THEME_OPTIONS = [
     value: "dark",
     label: "Dark",
   },
+] as const;
+
+const TRANSCRIPT_TEXT_SIZE_OPTIONS = [
+  { value: "small", label: "Small" },
+  { value: "medium", label: "Medium" },
+  { value: "large", label: "Large" },
+] as const;
+
+const TRANSCRIPT_WIDTH_OPTIONS = [
+  { value: "narrow", label: "Narrow" },
+  { value: "medium", label: "Medium" },
+  { value: "wide", label: "Wide" },
 ] as const;
 
 const TIMESTAMP_FORMAT_LABELS = {
@@ -404,6 +417,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.transcriptTextSize !== DEFAULT_UNIFIED_SETTINGS.transcriptTextSize
+        ? ["Transcript text size"]
+        : []),
+      ...(settings.transcriptWidth !== DEFAULT_UNIFIED_SETTINGS.transcriptWidth
+        ? ["Transcript width"]
+        : []),
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
@@ -463,6 +482,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
+      settings.transcriptTextSize,
+      settings.transcriptWidth,
       settings.wordWrap,
       theme,
     ],
@@ -481,6 +502,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     setTheme("system");
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      transcriptTextSize: DEFAULT_UNIFIED_SETTINGS.transcriptTextSize,
+      transcriptWidth: DEFAULT_UNIFIED_SETTINGS.transcriptWidth,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -585,6 +608,78 @@ export function GeneralSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Transcript text size"
+          description="Size of the conversation transcript text."
+          resetAction={
+            settings.transcriptTextSize !== DEFAULT_UNIFIED_SETTINGS.transcriptTextSize ? (
+              <SettingResetButton
+                label="transcript text size"
+                onClick={() =>
+                  updateSettings({
+                    transcriptTextSize: DEFAULT_UNIFIED_SETTINGS.transcriptTextSize,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ToggleGroup
+              variant="outline"
+              size="sm"
+              value={[settings.transcriptTextSize]}
+              onValueChange={(value) => {
+                const nextValue = value[0];
+                if (nextValue === "small" || nextValue === "medium" || nextValue === "large") {
+                  updateSettings({ transcriptTextSize: nextValue });
+                }
+              }}
+              aria-label="Transcript text size"
+            >
+              {TRANSCRIPT_TEXT_SIZE_OPTIONS.map((option) => (
+                <Toggle key={option.value} value={option.value} className="min-w-16 px-2">
+                  {option.label}
+                </Toggle>
+              ))}
+            </ToggleGroup>
+          }
+        />
+
+        <SettingsRow
+          title="Transcript width"
+          description="Maximum width of the transcript and composer columns."
+          resetAction={
+            settings.transcriptWidth !== DEFAULT_UNIFIED_SETTINGS.transcriptWidth ? (
+              <SettingResetButton
+                label="transcript width"
+                onClick={() =>
+                  updateSettings({ transcriptWidth: DEFAULT_UNIFIED_SETTINGS.transcriptWidth })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ToggleGroup
+              variant="outline"
+              size="sm"
+              value={[settings.transcriptWidth]}
+              onValueChange={(value) => {
+                const nextValue = value[0];
+                if (nextValue === "narrow" || nextValue === "medium" || nextValue === "wide") {
+                  updateSettings({ transcriptWidth: nextValue });
+                }
+              }}
+              aria-label="Transcript width"
+            >
+              {TRANSCRIPT_WIDTH_OPTIONS.map((option) => (
+                <Toggle key={option.value} value={option.value} className="min-w-16 px-2">
+                  {option.label}
+                </Toggle>
+              ))}
+            </ToggleGroup>
           }
         />
 

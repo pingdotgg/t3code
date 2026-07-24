@@ -49,6 +49,29 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
+describe("ClientSettings transcript presentation", () => {
+  it("defaults to the existing medium transcript presentation", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.transcriptTextSize).toBe("medium");
+    expect(settings.transcriptWidth).toBe("medium");
+  });
+
+  it.each(["small", "medium", "large"] as const)("accepts transcript text size: %s", (value) => {
+    expect(decodeClientSettings({ transcriptTextSize: value }).transcriptTextSize).toBe(value);
+    expect(decodeClientSettingsPatch({ transcriptTextSize: value }).transcriptTextSize).toBe(value);
+  });
+
+  it.each(["narrow", "medium", "wide"] as const)("accepts transcript width: %s", (value) => {
+    expect(decodeClientSettings({ transcriptWidth: value }).transcriptWidth).toBe(value);
+    expect(decodeClientSettingsPatch({ transcriptWidth: value }).transcriptWidth).toBe(value);
+  });
+
+  it("rejects unsupported transcript presentation values", () => {
+    expect(() => decodeClientSettings({ transcriptTextSize: "extra-large" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ transcriptWidth: "full" })).toThrow();
+  });
+});
+
 describe("ClientSettings sidebar v2", () => {
   it("defaults the beta off with a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});

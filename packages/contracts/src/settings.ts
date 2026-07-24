@@ -59,6 +59,14 @@ export const GlassOpacity = Schema.Int.check(
 export type GlassOpacity = typeof GlassOpacity.Type;
 export const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
 
+export const TranscriptTextSize = Schema.Literals(["small", "medium", "large"]);
+export type TranscriptTextSize = typeof TranscriptTextSize.Type;
+export const DEFAULT_TRANSCRIPT_TEXT_SIZE: TranscriptTextSize = "medium";
+
+export const TranscriptWidth = Schema.Literals(["narrow", "medium", "wide"]);
+export type TranscriptWidth = typeof TranscriptWidth.Type;
+export const DEFAULT_TRANSCRIPT_WIDTH: TranscriptWidth = "medium";
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -117,6 +125,12 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarV2Enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  transcriptTextSize: TranscriptTextSize.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TRANSCRIPT_TEXT_SIZE)),
+  ),
+  transcriptWidth: TranscriptWidth.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TRANSCRIPT_WIDTH)),
   ),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
@@ -605,6 +619,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  transcriptTextSize: Schema.optionalKey(TranscriptTextSize),
+  transcriptWidth: Schema.optionalKey(TranscriptWidth),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

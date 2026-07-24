@@ -5606,7 +5606,11 @@ function ChatViewContent(props: ChatViewProps) {
   ) : null;
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+    <div
+      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      data-transcript-text-size={settings.transcriptTextSize}
+      data-transcript-width={settings.transcriptWidth}
+    >
       {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
@@ -5776,7 +5780,7 @@ function ChatViewContent(props: ChatViewProps) {
                   >
                     <div
                       className={cn(
-                        "chat-composer-glass-shell relative mx-auto w-full max-w-3xl",
+                        "chat-composer-glass-shell relative mx-auto w-full max-w-[var(--chat-content-max-width,48rem)]",
                         showComposerContextStrip && "chat-composer-glass-shell-with-context",
                       )}
                     >
