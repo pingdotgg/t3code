@@ -69,7 +69,11 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   archivedShellStreamItemFromSnapshot,
+  coalesceShellApplicationEvents,
+  composeShellStreamWithEnrichment,
+  shellStreamItemFromEnrichmentRefresh,
   shellStreamItemFromSnapshot,
+  shellStreamItemsFromInitialSnapshot,
 } from "./orchestration-v2/ShellStream.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEventStore from "./persistence/Services/OrchestrationEventStore.ts";
@@ -425,13 +429,28 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
           Effect.forEach(
             projects,
             (project) =>
+              // Non-blocking: emit with cached identity (or null) and schedule
+              // background resolution. subscribeChanges is attached before
+              // loadSnapshot, so later identity completions push refreshed
+              // shells for multi-env grouping without blocking the initial
+              // snapshot or completion marker on slow git probes.
               projectEnrichment.getAvailable(project.workspaceRoot).pipe(
                 Effect.map((enrichment) => ({
-                  ...project,
-                  repositoryIdentity: enrichment.repositoryIdentity,
+                  project: {
+                    ...project,
+                    repositoryIdentity: enrichment.repositoryIdentity,
+                  },
+                  repositoryIdentityResolved: enrichment.repositoryIdentityResolved,
                 })),
               ),
             { concurrency: 16 },
+          ).pipe(
+            Effect.map((enriched) => ({
+              projects: enriched.map((entry) => entry.project),
+              resolvedRepositoryIdentityRoots: enriched
+                .filter((entry) => entry.repositoryIdentityResolved)
+                .map((entry) => entry.project.workspaceRoot),
+            })),
           ),
       );
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
@@ -655,8 +674,11 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 } as const;
               }),
             );
-            const projects = yield* enrichProjectShells(base.projects);
-            return { ...base, projects };
+            const enriched = yield* enrichProjectShells(base.projects);
+            return {
+              snapshot: { ...base, projects: enriched.projects } as OrchestrationV2ShellSnapshot,
+              resolvedRepositoryIdentityRoots: enriched.resolvedRepositoryIdentityRoots,
+            };
           });
           const snapshot = yield* loadSnapshot().pipe(
             Effect.mapError(
@@ -712,15 +734,98 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
 
           const enrichmentRefreshes = Stream.fromSubscription(enrichmentChanges).pipe(
             Stream.filter((change) => change.repositoryIdentityResolved),
-            Stream.debounce("25 millis"),
-            Stream.mapEffect(() => loadSnapshot()),
-            Stream.map((snapshot) => ({ kind: "snapshot" as const, snapshot })),
+            Stream.groupedWithin(64, Duration.millis(25)),
+            Stream.mapEffect((changes) =>
+              loadSnapshot().pipe(
+                Effect.map(({ snapshot }) =>
+                  shellStreamItemFromEnrichmentRefresh({
+                    snapshot,
+                    changes: Array.from(changes),
+                  }),
+                ),
+              ),
+            ),
           );
 
-          return Stream.merge(
-            Stream.concat(Stream.make({ kind: "snapshot" as const, snapshot }), live),
-            enrichmentRefreshes,
-          ).pipe(
+          // Always attach the enrichment subscription before the first load so
+          // completions that race HTTP snapshot fetch still push a refresh.
+          // When the client already holds a shell snapshot (cached, or loaded
+          // over HTTP) it passes that snapshot's sequence. We still emit one
+          // enriched snapshot up front: getAvailable may have been cold on the
+          // HTTP path (null identity), and enrichment PubSub events published
+          // before this subscribe attached are dropped. Rehydrating here fills
+          // repositoryIdentity for cross-environment project grouping even on
+          // afterSequence resumes. Application events after the sequence still
+          // stream as deltas; overlapping events are deduped by sequence on the
+          // client.
+          //
+          // After the unmarked authoritative frame, emit a same-sequence
+          // metadata-only frame for roots that already resolved successfully
+          // (including cached null). Cold/failed roots stay unmarked and use
+          // the PubSub enrichment path when they complete later.
+          const completionMarker =
+            input.requestCompletionMarker === true
+              ? Stream.make({ kind: "synchronized" as const })
+              : Stream.empty;
+          const initialSnapshotItems = (loaded: {
+            readonly snapshot: OrchestrationV2ShellSnapshot;
+            readonly resolvedRepositoryIdentityRoots: ReadonlyArray<string>;
+          }) =>
+            Stream.fromIterable(
+              shellStreamItemsFromInitialSnapshot({
+                snapshot: loaded.snapshot,
+                resolvedRepositoryIdentityRoots: loaded.resolvedRepositoryIdentityRoots,
+              }),
+            );
+          // Initial unmarked (+ optional same-load marked) always drains first.
+          // Enrichment merges only with the post-prefix tail so a ready marked
+          // refresh cannot interleave before the authoritative initial frame.
+          const completionThenLive = (afterSequence: number) =>
+            Stream.concat(completionMarker, liveFrom(afterSequence));
+
+          const stream = yield* Effect.gen(function* () {
+            const loaded = yield* loadSnapshot();
+            const initial = initialSnapshotItems(loaded);
+            if (input.afterSequence === undefined) {
+              return composeShellStreamWithEnrichment({
+                initial,
+                tail: completionThenLive(loaded.snapshot.snapshotSequence),
+                enrichment: enrichmentRefreshes,
+              });
+            }
+
+            const highWater = yield* applicationEvents.latestApplicationSequence;
+            const replayGap = highWater - input.afterSequence;
+            if (replayGap < 0 || replayGap > 1_000) {
+              return composeShellStreamWithEnrichment({
+                initial,
+                tail: completionThenLive(loaded.snapshot.snapshotSequence),
+                enrichment: enrichmentRefreshes,
+              });
+            }
+
+            const replay = toShellStream(
+              applicationEvents.readApplicationEvents({
+                afterSequence: input.afterSequence,
+                throughSequence: highWater,
+              }),
+            );
+            return composeShellStreamWithEnrichment({
+              initial,
+              tail: Stream.concat(Stream.concat(replay, completionMarker), liveFrom(highWater)),
+              enrichment: enrichmentRefreshes,
+            });
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Failed to prepare the application shell stream",
+                  cause,
+                }),
+            ),
+          );
+
+          return stream.pipe(
             Stream.mapError(
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
@@ -748,7 +853,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
         .pipe(
           Effect.flatMap((snapshot) =>
             enrichProjectShells(snapshot.projects).pipe(
-              Effect.map((projects) => ({ ...snapshot, projects })),
+              Effect.map(({ projects }) => ({ ...snapshot, projects })),
             ),
           ),
           Effect.mapError(
