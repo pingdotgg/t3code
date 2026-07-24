@@ -391,6 +391,7 @@ describe("environment grouping", () => {
 
     expect(flat?.displayName).toBe("Threads");
     expect(flat?.memberProjectRefs.map((projectRef) => projectRef.projectId)).toEqual([
+      stale.id,
       canonical.id,
       second.id,
     ]);

@@ -48,15 +48,17 @@ export function buildFlatSidebarProjectSnapshot(
   }
 
   const membersByKey = new Map<string, SidebarProjectGroupMember>();
+  const memberProjectRefsByKey = new Map<string, ScopedProjectRef>();
   for (const project of projects) {
     for (const member of project.memberProjects) {
       membersByKey.set(scopedProjectKey(scopeProjectRef(member.environmentId, member.id)), member);
     }
+    for (const projectRef of project.memberProjectRefs) {
+      memberProjectRefsByKey.set(scopedProjectKey(projectRef), projectRef);
+    }
   }
   const memberProjects = [...membersByKey.values()];
-  const memberProjectRefs = memberProjects.map((member) =>
-    scopeProjectRef(member.environmentId, member.id),
-  );
+  const memberProjectRefs = [...memberProjectRefsByKey.values()];
 
   return {
     ...representative,

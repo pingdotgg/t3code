@@ -98,6 +98,7 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
+  filterSidebarThreadsForActiveRoute,
   firstValidTimestampMs,
   formatWorkingDurationLabel,
   hasUnseenCompletion,
@@ -1360,20 +1361,25 @@ export default function SidebarV2() {
   // form a third, explicit tail only while the Archived filter is enabled.
   const { activeThreads, settledThreads, filteredArchivedThreads } = useMemo(() => {
     const now = `${nowMinute}:00.000Z`;
-    const visible = threadsWithArchived.filter((thread) => {
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      const providerInstanceId =
-        thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
-      return matchesSidebarThreadFilters({
-        thread,
-        lastVisitedAt: threadLastVisitedAtById[threadKey],
-        isExplicitlyUnread: threadExplicitlyUnreadById[threadKey],
-        providerDriverKind:
-          providerFilterState.driverKindByScopedInstanceKey.get(
-            sidebarProviderInstanceKey(thread.environmentId, providerInstanceId),
-          ) ?? null,
-        filters: sidebarThreadFilters,
-      });
+    const visible = filterSidebarThreadsForActiveRoute({
+      threads: threadsWithArchived,
+      activeThreadKey: routeThreadKey,
+      getThreadKey: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      matchesFilters: (thread) => {
+        const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+        const providerInstanceId =
+          thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+        return matchesSidebarThreadFilters({
+          thread,
+          lastVisitedAt: threadLastVisitedAtById[threadKey],
+          isExplicitlyUnread: threadExplicitlyUnreadById[threadKey],
+          providerDriverKind:
+            providerFilterState.driverKindByScopedInstanceKey.get(
+              sidebarProviderInstanceKey(thread.environmentId, providerInstanceId),
+            ) ?? null,
+          filters: sidebarThreadFilters,
+        });
+      },
     });
     const active: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
@@ -1414,6 +1420,7 @@ export default function SidebarV2() {
     changeRequestStateByKey,
     nowMinute,
     providerFilterState.driverKindByScopedInstanceKey,
+    routeThreadKey,
     serverConfigs,
     sidebarThreadFilters,
     threadExplicitlyUnreadById,
