@@ -1,8 +1,5 @@
 import type { ScopedProjectRef } from "@t3tools/contracts";
-import {
-  scopedProjectKey,
-  scopeProjectRef,
-} from "@t3tools/client-runtime/environment";
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { FolderPlusIcon, SearchIcon } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
@@ -26,7 +23,7 @@ import {
   ComboboxPopup,
   ComboboxTrigger,
 } from "../ui/combobox";
-import { filterDraftHeroProjects } from "./draftHeroProjectSearch";
+import { filterDraftHeroProjects, isImeCommitKey } from "./draftHeroProjectSearch";
 
 interface DraftHeroHeadlineProps {
   readonly activeProjectRef: ScopedProjectRef | null;
@@ -41,27 +38,17 @@ export function DraftHeroHeadline({
   const threads = useThreadShells();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const projectGroupingSettings = useClientSettings(
-    selectProjectGroupingSettings,
-  );
-  const projectSortOrder = useClientSettings(
-    (settings) => settings.sidebarProjectSortOrder,
-  );
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const handleNewThread = useNewThreadHandler();
-  const openAddProject = useCallback(
-    () => openCommandPalette({ open: "add-project" }),
-    [],
-  );
+  const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
   const [isProjectPickerOpen, setIsProjectPickerOpen] = useState(false);
   const [projectQuery, setProjectQuery] = useState("");
 
   const environmentLabelById = useMemo(
     () =>
       new Map(
-        environments.map(
-          (environment) =>
-            [environment.environmentId, environment.label] as const,
-        ),
+        environments.map((environment) => [environment.environmentId, environment.label] as const),
       ),
     [environments],
   );
@@ -96,12 +83,7 @@ export function DraftHeroHeadline({
     [activeProjectRef, projectGroups],
   );
   const projectEntryByKey = useMemo(
-    () =>
-      new Map(
-        projectPickerEntries.map(
-          (entry) => [entry.group.projectKey, entry] as const,
-        ),
-      ),
+    () => new Map(projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const)),
     [projectPickerEntries],
   );
   const filteredProjectEntries = useMemo(
@@ -111,6 +93,10 @@ export function DraftHeroHeadline({
           entry,
           title: entry.group.displayName,
           workspaceRoot: entry.targetProject.workspaceRoot,
+          searchTerms: entry.group.memberProjects.flatMap((project) => [
+            project.title,
+            project.workspaceRoot,
+          ]),
         })),
         projectQuery,
       ).map(({ entry }) => entry),
@@ -121,14 +107,11 @@ export function DraftHeroHeadline({
       ? null
       : (projectGroups.find((group) =>
           group.memberProjectRefs.some(
-            (projectRef) =>
-              scopedProjectKey(projectRef) ===
-              scopedProjectKey(activeProjectRef),
+            (projectRef) => scopedProjectKey(projectRef) === scopedProjectKey(activeProjectRef),
           ),
         ) ?? null);
   const activeProjectKey = activeProjectGroup?.projectKey ?? "";
-  const activeProjectDisplayName =
-    activeProjectGroup?.displayName ?? activeProjectTitle;
+  const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
@@ -137,9 +120,7 @@ export function DraftHeroHeadline({
     <Combobox
       autoHighlight
       items={projectPickerEntries.map(({ group }) => group.projectKey)}
-      filteredItems={filteredProjectEntries.map(
-        ({ group }) => group.projectKey,
-      )}
+      filteredItems={filteredProjectEntries.map(({ group }) => group.projectKey)}
       open={isProjectPickerOpen}
       value={activeProjectKey}
       onOpenChange={(open) => {
@@ -159,12 +140,9 @@ export function DraftHeroHeadline({
         }
         setIsProjectPickerOpen(false);
         const project = entry.targetProject;
-        void handleNewThread(
-          scopeProjectRef(project.environmentId, project.id),
-          {
-            replace: true,
-          },
-        );
+        void handleNewThread(scopeProjectRef(project.environmentId, project.id), {
+          replace: true,
+        });
       }}
     >
       <ComboboxTrigger
@@ -190,6 +168,18 @@ export function DraftHeroHeadline({
               unstyled
               value={projectQuery}
               onChange={(event) => setProjectQuery(event.target.value)}
+              onKeyDownCapture={(event) => {
+                if (
+                  isImeCommitKey({
+                    key: event.key,
+                    isComposing: event.nativeEvent.isComposing,
+                    keyCode: event.nativeEvent.keyCode,
+                  })
+                ) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }
+              }}
             />
           </div>
         </div>
