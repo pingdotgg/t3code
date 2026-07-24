@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  formatWorkspaceDocumentTitle,
   resolveServerBackedAppDisplayName,
   resolveServerBackedAppStageLabel,
 } from "./branding.logic";
@@ -112,5 +113,47 @@ describe("branding logic", () => {
         primaryServerVersion: "0.0.28-nightly.20260616",
       }),
     ).toBe("T3 Code (Alpha)");
+  });
+});
+
+describe("workspace document title", () => {
+  it("combines the project and thread with the app name", () => {
+    expect(
+      formatWorkspaceDocumentTitle({
+        appName: "T3 Code (Alpha)",
+        projectTitle: "acme-web",
+        threadTitle: "Fix login redirect",
+      }),
+    ).toBe("acme-web – Fix login redirect — T3 Code (Alpha)");
+  });
+
+  it("includes whichever context is available", () => {
+    expect(
+      formatWorkspaceDocumentTitle({
+        appName: "T3 Code (Alpha)",
+        projectTitle: "acme-web",
+        threadTitle: null,
+      }),
+    ).toBe("acme-web — T3 Code (Alpha)");
+  });
+
+  it("falls back to the app name when no project or thread is active", () => {
+    expect(
+      formatWorkspaceDocumentTitle({
+        appName: "T3 Code (Alpha)",
+        projectTitle: null,
+        threadTitle: undefined,
+      }),
+    ).toBe("T3 Code (Alpha)");
+  });
+
+  it("ignores blank context values", () => {
+    expect(
+      formatWorkspaceDocumentTitle({
+        appName: "T3 Code (Alpha)",
+        projectTitle: "   ",
+        threadTitle: "Fix login redirect",
+      }),
+    ).toBe("Fix login redirect — T3 Code (Alpha)");
   });
 });
