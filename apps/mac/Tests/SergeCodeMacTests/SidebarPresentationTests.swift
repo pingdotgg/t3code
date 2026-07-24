@@ -199,6 +199,77 @@ struct SidebarPresentationTests {
                 .map(\.thread.id) == ["local-thread"])
     }
 
+    @Test("project groups order by most recent activity")
+    func groupsOrderByRecency() {
+        let local = makeModel(
+            projects: [
+                Project(id: "stale", name: "Stale", path: "/stale"),
+                Project(id: "fresh", name: "Fresh", path: "/fresh"),
+                Project(id: "empty", name: "Empty", path: "/empty"),
+            ],
+            threads: [
+                makeThread(id: "stale-thread", projectID: "stale", at: 1),
+                makeThread(id: "fresh-thread", projectID: "fresh", at: 100),
+            ])
+        let groups = SidebarProjection.projectGroups(
+            in: MultiDeviceModel(local: local), scope: .all)
+
+        #expect(groups.map(\.name) == ["Fresh", "Stale", "Empty"])
+    }
+
+    @Test("group threads rank pinned then attention then running then recent")
+    func groupThreadsRankPinnedAttentionRunningRecent() {
+        let suffix = UUID().uuidString
+        let projectID = "project-\(suffix)"
+        let pinned = makeThread(
+            id: "pinned-\(suffix)", projectID: projectID, status: .idle, at: 2)
+        let approval = makeThread(
+            id: "approval-\(suffix)", projectID: projectID, status: .waitingApproval, at: 4)
+        let error = makeThread(
+            id: "error-\(suffix)", projectID: projectID, status: .error, at: 5)
+        let running = makeThread(
+            id: "running-\(suffix)", projectID: projectID, status: .running, at: 6)
+        let recent = makeThread(
+            id: "recent-\(suffix)", projectID: projectID, status: .idle, at: 7)
+        let local = makeModel(
+            projects: [Project(id: projectID, name: "Project", path: "/project")],
+            threads: [recent, running, error, approval, pinned])
+        local.togglePinned(pinned)
+        defer { local.togglePinned(pinned) }
+        let groups = SidebarProjection.projectGroups(
+            in: MultiDeviceModel(local: local), scope: .all)
+
+        let split = SidebarProjection.groupThreads(groups[0])
+
+        #expect(
+            split.active.map(\.thread.id)
+                == [pinned.id, approval.id, error.id, running.id, recent.id])
+        #expect(split.settled.isEmpty)
+    }
+
+    @Test("group threads split settled sessions into the disclosure list")
+    func groupThreadsSplitSettled() {
+        let projectID = "project-settled"
+        let active = makeThread(id: "active", projectID: projectID, status: .idle, at: 9)
+        let settledOld = makeThread(
+            id: "settled-old", projectID: projectID, status: .settled, at: 5,
+            settledOverride: "settled", settledAt: Date(timeIntervalSince1970: 5))
+        let settledNew = makeThread(
+            id: "settled-new", projectID: projectID, status: .settled, at: 8,
+            settledOverride: "settled", settledAt: Date(timeIntervalSince1970: 8))
+        let local = makeModel(
+            projects: [Project(id: projectID, name: "Project", path: "/project")],
+            threads: [active, settledOld, settledNew])
+        let groups = SidebarProjection.projectGroups(
+            in: MultiDeviceModel(local: local), scope: .all)
+
+        let split = SidebarProjection.groupThreads(groups[0])
+
+        #expect(split.active.map(\.thread.id) == ["active"])
+        // Most recently settled first.
+        #expect(split.settled.map(\.thread.id) == ["settled-new", "settled-old"])
+    }
+
     private func makeModel(
         projects: [Project],
         threads: [ChatThread],
@@ -241,7 +312,9 @@ struct SidebarPresentationTests {
         title: String? = nil,
         status: ThreadStatus = .idle,
         at timestamp: TimeInterval = 1,
-        parentThreadId: String? = nil
+        parentThreadId: String? = nil,
+        settledOverride: String? = nil,
+        settledAt: Date? = nil
     ) -> ChatThread {
         ChatThread(
             id: id,
@@ -250,6 +323,8 @@ struct SidebarPresentationTests {
             provider: .codex,
             status: status,
             updatedAt: Date(timeIntervalSince1970: timestamp),
+            settledOverride: settledOverride,
+            settledAt: settledAt,
             parentThreadId: parentThreadId)
     }
 }

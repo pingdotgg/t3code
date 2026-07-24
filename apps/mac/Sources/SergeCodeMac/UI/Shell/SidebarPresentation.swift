@@ -113,6 +113,11 @@ struct SidebarProjectGroup: Identifiable {
         members.first(where: { $0.location.isLocal }) ?? members[0]
     }
 
+    /// Most recent thread activity across the group; groups sort by this.
+    var lastActivityAt: Date? {
+        threads.map(\.thread.updatedAt).max()
+    }
+
     var activeThreadCount: Int {
         threads.filter(\.isInProgress).count
     }
@@ -120,6 +125,12 @@ struct SidebarProjectGroup: Identifiable {
     var attentionThreadCount: Int {
         threads.filter(\.needsAttention).count
     }
+}
+
+@MainActor
+struct SidebarGroupThreads {
+    let active: [SidebarThreadItem]
+    let settled: [SidebarThreadItem]
 }
 
 @MainActor
@@ -212,8 +223,11 @@ enum SidebarProjection {
                 members: sortedMembers,
                 threads: pinnedFirst)
         }
-        .sorted {
-            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        .sorted { lhs, rhs in
+            let left = lhs.lastActivityAt ?? .distantPast
+            let right = rhs.lastActivityAt ?? .distantPast
+            if left != right { return left > right }
+            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
     }
 
@@ -230,17 +244,60 @@ enum SidebarProjection {
         return items.sorted { (order[$0.thread.id] ?? .max) < (order[$1.thread.id] ?? .max) }
     }
 
-    static func settledThreads(in groups: [SidebarProjectGroup], now: Date = Date()) -> [SidebarThreadItem] {
-        let items = groups.flatMap(\.threads).filter {
-            ThreadInboxSemantics.effectiveSettled(
-                $0.thread,
+    /// Display split for one project section. `active` is ranked pinned →
+    /// attention → in progress → recent; `settled` feeds the per-project
+    /// "Settled" disclosure, most recently settled first.
+    static func groupThreads(
+        _ group: SidebarProjectGroup,
+        now: Date = Date()
+    ) -> SidebarGroupThreads {
+        var active: [SidebarThreadItem] = []
+        var settled: [SidebarThreadItem] = []
+        for item in group.threads {
+            if ThreadInboxSemantics.effectiveSettled(
+                item.thread,
                 now: now,
-                changeRequestState: $0.vcs?.prState)
+                changeRequestState: item.vcs?.prState)
+            {
+                settled.append(item)
+            } else {
+                active.append(item)
+            }
         }
-        let order = Dictionary(
-            uniqueKeysWithValues: ThreadInboxSemantics.sortSettled(items.map(\.thread))
+
+        let settledOrder = Dictionary(
+            uniqueKeysWithValues: ThreadInboxSemantics.sortSettled(settled.map(\.thread))
                 .enumerated().map { ($0.element.id, $0.offset) })
-        return items.sorted { (order[$0.thread.id] ?? .max) < (order[$1.thread.id] ?? .max) }
+        settled.sort {
+            (settledOrder[$0.thread.id] ?? .max) < (settledOrder[$1.thread.id] ?? .max)
+        }
+
+        let ranked = active.enumerated().sorted { lhs, rhs in
+            let leftTier = groupDisplayTier(lhs.element)
+            let rightTier = groupDisplayTier(rhs.element)
+            if leftTier != rightTier { return leftTier < rightTier }
+            switch leftTier {
+            case 0:
+                // Pinned threads keep their manual (pin) order.
+                return lhs.offset < rhs.offset
+            case 1:
+                if lhs.element.attentionRank != rhs.element.attentionRank {
+                    return lhs.element.attentionRank < rhs.element.attentionRank
+                }
+                return lhs.element.thread.updatedAt > rhs.element.thread.updatedAt
+            default:
+                return lhs.element.thread.updatedAt > rhs.element.thread.updatedAt
+            }
+        }
+        return SidebarGroupThreads(active: ranked.map(\.element), settled: settled)
+    }
+
+    /// 0 = pinned, 1 = needs attention, 2 = in progress, 3 = everything else.
+    private static func groupDisplayTier(_ item: SidebarThreadItem) -> Int {
+        if item.isPinned { return 0 }
+        if item.needsAttention { return 1 }
+        if item.belongsInRunning { return 2 }
+        return 3
     }
 
     static func attentionThreads(in groups: [SidebarProjectGroup]) -> [SidebarThreadItem] {
