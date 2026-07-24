@@ -1,5 +1,5 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
-import { memo, type ReactNode } from "react";
+import { cloneElement, memo, type ReactElement, useCallback, useState } from "react";
 import { EllipsisIcon, ListTodoIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
@@ -19,13 +19,25 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   planSidebarOpen: boolean;
   runtimeMode: RuntimeMode;
   showInteractionModeToggle: boolean;
-  traitsMenuContent?: ReactNode;
+  traitsMenuContent?: ReactElement | null;
   onToggleInteractionMode: () => void;
   onTogglePlanSidebar: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  onSelectionComplete: () => void;
 }) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const completeSelection = useCallback(() => {
+    setIsMenuOpen(false);
+    props.onSelectionComplete();
+  }, [props.onSelectionComplete]);
+  const traitsMenuContent = props.traitsMenuContent
+    ? cloneElement(props.traitsMenuContent as ReactElement<{ onSelectionComplete?: () => void }>, {
+        onSelectionComplete: completeSelection,
+      })
+    : null;
+
   return (
-    <Menu>
+    <Menu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
       <MenuTrigger
         render={
           <Button
@@ -39,9 +51,9 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
         <EllipsisIcon aria-hidden="true" className="size-4" />
       </MenuTrigger>
       <MenuPopup align="start">
-        {props.traitsMenuContent ? (
+        {traitsMenuContent ? (
           <>
-            {props.traitsMenuContent}
+            {traitsMenuContent}
             <MenuDivider />
           </>
         ) : null}
@@ -53,10 +65,15 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
               onValueChange={(value) => {
                 if (!value || value === props.interactionMode) return;
                 props.onToggleInteractionMode();
+                completeSelection();
               }}
             >
-              <MenuRadioItem value="default">Chat</MenuRadioItem>
-              <MenuRadioItem value="plan">Plan</MenuRadioItem>
+              <MenuRadioItem closeOnClick value="default">
+                Chat
+              </MenuRadioItem>
+              <MenuRadioItem closeOnClick value="plan">
+                Plan
+              </MenuRadioItem>
             </MenuRadioGroup>
             <MenuDivider />
           </>
@@ -67,17 +84,31 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
           onValueChange={(value) => {
             if (!value || value === props.runtimeMode) return;
             props.onRuntimeModeChange(value as RuntimeMode);
+            completeSelection();
           }}
         >
-          <MenuRadioItem value="approval-required">Supervised</MenuRadioItem>
-          <MenuRadioItem value="auto-accept-edits">Auto-accept edits</MenuRadioItem>
-          <MenuRadioItem value="auto">Auto</MenuRadioItem>
-          <MenuRadioItem value="full-access">Full access</MenuRadioItem>
+          <MenuRadioItem closeOnClick value="approval-required">
+            Supervised
+          </MenuRadioItem>
+          <MenuRadioItem closeOnClick value="auto-accept-edits">
+            Auto-accept edits
+          </MenuRadioItem>
+          <MenuRadioItem closeOnClick value="auto">
+            Auto
+          </MenuRadioItem>
+          <MenuRadioItem closeOnClick value="full-access">
+            Full access
+          </MenuRadioItem>
         </MenuRadioGroup>
         {props.activePlan ? (
           <>
             <MenuDivider />
-            <MenuItem onClick={props.onTogglePlanSidebar}>
+            <MenuItem
+              onClick={() => {
+                props.onTogglePlanSidebar();
+                completeSelection();
+              }}
+            >
               <ListTodoIcon className="size-4 shrink-0" />
               {props.planSidebarOpen
                 ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
