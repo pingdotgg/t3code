@@ -46,6 +46,55 @@ import {
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
+const CLAUDE_TEXT_GENERATION_DISALLOWED_TOOLS = [
+  "Agent",
+  "Artifact",
+  "AskUserQuestion",
+  "Bash",
+  "CronCreate",
+  "CronDelete",
+  "CronList",
+  "Edit",
+  "EndConversation",
+  "EnterPlanMode",
+  "EnterWorktree",
+  "ExitPlanMode",
+  "ExitWorktree",
+  "Glob",
+  "Grep",
+  "ListMcpResources",
+  "ListMcpResourcesTool",
+  "LSP",
+  "Monitor",
+  "NotebookEdit",
+  "PowerShell",
+  "PushNotification",
+  "Read",
+  "ReadMcpResource",
+  "ReadMcpResourceTool",
+  "RemoteTrigger",
+  "REPL",
+  "ReportFindings",
+  "ScheduleWakeup",
+  "SendMessage",
+  "SendUserFile",
+  "ShareOnboardingGuide",
+  "Skill",
+  "Task",
+  "TaskCreate",
+  "TaskGet",
+  "TaskList",
+  "TaskOutput",
+  "TaskStop",
+  "TaskUpdate",
+  "TodoWrite",
+  "ToolSearch",
+  "WaitForMcpServers",
+  "WebFetch",
+  "WebSearch",
+  "Workflow",
+  "Write",
+].join(",");
 
 /**
  * Schema for the wrapper JSON returned by `claude -p --output-format json`.
@@ -169,7 +218,16 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           resolveClaudeApiModelId(modelSelection),
           ...(cliEffort ? ["--effort", cliEffort] : []),
           ...(settingsJson ? ["--settings", settingsJson] : []),
-          "--dangerously-skip-permissions",
+          // `--tools ""` is the primary tool-surface restriction. Older Claude
+          // versions treated an empty value as omitted, so pair it with a
+          // deny-by-default mode and an explicit legacy built-in denylist.
+          "--permission-mode",
+          "dontAsk",
+          "--disallowedTools",
+          CLAUDE_TEXT_GENERATION_DISALLOWED_TOOLS,
+          "--strict-mcp-config",
+          "--tools",
+          "",
         ],
         { env: claudeEnvironment },
       );
