@@ -111,26 +111,33 @@ describe("selection navigation", () => {
     expect(event.stopImmediatePropagation).toHaveBeenCalledOnce();
   });
 
-  it("routes the first chord after opening the prompt runtime/access picker", () => {
-    vi.stubGlobal("Element", TestElement);
-    vi.stubGlobal("HTMLElement", TestElement);
+  it.each([
+    ["runtime/access", "data-chat-runtime-mode-picker", "select-popup"],
+    ["effort and provider options", "data-chat-provider-traits-picker", "menu-popup"],
+  ] as const)(
+    "routes the first chord after a tooltip replaces the %s picker trigger slot",
+    (_label, triggerMarker, popupSlot) => {
+      vi.stubGlobal("Element", TestElement);
+      vi.stubGlobal("HTMLElement", TestElement);
 
-    const target = new TestElement();
-    target.attributes.set("aria-expanded", "true");
-    target.attributes.set("data-slot", "select-trigger");
-    const surface = new TestElement();
-    surface.attributes.set("data-slot", "select-popup");
-    testDocument(target, [surface]);
+      const target = new TestElement();
+      target.attributes.set("aria-expanded", "true");
+      target.attributes.set("data-slot", "tooltip-trigger");
+      target.attributes.set(triggerMarker, "true");
+      const surface = new TestElement();
+      surface.attributes.set("data-slot", popupSlot);
+      testDocument(target, [surface]);
 
-    const dispatchedKeys: string[] = [];
-    target.addEventListener("keydown", (event) => {
-      dispatchedKeys.push((event as TestKeyboardEvent).key);
-    });
+      const dispatchedKeys: string[] = [];
+      target.addEventListener("keydown", (event) => {
+        dispatchedKeys.push((event as TestKeyboardEvent).key);
+      });
 
-    handleSelectionNavigationKeyDown(keyboardEvent(target, { key: "n", ctrlKey: true }));
+      handleSelectionNavigationKeyDown(keyboardEvent(target, { key: "n", ctrlKey: true }));
 
-    expect(dispatchedKeys).toEqual(["ArrowDown"]);
-  });
+      expect(dispatchedKeys).toEqual(["ArrowDown"]);
+    },
+  );
 
   it("routes navigation in the model picker search input", () => {
     vi.stubGlobal("Element", TestElement);

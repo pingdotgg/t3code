@@ -20,6 +20,11 @@ const SURFACE_SLOT_BY_TRIGGER_SLOT: Readonly<Record<string, string>> = {
   "select-trigger": "select-popup",
 };
 
+const SURFACE_SLOT_BY_TRIGGER_MARKER: Readonly<Record<string, string>> = {
+  "data-chat-provider-traits-picker": "menu-popup",
+  "data-chat-runtime-mode-picker": "select-popup",
+};
+
 function resolveSelectionNavigationKey(event: KeyboardEvent): SelectionNavigationKey | null {
   if (
     event.defaultPrevented ||
@@ -57,6 +62,14 @@ function candidateSurfaceBelongsToFocus(
     surfaceSlot === SURFACE_SLOT_BY_TRIGGER_SLOT[triggerSlot]
   ) {
     return true;
+  }
+
+  if (focusedElement.getAttribute("aria-expanded") === "true") {
+    for (const [triggerMarker, popupSlot] of Object.entries(SURFACE_SLOT_BY_TRIGGER_MARKER)) {
+      if (focusedElement.hasAttribute(triggerMarker) && surfaceSlot === popupSlot) {
+        return true;
+      }
+    }
   }
 
   if (
