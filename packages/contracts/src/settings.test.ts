@@ -136,6 +136,33 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings.textGenerationStyle", () => {
+  it("defaults all style settings for legacy configs", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.textGenerationStyle).toEqual({
+      mode: "repo_conventions",
+      customInstructions: "",
+      followPrTemplates: true,
+    });
+    expect(settings.gitWriterModelSelection).toBeNull();
+  });
+
+  it("trims partial style updates", () => {
+    const patch = decodeServerSettingsPatch({
+      textGenerationStyle: {
+        mode: "custom",
+        customInstructions: "  Prefer concise wording.  ",
+      },
+    });
+
+    expect(patch.textGenerationStyle).toEqual({
+      mode: "custom",
+      customInstructions: "Prefer concise wording.",
+    });
+  });
+});
+
 describe("ServerSettingsPatch.providerInstances", () => {
   it("treats providerInstances as an optional whole-map replacement", () => {
     const patch = decodeServerSettingsPatch({});

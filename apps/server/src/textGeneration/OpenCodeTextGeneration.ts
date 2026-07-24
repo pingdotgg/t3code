@@ -530,6 +530,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         stagedSummary: input.stagedSummary,
         stagedPatch: input.stagedPatch,
         includeBranch: input.includeBranch === true,
+        policy: input.policy,
       });
       const generated = yield* runOpenCodeJson({
         operation: "generateCommitMessage",
@@ -556,6 +557,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         commitSummary: input.commitSummary,
         diffSummary: input.diffSummary,
         diffPatch: input.diffPatch,
+        policy: input.policy,
+        prTemplate: input.prTemplate,
       });
       const generated = yield* runOpenCodeJson({
         operation: "generatePrContent",

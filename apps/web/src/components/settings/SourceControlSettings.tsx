@@ -48,6 +48,7 @@ import {
   type Icon,
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { TextGenerationSettingsSection } from "./TextGenerationSettings";
 import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
@@ -513,6 +514,8 @@ export function SourceControlSettingsPanel() {
           onScan={handleScan}
         />
       )}
+
+      {environmentId !== null ? <TextGenerationSettingsSection /> : null}
     </SettingsPageContainer>
   );
 }

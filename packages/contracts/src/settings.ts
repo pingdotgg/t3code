@@ -395,6 +395,22 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const TextGenerationStyleMode = Schema.Literals([
+  "repo_conventions",
+  "conventional_commits",
+  "custom",
+]);
+export type TextGenerationStyleMode = typeof TextGenerationStyleMode.Type;
+
+export const TextGenerationStyleSettings = Schema.Struct({
+  mode: TextGenerationStyleMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("repo_conventions" as const)),
+  ),
+  customInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  followPrTemplates: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+});
+export type TextGenerationStyleSettings = typeof TextGenerationStyleSettings.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
@@ -419,6 +435,12 @@ export const ServerSettings = Schema.Struct({
         model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
       }),
     ),
+  ),
+  textGenerationStyle: TextGenerationStyleSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  gitWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
@@ -545,6 +567,14 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  textGenerationStyle: Schema.optionalKey(
+    Schema.Struct({
+      mode: Schema.optionalKey(TextGenerationStyleMode),
+      customInstructions: Schema.optionalKey(TrimmedString),
+      followPrTemplates: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
+  gitWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

@@ -39,6 +39,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   open?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
+  triggerAriaLabel?: string;
   onOpenChange?: (open: boolean) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
@@ -146,6 +147,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       <PopoverTrigger
         render={
           <Button
+            aria-label={props.triggerAriaLabel}
             size="sm"
             variant={props.triggerVariant ?? "ghost"}
             data-chat-provider-model-picker="true"

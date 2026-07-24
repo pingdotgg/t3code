@@ -16,7 +16,6 @@ import { expect } from "vite-plus/test";
 import type {
   GitActionProgressEvent,
   GitPreparePullRequestThreadInput,
-  ModelSelection,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -65,38 +64,7 @@ function fakeGhOutput(stdout: string): VcsProcess.VcsProcessOutput {
   };
 }
 
-interface FakeGitTextGeneration {
-  generateCommitMessage: (input: {
-    cwd: string;
-    branch: string | null;
-    stagedSummary: string;
-    stagedPatch: string;
-    includeBranch?: boolean;
-    modelSelection: ModelSelection;
-  }) => Effect.Effect<
-    { subject: string; body: string; branch?: string | undefined },
-    TextGenerationError
-  >;
-  generatePrContent: (input: {
-    cwd: string;
-    baseBranch: string;
-    headBranch: string;
-    commitSummary: string;
-    diffSummary: string;
-    diffPatch: string;
-    modelSelection: ModelSelection;
-  }) => Effect.Effect<{ title: string; body: string }, TextGenerationError>;
-  generateBranchName: (input: {
-    cwd: string;
-    message: string;
-    modelSelection: ModelSelection;
-  }) => Effect.Effect<{ branch: string }, TextGenerationError>;
-  generateThreadTitle: (input: {
-    cwd: string;
-    message: string;
-    modelSelection: ModelSelection;
-  }) => Effect.Effect<{ title: string }, TextGenerationError>;
-}
+type FakeGitTextGeneration = TextGeneration.TextGeneration["Service"];
 
 type FakePullRequest = NonNullable<FakeGhScenario["pullRequest"]>;
 
@@ -640,6 +608,7 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
+  serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
@@ -648,7 +617,7 @@ function makeManager(input?: {
     prefix: "t3-git-manager-test-",
   });
 
-  const serverSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
+  const serverSettingsLayer = ServerSettings.ServerSettingsService.layerTest(input?.serverSettings);
 
   const vcsDriverLayer = GitVcsDriver.layer.pipe(
     Layer.provideMerge(VcsProcess.layer),
@@ -1568,8 +1537,22 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nworld\n");
+      let generatedPolicy: TextGeneration.CommitMessageGenerationInput["policy"] = undefined;
 
-      const { manager } = yield* makeManager();
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          textGenerationStyle: {
+            mode: "custom" as const,
+            customInstructions: "Use a direct tone.",
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            generatedPolicy = input.policy;
+            return Effect.succeed({ subject: "Implement stacked git actions", body: "" });
+          },
+        },
+      });
       const result = yield* runStackedAction(manager, {
         cwd: repoDir,
         action: "commit",
@@ -1579,6 +1562,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.commit.status).toBe("created");
       expect(result.push.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("skipped_not_requested");
+      expect(generatedPolicy).toMatchObject({ commitInstructions: "Use a direct tone." });
       expect(result.toast).toMatchObject({
         description: "Implement stacked git actions",
         cta: {
@@ -1595,6 +1579,78 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           Effect.map((result) => result.stdout.trim()),
         ),
       ).toBe("Implement stacked git actions");
+    }),
+  );
+
+  it.effect("preserves custom style when instructions are empty", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nworld\n");
+      let generatedPolicy: TextGeneration.CommitMessageGenerationInput["policy"] = undefined;
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          textGenerationStyle: {
+            mode: "custom" as const,
+            customInstructions: "",
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            generatedPolicy = input.policy;
+            return Effect.succeed({ subject: "Preserve custom style", body: "" });
+          },
+        },
+      });
+      yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      });
+
+      expect(generatedPolicy).toEqual({
+        kind: "custom",
+        inferRepositoryConventions: false,
+      });
+    }),
+  );
+
+  it.effect("preserves repository conventions style when recent history is empty", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* runGit(repoDir, ["init", "--initial-branch=main"]);
+      yield* runGit(repoDir, ["config", "user.email", "test@example.com"]);
+      yield* runGit(repoDir, ["config", "user.name", "Test User"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      let generatedPolicy: TextGeneration.CommitMessageGenerationInput["policy"] = undefined;
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          textGenerationStyle: {
+            mode: "repo_conventions" as const,
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            generatedPolicy = input.policy;
+            return Effect.succeed({ subject: "Create initial commit", body: "" });
+          },
+        },
+      });
+      yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      });
+
+      expect(generatedPolicy).toEqual({
+        kind: "repo_conventions",
+        commitInstructions:
+          "Follow the repository's established commit message style when examples are available.",
+        changeRequestInstructions:
+          "Follow the repository's established change request title and body style when examples are available.",
+        inferRepositoryConventions: true,
+      });
     }),
   );
 
@@ -2535,6 +2591,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".github"));
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".github", "pull_request_template.md"),
+        "## What changed?\n\n## Verification",
+      );
+      yield* runGit(repoDir, ["add", ".github/pull_request_template.md"]);
+      yield* runGit(repoDir, ["commit", "-m", "Add pull request template"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature-create-pr"]);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
@@ -2543,8 +2606,26 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature-create-pr"]);
       yield* runGit(repoDir, ["config", "branch.feature-create-pr.gh-merge-base", "main"]);
+      let generatedPolicy: TextGeneration.PrContentGenerationInput["policy"] = undefined;
+      let generatedPrTemplate: string | undefined;
 
       const { manager, ghCalls } = yield* makeManager({
+        serverSettings: {
+          textGenerationStyle: {
+            mode: "custom" as const,
+            customInstructions: "Lead with user impact.",
+          },
+        },
+        textGeneration: {
+          generatePrContent: (input) => {
+            generatedPolicy = input.policy;
+            generatedPrTemplate = input.prTemplate;
+            return Effect.succeed({
+              title: "Add stacked git actions",
+              body: "## What changed?\nAdded stacked git actions.",
+            });
+          },
+        },
         ghScenario: {
           prListSequence: [
             "[]",
@@ -2569,6 +2650,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.branch.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("created");
       expect(result.pr.number).toBe(88);
+      expect(generatedPolicy).toMatchObject({
+        changeRequestInstructions: "Lead with user impact.",
+      });
+      expect(generatedPrTemplate).toBe("## What changed?\n\n## Verification");
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
       expect(
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),

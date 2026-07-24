@@ -8,8 +8,10 @@ import { createModelSelection } from "./model.ts";
 import {
   applyServerSettingsPatch,
   extractPersistedServerObservabilitySettings,
+  isModelSelectionProviderEnabled,
   normalizePersistedServerSettingString,
   parsePersistedServerObservabilitySettings,
+  resolveGitWriterModelSelection,
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
@@ -159,6 +161,65 @@ describe("serverSettings helpers", () => {
         { id: "agent", value: "build" },
       ],
     });
+  });
+
+  it("replaces Git writer selection without retaining stale options", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      gitWriterModelSelection: createModelSelection(
+        ProviderInstanceId.make("codex"),
+        "gpt-5.4-mini",
+        [{ id: "reasoningEffort", value: "high" }],
+      ),
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        gitWriterModelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      }).gitWriterModelSelection,
+    ).toEqual({
+      instanceId: "opencode",
+      model: "openai/gpt-5",
+    });
+  });
+
+  it("clears Git writer selection with null", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      gitWriterModelSelection: createModelSelection(
+        ProviderInstanceId.make("codex"),
+        "gpt-5.4-mini",
+      ),
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        gitWriterModelSelection: null,
+      }).gitWriterModelSelection,
+    ).toBeNull();
+  });
+
+  it("falls back from a disabled Git writer provider without clearing its selection", () => {
+    const instanceId = ProviderInstanceId.make("codex_writer");
+    const gitWriterModelSelection = createModelSelection(instanceId, "gpt-5.4-mini");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: false,
+          config: {},
+        },
+      },
+      gitWriterModelSelection,
+    };
+
+    expect(isModelSelectionProviderEnabled(settings, gitWriterModelSelection)).toBe(false);
+    expect(resolveGitWriterModelSelection(settings)).toBe(settings.textGenerationModelSelection);
+    expect(settings.gitWriterModelSelection).toBe(gitWriterModelSelection);
   });
 
   it("replaces providerInstances maps so omitted instance fields are cleared", () => {

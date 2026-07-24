@@ -1000,7 +1000,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Text generation model"
-          description="Configure the model used for generated commit messages, PR titles, and similar Git text."
+          description="Default model for generated text like thread titles and Git content. Source control settings can override it with a dedicated Git writer model."
           resetAction={
             isGitWritingModelDirty ? (
               <SettingResetButton
