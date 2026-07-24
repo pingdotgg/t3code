@@ -2329,6 +2329,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             defaultClaudeSettings,
             claudeCapabilities({ tokenSource: "ANTHROPIC_AUTH_TOKEN" }),
             undefined,
+            undefined,
             () => {
               usageProbeCalls += 1;
               return Effect.void.pipe(Effect.as(undefined as ServerProvider["usageLimits"]));
