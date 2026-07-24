@@ -207,6 +207,15 @@ export function readEnvironmentSupportsSettlement(environmentId: EnvironmentId):
   );
 }
 
+/** Whether the environment's server understands thread.snooze/unsnooze.
+    Same version-skew contract as settlement. */
+export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadSnooze === true
+  );
+}
+
 export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null {
   return appAtomRegistry.get(environmentThreadDetails.detailAtom(ref));
 }
