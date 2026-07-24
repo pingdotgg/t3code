@@ -1113,14 +1113,11 @@ function workEntryPreview(
     : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
 }
 
-function workEntryRawCommand(
+function workEntryFullCommand(
   workEntry: Pick<TimelineWorkEntry, "command" | "rawCommand">,
 ): string | null {
   const rawCommand = workEntry.rawCommand?.trim();
-  if (!rawCommand || !workEntry.command) {
-    return null;
-  }
-  return rawCommand === workEntry.command.trim() ? null : rawCommand;
+  return rawCommand ?? workEntry.command?.trim() ?? null;
 }
 
 function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
@@ -1168,6 +1165,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
+  const [isCommandExpanded, setIsCommandExpanded] = useState(false);
   if (workEntry.agentRun) {
     return <AgentRunRow agentRun={workEntry.agentRun} workspaceRoot={workspaceRoot} />;
   }
@@ -1181,10 +1179,11 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       normalizeCompactToolLabel(heading).toLowerCase()
       ? null
       : rawPreview;
-  const rawCommand = workEntryRawCommand(workEntry);
+  const fullCommand = workEntryFullCommand(workEntry);
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
+  const CommandToggleIcon = isCommandExpanded ? ChevronDownIcon : ChevronRightIcon;
 
   return (
     <div className="rounded-lg px-1 py-1">
@@ -1195,11 +1194,17 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           {entryIcon}
         </span>
         <div className="min-w-0 flex-1 overflow-hidden">
-          {rawCommand ? (
-            <div className="max-w-full">
+          {fullCommand ? (
+            <button
+              type="button"
+              className="flex w-full min-w-0 items-center gap-1 text-left"
+              onClick={() => setIsCommandExpanded((value) => !value)}
+              aria-expanded={isCommandExpanded}
+              aria-label={`${isCommandExpanded ? "Collapse" : "Expand"} command: ${heading}`}
+            >
               <p
                 className={cn(
-                  "truncate text-[length:inherit] leading-[1.67]",
+                  "min-w-0 flex-1 truncate text-[length:inherit] leading-[1.67]",
                   workToneClass(workEntry.tone),
                   preview ? "text-muted-foreground/70" : "",
                 )}
@@ -1208,31 +1213,13 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
                   {heading}
                 </span>
-                {preview && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      closeDelay={0}
-                      delay={75}
-                      render={
-                        <span className="max-w-full cursor-default text-muted-foreground/55 transition-colors hover:text-muted-foreground/75 focus-visible:text-muted-foreground/75">
-                          {" "}
-                          - {preview}
-                        </span>
-                      }
-                    />
-                    <TooltipPopup
-                      align="start"
-                      className="max-w-[min(56rem,calc(100vw-2rem))] px-0 py-0"
-                      side="top"
-                    >
-                      <div className="max-w-[min(56rem,calc(100vw-2rem))] overflow-x-auto px-1.5 py-1 font-mono text-[length:inherit] leading-[1.45] whitespace-nowrap">
-                        {rawCommand}
-                      </div>
-                    </TooltipPopup>
-                  </Tooltip>
-                )}
+                {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
               </p>
-            </div>
+              <CommandToggleIcon
+                className="size-3 shrink-0 text-muted-foreground/55"
+                aria-hidden="true"
+              />
+            </button>
           ) : (
             <Tooltip>
               <TooltipTrigger
@@ -1262,6 +1249,15 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           )}
         </div>
       </div>
+      {fullCommand && isCommandExpanded && (
+        <pre
+          data-tool-command-details
+          data-testid="tool-command-details"
+          className="mt-1 ml-7 overflow-x-auto rounded-md border border-border/45 bg-background/60 px-2 py-1.5 font-mono text-[0.9em] leading-[1.5] whitespace-pre-wrap wrap-break-word text-foreground/80"
+        >
+          {fullCommand}
+        </pre>
+      )}
       {hasChangedFiles && !previewIsChangedFiles && (
         <div className="mt-1 flex flex-wrap gap-1 pl-6">
           {workEntry.changedFiles?.slice(0, 4).map((filePath) => {

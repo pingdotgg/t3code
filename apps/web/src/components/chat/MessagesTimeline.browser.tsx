@@ -114,6 +114,46 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("expands a tool call to reveal its full command", async () => {
+    const fullCommand = `bash -lc 'rg -n "very long command" apps/web/src/components/chat/MessagesTimeline.tsx'`;
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "command-1",
+            kind: "work",
+            createdAt: "2026-04-13T12:00:00.000Z",
+            entry: {
+              id: "command-1",
+              createdAt: "2026-04-13T12:00:00.000Z",
+              label: "Ran command",
+              command:
+                'rg -n "very long command" apps/web/src/components/chat/MessagesTimeline.tsx',
+              rawCommand: fullCommand,
+              tone: "tool",
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      const commandToggle = page.getByRole("button", { name: "Expand command: Ran command" });
+      await expect.element(commandToggle).toHaveAttribute("aria-expanded", "false");
+      await expect.element(page.getByTestId("tool-command-details")).not.toBeInTheDocument();
+
+      await commandToggle.click();
+
+      await expect
+        .element(page.getByRole("button", { name: "Collapse command: Ran command" }))
+        .toHaveAttribute("aria-expanded", "true");
+      await expect.element(page.getByTestId("tool-command-details")).toHaveTextContent(fullCommand);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("snaps to the bottom when timeline rows appear after an initially empty render", async () => {
     const requestAnimationFrameSpy = vi
       .spyOn(window, "requestAnimationFrame")
