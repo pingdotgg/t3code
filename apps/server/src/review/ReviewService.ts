@@ -203,6 +203,12 @@ export const make = Effect.gen(function* () {
     // Never trust the client's canSettleNow alone: re-derive activity from the
     // server's own projection so a session that started (or approval/input
     // that appeared) after the client read its shell still blocks settling.
+    // The shell is deliberately read AFTER the transcript: the two reads are
+    // separate transactions, and reading the activity view last means a
+    // session starting in between is still caught. The reverse skew (activity
+    // ending in between) only staleness-affects the summary text — an actual
+    // settle is re-validated by the client at apply time and by the decider's
+    // thread.settle guards, so a recommendation can never settle live work.
     const shellOption = yield* projectionSnapshotQuery
       .getThreadShellById(input.threadId)
       .pipe(Effect.mapError(mapProjectionError));

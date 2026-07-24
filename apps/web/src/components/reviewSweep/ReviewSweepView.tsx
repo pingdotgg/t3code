@@ -1,5 +1,8 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ProjectId } from "@t3tools/contracts";
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+} from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
 import { ArrowRightIcon, ListChecksIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -255,10 +258,15 @@ export function ReviewSweepView() {
   const truncatedCount = useReviewSweepStore((state) => state.truncatedCount);
   const projects = useProjects();
 
+  // Projects are only unique per (environmentId, projectId) — ids can
+  // collide across connected environments.
   const projectTitles = useMemo(() => {
-    const titles = new Map<ProjectId, string>();
+    const titles = new Map<string, string>();
     for (const project of projects) {
-      titles.set(project.id, project.title);
+      titles.set(
+        scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+        project.title,
+      );
     }
     return titles;
   }, [projects]);
@@ -271,13 +279,14 @@ export function ReviewSweepView() {
     [items, order],
   );
   const groups = useMemo(() => {
-    const byProject = new Map<ProjectId, SweepItem[]>();
+    const byProject = new Map<string, SweepItem[]>();
     for (const item of visibleItems) {
-      const group = byProject.get(item.projectId);
+      const key = scopedProjectKey(scopeProjectRef(item.ref.environmentId, item.projectId));
+      const group = byProject.get(key);
       if (group) {
         group.push(item);
       } else {
-        byProject.set(item.projectId, [item]);
+        byProject.set(key, [item]);
       }
     }
     return [...byProject.entries()];
@@ -361,10 +370,10 @@ export function ReviewSweepView() {
                   were skipped this run.
                 </p>
               ) : null}
-              {groups.map(([projectId, groupItems]) => (
-                <section key={projectId} className="flex flex-col gap-2">
+              {groups.map(([projectKey, groupItems]) => (
+                <section key={projectKey} className="flex flex-col gap-2">
                   <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
-                    {projectTitles.get(projectId) ?? "Unknown project"}
+                    {projectTitles.get(projectKey) ?? "Unknown project"}
                     <span className="ms-2 font-normal normal-case tracking-normal">
                       · {groupItems.length} {groupItems.length === 1 ? "thread" : "threads"}
                     </span>

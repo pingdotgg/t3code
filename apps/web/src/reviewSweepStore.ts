@@ -276,6 +276,11 @@ export async function applySweepSettle(key: string): Promise<boolean> {
         description: "This thread picked up new activity since the review, so it stays active.",
       }),
     );
+    // The recommendation is now known-stale — withdraw it so the card stops
+    // advertising a settle the live guard just refused.
+    store.patchItem(key, {
+      result: { ...item.result, recommendSettle: false, settleReason: null },
+    });
     return false;
   }
   const result = await runAtomCommand(
