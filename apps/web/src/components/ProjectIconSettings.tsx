@@ -145,6 +145,10 @@ export function ProjectIconPathField({ target }: { readonly target: ProjectIconT
   const { iconPath, initialScope, saveIconPath, settingsPath } = useProjectIconSetting(target);
   const [draftPath, setDraftPath] = useState(iconPath);
   const [scope, setScope] = useState<ProjectIconScope>(initialScope);
+  const [pathDirty, setPathDirty] = useState(false);
+  const [scopeDirty, setScopeDirty] = useState(false);
+  const draftPathRef = useRef(draftPath);
+  const scopeRef = useRef(scope);
   const saveQueueRef = useRef(Promise.resolve());
   const queueSave = useCallback(
     (nextPath: string, nextScope: ProjectIconScope) => {
@@ -153,17 +157,30 @@ export function ProjectIconPathField({ target }: { readonly target: ProjectIconT
         () => undefined,
         () => undefined,
       );
+      void save.then((saved) => {
+        if (!saved) return;
+        if (draftPathRef.current === nextPath) {
+          setPathDirty(false);
+        }
+        if (scopeRef.current === nextScope) {
+          setScopeDirty(false);
+        }
+      });
       return save;
     },
     [saveIconPath],
   );
 
   useEffect(() => {
+    if (pathDirty) return;
+    draftPathRef.current = iconPath;
     setDraftPath(iconPath);
-  }, [iconPath]);
+  }, [iconPath, pathDirty]);
   useEffect(() => {
+    if (scopeDirty) return;
+    scopeRef.current = initialScope;
     setScope(initialScope);
-  }, [initialScope]);
+  }, [initialScope, scopeDirty]);
 
   return (
     <label className="grid min-w-0 gap-1.5 sm:col-span-2">
@@ -173,7 +190,12 @@ export function ProjectIconPathField({ target }: { readonly target: ProjectIconT
         aria-label={`Custom icon path for ${target.title}`}
         value={draftPath}
         placeholder="~/icons/project.svg"
-        onChange={(event) => setDraftPath(event.currentTarget.value)}
+        onChange={(event) => {
+          const nextPath = event.currentTarget.value;
+          draftPathRef.current = nextPath;
+          setDraftPath(nextPath);
+          setPathDirty(true);
+        }}
         onBlur={(event) => {
           void queueSave(event.currentTarget.value, scope);
         }}
@@ -188,7 +210,9 @@ export function ProjectIconPathField({ target }: { readonly target: ProjectIconT
             checked={scope === "git-remote"}
             onCheckedChange={(checked) => {
               const nextScope = checked ? "git-remote" : "workspace";
+              scopeRef.current = nextScope;
               setScope(nextScope);
+              setScopeDirty(true);
               void queueSave(draftPath, nextScope);
             }}
           />
