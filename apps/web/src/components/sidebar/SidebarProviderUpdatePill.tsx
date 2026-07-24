@@ -2,13 +2,10 @@ import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerProvider } from "@t3tools/contracts";
 import { CircleCheckIcon, DownloadIcon, LoaderIcon, TriangleAlertIcon, XIcon } from "lucide-react";
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { primaryServerProvidersAtom } from "../../state/server";
-import {
-  getProviderUpdateSidebarPillView,
-  type ProviderUpdateSidebarPillView,
-} from "../ProviderUpdateLaunchNotification.logic";
+import { getProviderUpdateSidebarPillView } from "../ProviderUpdateLaunchNotification.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const PROVIDER_UPDATE_PILL_STYLES = {
@@ -39,32 +36,53 @@ function latestProviderCheckedAt(
 }
 
 export function SidebarProviderUpdatePill() {
-  const navigate = useNavigate();
   const providers = useAtomValue(primaryServerProvidersAtom);
+
+  if (providers.length === 0) {
+    return null;
+  }
+
+  return <SidebarProviderUpdatePillContent providers={providers} />;
+}
+
+function useProviderUpdatePillAutoDismiss(input: {
+  readonly dismissAfterVisibleMs: number | undefined;
+  readonly exitingKey: string | null;
+  readonly startExit: (key: string, dismissKey?: string) => void;
+  readonly viewKey: string | null;
+}) {
+  useEffect(() => {
+    if (!input.dismissAfterVisibleMs || !input.viewKey) {
+      return;
+    }
+    if (input.exitingKey === input.viewKey) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      input.startExit(input.viewKey!, input.viewKey!);
+    }, input.dismissAfterVisibleMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [input.dismissAfterVisibleMs, input.exitingKey, input.startExit, input.viewKey]);
+}
+
+function SidebarProviderUpdatePillContent(props: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+}) {
+  const navigate = useNavigate();
   const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(() => new Set());
-  const [renderedView, setRenderedView] = useState<ProviderUpdateSidebarPillView | null>(null);
-  const [pendingView, setPendingView] = useState<ProviderUpdateSidebarPillView | null>(null);
   const [exitingKey, setExitingKey] = useState<string | null>(null);
-  const [dismissAfterExitKey, setDismissAfterExitKey] = useState<string | null>(null);
-  const [visibleAfterIso, setVisibleAfterIso] = useState<string | undefined>();
-  const effectiveVisibleAfterIso = visibleAfterIso ?? latestProviderCheckedAt(providers);
-  const view = getProviderUpdateSidebarPillView(providers, {
-    ...(effectiveVisibleAfterIso !== undefined
-      ? { visibleAfterIso: effectiveVisibleAfterIso }
-      : {}),
+  const [visibleAfterIso] = useState(() => latestProviderCheckedAt(props.providers));
+  const dismissAfterExitKeyRef = useRef<string | null>(null);
+  const view = getProviderUpdateSidebarPillView(props.providers, {
+    ...(visibleAfterIso !== undefined ? { visibleAfterIso } : {}),
     dismissedKeys,
   });
-
-  useEffect(() => {
-    if (visibleAfterIso === undefined && effectiveVisibleAfterIso !== undefined) {
-      setVisibleAfterIso(effectiveVisibleAfterIso);
-    }
-  }, [effectiveVisibleAfterIso, visibleAfterIso]);
 
   const openProviderSettings = useCallback(() => {
     void navigate({ to: "/settings/providers" });
   }, [navigate]);
-  const displayedView = renderedView ?? view;
+  const displayedView = view;
   const dismissAfterVisibleMs = displayedView?.dismissAfterVisibleMs;
   const viewKey = displayedView?.key ?? null;
   const showDismissProgress =
@@ -73,50 +91,22 @@ export function SidebarProviderUpdatePill() {
     exitingKey !== viewKey;
 
   const startExit = useCallback(
-    (key: string, nextView: ProviderUpdateSidebarPillView | null, dismissKey?: string) => {
+    (key: string, dismissKey?: string) => {
       if (exitingKey === key) {
         return;
       }
-      setPendingView(nextView);
+      dismissAfterExitKeyRef.current = dismissKey ?? null;
       setExitingKey(key);
-      setDismissAfterExitKey(dismissKey ?? null);
     },
     [exitingKey],
   );
 
-  useEffect(() => {
-    if (exitingKey !== null) {
-      return;
-    }
-    if (!renderedView) {
-      if (view) {
-        setRenderedView(view);
-      }
-      return;
-    }
-    if (!view) {
-      startExit(renderedView.key, null);
-      return;
-    }
-    if (view.key !== renderedView.key) {
-      startExit(renderedView.key, view);
-      return;
-    }
-  }, [exitingKey, renderedView, startExit, view]);
-
-  useEffect(() => {
-    if (!dismissAfterVisibleMs || !viewKey) {
-      return;
-    }
-    if (exitingKey === viewKey) {
-      return;
-    }
-    const timeoutId = window.setTimeout(() => {
-      startExit(viewKey, null, viewKey);
-    }, dismissAfterVisibleMs);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [dismissAfterVisibleMs, exitingKey, startExit, viewKey]);
+  useProviderUpdatePillAutoDismiss({
+    dismissAfterVisibleMs,
+    exitingKey,
+    startExit,
+    viewKey,
+  });
 
   if (!displayedView) {
     return null;
@@ -138,13 +128,11 @@ export function SidebarProviderUpdatePill() {
         if (!displayedView || exitingKey !== displayedView.key) {
           return;
         }
-        if (dismissAfterExitKey === displayedView.key) {
+        if (dismissAfterExitKeyRef.current === displayedView.key) {
           setDismissedKeys((previous) => new Set(previous).add(displayedView.key));
         }
-        setRenderedView(pendingView);
-        setPendingView(null);
         setExitingKey(null);
-        setDismissAfterExitKey(null);
+        dismissAfterExitKeyRef.current = null;
       }}
     >
       {showDismissProgress ? (
@@ -194,7 +182,7 @@ export function SidebarProviderUpdatePill() {
                 type="button"
                 aria-label="Dismiss provider update notice"
                 className="relative z-[1] mr-1 inline-flex size-5 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100"
-                onClick={() => startExit(displayedView.key, null, displayedView.key)}
+                onClick={() => startExit(displayedView.key, displayedView.key)}
               >
                 <XIcon className="size-3.5" />
               </button>
