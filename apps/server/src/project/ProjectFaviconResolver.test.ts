@@ -133,6 +133,94 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect("resolves favicon files from monorepo apps in stable order", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "apps/zeta/favicon.svg", "<svg>zeta</svg>");
+        yield* writeTextFile(cwd, "apps/alpha/public/favicon.png", "alpha");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("apps/alpha/public/favicon.png");
+      }),
+    );
+
+    it.effect("resolves icon hrefs from monorepo app source files", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "apps/dashboard/index.html",
+          '<link rel="icon" href="/brand/logo.svg">',
+        );
+        yield* writeTextFile(cwd, "apps/dashboard/public/brand/logo.svg", "<svg>brand</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("apps/dashboard/public/brand/logo.svg");
+      }),
+    );
+
+    it.effect("keeps root favicon metadata ahead of monorepo candidates", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="/brand.svg">');
+        yield* writeTextFile(cwd, "public/brand.svg", "<svg>root</svg>");
+        yield* writeTextFile(cwd, "apps/dashboard/favicon.svg", "<svg>app</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("public/brand.svg");
+      }),
+    );
+
+    it.effect("continues across unreadable monorepo roots", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const appsRoot = path.join(cwd, "apps");
+        const packagesRoot = path.join(cwd, "packages");
+        yield* writeTextFile(cwd, "apps/dashboard/package.json", "{}");
+        yield* writeTextFile(cwd, "packages/ui/package.json", "{}");
+        yield* writeTextFile(cwd, "services/api/favicon.svg", "<svg>api</svg>");
+        const statCause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "stat",
+          pathOrDescriptor: appsRoot,
+        });
+        const readCause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readDirectory",
+          pathOrDescriptor: packagesRoot,
+        });
+        const resolver = yield* makeResolverWithFileSystem(
+          FileSystem.FileSystem.of({
+            ...fileSystem,
+            stat: (filePath) =>
+              filePath === appsRoot ? Effect.fail(statCause) : fileSystem.stat(filePath),
+            readDirectory: (directoryPath, options) =>
+              directoryPath === packagesRoot
+                ? Effect.fail(readCause)
+                : fileSystem.readDirectory(directoryPath, options),
+          }),
+        );
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("services/api/favicon.svg");
+      }),
+    );
+
     it.effect("returns null when no icon is present", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
