@@ -133,12 +133,23 @@ export type TimelineLatestTurn = Pick<
   "turnId" | "state" | "startedAt" | "completedAt"
 >;
 
+export interface TimelineImageOutput {
+  entry: WorkLogEntry;
+  imagePath: string;
+}
+
 export type MessagesTimelineRow =
   | {
       kind: "work";
       id: string;
       createdAt: string;
       groupedEntries: WorkLogEntry[];
+    }
+  | {
+      kind: "image-output";
+      id: string;
+      createdAt: string;
+      images: TimelineImageOutput[];
     }
   | {
       kind: "work-toggle";
@@ -167,6 +178,7 @@ export type MessagesTimelineRow =
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
+      assistantImageOutputs?: TimelineImageOutput[] | undefined;
       revertTurnCount?: number | undefined;
     }
   | {
@@ -245,6 +257,128 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
   }
 
   return new Set(lastAssistantMessageIdByResponseKey.values());
+}
+
+function appendImageOutputRows(input: {
+  rows: ReadonlyArray<MessagesTimelineRow>;
+  timelineEntries: ReadonlyArray<TimelineEntry>;
+  terminalAssistantMessageIds: ReadonlySet<string>;
+  unsettledTurnId: TurnId | null;
+}): MessagesTimelineRow[] {
+  const outputsByTurnId = new Map<TurnId, TimelineImageOutput[]>();
+  const unscopedOutputs: TimelineImageOutput[] = [];
+  const seenImagePathsByTurnId = new Map<TurnId | null, Set<string>>();
+
+  for (const timelineEntry of input.timelineEntries) {
+    if (timelineEntry.kind !== "work") {
+      continue;
+    }
+    const entry = timelineEntry.entry;
+    if (entry.itemType !== "image_view" || !entry.imagePath) {
+      continue;
+    }
+    if (entry.turnId === input.unsettledTurnId) {
+      continue;
+    }
+    const turnId = entry.turnId ?? null;
+    const seenImagePaths = seenImagePathsByTurnId.get(turnId) ?? new Set<string>();
+    if (seenImagePaths.has(entry.imagePath)) {
+      continue;
+    }
+    seenImagePaths.add(entry.imagePath);
+    seenImagePathsByTurnId.set(turnId, seenImagePaths);
+    const output = {
+      entry,
+      imagePath: entry.imagePath,
+    };
+    if (!entry.turnId) {
+      unscopedOutputs.push(output);
+      continue;
+    }
+    const existing = outputsByTurnId.get(entry.turnId);
+    if (existing) {
+      existing.push(output);
+    } else {
+      outputsByTurnId.set(entry.turnId, [output]);
+    }
+  }
+
+  if (outputsByTurnId.size === 0 && unscopedOutputs.length === 0) {
+    return [...input.rows];
+  }
+
+  const toRow = (
+    id: string,
+    images: TimelineImageOutput[],
+  ): Extract<MessagesTimelineRow, { kind: "image-output" }> => ({
+    kind: "image-output",
+    id,
+    createdAt: images.at(-1)?.entry.createdAt ?? "",
+    images,
+  });
+  const terminalRowIdByTurnId = new Map<TurnId, string>();
+  const lastRowIdByTurnId = new Map<TurnId, string>();
+  for (const row of input.rows) {
+    if (row.kind === "turn-fold") {
+      lastRowIdByTurnId.set(row.turnId, row.id);
+      continue;
+    }
+    if (row.kind === "work") {
+      for (const entry of row.groupedEntries) {
+        if (entry.turnId) {
+          lastRowIdByTurnId.set(entry.turnId, row.id);
+        }
+      }
+      continue;
+    }
+    if (row.kind !== "message") {
+      continue;
+    }
+    const message = row.message;
+    if (message.role !== "assistant" || !message.turnId) {
+      continue;
+    }
+    lastRowIdByTurnId.set(message.turnId, row.id);
+    if (input.terminalAssistantMessageIds.has(message.id)) {
+      terminalRowIdByTurnId.set(message.turnId, row.id);
+    }
+  }
+
+  const outputsAfterRowId = new Map<
+    string,
+    Array<Extract<MessagesTimelineRow, { kind: "image-output" }>>
+  >();
+  const outputsByAssistantRowId = new Map<string, TimelineImageOutput[]>();
+  const trailingOutputs: Array<Extract<MessagesTimelineRow, { kind: "image-output" }>> = [];
+  if (unscopedOutputs.length > 0) {
+    trailingOutputs.push(toRow("image-output:unscoped", unscopedOutputs));
+  }
+  for (const [turnId, outputs] of outputsByTurnId) {
+    const terminalRowId = terminalRowIdByTurnId.get(turnId);
+    if (terminalRowId) {
+      outputsByAssistantRowId.set(terminalRowId, outputs);
+      continue;
+    }
+    const outputRow = toRow(`image-output:turn:${turnId}`, outputs);
+    const targetRowId = lastRowIdByTurnId.get(turnId) ?? null;
+    if (!targetRowId) {
+      trailingOutputs.push(outputRow);
+      continue;
+    }
+    outputsAfterRowId.set(targetRowId, [outputRow]);
+  }
+
+  return input.rows
+    .flatMap((row) => [
+      row.kind === "message" && outputsByAssistantRowId.has(row.id)
+        ? {
+            ...row,
+            assistantImageOutputs: outputsByAssistantRowId.get(row.id),
+          }
+        : row,
+      ...(outputsAfterRowId.get(row.id) ?? []),
+    ])
+    .concat(trailingOutputs);
 }
 
 interface TurnFold {
@@ -563,15 +697,22 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
+  const rowsWithImageOutputs = appendImageOutputRows({
+    rows: nextRows,
+    timelineEntries: input.timelineEntries,
+    terminalAssistantMessageIds,
+    unsettledTurnId,
+  });
+
   if (input.isWorking) {
-    nextRows.push({
+    rowsWithImageOutputs.push({
       kind: "working",
       id: "working-indicator-row",
       createdAt: input.activeTurnStartedAt,
     });
   }
 
-  return nextRows;
+  return rowsWithImageOutputs;
 }
 
 export function computeStableMessagesTimelineRows(
@@ -594,6 +735,21 @@ export function computeStableMessagesTimelineRows(
   return anyChanged ? { byId: next, result } : previous;
 }
 
+function imageOutputsEqual(
+  a: ReadonlyArray<TimelineImageOutput> | undefined,
+  b: ReadonlyArray<TimelineImageOutput> | undefined,
+): boolean {
+  const aImages = a ?? [];
+  const bImages = b ?? [];
+  return (
+    aImages.length === bImages.length &&
+    aImages.every(
+      (image, index) =>
+        image.entry === bImages[index]?.entry && image.imagePath === bImages[index]?.imagePath,
+    )
+  );
+}
+
 /** Shallow field comparison per row variant — avoids deep equality cost. */
 function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean {
   if (a.kind !== b.kind || a.id !== b.id) return false;
@@ -609,6 +765,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "image-output": {
+      const bi = b as typeof a;
+      return imageOutputsEqual(a.images, bi.images);
+    }
 
     case "work":
       return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);
@@ -633,6 +794,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
+        imageOutputsEqual(a.assistantImageOutputs, bm.assistantImageOutputs) &&
         a.revertTurnCount === bm.revertTurnCount
       );
     }

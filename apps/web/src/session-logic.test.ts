@@ -995,6 +995,68 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.toolData).toEqual(item);
   });
 
+  it("extracts the local path from completed image view activities", () => {
+    const imagePath = "/tmp/codex-preview.png";
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "image-view-complete",
+        kind: "tool.completed",
+        summary: "Image view",
+        payload: {
+          itemType: "image_view",
+          status: "completed",
+          title: "Image view",
+          detail: imagePath,
+          data: {
+            item: {
+              id: "call-image-1",
+              path: imagePath,
+              type: "imageView",
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entry).toMatchObject({
+      id: "image-view-complete",
+      itemType: "image_view",
+      imagePath,
+      toolLifecycleStatus: "completed",
+    });
+  });
+
+  it("extracts the saved path from completed image generation activities", () => {
+    const imagePath = "/Users/test/.codex/generated_images/thread-1/generated.png";
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "image-generation-complete",
+        kind: "tool.completed",
+        summary: "Image view",
+        payload: {
+          itemType: "image_view",
+          data: {
+            item: {
+              id: "call-image-generation-1",
+              result: "base64-image-data",
+              revisedPrompt: "A generated image",
+              savedPath: imagePath,
+              status: "completed",
+              type: "imageGeneration",
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entry).toMatchObject({
+      id: "image-generation-complete",
+      itemType: "image_view",
+      imagePath,
+      toolLifecycleStatus: "completed",
+    });
+  });
+
   it("unwraps PowerShell command wrappers for displayed command text", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

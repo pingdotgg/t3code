@@ -613,6 +613,95 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps image view items with their local path", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      const imagePath = "/tmp/codex-preview.png";
+
+      yield* runtime.emit({
+        id: asEventId("evt-image-view-complete"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("image_1"),
+        payload: {
+          completedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "imageView",
+            id: "image_1",
+            path: imagePath,
+          },
+        },
+      });
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "item.completed") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.itemType, "image_view");
+      NodeAssert.equal(firstEvent.value.payload.title, "Image view");
+      NodeAssert.equal(firstEvent.value.payload.detail, imagePath);
+      NodeAssert.deepStrictEqual(firstEvent.value.payload.data, {
+        completedAtMs: 1_778_000_000_000,
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "imageView",
+          id: "image_1",
+          path: imagePath,
+        },
+      });
+    }),
+  );
+
+  it.effect("maps generated images with their saved path", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      const imagePath = "/Users/test/.codex/generated_images/thread-1/generated.png";
+
+      yield* runtime.emit({
+        id: asEventId("evt-image-generation-complete"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("image_generation_1"),
+        payload: {
+          completedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "imageGeneration",
+            id: "image_generation_1",
+            status: "completed",
+            revisedPrompt: "A generated image",
+            result: "base64-image-data",
+            savedPath: imagePath,
+          },
+        },
+      });
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "item.completed") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.itemType, "image_view");
+      NodeAssert.equal(firstEvent.value.payload.title, "Image view");
+      NodeAssert.equal(firstEvent.value.payload.detail, imagePath);
+    }),
+  );
+
   it.effect("maps completed plan items to canonical proposed-plan completion events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

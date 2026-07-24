@@ -69,6 +69,7 @@ export interface WorkLogEntry {
   command?: string;
   rawCommand?: string;
   changedFiles?: ReadonlyArray<string>;
+  imagePath?: string;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   toolData?: unknown;
@@ -740,6 +741,19 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       entry.toolData = data.item;
     }
   }
+  if (itemType === "image_view") {
+    const data = asRecord(payload?.data);
+    const item = asRecord(data?.item);
+    const imagePath =
+      item?.type === "imageView"
+        ? asTrimmedString(item.path)
+        : item?.type === "imageGeneration"
+          ? asTrimmedString(item.savedPath)
+          : null;
+    if (imagePath) {
+      entry.imagePath = imagePath;
+    }
+  }
   if (itemType) {
     entry.itemType = itemType;
   }
@@ -811,6 +825,7 @@ function mergeDerivedWorkLogEntries(
   const detail = next.detail ?? previous.detail;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
+  const imagePath = next.imagePath ?? previous.imagePath;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
@@ -824,6 +839,7 @@ function mergeDerivedWorkLogEntries(
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
+    ...(imagePath ? { imagePath } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),

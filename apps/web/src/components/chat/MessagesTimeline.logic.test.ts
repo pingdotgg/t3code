@@ -261,6 +261,238 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("deduplicates and groups image output after the terminal assistant message", () => {
+    const timelineEntries = [
+      {
+        id: "user-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: "user-message" as never,
+          role: "user" as const,
+          text: "Generate an image",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "image-view-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:10Z",
+        entry: {
+          id: "image-view-activity",
+          createdAt: "2026-01-01T00:00:10Z",
+          turnId: "turn-1" as never,
+          label: "Image view",
+          tone: "tool" as const,
+          itemType: "image_view" as const,
+          imagePath: "/tmp/generated.png",
+          toolLifecycleStatus: "completed" as const,
+        },
+      },
+      {
+        id: "duplicate-image-view-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:11Z",
+        entry: {
+          id: "duplicate-image-view-activity",
+          createdAt: "2026-01-01T00:00:11Z",
+          turnId: "turn-1" as never,
+          label: "Image view",
+          tone: "tool" as const,
+          itemType: "image_view" as const,
+          imagePath: "/tmp/generated.png",
+          toolLifecycleStatus: "completed" as const,
+        },
+      },
+      {
+        id: "second-image-view-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:12Z",
+        entry: {
+          id: "second-image-view-activity",
+          createdAt: "2026-01-01T00:00:12Z",
+          turnId: "turn-1" as never,
+          label: "Image view",
+          tone: "tool" as const,
+          itemType: "image_view" as const,
+          imagePath: "/tmp/second.png",
+          toolLifecycleStatus: "completed" as const,
+        },
+      },
+      {
+        id: "assistant-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:20Z",
+        message: {
+          id: "assistant-message" as never,
+          role: "assistant" as const,
+          text: "Here is the generated image.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:20Z",
+          updatedAt: "2026-01-01T00:00:21Z",
+          streaming: false,
+        },
+      },
+    ];
+    const input = {
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    };
+
+    const expandedRows = deriveMessagesTimelineRows({
+      ...input,
+      expandedTurnIds: new Set(["turn-1" as never]),
+    });
+    const toolRowIndex = expandedRows.findIndex((row) => row.kind === "work");
+    const assistantRowIndex = expandedRows.findIndex(
+      (row) => row.kind === "message" && row.message.role === "assistant",
+    );
+    const assistantRow = expandedRows[assistantRowIndex];
+
+    expect(toolRowIndex).toBeGreaterThan(-1);
+    expect(assistantRowIndex).toBeGreaterThan(toolRowIndex);
+    expect(assistantRow).toMatchObject({
+      kind: "message",
+      assistantImageOutputs: [
+        {
+          entry: { id: "image-view-activity" },
+          imagePath: "/tmp/generated.png",
+        },
+        {
+          entry: { id: "second-image-view-activity" },
+          imagePath: "/tmp/second.png",
+        },
+      ],
+    });
+    expect(expandedRows.some((row) => row.kind === "image-output")).toBe(false);
+
+    const collapsedRows = deriveMessagesTimelineRows(input);
+    expect(collapsedRows.some((row) => row.kind === "work")).toBe(false);
+    expect(collapsedRows.at(-1)).toMatchObject({
+      kind: "message",
+      assistantImageOutputs: [
+        {
+          entry: { id: "image-view-activity" },
+          imagePath: "/tmp/generated.png",
+        },
+        {
+          entry: { id: "second-image-view-activity" },
+          imagePath: "/tmp/second.png",
+        },
+      ],
+    });
+  });
+
+  it("withholds image output until its turn is settled", () => {
+    const timelineEntries = [
+      {
+        id: "image-view-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:10Z",
+        entry: {
+          id: "image-view-activity",
+          createdAt: "2026-01-01T00:00:10Z",
+          turnId: "turn-1" as never,
+          label: "Image view",
+          tone: "tool" as const,
+          itemType: "image_view" as const,
+          imagePath: "/tmp/generated.png",
+          toolLifecycleStatus: "completed" as const,
+        },
+      },
+    ];
+    const sharedInput = {
+      timelineEntries,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    };
+
+    const runningRows = deriveMessagesTimelineRows({
+      ...sharedInput,
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "running" as const,
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+    });
+    expect(runningRows.some((row) => row.kind === "image-output")).toBe(false);
+
+    const settledRows = deriveMessagesTimelineRows({
+      ...sharedInput,
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "completed" as const,
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:00:20Z",
+      },
+      isWorking: false,
+    });
+    expect(settledRows.some((row) => row.kind === "image-output")).toBe(true);
+  });
+
+  it("allows the same image to appear once in each turn", () => {
+    const imagePath = "/tmp/shared.png";
+    const makeImageEntry = (turnId: string, id: string, createdAt: string) => ({
+      id: `${id}-entry`,
+      kind: "work" as const,
+      createdAt,
+      entry: {
+        id,
+        createdAt,
+        turnId: turnId as never,
+        label: "Image view",
+        tone: "tool" as const,
+        itemType: "image_view" as const,
+        imagePath,
+        toolLifecycleStatus: "completed" as const,
+      },
+    });
+    const makeAssistantEntry = (turnId: string, id: string, createdAt: string) => ({
+      id: `${id}-entry`,
+      kind: "message" as const,
+      createdAt,
+      message: {
+        id: id as never,
+        role: "assistant" as const,
+        text: `Response for ${turnId}`,
+        turnId: turnId as never,
+        createdAt,
+        updatedAt: createdAt,
+        streaming: false,
+      },
+    });
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        makeImageEntry("turn-1", "image-view-1", "2026-01-01T00:00:01Z"),
+        makeAssistantEntry("turn-1", "assistant-1", "2026-01-01T00:00:02Z"),
+        makeImageEntry("turn-2", "image-view-2", "2026-01-01T00:00:03Z"),
+        makeAssistantEntry("turn-2", "assistant-2", "2026-01-01T00:00:04Z"),
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      expandedTurnIds: new Set(["turn-1" as never, "turn-2" as never]),
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(
+      rows.filter((row) => row.kind === "message").map((row) => row.assistantImageOutputs),
+    ).toMatchObject([
+      [{ entry: { id: "image-view-1" }, imagePath }],
+      [{ entry: { id: "image-view-2" }, imagePath }],
+    ]);
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
