@@ -57,8 +57,8 @@ There's no public docs site yet, checkout the miscellaneous markdown files in [d
 - [Remote access](./docs/user/remote-access.md)
 - [Keeping T3 Code in sync](./docs/user/server-updates.md)
 - [Architecture overview](./docs/architecture/overview.md)
-- [Provider guides](./docs/providers/codex.md)
-- [Operations](./docs/operations/ci.md)
+- [Provider guides](./docs/providers)
+- [Operations](./docs/operations)
 - [Reference](./docs/reference/encyclopedia.md)
 
 ## If you REALLY want to contribute still.... read this first
