@@ -4,6 +4,7 @@ import type {
   PreviewAutomationRecordingArtifact,
   PreviewAutomationRecordingStatus,
   PreviewAutomationResizeResult,
+  PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
   PreviewTabId,
@@ -58,6 +59,8 @@ const handlers = {
     invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
   preview_resize: (input) =>
     invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
+  preview_set_appearance: (input) =>
+    invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input),
   preview_snapshot: (input) => invokeTargeted<PreviewAutomationSnapshot>("snapshot", input ?? {}),
   preview_click: (input) =>
     invokeTargeted<void>("click", input, input.timeoutMs).pipe(Effect.as(null)),
