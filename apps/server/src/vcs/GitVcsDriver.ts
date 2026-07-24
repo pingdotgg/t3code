@@ -27,6 +27,7 @@ import {
   type VcsRemoveWorktreeInput,
   type VcsStatusInput,
   type VcsStatusResult,
+  CheckpointRef,
 } from "@t3tools/contracts";
 import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
@@ -846,6 +847,27 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             }),
           { discard: true },
         );
+      },
+    ),
+
+    listCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.listCheckpointRefs")(
+      function* (input) {
+        const result = yield* execute({
+          operation: "GitVcsDriver.checkpoints.listCheckpointRefs",
+          cwd: input.cwd,
+          args: ["for-each-ref", "--format=%(refname)", "refs/t3/checkpoints/"],
+          allowNonZeroExit: true,
+        });
+
+        if (result.exitCode !== 0 || result.stdout.trim().length === 0) {
+          return [];
+        }
+
+        return result.stdout
+          .trim()
+          .split("\n")
+          .filter((line) => line.length > 0)
+          .map((refname) => CheckpointRef.make(refname));
       },
     ),
   };
