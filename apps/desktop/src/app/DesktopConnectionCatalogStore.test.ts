@@ -351,7 +351,7 @@ describe("DesktopConnectionCatalogStore", () => {
     ),
   );
 
-  it.effect("reports invalid encrypted catalog data without exposing it", () =>
+  it.effect("treats invalid encrypted catalog data as an empty catalog instead of failing", () =>
     withStore(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -361,24 +361,17 @@ describe("DesktopConnectionCatalogStore", () => {
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(catalogPath, '{"version":1,"encryptedCatalog":"%%%"}\n');
 
-        const error = yield* store.get.pipe(Effect.flip);
-        assert.instanceOf(
-          error,
-          DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreDecodeError,
-        );
-        assert.equal(error.resource, "encryptedCatalog");
-        assert.equal(error.catalogPath, catalogPath);
-        assert.exists(error.cause);
-        assert.equal(
-          error.message,
-          `Failed to decode encryptedCatalog for the desktop connection catalog at ${catalogPath}.`,
-        );
-        assert.notInclude(error.message, "%%%");
+        // Unreadable catalog data must not fail the whole store — callers
+        // like EnvironmentRegistry build synchronously against `get`, and a
+        // thrown error here would break environment discovery entirely.
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        // The unreadable file is left on disk rather than deleted.
+        assert.isTrue(yield* fileSystem.exists(catalogPath));
       }),
     ),
   );
 
-  it.effect("surfaces a catalog that can no longer be decrypted without deleting it", () =>
+  it.effect("treats a catalog that can no longer be decrypted as empty without deleting it", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -389,25 +382,19 @@ describe("DesktopConnectionCatalogStore", () => {
       const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
         Effect.provide(layer),
       );
+      const catalogPath = `${baseDir}/userdata/connection-catalog.json`;
 
       assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
       yield* Ref.set(failDecrypt, true);
-      const error = yield* store.get.pipe(Effect.flip);
-      assert.instanceOf(
-        error,
-        DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreProtectionError,
-      );
-      assert.equal(error.operation, "decrypt-catalog");
-      assert.equal(error.catalogPath, `${baseDir}/userdata/connection-catalog.json`);
-      assert.instanceOf(error.cause, ElectronSafeStorage.ElectronSafeStorageDecryptError);
-      const decryptError = error.cause as ElectronSafeStorage.ElectronSafeStorageDecryptError;
-      assert.instanceOf(decryptError.cause, Error);
-      assert.equal(decryptError.cause.message, "invalid encrypted catalog");
-      assert.equal(
-        error.message,
-        `Desktop connection catalog protection failed during decrypt-catalog at ${baseDir}/userdata/connection-catalog.json.`,
-      );
-      assert.notEqual(error.message, decryptError.message);
+
+      // A decrypt failure (e.g. a stale OS-level key) must not propagate as
+      // an error — it degrades to an empty catalog so the rest of the app
+      // (in particular the local primary environment, which doesn't depend
+      // on this file at all) keeps working.
+      assert.deepStrictEqual(yield* store.get, Option.none());
+      assert.isTrue(yield* fileSystem.exists(catalogPath));
+
+      // Once decryption works again, the untouched file is recovered.
       yield* Ref.set(failDecrypt, false);
       assert.deepStrictEqual(yield* store.get, Option.some('{"schemaVersion":1,"targets":[]}'));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
