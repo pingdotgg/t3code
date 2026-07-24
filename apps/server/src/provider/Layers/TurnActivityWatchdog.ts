@@ -61,6 +61,13 @@ interface TrackedTurnActivity {
   readonly lastActivityAt: string;
   readonly lastActivityAtMs: number;
   readonly stalled: boolean;
+  /**
+   * True while a context compaction is in progress for the active turn
+   * (compaction `item.started` seen, not yet completed). Long compactions
+   * produce no events, so the stalled verdict is suppressed until the
+   * compaction finishes or the turn ends.
+   */
+  readonly compactionActive?: boolean;
 }
 
 const isStoppedEvent = (event: ProviderRuntimeEvent): boolean =>
@@ -69,6 +76,23 @@ const isStoppedEvent = (event: ProviderRuntimeEvent): boolean =>
 
 const isTurnEndedEvent = (event: ProviderRuntimeEvent): boolean =>
   event.type === "turn.completed" || event.type === "turn.aborted";
+
+const isCompactionItemEvent = (event: ProviderRuntimeEvent): boolean =>
+  (event.type === "item.started" ||
+    event.type === "item.updated" ||
+    event.type === "item.completed") &&
+  event.payload.itemType === "context_compaction";
+
+const compactionActiveAfter = (
+  event: ProviderRuntimeEvent,
+  previous: TrackedTurnActivity | undefined,
+): boolean | undefined => {
+  if (isTurnEndedEvent(event)) return undefined;
+  if (isCompactionItemEvent(event)) {
+    return event.type === "item.completed" ? undefined : true;
+  }
+  return previous?.compactionActive;
+};
 
 const PROGRESS_EVENT_PREFIXES = [
   "session.",
@@ -162,6 +186,7 @@ export const makeTurnActivityWatchdog = Effect.fn("makeTurnActivityWatchdog")(fu
         lastActivityAt: nowIso,
         lastActivityAtMs: nowMs,
         stalled: false,
+        ...(compactionActiveAfter(event, previous) !== undefined ? { compactionActive: true } : {}),
       });
       return [recovered, nextMap] as const;
     });
@@ -177,6 +202,8 @@ export const makeTurnActivityWatchdog = Effect.fn("makeTurnActivityWatchdog")(fu
       const claimed: Array<TurnHealthTransition> = [];
       for (const [threadId, activity] of current) {
         if (activity.activeTurnId === undefined || activity.stalled) continue;
+        // A running compaction produces no events; do not flag it as stalled.
+        if (activity.compactionActive === true) continue;
         const stalledForMs = nowMs - activity.lastActivityAtMs;
         if (stalledForMs < thresholdMs) continue;
         nextMap.set(threadId, { ...activity, stalled: true });

@@ -28,7 +28,9 @@ const event = (
     | "session.exited"
     | "turn.started"
     | "content.delta"
-    | "account.rate-limits.updated",
+    | "account.rate-limits.updated"
+    | "compaction.started"
+    | "compaction.completed",
 ): ProviderRuntimeEvent => {
   const base = {
     eventId: EventId.make(`event-${type}`),
@@ -52,6 +54,20 @@ const event = (
       };
     case "account.rate-limits.updated":
       return { ...base, type, payload: { rateLimits: { remaining: 100 } } };
+    case "compaction.started":
+      return {
+        ...base,
+        type: "item.started",
+        turnId,
+        payload: { itemType: "context_compaction" as const, status: "inProgress" as const },
+      };
+    case "compaction.completed":
+      return {
+        ...base,
+        type: "item.completed",
+        turnId,
+        payload: { itemType: "context_compaction" as const, status: "completed" as const },
+      };
   }
 };
 
@@ -168,6 +184,72 @@ describe("TurnActivityWatchdog", () => {
         assert.isUndefined(yield* watchdog.getSnapshot(threadId));
         yield* TestClock.adjust(Duration.minutes(10));
         assert.equal((yield* Ref.get(transitions)).length, 1);
+      }),
+    ),
+  );
+
+  it.effect("suppresses the stalled verdict while a compaction is active", () =>
+    withTestClock(
+      Effect.gen(function* () {
+        const transitions = yield* Ref.make<Array<TurnHealthTransition>>([]);
+        const watchdog = yield* makeTurnActivityWatchdog({
+          thresholdMs: 1_000,
+          pollIntervalMs: 100,
+          onTransition: (transition) =>
+            Ref.update(transitions, (current) => [...current, transition]),
+        });
+
+        yield* watchdog.observe(event("turn.started"));
+        yield* watchdog.observe(event("compaction.started"));
+        // A long compaction emits no events; it must not be flagged stalled.
+        yield* TestClock.adjust(Duration.minutes(10));
+        assert.deepEqual(yield* Ref.get(transitions), []);
+
+        // Once the compaction completes, normal stall semantics resume.
+        yield* watchdog.observe(event("compaction.completed"));
+        yield* TestClock.adjust(Duration.millis(1_200));
+        assert.deepEqual(
+          (yield* Ref.get(transitions)).map((transition) => transition.state),
+          ["stalled"],
+        );
+      }),
+    ),
+  );
+
+  it.effect("resumes stall detection when the turn ends mid-compaction", () =>
+    withTestClock(
+      Effect.gen(function* () {
+        const transitions = yield* Ref.make<Array<TurnHealthTransition>>([]);
+        const watchdog = yield* makeTurnActivityWatchdog({
+          thresholdMs: 1_000,
+          pollIntervalMs: 100,
+          onTransition: (transition) =>
+            Ref.update(transitions, (current) => [...current, transition]),
+        });
+
+        yield* watchdog.observe(event("turn.started"));
+        yield* watchdog.observe(event("compaction.started"));
+        yield* watchdog.observe({
+          eventId: EventId.make("event-turn-completed"),
+          provider,
+          threadId,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          type: "turn.completed",
+          turnId,
+          payload: { state: "failed" as const },
+        });
+        yield* TestClock.adjust(Duration.minutes(10));
+        // No active turn remains, so nothing can stall.
+        assert.deepEqual(yield* Ref.get(transitions), []);
+
+        // A subsequent turn stalls normally; the cleared compaction state must
+        // not leak into it.
+        yield* watchdog.observe(event("turn.started"));
+        yield* TestClock.adjust(Duration.millis(1_200));
+        assert.deepEqual(
+          (yield* Ref.get(transitions)).map((transition) => transition.state),
+          ["stalled"],
+        );
       }),
     ),
   );

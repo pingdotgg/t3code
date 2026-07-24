@@ -15,6 +15,7 @@ import {
   type ToolLifecycleItemType,
   type ToolPresentation,
   type ProviderDriverKind,
+  type RuntimeItemId,
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationProposedPlan,
@@ -121,6 +122,10 @@ function activityCoalesceKey(
     case "turn.reasoning":
       // One live reasoning row per turn; successive deltas replace in place.
       return event.turnId ? `reasoning:${event.turnId}` : `reasoning:${activity.id}`;
+    case "context-compaction":
+      // One row per compaction (stable activity id); started/completed/failed
+      // states replace each other in place.
+      return `compaction:${activity.id}`;
     case "context-window.updated":
       return `ctx:${event.turnId ?? "thread"}`;
     default:
@@ -390,6 +395,43 @@ function reasoningActivityId(threadId: ThreadId, turnId: TurnId | undefined): Ev
   );
 }
 
+function eventSequenceOf(
+  event: ProviderRuntimeEvent,
+): { readonly sequence: number } | Record<string, never> {
+  const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
+  return eventWithSequence.sessionSequence !== undefined
+    ? { sequence: eventWithSequence.sessionSequence }
+    : {};
+}
+
+/**
+ * Stable activity id for a compaction row so started / completed / failed /
+ * canceled states replace each other in place (the projector upserts
+ * activities by id) even across coalesce flushes.
+ */
+function compactionActivityId(
+  threadId: ThreadId,
+  turnId: TurnId | undefined,
+  itemId: RuntimeItemId | undefined,
+  eventId: EventId,
+): EventId {
+  return EventId.make(`compaction:${threadId}:${turnId ?? itemId ?? eventId}`);
+}
+
+function isCompactionItemLifecycleEvent(
+  event: ProviderRuntimeEvent,
+): event is Extract<
+  ProviderRuntimeEvent,
+  { type: "item.started" | "item.updated" | "item.completed" }
+> {
+  return (
+    (event.type === "item.started" ||
+      event.type === "item.updated" ||
+      event.type === "item.completed") &&
+    event.payload.itemType === "context_compaction"
+  );
+}
+
 function proposedPlanIdForTurn(threadId: ThreadId, turnId: TurnId): string {
   return `plan:${threadId}:turn:${turnId}`;
 }
@@ -519,12 +561,7 @@ function isProcessStderrRuntimeDetail(value: unknown): boolean {
 function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
 ): ReadonlyArray<OrchestrationThreadActivity> {
-  const maybeSequence = (() => {
-    const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
-    return eventWithSequence.sessionSequence !== undefined
-      ? { sequence: eventWithSequence.sessionSequence }
-      : {};
-  })();
+  const maybeSequence = eventSequenceOf(event);
   switch (event.type) {
     case "session.health": {
       return [
@@ -912,25 +949,10 @@ function runtimeEventToActivities(
     }
 
     case "thread.state.changed": {
-      if (event.payload.state !== "compacted") {
-        return [];
-      }
-
-      return [
-        {
-          id: event.eventId,
-          createdAt: event.createdAt,
-          tone: "info",
-          kind: "context-compaction",
-          summary: "Context compacted",
-          payload: {
-            state: event.payload.state,
-            ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
-          },
-          turnId: toTurnId(event.turnId) ?? null,
-          ...maybeSequence,
-        },
-      ];
+      // Compaction completion is handled by the state-aware mapper in
+      // processRuntimeEvent (compactionActivityForEvent), which is idempotent
+      // with item-based compaction completions.
+      return [];
     }
 
     case "thread.token-usage.updated": {
@@ -1090,6 +1112,183 @@ const make = Effect.gen(function* () {
         }
       }
     });
+
+  /**
+   * Buffer a coalescible activity (replacing the pending row in place) or
+   * flush-then-dispatch an immediate one. Shared by the generic activity
+   * mapper and the compaction lifecycle mapper.
+   */
+  const queueActivity = (
+    threadId: ThreadId,
+    event: ProviderRuntimeEvent,
+    activity: OrchestrationThreadActivity,
+  ) =>
+    Effect.gen(function* () {
+      const pendingKey = activityCoalesceKey(event, activity);
+      if (pendingKey !== null) {
+        const threadPending = pendingActivities.get(threadId) ?? new Map<string, PendingActivity>();
+        const incoming: PendingActivity = { threadId, activity, event };
+        const existing = threadPending.get(pendingKey);
+        threadPending.set(
+          pendingKey,
+          existing !== undefined ? mergePendingActivity(existing, incoming) : incoming,
+        );
+        pendingActivities.set(threadId, threadPending);
+        return;
+      }
+      // Any immediate row flushes the thread's buffer first so the work
+      // log keeps arrival order — only consecutive progress snapshots for
+      // the same row ever collapse.
+      yield* flushPendingActivities(threadId);
+      yield* dispatchActivity({ threadId, activity, event });
+    });
+
+  /**
+   * In-flight compaction per (thread, turn). "completed" means a terminal row
+   * (completed / failed / canceled) was already emitted, so fallback and
+   * synthesized completions stay idempotent. Entries are pruned when the turn
+   * ends and on session exit. Only touched from the single worker fiber.
+   */
+  interface CompactionTurnState {
+    readonly status: "started" | "completed";
+    readonly activityId: EventId;
+    readonly turnId: TurnId | null;
+  }
+  const compactionStateByTurnKey = new Map<string, CompactionTurnState>();
+
+  const compactionTurnKey = (threadId: ThreadId, turnId: TurnId | undefined) =>
+    turnId !== undefined ? providerTurnKey(threadId, turnId) : `${threadId}:no-turn`;
+
+  const COMPACTION_INCOMPLETE_DETAIL =
+    "Compaction did not finish — the session context is unchanged. Start a new thread or retry.";
+
+  /**
+   * State-aware mapper for compaction lifecycle events (`context_compaction`
+   * item lifecycle + the `thread.state.changed { compacted }` fallback).
+   * Returns the activity to queue, or undefined when the event is not
+   * compaction-related or is an idempotent duplicate.
+   */
+  const compactionActivityForEvent = (
+    event: ProviderRuntimeEvent,
+  ): OrchestrationThreadActivity | undefined => {
+    const turnId = toTurnId(event.turnId);
+    const key = compactionTurnKey(event.threadId, turnId);
+    const existing = compactionStateByTurnKey.get(key);
+    const activityId = compactionActivityId(event.threadId, turnId, event.itemId, event.eventId);
+    const base = {
+      id: activityId,
+      createdAt: event.createdAt,
+      kind: "context-compaction",
+      turnId: turnId ?? null,
+      ...eventSequenceOf(event),
+    } as const;
+
+    if (isCompactionItemLifecycleEvent(event)) {
+      if (event.type === "item.completed") {
+        compactionStateByTurnKey.set(key, {
+          status: "completed",
+          activityId,
+          turnId: turnId ?? null,
+        });
+        return {
+          ...base,
+          tone: "info",
+          summary: "Context compacted",
+          payload: {
+            status: "completed",
+            ...(event.payload.usedTokensBefore !== undefined
+              ? { usedTokensBefore: event.payload.usedTokensBefore }
+              : {}),
+            ...(event.payload.usedTokensAfter !== undefined
+              ? { usedTokensAfter: event.payload.usedTokensAfter }
+              : {}),
+            ...(event.payload.maxTokens !== undefined
+              ? { maxTokens: event.payload.maxTokens }
+              : {}),
+          },
+        };
+      }
+      // item.started / item.updated — (re)arm the in-progress compaction.
+      compactionStateByTurnKey.set(key, { status: "started", activityId, turnId: turnId ?? null });
+      return {
+        ...base,
+        tone: "info",
+        summary: "Compacting context…",
+        payload: { status: "started" },
+      };
+    }
+
+    if (event.type === "thread.state.changed" && event.payload.state === "compacted") {
+      // Fallback completion for providers that only emit a thread-level
+      // compacted notification. Skip when an item-based completion already
+      // produced the terminal row for this turn.
+      if (existing?.status === "completed") {
+        return undefined;
+      }
+      compactionStateByTurnKey.set(key, {
+        status: "completed",
+        activityId,
+        turnId: turnId ?? null,
+      });
+      return {
+        ...base,
+        tone: "info",
+        summary: "Context compacted",
+        payload: { status: "completed" },
+      };
+    }
+
+    return undefined;
+  };
+
+  /**
+   * Synthesize a terminal compaction row when the turn fails / is interrupted
+   * (or a runtime error arrives) while a compaction is still in progress.
+   * Marks the compaction terminal so later signals stay idempotent.
+   */
+  const synthesizeCompactionTerminalActivity = (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId | undefined;
+    readonly status: "failed" | "canceled";
+  }): OrchestrationThreadActivity | undefined => {
+    const key = (() => {
+      if (input.turnId !== undefined) {
+        const direct = compactionTurnKey(input.threadId, input.turnId);
+        if (compactionStateByTurnKey.get(direct)?.status === "started") {
+          return direct;
+        }
+      }
+      for (const [candidate, state] of compactionStateByTurnKey) {
+        if (candidate.startsWith(`${input.threadId}:`) && state.status === "started") {
+          return candidate;
+        }
+      }
+      return undefined;
+    })();
+    if (key === undefined) {
+      return undefined;
+    }
+    const state = compactionStateByTurnKey.get(key);
+    if (state === undefined) {
+      return undefined;
+    }
+    compactionStateByTurnKey.set(key, { ...state, status: "completed" });
+    return {
+      id: state.activityId,
+      createdAt: input.event.createdAt,
+      tone: "error",
+      kind: "context-compaction",
+      summary:
+        input.status === "failed" ? "Context compaction failed" : "Context compaction canceled",
+      payload: {
+        status: input.status,
+        detail: COMPACTION_INCOMPLETE_DETAIL,
+      },
+      turnId: state.turnId,
+      ...eventSequenceOf(input.event),
+    };
+  };
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -1692,6 +1891,11 @@ const make = Effect.gen(function* () {
             : Effect.void,
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
+      for (const key of compactionStateByTurnKey.keys()) {
+        if (key.startsWith(prefix)) {
+          compactionStateByTurnKey.delete(key);
+        }
+      }
     });
 
   const getSourceProposedPlanReferenceForPendingTurnStart = Effect.fn(
@@ -2176,6 +2380,24 @@ const make = Effect.gen(function* () {
           // transcript reflects thinking that arrived with the last tokens.
           yield* flushPendingActivities(thread.id);
 
+          // A compaction still in progress when the turn ends without a
+          // completed row did not finish: surface a terminal failed/canceled
+          // row so the work log does not show it as compacting forever.
+          const turnState = normalizeRuntimeTurnState(event.payload.state);
+          if (turnState !== "completed") {
+            const synthesizedCompaction = synthesizeCompactionTerminalActivity({
+              event,
+              threadId: thread.id,
+              turnId,
+              status: turnState === "failed" ? "failed" : "canceled",
+            });
+            if (synthesizedCompaction) {
+              yield* queueActivity(thread.id, event, synthesizedCompaction);
+            }
+          }
+          // Compaction state is per-turn; drop it once the turn closes.
+          compactionStateByTurnKey.delete(compactionTurnKey(thread.id, turnId));
+
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
             assistantMessageIds,
@@ -2231,6 +2453,18 @@ const make = Effect.gen(function* () {
 
       if (event.type === "runtime.error") {
         const runtimeErrorMessage = event.payload.message;
+
+        // A runtime error during an in-progress compaction means the
+        // compaction did not finish; surface a terminal failed row.
+        const synthesizedCompaction = synthesizeCompactionTerminalActivity({
+          event,
+          threadId: thread.id,
+          turnId: eventTurnId,
+          status: "failed",
+        });
+        if (synthesizedCompaction) {
+          yield* queueActivity(thread.id, event, synthesizedCompaction);
+        }
 
         const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
           ? true
@@ -2304,26 +2538,14 @@ const make = Effect.gen(function* () {
         }
       }
 
+      const compactionActivity = compactionActivityForEvent(event);
+      if (compactionActivity) {
+        yield* queueActivity(thread.id, event, compactionActivity);
+      }
+
       const activities = runtimeEventToActivities(event);
       for (const activity of activities) {
-        const pendingKey = activityCoalesceKey(event, activity);
-        if (pendingKey !== null) {
-          const threadPending =
-            pendingActivities.get(thread.id) ?? new Map<string, PendingActivity>();
-          const incoming: PendingActivity = { threadId: thread.id, activity, event };
-          const existing = threadPending.get(pendingKey);
-          threadPending.set(
-            pendingKey,
-            existing !== undefined ? mergePendingActivity(existing, incoming) : incoming,
-          );
-          pendingActivities.set(thread.id, threadPending);
-          continue;
-        }
-        // Any immediate row flushes the thread's buffer first so the work
-        // log keeps arrival order — only consecutive progress snapshots for
-        // the same row ever collapse.
-        yield* flushPendingActivities(thread.id);
-        yield* dispatchActivity({ threadId: thread.id, activity, event });
+        yield* queueActivity(thread.id, event, activity);
       }
     });
 

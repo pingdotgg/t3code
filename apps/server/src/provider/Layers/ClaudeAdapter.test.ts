@@ -4739,6 +4739,102 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("emits synthetic compaction item lifecycle events around compact_boundary", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "thread.state.changed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "compact please",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "status",
+        status: "compacting",
+        session_id: "sdk-session-compact",
+        uuid: "status-compacting-1",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: {
+          trigger: "auto",
+          pre_tokens: 148_000,
+          post_tokens: 32_500,
+        },
+        session_id: "sdk-session-compact",
+        uuid: "compact-boundary-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+      const compactionStarted = runtimeEvents.find(
+        (event) => event.type === "item.started" && event.payload.itemType === "context_compaction",
+      );
+      assert.isDefined(compactionStarted);
+      if (compactionStarted?.type === "item.started") {
+        assert.isDefined(compactionStarted.turnId);
+        assert.equal(compactionStarted.itemId, `claude-compaction-${compactionStarted.turnId}`);
+        assert.equal(compactionStarted.payload.status, "inProgress");
+      }
+
+      const compactionCompleted = runtimeEvents.find(
+        (event) =>
+          event.type === "item.completed" && event.payload.itemType === "context_compaction",
+      );
+      assert.isDefined(compactionCompleted);
+      if (compactionCompleted?.type === "item.completed") {
+        assert.equal(compactionCompleted.itemId, compactionStarted?.itemId);
+        assert.equal(compactionCompleted.turnId, compactionStarted?.turnId);
+        assert.equal(compactionCompleted.payload.status, "completed");
+        assert.equal(compactionCompleted.payload.usedTokensBefore, 148_000);
+        assert.equal(compactionCompleted.payload.usedTokensAfter, 32_500);
+      }
+
+      // The synthetic item completion must arrive before the token-usage and
+      // thread-state events so ingestion records the terminal row first.
+      const completedIndex = runtimeEvents.indexOf(compactionCompleted!);
+      const tokenUsageIndex = runtimeEvents.findIndex(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      const compactedIndex = runtimeEvents.findIndex(
+        (event) => event.type === "thread.state.changed",
+      );
+      assert.isAbove(tokenUsageIndex, -1);
+      assert.isAbove(compactedIndex, -1);
+      assert.isBelow(completedIndex, tokenUsageIndex);
+      assert.isBelow(completedIndex, compactedIndex);
+
+      // The existing session-state signal is preserved.
+      assert.isTrue(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "session.state.changed" &&
+            event.payload.state === "waiting" &&
+            event.payload.reason === "status:compacting",
+        ),
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("uses an app-generated Claude session id for fresh sessions", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
