@@ -384,9 +384,21 @@ export const makeServerLayer = Layer.unwrap(
         yield* startup.markHttpListening;
       }),
     );
+    // Publish the local administrative token before server-runtime.json. The
+    // runtime state is the desktop's readiness signal, so observing it must
+    // guarantee that the matching attach credential is already securely in
+    // place. Token publication failure aborts startup rather than leaving a
+    // running server with an unusable or insecure attach path.
     const runtimeStateLayer = Layer.effectDiscard(
       Effect.acquireRelease(
         Effect.gen(function* () {
+          if (config.localAttachToken !== undefined) {
+            yield* writeLocalAttachTokenFile({
+              path: config.localAttachTokenPath,
+              token: config.localAttachToken,
+            });
+          }
+
           const server = yield* HttpServer.HttpServer;
           const address = server.address;
           if (typeof address === "string" || !("port" in address)) {
@@ -400,31 +412,26 @@ export const makeServerLayer = Layer.unwrap(
           yield* persistServerRuntimeState({
             path: config.serverRuntimeStatePath,
             state,
-          });
-        }),
-        () => clearPersistedServerRuntimeState(config.serverRuntimeStatePath),
-      ),
-    );
-    // Local attach token: written on boot (mode 0600) and removed on graceful
-    // shutdown, mirroring server-runtime.json. Same-user local clients read it
-    // to attach without interactive pairing. Skipped only when the token is
-    // absent (unit-test configs); real boots always mint one.
-    const localAttachTokenLayer =
-      config.localAttachToken === undefined
-        ? Layer.empty
-        : Layer.effectDiscard(
-            Effect.acquireRelease(
-              writeLocalAttachTokenFile({
-                path: config.localAttachTokenPath,
-                token: config.localAttachToken,
-              }).pipe(
-                Effect.catchTag("LocalAttachTokenFileError", (error) =>
-                  Effect.logWarning(error.message).pipe(Effect.annotateLogs({ cause: error })),
-                ),
-              ),
-              () => clearLocalAttachTokenFile(config.localAttachTokenPath),
+          }).pipe(
+            Effect.onError(() =>
+              config.localAttachToken === undefined
+                ? Effect.void
+                : clearLocalAttachTokenFile(config.localAttachTokenPath),
             ),
           );
+        }),
+        () =>
+          Effect.all(
+            [
+              clearPersistedServerRuntimeState(config.serverRuntimeStatePath),
+              config.localAttachToken === undefined
+                ? Effect.void
+                : clearLocalAttachTokenFile(config.localAttachTokenPath),
+            ],
+            { concurrency: "unbounded", discard: true },
+          ),
+      ),
+    );
     const tailscaleServeLayer = config.tailscaleServeEnabled
       ? Layer.effectDiscard(
           Effect.acquireRelease(
@@ -504,7 +511,6 @@ export const makeServerLayer = Layer.unwrap(
       }),
       httpListeningLayer,
       runtimeStateLayer,
-      localAttachTokenLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
     );

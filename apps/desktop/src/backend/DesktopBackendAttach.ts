@@ -44,6 +44,7 @@ export type AttachDecision =
       readonly token: string;
       readonly pid: number;
     }
+  | { readonly _tag: "wait"; readonly reason: string }
   | { readonly _tag: "spawn"; readonly reason: string };
 
 // Injected IO, faked in tests. Each step is only run when the prior one
@@ -60,6 +61,18 @@ export interface AttachProbeContext {
 }
 
 const spawn = (reason: string): AttachDecision => ({ _tag: "spawn", reason });
+const wait = (reason: string): AttachDecision => ({ _tag: "wait", reason });
+
+const parseHttpOrigin = (origin: string): Option.Option<URL> => {
+  try {
+    const parsed = new URL(origin);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? Option.some(parsed)
+      : Option.none();
+  } catch {
+    return Option.none();
+  }
+};
 
 // Pure attach-or-spawn decision. Falls back to spawn on any failing gate (no
 // runtime file, dead pid, no HTTP answer, unreadable token), so behavior is
@@ -75,20 +88,29 @@ export const resolveAttachDecision = (context: AttachProbeContext): Effect.Effec
       return spawn("no server-runtime.json for the target state dir");
     }
     const { pid, origin } = runtimeState.value;
+    const parsedOrigin = parseHttpOrigin(origin);
+    if (Option.isNone(parsedOrigin)) {
+      return spawn(`server-runtime.json contains an invalid origin: ${origin}`);
+    }
+    const resolvedOrigin = parsedOrigin.value.href;
 
     const alive = yield* context.isPidAlive(pid);
     if (!alive) {
       return spawn(`recorded backend pid ${pid} is not alive`);
     }
 
-    const probed = yield* context.probeEnvironment(origin);
+    const probed = yield* context.probeEnvironment(resolvedOrigin);
     if (Option.isNone(probed)) {
-      return spawn(`existing backend at ${origin} did not answer the environment probe`);
+      return spawn(`existing backend at ${resolvedOrigin} did not answer the environment probe`);
     }
 
     const token = yield* context.readAttachToken;
     if (Option.isNone(token)) {
-      return spawn("local attach token file is missing or unreadable");
+      // A live, healthy backend demonstrably owns this state directory. Never
+      // spawn a competing child merely because its attach credential is
+      // temporarily unavailable; retry configuration until the token appears
+      // or the external backend goes away.
+      return wait("local attach token file is missing or unreadable");
     }
 
     // Version skew is not fatal: attach anyway and let the web app surface
@@ -101,12 +123,12 @@ export const resolveAttachDecision = (context: AttachProbeContext): Effect.Effec
           : logAttachWarning("attaching to a backend with a mismatched version", {
               appVersion: context.appVersion,
               serverVersion,
-              origin,
+              origin: resolvedOrigin,
             }),
     });
 
-    yield* logAttachInfo("attaching to existing local backend", { origin, pid });
-    return { _tag: "attach", origin, token: token.value, pid };
+    yield* logAttachInfo("attaching to existing local backend", { origin: resolvedOrigin, pid });
+    return { _tag: "attach", origin: resolvedOrigin, token: token.value, pid };
   });
 
 // ---------------------------------------------------------------------------
@@ -115,6 +137,13 @@ export const resolveAttachDecision = (context: AttachProbeContext): Effect.Effec
 
 const ENVIRONMENT_PROBE_PATH = "/.well-known/t3/environment";
 const ENVIRONMENT_PROBE_TIMEOUT = Duration.seconds(2);
+
+class InvalidEnvironmentOriginError extends Schema.TaggedErrorClass<InvalidEnvironmentOriginError>()(
+  "InvalidEnvironmentOriginError",
+  {
+    origin: Schema.String,
+  },
+) {}
 
 const decodeRuntimeState = Schema.decodeUnknownEffect(
   Schema.fromJsonString(PersistedRuntimeStateProbe),
@@ -168,7 +197,10 @@ export const makeProbeEnvironment = (
 ): Effect.Effect<Option.Option<ProbedEnvironment>, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
-    const requestUrl = new URL(ENVIRONMENT_PROBE_PATH, origin).toString();
+    const requestUrl = yield* Effect.try({
+      try: () => new URL(ENVIRONMENT_PROBE_PATH, origin).toString(),
+      catch: () => new InvalidEnvironmentOriginError({ origin }),
+    });
     const response = yield* client
       .execute(HttpClientRequest.get(requestUrl))
       .pipe(Effect.timeout(ENVIRONMENT_PROBE_TIMEOUT));

@@ -22,8 +22,10 @@ export class LocalAttachTokenFileError extends Schema.TaggedErrorClass<LocalAtta
   }
 }
 
-// Rewrites the token file each boot (single line, token only) and forces
-// mode 0600 even if a prior boot left it with looser permissions.
+// Publishes the token through a mode-0600 temporary file in the target
+// directory, then atomically renames it into place. The administrative token
+// is therefore never visible through the stable path with permissions inherited
+// from a pre-existing file.
 export const writeLocalAttachTokenFile = (input: {
   readonly path: string;
   readonly token: string;
@@ -31,14 +33,20 @@ export const writeLocalAttachTokenFile = (input: {
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    yield* fs.makeDirectory(path.dirname(input.path), { recursive: true });
-    yield* fs.writeFileString(input.path, `${input.token}\n`, {
+    const targetDirectory = path.dirname(input.path);
+    yield* fs.makeDirectory(targetDirectory, { recursive: true });
+    const tempDirectory = yield* fs.makeTempDirectoryScoped({
+      directory: targetDirectory,
+      prefix: `${path.basename(input.path)}.`,
+    });
+    const tempPath = path.join(tempDirectory, "token.tmp");
+    yield* fs.writeFileString(tempPath, `${input.token}\n`, {
       mode: LOCAL_ATTACH_TOKEN_MODE,
     });
-    // `mode` on open only applies when the file is created, so chmod
-    // unconditionally to tighten a file that already existed.
-    yield* fs.chmod(input.path, LOCAL_ATTACH_TOKEN_MODE);
+    yield* fs.chmod(tempPath, LOCAL_ATTACH_TOKEN_MODE);
+    yield* fs.rename(tempPath, input.path);
   }).pipe(
+    Effect.scoped,
     Effect.mapError(
       (cause) =>
         new LocalAttachTokenFileError({ operation: "write", tokenPath: input.path, cause }),
@@ -55,14 +63,15 @@ export const clearLocalAttachTokenFile = (tokenPath: string) =>
       Effect.mapError(
         (cause) => new LocalAttachTokenFileError({ operation: "clear", tokenPath, cause }),
       ),
-      Effect.catchTag("LocalAttachTokenFileError", (error) =>
-        Effect.logWarning(error.message).pipe(
-          Effect.annotateLogs({
-            operation: error.operation,
-            tokenPath: error.tokenPath,
-            cause: error,
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        LocalAttachTokenFileError: (error) =>
+          Effect.logWarning(error.message).pipe(
+            Effect.annotateLogs({
+              operation: error.operation,
+              tokenPath: error.tokenPath,
+              cause: error,
+            }),
+          ),
+      }),
     );
   });

@@ -141,6 +141,33 @@ describe("ElectronProtocol", () => {
     }).pipe(Effect.provide(ElectronProtocol.layer)),
   );
 
+  it.effect("retargets packaged renderer proxying when the backend origin changes", () =>
+    Effect.gen(function* () {
+      let handler: ((request: Request) => Promise<Response>) | undefined;
+      handleMock.mockImplementation((_scheme, nextHandler) => {
+        handler = nextHandler;
+      });
+      netFetchMock.mockResolvedValue(new Response("ok"));
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const protocol = yield* ElectronProtocol.ElectronProtocol;
+          yield* protocol.registerDesktopProtocol({
+            scheme: "t3code",
+            targetOrigin: new URL("http://127.0.0.1:3774/"),
+            backendOrigin: new URL("http://127.0.0.1:3774/"),
+            followBackendOrigin: true,
+            clerkFrontendApiHostname: undefined,
+          });
+          yield* protocol.setBackendOrigin(new URL("http://127.0.0.1:3773/"));
+          yield* Effect.promise(() => handler!(new Request("t3code://app/")));
+        }),
+      );
+
+      assert.equal(netFetchMock.mock.calls[0]?.[0], "http://127.0.0.1:3773/");
+    }).pipe(Effect.provide(ElectronProtocol.layer)),
+  );
+
   it.effect("preserves protocol registration failures", () =>
     Effect.gen(function* () {
       const cause = new Error("protocol registration failed");

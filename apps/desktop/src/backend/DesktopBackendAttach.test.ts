@@ -51,7 +51,7 @@ describe("resolveAttachDecision", () => {
       );
       assert.equal(decision._tag, "attach");
       if (decision._tag === "attach") {
-        assert.equal(decision.origin, "http://127.0.0.1:3773");
+        assert.equal(decision.origin, "http://127.0.0.1:3773/");
         assert.equal(decision.token, "attach-token");
         assert.equal(decision.pid, 4321);
       }
@@ -76,6 +76,17 @@ describe("resolveAttachDecision", () => {
     Effect.gen(function* () {
       const decision = yield* DesktopBackendAttach.resolveAttachDecision(
         makeContext({ pidAlive: false }),
+      );
+      assert.equal(decision._tag, "spawn");
+    }),
+  );
+
+  it.effect("spawns without probing when the recorded origin is invalid", () =>
+    Effect.gen(function* () {
+      const decision = yield* DesktopBackendAttach.resolveAttachDecision(
+        makeContext({
+          runtimeState: Option.some({ ...runtimeState, origin: "not-an-origin" }),
+        }),
       );
       assert.equal(decision._tag, "spawn");
     }),
@@ -108,7 +119,7 @@ describe("resolveAttachDecision", () => {
     }),
   );
 
-  it.effect("spawns when the attach token is missing or unreadable", () =>
+  it.effect("waits rather than spawning when a live backend's attach token is unavailable", () =>
     Effect.gen(function* () {
       const decision = yield* DesktopBackendAttach.resolveAttachDecision(
         makeContext({
@@ -117,7 +128,7 @@ describe("resolveAttachDecision", () => {
           token: Option.none(),
         }),
       );
-      assert.equal(decision._tag, "spawn");
+      assert.equal(decision._tag, "wait");
     }),
   );
 });

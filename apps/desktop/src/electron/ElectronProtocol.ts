@@ -52,6 +52,10 @@ export interface DesktopProtocolRegistrationInput {
   readonly scheme: string;
   readonly targetOrigin: URL;
   readonly backendOrigin: URL;
+  // Packaged builds serve renderer assets from the primary backend, whose
+  // origin can change when the desktop attaches to an external server.
+  // Development keeps the Vite dev-server target stable.
+  readonly followBackendOrigin?: boolean;
   readonly clerkFrontendApiHostname: string | undefined;
 }
 
@@ -61,6 +65,7 @@ export class ElectronProtocol extends Context.Service<
     readonly registerDesktopProtocol: (
       input: DesktopProtocolRegistrationInput,
     ) => Effect.Effect<void, ElectronProtocolRegistrationError, Scope.Scope>;
+    readonly setBackendOrigin: (origin: URL) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/electron/ElectronProtocol") {}
 
@@ -171,18 +176,22 @@ async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<
 
 export const make = Effect.gen(function* () {
   const registered = yield* Ref.make(false);
+  let targetOrigin: URL | undefined;
+  let followBackendOrigin = false;
 
   const registerDesktopProtocol = Effect.fn("desktop.electron.protocol.registerDesktopProtocol")(
     function* (input: DesktopProtocolRegistrationInput) {
       if (yield* Ref.get(registered)) return;
 
+      targetOrigin = input.targetOrigin;
+      followBackendOrigin = input.followBackendOrigin ?? false;
       const contentSecurityPolicy = makeDesktopContentSecurityPolicy(input);
 
       yield* Effect.acquireRelease(
         Effect.try({
           try: () => {
             Electron.protocol.handle(input.scheme, (request) =>
-              proxyRequest(request, input.targetOrigin, contentSecurityPolicy),
+              proxyRequest(request, targetOrigin ?? input.targetOrigin, contentSecurityPolicy),
             );
           },
           catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),
@@ -200,7 +209,14 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return ElectronProtocol.of({ registerDesktopProtocol });
+  const setBackendOrigin = (origin: URL) =>
+    Effect.sync(() => {
+      if (followBackendOrigin) {
+        targetOrigin = origin;
+      }
+    });
+
+  return ElectronProtocol.of({ registerDesktopProtocol, setBackendOrigin });
 });
 
 export const layer = Layer.effect(ElectronProtocol, make);

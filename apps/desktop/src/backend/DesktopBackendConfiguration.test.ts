@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
@@ -47,6 +48,20 @@ const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExp
   setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
   getAdvertisedEndpoints: Effect.succeed([]),
 } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
+
+const attachProbeHttpClientLayer = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) =>
+    Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        Response.json({
+          serverVersion: "1.2.3",
+        }),
+      ),
+    ),
+  ),
+);
 
 function makeEnvironmentLayer(
   baseDir: string,
@@ -163,6 +178,33 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(wsl.bootstrap.desktopBootstrapToken, primary.bootstrap.desktopBootstrapToken);
       }),
     ),
+  );
+
+  it.effect("attached primary shares its external token with a later WSL backend", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.path.join(environment.stateDir, "server-runtime.json"),
+          `{"version":1,"pid":${process.pid},"host":"127.0.0.1","port":3773,"origin":"http://127.0.0.1:3773","startedAt":"2026-07-23T00:00:00.000Z"}\n`,
+        );
+        yield* fileSystem.writeFileString(
+          environment.path.join(environment.stateDir, "local-attach-token"),
+          "external-attach-token\n",
+        );
+
+        const primary = yield* configuration.resolvePrimary;
+        const wsl = yield* configuration.resolveWsl({ port: 5000, distro: null });
+
+        assert.equal(primary.httpBaseUrl.href, "http://127.0.0.1:3773/");
+        assert.isTrue(Option.isSome(primary.attach));
+        assert.equal(primary.bootstrap.desktopBootstrapToken, "external-attach-token");
+        assert.equal(wsl.bootstrap.desktopBootstrapToken, "external-attach-token");
+      }),
+    ).pipe(Effect.provide(attachProbeHttpClientLayer)),
   );
 
   it.effect("resolveWsl pins a default-tracking run to the concrete default distro", () =>

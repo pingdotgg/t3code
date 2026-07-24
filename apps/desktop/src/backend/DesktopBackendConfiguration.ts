@@ -677,6 +677,16 @@ export const make = Effect.gen(function* () {
     if (decision._tag === "spawn") {
       return spawnConfig;
     }
+    if (decision._tag === "wait") {
+      return {
+        ...spawnConfig,
+        preflightFailure: Option.some({
+          reason: decision.reason,
+          fatal: false,
+        }),
+      } satisfies DesktopBackendManager.DesktopBackendStartConfig;
+    }
+    yield* SynchronizedRef.set(tokenRef, Option.some(decision.token));
     // Attach: point the renderer/readiness at the external origin and hand the
     // renderer the attach token through the exact channel the desktop bootstrap
     // token uses today (config.bootstrap.desktopBootstrapToken), so the whole
