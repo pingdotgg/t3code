@@ -34,38 +34,38 @@ struct BrandMarkView: View {
                     .fill(style: FillStyle(eoFill: true))
                     .foregroundStyle(.tint)
 
+            // The shipped app-icon look: the snow mark on the sky-gradient
+            // squircle, matching scripts/generate-appicon.swift. There is no
+            // green variant of the mark; fullColor always renders this one.
             case .fullColor:
-                ZStack {
-                    BrandMarkShape(candidate: candidate)
-                        .fill(style: fillStyle)
-                        .foregroundStyle(mossColor)
-
-                    if BrandMarkGeometry.accent(candidate, in: .init(x: 0, y: 0, width: 1, height: 1)) != nil {
-                        BrandMarkAccentShape(candidate: candidate)
-                            .fill(snowColor)
+                GeometryReader { proxy in
+                    let side = min(proxy.size.width, proxy.size.height)
+                    ZStack {
+                        RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    stops: skyGradientStops,
+                                    startPoint: .top,
+                                    endPoint: .bottom))
+                        BrandMarkShape(candidate: candidate)
+                            .fill(style: FillStyle(eoFill: true))
+                            .foregroundStyle(snowColor)
+                            .frame(width: side * 0.65, height: side * 0.65)
+                            .offset(y: -side * 0.016)
                     }
+                    .frame(width: proxy.size.width, height: proxy.size.height)
                 }
             }
         }
         .aspectRatio(1, contentMode: .fit)
     }
 
-    private var fillStyle: FillStyle {
-        FillStyle(eoFill: usesEvenOddFill)
-    }
-
-    private var usesEvenOddFill: Bool {
-        switch candidate {
-        case .surgePeak:
-            return false
-        case .notchPeak, .passportPeak:
-            return true
+    private var skyGradientStops: [Gradient.Stop] {
+        zip(BrandMarkGeometry.skyStops, [0, 0.55, 1]).map { rgb, location in
+            Gradient.Stop(
+                color: Color(red: Double(rgb.red), green: Double(rgb.green), blue: Double(rgb.blue)),
+                location: location)
         }
-    }
-
-    private var mossColor: Color {
-        let rgb = BrandMarkGeometry.moss
-        return Color(red: Double(rgb.red), green: Double(rgb.green), blue: Double(rgb.blue))
     }
 
     private var snowColor: Color {
@@ -84,14 +84,5 @@ private struct BrandMarkMonochromeShape: Shape {
             compound.addPath(accent)
         }
         return Path(compound)
-    }
-}
-
-private struct BrandMarkAccentShape: Shape {
-    let candidate: BrandMarkCandidate
-
-    func path(in rect: CGRect) -> Path {
-        guard let accent = BrandMarkGeometry.accent(candidate, in: rect) else { return Path() }
-        return Path(accent)
     }
 }

@@ -41,10 +41,6 @@ struct AboutView: View {
             VStack(spacing: 20) {
                 BrandMarkView(style: .fullColor)
                     .frame(width: 96, height: 96)
-                    .padding(14)
-                    .glassEffect(
-                        .regular,
-                        in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.hero))
 
                 BrandWordmark(size: 28)
 

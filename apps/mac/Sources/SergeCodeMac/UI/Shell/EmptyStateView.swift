@@ -37,8 +37,8 @@ struct EmptyStateView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 16) {
-                BrandMarkView()
-                    .frame(width: 44, height: 44)
+                BrandMarkView(style: .fullColor)
+                    .frame(width: 64, height: 64)
                 BrandWordmark(size: 26)
                 Text("Select a session, start a quick chat, or choose a project.")
                     .foregroundStyle(.white.opacity(0.88))
