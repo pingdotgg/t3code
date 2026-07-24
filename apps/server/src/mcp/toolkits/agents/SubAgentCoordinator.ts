@@ -31,6 +31,8 @@ import {
   type OrchestrationThreadActivity,
   type RuntimeMode,
   type ServerProvider,
+  type SubAgentConfigurationHistory,
+  type SubAgentConfigurationSnapshot,
   type SubAgentListResult,
   type SubAgentSendInput,
   type SubAgentSendResult,
@@ -90,6 +92,8 @@ interface SubAgentRecord {
   /** Last observed turn status; updated on spawn/send/wait and refreshed in list. */
   readonly status: SubAgentStatus;
   readonly policyNotices: ReadonlyArray<string>;
+  /** Requested → resolved → actual configuration trail for diagnostics. */
+  readonly configurationHistory: SubAgentConfigurationHistory;
 }
 
 export interface SubAgentCoordinatorShape {
@@ -726,6 +730,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         // listed as still running after the turn settles without a wait. Failures
         // fall back to the last recorded status — list must stay infallible.
         let status = record.status;
+        let configuration = record.configurationHistory;
         const detail = yield* snapshotQuery
           .getThreadDetailById(threadId)
           .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationThread>()));
@@ -744,6 +749,49 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
               yield* writeStatus(threadId, status);
             }
           }
+          // Enrich with actual configuration reported by the child thread when
+          // available so callers can see policy drift at list time.
+          const actualSelection = detail.value.modelSelection;
+          if (actualSelection) {
+            const liveProvider = providers.find(
+              (provider) => provider.instanceId === actualSelection.instanceId,
+            );
+            const actualEffort =
+              liveProvider !== undefined
+                ? resolveSpawnEffort(liveProvider, actualSelection)
+                : undefined;
+            const actual: SubAgentConfigurationSnapshot = {
+              providerInstanceId: actualSelection.instanceId,
+              model: actualSelection.model,
+              ...(actualEffort !== undefined ? { effort: actualEffort } : {}),
+              ...(actualSelection.options !== undefined && actualSelection.options.length > 0
+                ? {
+                    options: actualSelection.options.map((option) => ({
+                      id: option.id,
+                      value: option.value,
+                    })),
+                  }
+                : {}),
+            };
+            configuration = {
+              ...record.configurationHistory,
+              actual,
+            };
+            if (
+              record.configurationHistory.actual?.model !== actual.model ||
+              record.configurationHistory.actual?.providerInstanceId !==
+                actual.providerInstanceId ||
+              record.configurationHistory.actual?.effort !== actual.effort
+            ) {
+              yield* SynchronizedRef.update(children, (current) => {
+                const existing = current.get(threadId);
+                if (!existing) return current;
+                const next = new Map(current);
+                next.set(threadId, { ...existing, configurationHistory: configuration });
+                return next;
+              });
+            }
+          }
         }
         agents.push({
           threadId,
@@ -752,6 +800,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           providerInstanceId: record.providerInstanceId,
           model: record.model,
           status,
+          configuration,
         });
       }
 
@@ -820,6 +869,12 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
     const parent = callerThread.value;
     // Sub-agents always inherit the parent thread's stored runtimeMode.
     const requestedInstanceId = input.providerInstanceId;
+    // Capture the caller's intent before any policy/catalog resolution so
+    // diagnostics can distinguish "requested X" from "ran as Y".
+    const requestedConfig: SubAgentConfigurationSnapshot = {
+      providerInstanceId: input.providerInstanceId,
+      model: input.model ?? "(to be resolved)",
+    };
     const target = providers.find((provider) => provider.instanceId === requestedInstanceId);
     if (!target) {
       return yield* new SubAgentError({
@@ -874,6 +929,29 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
     const policyNotices = policy.notices;
     const title = baseTitle;
     const effort = resolveSpawnEffort(target, modelSelection);
+    const resolvedConfig: SubAgentConfigurationSnapshot = {
+      providerInstanceId: target.instanceId,
+      model: effectiveModel,
+      ...(effort !== undefined ? { effort } : {}),
+      ...(modelSelection.options !== undefined && modelSelection.options.length > 0
+        ? {
+            options: modelSelection.options.map((option) => ({
+              id: option.id,
+              value: option.value,
+            })),
+          }
+        : {}),
+    };
+    const configurationHistory: SubAgentConfigurationHistory = {
+      requested: {
+        ...requestedConfig,
+        // Fill in the pre-policy model once inheritance resolved it.
+        model,
+        providerInstanceId: requestedInstanceId,
+      },
+      resolved: resolvedConfig,
+      policyNotices,
+    };
     const parentTurnId = yield* readParentTurnId(scope.threadId);
 
     yield* engine
@@ -921,6 +999,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         model: effectiveModel,
         ...(effort !== undefined ? { effort } : {}),
         policyNotices,
+        configurationHistory,
         activityTaskId,
         parentTurnId,
         status: "running",
@@ -935,6 +1014,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       title,
       ...(name !== undefined ? { name } : {}),
       policyNotices,
+      configuration: configurationHistory,
       status: "running" as const,
     };
   });

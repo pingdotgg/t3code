@@ -41,6 +41,17 @@ struct ActivityRowTests {
                 == nil)
     }
 
+    @Test func turnReasoningMapsToReasoningRow() {
+        let row = ActivityRows.row(
+            for: activity(
+                id: "reasoning:thread-1:turn-1",
+                tone: .info,
+                kind: ActivityKind.turnReasoning,
+                summary: "Reasoning",
+                payload: .object(["detail": .string("thinking step by step")])))
+        #expect(row == .reasoning(id: "reasoning:thread-1:turn-1", text: "thinking step by step"))
+    }
+
     @Test func checkpointCapturedNoticeIsSkipped() {
         let row = ActivityRows.row(
             for: activity(tone: .info, kind: "checkpoint", summary: "Checkpoint captured"))

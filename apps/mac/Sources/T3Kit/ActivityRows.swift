@@ -54,6 +54,15 @@ public enum ActivityRows {
             // mapping one event here would split/lose lifecycle aggregation.
             return nil
 
+        case ActivityKind.turnReasoning:
+            // Live reasoning/thought stream for the active turn. Stable id +
+            // full accumulated text so successive deltas replace in place.
+            let text =
+                nonEmpty(payloadDetail(activity.payload))
+                ?? nonEmpty(activity.summary)
+                ?? "Reasoning"
+            return .reasoning(id: activity.id, text: text)
+
         case ActivityKind.runtimeWarning, ActivityKind.runtimeError:
             // Unknown-SDK-message warnings whose whole body is the server's
             // no-content marker (describeUnknownSdkMessage) carry nothing a

@@ -3673,4 +3673,211 @@ describe("ProviderRuntimeIngestion", () => {
       activityIds.indexOf(asEventId("evt-coalesce-complete")),
     );
   });
+
+  it("projects reasoning_text content deltas as coalesced turn.reasoning activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-reasoning-1");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-reasoning-turn-started"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-delta-1"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "thinking step one. ",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-delta-2"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "thinking step two.",
+      },
+    });
+
+    await harness.drain();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    const reasoningRows = (thread?.activities ?? []).filter(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "turn.reasoning",
+    );
+    expect(reasoningRows).toHaveLength(1);
+    expect(reasoningRows[0]?.id).toBe(`reasoning:thread-1:${turnId}`);
+    const payload = reasoningRows[0]?.payload as { detail?: string } | undefined;
+    expect(payload?.detail).toBe("thinking step one. thinking step two.");
+  });
+
+  it("generates a fallback assistant message when turn.completed has no assistant text", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-fallback-1");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-fallback-turn-started"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-fallback-tool-started"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-fallback-tool"),
+      payload: {
+        itemType: "command_execution",
+        title: "List files",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-fallback-tool-completed"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-fallback-tool"),
+      payload: {
+        itemType: "command_execution",
+        title: "List files",
+        detail: "ok",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-fallback-turn-completed"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: "2026-01-01T00:00:03.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        state: "completed",
+        stopReason: "end_turn",
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "ready" &&
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.role === "assistant" &&
+            message.turnId === turnId &&
+            message.text.includes("tool call") &&
+            !message.streaming,
+        ),
+    );
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    const fallback = thread?.messages.find(
+      (message: ProviderRuntimeTestMessage) => message.id === `assistant:fallback:${turnId}`,
+    );
+    expect(fallback?.text).toMatch(/Completed task \(executed 1 tool call\)/);
+    expect(
+      (thread?.activities ?? []).some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === `fallback:${turnId}` &&
+          activity.summary === "Generated completion summary",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not generate a fallback when assistant text already exists", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-no-fallback");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-no-fallback-started"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-no-fallback-delta"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Real answer from the model.",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-no-fallback-completed"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        state: "completed",
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "ready" &&
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.role === "assistant" &&
+            message.text.includes("Real answer") &&
+            !message.streaming,
+        ),
+    );
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(
+      thread?.messages.some(
+        (message: ProviderRuntimeTestMessage) => message.id === `assistant:fallback:${turnId}`,
+      ),
+    ).toBe(false);
+  });
 });

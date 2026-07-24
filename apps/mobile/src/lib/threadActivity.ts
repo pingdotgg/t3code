@@ -358,12 +358,13 @@ function toDerivedWorkLogEntry(
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
   const isTaskActivity = activity.kind === "task.progress" || activity.kind === "task.completed";
+  const isReasoningActivity = activity.kind === "turn.reasoning";
   const taskSummary =
     isTaskActivity && typeof payload?.summary === "string" && payload.summary.length > 0
       ? payload.summary
       : null;
   const taskDetailAsLabel =
-    isTaskActivity &&
+    (isTaskActivity || isReasoningActivity) &&
     !taskSummary &&
     typeof payload?.detail === "string" &&
     payload.detail.length > 0
@@ -379,7 +380,7 @@ function toDerivedWorkLogEntry(
     turnId: activity.turnId,
     label: taskLabel || presentation?.title || activity.summary,
     tone:
-      activity.kind === "task.progress"
+      activity.kind === "task.progress" || isReasoningActivity
         ? "thinking"
         : activity.tone === "approval"
           ? "info"

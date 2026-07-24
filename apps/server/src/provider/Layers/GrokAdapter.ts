@@ -73,6 +73,47 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJ
 
 const PROVIDER = ProviderDriverKind.make("grok");
 const GROK_RESUME_VERSION = 1 as const;
+/**
+ * After session/prompt returns, Grok may still flush late ContentDelta /
+ * ReasoningDelta / tool events through ACP stdout. A single drain only covers
+ * events already queued. We drain until the session event sequence is stable
+ * across several yield+drain rounds so late in-process events settle before
+ * turn.completed. Purely cooperative (no wall-clock sleep) so unit tests under
+ * TestClock still complete.
+ */
+const GROK_EVENT_SETTLE_MAX_ROUNDS = 24;
+const GROK_EVENT_SETTLE_STABLE_ROUNDS = 3;
+const GROK_EVENT_SETTLE_YIELDS_PER_ROUND = 8;
+
+const drainGrokEventStream = (
+  acp: AcpSessionRuntime.AcpSessionRuntime["Service"],
+  getEventSequence: () => number,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    let stableRounds = 0;
+    let lastSequence = getEventSequence();
+    for (
+      let attempt = 0;
+      attempt < GROK_EVENT_SETTLE_MAX_ROUNDS && stableRounds < GROK_EVENT_SETTLE_STABLE_ROUNDS;
+      attempt += 1
+    ) {
+      for (
+        let yieldAttempt = 0;
+        yieldAttempt < GROK_EVENT_SETTLE_YIELDS_PER_ROUND;
+        yieldAttempt += 1
+      ) {
+        yield* Effect.yieldNow;
+      }
+      yield* acp.drainEvents;
+      const nextSequence = getEventSequence();
+      if (nextSequence === lastSequence) {
+        stableRounds += 1;
+      } else {
+        stableRounds = 0;
+        lastSequence = nextSequence;
+      }
+    }
+  });
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -118,6 +159,11 @@ interface GrokSessionContext {
   promptsInFlight: number;
   currentModelId: string | undefined;
   stopped: boolean;
+  /**
+   * Monotonic count of ACP session events processed by the notification fiber.
+   * Used as a settlement barrier so turn.completed waits for late content.
+   */
+  eventSequence: number;
 }
 
 function settlePendingApprovalsAsCancelled(
@@ -791,6 +837,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
             currentModelId: boundModelId,
+            eventSequence: 0,
             stopped: false,
           };
 
@@ -801,6 +848,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   yield* Deferred.succeed(event.acknowledge, undefined);
                   return;
                 }
+                // Count every real ACP/process event so turn settlement can
+                // wait until the stream goes quiet.
+                ctx.eventSequence += 1;
                 if (event._tag === "ProcessStderr") {
                   yield* logNative(ctx.threadId, "process/stderr", { message: event.message });
                   if (isNoteworthyAcpStderrLine(event.message)) {
@@ -1211,10 +1261,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               // Keep prompt settlement atomic with respect to Stop and steering.
               // interruptTurn marks its target before waiting for this lock, so
               // cancellation can still win while queued ACP events are drained.
-              for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
-                yield* Effect.yieldNow;
-              }
-              yield* prepared.acp.drainEvents;
+              // Drain until the notification fiber's event sequence is stable so
+              // late ContentDelta / ReasoningDelta events land before turn.completed.
+              yield* drainGrokEventStream(prepared.acp, () => ctx.eventSequence);
               if (ctx.interruptedTurnIds.has(prepared.turnId)) {
                 yield* Ref.set(promptSettled, true);
                 return {
@@ -1342,6 +1391,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       prepared.promptParts,
                       promptResult,
                     );
+                    // Match the success path: drain late ACP events before
+                    // emitting turn.completed from the ensuring settlement.
+                    yield* drainGrokEventStream(prepared.acp, () => ctx.eventSequence);
+                    if (ctx.interruptedTurnIds.has(prepared.turnId)) {
+                      return;
+                    }
                     yield* settlePromptInFlight(
                       input.threadId,
                       prepared.turnId,
