@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ReviewSweepRouteImport } from './routes/review-sweep'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
@@ -29,6 +30,11 @@ import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$e
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReviewSweepRoute = ReviewSweepRouteImport.update({
+  id: '/review-sweep',
+  path: '/review-sweep',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PairRoute = PairRouteImport.update({
@@ -111,6 +117,7 @@ export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
+  '/review-sweep': typeof ReviewSweepRoute
   '/settings': typeof SettingsRouteWithChildren
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -127,6 +134,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
+  '/review-sweep': typeof ReviewSweepRoute
   '/settings': typeof SettingsRouteWithChildren
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -146,6 +154,7 @@ export interface FileRoutesById {
   '/_chat': typeof ChatRouteWithChildren
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
+  '/review-sweep': typeof ReviewSweepRoute
   '/settings': typeof SettingsRouteWithChildren
   '/connect_/callback': typeof ConnectCallbackRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -166,6 +175,7 @@ export interface FileRouteTypes {
     | '/'
     | '/connect'
     | '/pair'
+    | '/review-sweep'
     | '/settings'
     | '/connect/callback'
     | '/settings/archived'
@@ -182,6 +192,7 @@ export interface FileRouteTypes {
   to:
     | '/connect'
     | '/pair'
+    | '/review-sweep'
     | '/settings'
     | '/connect/callback'
     | '/settings/archived'
@@ -200,6 +211,7 @@ export interface FileRouteTypes {
     | '/_chat'
     | '/connect'
     | '/pair'
+    | '/review-sweep'
     | '/settings'
     | '/connect_/callback'
     | '/settings/archived'
@@ -219,6 +231,7 @@ export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
   ConnectRoute: typeof ConnectRoute
   PairRoute: typeof PairRoute
+  ReviewSweepRoute: typeof ReviewSweepRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   ConnectCallbackRoute: typeof ConnectCallbackRoute
 }
@@ -230,6 +243,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/review-sweep': {
+      id: '/review-sweep'
+      path: '/review-sweep'
+      fullPath: '/review-sweep'
+      preLoaderRoute: typeof ReviewSweepRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pair': {
@@ -384,6 +404,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   ConnectRoute: ConnectRoute,
   PairRoute: PairRoute,
+  ReviewSweepRoute: ReviewSweepRoute,
   SettingsRoute: SettingsRouteWithChildren,
   ConnectCallbackRoute: ConnectCallbackRoute,
 }

@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { GitCommandError } from "./git.ts";
+import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { GitCommandError, TextGenerationError } from "./git.ts";
 import { VcsError } from "./vcs.ts";
 
 export const ReviewDiffPreviewInput = Schema.Struct({
@@ -34,3 +34,33 @@ export type ReviewDiffPreviewResult = typeof ReviewDiffPreviewResult.Type;
 
 export const ReviewDiffPreviewError = Schema.Union([VcsError, GitCommandError]);
 export type ReviewDiffPreviewError = typeof ReviewDiffPreviewError.Type;
+
+export const ReviewThreadSummaryInput = Schema.Struct({
+  threadId: ThreadId,
+  /** Whether the thread is currently eligible to settle (no running session,
+      pending approvals, or pending user input). The server never recommends
+      settling when this is false, regardless of what the model says. */
+  canSettleNow: Schema.Boolean,
+});
+export type ReviewThreadSummaryInput = typeof ReviewThreadSummaryInput.Type;
+
+export const ReviewThreadSummaryResult = Schema.Struct({
+  threadId: ThreadId,
+  summary: TrimmedNonEmptyString,
+  /** Null when the current title is still accurate. */
+  suggestedTitle: Schema.NullOr(TrimmedNonEmptyString),
+  recommendSettle: Schema.Boolean,
+  settleReason: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ReviewThreadSummaryResult = typeof ReviewThreadSummaryResult.Type;
+
+export class ReviewThreadNotFoundError extends Schema.TaggedErrorClass<ReviewThreadNotFoundError>()(
+  "ReviewThreadNotFoundError",
+  { threadId: ThreadId },
+) {}
+
+export const ReviewThreadSummaryError = Schema.Union([
+  TextGenerationError,
+  ReviewThreadNotFoundError,
+]);
+export type ReviewThreadSummaryError = typeof ReviewThreadSummaryError.Type;

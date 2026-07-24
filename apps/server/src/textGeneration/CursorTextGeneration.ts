@@ -15,9 +15,11 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadReviewPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
+  normalizeThreadReview,
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
@@ -54,7 +56,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateThreadReview";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -255,10 +258,31 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateThreadReview: TextGeneration.TextGeneration["Service"]["generateThreadReview"] =
+    Effect.fn("CursorTextGeneration.generateThreadReview")(function* (input) {
+      const { prompt, outputSchema } = buildThreadReviewPrompt({
+        title: input.title,
+        isActive: input.isActive,
+        firstUserMessage: input.firstUserMessage,
+        recentMessages: input.recentMessages,
+      });
+
+      const generated = yield* runCursorJson({
+        operation: "generateThreadReview",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return normalizeThreadReview(generated, input.isActive);
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadReview,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

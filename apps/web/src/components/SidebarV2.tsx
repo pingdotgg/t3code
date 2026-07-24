@@ -19,6 +19,7 @@ import {
   FolderPlusIcon,
   GitBranchIcon,
   EllipsisIcon,
+  ListChecksIcon,
   MessageSquareIcon,
   PlusIcon,
   SearchIcon,
@@ -70,6 +71,7 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import { startReviewSweep } from "../reviewSweepStore";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -1739,6 +1741,12 @@ export default function SidebarV2() {
     openCommandPalette({ open: "new-thread-in" });
   }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
 
+  const handleReviewSweepClick = useCallback(() => {
+    if (isMobile) setOpenMobile(false);
+    startReviewSweep();
+    void router.navigate({ to: "/review-sweep" });
+  }, [isMobile, router, setOpenMobile]);
+
   const commandPaletteShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
   // Same resolution as v1: prefer the local-thread binding, fall back to
   // chat.new, no platform gating — web users have working shortcuts too.
@@ -1771,6 +1779,29 @@ export default function SidebarV2() {
                   </Kbd>
                 ) : null}
               </CommandDialogTrigger>
+            </div>
+            <div className="shrink-0">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <SidebarMenuButton
+                      size="sm"
+                      type="button"
+                      className="relative size-8 justify-center rounded-md border-0 bg-transparent p-0 text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                      onClick={handleReviewSweepClick}
+                      disabled={projects.length === 0}
+                      aria-label="Review unsettled work"
+                    />
+                  }
+                >
+                  <ListChecksIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+                  <span
+                    className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+                    aria-hidden="true"
+                  />
+                </TooltipTrigger>
+                <TooltipPopup side="right">Review unsettled work</TooltipPopup>
+              </Tooltip>
             </div>
             <div className="shrink-0">
               <Tooltip>

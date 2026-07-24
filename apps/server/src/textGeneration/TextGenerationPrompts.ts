@@ -216,3 +216,67 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Thread review (work-review sweep)
+// ---------------------------------------------------------------------------
+
+export interface ThreadReviewMessage {
+  role: "user" | "assistant" | "system";
+  text: string;
+}
+
+export interface ThreadReviewPromptInput {
+  title: string;
+  /** True when the thread has a running session or pending approvals/input.
+      Active threads must never get a settle recommendation. */
+  isActive: boolean;
+  firstUserMessage: string | null;
+  recentMessages: ReadonlyArray<ThreadReviewMessage>;
+}
+
+const THREAD_REVIEW_RECENT_MESSAGE_COUNT = 20;
+const THREAD_REVIEW_MESSAGE_CHAR_LIMIT = 2_000;
+
+export function buildThreadReviewPrompt(input: ThreadReviewPromptInput) {
+  const recent = input.recentMessages.slice(-THREAD_REVIEW_RECENT_MESSAGE_COUNT);
+  const transcript = recent
+    .map(
+      (message) =>
+        `[${message.role}] ${limitSection(message.text, THREAD_REVIEW_MESSAGE_CHAR_LIMIT)}`,
+    )
+    .join("\n\n");
+
+  const prompt = [
+    "You review a coding-agent conversation thread and report its state.",
+    "Return a JSON object with keys: summary, suggestedTitle, recommendSettle, settleReason.",
+    "Rules:",
+    "- summary: 1-2 sentences covering what was asked and where the work landed",
+    "- suggestedTitle: a corrected 3-8 word title ONLY if the current title is misleading or a placeholder like 'New thread'; otherwise null",
+    "- recommendSettle: true ONLY when the work clearly concluded (done, abandoned, or superseded) and nothing awaits the user",
+    "- settleReason: one short sentence justifying recommendSettle, or null when recommendSettle is false",
+    "- be conservative: when in doubt, do not suggest a title change and do not recommend settling",
+    ...(input.isActive
+      ? [
+          "- this thread is still ACTIVE (running or awaiting the user): recommendSettle must be false",
+        ]
+      : []),
+    "",
+    `Current title: ${input.title}`,
+    "",
+    "First user message:",
+    limitSection(input.firstUserMessage ?? "(none)", THREAD_REVIEW_MESSAGE_CHAR_LIMIT),
+    "",
+    `Most recent messages (up to ${THREAD_REVIEW_RECENT_MESSAGE_COUNT}):`,
+    limitSection(transcript.length > 0 ? transcript : "(no messages)", 24_000),
+  ].join("\n");
+
+  const outputSchema = Schema.Struct({
+    summary: Schema.String,
+    suggestedTitle: Schema.NullOr(Schema.String),
+    recommendSettle: Schema.Boolean,
+    settleReason: Schema.NullOr(Schema.String),
+  });
+
+  return { prompt, outputSchema };
+}

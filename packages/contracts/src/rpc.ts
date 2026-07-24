@@ -43,6 +43,9 @@ import {
   ReviewDiffPreviewError,
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
+  ReviewThreadSummaryError,
+  ReviewThreadSummaryInput,
+  ReviewThreadSummaryResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
@@ -181,6 +184,7 @@ export const WS_METHODS = {
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
+  reviewSummarizeThread: "review.summarizeThread",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -495,6 +499,14 @@ export const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPrevie
   error: Schema.Union([ReviewDiffPreviewError, EnvironmentAuthorizationError]),
 });
 
+/** One-shot agentic review of a single thread for the sidebar work-review
+    sweep: summary, optional corrected title, and a settle recommendation. */
+export const WsReviewSummarizeThreadRpc = Rpc.make(WS_METHODS.reviewSummarizeThread, {
+  payload: ReviewThreadSummaryInput,
+  success: ReviewThreadSummaryResult,
+  error: Schema.Union([ReviewThreadSummaryError, EnvironmentAuthorizationError]),
+});
+
 export const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
@@ -738,6 +750,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
   WsReviewGetDiffPreviewRpc,
+  WsReviewSummarizeThreadRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
   WsTerminalWriteRpc,

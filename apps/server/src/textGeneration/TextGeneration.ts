@@ -67,6 +67,26 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface ThreadReviewGenerationInput {
+  cwd: string;
+  title: string;
+  /** Active threads (running session or awaiting the user) never get a settle
+      recommendation. */
+  isActive: boolean;
+  firstUserMessage: string | null;
+  recentMessages: ReadonlyArray<{ role: "user" | "assistant" | "system"; text: string }>;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface ThreadReviewGenerationResult {
+  summary: string;
+  /** Null when the current title is still accurate. */
+  suggestedTitle: string | null;
+  recommendSettle: boolean;
+  settleReason: string | null;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -74,6 +94,7 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  generateThreadReview(input: ThreadReviewGenerationInput): Promise<ThreadReviewGenerationResult>;
 }
 
 /**
@@ -109,6 +130,14 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /**
+     * Review a thread transcript for the work-review sweep: summary,
+     * optional corrected title, and a settle recommendation.
+     */
+    readonly generateThreadReview: (
+      input: ThreadReviewGenerationInput,
+    ) => Effect.Effect<ThreadReviewGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -119,7 +148,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateThreadReview";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -158,6 +188,10 @@ export const makeTextGenerationFromRegistry = (
     generateThreadTitle: (input) =>
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+      ),
+    generateThreadReview: (input) =>
+      resolveInstance(registry, "generateThreadReview", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateThreadReview(input)),
       ),
   });
 

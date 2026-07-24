@@ -44,6 +44,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       pre-settlement servers, so clients treat missing as unsupported and
       never send the commands under version skew. */
   threadSettlement: Schema.optionalKey(Schema.Boolean),
+  /** Server understands the review.summarizeThread RPC used by the sidebar
+      work-review sweep. Absent on older servers, so clients skip their
+      threads instead of sending an unknown method. */
+  reviewSweep: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */
