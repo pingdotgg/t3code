@@ -148,7 +148,13 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./u
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
-import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import {
+  Tooltip,
+  TooltipCardPopup,
+  TooltipPopup,
+  TooltipProvider,
+  TooltipTrigger,
+} from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
@@ -232,12 +238,7 @@ function SidebarV2ThreadTooltip({
   } | null;
 }) {
   return (
-    <TooltipPopup
-      side="right"
-      align="start"
-      sideOffset={8}
-      className="dropdown-glass max-w-80 border-0! bg-[color-mix(in_srgb,var(--background)_var(--glass-opacity),transparent)] text-left whitespace-normal shadow-lg/10 before:hidden dark:shadow-none"
-    >
+    <TooltipCardPopup side="right" align="start">
       <div className="flex max-w-80 flex-col gap-2 p-2">
         <div className="whitespace-nowrap text-sm font-medium text-foreground">{thread.title}</div>
         <div className="grid gap-1.5 text-xs text-muted-foreground">
@@ -289,7 +290,7 @@ function SidebarV2ThreadTooltip({
           ) : null}
         </div>
       </div>
-    </TooltipPopup>
+    </TooltipCardPopup>
   );
 }
 

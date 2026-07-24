@@ -6,11 +6,43 @@ const TooltipCreateHandle = TooltipPrimitive.createHandle;
 
 const TooltipProvider = TooltipPrimitive.Provider;
 
-const Tooltip = TooltipPrimitive.Root;
+type TooltipProps = TooltipPrimitive.Root.Props & {
+  preserveOnNestedTriggerHover?: boolean;
+};
+
+function hasHoveredNestedTooltipTrigger() {
+  return (
+    document.querySelector(
+      '[data-slot="tooltip-trigger"][data-popup-open] [data-slot="tooltip-trigger"]:hover',
+    ) !== null
+  );
+}
+
+function Tooltip({ preserveOnNestedTriggerHover = false, onOpenChange, ...props }: TooltipProps) {
+  return (
+    <TooltipPrimitive.Root
+      onOpenChange={(open, eventDetails) => {
+        if (!open && preserveOnNestedTriggerHover && hasHoveredNestedTooltipTrigger()) {
+          eventDetails.cancel();
+          return;
+        }
+        onOpenChange?.(open, eventDetails);
+      }}
+      {...props}
+    />
+  );
+}
 
 function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
   return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
 }
+
+type TooltipPopupProps = TooltipPrimitive.Popup.Props & {
+  align?: TooltipPrimitive.Positioner.Props["align"];
+  side?: TooltipPrimitive.Positioner.Props["side"];
+  sideOffset?: TooltipPrimitive.Positioner.Props["sideOffset"];
+  anchor?: TooltipPrimitive.Positioner.Props["anchor"];
+};
 
 function TooltipPopup({
   className,
@@ -20,12 +52,7 @@ function TooltipPopup({
   anchor,
   children,
   ...props
-}: TooltipPrimitive.Popup.Props & {
-  align?: TooltipPrimitive.Positioner.Props["align"];
-  side?: TooltipPrimitive.Positioner.Props["side"];
-  sideOffset?: TooltipPrimitive.Positioner.Props["sideOffset"];
-  anchor?: TooltipPrimitive.Positioner.Props["anchor"];
-}) {
+}: TooltipPopupProps) {
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Positioner
@@ -56,4 +83,24 @@ function TooltipPopup({
   );
 }
 
-export { TooltipCreateHandle, TooltipProvider, Tooltip, TooltipTrigger, TooltipPopup };
+function TooltipCardPopup({ className, sideOffset = 8, ...props }: TooltipPopupProps) {
+  return (
+    <TooltipPopup
+      className={cn(
+        "dropdown-glass max-w-80 border-0! bg-[color-mix(in_srgb,var(--background)_var(--glass-opacity),transparent)] text-left whitespace-normal shadow-lg/10 before:hidden dark:shadow-none",
+        className,
+      )}
+      sideOffset={sideOffset}
+      {...props}
+    />
+  );
+}
+
+export {
+  TooltipCreateHandle,
+  TooltipProvider,
+  Tooltip,
+  TooltipTrigger,
+  TooltipPopup,
+  TooltipCardPopup,
+};

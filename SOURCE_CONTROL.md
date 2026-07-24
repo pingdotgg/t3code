@@ -119,7 +119,7 @@ Items are sorted by operational urgency, then recency. An unclean working tree i
 
 ## Working Tree
 
-The `Working tree` row expands to a compact changed-file list. There is no staged-versus-unstaged grouping in the panel UI. Each changed file has a selector, and newly appearing changed files are selected by default.
+The `Working tree` row expands to a compact changed-file list. Hovering anywhere on the row reveals its branch, full worktree path, file count, and aggregate added/removed line indicators. There is no staged-versus-unstaged grouping in the panel UI. Each changed file has a selector, and newly appearing changed files are selected by default.
 
 Dirty sibling worktree rows expand to the same compact changed-file list and selection model. File diff, right-panel File preview, open-in-editor, stash, commit, and discard operations for those rows target the sibling worktree path, not the panel's root cwd. The File surface can carry a source-control cwd override for these rows while normal file surfaces remain workspace-relative. This prevents same relative paths in different checkouts from sharing diff state or executing Git actions against the wrong worktree.
 
@@ -135,7 +135,7 @@ Commit selected and stash selected generate their messages by default. Holding S
 
 Branch sync actions such as push, pull, fetch, publish, and undo latest commit are intentionally not rendered on the `Working tree` row. They belong to branch rows, where the target branch is explicit.
 
-File rows are compact. They show a one-letter status indicator such as `A`, `D`, `M`, or `R`, line change counts, and hover/focus-only action buttons. `+x` uses the added-line color and `-y` uses the removed-line color. Zero counts are hidden. Expanding a file row opens an inline diff for that file change in working-tree, commit, stash, branch, and compare file lists. Inline file diffs apply syntax highlighting on their initial expansion; asynchronous worker completion updates the mounted viewer so users do not need to collapse and reopen the row to consume highlighted output. Rename diff requests preserve both the destination path and original path, so `R` rows compare against the deleted source side instead of rendering the destination as a whole new file. Mixed staged-plus-unstaged working-tree rows open the unstaged diff by default because it is the still-editable part of the row; staged-only rows open the staged diff. The row actions are:
+File rows are compact. They show a one-letter status indicator such as `A`, `D`, `M`, or `R`, line change counts, and hover/focus-only action buttons. `+x` uses the added-line color and `-y` uses the removed-line color. Zero counts are hidden. Hovering anywhere on a file row reveals its full repository-relative path and line-change indicators; rename tooltips include the original path as well. The full-width row trigger keeps the card available across the whole item, while a panel-aligned virtual anchor keeps every left-positioned file card on the same horizontal axis as the top-level item cards regardless of list nesting. Expanding a file row opens an inline diff for that file change in working-tree, commit, stash, branch, and compare file lists. Inline file diffs apply syntax highlighting on their initial expansion; asynchronous worker completion updates the mounted viewer so users do not need to collapse and reopen the row to consume highlighted output. Rename diff requests preserve both the destination path and original path, so `R` rows compare against the deleted source side instead of rendering the destination as a whole new file. Mixed staged-plus-unstaged working-tree rows open the unstaged diff by default because it is the still-editable part of the row; staged-only rows open the staged diff. The row actions are:
 
 - Open file in the right-panel File surface.
 - Open in VS Code through the preferred editor or host bridge.
@@ -147,15 +147,17 @@ The working-tree file list is not a nested vertical scroller. Rows render in nor
 
 The `Working tree` context menu includes selected-file commit and stash actions plus a separated destructive `Discard selected changes` action.
 
+The web panel shares the Sidebar v2 tooltip presentation and timing for informational row targets: rich glass cards open to the left after a short delay, close immediately, and switch instantly between adjacent targets. Action buttons nested inside branch, commit, and file rows retain their terse top-positioned label tooltips, while those rich item cards opt out of Base UI's normal parent-close behavior for nested tooltip hover so both remain visible as the pointer moves across the actions.
+
 ## Branch Rows
 
-Branch rows are compact tree items used both in `Actionable` and under `Remotes`. They show branch identity, sync indicators, head labels, and a relative activity date. The sync-state rules are isolated in `SourceControlPanel.logic.ts` so Actionable and Remotes use the same definition of published, behind, ahead, diverged, and local-only.
+Branch rows are compact tree items used both in `Actionable` and under `Remotes`. They show branch identity, sync indicators, head labels, and a relative activity date. Hovering anywhere on a branch row reveals its full name plus available upstream, worktree, sync-state, and readable activity-time details. Anchoring the tooltip to the full row keeps its left-positioned card outside the panel content instead of overlapping the row's right side. Long branch refs and worktree paths use constrained metadata columns with forced wrapping so the animated tooltip viewport does not clip their trailing text. The sync-state rules are isolated in `SourceControlPanel.logic.ts` so Actionable and Remotes use the same definition of published, behind, ahead, diverged, and local-only.
 
 Ahead and behind status is rendered as `↑x` and `↓y`; zero sides are hidden. `↑x` uses the same green as added-line indicators. `↓y` uses the warning/yellow download color. If a branch has both indicators against its same-name sync upstream it is diverged; no separate diverged badge is needed. Ahead/behind counts against a different compare base may still appear in fork/change-request rows or expanded branch details, but those counts do not drive the branch sync action.
 
 Synced local branches shown under `Remotes` use a muted target icon before the branch label. Local-only or not-fully-synced branches use the same branch row model and expose the same expandable details wherever they appear.
 
-Branch action buttons appear only on row hover/focus and are absolutely positioned over the right side of the row. Row-level keyboard expansion only handles key events targeted at the row itself, so pressing Enter or Space on a nested action button does not also expand or collapse the row. Supported branch actions include:
+Branch action buttons appear only on row hover/focus and are absolutely positioned over the right side of the row. Hovering those controls keeps the branch tooltip visible instead of replacing it with a nested action tooltip. Row-level keyboard expansion only handles key events targeted at the row itself, so pressing Enter or Space on a nested action button does not also expand or collapse the row. Supported branch actions include:
 
 - Switch to branch.
 - Fetch, pull, push, publish, or smart sync, using state-specific icons.
@@ -200,7 +202,7 @@ Commit labels are de-duplicated:
   Branch/tag labels classify remote refs using the repository's known remote names, not a slash heuristic, so local branch names such as `feature/login` remain local labels.
 - Tag labels use a tag icon before the tag name.
 
-Commit tooltips are structured panels with author name and avatar, relative and readable commit time, branch/tag labels, message, and line-change indicators.
+Commit tooltips use the shared rich tooltip card and are structured panels with author name and avatar, short SHA, relative and readable commit time, branch/tag labels, message, and line-change indicators. The card remains visible while hovering the commit's action buttons.
 
 Commit rows expand to their changed files. Hover/focus-only commit actions include:
 
@@ -211,7 +213,7 @@ Commit rows expand to their changed files. Hover/focus-only commit actions inclu
 
 ## Stashes
 
-Stashes are listed as `Actionable` tree rows. Each stash shows its message, ref, branch context when available, and relative date. Expanding a stash loads and shows the stash's changed files using the same compact file-change row model used by commits and compare results. Restored stash expansion and cached stash details are keyed by the stash commit hash when Git reports one, falling back to the positional ref only when no hash is available, so `stash@{n}` renumbering after stash create/drop operations does not show details for the wrong stash.
+Stashes are listed as `Actionable` tree rows. Each stash shows its message, ref, branch context when available, and relative date. Hovering the message reveals the full message, ref, branch context, and readable creation time. Expanding a stash loads and shows the stash's changed files using the same compact file-change row model used by commits and compare results. Restored stash expansion and cached stash details are keyed by the stash commit hash when Git reports one, falling back to the positional ref only when no hash is available, so `stash@{n}` renumbering after stash create/drop operations does not show details for the wrong stash.
 
 Stash row actions appear on hover/focus and include:
 
@@ -228,7 +230,7 @@ Creating a stash is done from the dirty `Working tree` row through `Stash select
 - Fetch all remotes.
 - Add remote, via a modal form.
 
-Each remote row shows the remote name and fetch URL. Remote action buttons appear on hover/focus and include fetch and remove.
+Each remote row shows the remote name and fetch URL. Hovering the remote name reveals the complete fetch and push URLs plus its branch count. Remote action buttons appear on hover/focus and include fetch and remove.
 
 When local-only or unpublished branches exist, `Remotes` also shows an `unpublished` tree row with those branches and an `x branch(es)` secondary label. Publishing one branch sets its same-name remote upstream. If the repository has multiple remotes, the panel prompts for the remote to publish to.
 

@@ -105,7 +105,13 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  Tooltip,
+  TooltipCardPopup,
+  TooltipPopup,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../ui/tooltip";
 import {
   type AttentionKind,
   type BranchSyncState,
@@ -728,6 +734,170 @@ function CommitTooltip({
   );
 }
 
+function activeFileTooltipAnchor() {
+  const trigger = document.querySelector<HTMLElement>(
+    "[data-file-change-tooltip-anchor][data-popup-open]",
+  );
+  if (!trigger) return null;
+  const panel = trigger.closest<HTMLElement>("[data-source-control-tooltip-boundary]");
+  if (!panel) return trigger;
+  return {
+    contextElement: trigger,
+    getBoundingClientRect: () => {
+      const triggerRect = trigger.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const left = panelRect.left + 8;
+      return DOMRect.fromRect({
+        x: left,
+        y: triggerRect.top,
+        width: Math.max(0, triggerRect.right - left),
+        height: triggerRect.height,
+      });
+    },
+  };
+}
+
+function FilePathTooltip({ file }: { readonly file: VcsPanelFileChange }) {
+  return (
+    <TooltipCardPopup anchor={activeFileTooltipAnchor} side="left" align="start">
+      <div className="max-w-80 space-y-1.5 px-2 py-1.5 text-left">
+        <div className="break-all font-mono text-xs text-foreground">{file.path}</div>
+        {file.originalPath && file.originalPath !== file.path ? (
+          <TooltipMetadataRow label="Renamed from" value={file.originalPath} />
+        ) : null}
+        <StatLabels insertions={file.insertions} deletions={file.deletions} />
+      </div>
+    </TooltipCardPopup>
+  );
+}
+
+function TooltipMetadataRow({ label, value }: { readonly label: string; readonly value: string }) {
+  return (
+    <div className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] items-start gap-x-1.5 text-muted-foreground">
+      <span>{label}</span>
+      <span className="min-w-0 break-all font-mono leading-4 text-foreground/90">{value}</span>
+    </div>
+  );
+}
+
+function BranchTooltip({
+  branch,
+  displayName,
+  aheadCount,
+  behindCount,
+}: {
+  readonly branch: VcsRef;
+  readonly displayName: string;
+  readonly aheadCount: number;
+  readonly behindCount: number;
+}) {
+  const relativeDate = formatRelativeDate(branch.lastActivityAt);
+  const readableDate = formatReadableDate(branch.lastActivityAt);
+  return (
+    <TooltipCardPopup side="left" align="start">
+      <div className="w-72 max-w-full space-y-2 px-2 py-1.5 text-left">
+        <div className="break-all text-sm font-medium text-foreground">{displayName}</div>
+        <div className="grid gap-1.5 text-xs text-muted-foreground">
+          {branch.name !== displayName ? (
+            <TooltipMetadataRow label="Ref" value={branch.name} />
+          ) : null}
+          {branch.upstreamName ? (
+            <TooltipMetadataRow label="Upstream" value={branch.upstreamName} />
+          ) : null}
+          {branch.worktreePath ? (
+            <TooltipMetadataRow label="Worktree" value={branch.worktreePath} />
+          ) : null}
+          {branch.current || branch.isDefault || aheadCount > 0 || behindCount > 0 ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {branch.current ? <CompactBadge>current</CompactBadge> : null}
+              {branch.isDefault ? <CompactBadge>default</CompactBadge> : null}
+              <BranchSyncLabels aheadCount={aheadCount} behindCount={behindCount} />
+            </div>
+          ) : null}
+          {relativeDate || readableDate ? (
+            <div>
+              {relativeDate ?? "Unknown time"}
+              {readableDate ? ` (${readableDate})` : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </TooltipCardPopup>
+  );
+}
+
+function WorkingTreeTooltip({ changeSet }: { readonly changeSet: WorkingTreeChangeSetView }) {
+  const stats = sumFiles(changeSet.files);
+  return (
+    <TooltipCardPopup side="left" align="start">
+      <div className="w-72 max-w-full space-y-2 px-2 py-1.5 text-left">
+        <div className="text-sm font-medium text-foreground">
+          {changeSet.current ? "Working tree" : "Sibling working tree"}
+        </div>
+        <div className="grid gap-1.5 text-xs text-muted-foreground">
+          <TooltipMetadataRow label="Branch" value={changeSet.branchName ?? "Detached HEAD"} />
+          <TooltipMetadataRow label="Worktree" value={changeSet.worktreePath ?? changeSet.cwd} />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span>
+              {changeSet.files.length === 1 ? "1 file" : `${changeSet.files.length} files`}
+            </span>
+            <StatLabels insertions={stats.insertions} deletions={stats.deletions} />
+          </div>
+        </div>
+      </div>
+    </TooltipCardPopup>
+  );
+}
+
+function RemoteTooltip({ remote }: { readonly remote: VcsPanelRemote }) {
+  return (
+    <TooltipCardPopup side="left" align="start">
+      <div className="w-72 max-w-full space-y-2 px-2 py-1.5 text-left">
+        <div className="break-all text-sm font-medium text-foreground">{remote.name}</div>
+        <div className="grid gap-1.5 text-xs text-muted-foreground">
+          <TooltipMetadataRow label="Fetch" value={remote.fetchUrl ?? "No fetch URL"} />
+          {remote.pushUrl && remote.pushUrl !== remote.fetchUrl ? (
+            <TooltipMetadataRow label="Push" value={remote.pushUrl} />
+          ) : null}
+          <div>
+            {remote.branches.length === 1 ? "1 branch" : `${remote.branches.length} branches`}
+          </div>
+        </div>
+      </div>
+    </TooltipCardPopup>
+  );
+}
+
+function StashTooltip({
+  stash,
+  branchName,
+}: {
+  readonly stash: VcsPanelStash;
+  readonly branchName: string | null;
+}) {
+  const relativeDate = formatRelativeDate(stash.createdAt);
+  const readableDate = formatReadableDate(stash.createdAt);
+  return (
+    <TooltipCardPopup side="left" align="start">
+      <div className="w-72 space-y-2 px-2 py-1.5 text-left">
+        <div className="wrap-break-word text-sm font-medium text-foreground">{stash.message}</div>
+        <div className="grid gap-1.5 text-xs text-muted-foreground">
+          <div>
+            Ref <span className="font-mono text-foreground/90">{stash.refName}</span>
+          </div>
+          {branchName ? <TooltipMetadataRow label="Branch" value={branchName} /> : null}
+          {relativeDate || readableDate ? (
+            <div>
+              {relativeDate ?? "Unknown time"}
+              {readableDate ? ` (${readableDate})` : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </TooltipCardPopup>
+  );
+}
+
 function IconButton({
   label,
   children,
@@ -991,57 +1161,65 @@ function FileChangeList({
         const expanded = isFileExpanded?.(file) ?? false;
         return (
           <div key={fileKey} className="space-y-0.5">
-            <div
-              role={onFileToggle ? "button" : undefined}
-              tabIndex={onFileToggle ? 0 : undefined}
-              className="group relative flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
-              onClick={onFileToggle ? () => onFileToggle(file) : undefined}
-              onKeyDown={
-                onFileToggle
-                  ? (event) => {
-                      if (event.target !== event.currentTarget) return;
-                      if (event.key !== "Enter" && event.key !== " ") return;
-                      event.preventDefault();
-                      onFileToggle(file);
+            <Tooltip preserveOnNestedTriggerHover>
+              <TooltipTrigger
+                render={
+                  <div
+                    role={onFileToggle ? "button" : undefined}
+                    tabIndex={onFileToggle ? 0 : undefined}
+                    data-file-change-tooltip-anchor
+                    className="group relative flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
+                    onClick={onFileToggle ? () => onFileToggle(file) : undefined}
+                    onKeyDown={
+                      onFileToggle
+                        ? (event) => {
+                            if (event.target !== event.currentTarget) return;
+                            if (event.key !== "Enter" && event.key !== " ") return;
+                            event.preventDefault();
+                            onFileToggle(file);
+                          }
+                        : undefined
                     }
-                  : undefined
-              }
-              onContextMenu={
-                onFileContextMenu ? (event) => onFileContextMenu(event, file) : undefined
-              }
-            >
-              {onFileToggle ? (
-                expanded ? (
-                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                )
-              ) : null}
-              <span
-                className={cn(
-                  "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
-                  fileStatusColor(file.status),
-                )}
+                    onContextMenu={
+                      onFileContextMenu ? (event) => onFileContextMenu(event, file) : undefined
+                    }
+                  />
+                }
               >
-                {fileStatusLetter(file.status)}
-              </span>
-              <span className="min-w-0 flex-1 truncate">{file.path}</span>
-              <StatLabels insertions={file.insertions} deletions={file.deletions} />
-              {onOpenFile || onOpenInVsCode ? (
-                <RowActions>
-                  {onOpenFile ? (
-                    <IconButton label="Open file" onClick={() => onOpenFile(file)}>
-                      <FileText className="size-3.5" />
-                    </IconButton>
-                  ) : null}
-                  {onOpenInVsCode ? (
-                    <IconButton label="Open in VS Code" onClick={() => onOpenInVsCode(file)}>
-                      <VisualStudioCode className="size-3.5" />
-                    </IconButton>
-                  ) : null}
-                </RowActions>
-              ) : null}
-            </div>
+                {onFileToggle ? (
+                  expanded ? (
+                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                  )
+                ) : null}
+                <span
+                  className={cn(
+                    "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
+                    fileStatusColor(file.status),
+                  )}
+                >
+                  {fileStatusLetter(file.status)}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{file.path}</span>
+                <StatLabels insertions={file.insertions} deletions={file.deletions} />
+                {onOpenFile || onOpenInVsCode ? (
+                  <RowActions>
+                    {onOpenFile ? (
+                      <IconButton label="Open file" onClick={() => onOpenFile(file)}>
+                        <FileText className="size-3.5" />
+                      </IconButton>
+                    ) : null}
+                    {onOpenInVsCode ? (
+                      <IconButton label="Open in VS Code" onClick={() => onOpenInVsCode(file)}>
+                        <VisualStudioCode className="size-3.5" />
+                      </IconButton>
+                    ) : null}
+                  </RowActions>
+                ) : null}
+              </TooltipTrigger>
+              <FilePathTooltip file={file} />
+            </Tooltip>
             {expanded && renderExpandedFile ? (
               <div className="ml-4 border-l border-border/60 pl-1">{renderExpandedFile(file)}</div>
             ) : null}
@@ -2955,90 +3133,100 @@ export function SourceControlPanel({
       })();
     return (
       <div key={file.path} className="space-y-0.5">
-        <div
-          role="button"
-          tabIndex={0}
-          className="group relative flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
-          onClick={() => toggleFileDiff(file, diffSource, changeSet.cwd)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            event.preventDefault();
-            toggleFileDiff(file, diffSource, changeSet.cwd);
-          }}
-          onContextMenu={(event) =>
-            openContextMenu(
-              event,
-              [
-                { id: "open-file", label: "Open file" },
-                { id: "open-vscode", label: "Open in VS Code" },
-                contextMenuSeparator("discard-separator"),
-                {
-                  id: "discard",
-                  label: "Discard change",
-                  destructive: true,
-                  disabled: isActionRunning(discardKey),
-                  icon: "trash",
-                },
-                contextMenuSeparator("copy-separator"),
-                { id: "copy-filename", label: "Copy filename", icon: "copy" },
-                { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
-              ],
-              {
-                discard: discardFile,
-                "open-file": () => openFilePanel(file.path, changeSet.cwd),
-                "open-vscode": () => openInVsCode(file.path, changeSet.cwd),
-                "copy-filename": () => copyText(fileBasename(file.path)),
-                "copy-full-path": () => copyText(resolvePathLinkTarget(file.path, changeSet.cwd)),
-              },
-            )
-          }
-        >
-          {diffExpanded ? (
-            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-          )}
-          <span onClick={(event) => event.stopPropagation()}>
-            <Checkbox
-              checked={selected}
-              disabled={isActionRunning(discardKey)}
-              aria-label={selected ? `Deselect ${file.path}` : `Select ${file.path}`}
-              onCheckedChange={(checked) =>
-                toggleChangeSetFileSelection(changeSet, file.path, checked === true)
-              }
-            />
-          </span>
-          <span
-            className={cn(
-              "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
-              fileStatusColor(file.status),
-            )}
+        <Tooltip preserveOnNestedTriggerHover>
+          <TooltipTrigger
+            render={
+              <div
+                role="button"
+                tabIndex={0}
+                data-file-change-tooltip-anchor
+                className="group relative flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
+                onClick={() => toggleFileDiff(file, diffSource, changeSet.cwd)}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  toggleFileDiff(file, diffSource, changeSet.cwd);
+                }}
+                onContextMenu={(event) =>
+                  openContextMenu(
+                    event,
+                    [
+                      { id: "open-file", label: "Open file" },
+                      { id: "open-vscode", label: "Open in VS Code" },
+                      contextMenuSeparator("discard-separator"),
+                      {
+                        id: "discard",
+                        label: "Discard change",
+                        destructive: true,
+                        disabled: isActionRunning(discardKey),
+                        icon: "trash",
+                      },
+                      contextMenuSeparator("copy-separator"),
+                      { id: "copy-filename", label: "Copy filename", icon: "copy" },
+                      { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
+                    ],
+                    {
+                      discard: discardFile,
+                      "open-file": () => openFilePanel(file.path, changeSet.cwd),
+                      "open-vscode": () => openInVsCode(file.path, changeSet.cwd),
+                      "copy-filename": () => copyText(fileBasename(file.path)),
+                      "copy-full-path": () =>
+                        copyText(resolvePathLinkTarget(file.path, changeSet.cwd)),
+                    },
+                  )
+                }
+              />
+            }
           >
-            {fileStatusLetter(file.status)}
-          </span>
-          <span className="min-w-0 flex-1 truncate">{file.path}</span>
-          <StatLabels insertions={file.insertions} deletions={file.deletions} />
-          <RowActions>
-            <IconButton
-              label="Discard changes"
-              destructive
-              disabled={isActionRunning(discardKey)}
-              loading={isActionRunning(discardKey)}
-              onClick={discardFile}
+            {diffExpanded ? (
+              <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+            )}
+            <span onClick={(event) => event.stopPropagation()}>
+              <Checkbox
+                checked={selected}
+                disabled={isActionRunning(discardKey)}
+                aria-label={selected ? `Deselect ${file.path}` : `Select ${file.path}`}
+                onCheckedChange={(checked) =>
+                  toggleChangeSetFileSelection(changeSet, file.path, checked === true)
+                }
+              />
+            </span>
+            <span
+              className={cn(
+                "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
+                fileStatusColor(file.status),
+              )}
             >
-              <Trash2 className="size-3.5" />
-            </IconButton>
-            <IconButton label="Open file" onClick={() => openFilePanel(file.path, changeSet.cwd)}>
-              <FileText className="size-3.5" />
-            </IconButton>
-            <IconButton
-              label="Open in VS Code"
-              onClick={() => void openInVsCode(file.path, changeSet.cwd)}
-            >
-              <VisualStudioCode className="size-3.5" />
-            </IconButton>
-          </RowActions>
-        </div>
+              {fileStatusLetter(file.status)}
+            </span>
+            <span className="min-w-0 flex-1 truncate">{file.path}</span>
+            <StatLabels insertions={file.insertions} deletions={file.deletions} />
+            <RowActions>
+              <IconButton
+                label="Discard changes"
+                destructive
+                disabled={isActionRunning(discardKey)}
+                loading={isActionRunning(discardKey)}
+                onClick={discardFile}
+              >
+                <Trash2 className="size-3.5" />
+              </IconButton>
+              <IconButton label="Open file" onClick={() => openFilePanel(file.path, changeSet.cwd)}>
+                <FileText className="size-3.5" />
+              </IconButton>
+              <IconButton
+                label="Open in VS Code"
+                onClick={() => void openInVsCode(file.path, changeSet.cwd)}
+              >
+                <VisualStudioCode className="size-3.5" />
+              </IconButton>
+            </RowActions>
+          </TooltipTrigger>
+          <FilePathTooltip file={file} />
+        </Tooltip>
         {diffExpanded ? (
           <div className="ml-4 border-l border-border/60 pl-1">
             {renderFileDiff(file, diffSource, changeSet.cwd)}
@@ -3066,7 +3254,7 @@ export function SourceControlPanel({
     const canUndoCommit = options.undoBranchName !== undefined;
     return (
       <div key={commit.sha} className="space-y-0.5">
-        <Tooltip>
+        <Tooltip preserveOnNestedTriggerHover>
           <TooltipTrigger
             render={
               <div
@@ -3174,12 +3362,12 @@ export function SourceControlPanel({
               </div>
             }
           />
-          <TooltipPopup side="top" className="max-w-80">
+          <TooltipCardPopup side="left" align="start">
             <CommitTooltip
               commit={commit}
               remoteNames={snapshot.remotes.map((remote) => remote.name)}
             />
-          </TooltipPopup>
+          </TooltipCardPopup>
         </Tooltip>
         {expanded ? (
           <div className="ml-2 border-l border-border/60 pl-1">
@@ -3396,147 +3584,167 @@ export function SourceControlPanel({
           : runBranchSync(branch);
     return (
       <div key={key} className="space-y-0.5">
-        <div
-          role="button"
-          tabIndex={0}
-          className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
-          onClick={() => toggleBranchTree(key, branch, options.compareBaseRef, detailsKey)}
-          onKeyDown={(event) =>
-            toggleBranchTreeFromKeyboard(key, branch, event, options.compareBaseRef, detailsKey)
-          }
-          onContextMenu={(event) =>
-            openContextMenu(
-              event,
-              [
-                { id: "switch", label: "Checkout", disabled: switchDisabled },
-                { id: "sync", label: syncLabel, disabled: syncDisabled },
-                ...(current && aheadCount > 0
-                  ? [
+        <Tooltip preserveOnNestedTriggerHover>
+          <TooltipTrigger
+            render={
+              <div
+                role="button"
+                tabIndex={0}
+                className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+                onClick={() => toggleBranchTree(key, branch, options.compareBaseRef, detailsKey)}
+                onKeyDown={(event) =>
+                  toggleBranchTreeFromKeyboard(
+                    key,
+                    branch,
+                    event,
+                    options.compareBaseRef,
+                    detailsKey,
+                  )
+                }
+                onContextMenu={(event) =>
+                  openContextMenu(
+                    event,
+                    [
+                      { id: "switch", label: "Checkout", disabled: switchDisabled },
+                      { id: "sync", label: syncLabel, disabled: syncDisabled },
+                      ...(current && aheadCount > 0
+                        ? [
+                            {
+                              id: "undo-latest",
+                              label: "Undo latest commit",
+                              disabled: isActionRunning(undoKey),
+                            },
+                          ]
+                        : []),
+                      ...(!current
+                        ? [
+                            {
+                              id: "merge",
+                              label: "Merge branch into current",
+                              disabled: isActionRunning(mergeKey),
+                            },
+                            {
+                              id: "rebase",
+                              label: "Rebase current branch onto branch",
+                              disabled: isActionRunning(rebaseKey),
+                            },
+                          ]
+                        : []),
+                      contextMenuSeparator("delete-separator-before"),
                       {
-                        id: "undo-latest",
-                        label: "Undo latest commit",
-                        disabled: isActionRunning(undoKey),
+                        id: "delete",
+                        label: "Delete branch",
+                        destructive: true,
+                        disabled: deleteDisabled,
+                        icon: "trash",
                       },
-                    ]
-                  : []),
-                ...(!current
-                  ? [
-                      {
-                        id: "merge",
-                        label: "Merge branch into current",
-                        disabled: isActionRunning(mergeKey),
-                      },
-                      {
-                        id: "rebase",
-                        label: "Rebase current branch onto branch",
-                        disabled: isActionRunning(rebaseKey),
-                      },
-                    ]
-                  : []),
-                contextMenuSeparator("delete-separator-before"),
-                {
-                  id: "delete",
-                  label: "Delete branch",
-                  destructive: true,
-                  disabled: deleteDisabled,
-                  icon: "trash",
-                },
-                contextMenuSeparator("delete-separator-after"),
-                { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
-              ],
-              {
-                switch: () => switchRef(branch.name),
-                sync: () => runSync(),
-                delete: () => deleteBranch(branch, false),
-                "undo-latest": () => undoCommit(branch.name),
-                merge: () => mergeBranchIntoCurrent(branch.name),
-                rebase: () => rebaseCurrentOnto(branch.name),
-                "copy-branch-name": () => copyText(branch.name),
-              },
-            )
-          }
-        >
-          {expanded ? (
-            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-          )}
-          <AttentionIcon kind={attention} />
-          <span className="min-w-0 flex-1 truncate text-sm">{branch.name}</span>
-          <div className="pointer-events-none ml-auto flex min-w-0 shrink-0 items-center gap-1">
-            {hasUpstream && aheadCount === 0 && behindCount === 0 ? (
-              <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground">
-                <SyncedIcon />
-              </span>
-            ) : null}
-            {!hasUpstream ? <CompactBadge>local</CompactBadge> : null}
-            {options.secondaryBadge}
-            {current ? <CompactBadge>current</CompactBadge> : null}
-            {branch.isDefault ? <CompactBadge>default</CompactBadge> : null}
-            {branch.worktreePath && !current ? <CompactBadge>worktree</CompactBadge> : null}
-            <BranchSyncLabels aheadCount={aheadCount} behindCount={behindCount} />
-            {relativeDate ? (
-              <span className="shrink-0 text-[11px] text-muted-foreground">{relativeDate}</span>
-            ) : null}
-          </div>
-          <RowActions>
-            <IconButton
-              label="Checkout"
-              disabled={switchDisabled}
-              loading={isActionRunning(switchKey)}
-              onClick={() => void switchRef(branch.name)}
-            >
-              <GitBranch className="size-3.5" />
-            </IconButton>
-            <IconButton
-              label={syncLabel}
-              disabled={syncDisabled}
-              loading={isActionRunning(syncKey) || isActionRunning(fetchKey)}
-              onClick={(event) => runSync(event)}
-            >
-              <BranchSyncActionIcon state={syncState} />
-            </IconButton>
-            <IconButton
-              label="Delete branch. Shift: force."
-              destructive
-              disabled={deleteDisabled}
-              loading={isActionRunning(deleteKey)}
-              onClick={(event) => deleteBranch(branch, isActionForced(event))}
-            >
-              <Trash2 className="size-3.5" />
-            </IconButton>
-            {current && aheadCount > 0 ? (
-              <IconButton
-                label="Undo latest commit"
-                disabled={isActionRunning(undoKey)}
-                loading={isActionRunning(undoKey)}
-                onClick={() => undoCommit(branch.name)}
+                      contextMenuSeparator("delete-separator-after"),
+                      { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
+                    ],
+                    {
+                      switch: () => switchRef(branch.name),
+                      sync: () => runSync(),
+                      delete: () => deleteBranch(branch, false),
+                      "undo-latest": () => undoCommit(branch.name),
+                      merge: () => mergeBranchIntoCurrent(branch.name),
+                      rebase: () => rebaseCurrentOnto(branch.name),
+                      "copy-branch-name": () => copyText(branch.name),
+                    },
+                  )
+                }
               >
-                <Undo2 className="size-3.5" />
-              </IconButton>
-            ) : null}
-            {!current ? (
-              <>
-                <IconButton
-                  label="Merge branch into current"
-                  disabled={isActionRunning(mergeKey)}
-                  loading={isActionRunning(mergeKey)}
-                  onClick={() => mergeBranchIntoCurrent(branch.name)}
-                >
-                  <GitMerge className="size-3.5" />
-                </IconButton>
-                <IconButton
-                  label="Rebase current branch onto branch"
-                  disabled={isActionRunning(rebaseKey)}
-                  loading={isActionRunning(rebaseKey)}
-                  onClick={() => rebaseCurrentOnto(branch.name)}
-                >
-                  <GitPullRequestArrow className="size-3.5" />
-                </IconButton>
-              </>
-            ) : null}
-          </RowActions>
-        </div>
+                {expanded ? (
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <AttentionIcon kind={attention} />
+                <span className="min-w-0 flex-1 truncate text-sm">{branch.name}</span>
+                <div className="pointer-events-none ml-auto flex min-w-0 shrink-0 items-center gap-1">
+                  {hasUpstream && aheadCount === 0 && behindCount === 0 ? (
+                    <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground">
+                      <SyncedIcon />
+                    </span>
+                  ) : null}
+                  {!hasUpstream ? <CompactBadge>local</CompactBadge> : null}
+                  {options.secondaryBadge}
+                  {current ? <CompactBadge>current</CompactBadge> : null}
+                  {branch.isDefault ? <CompactBadge>default</CompactBadge> : null}
+                  {branch.worktreePath && !current ? <CompactBadge>worktree</CompactBadge> : null}
+                  <BranchSyncLabels aheadCount={aheadCount} behindCount={behindCount} />
+                  {relativeDate ? (
+                    <span className="shrink-0 text-[11px] text-muted-foreground">
+                      {relativeDate}
+                    </span>
+                  ) : null}
+                </div>
+                <RowActions>
+                  <IconButton
+                    label="Checkout"
+                    disabled={switchDisabled}
+                    loading={isActionRunning(switchKey)}
+                    onClick={() => void switchRef(branch.name)}
+                  >
+                    <GitBranch className="size-3.5" />
+                  </IconButton>
+                  <IconButton
+                    label={syncLabel}
+                    disabled={syncDisabled}
+                    loading={isActionRunning(syncKey) || isActionRunning(fetchKey)}
+                    onClick={(event) => runSync(event)}
+                  >
+                    <BranchSyncActionIcon state={syncState} />
+                  </IconButton>
+                  <IconButton
+                    label="Delete branch. Shift: force."
+                    destructive
+                    disabled={deleteDisabled}
+                    loading={isActionRunning(deleteKey)}
+                    onClick={(event) => deleteBranch(branch, isActionForced(event))}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </IconButton>
+                  {current && aheadCount > 0 ? (
+                    <IconButton
+                      label="Undo latest commit"
+                      disabled={isActionRunning(undoKey)}
+                      loading={isActionRunning(undoKey)}
+                      onClick={() => undoCommit(branch.name)}
+                    >
+                      <Undo2 className="size-3.5" />
+                    </IconButton>
+                  ) : null}
+                  {!current ? (
+                    <>
+                      <IconButton
+                        label="Merge branch into current"
+                        disabled={isActionRunning(mergeKey)}
+                        loading={isActionRunning(mergeKey)}
+                        onClick={() => mergeBranchIntoCurrent(branch.name)}
+                      >
+                        <GitMerge className="size-3.5" />
+                      </IconButton>
+                      <IconButton
+                        label="Rebase current branch onto branch"
+                        disabled={isActionRunning(rebaseKey)}
+                        loading={isActionRunning(rebaseKey)}
+                        onClick={() => rebaseCurrentOnto(branch.name)}
+                      >
+                        <GitPullRequestArrow className="size-3.5" />
+                      </IconButton>
+                    </>
+                  ) : null}
+                </RowActions>
+              </div>
+            }
+          />
+          <BranchTooltip
+            branch={branch}
+            displayName={branch.name}
+            aheadCount={aheadCount}
+            behindCount={behindCount}
+          />
+        </Tooltip>
         {expanded && details ? renderBranchTree(branch, details, detailsKey) : null}
         {expanded && !details && loadingDetails ? (
           <div className="ml-2 border-l border-border/60 px-2 py-1 text-xs text-muted-foreground">
@@ -3578,153 +3786,169 @@ export function SourceControlPanel({
       );
     return (
       <div key={`${branch.remoteName ?? "local"}:${displayName}`} className="space-y-0.5">
-        <div
-          role="button"
-          tabIndex={0}
-          className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
-          onClick={() => toggleBranchTree(key, branch)}
-          onKeyDown={(event) => toggleBranchTreeFromKeyboard(key, branch, event)}
-          onContextMenu={(event) =>
-            openContextMenu(
-              event,
-              [
-                { id: "switch", label: "Checkout", disabled: switchDisabled },
-                { id: "sync", label: syncLabel, disabled: syncDisabled },
-                ...(current && aheadCount > 0
-                  ? [
+        <Tooltip preserveOnNestedTriggerHover>
+          <TooltipTrigger
+            render={
+              <div
+                role="button"
+                tabIndex={0}
+                className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+                onClick={() => toggleBranchTree(key, branch)}
+                onKeyDown={(event) => toggleBranchTreeFromKeyboard(key, branch, event)}
+                onContextMenu={(event) =>
+                  openContextMenu(
+                    event,
+                    [
+                      { id: "switch", label: "Checkout", disabled: switchDisabled },
+                      { id: "sync", label: syncLabel, disabled: syncDisabled },
+                      ...(current && aheadCount > 0
+                        ? [
+                            {
+                              id: "undo-latest",
+                              label: "Undo latest commit",
+                              disabled: isActionRunning(undoKey),
+                            },
+                          ]
+                        : []),
+                      ...(!current
+                        ? [
+                            {
+                              id: "merge",
+                              label: "Merge branch into current",
+                              disabled: isActionRunning(mergeKey),
+                            },
+                            {
+                              id: "rebase",
+                              label: "Rebase current branch onto branch",
+                              disabled: isActionRunning(rebaseKey),
+                            },
+                          ]
+                        : []),
+                      contextMenuSeparator("delete-separator-before"),
                       {
-                        id: "undo-latest",
-                        label: "Undo latest commit",
-                        disabled: isActionRunning(undoKey),
+                        id: "delete",
+                        label: hasLocalBranch ? "Delete branch" : "Delete remote branch",
+                        destructive: true,
+                        disabled: deleteDisabled,
+                        icon: "trash",
                       },
-                    ]
-                  : []),
-                ...(!current
-                  ? [
-                      {
-                        id: "merge",
-                        label: "Merge branch into current",
-                        disabled: isActionRunning(mergeKey),
-                      },
-                      {
-                        id: "rebase",
-                        label: "Rebase current branch onto branch",
-                        disabled: isActionRunning(rebaseKey),
-                      },
-                    ]
-                  : []),
-                contextMenuSeparator("delete-separator-before"),
-                {
-                  id: "delete",
-                  label: hasLocalBranch ? "Delete branch" : "Delete remote branch",
-                  destructive: true,
-                  disabled: deleteDisabled,
-                  icon: "trash",
-                },
-                contextMenuSeparator("delete-separator-after"),
-                { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
-              ],
-              {
-                switch: () => switchRef(branch.name),
-                sync: () => (hasLocalBranch ? runBranchSync(branch) : fetchRemoteBranch()),
-                delete: () => deleteBranch(branch, false),
-                "undo-latest": () => undoCommit(branch.name),
-                merge: () => mergeBranchIntoCurrent(branch.name),
-                rebase: () => rebaseCurrentOnto(branch.name),
-                "copy-branch-name": () => copyText(displayName),
-              },
-            )
-          }
-        >
-          {expanded ? (
-            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-          )}
-          {hasLocalBranch ? (
-            <SyncedIcon className="size-3.5 text-muted-foreground" />
-          ) : (
-            <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
-          )}
-          <span className="min-w-0 flex-1 truncate text-sm">{displayName}</span>
-          <div className="pointer-events-none ml-auto flex min-w-0 shrink-0 items-center gap-1">
-            {hasLocalBranch && !hasUpstream ? <CompactBadge>local</CompactBadge> : null}
-            {current ? <CompactBadge>current</CompactBadge> : null}
-            {branch.isDefault ? <CompactBadge>default</CompactBadge> : null}
-            <BranchSyncLabels aheadCount={aheadCount} behindCount={behindCount} />
-            {relativeDate ? (
-              <span className="shrink-0 text-[11px] text-muted-foreground">{relativeDate}</span>
-            ) : null}
-          </div>
-          <RowActions>
-            <IconButton
-              label="Checkout"
-              disabled={switchDisabled}
-              loading={isActionRunning(switchKey)}
-              onClick={() => void switchRef(branch.name)}
-            >
-              <GitBranch className="size-3.5" />
-            </IconButton>
-            {hasLocalBranch ? (
-              <IconButton
-                label={branchSyncActionLabel(syncState)}
-                disabled={syncDisabled}
-                loading={isActionRunning(syncKey) || isActionRunning(fetchKey)}
-                onClick={(event) => syncBranch(branch, event)}
+                      contextMenuSeparator("delete-separator-after"),
+                      { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
+                    ],
+                    {
+                      switch: () => switchRef(branch.name),
+                      sync: () => (hasLocalBranch ? runBranchSync(branch) : fetchRemoteBranch()),
+                      delete: () => deleteBranch(branch, false),
+                      "undo-latest": () => undoCommit(branch.name),
+                      merge: () => mergeBranchIntoCurrent(branch.name),
+                      rebase: () => rebaseCurrentOnto(branch.name),
+                      "copy-branch-name": () => copyText(displayName),
+                    },
+                  )
+                }
               >
-                <BranchSyncActionIcon state={syncState} />
-              </IconButton>
-            ) : (
-              <IconButton
-                label="Fetch branch"
-                disabled={syncDisabled}
-                loading={isActionRunning(fetchKey)}
-                onClick={fetchRemoteBranch}
-              >
-                <RefreshCw className="size-3.5" />
-              </IconButton>
-            )}
-            <IconButton
-              label={hasLocalBranch ? "Delete branch. Shift: force." : "Delete remote branch"}
-              destructive
-              disabled={deleteDisabled}
-              loading={isActionRunning(deleteKey)}
-              onClick={(event) => deleteBranch(branch, hasLocalBranch && isActionForced(event))}
-            >
-              <Trash2 className="size-3.5" />
-            </IconButton>
-            {current && aheadCount > 0 ? (
-              <IconButton
-                label="Undo latest commit"
-                disabled={isActionRunning(undoKey)}
-                loading={isActionRunning(undoKey)}
-                onClick={() => undoCommit(branch.name)}
-              >
-                <Undo2 className="size-3.5" />
-              </IconButton>
-            ) : null}
-            {!current ? (
-              <>
-                <IconButton
-                  label="Merge branch into current"
-                  disabled={isActionRunning(mergeKey)}
-                  loading={isActionRunning(mergeKey)}
-                  onClick={() => mergeBranchIntoCurrent(branch.name)}
-                >
-                  <GitMerge className="size-3.5" />
-                </IconButton>
-                <IconButton
-                  label="Rebase current branch onto branch"
-                  disabled={isActionRunning(rebaseKey)}
-                  loading={isActionRunning(rebaseKey)}
-                  onClick={() => rebaseCurrentOnto(branch.name)}
-                >
-                  <GitPullRequestArrow className="size-3.5" />
-                </IconButton>
-              </>
-            ) : null}
-          </RowActions>
-        </div>
+                {expanded ? (
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                )}
+                {hasLocalBranch ? (
+                  <SyncedIcon className="size-3.5 text-muted-foreground" />
+                ) : (
+                  <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <span className="min-w-0 flex-1 truncate text-sm">{displayName}</span>
+                <div className="pointer-events-none ml-auto flex min-w-0 shrink-0 items-center gap-1">
+                  {hasLocalBranch && !hasUpstream ? <CompactBadge>local</CompactBadge> : null}
+                  {current ? <CompactBadge>current</CompactBadge> : null}
+                  {branch.isDefault ? <CompactBadge>default</CompactBadge> : null}
+                  <BranchSyncLabels aheadCount={aheadCount} behindCount={behindCount} />
+                  {relativeDate ? (
+                    <span className="shrink-0 text-[11px] text-muted-foreground">
+                      {relativeDate}
+                    </span>
+                  ) : null}
+                </div>
+                <RowActions>
+                  <IconButton
+                    label="Checkout"
+                    disabled={switchDisabled}
+                    loading={isActionRunning(switchKey)}
+                    onClick={() => void switchRef(branch.name)}
+                  >
+                    <GitBranch className="size-3.5" />
+                  </IconButton>
+                  {hasLocalBranch ? (
+                    <IconButton
+                      label={branchSyncActionLabel(syncState)}
+                      disabled={syncDisabled}
+                      loading={isActionRunning(syncKey) || isActionRunning(fetchKey)}
+                      onClick={(event) => syncBranch(branch, event)}
+                    >
+                      <BranchSyncActionIcon state={syncState} />
+                    </IconButton>
+                  ) : (
+                    <IconButton
+                      label="Fetch branch"
+                      disabled={syncDisabled}
+                      loading={isActionRunning(fetchKey)}
+                      onClick={fetchRemoteBranch}
+                    >
+                      <RefreshCw className="size-3.5" />
+                    </IconButton>
+                  )}
+                  <IconButton
+                    label={hasLocalBranch ? "Delete branch. Shift: force." : "Delete remote branch"}
+                    destructive
+                    disabled={deleteDisabled}
+                    loading={isActionRunning(deleteKey)}
+                    onClick={(event) =>
+                      deleteBranch(branch, hasLocalBranch && isActionForced(event))
+                    }
+                  >
+                    <Trash2 className="size-3.5" />
+                  </IconButton>
+                  {current && aheadCount > 0 ? (
+                    <IconButton
+                      label="Undo latest commit"
+                      disabled={isActionRunning(undoKey)}
+                      loading={isActionRunning(undoKey)}
+                      onClick={() => undoCommit(branch.name)}
+                    >
+                      <Undo2 className="size-3.5" />
+                    </IconButton>
+                  ) : null}
+                  {!current ? (
+                    <>
+                      <IconButton
+                        label="Merge branch into current"
+                        disabled={isActionRunning(mergeKey)}
+                        loading={isActionRunning(mergeKey)}
+                        onClick={() => mergeBranchIntoCurrent(branch.name)}
+                      >
+                        <GitMerge className="size-3.5" />
+                      </IconButton>
+                      <IconButton
+                        label="Rebase current branch onto branch"
+                        disabled={isActionRunning(rebaseKey)}
+                        loading={isActionRunning(rebaseKey)}
+                        onClick={() => rebaseCurrentOnto(branch.name)}
+                      >
+                        <GitPullRequestArrow className="size-3.5" />
+                      </IconButton>
+                    </>
+                  ) : null}
+                </RowActions>
+              </div>
+            }
+          />
+          <BranchTooltip
+            branch={branch}
+            displayName={displayName}
+            aheadCount={aheadCount}
+            behindCount={behindCount}
+          />
+        </Tooltip>
         {expanded && details ? renderBranchTree(branch, details, branch.name) : null}
         {expanded && !details && loadingDetails ? (
           <div className="ml-2 border-l border-border/60 px-2 py-1 text-xs text-muted-foreground">
@@ -3793,7 +4017,12 @@ export function SourceControlPanel({
           ) : (
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
           )}
-          <span className="min-w-0 flex-1 truncate text-sm">{remote.name}</span>
+          <Tooltip>
+            <TooltipTrigger render={<span className="min-w-0 flex-1 truncate text-sm" />}>
+              {remote.name}
+            </TooltipTrigger>
+            <RemoteTooltip remote={remote} />
+          </Tooltip>
           <span className="min-w-0 flex-[2] truncate text-muted-foreground">
             {remote.fetchUrl ?? "No fetch URL"}
           </span>
@@ -3960,7 +4189,12 @@ export function SourceControlPanel({
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
           )}
           <Archive className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate">{stash.message}</span>
+          <Tooltip>
+            <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
+              {stash.message}
+            </TooltipTrigger>
+            <StashTooltip stash={stash} branchName={branchName} />
+          </Tooltip>
           {relativeDate ? (
             <span className="shrink-0 text-[11px] text-muted-foreground">{relativeDate}</span>
           ) : null}
@@ -4394,70 +4628,77 @@ export function SourceControlPanel({
     };
     return (
       <div className="space-y-0.5">
-        <div
-          role="button"
-          tabIndex={0}
-          className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
-          onClick={() => toggleTree(key, changeSet.current)}
-          onKeyDown={(event) => toggleTreeFromKeyboard(key, event, changeSet.current)}
-          onContextMenu={(event) =>
-            openContextMenu(
-              event,
-              [
-                {
-                  id: "commit-selected",
-                  label: "Commit selected changes",
-                  disabled:
-                    isActionRunning(commitActionKey) ||
-                    (changeSet.current && gitAction.isPending) ||
-                    selectedFiles.length === 0,
-                },
-                {
-                  id: "stash-selected",
-                  label: "Stash selected changes",
-                  disabled: isActionRunning(stashActionKey) || selectedFiles.length === 0,
-                },
-                contextMenuSeparator("discard-separator-before"),
-                {
-                  id: "discard-selected",
-                  label: "Discard selected changes",
-                  destructive: true,
-                  disabled: isActionRunning(discardActionKey) || selectedFiles.length === 0,
-                  icon: "trash",
-                },
-              ],
-              {
-                "commit-selected": commitSelected,
-                "stash-selected": stashSelected,
-                "discard-selected": discardSelected,
-              },
-            )
-          }
-        >
-          {expanded ? (
-            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-          )}
-          <AttentionIcon kind={attention} />
-          <span className="min-w-0 flex-1 truncate text-sm">{changeSet.label}</span>
-          <div className="ml-auto flex shrink-0 items-center gap-1">
-            {changeSet.current && currentBranch ? (
-              <CompactBadge>{currentBranch.name}</CompactBadge>
-            ) : null}
-            {!changeSet.current && changeSet.worktreePath ? (
-              <CompactBadge>{fileBasename(changeSet.worktreePath)}</CompactBadge>
-            ) : null}
-            {changeSet.files.length > 0 ? (
-              <span className="shrink-0 text-[11px] text-muted-foreground">
-                {changeSet.files.length === 1 ? "1 file" : `${changeSet.files.length} files`}
-              </span>
-            ) : (
-              <span className="shrink-0 text-[11px] text-muted-foreground">clean</span>
-            )}
-            <BranchSyncLabels aheadCount={aheadCount} behindCount={behindCount} />
-          </div>
-        </div>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <div
+                role="button"
+                tabIndex={0}
+                className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+                onClick={() => toggleTree(key, changeSet.current)}
+                onKeyDown={(event) => toggleTreeFromKeyboard(key, event, changeSet.current)}
+                onContextMenu={(event) =>
+                  openContextMenu(
+                    event,
+                    [
+                      {
+                        id: "commit-selected",
+                        label: "Commit selected changes",
+                        disabled:
+                          isActionRunning(commitActionKey) ||
+                          (changeSet.current && gitAction.isPending) ||
+                          selectedFiles.length === 0,
+                      },
+                      {
+                        id: "stash-selected",
+                        label: "Stash selected changes",
+                        disabled: isActionRunning(stashActionKey) || selectedFiles.length === 0,
+                      },
+                      contextMenuSeparator("discard-separator-before"),
+                      {
+                        id: "discard-selected",
+                        label: "Discard selected changes",
+                        destructive: true,
+                        disabled: isActionRunning(discardActionKey) || selectedFiles.length === 0,
+                        icon: "trash",
+                      },
+                    ],
+                    {
+                      "commit-selected": commitSelected,
+                      "stash-selected": stashSelected,
+                      "discard-selected": discardSelected,
+                    },
+                  )
+                }
+              >
+                {expanded ? (
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <AttentionIcon kind={attention} />
+                <span className="min-w-0 flex-1 truncate text-sm">{changeSet.label}</span>
+                <div className="ml-auto flex shrink-0 items-center gap-1">
+                  {changeSet.current && currentBranch ? (
+                    <CompactBadge>{currentBranch.name}</CompactBadge>
+                  ) : null}
+                  {!changeSet.current && changeSet.worktreePath ? (
+                    <CompactBadge>{fileBasename(changeSet.worktreePath)}</CompactBadge>
+                  ) : null}
+                  {changeSet.files.length > 0 ? (
+                    <span className="shrink-0 text-[11px] text-muted-foreground">
+                      {changeSet.files.length === 1 ? "1 file" : `${changeSet.files.length} files`}
+                    </span>
+                  ) : (
+                    <span className="shrink-0 text-[11px] text-muted-foreground">clean</span>
+                  )}
+                  <BranchSyncLabels aheadCount={aheadCount} behindCount={behindCount} />
+                </div>
+              </div>
+            }
+          />
+          <WorkingTreeTooltip changeSet={changeSet} />
+        </Tooltip>
         {expanded ? (
           <div className="ml-2 border-l border-border/60 pl-1">
             {renderChangesSection(changeSet)}
@@ -4531,51 +4772,57 @@ export function SourceControlPanel({
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-        {repositorySummary}
-        <div ref={containerRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {SECTION_ORDER.map((key) => {
-            switch (key) {
-              case "work":
-                return section(
-                  key,
-                  workSection,
-                  <IconButton
-                    label="Fetch"
-                    disabled={isActionRunning("work-fetch")}
-                    loading={isActionRunning("work-fetch")}
-                    onClick={() => void fetchActionableBranches(true)}
-                  >
-                    <RefreshCw className="size-3.5" />
-                  </IconButton>,
-                );
-              case "remotes":
-                return section(
-                  key,
-                  remotesSection,
-                  <div className="flex items-center gap-0.5">
+      <TooltipProvider delay={150} closeDelay={0} timeout={400}>
+        <div
+          data-source-control-tooltip-boundary
+          className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+        >
+          {repositorySummary}
+          <div ref={containerRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            {SECTION_ORDER.map((key) => {
+              switch (key) {
+                case "work":
+                  return section(
+                    key,
+                    workSection,
                     <IconButton
-                      label="Fetch all remotes"
-                      disabled={isActionRunning("remotes-fetch-all")}
-                      loading={isActionRunning("remotes-fetch-all")}
-                      onClick={() =>
-                        void runAction(
-                          "remotes-fetch-all",
-                          () => api?.vcs.fetchAllRemotes({ cwd, force: true }) ?? Promise.resolve(),
-                        )
-                      }
+                      label="Fetch"
+                      disabled={isActionRunning("work-fetch")}
+                      loading={isActionRunning("work-fetch")}
+                      onClick={() => void fetchActionableBranches(true)}
                     >
                       <RefreshCw className="size-3.5" />
-                    </IconButton>
-                    <IconButton label="Add remote" onClick={() => setAddRemoteOpen(true)}>
-                      <Plus className="size-3.5" />
-                    </IconButton>
-                  </div>,
-                );
-            }
-          })}
+                    </IconButton>,
+                  );
+                case "remotes":
+                  return section(
+                    key,
+                    remotesSection,
+                    <div className="flex items-center gap-0.5">
+                      <IconButton
+                        label="Fetch all remotes"
+                        disabled={isActionRunning("remotes-fetch-all")}
+                        loading={isActionRunning("remotes-fetch-all")}
+                        onClick={() =>
+                          void runAction(
+                            "remotes-fetch-all",
+                            () =>
+                              api?.vcs.fetchAllRemotes({ cwd, force: true }) ?? Promise.resolve(),
+                          )
+                        }
+                      >
+                        <RefreshCw className="size-3.5" />
+                      </IconButton>
+                      <IconButton label="Add remote" onClick={() => setAddRemoteOpen(true)}>
+                        <Plus className="size-3.5" />
+                      </IconButton>
+                    </div>,
+                  );
+              }
+            })}
+          </div>
         </div>
-      </div>
+      </TooltipProvider>
       <Dialog open={addRemoteOpen} onOpenChange={setAddRemoteOpen}>
         <DialogPopup>
           <DialogHeader>
