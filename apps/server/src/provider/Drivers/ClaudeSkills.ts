@@ -53,17 +53,25 @@ function parseSkillFrontmatter(contents: string): {
 }
 
 /**
- * Resolve the Claude config directory the CLI would use: the instance's
- * `homePath` (`CLAUDE_CONFIG_DIR`) when set, otherwise `~/.claude`.
+ * Resolve the Claude config directory the CLI would use, matching the
+ * precedence the spawned CLI sees: the instance's `homePath` (exported as
+ * `CLAUDE_CONFIG_DIR` by `makeClaudeEnvironment`), then a `CLAUDE_CONFIG_DIR`
+ * already present in the process environment, then `~/.claude`.
  */
 const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
+  environment: NodeJS.ProcessEnv,
 ): Effect.fn.Return<string, never, Path.Path> {
   const path = yield* Path.Path;
   const homePath = config.homePath.trim();
-  return homePath.length > 0
-    ? path.resolve(expandHomePath(homePath))
-    : path.join(NodeOS.homedir(), ".claude");
+  if (homePath.length > 0) {
+    return path.resolve(expandHomePath(homePath));
+  }
+  const environmentConfigDir = environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
+  if (environmentConfigDir.length > 0) {
+    return path.resolve(expandHomePath(environmentConfigDir));
+  }
+  return path.join(NodeOS.homedir(), ".claude");
 });
 
 /**
@@ -76,10 +84,11 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   cwd?: string,
+  environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configDirPath = yield* resolveClaudeConfigDirPath(config);
+  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env);
 
   const roots: ReadonlyArray<{ directory: string; scope: ClaudeSkillScope }> = [
     { directory: path.join(configDirPath, "skills"), scope: "user" },

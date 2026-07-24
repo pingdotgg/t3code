@@ -120,6 +120,46 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("honors CLAUDE_CONFIG_DIR from the environment when homePath is unset", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const environmentConfigDir = path.join(tempDir, "env-config");
+
+      yield* writeSkill(
+        path.join(environmentConfigDir, "skills"),
+        "env-skill",
+        ["---", "name: env-skill", "description: From env config dir.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: "" }, undefined, {
+        CLAUDE_CONFIG_DIR: environmentConfigDir,
+      });
+
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["env-skill"],
+      );
+
+      // An explicit homePath wins over the environment variable, matching
+      // makeClaudeEnvironment which overwrites CLAUDE_CONFIG_DIR for the CLI.
+      const explicitHome = path.join(tempDir, "explicit-home");
+      yield* writeSkill(
+        path.join(explicitHome, "skills"),
+        "explicit-skill",
+        ["---", "name: explicit-skill", "---"].join("\n"),
+      );
+      const explicitSkills = yield* discoverClaudeSkills({ homePath: explicitHome }, undefined, {
+        CLAUDE_CONFIG_DIR: environmentConfigDir,
+      });
+      assert.deepEqual(
+        explicitSkills.map((skill) => skill.name),
+        ["explicit-skill"],
+      );
+    }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
