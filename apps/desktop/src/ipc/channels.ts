@@ -13,9 +13,12 @@ export const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 export const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 export const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 export const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
+export const GET_BACKEND_MODE_STATE_CHANNEL = "desktop:get-backend-mode-state";
+export const SET_BACKEND_MODE_CHANNEL = "desktop:set-backend-mode";
 export const GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL = "desktop:get-local-environment-bootstraps";
 export const GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL =
   "desktop:get-local-environment-bearer-token";
+export const DISCOVER_LOCAL_SERVERS_CHANNEL = "desktop:discover-local-servers";
 export const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
 export const SET_CLIENT_SETTINGS_CHANNEL = "desktop:set-client-settings";
 export const GET_CONNECTION_CATALOG_CHANNEL = "desktop:get-connection-catalog";

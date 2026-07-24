@@ -7,7 +7,7 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { type ReactNode, memo, useCallback, useMemo, useState } from "react";
+import { type ReactNode, memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -24,6 +24,9 @@ import {
   type AuthPairingLink,
   type AdvertisedEndpoint,
   type DesktopDiscoveredSshHost,
+  type DesktopBackendMode,
+  type DesktopBackendModeState,
+  type LocalServerAdvertisement,
   type DesktopSshEnvironmentTarget,
   type DesktopServerExposureState,
   type DesktopWslState,
@@ -41,7 +44,10 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
-import { applyWslEnableSelection } from "./ConnectionsSettings.logic";
+import {
+  applyWslEnableSelection,
+  selectLocalServerPairingCandidates,
+} from "./ConnectionsSettings.logic";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -139,6 +145,7 @@ import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
+const EMPTY_LOCAL_SERVER_ADVERTISEMENTS: ReadonlyArray<LocalServerAdvertisement> = [];
 
 // Sentinels for the consolidated WSL backend picker. The colon is
 // rejected by DISTRO_NAME_PATTERN (validated on the desktop side) so
@@ -1711,6 +1718,18 @@ function CloudRemoteEnvironmentRows({
 
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
+  const [desktopBackendModeState, setDesktopBackendModeState] =
+    useState<DesktopBackendModeState | null>(() => desktopBridge?.getBackendModeState?.() ?? null);
+  const [desktopBackendModeError, setDesktopBackendModeError] = useState<string | null>(null);
+  const [isUpdatingDesktopBackendMode, setIsUpdatingDesktopBackendMode] = useState(false);
+  const [localServerAdvertisements, setLocalServerAdvertisements] = useState<
+    ReadonlyArray<LocalServerAdvertisement>
+  >(EMPTY_LOCAL_SERVER_ADVERTISEMENTS);
+  const [isDiscoveringLocalServers, setIsDiscoveringLocalServers] = useState(false);
+  const [pairingLocalServerInstanceId, setPairingLocalServerInstanceId] = useState<string | null>(
+    null,
+  );
+  const [localServerDiscoveryError, setLocalServerDiscoveryError] = useState<string | null>(null);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
@@ -1733,6 +1752,96 @@ export function ConnectionsSettings() {
         .filter((environment) => environment.entry.target._tag !== "PrimaryConnectionTarget")
         .toSorted((left, right) => left.label.localeCompare(right.label)),
     [environments],
+  );
+  const hasUsableClientOnlyEnvironment = savedEnvironments.some(
+    (environment) => !isDesktopLocalConnectionTarget(environment.entry.target),
+  );
+  const isClientOnlyDesktop = desktopBackendModeState?.effectiveMode === "client-only";
+  const localServerPairingCandidates = useMemo(
+    () => selectLocalServerPairingCandidates(localServerAdvertisements, environments),
+    [environments, localServerAdvertisements],
+  );
+  const refreshLocalServerAdvertisements = useCallback(async () => {
+    const discoverLocalServers = desktopBridge?.discoverLocalServers;
+    if (!discoverLocalServers) {
+      setLocalServerAdvertisements(EMPTY_LOCAL_SERVER_ADVERTISEMENTS);
+      return EMPTY_LOCAL_SERVER_ADVERTISEMENTS;
+    }
+    setIsDiscoveringLocalServers(true);
+    setLocalServerDiscoveryError(null);
+    try {
+      const discovered = await discoverLocalServers();
+      setLocalServerAdvertisements(discovered);
+      setIsDiscoveringLocalServers(false);
+      return discovered;
+    } catch (error) {
+      setLocalServerAdvertisements(EMPTY_LOCAL_SERVER_ADVERTISEMENTS);
+      setLocalServerDiscoveryError(
+        error instanceof Error ? error.message : "Could not scan for local T3 Code servers.",
+      );
+      setIsDiscoveringLocalServers(false);
+      return EMPTY_LOCAL_SERVER_ADVERTISEMENTS;
+    }
+  }, [desktopBridge]);
+
+  useEffect(() => {
+    void refreshLocalServerAdvertisements();
+  }, [refreshLocalServerAdvertisements]);
+
+  const handlePairLocalServer = useCallback(
+    async (advertisement: LocalServerAdvertisement, pairAgain: boolean) => {
+      const discoverLocalServers = desktopBridge?.discoverLocalServers;
+      if (!discoverLocalServers) return;
+      setPairingLocalServerInstanceId(advertisement.instanceId);
+      setLocalServerDiscoveryError(null);
+      try {
+        // Re-read immediately before the explicit pairing action so a rotated
+        // one-time credential is used instead of a stale UI snapshot.
+        const currentAdvertisements = await discoverLocalServers();
+        setLocalServerAdvertisements(currentAdvertisements);
+        const current = currentAdvertisements.find(
+          (candidate) =>
+            candidate.instanceId === advertisement.instanceId &&
+            candidate.environmentId === advertisement.environmentId,
+        );
+        if (!current) {
+          throw new Error("This local server is no longer advertising a valid pairing link.");
+        }
+
+        const result = await connectPairing({ pairingUrl: current.pairingUrl });
+        if (result._tag === "Failure") {
+          if (isAtomCommandInterrupted(result)) {
+            setPairingLocalServerInstanceId(null);
+            return;
+          }
+          throw squashAtomCommandFailure(result);
+        }
+
+        setLocalServerAdvertisements((previous) =>
+          previous.filter((candidate) => candidate.instanceId !== advertisement.instanceId),
+        );
+        setAddBackendDialogOpen(false);
+        toastManager.add({
+          type: "success",
+          title: pairAgain ? "Environment paired again" : "Environment paired",
+          description: `${current.label} is saved and will reconnect on app startup.`,
+        });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Could not pair the local T3 Code server.";
+        setLocalServerDiscoveryError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not pair local server",
+            description: message,
+          }),
+        );
+      } finally {
+        setPairingLocalServerInstanceId(null);
+      }
+    },
+    [connectPairing, desktopBridge],
   );
   const savedDesktopSshEnvironmentsByAlias = useMemo(
     () =>
@@ -1841,7 +1950,8 @@ export function ConnectionsSettings() {
   const setDefaultAdvertisedEndpointKey = useUiStateStore(
     (state) => state.setDefaultAdvertisedEndpointKey,
   );
-  const canManageLocalBackend = currentSessionScopes?.includes(AuthAccessWriteScope) ?? false;
+  const canManageLocalBackend =
+    !isClientOnlyDesktop && (currentSessionScopes?.includes(AuthAccessWriteScope) ?? false);
   const canManageRelay = currentSessionScopes?.includes(AuthRelayWriteScope) ?? false;
   const authAccessChanges = useEnvironmentQuery(
     canManageLocalBackend && primaryEnvironmentId !== null
@@ -2432,6 +2542,42 @@ export function ConnectionsSettings() {
       </Button>
     </div>
   );
+  const renderLocalServerPairingCandidates = () => (
+    <div className="space-y-2">
+      {localServerPairingCandidates.map(({ advertisement, pairAgain }) => (
+        <div
+          key={advertisement.instanceId}
+          className="flex items-center gap-3 rounded-lg border border-border/70 bg-background p-3"
+        >
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/30 text-muted-foreground">
+            <TerminalIcon aria-hidden className="size-4" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium text-foreground">
+              {advertisement.label}
+            </span>
+            <span className="block truncate text-xs text-muted-foreground">
+              {advertisement.httpBaseUrl} · process {advertisement.pid}
+            </span>
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pairingLocalServerInstanceId !== null}
+            onClick={() => void handlePairLocalServer(advertisement, pairAgain)}
+          >
+            {pairingLocalServerInstanceId === advertisement.instanceId ? (
+              <Spinner className="size-3.5" />
+            ) : null}
+            {pairAgain ? "Pair again" : "Pair"}
+          </Button>
+        </div>
+      ))}
+      {localServerDiscoveryError ? (
+        <p className="text-xs text-destructive">{localServerDiscoveryError}</p>
+      ) : null}
+    </div>
+  );
   const renderSshFields = () => (
     <div className="space-y-4">
       <div className="space-y-3">
@@ -2975,9 +3121,89 @@ export function ConnectionsSettings() {
     />
   );
 
+  const handleDesktopBackendModeChange = async (mode: DesktopBackendMode) => {
+    if (!desktopBridge || !desktopBackendModeState) return;
+    if (mode === desktopBackendModeState.configuredMode) return;
+    if (mode === "client-only" && !hasUsableClientOnlyEnvironment) {
+      setDesktopBackendModeError(
+        "Pair and save an environment before switching to client-only mode.",
+      );
+      setAddBackendDialogOpen(true);
+      void refreshLocalServerAdvertisements();
+      return;
+    }
+
+    setIsUpdatingDesktopBackendMode(true);
+    setDesktopBackendModeError(null);
+    try {
+      const next = await desktopBridge.setBackendMode(mode);
+      setDesktopBackendModeState(next);
+      setIsUpdatingDesktopBackendMode(false);
+    } catch (error) {
+      setDesktopBackendModeError(
+        error instanceof Error ? error.message : "Could not update the desktop backend mode.",
+      );
+      setIsUpdatingDesktopBackendMode(false);
+    }
+  };
+
   return (
     <SettingsPageContainer>
-      {canManageLocalBackend ? (
+      {desktopBridge && desktopBackendModeState ? (
+        <SettingsSection title="Desktop application">
+          <SettingsRow
+            title="Backend mode"
+            description={
+              isClientOnlyDesktop
+                ? "Connect only to saved environments. This desktop process does not start or control a local backend."
+                : "Start and manage a local backend while retaining access to saved environments."
+            }
+            status={
+              desktopBackendModeError ? (
+                <span className="block text-destructive">{desktopBackendModeError}</span>
+              ) : desktopBackendModeState.cliOverride !== null ? (
+                <span className="block text-muted-foreground">
+                  This launch is overridden by --backend-mode=
+                  {desktopBackendModeState.cliOverride}. The saved preference applies when launched
+                  without that flag.
+                </span>
+              ) : null
+            }
+            control={
+              <Select
+                value={desktopBackendModeState.configuredMode}
+                onValueChange={(value) => {
+                  if (value === "managed" || value === "client-only") {
+                    void handleDesktopBackendModeChange(value);
+                  }
+                }}
+              >
+                <SelectTrigger
+                  className="w-full sm:w-48"
+                  aria-label="Desktop backend mode"
+                  disabled={isUpdatingDesktopBackendMode}
+                >
+                  <SelectValue>
+                    {desktopBackendModeState.configuredMode === "managed"
+                      ? "Managed backend"
+                      : "Client only"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="managed">
+                    Managed backend
+                  </SelectItem>
+                  <SelectItem hideIndicator value="client-only">
+                    Client only
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+        </SettingsSection>
+      ) : null}
+
+      {isClientOnlyDesktop ? null : canManageLocalBackend ? (
         <>
           <SettingsSection title="This environment">
             {primaryVersionMismatch ? (
@@ -3315,6 +3541,33 @@ export function ConnectionsSettings() {
         </SettingsSection>
       )}
 
+      {localServerPairingCandidates.length > 0 ? (
+        <SettingsSection
+          title="Available on this computer"
+          headerAction={
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={isDiscoveringLocalServers}
+              onClick={() => void refreshLocalServerAdvertisements()}
+            >
+              {isDiscoveringLocalServers ? (
+                <Spinner className="size-3" />
+              ) : (
+                <RefreshCwIcon className="size-3" />
+              )}
+              Scan again
+            </Button>
+          }
+        >
+          <p className="px-1 text-xs text-muted-foreground">
+            These loopback servers advertised a private, short-lived pairing link. Pairing saves the
+            connection; this desktop will not manage the server process.
+          </p>
+          {renderLocalServerPairingCandidates()}
+        </SettingsSection>
+      ) : null}
+
       <SettingsSection
         title="Remote environments"
         headerAction={
@@ -3322,6 +3575,9 @@ export function ConnectionsSettings() {
             open={addBackendDialogOpen}
             onOpenChange={(open) => {
               setAddBackendDialogOpen(open);
+              if (open) {
+                void refreshLocalServerAdvertisements();
+              }
               if (!open) {
                 setSavedBackendError(null);
               }
@@ -3354,6 +3610,19 @@ export function ConnectionsSettings() {
               </DialogHeader>
               <DialogPanel>
                 <div className="space-y-4">
+                  {localServerPairingCandidates.length > 0 ? (
+                    <div className="space-y-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">
+                          A local T3 Code server is running
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Pair explicitly to save it without copying its URL.
+                        </p>
+                      </div>
+                      {renderLocalServerPairingCandidates()}
+                    </div>
+                  ) : null}
                   <div className="grid gap-3 sm:grid-cols-2">
                     {renderConnectionModeCard({
                       mode: "remote",

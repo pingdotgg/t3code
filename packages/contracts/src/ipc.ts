@@ -19,6 +19,7 @@ import type {
   VcsStatusResult,
 } from "./git.ts";
 import type { ReviewDiffPreviewInput, ReviewDiffPreviewResult } from "./review.ts";
+import type { LocalServerAdvertisement } from "./localServerDiscovery.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import type {
@@ -163,6 +164,7 @@ export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
 export type DesktopUpdateChannel = "latest" | "nightly";
 export type DesktopAppStageLabel = "Alpha" | "Dev" | "Nightly";
+export type DesktopBackendMode = "managed" | "client-only";
 
 export const DesktopUpdateStatusSchema = Schema.Literals([
   "disabled",
@@ -178,6 +180,19 @@ export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
 export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly"]);
+export const DesktopBackendModeSchema = Schema.Literals(["managed", "client-only"]);
+
+export interface DesktopBackendModeState {
+  effectiveMode: DesktopBackendMode;
+  configuredMode: DesktopBackendMode;
+  cliOverride: DesktopBackendMode | null;
+}
+
+export const DesktopBackendModeStateSchema = Schema.Struct({
+  effectiveMode: DesktopBackendModeSchema,
+  configuredMode: DesktopBackendModeSchema,
+  cliOverride: Schema.NullOr(DesktopBackendModeSchema),
+});
 
 export interface DesktopAppBranding {
   baseName: string;
@@ -974,11 +989,14 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
+  getBackendModeState: () => DesktopBackendModeState;
+  setBackendMode: (mode: DesktopBackendMode) => Promise<DesktopBackendModeState>;
   // One bootstrap per pool instance currently registered with bootstrap
   // info (omits instances whose backend hasn't produced a config yet).
   // The primary backend is identified by id === PRIMARY_LOCAL_ENVIRONMENT_ID.
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentBearerToken: () => Promise<string>;
+  discoverLocalServers?: () => Promise<readonly LocalServerAdvertisement[]>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
   getConnectionCatalog?: () => Promise<string | null>;

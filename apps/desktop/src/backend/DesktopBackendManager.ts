@@ -403,6 +403,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const state = yield* Ref.make(initialState);
+  const startRequestedRef = yield* Ref.make(false);
   const mutex = yield* Semaphore.make(1);
 
   const { logWarning: logInstanceWarning, logError: logInstanceError } =
@@ -442,6 +443,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const start: Effect.Effect<void> = Effect.suspend(() =>
     mutex.withPermits(1)(
       Effect.gen(function* () {
+        yield* Ref.set(startRequestedRef, true);
         const current = yield* Ref.get(state);
         if (Option.isSome(current.active)) {
           return;
@@ -805,7 +807,11 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       Effect.map(Option.getOrElse(() => false)),
     );
 
-  yield* Effect.addFinalizer(() => stop());
+  yield* Effect.addFinalizer(() =>
+    Ref.get(startRequestedRef).pipe(
+      Effect.flatMap((startRequested) => (startRequested ? stop() : Effect.void)),
+    ),
+  );
 
   return {
     id: spec.id,

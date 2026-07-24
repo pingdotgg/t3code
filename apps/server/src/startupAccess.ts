@@ -1,6 +1,7 @@
 import * as NodeOS from "node:os";
 
 import { QrCode } from "@t3tools/shared/qrCode";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
@@ -8,9 +9,11 @@ import { ServerConfig } from "./config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 
 export interface HeadlessServeAccessInfo {
+  readonly pairingCredentialId: string;
   readonly connectionString: string;
   readonly token: string;
   readonly pairingUrl: string;
+  readonly pairingExpiresAt: string;
 }
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
@@ -97,6 +100,18 @@ export const buildPairingUrl = (connectionString: string, token: string): string
   return url.toString();
 };
 
+export const resolveLocalAdvertisementHttpBaseUrl = (
+  host: string | undefined,
+  port: number,
+): string | null => {
+  if (!isLoopbackHost(host)) {
+    return null;
+  }
+  const normalized = host ? normalizeHost(host) : "127.0.0.1";
+  const canonicalHost = normalized === "localhost" ? "127.0.0.1" : formatHostForUrl(normalized);
+  return `http://${canonicalHost}:${port}/`;
+};
+
 export const renderTerminalQrCode = (value: string, margin = 2): string => {
   const qrCode = QrCode.encodeText(value, QrCode.Ecc.MEDIUM);
   const rows: Array<string> = [];
@@ -141,8 +156,10 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
   const issued = yield* serverAuth.issueStartupPairingCredential();
 
   return {
+    pairingCredentialId: issued.id,
     connectionString,
     token: issued.credential,
     pairingUrl: buildPairingUrl(connectionString, issued.credential),
+    pairingExpiresAt: DateTime.formatIso(issued.expiresAt),
   } satisfies HeadlessServeAccessInfo;
 });

@@ -194,6 +194,10 @@
     "./httpReadiness": {
       "types": "./src/httpReadiness.ts",
       "import": "./src/httpReadiness.ts"
+    },
+    "./localServerDiscovery": {
+      "types": "./src/localServerDiscovery.ts",
+      "import": "./src/localServerDiscovery.ts"
     }
   },
   "scripts": {

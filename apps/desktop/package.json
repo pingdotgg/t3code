@@ -24,8 +24,10 @@
     "electron": "41.5.0",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.6.2",
+    "env-paths": "^2.2.1",
     "playwright-core": "1.60.0",
-    "react-grab": "^0.1.32"
+    "react-grab": "^0.1.32",
+    "semver": "^7.3.5"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

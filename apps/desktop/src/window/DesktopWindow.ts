@@ -66,6 +66,9 @@ export class DesktopWindow extends Context.Service<
     // mode), before the WSL backend that serves the renderer is ready. It is
     // dismissed automatically once the real main window reveals.
     readonly showConnectingSplash: Effect.Effect<void>;
+    // Marks the packaged/Vite renderer as loadable independently of whether
+    // this desktop process owns a backend.
+    readonly handleRendererReady: Effect.Effect<void, DesktopWindowError>;
     // Marks the primary backend as ready so `createMainIfBackendReady` and the
     // macOS "activate without windows" path may open the real main window. The
     // renderer now always loads the local client URL (getDesktopUrl) and connects
@@ -727,6 +730,11 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("desktop.window.showConnectingSplash"),
   );
 
+  const handleRendererReady = Ref.set(backendReadyRef, true).pipe(
+    Effect.andThen(createMainIfBackendReady),
+    Effect.withSpan("desktop.window.handleRendererReady"),
+  );
+
   return DesktopWindow.of({
     createMain,
     ensureMain,
@@ -754,10 +762,10 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.withSpan("desktop.window.activate")),
     createMainIfBackendReady,
     showConnectingSplash,
+    handleRendererReady,
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
-      yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
-      yield* createMainIfBackendReady;
+      yield* handleRendererReady;
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
       Effect.withSpan("desktop.window.handleBackendNotReady"),
