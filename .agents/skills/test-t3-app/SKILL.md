@@ -1,6 +1,6 @@
 ---
 name: test-t3-app
-description: Launch and test the T3 Code web app in isolated development environments, including first-try browser authentication with one-time pairing URLs, pairing-token recovery, worktree-safe state directories, dev server lifecycle, and direct SQLite inspection or fixture seeding. Use when an agent needs to run T3 locally, test UI behavior in a browser, recover from an expired or consumed pairing token, isolate dev state, or prepare test data in state.sqlite.
+description: Launch, retain, and test the T3 Code web app in isolated development environments, including first-try browser authentication with one-time pairing URLs, pairing-token recovery, worktree-safe state directories, cross-turn dev server lifecycle, and direct SQLite inspection or fixture seeding. Use when an agent needs to run T3 locally, iteratively test UI behavior with a human, recover from an expired or consumed pairing token, isolate dev state, or prepare test data in state.sqlite.
 ---
 
 # Test T3 App
@@ -19,6 +19,16 @@ Use this skill for the web client. For iOS Simulator, Android Emulator, or physi
 Treat a base directory as disposable only when it was created or deliberately selected for the current test. Never delete or directly seed the shared `~/.t3` directory. Prefer starting with a new temporary base directory over clearing state of uncertain ownership.
 
 The dev runner disables browser auto-open by default. Do not pass `--browser` during automated testing: an automatically opened page can consume the one-time bootstrap token before the controlled browser uses it.
+
+## Preserve the environment while iterating
+
+Treat the overall testing or implementation loop—not an assistant turn or one verification pass—as the environment lifecycle boundary.
+
+- Keep the dev process, base directory, selected ports, authenticated browser tab, registered projects, and seeded fixtures alive while the user may inspect the result or request follow-up changes.
+- Do not stop the server merely because one verification pass completed or because you are yielding a response to the user.
+- Before starting another environment, check whether the existing process and browser tab still serve the task. Reuse them when healthy instead of discarding useful state.
+- On a later turn, verify that the existing process is alive and reuse its printed ports and base directory. If it exited, restart with the same base directory; create a new pairing token only when the browser session is no longer valid.
+- Tell the user when a test environment remains available, including its non-secret web URL when useful. Never include a pairing token.
 
 ## Authenticate the browser on the first navigation
 
@@ -58,9 +68,17 @@ Read [references/sqlite-fixtures.md](references/sqlite-fixtures.md) before chang
 
 The helper refuses to write to the shared `~/.t3` directory by default and creates a database backup before each mutation.
 
-## Finish the test
+## Tear down only when the testing loop is finished
 
-Stop the dev process with its terminal interrupt. Preserve the isolated base directory when it contains useful reproduction evidence; otherwise remove only a path that was created for this test after resolving and verifying the exact target. A fresh isolated base directory is the safest reset when authentication, migrations, or fixture state becomes ambiguous.
+Tear down when the user explicitly asks, confirms the iteration is finished, or the overall task is genuinely complete with no pending human review. Do not infer completion from the end of an assistant turn.
+
+When teardown is appropriate:
+
+1. Stop the dev process with its terminal interrupt.
+2. Preserve the isolated base directory when it contains useful reproduction evidence or state for a likely follow-up.
+3. Otherwise remove only a path created for this test after resolving and verifying the exact target.
+
+If completion is uncertain, keep the environment alive and mention that it is retained for further iteration. A fresh isolated base directory remains the safest reset when authentication, migrations, or fixture state becomes ambiguous.
 
 ## Troubleshoot predictably
 

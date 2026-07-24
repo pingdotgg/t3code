@@ -289,6 +289,46 @@ export function buildExpiredTerminalContextToastCopy(
   };
 }
 
+export function branchMismatchKey(
+  threadId: string | null,
+  mismatch: { threadBranch: string; currentBranch: string } | null,
+): string | null {
+  if (!threadId || !mismatch) {
+    return null;
+  }
+  return `${threadId}:${mismatch.threadBranch}:${mismatch.currentBranch}`;
+}
+
+// The mismatch banner only matters when the user is about to send: passive
+// reading of an old thread carries no risk (the branch picker tint already
+// covers ambient awareness). Draft content is the intent signal — composer
+// focus is useless here because ChatView autofocuses the composer on every
+// thread open. `wasShownForCurrentMismatch` keeps the banner mounted once
+// revealed so it doesn't flicker away when the draft is cleared.
+export function shouldShowBranchMismatchBanner(input: {
+  hasMismatch: boolean;
+  isDismissed: boolean;
+  composerHasContent: boolean;
+  wasShownForCurrentMismatch: boolean;
+}): boolean {
+  if (!input.hasMismatch || input.isDismissed) {
+    return false;
+  }
+  return input.composerHasContent || input.wasShownForCurrentMismatch;
+}
+
+// Session-scoped (module-level so it survives ChatView remounts, e.g. route
+// changes). Durable cross-device dismissal is planned as a server-side ack.
+const sessionDismissedBranchMismatchKeys = new Set<string>();
+
+export function dismissBranchMismatchForSession(key: string): void {
+  sessionDismissedBranchMismatchKeys.add(key);
+}
+
+export function isBranchMismatchDismissedForSession(key: string | null): boolean {
+  return key !== null && sessionDismissedBranchMismatchKeys.has(key);
+}
+
 export function threadHasStarted(thread: Thread | null | undefined): boolean {
   return Boolean(
     thread && (thread.latestTurn !== null || thread.messages.length > 0 || thread.session !== null),

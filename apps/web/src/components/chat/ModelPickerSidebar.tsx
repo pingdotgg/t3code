@@ -97,7 +97,10 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   }, [props.instanceEntries, props.selectedInstanceId, showFavorites]);
 
   return (
-    <div className="w-12 shrink-0 overflow-hidden bg-muted/60" data-model-picker-sidebar="true">
+    <div
+      className="w-12 shrink-0 overflow-hidden border-r bg-muted/30"
+      data-model-picker-sidebar="true"
+    >
       <div className="h-full overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div
           ref={sidebarContentRef}
@@ -115,14 +118,14 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
           ) : null}
           {/* Favorites section */}
           {showFavorites ? (
-            <div className="mb-1 pb-1">
+            <div className="mb-1 border-b pb-1">
               <div className="relative w-full">
                 <Tooltip>
                   <TooltipTrigger
                     render={
                       <button
                         className={cn(
-                          "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-muted",
+                          "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] focus-visible:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] focus-visible:outline-none",
                         )}
                         onClick={() => handleSelect("favorites")}
                         type="button"
@@ -169,7 +172,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
               <button
                 data-model-picker-provider={entry.instanceId}
                 className={cn(
-                  "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-muted",
+                  "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] focus-visible:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] focus-visible:outline-none",
                   isDisabled && "opacity-50 cursor-not-allowed hover:bg-transparent",
                 )}
                 data-provider-accent-color={entry.accentColor}

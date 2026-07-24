@@ -236,6 +236,21 @@ function ThreadNavigationSidebarPane(
       })),
     [projectScopes],
   );
+  const projectTitleByProjectKey = useMemo(
+    () =>
+      new Map(
+        projectScopes.flatMap((scope) =>
+          scope.projectRefs.map(
+            (projectRef) =>
+              [
+                scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+                scope.title,
+              ] as const,
+          ),
+        ),
+      ),
+    [projectScopes],
+  );
   const selectedProjectScope = useMemo(
     () =>
       selectedProjectKey === null
@@ -384,6 +399,10 @@ function ThreadNavigationSidebarPane(
   // crossed while the pane stays open; without a clock dependency the
   // partition memoizes a frozen "now".
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
+  // Snooze wake times are second-precise; a counter bumped exactly at the
+  // next wake boundary re-runs the partition with a fresh clock so a woken
+  // thread reappears immediately instead of on the next minute tick.
+  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   useEffect(() => {
     if (!threadListV2Enabled) return;
     // Refresh immediately on enable: the mount-time value can be hours old
@@ -405,8 +424,18 @@ function ThreadNavigationSidebarPane(
     }
     return supported;
   }, [serverConfigs]);
+  const snoozeEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadSnooze === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
   const threadListV2Layout = useMemo(() => {
-    if (!threadListV2Enabled) return { items: [], hiddenSettledCount: 0 };
+    if (!threadListV2Enabled)
+      return { items: [], hiddenSettledCount: 0, snoozedCount: 0, nextSnoozeWakeAt: null };
     return buildThreadListV2Items({
       threads: threads.filter((thread) => thread.archivedAt === null),
       environmentId: options.selectedEnvironmentId,
@@ -414,20 +443,38 @@ function ThreadNavigationSidebarPane(
       searchQuery: props.searchQuery,
       changeRequestStateByKey,
       settlementEnvironmentIds,
+      snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
+      snoozeNow: new Date().toISOString(),
     });
   }, [
     changeRequestStateByKey,
     nowMinute,
+    snoozeWakeTick,
     options.selectedEnvironmentId,
     props.searchQuery,
     settledVisibleCount,
     settlementEnvironmentIds,
+    snoozeEnvironmentIds,
     threadListV2Enabled,
     threads,
     selectedProjectScope,
   ]);
+  // Re-partition the moment the earliest snooze expires (clamped to the
+  // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
+  const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
+  useEffect(() => {
+    if (nextSnoozeWakeAt === null) return;
+    const wakeAtMs = Date.parse(nextSnoozeWakeAt);
+    if (Number.isNaN(wakeAtMs)) return;
+    const delayMs = Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647);
+    const id = setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
+    return () => clearTimeout(id);
+    // snoozeWakeTick must re-arm the timer even when nextSnoozeWakeAt is
+    // unchanged: after a clamped fire (wake beyond the 32-bit setTimeout
+    // range) the boundary string is identical and the chain would die.
+  }, [nextSnoozeWakeAt, snoozeWakeTick]);
   const listItems = useMemo<readonly SidebarListItem[]>(() => {
     if (!threadListV2Enabled) return listLayout.items;
     // Queued offline tasks render above the thread rows (mirrors the
@@ -728,6 +775,7 @@ function ThreadNavigationSidebarPane(
               variant={item.item.variant}
               showSettledDivider={item.item.showSettledDivider}
               project={projectByKey.get(scopeKey) ?? null}
+              projectTitle={projectTitleByProjectKey.get(scopeKey)}
               providerDriver={
                 serverConfigs
                   .get(thread.environmentId)
@@ -857,6 +905,7 @@ function ThreadNavigationSidebarPane(
       openPendingTask,
       projectByKey,
       projectCwdByKey,
+      projectTitleByProjectKey,
       props.onNewThreadInProject,
       props.selectedThreadKey,
       props.width,
@@ -913,15 +962,28 @@ function ThreadNavigationSidebarPane(
       }),
     [filterIcon, filterMenu, props.onOpenSettings],
   );
+  // "No threads yet" over an inbox that is merely all-snoozed reads as
+  // data loss; name the snoozed threads instead.
+  const snoozedCount = threadListV2Layout.snoozedCount;
   const listEmpty = (
     <Text className="px-2 py-4 text-sm text-foreground-muted">
       {catalogState.isLoadingConnections
         ? "Loading threads…"
         : props.searchQuery.trim().length > 0
-          ? "No matching threads"
-          : selectedProjectScope !== null
-            ? `No threads in ${selectedProjectScope.title}`
-            : "No threads yet"}
+          ? snoozedCount > 0
+            ? // Snoozed matches passed this same search filter — "No
+              // matching threads" would misreport them as nonexistent.
+              snoozedCount === 1
+              ? "1 matching thread snoozed"
+              : "All matching threads snoozed"
+            : "No matching threads"
+          : snoozedCount > 0
+            ? snoozedCount === 1
+              ? "1 thread snoozed"
+              : `${snoozedCount} threads snoozed`
+            : selectedProjectScope !== null
+              ? `No threads in ${selectedProjectScope.title}`
+              : "No threads yet"}
     </Text>
   );
 

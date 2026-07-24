@@ -245,43 +245,69 @@ export function HomeScreen(props: HomeScreenProps) {
     onScrollBeginDrag: handleScrollBeginDrag,
   });
 
-  const scopedProject = useMemo(
+  const projectScopes = useMemo(
+    () =>
+      buildHomeProjectScopes({
+        projects: props.projects,
+        environmentId: props.selectedEnvironmentId,
+        projectGroupingMode: props.projectGroupingMode,
+      }),
+    [props.projectGroupingMode, props.projects, props.selectedEnvironmentId],
+  );
+  const selectedProjectScope = useMemo(
     () =>
       props.selectedProjectKey === null
         ? null
-        : (props.projects.find(
-            (project) =>
-              scopedProjectKey(project.environmentId, project.id) === props.selectedProjectKey &&
-              (props.selectedEnvironmentId === null ||
-                project.environmentId === props.selectedEnvironmentId),
+        : (projectScopes.find(
+            (scope) =>
+              scope.key === props.selectedProjectKey ||
+              scope.projectRefs.some(
+                (projectRef) =>
+                  scopedProjectKey(projectRef.environmentId, projectRef.projectId) ===
+                  props.selectedProjectKey,
+              ),
           ) ?? null),
-    [props.projects, props.selectedEnvironmentId, props.selectedProjectKey],
+    [projectScopes, props.selectedProjectKey],
+  );
+  const selectedProjectRefKeys = useMemo(
+    () =>
+      selectedProjectScope === null
+        ? null
+        : new Set(
+            selectedProjectScope.projectRefs.map((projectRef) =>
+              scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+            ),
+          ),
+    [selectedProjectScope],
   );
   const scopedProjects = useMemo(
-    () => (scopedProject === null ? props.projects : [scopedProject]),
-    [props.projects, scopedProject],
+    () =>
+      selectedProjectRefKeys === null
+        ? props.projects
+        : props.projects.filter((project) =>
+            selectedProjectRefKeys.has(scopedProjectKey(project.environmentId, project.id)),
+          ),
+    [props.projects, selectedProjectRefKeys],
   );
   const scopedThreads = useMemo(
     () =>
-      scopedProject === null
+      selectedProjectRefKeys === null
         ? props.threads
-        : props.threads.filter(
-            (thread) =>
-              thread.environmentId === scopedProject.environmentId &&
-              thread.projectId === scopedProject.id,
+        : props.threads.filter((thread) =>
+            selectedProjectRefKeys.has(scopedProjectKey(thread.environmentId, thread.projectId)),
           ),
-    [props.threads, scopedProject],
+    [props.threads, selectedProjectRefKeys],
   );
   const scopedPendingTasks = useMemo(
     () =>
-      scopedProject === null
+      selectedProjectRefKeys === null
         ? props.pendingTasks
-        : props.pendingTasks.filter(
-            (pendingTask) =>
-              pendingTask.message.environmentId === scopedProject.environmentId &&
-              pendingTask.creation.projectId === scopedProject.id,
+        : props.pendingTasks.filter((pendingTask) =>
+            selectedProjectRefKeys.has(
+              scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+            ),
           ),
-    [props.pendingTasks, scopedProject],
+    [props.pendingTasks, selectedProjectRefKeys],
   );
 
   const projectGroups = useMemo(
@@ -339,22 +365,18 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ScopeProjects = useMemo(
     () =>
       sortHomeProjectScopes({
-        scopes: buildHomeProjectScopes({
-          projects: props.projects,
-          environmentId: props.selectedEnvironmentId,
-          projectGroupingMode: props.projectGroupingMode,
-        }),
+        scopes: projectScopes,
         threads: props.threads,
         pendingTasks: props.pendingTasks,
         projectSortOrder: props.projectSortOrder,
       }),
     [
       props.pendingTasks,
-      props.projectGroupingMode,
       props.projects,
       props.projectSortOrder,
       props.selectedEnvironmentId,
       props.threads,
+      projectScopes,
     ],
   );
   const v2ScopedProjectGroup = useMemo(
@@ -371,6 +393,21 @@ export function HomeScreen(props: HomeScreenProps) {
               ),
           ) ?? null),
     [v2ProjectScopeKey, v2ScopeProjects],
+  );
+  const v2ProjectTitleByProjectKey = useMemo(
+    () =>
+      new Map(
+        v2ScopeProjects.flatMap((scope) =>
+          scope.projectRefs.map(
+            (projectRef) =>
+              [
+                scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+                scope.title,
+              ] as const,
+          ),
+        ),
+      ),
+    [v2ScopeProjects],
   );
   const v2ScopedProjectKeys = useMemo(
     () =>
@@ -435,6 +472,10 @@ export function HomeScreen(props: HomeScreenProps) {
   // boundary is actually crossed while the app stays open (mirrors web);
   // without a clock dependency the partition memoizes a frozen "now".
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
+  // Snooze wake times are second-precise; a counter bumped exactly at the
+  // next wake boundary re-runs the partition with a fresh clock so a woken
+  // thread reappears immediately instead of on the next minute tick.
+  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   useEffect(() => {
     if (!threadListV2Enabled) return;
     // Refresh immediately on enable: the mount-time value can be hours old
@@ -456,8 +497,18 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     return supported;
   }, [serverConfigs]);
+  const snoozeEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadSnooze === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
   const threadListV2Layout = useMemo(() => {
-    if (!threadListV2Enabled) return { items: [], hiddenSettledCount: 0 };
+    if (!threadListV2Enabled)
+      return { items: [], hiddenSettledCount: 0, snoozedCount: 0, nextSnoozeWakeAt: null };
     // Settled threads are live shells; archived threads keep their original
     // "hidden from lists" meaning.
     return buildThreadListV2Items({
@@ -467,20 +518,38 @@ export function HomeScreen(props: HomeScreenProps) {
       searchQuery: props.searchQuery,
       changeRequestStateByKey,
       settlementEnvironmentIds,
+      snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
+      snoozeNow: new Date().toISOString(),
     });
   }, [
     changeRequestStateByKey,
     nowMinute,
+    snoozeWakeTick,
     settledVisibleCount,
     settlementEnvironmentIds,
+    snoozeEnvironmentIds,
     props.searchQuery,
     props.selectedEnvironmentId,
     props.threads,
     threadListV2Enabled,
     v2ScopedProjectGroup,
   ]);
+  // Re-partition the moment the earliest snooze expires (clamped to the
+  // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
+  const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
+  useEffect(() => {
+    if (nextSnoozeWakeAt === null) return;
+    const wakeAtMs = Date.parse(nextSnoozeWakeAt);
+    if (Number.isNaN(wakeAtMs)) return;
+    const delayMs = Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647);
+    const id = setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
+    return () => clearTimeout(id);
+    // snoozeWakeTick must re-arm the timer even when nextSnoozeWakeAt is
+    // unchanged: after a clamped fire (wake beyond the 32-bit setTimeout
+    // range) the boundary string is identical and the chain would die.
+  }, [nextSnoozeWakeAt, snoozeWakeTick]);
   const threadListV2Items = threadListV2Layout.items;
 
   const renderV2Item = useCallback(
@@ -493,6 +562,9 @@ export function HomeScreen(props: HomeScreenProps) {
           projectByKey.get(scopedProjectKey(item.thread.environmentId, item.thread.projectId)) ??
           null
         }
+        projectTitle={v2ProjectTitleByProjectKey.get(
+          scopedProjectKey(item.thread.environmentId, item.thread.projectId),
+        )}
         providerDriver={
           serverConfigs
             .get(item.thread.environmentId)
@@ -536,6 +608,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.savedConnectionsById,
       serverConfigs,
       settlementEnvironmentIds,
+      v2ProjectTitleByProjectKey,
     ],
   );
   const v2KeyExtractor = useCallback(
@@ -755,9 +828,9 @@ export function HomeScreen(props: HomeScreenProps) {
   const listEmpty = !hasResults ? (
     hasSearchQuery ? (
       <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
-    ) : scopedProject !== null ? (
+    ) : selectedProjectScope !== null ? (
       <EmptyState
-        title={`No threads in ${scopedProject.title}`}
+        title={`No threads in ${selectedProjectScope.title}`}
         detail="Choose another project or create a new task."
       />
     ) : selectedEnvironmentLabel ? (
@@ -772,11 +845,31 @@ export function HomeScreen(props: HomeScreenProps) {
   // Self-contained: v1's listEmpty keys off projectGroups, which ignores the
   // v2 project scope, so it can be null (results elsewhere) while this list
   // is empty. Search outranks the scope — "No results" names the actionable
-  // fact when a query is active. Pending tasks render in the header, so the
-  // list showing them isn't empty in the user's eyes.
+  // fact when a query is active. Snoozed threads outrank the rest: "No
+  // threads yet" over an inbox that is merely all-snoozed reads as data
+  // loss. Pending tasks render in the header, so the list showing them
+  // isn't empty in the user's eyes.
+  const v2SnoozedCount = threadListV2Layout.snoozedCount;
   const v2ListEmpty =
     v2PendingTasks.length > 0 ? null : hasSearchQuery ? (
-      <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+      v2SnoozedCount > 0 ? (
+        // The snoozed threads already passed this search filter: "No
+        // results" would claim nothing matched when matches are merely
+        // parked.
+        <EmptyState
+          title={
+            v2SnoozedCount === 1 ? "1 matching thread snoozed" : `All matching threads snoozed`
+          }
+          detail={`Threads matching "${props.searchQuery}" are snoozed and return when their wake time passes.`}
+        />
+      ) : (
+        <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+      )
+    ) : v2SnoozedCount > 0 ? (
+      <EmptyState
+        title={v2SnoozedCount === 1 ? "1 thread snoozed" : `${v2SnoozedCount} threads snoozed`}
+        detail="Snoozed threads return when their wake time passes."
+      />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
         title={`No threads in ${v2ScopedProjectGroup.title}`}

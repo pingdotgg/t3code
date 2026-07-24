@@ -521,7 +521,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   return (
     <TooltipProvider delay={0}>
       <div
-        className="dropdown-glass model-picker-surface relative flex h-screen max-h-96 w-screen max-w-100 flex-row overflow-hidden rounded-xl text-popover-foreground"
+        className="dropdown-glass model-picker-surface relative flex h-screen max-h-96 w-screen max-w-100 flex-row overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
         data-model-picker-content="true"
       >
         {/* Sidebar */}
@@ -568,18 +568,23 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             handleModelSelect(slug, instanceId);
           }}
         >
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div
+            className={cn(
+              "flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/40",
+              showSidebar && "border-l",
+            )}
+          >
             {/* Search bar */}
             <div className="px-4 pt-2.5">
-              <div className="-translate-y-px rounded-lg bg-accent px-2 py-1">
+              <div className="-translate-y-px border-b border-border/70 pb-2.5 transition-colors focus-within:border-ring">
                 <ComboboxInput
                   ref={searchInputRef}
                   className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
-                  inputClassName="rounded-none bg-transparent text-sm placeholder:text-muted-foreground/80"
+                  inputClassName="rounded-none bg-transparent text-sm"
                   placeholder="Search models..."
                   showTrigger={false}
                   startAddon={
-                    <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground/80" />
+                    <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground/55" />
                   }
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}

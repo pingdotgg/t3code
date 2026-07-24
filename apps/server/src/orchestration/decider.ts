@@ -53,6 +53,13 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
   );
 }
 
+// Scans the read model's activities, which the projector caps at the most
+// recent 500. That bound is safe here: an OPEN approval/user-input request
+// blocks its turn, so the thread cannot accumulate hundreds of later
+// activities while one is outstanding — a request that has scrolled out of
+// the window is one whose turn kept running, i.e. it was resolved or went
+// stale. (The projection pipeline's pendingApprovalCount reads the same
+// capped stream and stays consistent with this view.)
 function hasOpenBlockingRequest(thread: {
   readonly activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>;
 }): boolean {
@@ -77,6 +84,62 @@ function hasOpenBlockingRequest(thread: {
     }
   }
   return openRequestIds.size > 0;
+}
+
+/**
+ * A queued turn start — a user message no turn has picked up yet — is work
+ * in flight even though session is still null (turn.start emits
+ * message-sent + turn-start-requested; the session arrives later). Detection
+ * mirrors the client's hasQueuedTurnStart: the newest user message is
+ * strictly newer than every latestTurn timestamp (adoption stamps the new
+ * turn's requestedAt with the message time, clearing this), and only within
+ * the adoption grace window — historical threads whose last user message
+ * postdates their turn timestamps (older-server data, mid-turn messages)
+ * must not be blocked forever. A failed session start (status "error")
+ * clears the block immediately.
+ *
+ * The age check is bounded on BOTH sides: message timestamps are
+ * client-supplied, so a client clock ahead of the server yields a negative
+ * age. Without the lower bound that negative age satisfies `<= grace` for
+ * as long as the skew lasts, extending the block far past the intended two
+ * minutes.
+ */
+function threadHasQueuedTurnStart(
+  thread: {
+    readonly messages: ReadonlyArray<{ readonly role: string; readonly createdAt: string }>;
+    readonly latestTurn: {
+      readonly requestedAt: string;
+      readonly startedAt: string | null;
+      readonly completedAt: string | null;
+    } | null;
+    readonly session: { readonly status: string } | null;
+  },
+  occurredAt: string,
+): boolean {
+  const latestUserMessageAtMs = thread.messages.reduce(
+    (latest, message) =>
+      message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
+    Number.NEGATIVE_INFINITY,
+  );
+  const latestTurnAtMs =
+    thread.latestTurn === null
+      ? Number.NEGATIVE_INFINITY
+      : Math.max(
+          ...[
+            thread.latestTurn.requestedAt,
+            thread.latestTurn.startedAt,
+            thread.latestTurn.completedAt,
+          ].map((candidate) =>
+            candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
+          ),
+        );
+  const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
+  return (
+    thread.session?.status !== "error" &&
+    Number.isFinite(latestUserMessageAtMs) &&
+    latestUserMessageAtMs > latestTurnAtMs &&
+    Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS
+  );
 }
 
 function withEventBase(
@@ -411,46 +474,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         );
       }
       const occurredAt = yield* nowIso;
-      // A queued turn start — a user message no turn has picked up yet — is
-      // work in flight even though session is still null (turn.start emits
-      // message-sent + turn-start-requested; the session arrives later).
-      // Settling in that window would hide just-requested work. Detection
-      // mirrors the client's hasQueuedTurnStart: the newest user message is
-      // strictly newer than every latestTurn timestamp (adoption stamps the
-      // new turn's requestedAt with the message time, clearing this), and
-      // only within the adoption grace window — historical threads whose
-      // last user message postdates their turn timestamps (older-server
-      // data, mid-turn messages) must stay settleable. A failed session
-      // start (status "error") clears the block immediately.
-      const latestUserMessageAtMs = thread.messages.reduce(
-        (latest, message) =>
-          message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
-        Number.NEGATIVE_INFINITY,
-      );
-      const latestTurnAtMs =
-        thread.latestTurn === null
-          ? Number.NEGATIVE_INFINITY
-          : Math.max(
-              ...[
-                thread.latestTurn.requestedAt,
-                thread.latestTurn.startedAt,
-                thread.latestTurn.completedAt,
-              ].map((candidate) =>
-                candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
-              ),
-            );
-      // The age check is bounded on BOTH sides: message timestamps are
-      // client-supplied, so a client clock ahead of the server yields a
-      // negative age. Without the lower bound that negative age satisfies
-      // `<= grace` for as long as the skew lasts, extending the settle
-      // block far past the intended two minutes.
-      const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
-      const hasQueuedTurnStart =
-        thread.session?.status !== "error" &&
-        Number.isFinite(latestUserMessageAtMs) &&
-        latestUserMessageAtMs > latestTurnAtMs &&
-        Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS;
-      if (hasQueuedTurnStart) {
+      // Settling inside the adoption window would hide just-requested work.
+      if (threadHasQueuedTurnStart(thread, occurredAt)) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -504,6 +529,103 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           reason: command.reason,
           updatedAt: alreadyPinnedActive ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.snooze": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      // A wake time in the past would create a thread that is snoozed and
+      // woken at once — the row would never leave the inbox but still carry
+      // snooze state. Reject instead of silently normalizing. The negated
+      // comparison also catches unparseable wake times (IsoDateTime is
+      // structurally just a string): NaN fails every comparison, and an
+      // unparseable snoozedUntil must never persist.
+      if (!(Date.parse(command.snoozedUntil) > Date.parse(occurredAt))) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future`,
+          }),
+        );
+      }
+      // Blocked-on-you work must not be snoozed away: a pending approval or
+      // user-input request is the agent waiting on the user, and hiding it
+      // defeats the request. (A running session IS snoozable — snooze only
+      // affects visibility, never the agent.)
+      if (hasOpenBlockingRequest(thread)) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed`,
+          }),
+        );
+      }
+      // A queued turn start — a user message no turn has adopted yet — is
+      // invisible pending work: no session, no pending flags. Snoozing in
+      // that window would hide a just-requested turn exactly the way settle
+      // would.
+      if (threadHasQueuedTurnStart(thread, occurredAt)) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} has a queued turn start and cannot be snoozed`,
+          }),
+        );
+      }
+      // Re-snoozing an already-snoozed thread to the SAME wake time is a
+      // duplicate (double-click, raced clients): re-emit with the original
+      // timestamps so the projection is a no-op. A different wake time is a
+      // real change and stamps fresh.
+      const existingSnoozedAt =
+        thread.snoozedUntil === command.snoozedUntil && thread.snoozedAt != null
+          ? thread.snoozedAt
+          : null;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.snoozed",
+        payload: {
+          threadId: command.threadId,
+          snoozedUntil: command.snoozedUntil,
+          snoozedAt: existingSnoozedAt ?? occurredAt,
+          updatedAt: existingSnoozedAt !== null ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.unsnooze": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Idempotent by re-emission (see thread.settle): waking a thread that
+      // is not snoozed lands on the same null state without churning
+      // updatedAt.
+      const alreadyAwake = thread.snoozedUntil == null;
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.unsnoozed",
+        payload: {
+          threadId: command.threadId,
+          reason: command.reason,
+          updatedAt: alreadyAwake ? thread.updatedAt : occurredAt,
         },
       };
     }
@@ -663,24 +785,42 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // Real activity resets ANY override: it wakes an explicitly settled
       // thread, and it clears a keep-active pin back to neutral so the
       // thread can auto-settle again after this burst of work goes stale.
-      if (targetThread.settledOverride === null) {
-        return [userMessageEvent, turnStartRequestedEvent];
+      // A snooze clears the same way — sending a message to a snoozed
+      // thread is the user re-engaging, so the return ticket is spent.
+      const lifecycleResetEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      if (targetThread.settledOverride !== null) {
+        lifecycleResetEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        });
       }
-      const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
-        ...(yield* withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        type: "thread.unsettled",
-        payload: {
-          threadId: command.threadId,
-          reason: "activity",
-          updatedAt: command.createdAt,
-        },
-      };
-      return [unsettledEvent, userMessageEvent, turnStartRequestedEvent];
+      if (targetThread.snoozedUntil != null) {
+        lifecycleResetEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsnoozed",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        });
+      }
+      return [...lifecycleResetEvents, userMessageEvent, turnStartRequestedEvent];
     }
 
     case "thread.turn.interrupt": {
@@ -822,7 +962,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
       // Only a session coming alive is activity worth waking a settled thread
       // for — status writes like ready/stopped/error arrive after the fact and
-      // must not fight a user's explicit settle.
+      // must not fight a user's explicit settle. Snooze is deliberately NOT
+      // cleared here: snooze never pauses the agent, so its session starting
+      // or erroring is not the user re-engaging. Blocked/failed work still
+      // surfaces immediately — effectiveSnoozed refuses to classify a thread
+      // with a raised hand (approval / input / failure / fresh completion)
+      // as snoozed, without spending the return ticket.
       const isSessionActivity =
         command.session.status === "starting" || command.session.status === "running";
       // Real activity resets ANY override (settled wakes, active unpins).

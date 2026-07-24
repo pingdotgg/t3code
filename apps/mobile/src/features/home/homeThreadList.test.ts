@@ -104,6 +104,7 @@ describe("buildHomeThreadGroups", () => {
     });
 
     expect(scopes).toHaveLength(1);
+    expect(scopes[0]?.title).toBe("t3code");
     expect(scopes[0]?.projects).toEqual(projects);
     expect(scopes[0]?.projectRefs).toEqual(
       projects.map((project) => ({
@@ -371,6 +372,43 @@ describe("buildHomeThreadGroups", () => {
         projectGroupingMode: "repository",
       }),
     ).toHaveLength(2);
+  });
+
+  it("uses the repository label for a singleton repository scope", () => {
+    const project = makeProject({
+      environmentId: EnvironmentId.make("environment-1"),
+      id: ProjectId.make("project-1"),
+      title: "local-worktree-name",
+      repositoryIdentity: {
+        canonicalKey: "github.com/pingdotgg/t3code",
+        displayName: "codething-mvp",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: "git@github.com:pingdotgg/t3code.git",
+        },
+      },
+    });
+
+    const scopes = buildHomeProjectScopes({
+      projects: [project],
+      environmentId: null,
+      projectGroupingMode: "repository",
+    });
+    const groups = buildGroups(
+      [project],
+      [
+        makeThread({
+          environmentId: project.environmentId,
+          id: ThreadId.make("thread-1"),
+          projectId: project.id,
+          title: "Thread",
+        }),
+      ],
+    );
+
+    expect(scopes[0]?.title).toBe("codething-mvp");
+    expect(groups[0]?.title).toBe("codething-mvp");
   });
 
   it("sorts the newest thread first regardless of snapshot order", () => {
