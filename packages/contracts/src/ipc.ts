@@ -309,6 +309,12 @@ export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
 });
 export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
 
+export const DesktopOpenRemoteZedInputSchema = Schema.Struct({
+  target: DesktopSshEnvironmentTargetSchema,
+  path: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
+});
+export type DesktopOpenRemoteZedInput = typeof DesktopOpenRemoteZedInputSchema.Type;
+
 export type DesktopSshHostSource = "ssh-config" | "known-hosts";
 export const DesktopSshHostSourceSchema = Schema.Literals(["ssh-config", "known-hosts"]);
 
@@ -1020,6 +1026,7 @@ export interface DesktopBridge {
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
   ) => Promise<T | null>;
+  openRemoteZed: (input: DesktopOpenRemoteZedInput) => Promise<void>;
   openExternal: (url: string) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getWindowFullscreenState: () => boolean;
