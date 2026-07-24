@@ -15,6 +15,8 @@ import {
   type PanelChangedFile,
 } from "@t3tools/shared/sourceControl";
 
+import { relativeTime } from "../../lib/time";
+
 export interface VersionControlChangeSet {
   readonly id: string;
   readonly branchName: string;
@@ -85,6 +87,11 @@ export function actionableLocalBranches(snapshot: VcsPanelSnapshotResult): VcsRe
 
 export function stashIdentityKey(stash: Pick<VcsPanelStash, "refName" | "sha">): string {
   return stash.sha ? `sha:${stash.sha}` : `ref:${stash.refName}`;
+}
+
+export function relativeLabel(value: string | null | undefined): string | null {
+  if (!value || Number.isNaN(Date.parse(value))) return null;
+  return relativeTime(value);
 }
 
 export function localBranchForRemoteBranch(

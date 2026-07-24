@@ -23,7 +23,6 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { cn } from "../../lib/cn";
-import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useEnvironmentQuery } from "../../state/query";
@@ -44,6 +43,7 @@ import {
   operationPaths,
   panelChangeSets,
   reconcileSelectedPaths,
+  relativeLabel,
   selectedFileStats,
   stashIdentityKey,
   visibleRemoteBranches,
@@ -73,10 +73,6 @@ interface FileDiffRequest {
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) return error.message;
   return "The Version Control operation failed.";
-}
-
-function relativeLabel(value: string | null | undefined): string | null {
-  return value ? relativeTime(value) : null;
 }
 
 function ActionButton(props: {

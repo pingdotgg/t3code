@@ -11,6 +11,7 @@ import {
   operationPaths,
   panelChangeSets,
   reconcileSelectedPaths,
+  relativeLabel,
   selectedFileStats,
   stashIdentityKey,
   visibleRemoteBranches,
@@ -119,6 +120,13 @@ describe("native Version Control model", () => {
     expect(stashIdentityKey({ refName: "stash@{2}", sha: "abc123" })).toBe("sha:abc123");
     expect(stashIdentityKey({ refName: "stash@{0}", sha: "abc123" })).toBe("sha:abc123");
     expect(stashIdentityKey({ refName: "stash@{0}", sha: null })).toBe("ref:stash@{0}");
+  });
+
+  it("omits missing and invalid relative dates", () => {
+    expect(relativeLabel(null)).toBeNull();
+    expect(relativeLabel("")).toBeNull();
+    expect(relativeLabel("not-a-timestamp")).toBeNull();
+    expect(relativeLabel(new Date().toISOString())).toBe("<1m");
   });
 
   it("matches remote rows only to locals tracking that exact remote ref", () => {
