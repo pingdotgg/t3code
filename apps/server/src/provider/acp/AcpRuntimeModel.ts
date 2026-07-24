@@ -115,6 +115,12 @@ export type AcpParsedSessionEvent =
       readonly rawPayload: unknown;
     }
   | {
+      readonly _tag: "UsageUpdated";
+      readonly usedTokens: number;
+      readonly maxTokens?: number;
+      readonly rawPayload: unknown;
+    }
+  | {
       readonly _tag: "ProcessExited";
       readonly exitCode: number;
       readonly stderrTail?: string;
@@ -593,6 +599,17 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         events.push({
           _tag: "ReasoningDelta",
           text: upd.content.text,
+          rawPayload: params,
+        });
+      }
+      break;
+    }
+    case "usage_update": {
+      if (upd.used > 0) {
+        events.push({
+          _tag: "UsageUpdated",
+          usedTokens: upd.used,
+          ...(upd.size > 0 ? { maxTokens: upd.size } : {}),
           rawPayload: params,
         });
       }

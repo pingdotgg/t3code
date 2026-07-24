@@ -211,6 +211,8 @@ function normalizeCodexTokenUsage(
     ...(reasoningOutputTokens !== undefined
       ? { lastReasoningOutputTokens: reasoningOutputTokens }
       : {}),
+    // Codex auto-compacts conversation history when the context window fills,
+    // so this is a constant rather than a per-payload value.
     compactsAutomatically: true,
     accountingStatus: "provider-reported",
   };

@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   RuntimeRequestId,
   type ThreadId,
+  type ThreadTokenUsageSnapshot,
   TurnId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -61,6 +62,7 @@ import {
   resolveKimiAcpBaseModelId,
 } from "../acp/KimiAcpSupport.ts";
 import { type KimiAdapterShape } from "../Services/KimiAdapter.ts";
+import { kimiTokenUsageSnapshotFromAcpUsage } from "./KimiProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
@@ -312,6 +314,17 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
+
+    const emitThreadTokenUsage = (threadId: ThreadId, usage: ThreadTokenUsageSnapshot) =>
+      Effect.flatMap(makeEventStamp(), (stamp) =>
+        offerRuntimeEvent({
+          type: "thread.token-usage.updated",
+          ...stamp,
+          provider: PROVIDER,
+          threadId,
+          payload: { usage },
+        }),
+      );
 
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
@@ -861,12 +874,24 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                   event._tag === "PlanUpdated" ||
                   event._tag === "ToolCallUpdated" ||
                   event._tag === "ContentDelta" ||
-                  event._tag === "ReasoningDelta"
+                  event._tag === "ReasoningDelta" ||
+                  event._tag === "UsageUpdated"
                 ) {
                   yield* logNative(ctx.threadId, "session/update", event.rawPayload);
                 }
 
                 if (event._tag === "ModeChanged") {
+                  return;
+                }
+
+                if (event._tag === "UsageUpdated") {
+                  // Context-window usage is thread-level, not turn-scoped, so
+                  // it is handled before the active-turn guard below.
+                  yield* emitThreadTokenUsage(ctx.threadId, {
+                    usedTokens: event.usedTokens,
+                    ...(event.maxTokens !== undefined ? { maxTokens: event.maxTokens } : {}),
+                    accountingStatus: "provider-reported",
+                  });
                   return;
                 }
 
@@ -1285,6 +1310,13 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                   ...(prepared.displayModel ? { model: prepared.displayModel } : {}),
                 };
                 const completedStopReason = completedStopReasonFromPromptResponse(result);
+                const turnUsage = kimiTokenUsageSnapshotFromAcpUsage(
+                  result.usage,
+                  resolveKimiAcpBaseModelId(ctx.currentModelId),
+                );
+                if (turnUsage) {
+                  yield* emitThreadTokenUsage(input.threadId, turnUsage);
+                }
                 yield* offerRuntimeEvent({
                   type: "turn.completed",
                   ...(yield* makeEventStamp()),
@@ -1358,6 +1390,13 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                     yield* drainKimiEventStream(prepared.acp, () => ctx.eventSequence);
                     if (ctx.interruptedTurnIds.has(prepared.turnId)) {
                       return;
+                    }
+                    const settledUsage = kimiTokenUsageSnapshotFromAcpUsage(
+                      promptResult.usage,
+                      resolveKimiAcpBaseModelId(ctx.currentModelId),
+                    );
+                    if (settledUsage) {
+                      yield* emitThreadTokenUsage(input.threadId, settledUsage);
                     }
                     yield* settlePromptInFlight(
                       input.threadId,

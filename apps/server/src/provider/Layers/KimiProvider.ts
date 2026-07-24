@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
+  type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -88,6 +89,66 @@ const KIMI_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     capabilities: EMPTY_CAPABILITIES,
   },
 ];
+
+// Best-known context windows per public Moonshot docs: K3 advertises up to
+// 1M tokens; the K2.7 "for coding" line uses 256K. ACP `usage_update`
+// notifications report the window size directly and take precedence — this
+// map is the fallback for turn-level `PromptResponse.usage`, which carries
+// token counts but no window size. Unknown/custom slugs intentionally have no
+// entry so the UI falls back to a raw token count instead of a wrong limit.
+const KIMI_MODEL_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
+  "kimi-code/k3": 1_048_576,
+  "kimi-code/kimi-for-coding": 262_144,
+  "kimi-code/kimi-for-coding-highspeed": 262_144,
+};
+
+export function kimiContextWindowForModel(slug: string | null | undefined): number | undefined {
+  if (!slug) {
+    return undefined;
+  }
+  return KIMI_MODEL_CONTEXT_WINDOWS[slug];
+}
+
+/**
+ * Builds the shared token-usage snapshot from an ACP `Usage` payload (turn
+ * level, e.g. `PromptResponse.usage`). The window limit comes from
+ * `kimiContextWindowForModel` because ACP turn usage carries token counts but
+ * no window size; streaming `usage_update` notifications report `size`
+ * directly and do not go through this helper.
+ */
+export function kimiTokenUsageSnapshotFromAcpUsage(
+  usage: EffectAcpSchema.Usage | null | undefined,
+  modelSlug: string | null | undefined,
+): ThreadTokenUsageSnapshot | undefined {
+  if (!usage || usage.totalTokens <= 0) {
+    return undefined;
+  }
+  const maxTokens = kimiContextWindowForModel(modelSlug);
+  const cachedReadTokens =
+    typeof usage.cachedReadTokens === "number" && usage.cachedReadTokens > 0
+      ? usage.cachedReadTokens
+      : undefined;
+  const cachedWriteTokens =
+    typeof usage.cachedWriteTokens === "number" && usage.cachedWriteTokens > 0
+      ? usage.cachedWriteTokens
+      : undefined;
+  const thoughtTokens =
+    typeof usage.thoughtTokens === "number" && usage.thoughtTokens > 0
+      ? usage.thoughtTokens
+      : undefined;
+  return {
+    usedTokens: usage.totalTokens,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(usage.inputTokens > 0 ? { inputTokens: usage.inputTokens } : {}),
+    ...(cachedReadTokens !== undefined
+      ? { cachedInputTokens: cachedReadTokens, cacheReadInputTokens: cachedReadTokens }
+      : {}),
+    ...(cachedWriteTokens !== undefined ? { cacheCreationInputTokens: cachedWriteTokens } : {}),
+    ...(usage.outputTokens > 0 ? { outputTokens: usage.outputTokens } : {}),
+    ...(thoughtTokens !== undefined ? { reasoningOutputTokens: thoughtTokens } : {}),
+    accountingStatus: "provider-reported",
+  };
+}
 
 export function buildInitialKimiProviderSnapshot(
   kimiSettings: KimiSettings,

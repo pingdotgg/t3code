@@ -376,6 +376,43 @@ describe("AcpRuntimeModel", () => {
     expect(emptyThoughtResult.events).toEqual([]);
   });
 
+  it("projects usage_update notifications into usage events", () => {
+    const usageResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 48_000,
+        size: 262_144,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(usageResult.events).toEqual([
+      {
+        _tag: "UsageUpdated",
+        usedTokens: 48_000,
+        maxTokens: 262_144,
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 48_000,
+            size: 262_144,
+          },
+        },
+      },
+    ]);
+
+    const emptyUsageResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 0,
+        size: 0,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(emptyUsageResult.events).toEqual([]);
+  });
+
   it("keeps permission request parsing compatible with loose extension payloads", () => {
     const request = parsePermissionRequest({
       sessionId: "session-1",

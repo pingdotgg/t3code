@@ -447,7 +447,11 @@ function selectedClaudeContextWindow(
   if (hasContextWindowOption) {
     return 200_000;
   }
-  return undefined;
+  // Every current Claude model supports at least a 200k window. Without this
+  // fallback the usage snapshot has no maxTokens and clients drop to a raw
+  // token count instead of the standard ring+percent meter other providers
+  // render.
+  return modelSelection?.model !== undefined ? 200_000 : undefined;
 }
 
 function finiteNonNegativeInteger(value: unknown): number | undefined {
