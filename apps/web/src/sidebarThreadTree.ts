@@ -79,6 +79,7 @@ export interface SidebarThreadRowView {
   hasChildren: boolean;
   isExpanded: boolean;
   childCount: number;
+  status: ThreadStatusPill | null;
   rolledUpStatus: ThreadStatusPill | null;
 }
 
@@ -261,6 +262,7 @@ function flattenRows(input: {
       hasChildren,
       isExpanded,
       childCount: node.descendantCount,
+      status: node.status,
       rolledUpStatus: node.rolledUpStatus,
     });
     if (isExpanded) {
