@@ -1068,74 +1068,76 @@ export function NewTaskDraftScreen(props: {
         <NativeStackScreenOptions options={{ headerShown: false }} />
         <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
 
-        <KeyboardStickyView
-          style={ANDROID_DRAFT_COMPOSER_STICKY_STYLE}
-          offset={ANDROID_DRAFT_COMPOSER_KEYBOARD_OFFSET}
-        >
-          <View
-            className="px-4 pt-2"
-            style={{
-              paddingBottom: controlsBottomPadding,
-              experimental_backgroundImage: isDarkMode
-                ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
-                : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
-            }}
+        <View className="relative min-h-0 flex-1">
+          <KeyboardStickyView
+            style={ANDROID_DRAFT_COMPOSER_STICKY_STYLE}
+            offset={ANDROID_DRAFT_COMPOSER_KEYBOARD_OFFSET}
           >
-            <ComposerSurface
-              isDarkMode={isDarkMode}
-              style={
-                isExpanded
-                  ? {
-                      borderRadius: 20,
-                      overflow: "hidden",
-                      paddingHorizontal: 14,
-                      paddingVertical: 12,
-                    }
-                  : {
-                      borderRadius: 999,
-                      overflow: "hidden",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      paddingLeft: 18,
-                      paddingRight: 5,
-                      paddingVertical: 5,
-                    }
-              }
+            <View
+              className="px-4 pt-2"
+              style={{
+                paddingBottom: controlsBottomPadding,
+                experimental_backgroundImage: isDarkMode
+                  ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
+                  : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
+              }}
             >
-              {isExpanded && flow.attachments.length > 0 ? (
-                <View className="pb-2.5">
-                  <ComposerAttachmentStrip
-                    attachments={flow.attachments}
-                    onRemove={
-                      isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
-                    }
+              <ComposerSurface
+                isDarkMode={isDarkMode}
+                style={
+                  isExpanded
+                    ? {
+                        borderRadius: 20,
+                        overflow: "hidden",
+                        paddingHorizontal: 14,
+                        paddingVertical: 12,
+                      }
+                    : {
+                        borderRadius: 999,
+                        overflow: "hidden",
+                        flexDirection: "row",
+                        alignItems: "center",
+                        paddingLeft: 18,
+                        paddingRight: 5,
+                        paddingVertical: 5,
+                      }
+                }
+              >
+                {isExpanded && flow.attachments.length > 0 ? (
+                  <View className="pb-2.5">
+                    <ComposerAttachmentStrip
+                      attachments={flow.attachments}
+                      onRemove={
+                        isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
+                      }
+                    />
+                  </View>
+                ) : null}
+                <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
+                {!isExpanded ? (
+                  <ControlPill
+                    icon="arrow.up"
+                    variant="primary"
+                    disabled={!canStart}
+                    onPress={() => void handleStart()}
                   />
-                </View>
-              ) : null}
-              <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
-              {!isExpanded ? (
-                <ControlPill
-                  icon="arrow.up"
-                  variant="primary"
-                  disabled={!canStart}
-                  onPress={() => void handleStart()}
-                />
-              ) : null}
-            </ComposerSurface>
+                ) : null}
+              </ComposerSurface>
 
-            {isExpanded ? (
-              <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
-                <ComposerToolbarScroller
-                  fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
-                  fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
-                >
-                  {toolbarPills}
-                </ComposerToolbarScroller>
-                {startButton}
-              </ComposerToolbarRow>
-            ) : null}
-          </View>
-        </KeyboardStickyView>
+              {isExpanded ? (
+                <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
+                  <ComposerToolbarScroller
+                    fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
+                    fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
+                  >
+                    {toolbarPills}
+                  </ComposerToolbarScroller>
+                  {startButton}
+                </ComposerToolbarRow>
+              ) : null}
+            </View>
+          </KeyboardStickyView>
+        </View>
       </View>
     );
   }
