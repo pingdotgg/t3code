@@ -12,6 +12,8 @@ export function supportsThreadFork(driverKind: ProviderDriverKind | null | undef
     : false;
 }
 
+export const supportsSelectedResponseFork = supportsThreadFork;
+
 export function resolveLatestForkableTurnId(
   latestTurn: OrchestrationLatestTurn | null,
 ): TurnId | null {

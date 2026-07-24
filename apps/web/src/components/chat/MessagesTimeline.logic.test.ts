@@ -1,3 +1,4 @@
+import { TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   computeStableMessagesTimelineRows,
@@ -5,6 +6,7 @@ import {
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  resolveAssistantMessageForkState,
 } from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
@@ -257,6 +259,35 @@ describe("resolveAssistantMessageCopyState", () => {
       text: "Interim thought",
       visible: false,
     });
+  });
+});
+
+describe("resolveAssistantMessageForkState", () => {
+  it("keeps the selected completed assistant turn", () => {
+    const turnId = TurnId.make("turn-selected");
+
+    expect(
+      resolveAssistantMessageForkState({
+        turnId,
+        showForkButton: true,
+        streaming: false,
+      }),
+    ).toEqual({ turnId, visible: true });
+  });
+
+  it("hides the action for streaming, intermediate, and unscoped messages", () => {
+    const turnId = TurnId.make("turn-selected");
+
+    expect(
+      resolveAssistantMessageForkState({ turnId, showForkButton: true, streaming: true }).visible,
+    ).toBe(false);
+    expect(
+      resolveAssistantMessageForkState({ turnId, showForkButton: false, streaming: false }).visible,
+    ).toBe(false);
+    expect(
+      resolveAssistantMessageForkState({ turnId: null, showForkButton: true, streaming: false })
+        .visible,
+    ).toBe(false);
   });
 });
 

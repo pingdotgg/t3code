@@ -685,6 +685,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             archivedAt: null,
             settledOverride: null,
             settledAt: null,
+            snoozedUntil: null,
+            snoozedAt: null,
             latestUserMessageAt:
               event.payload.inheritedMessages
                 .toReversed()

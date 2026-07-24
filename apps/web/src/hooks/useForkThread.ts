@@ -13,18 +13,17 @@ import { newThreadId } from "../lib/utils";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 
+type ForkableThread = Pick<EnvironmentThreadShell, "environmentId" | "id" | "title">;
+
 export function useForkThread(): (
-  sourceThread: EnvironmentThreadShell,
+  sourceThread: ForkableThread,
   sourceTurnId: TurnId,
 ) => Promise<ScopedThreadRef | null> {
   const forkThread = useAtomCommand(threadEnvironment.fork, { reportFailure: false });
   const inFlightThreadKeysRef = useRef(new Set<string>());
 
   return useCallback(
-    async (
-      sourceThread: EnvironmentThreadShell,
-      sourceTurnId: TurnId,
-    ): Promise<ScopedThreadRef | null> => {
+    async (sourceThread: ForkableThread, sourceTurnId: TurnId): Promise<ScopedThreadRef | null> => {
       const sourceThreadKey = `${sourceThread.environmentId}:${sourceThread.id}`;
       if (inFlightThreadKeysRef.current.has(sourceThreadKey)) {
         return null;

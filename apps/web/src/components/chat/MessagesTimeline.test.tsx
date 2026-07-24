@@ -239,6 +239,61 @@ describe("MessagesTimeline", () => {
     expect(fadedMarkup).toContain("chat-timeline-scroll-fade");
   });
 
+  it("renders a fork action for the selected completed assistant response", () => {
+    const turnId = TurnId.make("turn-fork-point");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        onForkFromResponse={() => {}}
+        timelineEntries={[
+          {
+            id: "entry-assistant-fork-point",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: MessageId.make("message-assistant-fork-point"),
+              role: "assistant",
+              text: "Fork from this response.",
+              turnId,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Fork from this message"');
+    expect(markup).toContain("lucide-git-fork");
+  });
+
+  it("does not render the fork action without a thread fork owner", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-assistant-without-owner",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: MessageId.make("message-assistant-without-owner"),
+              role: "assistant",
+              text: "No fork owner.",
+              turnId: TurnId.make("turn-without-owner"),
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain('aria-label="Fork from this message"');
+  });
+
   it("keeps assistant changed-files headers sticky below the thread header", () => {
     const assistantMessageId = MessageId.make("message-assistant-with-files");
     const turnId = TurnId.make("turn-with-files");
