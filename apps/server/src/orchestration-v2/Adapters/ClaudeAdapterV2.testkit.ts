@@ -407,7 +407,9 @@ function makeClaudeSessionForkFrame(
   };
 }
 
-function makeReplayQueryRunner(transcript: ClaudeAgentSdkReplayTranscript): ClaudeQueryRunner {
+export function makeReplayQueryRunner(
+  transcript: ClaudeAgentSdkReplayTranscript,
+): ClaudeQueryRunner {
   let cursor = 0;
   let failure: ClaudeAgentSdkReplayError | null = null;
   let cursorAdvanced = makeCursorSignal();
@@ -415,6 +417,7 @@ function makeReplayQueryRunner(transcript: ClaudeAgentSdkReplayTranscript): Clau
 
   const fail = (error: ClaudeAgentSdkReplayError): never => {
     failure = error;
+    cursorAdvanced.resolve();
     throw error;
   };
 
@@ -1892,7 +1895,7 @@ async function recordClaudeForkSessionQuery(input: {
   }
 }
 
-async function recordInterruptedClaudeQuery(input: {
+export async function recordInterruptedClaudeQuery(input: {
   readonly scenario: string;
   readonly prompt: string;
   readonly modelSelection: ModelSelection;
@@ -1948,21 +1951,22 @@ async function recordInterruptedClaudeQuery(input: {
     frame: makeClaudePromptOfferFrame(message),
   });
   promptQueue.offer(message);
-  if (input.interruptAfter === "tool_use") {
-    await recordMessagesUntilFirstToolUse({
-      iterator,
-      entries: input.entries,
-      scenario: input.scenario,
-    });
-    await Effect.runPromise(Effect.sleep(Duration.millis(250)));
-  }
-  input.entries.push({
-    type: "expect_outbound",
-    label: input.interruptLabel,
-    frame: { type: "query.interrupt" },
-  });
 
   try {
+    if (input.interruptAfter === "tool_use") {
+      await recordMessagesUntilFirstToolUse({
+        iterator,
+        entries: input.entries,
+        scenario: input.scenario,
+      });
+      await Effect.runPromise(Effect.sleep(Duration.millis(250)));
+    }
+    input.entries.push({
+      type: "expect_outbound",
+      label: input.interruptLabel,
+      frame: { type: "query.interrupt" },
+    });
+
     let cancelledError: unknown;
     try {
       await runtime.interrupt();
