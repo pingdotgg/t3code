@@ -110,6 +110,7 @@ import {
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarV2Status,
+  resolveSidebarV2TopStatus,
   resolveWorkingStartedAt,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
@@ -408,12 +409,15 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   );
   const threadKey = scopedThreadKey(threadRef);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const isExplicitlyUnread = useUiStateStore(
+    (state) => state.threadExplicitlyUnreadById[threadKey] === true,
+  );
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
 
   // Same semantics as v1 (never-visited counts as read): flipping the beta
   // flag must not light up every historical thread as unread.
-  const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
+  const isUnread = isExplicitlyUnread || hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarV2Status(thread);
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
@@ -424,6 +428,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke = wokeAtDate !== null && (lastVisitedDate === null || lastVisitedDate < wokeAtDate);
+  const topStatusKind = resolveSidebarV2TopStatus({
+    status,
+    isExplicitlyUnread,
+    isUnread,
+  });
   // In-flight rows (working, or waiting on approval/input) fade as a whole:
   // there is nothing for the user to do yet, so prominence is reserved for
   // rows that need a human — done (unread), read-but-unsettled, failed, and
@@ -438,26 +447,26 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
   const topStatus =
-    status === "working"
+    topStatusKind === "working"
       ? {
           label: "Working",
           icon: "working" as const,
           className:
             "animate-sidebar-working-text text-sky-600 motion-reduce:animate-none dark:text-sky-400",
         }
-      : status === "approval"
+      : topStatusKind === "approval"
         ? {
             label: "Approval",
             icon: null,
             className: "text-amber-700 dark:text-amber-300",
           }
-        : status === "input"
+        : topStatusKind === "input"
           ? {
               label: "Input",
               icon: null,
               className: "text-indigo-600 dark:text-indigo-300",
             }
-          : status === "failed"
+          : topStatusKind === "failed"
             ? {
                 label: "Failed",
                 icon: null,
@@ -469,13 +478,19 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   icon: "woke" as const,
                   className: "text-amber-700 dark:text-amber-300",
                 }
-              : isUnread
+              : topStatusKind === "unread"
                 ? {
-                    label: "Done",
-                    icon: "done" as const,
-                    className: "text-emerald-700 dark:text-emerald-300",
+                    label: "Unread",
+                    icon: null,
+                    className: "text-blue-600 dark:text-blue-300",
                   }
-                : null;
+                : topStatusKind === "done"
+                  ? {
+                      label: "Done",
+                      icon: "done" as const,
+                      className: "text-emerald-700 dark:text-emerald-300",
+                    }
+                  : null;
 
   const gitCwd = thread.worktreePath ?? props.projectCwd;
   const gitStatus = useEnvironmentQuery(

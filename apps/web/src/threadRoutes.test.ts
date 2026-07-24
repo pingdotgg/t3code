@@ -10,6 +10,7 @@ import {
   resolveThreadRouteRenderState,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
+  shouldKeepActiveThreadVisitOnUnmount,
 } from "./threadRoutes";
 
 describe("threadRoutes", () => {
@@ -65,6 +66,48 @@ describe("threadRoutes", () => {
       kind: "draft",
       draftId: "draft-1",
     });
+
+    expect(resolveThreadRouteTarget({ environmentId: "env-1" })).toBeNull();
+    expect(resolveThreadRouteTarget({ threadId: "thread-1" })).toBeNull();
+  });
+
+  it("keeps an active visit only while the same chat route remains mounted", () => {
+    const routeThreadKey = "env-1:thread-1";
+
+    expect(
+      shouldKeepActiveThreadVisitOnUnmount({
+        currentRouteTarget: resolveThreadRouteTarget({
+          environmentId: "env-1",
+          threadId: "thread-1",
+        }),
+        routeThreadKey,
+        draftId: null,
+      }),
+    ).toBe(true);
+    expect(
+      shouldKeepActiveThreadVisitOnUnmount({
+        currentRouteTarget: resolveThreadRouteTarget({
+          environmentId: "env-1",
+          threadId: "thread-2",
+        }),
+        routeThreadKey,
+        draftId: null,
+      }),
+    ).toBe(false);
+    expect(
+      shouldKeepActiveThreadVisitOnUnmount({
+        currentRouteTarget: resolveThreadRouteTarget({ draftId: "draft-1" }),
+        routeThreadKey,
+        draftId: DraftId.make("draft-1"),
+      }),
+    ).toBe(true);
+    expect(
+      shouldKeepActiveThreadVisitOnUnmount({
+        currentRouteTarget: resolveThreadRouteTarget({ draftId: "draft-2" }),
+        routeThreadKey,
+        draftId: DraftId.make("draft-1"),
+      }),
+    ).toBe(false);
   });
 
   it("resolves the backing thread while a draft route is being promoted", () => {
