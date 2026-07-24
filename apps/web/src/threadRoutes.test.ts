@@ -7,6 +7,7 @@ import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
+  resolveEagerActiveThreadRouteKey,
   resolveThreadRouteRenderState,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
@@ -69,6 +70,21 @@ describe("threadRoutes", () => {
 
     expect(resolveThreadRouteTarget({ environmentId: "env-1" })).toBeNull();
     expect(resolveThreadRouteTarget({ threadId: "thread-1" })).toBeNull();
+  });
+
+  it("eagerly tracks server routes before their thread detail mounts", () => {
+    expect(
+      resolveEagerActiveThreadRouteKey(
+        resolveThreadRouteTarget({
+          environmentId: "env-1",
+          threadId: "thread-1",
+        }),
+      ),
+    ).toBe("env-1:thread-1");
+    expect(
+      resolveEagerActiveThreadRouteKey(resolveThreadRouteTarget({ draftId: "draft-1" })),
+    ).toBeUndefined();
+    expect(resolveEagerActiveThreadRouteKey(null)).toBeNull();
   });
 
   it("keeps an active visit only while the same chat route remains mounted", () => {

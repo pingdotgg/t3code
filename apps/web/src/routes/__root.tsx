@@ -50,7 +50,7 @@ import {
   primaryServerWelcomeAtom,
 } from "../state/server";
 import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
-import { resolveThreadRouteTarget } from "../threadRoutes";
+import { resolveEagerActiveThreadRouteKey, resolveThreadRouteTarget } from "../threadRoutes";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -208,19 +208,19 @@ function CompletedThreadUnreadTracker() {
 }
 
 function ActiveThreadRouteTracker() {
-  const routeKind = useRouterState({
+  const routeThreadKey = useRouterState({
     select: (state) => {
       const params = state.matches[state.matches.length - 1]?.params ?? {};
-      return resolveThreadRouteTarget(params)?.kind ?? null;
+      return resolveEagerActiveThreadRouteKey(resolveThreadRouteTarget(params));
     },
   });
   const markActiveThreadVisited = useUiStateStore((state) => state.markActiveThreadVisited);
 
   useEffect(() => {
-    if (routeKind === null) {
-      markActiveThreadVisited(null, null);
+    if (routeThreadKey !== undefined) {
+      markActiveThreadVisited(routeThreadKey, null);
     }
-  }, [markActiveThreadVisited, routeKind]);
+  }, [markActiveThreadVisited, routeThreadKey]);
 
   return null;
 }

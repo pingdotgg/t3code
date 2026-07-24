@@ -85,6 +85,20 @@ export function resolveThreadRouteTarget(
   };
 }
 
+/**
+ * Canonical routes can register their active thread before thread detail has
+ * loaded. Draft routes defer to ChatView because the draft id alone does not
+ * identify its scoped thread ref.
+ */
+export function resolveEagerActiveThreadRouteKey(
+  target: ThreadRouteTarget | null,
+): string | null | undefined {
+  if (target === null) {
+    return null;
+  }
+  return target.kind === "server" ? scopedThreadKey(target.threadRef) : undefined;
+}
+
 export function shouldKeepActiveThreadVisitOnUnmount(input: {
   readonly currentRouteTarget: ThreadRouteTarget | null;
   readonly routeThreadKey: string;
