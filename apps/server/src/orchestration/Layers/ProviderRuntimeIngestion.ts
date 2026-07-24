@@ -751,23 +751,55 @@ const make = Effect.gen(function* () {
   // "ready" ("Done"): the agent stopped, but a task completion is expected to
   // wake it, and flashing Done in between is a lie. Keyed by provider
   // instance so a replaced session can neither inherit nor close a
-  // predecessor's tasks. Plain mutable state is safe: ingestion is a single
-  // serial worker. Terminal session statuses sweep the entry.
-  const openTasksByThreadId = new Map<ThreadId, { instanceKey: string; taskIds: Set<string> }>();
+  // predecessor's tasks; closed ids are kept as tombstones so a late or
+  // replayed start/progress cannot resurrect a finished task. Plain mutable
+  // state is safe: ingestion is a single serial worker. Terminal session
+  // statuses sweep the entry.
+  const openTasksByThreadId = new Map<
+    ThreadId,
+    { instanceKey: string; taskIds: Set<string>; closedTaskIds: Set<string> }
+  >();
 
   const taskInstanceKey = (event: ProviderRuntimeEvent) =>
     event.providerInstanceId ?? event.provider;
 
-  /** Returns true when this task is the instance's first open task. */
-  const trackTaskStarted = (threadId: ThreadId, event: ProviderRuntimeEvent, taskId: string) => {
+  const sessionInstanceKeyFor = (session: {
+    providerInstanceId?: string | undefined;
+    providerName: string | null;
+  }): string | null => session.providerInstanceId ?? session.providerName;
+
+  /**
+   * Returns true when this task is the instance's first open task. The
+   * projected session adjudicates cross-instance races: a delayed start from
+   * a replaced instance must neither seed a phantom set nor displace the
+   * current instance's tasks, while a current-instance start may reclaim an
+   * entry a dead instance leaked.
+   */
+  const trackTaskStarted = (
+    threadId: ThreadId,
+    event: ProviderRuntimeEvent,
+    taskId: string,
+    sessionInstanceKey: string | null,
+  ) => {
     const instanceKey = taskInstanceKey(event);
+    if (sessionInstanceKey !== null && instanceKey !== sessionInstanceKey) {
+      return false;
+    }
     const entry = openTasksByThreadId.get(threadId);
     if (!entry || entry.instanceKey !== instanceKey) {
-      openTasksByThreadId.set(threadId, { instanceKey, taskIds: new Set([taskId]) });
+      openTasksByThreadId.set(threadId, {
+        instanceKey,
+        taskIds: new Set([taskId]),
+        closedTaskIds: new Set(),
+      });
       return true;
     }
+    if (entry.closedTaskIds.has(taskId)) {
+      return false;
+    }
+    const wasEmpty = entry.taskIds.size === 0;
     entry.taskIds.add(taskId);
-    return false;
+    return wasEmpty;
   };
 
   const trackTaskCompleted = (threadId: ThreadId, event: ProviderRuntimeEvent, taskId: string) => {
@@ -776,9 +808,7 @@ const make = Effect.gen(function* () {
       return;
     }
     entry.taskIds.delete(taskId);
-    if (entry.taskIds.size === 0) {
-      openTasksByThreadId.delete(threadId);
-    }
+    entry.closedTaskIds.add(taskId);
   };
 
   const hasOpenTasks = (threadId: ThreadId, event: ProviderRuntimeEvent) => {
@@ -1448,12 +1478,6 @@ const make = Effect.gen(function* () {
                   : restingStatus;
           }
         })();
-        // A session leaving the resting/running loop can no longer be woken
-        // by its tasks; drop them so a stale set never parks a future
-        // session on Waiting.
-        if (status === "stopped" || status === "error" || status === "interrupted") {
-          clearOpenTasks(thread.id);
-        }
         const nextActiveTurnId =
           event.type === "turn.started"
             ? (eventTurnId ?? null)
@@ -1476,6 +1500,13 @@ const make = Effect.gen(function* () {
                 : (thread.session?.lastError ?? null);
 
         if (shouldApplyThreadLifecycle) {
+          // A session leaving the resting/running loop can no longer be woken
+          // by its tasks; drop them so a stale set never parks a future
+          // session on Waiting. Gated like the session.set below: a rejected
+          // stale event must not erase the active turn's tasks.
+          if (status === "stopped" || status === "error" || status === "interrupted") {
+            clearOpenTasks(thread.id);
+          }
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
             yield* markSourceProposedPlanImplemented(
               acceptedTurnStartedSourcePlan.sourceThreadId,
@@ -1823,7 +1854,12 @@ const make = Effect.gen(function* () {
         // task.progress tracks too: it re-opens a task the tracker lost
         // (server restart, missed start event) so the thread still parks on
         // Waiting instead of a false Done.
-        const firstOpenTask = trackTaskStarted(thread.id, event, event.payload.taskId);
+        const firstOpenTask = trackTaskStarted(
+          thread.id,
+          event,
+          event.payload.taskId,
+          thread.session ? sessionInstanceKeyFor(thread.session) : null,
+        );
         // A task can outlive its turn: when its start (or surviving progress)
         // lands after the turn already settled the session on "ready", demote
         // to "idle" now — the turn-completion path never saw the task.
@@ -1831,8 +1867,7 @@ const make = Effect.gen(function* () {
           firstOpenTask &&
           thread.session?.status === "ready" &&
           thread.session.activeTurnId === null &&
-          (thread.session.providerInstanceId ?? thread.session.providerName) ===
-            taskInstanceKey(event)
+          sessionInstanceKeyFor(thread.session) === taskInstanceKey(event)
         ) {
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
