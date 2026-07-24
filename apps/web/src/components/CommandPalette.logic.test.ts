@@ -10,10 +10,19 @@ import {
 } from "./CommandPalette.logic";
 
 describe("resolveNewThreadOnIntent", () => {
-  it("keeps the intent pending until environment-backed projects load", () => {
-    expect(resolveNewThreadOnIntent({ isActive: false, environmentItemCount: 0 })).toBe("ignore");
-    expect(resolveNewThreadOnIntent({ isActive: true, environmentItemCount: 0 })).toBe("defer");
-    expect(resolveNewThreadOnIntent({ isActive: true, environmentItemCount: 1 })).toBe("open");
+  it("distinguishes loading from a loaded-empty environment list", () => {
+    expect(
+      resolveNewThreadOnIntent({ isActive: false, isLoaded: false, environmentItemCount: 0 }),
+    ).toBe("ignore");
+    expect(
+      resolveNewThreadOnIntent({ isActive: true, isLoaded: false, environmentItemCount: 0 }),
+    ).toBe("defer");
+    expect(
+      resolveNewThreadOnIntent({ isActive: true, isLoaded: true, environmentItemCount: 0 }),
+    ).toBe("clear");
+    expect(
+      resolveNewThreadOnIntent({ isActive: true, isLoaded: true, environmentItemCount: 1 }),
+    ).toBe("open");
   });
 });
 

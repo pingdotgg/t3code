@@ -60,7 +60,11 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import {
+  useAllEnvironmentShellsBootstrapped,
+  useProjects,
+  useThreadShells,
+} from "../state/entities";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -518,6 +522,7 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
+  const environmentShellsLoaded = useAllEnvironmentShellsBootstrapped();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -1264,13 +1269,18 @@ function OpenCommandPaletteDialog(props: {
   useLayoutEffect(() => {
     const resolution = resolveNewThreadOnIntent({
       isActive: openIntent?.kind === "new-thread-on",
+      isLoaded: environmentShellsLoaded,
       environmentItemCount: newThreadEnvironmentItems.length,
     });
+    if (resolution === "clear") {
+      clearOpenIntent();
+      return;
+    }
     if (resolution !== "open") {
       return;
     }
     openNewThreadOnFlow();
-  }, [newThreadEnvironmentItems.length, openIntent]);
+  }, [clearOpenIntent, environmentShellsLoaded, newThreadEnvironmentItems.length, openIntent]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 

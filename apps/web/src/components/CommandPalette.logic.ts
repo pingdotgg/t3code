@@ -17,10 +17,12 @@ export const ADDON_ICON_CLASS = "size-4";
 
 export function resolveNewThreadOnIntent(input: {
   isActive: boolean;
+  isLoaded: boolean;
   environmentItemCount: number;
-}): "ignore" | "defer" | "open" {
+}): "ignore" | "defer" | "clear" | "open" {
   if (!input.isActive) return "ignore";
-  return input.environmentItemCount > 0 ? "open" : "defer";
+  if (!input.isLoaded) return "defer";
+  return input.environmentItemCount > 0 ? "open" : "clear";
 }
 
 export interface CommandPaletteItem {
