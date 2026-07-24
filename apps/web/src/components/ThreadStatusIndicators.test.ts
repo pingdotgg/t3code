@@ -1,7 +1,11 @@
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
+import {
+  prStatusIndicator,
+  resolveThreadPr,
+  settledPrHoverColorClass,
+} from "./ThreadStatusIndicators";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {
@@ -69,5 +73,24 @@ describe("prStatusIndicator", () => {
       tooltipLead: "PR #42 - Open",
       tooltipTitle: "PR branch",
     });
+  });
+
+  it("uses red for closed pull requests", () => {
+    const closedPr = status().pr;
+    if (!closedPr) throw new Error("Expected pull request fixture");
+
+    expect(prStatusIndicator({ ...closedPr, state: "closed" }, undefined)?.colorClass).toContain(
+      "text-red-600",
+    );
+  });
+});
+
+describe("settledPrHoverColorClass", () => {
+  it.each([
+    ["open", "text-emerald-600"],
+    ["merged", "text-violet-600"],
+    ["closed", "text-red-600"],
+  ] as const)("restores the %s pull request color on row hover", (state, colorClass) => {
+    expect(settledPrHoverColorClass(state)).toContain(`group-hover/v2-row:${colorClass}`);
   });
 });
