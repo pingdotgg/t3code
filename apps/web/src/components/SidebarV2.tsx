@@ -400,7 +400,7 @@ function SidebarV2SettledDivider({
               event.stopPropagation();
               onArchiveAll();
             }}
-            className="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[10px] text-sidebar-muted-foreground/70 transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-50"
+            className="inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[10px] text-sidebar-muted-foreground/70 transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground disabled:opacity-50"
           >
             <ArchiveIcon aria-hidden className="size-3" />
             Archive all
@@ -2002,6 +2002,22 @@ export default function SidebarV2() {
             type: "error",
             title: entries.length === 1 ? "Failed to archive thread" : "Failed to archive threads",
             description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+      if (outcome.skippedThreadKeys.length > 0) {
+        const skippedCount = outcome.skippedThreadKeys.length;
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title:
+              outcome.archivedThreadKeys.length === 0
+                ? "No threads archived"
+                : "Some threads were not archived",
+            description:
+              skippedCount === 1
+                ? "1 thread became active and was skipped."
+                : `${skippedCount} threads became active and were skipped.`,
           }),
         );
       }

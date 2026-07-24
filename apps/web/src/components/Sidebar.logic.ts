@@ -55,14 +55,19 @@ export async function archiveSelectedThreadEntries<
   onArchived?: (entry: TEntry) => void;
 }): Promise<{
   archivedThreadKeys: readonly string[];
+  skippedThreadKeys: readonly string[];
   mutationFailure: Extract<TResult, { readonly _tag: "Failure" }> | null;
   followupFailures: readonly Extract<TResult, { readonly _tag: "Failure" }>[];
 }> {
   const archivedThreadKeys: string[] = [];
+  const skippedThreadKeys: string[] = [];
   const followupFailures: Extract<TResult, { readonly _tag: "Failure" }>[] = [];
 
   for (const entry of input.entries) {
-    if (input.canArchive && !input.canArchive(entry)) continue;
+    if (input.canArchive && !input.canArchive(entry)) {
+      skippedThreadKeys.push(entry.threadKey);
+      continue;
+    }
     let didArchive = false;
     const result = await input.archive(entry, () => {
       if (didArchive) return;
@@ -78,10 +83,10 @@ export async function archiveSelectedThreadEntries<
       followupFailures.push(failure);
       continue;
     }
-    return { archivedThreadKeys, mutationFailure: failure, followupFailures };
+    return { archivedThreadKeys, skippedThreadKeys, mutationFailure: failure, followupFailures };
   }
 
-  return { archivedThreadKeys, mutationFailure: null, followupFailures };
+  return { archivedThreadKeys, skippedThreadKeys, mutationFailure: null, followupFailures };
 }
 
 export async function withCoordinatedThreadArchiveEntries<

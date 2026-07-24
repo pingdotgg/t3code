@@ -116,6 +116,7 @@ describe("archiveSelectedThreadEntries", () => {
 
     expect(outcome).toEqual({
       archivedThreadKeys: ["one", "two", "three"],
+      skippedThreadKeys: [],
       mutationFailure: null,
       followupFailures: [],
     });
@@ -132,6 +133,7 @@ describe("archiveSelectedThreadEntries", () => {
     expect(archive).toHaveBeenCalledTimes(2);
     expect(outcome).toEqual({
       archivedThreadKeys: ["one"],
+      skippedThreadKeys: [],
       mutationFailure: failure,
       followupFailures: [],
     });
@@ -147,6 +149,7 @@ describe("archiveSelectedThreadEntries", () => {
     expect(archive).toHaveBeenCalledTimes(3);
     expect(outcome).toEqual({
       archivedThreadKeys: ["one", "two", "three"],
+      skippedThreadKeys: [],
       mutationFailure: null,
       followupFailures: [failure],
     });
@@ -186,6 +189,27 @@ describe("archiveSelectedThreadEntries", () => {
     expect(archive).toHaveBeenNthCalledWith(1, entries[0], expect.any(Function));
     expect(archive).toHaveBeenNthCalledWith(2, entries[2], expect.any(Function));
     expect(outcome.archivedThreadKeys).toEqual(["one", "three"]);
+    expect(outcome.skippedThreadKeys).toEqual(["two"]);
+  });
+
+  it("reports when every entry becomes ineligible before mutation", async () => {
+    const archive = vi.fn(async (_entry, markArchived: () => void) => {
+      markArchived();
+      return success;
+    });
+    const outcome = await archiveSelectedThreadEntries({
+      entries,
+      archive,
+      canArchive: () => false,
+    });
+
+    expect(archive).not.toHaveBeenCalled();
+    expect(outcome).toEqual({
+      archivedThreadKeys: [],
+      skippedThreadKeys: ["one", "two", "three"],
+      mutationFailure: null,
+      followupFailures: [],
+    });
   });
 });
 
