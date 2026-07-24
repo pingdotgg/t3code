@@ -574,7 +574,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --alert-glass-tint: var(--warning);
   }
 
-  .dropdown-glass,
   .dialog-glass {
     background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -588,6 +587,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .dropdown-glass {
+    /*
+     * Elevated glass needs a denser tint than broad ambient surfaces. Nesting
+     * the user-controlled mix inside an 18% popover tint preserves the full
+     * opacity setting range (40% -> 51%, 80% -> 84%, 100% -> 100%) while
+     * keeping high-contrast page content from blooming through menus.
+     */
+    background: color-mix(
+      in srgb,
+      var(--popover) 18%,
+      color-mix(in srgb, var(--popover) var(--glass-opacity), transparent)
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    backdrop-filter: blur(var(--glass-blur));
     border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
     box-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%);
   }
@@ -602,7 +614,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .dark .model-picker-surface.model-picker-surface {
-    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+    background: color-mix(
+      in srgb,
+      var(--popover) 18%,
+      color-mix(in srgb, var(--popover) var(--glass-opacity), transparent)
+    );
   }
 
   .dark .dialog-glass {
