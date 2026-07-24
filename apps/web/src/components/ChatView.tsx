@@ -3847,22 +3847,22 @@ function ChatViewContent(props: ChatViewProps) {
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
   const nowMinute = useNowMinute();
-  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
-  useEffect(() => {
-    void snoozeWakeTick;
-    const wakeAtMs = Date.parse(activeThreadShell?.snoozedUntil ?? "");
-    const remainingMs = wakeAtMs - Date.now();
-    if (!Number.isFinite(remainingMs) || remainingMs <= 0) return;
-    const id = window.setTimeout(
-      () => bumpSnoozeWakeTick((tick) => tick + 1),
-      Math.min(remainingMs + 50, 2_147_483_647),
-    );
-    return () => window.clearTimeout(id);
-  }, [activeThreadShell?.snoozedUntil, snoozeWakeTick]);
   const activeThreadSnoozed =
     activeThreadShell !== null &&
     supportsSnooze &&
     effectiveSnoozed(activeThreadShell, { now: new Date().toISOString() });
+  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
+  useEffect(() => {
+    void snoozeWakeTick;
+    if (!activeThreadSnoozed) return;
+    const wakeAtMs = Date.parse(activeThreadShell?.snoozedUntil ?? "");
+    if (!Number.isFinite(wakeAtMs)) return;
+    const id = window.setTimeout(
+      () => bumpSnoozeWakeTick((tick) => tick + 1),
+      Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647),
+    );
+    return () => window.clearTimeout(id);
+  }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeWakeTick]);
   const activeThreadSettled = useMemo(() => {
     if (activeThreadShell === null || !supportsSettlement) return false;
     return effectiveSettled(activeThreadShell, {
