@@ -13,7 +13,6 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
   ThreadId,
-  TurnId,
 } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -78,8 +77,6 @@ export interface ThreadDetailScreenProps {
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
   readonly onSendMessage: () => Promise<MessageId | null>;
-  readonly onForkFromTurn?: (turnId: TurnId) => void;
-  readonly isForkingFromTurn?: boolean;
   readonly onReconnectEnvironment: () => void;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
@@ -374,12 +371,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             usesAutomaticContentInsets={props.usesAutomaticContentInsets}
             onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
             skills={selectedProviderSkills}
-            {...(props.onForkFromTurn
-              ? {
-                  onForkFromTurn: props.onForkFromTurn,
-                  isForkingFromTurn: props.isForkingFromTurn ?? false,
-                }
-              : {})}
           />
         </View>
       ) : (

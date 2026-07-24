@@ -1,39 +1,36 @@
-import { ProviderDriverKind, TurnId } from "@t3tools/contracts";
+import { MessageId, ProviderDriverKind, TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  releaseForkActionLock,
-  supportsSelectedResponseFork,
-  tryAcquireForkActionLock,
-  type ForkActionLock,
-} from "./threadForking.js";
+import { resolveLatestForkableTurnId, supportsThreadFork } from "./threadForking.js";
 
-describe("supportsSelectedResponseFork", () => {
-  it("only enables providers with an exact historical fork primitive", () => {
-    expect(supportsSelectedResponseFork(ProviderDriverKind.make("codex"))).toBe(true);
-    expect(supportsSelectedResponseFork(ProviderDriverKind.make("claudeAgent"))).toBe(true);
-    expect(supportsSelectedResponseFork(ProviderDriverKind.make("opencode"))).toBe(true);
-    expect(supportsSelectedResponseFork(ProviderDriverKind.make("cursor"))).toBe(false);
-    expect(supportsSelectedResponseFork(ProviderDriverKind.make("grok"))).toBe(false);
-    expect(supportsSelectedResponseFork(null)).toBe(false);
+describe("supportsThreadFork", () => {
+  it("only enables providers with an exact native fork primitive", () => {
+    expect(supportsThreadFork(ProviderDriverKind.make("codex"))).toBe(true);
+    expect(supportsThreadFork(ProviderDriverKind.make("claudeAgent"))).toBe(true);
+    expect(supportsThreadFork(ProviderDriverKind.make("opencode"))).toBe(true);
+    expect(supportsThreadFork(ProviderDriverKind.make("cursor"))).toBe(false);
+    expect(supportsThreadFork(ProviderDriverKind.make("grok"))).toBe(false);
+    expect(supportsThreadFork(null)).toBe(false);
   });
 });
 
-describe("fork action lock", () => {
-  it("rejects a second action until the first one releases", () => {
-    const firstTurnId = TurnId.make("turn-1");
-    const secondTurnId = TurnId.make("turn-2");
-    const lock: ForkActionLock = { current: null };
+describe("resolveLatestForkableTurnId", () => {
+  const completedTurn = {
+    turnId: TurnId.make("turn-1"),
+    state: "completed" as const,
+    requestedAt: "2026-07-23T00:00:00.000Z",
+    startedAt: "2026-07-23T00:00:01.000Z",
+    completedAt: "2026-07-23T00:00:02.000Z",
+    assistantMessageId: MessageId.make("assistant-1"),
+  };
 
-    expect(tryAcquireForkActionLock(lock, firstTurnId)).toBe(true);
-    expect(tryAcquireForkActionLock(lock, secondTurnId)).toBe(false);
-    expect(lock.current).toBe(firstTurnId);
+  it("uses the latest completed assistant turn as the full-thread clone boundary", () => {
+    expect(resolveLatestForkableTurnId(completedTurn)).toBe(completedTurn.turnId);
+  });
 
-    releaseForkActionLock(lock, secondTurnId);
-    expect(lock.current).toBe(firstTurnId);
-    releaseForkActionLock(lock, firstTurnId);
-
-    expect(tryAcquireForkActionLock(lock, secondTurnId)).toBe(true);
-    expect(lock.current).toBe(secondTurnId);
+  it("rejects running turns and turns without a completed assistant response", () => {
+    expect(resolveLatestForkableTurnId({ ...completedTurn, state: "running" })).toBeNull();
+    expect(resolveLatestForkableTurnId({ ...completedTurn, assistantMessageId: null })).toBeNull();
+    expect(resolveLatestForkableTurnId(null)).toBeNull();
   });
 });

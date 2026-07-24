@@ -8,21 +8,13 @@
  * workspace paths, and diff/plan/files remain singleton surfaces.
  */
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
-export const RIGHT_PANEL_KINDS = [
-  "plan",
-  "diff",
-  "files",
-  "file",
-  "preview",
-  "terminal",
-  "thread",
-] as const;
+export const RIGHT_PANEL_KINDS = ["plan", "diff", "files", "file", "preview", "terminal"] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export type RightPanelSurface =
@@ -45,11 +37,10 @@ export type RightPanelSurface =
       revealLine: number | null;
       revealRequestId: number;
     }
-  | { id: "plan"; kind: "plan" }
-  | { id: `thread:${string}`; kind: "thread"; threadId: ThreadId; title: string };
+  | { id: "plan"; kind: "plan" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 8;
+const RIGHT_PANEL_STORAGE_VERSION = 7;
 
 export interface ThreadRightPanelState {
   isOpen: boolean;
@@ -59,11 +50,7 @@ export interface ThreadRightPanelState {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
-  open: (
-    ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "thread">,
-  ) => void;
-  openThread: (ref: ScopedThreadRef, threadId: ThreadId, title: string) => void;
+  open: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
@@ -85,10 +72,7 @@ interface RightPanelStoreState {
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
   toggleVisibility: (ref: ScopedThreadRef) => void;
-  toggle: (
-    ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "thread">,
-  ) => void;
+  toggle: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -99,7 +83,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "thread">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -134,13 +118,6 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   resourceId: terminalId,
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
-});
-
-const threadSurface = (threadId: ThreadId, title: string): RightPanelSurface => ({
-  id: `thread:${threadId}`,
-  kind: "thread",
-  threadId,
-  title,
 });
 
 const upsertSurface = (
@@ -280,20 +257,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               ? current.surfaces.filter((entry) => entry.id !== "browser:new")
               : current.surfaces;
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
-          }),
-        })),
-      openThread: (ref, threadId, title) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
-            const surface = threadSurface(threadId, title);
-            const existing = current.surfaces.some((entry) => entry.id === surface.id);
-            return {
-              isOpen: true,
-              activeSurfaceId: surface.id,
-              surfaces: existing
-                ? current.surfaces.map((entry) => (entry.id === surface.id ? surface : entry))
-                : [...current.surfaces, surface],
-            };
           }),
         })),
       openFile: (ref, relativePath, line) =>

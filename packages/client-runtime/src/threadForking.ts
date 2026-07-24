@@ -1,33 +1,26 @@
-import { ProviderDriverKind, type TurnId } from "@t3tools/contracts";
+import { ProviderDriverKind, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
 
-const SELECTED_RESPONSE_FORK_DRIVERS = new Set<ProviderDriverKind>([
+const THREAD_FORK_DRIVERS = new Set<ProviderDriverKind>([
   ProviderDriverKind.make("codex"),
   ProviderDriverKind.make("claudeAgent"),
   ProviderDriverKind.make("opencode"),
 ]);
 
-export function supportsSelectedResponseFork(
-  driverKind: ProviderDriverKind | null | undefined,
-): boolean {
+export function supportsThreadFork(driverKind: ProviderDriverKind | null | undefined): boolean {
   return driverKind !== null && driverKind !== undefined
-    ? SELECTED_RESPONSE_FORK_DRIVERS.has(driverKind)
+    ? THREAD_FORK_DRIVERS.has(driverKind)
     : false;
 }
 
-export interface ForkActionLock {
-  current: TurnId | null;
-}
-
-export function tryAcquireForkActionLock(lock: ForkActionLock, turnId: TurnId): boolean {
-  if (lock.current !== null) {
-    return false;
+export function resolveLatestForkableTurnId(
+  latestTurn: OrchestrationLatestTurn | null,
+): TurnId | null {
+  if (
+    latestTurn === null ||
+    latestTurn.state === "running" ||
+    latestTurn.assistantMessageId === null
+  ) {
+    return null;
   }
-  lock.current = turnId;
-  return true;
-}
-
-export function releaseForkActionLock(lock: ForkActionLock, turnId: TurnId): void {
-  if (lock.current === turnId) {
-    lock.current = null;
-  }
+  return latestTurn.turnId;
 }

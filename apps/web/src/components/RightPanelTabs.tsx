@@ -1,15 +1,6 @@
 import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import {
-  ClipboardList,
-  FileDiff,
-  Files,
-  GitFork,
-  Globe2,
-  Plus,
-  TerminalSquare,
-  X,
-} from "lucide-react";
+import { ClipboardList, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
 import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -214,8 +205,6 @@ function surfaceTitle(
       );
     case "plan":
       return "Plan";
-    case "thread":
-      return surface.title;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -277,8 +266,6 @@ function SurfaceIcon({
       return <TerminalSquare className="size-3.5 shrink-0" />;
     case "plan":
       return <ClipboardList className="size-3.5 shrink-0" />;
-    case "thread":
-      return <GitFork className="size-3.5 shrink-0" />;
   }
 }
 
