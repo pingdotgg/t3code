@@ -33,6 +33,7 @@ import { ClaudexDriver, type ClaudexDriverEnv } from "./Drivers/ClaudexDriver.ts
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import { FuguDriver, type FuguDriverEnv } from "./Drivers/FuguDriver.ts";
 import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
+import { KimiDriver, type KimiDriverEnv } from "./Drivers/KimiDriver.ts";
 import type { AnyProviderDriver } from "./ProviderDriver.ts";
 
 /**
@@ -47,6 +48,7 @@ export type BuiltInDriversEnv =
   | CodexDriverEnv
   | FuguDriverEnv
   | GrokDriverEnv
+  | KimiDriverEnv
   | ChatGptBrowserDriverEnv;
 
 /**
@@ -60,6 +62,7 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   ClaudeSyntheroDriver,
   ClaudexDriver,
   GrokDriver,
+  KimiDriver,
   FuguDriver,
   ChatGptBrowserDriver,
 ];
