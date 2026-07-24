@@ -9,6 +9,7 @@ enum ProviderBrand: String, Equatable, Sendable {
     case codex
     case openAI
     case grok
+    case kimi
     case fugu
     case cursor
 
@@ -17,6 +18,7 @@ enum ProviderBrand: String, Equatable, Sendable {
             let id = modelID.lowercased()
             if id.contains("claude") { return .claude }
             if id.contains("grok") { return .grok }
+            if id.contains("kimi") { return .kimi }
             if id.contains("fugu") { return .fugu }
             if id.contains("codex") { return .codex }
             if id.contains("openai") || id.contains("gpt") || isOpenAIReasoningModel(id) {
@@ -28,6 +30,7 @@ enum ProviderBrand: String, Equatable, Sendable {
         case .claude, .claudeWork, .claudeSynthero: .claude
         case .claudex, .codex: .codex
         case .grok: .grok
+        case .kimi: .kimi
         case .fugu: .fugu
         case .legacyCursor: .cursor
         }
@@ -44,6 +47,7 @@ enum ProviderBrand: String, Equatable, Sendable {
         case .openAI: "ProviderOpenAI"
         case .grok: "ProviderGrok"
         case .cursor: "ProviderCursor"
+        case .kimi: nil
         case .fugu: nil
         }
     }
@@ -64,7 +68,7 @@ struct ProviderIcon: View {
                     .resizable()
                     .scaledToFit()
             } else {
-                Image(systemName: "fish")
+                Image(systemName: brand == .kimi ? "moon.stars.fill" : "fish")
                     .resizable()
                     .scaledToFit()
             }

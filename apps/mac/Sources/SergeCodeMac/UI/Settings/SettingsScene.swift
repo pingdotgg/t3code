@@ -690,6 +690,7 @@ private extension ProviderKind {
         case .claudeSynthero: "claude"
         case .codex: "codex"
         case .grok: "grok"
+        case .kimi: "kimi"
         case .fugu: "codex-fugu"
         case .legacyCursor: "cursor"
         }

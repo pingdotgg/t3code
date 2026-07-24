@@ -34,7 +34,7 @@ import T3Kit
 //
 // ── Mapping decisions (wire -> UI) — best-effort, documented, never silent ────
 //  * ProviderKind: derived from ServerProvider.driver by substring match
-//    (claude/claude-synthero/codex/cursor/grok/fugu), with exact instance
+//    (claude/claude-synthero/codex/cursor/grok/kimi/fugu), with exact instance
 //    mappings for separately selectable profiles such as `claude-work`.
 //    Drivers with no ProviderKind equivalent are dropped from providers() —
 //    ProviderKind is a closed enum with no `.other`. See
@@ -3043,6 +3043,7 @@ public actor LiveBackend: BackendService {
         if lowered.contains("claude") { return .claude }
         if lowered.contains("codex") { return .codex }
         if lowered.contains("grok") { return .grok }
+        if lowered.contains("kimi") { return .kimi }
         if lowered.contains("fugu") { return .fugu }
         if lowered.contains("cursor") { return .legacyCursor }
         return nil

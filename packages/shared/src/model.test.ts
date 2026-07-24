@@ -51,6 +51,21 @@ describe("normalizeModelSlug", () => {
     expect(resolveModelSlugForProvider(grok, undefined)).toBe("grok-4.5");
   });
 
+  it("normalizes Kimi model aliases", () => {
+    const kimi = ProviderDriverKind.make("kimi");
+    expect(normalizeModelSlug("k3", kimi)).toBe("kimi-code/k3");
+    expect(normalizeModelSlug("k2.7", kimi)).toBe("kimi-code/kimi-for-coding");
+    expect(normalizeModelSlug("kimi-for-coding-highspeed", kimi)).toBe(
+      "kimi-code/kimi-for-coding-highspeed",
+    );
+  });
+
+  it("uses kimi-code/k3 as the Kimi provider default", () => {
+    const kimi = ProviderDriverKind.make("kimi");
+    expect(DEFAULT_MODEL_BY_PROVIDER[kimi]).toBe("kimi-code/k3");
+    expect(resolveModelSlugForProvider(kimi, undefined)).toBe("kimi-code/k3");
+  });
+
   it("normalizes Fugu ultra aliases", () => {
     expect(normalizeModelSlug("ultra", ProviderDriverKind.make("fugu"))).toBe("fugu-ultra");
     expect(normalizeModelSlug("fugu-ultra-latest", ProviderDriverKind.make("fugu"))).toBe(

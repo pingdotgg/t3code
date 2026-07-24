@@ -393,6 +393,36 @@ export const GrokSettings = makeProviderSettingsSchema(
 export type GrokSettings = typeof GrokSettings.Type;
 
 /**
+ * Moonshot Kimi Code CLI via ACP (`kimi acp`).
+ *
+ * Authenticate once with `kimi login` (device-code OAuth). Optional API keys
+ * can also be supplied through the provider environment variables section.
+ */
+export const KimiSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("kimi").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Kimi Code CLI binary.",
+        providerSettingsForm: { placeholder: "kimi", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath"],
+  },
+);
+export type KimiSettings = typeof KimiSettings.Type;
+
+/**
  * Sakana AI Fugu via the real OpenAI Codex binary + a dedicated CODEX_HOME.
  *
  * binaryPath defaults to `codex` (not `codex-fugu`): the Sakana wrapper is a
@@ -624,6 +654,7 @@ export const ServerSettings = Schema.Struct({
     "claude-synthero": ClaudeSyntheroSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     claudex: ClaudexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    kimi: KimiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     fugu: FuguSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     chatgpt: ChatGptBrowserSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -742,6 +773,12 @@ const GrokSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const KimiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 const FuguSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -784,6 +821,7 @@ export const ServerSettingsPatch = Schema.Struct({
       "claude-synthero": Schema.optionalKey(ClaudeSyntheroSettingsPatch),
       claudex: Schema.optionalKey(ClaudexSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
+      kimi: Schema.optionalKey(KimiSettingsPatch),
       fugu: Schema.optionalKey(FuguSettingsPatch),
       chatgpt: Schema.optionalKey(ChatGptBrowserSettingsPatch),
     }),

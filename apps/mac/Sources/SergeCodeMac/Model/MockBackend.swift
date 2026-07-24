@@ -932,6 +932,21 @@ private actor MockState {
                     EffortChoice(id: "high", label: "High", isDefault: true),
                 ]),
             ModelOption(
+                instanceID: "provider-kimi", modelID: "kimi-code/k3",
+                displayName: "K3", provider: .kimi, isDefault: true,
+                effortOptionID: "reasoningEffort",
+                effortChoices: [
+                    EffortChoice(id: "low", label: "Low", isDefault: false),
+                    EffortChoice(id: "high", label: "High", isDefault: true),
+                    EffortChoice(id: "max", label: "Max", isDefault: false),
+                ]),
+            ModelOption(
+                instanceID: "provider-kimi", modelID: "kimi-code/kimi-for-coding",
+                displayName: "K2.7 Coding", provider: .kimi, isDefault: false),
+            ModelOption(
+                instanceID: "provider-kimi", modelID: "kimi-code/kimi-for-coding-highspeed",
+                displayName: "K2.7 Coding Highspeed", provider: .kimi, isDefault: false),
+            ModelOption(
                 instanceID: "provider-fugu", modelID: "fugu",
                 displayName: "Fugu", provider: .fugu, isDefault: true,
                 effortOptionID: "reasoningEffort",
@@ -1377,6 +1392,7 @@ private actor MockState {
             ProviderInstance(id: "provider-claude-synthero", kind: .claudeSynthero, availability: .authRequired, version: nil),
             ProviderInstance(id: "provider-codex", kind: .codex, availability: .available, version: "0.9.0"),
             ProviderInstance(id: "provider-grok", kind: .grok, availability: .available, version: "0.2.91"),
+            ProviderInstance(id: "provider-kimi", kind: .kimi, availability: .available, version: "0.29.0"),
             ProviderInstance(id: "provider-fugu", kind: .fugu, availability: .available, version: "0.1.0"),
         ]
 
