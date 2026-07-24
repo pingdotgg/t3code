@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
+  DEFAULT_WORKTREE_PATH_TEMPLATE,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthReviewWriteScope,
@@ -439,6 +440,14 @@ const makeWsRpcLayer = (
           Effect.logWarning("Failed to read automatic Git fetch interval setting", {
             detail: cause.message,
           }).pipe(Effect.as(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
+        ),
+      );
+      const worktreePathTemplate = serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.worktreePathTemplate),
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to read worktree path template; using the default", {
+            detail: cause.message,
+          }).pipe(Effect.as(DEFAULT_WORKTREE_PATH_TEMPLATE)),
         ),
       );
       const sourceControlRepositories =
@@ -1015,6 +1024,7 @@ const makeWsRpcLayer = (
                 newRefName: bootstrap.prepareWorktree.branch,
                 baseRefName: bootstrap.prepareWorktree.baseBranch,
                 path: null,
+                pathTemplate: yield* worktreePathTemplate,
               });
               targetWorktreePath = worktree.worktree.path;
               yield* orchestrationEngine.dispatch({
@@ -1819,7 +1829,12 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateWorktree,
-            gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            worktreePathTemplate.pipe(
+              Effect.flatMap((pathTemplate) =>
+                gitWorkflow.createWorktree({ ...input, pathTemplate }),
+              ),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>

@@ -63,7 +63,7 @@ export class GitWorkflowService extends Context.Service<
       input: VcsListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
     readonly createWorktree: (
-      input: VcsCreateWorktreeInput,
+      input: VcsCreateWorktreeInput & { readonly pathTemplate?: string },
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
     readonly fetchRemote: (input: {
       readonly cwd: string;

@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  DEFAULT_WORKTREE_PATH_TEMPLATE,
   GitCommandError,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewSource,
@@ -2267,7 +2268,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const targetBranch = input.newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
-    const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
+    const worktreePath =
+      input.path ??
+      path.resolve(
+        input.cwd,
+        (input.pathTemplate ?? DEFAULT_WORKTREE_PATH_TEMPLATE)
+          .replaceAll("{worktreesDir}", worktreesDir)
+          .replaceAll("{repoRoot}", input.cwd)
+          .replaceAll("{repoName}", repoName)
+          .replaceAll("{branch}", sanitizedBranch),
+      );
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];

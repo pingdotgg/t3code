@@ -134,6 +134,29 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("uses the configured repository-local worktree path template", () =>
+  Effect.gen(function* () {
+    const cwd = yield* makeTmpDir("template-repo-");
+    const { initialBranch } = yield* initRepoWithCommit(cwd);
+    const pathService = yield* Path.Path;
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+
+    const created = yield* driver.createWorktree({
+      cwd,
+      path: null,
+      refName: initialBranch,
+      newRefName: "feature/local-worktree",
+      pathTemplate: "{repoRoot}/.worktrees/{branch}",
+    });
+
+    const expectedPath = pathService.join(cwd, ".worktrees", "feature-local-worktree");
+    assert.equal(created.worktree.path, expectedPath);
+    assert.equal(yield* git(expectedPath, ["branch", "--show-current"]), "feature/local-worktree");
+
+    yield* driver.removeWorktree({ cwd, path: expectedPath });
+  }).pipe(Effect.provide(TestLayer)),
+);
+
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   describe("process environment", () => {
     it.effect("preserves the caller locale for general Git subprocesses", () =>
@@ -661,6 +684,39 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it.effect("keeps the centralized worktree path as the default", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir("default-template-repo-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: initialBranch,
+          newRefName: "feature/default-worktree",
+        });
+
+        const expectedPath = created.worktree.path;
+        assert.equal(pathService.basename(expectedPath), "feature-default-worktree");
+        assert.equal(
+          pathService.basename(pathService.dirname(expectedPath)),
+          pathService.basename(cwd),
+        );
+        assert.equal(
+          pathService.basename(pathService.dirname(pathService.dirname(expectedPath))),
+          "worktrees",
+        );
+        assert.equal(
+          yield* git(expectedPath, ["branch", "--show-current"]),
+          "feature/default-worktree",
+        );
+
+        yield* driver.removeWorktree({ cwd, path: expectedPath });
+      }),
+    );
+
     it.effect("creates and removes a worktree for a new refName", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

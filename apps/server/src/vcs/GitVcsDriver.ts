@@ -230,7 +230,7 @@ export class GitVcsDriver extends Context.Service<
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly createWorktree: (
-      input: VcsCreateWorktreeInput,
+      input: VcsCreateWorktreeInput & { readonly pathTemplate?: string },
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
     readonly fetchPullRequestBranch: (
       input: GitFetchPullRequestBranchInput,
