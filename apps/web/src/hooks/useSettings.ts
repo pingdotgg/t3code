@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { ensureLocalApi } from "~/localApi";
+import { readRendererStateWithRetries } from "~/rendererStateStorage";
 import * as Struct from "effect/Struct";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { usePrimaryEnvironment } from "~/state/environments";
@@ -36,8 +37,11 @@ const clientSettingsListeners = new Set<() => void>();
 const clientSettingsHydrationListeners = new Set<() => void>();
 let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
 let clientSettingsHydrated = false;
+let clientSettingsPersistenceReady = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
+let clientSettingsHydrationBaseline: ClientSettings | null = null;
+let clientSettingsWriteQueue: Promise<void> = Promise.resolve();
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -88,8 +92,81 @@ function subscribeClientSettingsHydration(listener: () => void): () => void {
   };
 }
 
-async function hydrateClientSettings(): Promise<void> {
-  if (clientSettingsHydrated) {
+function persistedSettingsValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function isPlainSettingsObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function reconcilePersistedSettingsValue(
+  persisted: unknown,
+  current: unknown,
+  baseline: unknown,
+): unknown {
+  if (persistedSettingsValuesEqual(current, baseline)) {
+    return persisted;
+  }
+  if (
+    isPlainSettingsObject(persisted) &&
+    isPlainSettingsObject(current) &&
+    isPlainSettingsObject(baseline)
+  ) {
+    const reconciled: Record<string, unknown> = {};
+    const keys = new Set([
+      ...Object.keys(persisted),
+      ...Object.keys(current),
+      ...Object.keys(baseline),
+    ]);
+    for (const key of keys) {
+      const currentHasKey = Object.hasOwn(current, key);
+      const baselineHasKey = Object.hasOwn(baseline, key);
+      if (currentHasKey !== baselineHasKey) {
+        if (currentHasKey) {
+          reconciled[key] = current[key];
+        }
+        continue;
+      }
+      if (!currentHasKey) {
+        if (Object.hasOwn(persisted, key)) {
+          reconciled[key] = persisted[key];
+        }
+        continue;
+      }
+      reconciled[key] = reconcilePersistedSettingsValue(
+        persisted[key],
+        current[key],
+        baseline[key],
+      );
+    }
+    return reconciled;
+  }
+  return current;
+}
+
+function reconcileHydratedClientSettings(
+  persisted: ClientSettings,
+  current: ClientSettings,
+  baseline: ClientSettings,
+): ClientSettings {
+  return reconcilePersistedSettingsValue(persisted, current, baseline) as ClientSettings;
+}
+
+export function continueClientSettingsHydrationInBackground(): void {
+  if (clientSettingsPersistenceReady) {
+    return;
+  }
+  clientSettingsHydrationBaseline ??= clientSettingsSnapshot;
+  setClientSettingsHydrated(true);
+  if (clientSettingsHydrationPromise !== null) {
+    return;
+  }
+  void hydrateClientSettings();
+}
+
+export async function hydrateClientSettings(): Promise<void> {
+  if (clientSettingsPersistenceReady) {
     return;
   }
   if (clientSettingsHydrationPromise) {
@@ -97,14 +174,32 @@ async function hydrateClientSettings(): Promise<void> {
   }
 
   const hydrationGeneration = clientSettingsHydrationGeneration;
+  clientSettingsHydrationBaseline ??= clientSettingsSnapshot;
   const nextHydration = (async () => {
     try {
-      const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
+      const persistedSettings = await readRendererStateWithRetries(() =>
+        ensureLocalApi().persistence.getClientSettings(),
+      );
       if (hydrationGeneration !== clientSettingsHydrationGeneration) {
         return;
       }
-      if (persistedSettings) {
-        replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
+      const baseline = clientSettingsHydrationBaseline ?? DEFAULT_CLIENT_SETTINGS;
+      const current = clientSettingsSnapshot;
+      const hadLocalChanges = !persistedSettingsValuesEqual(current, baseline);
+      const reconciledSettings = reconcileHydratedClientSettings(
+        persistedSettings
+          ? { ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings }
+          : DEFAULT_CLIENT_SETTINGS,
+        current,
+        baseline,
+      );
+      replaceClientSettingsSnapshot(reconciledSettings);
+      clientSettingsPersistenceReady = true;
+      clientSettingsHydrationBaseline = null;
+      if (hadLocalChanges) {
+        await enqueueClientSettingsPersistence(reconciledSettings).catch(
+          logClientSettingsPersistenceError,
+        );
       }
     } catch (error) {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} hydrate failed`, {
@@ -128,16 +223,38 @@ async function hydrateClientSettings(): Promise<void> {
   return clientSettingsHydrationPromise;
 }
 
+function enqueueClientSettingsPersistence(settings: ClientSettings): Promise<void> {
+  const write = clientSettingsWriteQueue
+    .catch(() => undefined)
+    .then(() => ensureLocalApi().persistence.setClientSettings(settings));
+  clientSettingsWriteQueue = write;
+  return write;
+}
+
+function logClientSettingsPersistenceError(error: unknown): void {
+  console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
+    operation: "persist",
+    ...safeErrorLogAttributes(error),
+  });
+}
+
 function persistClientSettings(settings: ClientSettings): void {
   replaceClientSettingsSnapshot(settings);
-  void ensureLocalApi()
-    .persistence.setClientSettings(settings)
-    .catch((error) => {
-      console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
-        operation: "persist",
-        ...safeErrorLogAttributes(error),
-      });
-    });
+  if (!clientSettingsPersistenceReady) {
+    continueClientSettingsHydrationInBackground();
+    return;
+  }
+  void enqueueClientSettingsPersistence(settings).catch(logClientSettingsPersistenceError);
+}
+
+export async function flushClientSettingsPersistence(): Promise<void> {
+  if (!clientSettingsPersistenceReady) {
+    await hydrateClientSettings();
+  }
+  if (!clientSettingsPersistenceReady) {
+    return;
+  }
+  await enqueueClientSettingsPersistence(clientSettingsSnapshot);
 }
 
 // ── Key sets for routing patches ─────────────────────────────────────
@@ -280,19 +397,24 @@ export function useUpdatePrimarySettings() {
 }
 
 export function useUpdateClientSettings() {
-  return useCallback((patch: ClientSettingsPatch) => {
-    persistClientSettings({
-      ...getClientSettingsSnapshot(),
-      ...patch,
-    });
-  }, []);
+  return useCallback(updateClientSettings, []);
+}
+
+export function updateClientSettings(patch: ClientSettingsPatch): void {
+  persistClientSettings({
+    ...getClientSettingsSnapshot(),
+    ...patch,
+  });
 }
 
 export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationGeneration += 1;
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
   clientSettingsHydrated = false;
+  clientSettingsPersistenceReady = false;
   clientSettingsHydrationPromise = null;
+  clientSettingsHydrationBaseline = null;
+  clientSettingsWriteQueue = Promise.resolve();
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
 }
@@ -301,5 +423,8 @@ export function __setClientSettingsForTests(settings: ClientSettings): void {
   clientSettingsHydrationGeneration += 1;
   clientSettingsSnapshot = settings;
   clientSettingsHydrated = true;
+  clientSettingsPersistenceReady = true;
   clientSettingsHydrationPromise = null;
+  clientSettingsHydrationBaseline = null;
+  clientSettingsWriteQueue = Promise.resolve();
 }

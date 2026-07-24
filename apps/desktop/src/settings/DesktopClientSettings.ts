@@ -31,6 +31,11 @@ const decodeClientSettingsJson = (raw: string): Effect.Effect<ClientSettings, Sc
   );
 const encodeClientSettingsJson = Schema.encodeEffect(ClientSettingsJson);
 
+const DesktopClientSettingsReadOperation = Schema.Literals([
+  "read-settings-file",
+  "decode-document",
+]);
+
 const DesktopClientSettingsWriteOperation = Schema.Literals([
   "create-temporary-file-name",
   "encode-document",
@@ -38,6 +43,19 @@ const DesktopClientSettingsWriteOperation = Schema.Literals([
   "write-temporary-file",
   "replace-settings-file",
 ]);
+
+export class DesktopClientSettingsReadError extends Schema.TaggedErrorClass<DesktopClientSettingsReadError>()(
+  "DesktopClientSettingsReadError",
+  {
+    operation: DesktopClientSettingsReadOperation,
+    path: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Desktop client settings read failed during ${this.operation} at ${this.path}.`;
+  }
+}
 
 export class DesktopClientSettingsWriteError extends Schema.TaggedErrorClass<DesktopClientSettingsWriteError>()(
   "DesktopClientSettingsWriteError",
@@ -55,7 +73,7 @@ export class DesktopClientSettingsWriteError extends Schema.TaggedErrorClass<Des
 export class DesktopClientSettings extends Context.Service<
   DesktopClientSettings,
   {
-    readonly get: Effect.Effect<Option.Option<ClientSettings>>;
+    readonly get: Effect.Effect<Option.Option<ClientSettings>, DesktopClientSettingsReadError>;
     readonly set: (
       settings: ClientSettings,
     ) => Effect.Effect<void, DesktopClientSettingsWriteError>;
@@ -65,16 +83,19 @@ export class DesktopClientSettings extends Context.Service<
 const readClientSettings = (
   fileSystem: FileSystem.FileSystem,
   settingsPath: string,
-): Effect.Effect<Option.Option<ClientSettings>> =>
+): Effect.Effect<Option.Option<ClientSettings>, DesktopClientSettingsReadError> =>
   fileSystem.readFileString(settingsPath).pipe(
     Effect.map(Option.some),
     Effect.catchTags({
       PlatformError: (cause) =>
         cause.reason._tag === "NotFound"
           ? Effect.succeed(Option.none<string>())
-          : Effect.logWarning("Could not read desktop client settings.", cause).pipe(
-              Effect.annotateLogs({ settingsPath }),
-              Effect.as(Option.none<string>()),
+          : Effect.fail(
+              new DesktopClientSettingsReadError({
+                operation: "read-settings-file",
+                path: settingsPath,
+                cause,
+              }),
             ),
     }),
     Effect.flatMap(
@@ -83,13 +104,14 @@ const readClientSettings = (
         onSome: (raw) =>
           decodeClientSettingsJson(raw).pipe(
             Effect.map((settings) => Option.some(settings)),
-            Effect.catchTags({
-              SchemaError: (cause) =>
-                Effect.logWarning("Could not decode desktop client settings.", cause).pipe(
-                  Effect.annotateLogs({ settingsPath }),
-                  Effect.as(Option.none<ClientSettings>()),
-                ),
-            }),
+            Effect.mapError(
+              (cause) =>
+                new DesktopClientSettingsReadError({
+                  operation: "decode-document",
+                  path: settingsPath,
+                  cause,
+                }),
+            ),
           ),
       }),
     ),

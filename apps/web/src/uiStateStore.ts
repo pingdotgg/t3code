@@ -1,6 +1,10 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
+import {
+  createAppRendererStateStorage,
+  readRendererStateWithRetries,
+} from "./rendererStateStorage";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const LEGACY_PERSISTED_STATE_KEYS = [
@@ -15,6 +19,13 @@ const LEGACY_PERSISTED_STATE_KEYS = [
   "codething:renderer-state:v2",
   "codething:renderer-state:v1",
 ] as const;
+const uiStateStorage = createAppRendererStateStorage("ui-state");
+let uiStatePersistenceHydrated = !uiStateStorage.requiresExplicitHydration;
+let uiStateHydrationPromise: Promise<void> | null = null;
+let uiStateHydrationGeneration = 0;
+let uiStateHydrationBaseline: UiState | null = null;
+let uiStateDocumentInvalid = false;
+let applyingUiStateHydration = false;
 
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
@@ -50,6 +61,125 @@ const initialState: UiState = {
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
 };
+
+function snapshotUiState(state: UiState): UiState {
+  return {
+    projectExpandedById: { ...state.projectExpandedById },
+    projectOrder: [...state.projectOrder],
+    threadLastVisitedAtById: { ...state.threadLastVisitedAtById },
+    threadChangedFilesExpandedById: Object.fromEntries(
+      Object.entries(state.threadChangedFilesExpandedById).map(([threadId, turns]) => [
+        threadId,
+        { ...turns },
+      ]),
+    ),
+    defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
+  };
+}
+
+function persistedValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function reconcilePersistedRecord<T>(
+  persisted: Readonly<Record<string, T>>,
+  current: Readonly<Record<string, T>>,
+  baseline: Readonly<Record<string, T>>,
+): Record<string, T> {
+  const reconciled: Record<string, T> = {};
+  const keys = new Set([
+    ...Object.keys(persisted),
+    ...Object.keys(current),
+    ...Object.keys(baseline),
+  ]);
+  for (const key of keys) {
+    const currentHasKey = Object.hasOwn(current, key);
+    const baselineHasKey = Object.hasOwn(baseline, key);
+    const changedLocally =
+      currentHasKey !== baselineHasKey ||
+      (currentHasKey && !persistedValuesEqual(current[key], baseline[key]));
+    if (changedLocally) {
+      if (currentHasKey) {
+        reconciled[key] = current[key] as T;
+      }
+      continue;
+    }
+    if (Object.hasOwn(persisted, key)) {
+      reconciled[key] = persisted[key] as T;
+    }
+  }
+  return reconciled;
+}
+
+function reconcileNestedPersistedRecord<T>(
+  persisted: Readonly<Record<string, Readonly<Record<string, T>>>>,
+  current: Readonly<Record<string, Readonly<Record<string, T>>>>,
+  baseline: Readonly<Record<string, Readonly<Record<string, T>>>>,
+): Record<string, Record<string, T>> {
+  const reconciled: Record<string, Record<string, T>> = {};
+  const keys = new Set([
+    ...Object.keys(persisted),
+    ...Object.keys(current),
+    ...Object.keys(baseline),
+  ]);
+  for (const key of keys) {
+    const currentHasKey = Object.hasOwn(current, key);
+    const baselineHasKey = Object.hasOwn(baseline, key);
+    if (currentHasKey !== baselineHasKey) {
+      if (currentHasKey) {
+        reconciled[key] = { ...(current[key] as Readonly<Record<string, T>>) };
+      }
+      continue;
+    }
+    if (!currentHasKey) {
+      if (Object.hasOwn(persisted, key)) {
+        reconciled[key] = { ...(persisted[key] as Readonly<Record<string, T>>) };
+      }
+      continue;
+    }
+
+    const reconciledNested = reconcilePersistedRecord(
+      persisted[key] ?? {},
+      current[key] as Readonly<Record<string, T>>,
+      baseline[key] as Readonly<Record<string, T>>,
+    );
+    if (Object.keys(reconciledNested).length > 0) {
+      reconciled[key] = reconciledNested;
+    }
+  }
+  return reconciled;
+}
+
+function reconcileHydratedUiState(
+  persisted: UiState,
+  current: UiState,
+  baseline: UiState,
+): UiState {
+  return {
+    projectExpandedById: reconcilePersistedRecord(
+      persisted.projectExpandedById,
+      current.projectExpandedById,
+      baseline.projectExpandedById,
+    ),
+    projectOrder: persistedValuesEqual(current.projectOrder, baseline.projectOrder)
+      ? persisted.projectOrder
+      : current.projectOrder,
+    threadLastVisitedAtById: reconcilePersistedRecord(
+      persisted.threadLastVisitedAtById,
+      current.threadLastVisitedAtById,
+      baseline.threadLastVisitedAtById,
+    ),
+    threadChangedFilesExpandedById: reconcileNestedPersistedRecord(
+      persisted.threadChangedFilesExpandedById,
+      current.threadChangedFilesExpandedById,
+      baseline.threadChangedFilesExpandedById,
+    ),
+    defaultAdvertisedEndpointKey:
+      current.defaultAdvertisedEndpointKey === baseline.defaultAdvertisedEndpointKey
+        ? persisted.defaultAdvertisedEndpointKey
+        : current.defaultAdvertisedEndpointKey,
+  };
+}
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
 const LEGACY_PROJECT_EXPANSION_DEFAULT_KEY = "legacy-project-expansion-default";
@@ -135,26 +265,56 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   };
 }
 
-function readPersistedState(): UiState {
+function parsePersistedStateJson(raw: string): UiState | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsePersistedState(parsed as PersistedUiState);
+  } catch {
+    return null;
+  }
+}
+
+function readLegacyPersistedState(): { readonly raw: string; readonly state: UiState } | null {
   if (typeof window === "undefined") {
+    return null;
+  }
+  for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
+    let raw: string | null;
+    try {
+      raw = window.localStorage.getItem(legacyKey);
+    } catch {
+      return null;
+    }
+    if (!raw) {
+      continue;
+    }
+    const state = parsePersistedStateJson(raw);
+    if (state) {
+      return { raw, state };
+    }
+  }
+  return null;
+}
+
+function readPersistedState(): UiState {
+  if (uiStateStorage.requiresExplicitHydration) {
     return initialState;
   }
+
+  let raw: string | null | Promise<string | null>;
   try {
-    const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
-    if (!raw) {
-      for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
-        const legacyRaw = window.localStorage.getItem(legacyKey);
-        if (!legacyRaw) {
-          continue;
-        }
-        return parsePersistedState(JSON.parse(legacyRaw) as PersistedUiState);
-      }
-      return initialState;
-    }
-    return parsePersistedState(JSON.parse(raw) as PersistedUiState);
+    raw = uiStateStorage.storage.getItem(PERSISTED_STATE_KEY);
   } catch {
     return initialState;
   }
+  if (typeof raw === "string") {
+    return parsePersistedStateJson(raw) ?? initialState;
+  }
+
+  return readLegacyPersistedState()?.state ?? initialState;
 }
 
 function sanitizePersistedThreadChangedFilesExpanded(
@@ -185,46 +345,75 @@ function sanitizePersistedThreadChangedFilesExpanded(
   return nextState;
 }
 
-export function persistState(state: UiState): void {
-  if (typeof window === "undefined") {
+function serializePersistedState(state: UiState): string {
+  const projectExpandedById = Object.fromEntries(
+    Object.entries(state.projectExpandedById).filter(
+      ([key]) => key !== LEGACY_PROJECT_EXPANSION_DEFAULT_KEY,
+    ),
+  );
+  const threadChangedFilesExpandedById = Object.fromEntries(
+    Object.entries(state.threadChangedFilesExpandedById).flatMap(([threadId, turns]) => {
+      const nextTurns = Object.fromEntries(
+        Object.entries(turns).filter(([, expanded]) => expanded === false),
+      );
+      return Object.keys(nextTurns).length > 0 ? [[threadId, nextTurns]] : [];
+    }),
+  );
+  return JSON.stringify({
+    projectExpandedById,
+    projectOrder: state.projectOrder,
+    threadLastVisitedAtById: state.threadLastVisitedAtById,
+    defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
+    threadChangedFilesExpandedById,
+  } satisfies PersistedUiState);
+}
+
+function cleanUpLegacyPersistedStateKeys(): void {
+  if (legacyKeysCleanedUp || typeof window === "undefined") {
     return;
   }
-  try {
-    const projectExpandedById = Object.fromEntries(
-      Object.entries(state.projectExpandedById).filter(
-        ([key]) => key !== LEGACY_PROJECT_EXPANSION_DEFAULT_KEY,
-      ),
-    );
-    const threadChangedFilesExpandedById = Object.fromEntries(
-      Object.entries(state.threadChangedFilesExpandedById).flatMap(([threadId, turns]) => {
-        const nextTurns = Object.fromEntries(
-          Object.entries(turns).filter(([, expanded]) => expanded === false),
-        );
-        return Object.keys(nextTurns).length > 0 ? [[threadId, nextTurns]] : [];
-      }),
-    );
-    window.localStorage.setItem(
-      PERSISTED_STATE_KEY,
-      JSON.stringify({
-        projectExpandedById,
-        projectOrder: state.projectOrder,
-        threadLastVisitedAtById: state.threadLastVisitedAtById,
-        defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
-        threadChangedFilesExpandedById,
-      } satisfies PersistedUiState),
-    );
-    if (!legacyKeysCleanedUp) {
-      legacyKeysCleanedUp = true;
-      for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
-        window.localStorage.removeItem(legacyKey);
-      }
+  for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
+    try {
+      window.localStorage.removeItem(legacyKey);
+    } catch {
+      return;
     }
+  }
+  legacyKeysCleanedUp = true;
+}
+
+export function persistState(state: UiState): void {
+  try {
+    const result = uiStateStorage.storage.setItem(
+      PERSISTED_STATE_KEY,
+      serializePersistedState(state),
+    );
+    void Promise.resolve(result).then(cleanUpLegacyPersistedStateKeys, () => undefined);
   } catch {
     // Ignore quota/storage errors to avoid breaking chat UX.
   }
 }
 
 const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
+
+export async function flushUiStatePersistence(): Promise<void> {
+  debouncedPersistState.cancel();
+  if (
+    !uiStatePersistenceHydrated &&
+    !uiStateDocumentInvalid &&
+    uiStateStorage.requiresExplicitHydration
+  ) {
+    await hydrateUiStateStore();
+  }
+  if (!uiStatePersistenceHydrated || !uiStateStorage.writesEnabled()) {
+    return;
+  }
+  await uiStateStorage.writeHydratedValue(
+    PERSISTED_STATE_KEY,
+    serializePersistedState(useUiStateStore.getState()),
+  );
+  cleanUpLegacyPersistedStateKeys();
+}
 
 export function markThreadVisited(state: UiState, threadId: string, visitedAt: string): UiState {
   const visitedAtMs = Date.parse(visitedAt);
@@ -442,10 +631,122 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     ),
 }));
 
-useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
+export function continueUiStatePersistenceHydrationInBackground(): void {
+  if (
+    uiStatePersistenceHydrated ||
+    uiStateDocumentInvalid ||
+    !uiStateStorage.requiresExplicitHydration ||
+    uiStateHydrationPromise !== null
+  ) {
+    return;
+  }
+  void hydrateUiStateStore();
+}
+
+export async function hydrateUiStateStore(): Promise<void> {
+  if (
+    uiStatePersistenceHydrated ||
+    uiStateDocumentInvalid ||
+    !uiStateStorage.requiresExplicitHydration
+  ) {
+    return;
+  }
+  if (uiStateHydrationPromise) {
+    return uiStateHydrationPromise;
+  }
+
+  const hydrationGeneration = uiStateHydrationGeneration;
+  const isCurrentHydration = () => hydrationGeneration === uiStateHydrationGeneration;
+  uiStateHydrationBaseline ??= snapshotUiState(useUiStateStore.getState());
+  const hydrationPromise = (async () => {
+    try {
+      const raw = await readRendererStateWithRetries(() =>
+        uiStateStorage.storage.getItem(PERSISTED_STATE_KEY),
+      );
+      if (!isCurrentHydration()) {
+        return;
+      }
+      let persistedState: UiState;
+      let migratedLegacyState = false;
+      if (raw !== null) {
+        const parsedState = parsePersistedStateJson(raw);
+        if (!parsedState) {
+          uiStateDocumentInvalid = true;
+          console.error(
+            "[RENDERER_STATE] Desktop UI state document is not valid JSON state; preserving it without enabling writes.",
+          );
+          return;
+        }
+        persistedState = parsedState;
+      } else {
+        const legacyState = readLegacyPersistedState();
+        persistedState = legacyState?.state ?? initialState;
+        migratedLegacyState = legacyState !== null;
+      }
+      const baseline = uiStateHydrationBaseline ?? initialState;
+      const current = snapshotUiState(useUiStateStore.getState());
+      const hadLocalChanges = !persistedValuesEqual(current, baseline);
+      const reconciledState = reconcileHydratedUiState(persistedState, current, baseline);
+      applyingUiStateHydration = true;
+      try {
+        useUiStateStore.setState(reconciledState);
+      } finally {
+        applyingUiStateHydration = false;
+      }
+      if (!isCurrentHydration()) {
+        return;
+      }
+      uiStateStorage.enableWrites();
+      uiStatePersistenceHydrated = true;
+      uiStateHydrationBaseline = null;
+      if (migratedLegacyState || hadLocalChanges) {
+        try {
+          await uiStateStorage.writeHydratedValue(
+            PERSISTED_STATE_KEY,
+            serializePersistedState(reconciledState),
+          );
+          if (migratedLegacyState) {
+            cleanUpLegacyPersistedStateKeys();
+          }
+        } catch (error) {
+          console.error("[RENDERER_STATE] Reconciled UI state persistence failed.", error);
+          debouncedPersistState.maybeExecute(reconciledState);
+        }
+      }
+    } catch (error) {
+      if (isCurrentHydration()) {
+        console.error(
+          "[RENDERER_STATE] UI state hydration failed after bounded retries; writes remain guarded until a later read succeeds.",
+          error,
+        );
+      }
+    }
+  })().finally(() => {
+    if (uiStateHydrationPromise === hydrationPromise) {
+      uiStateHydrationPromise = null;
+    }
+  });
+  uiStateHydrationPromise = hydrationPromise;
+  return hydrationPromise;
+}
+
+useUiStateStore.subscribe((state) => {
+  if (applyingUiStateHydration) {
+    return;
+  }
+  if (uiStatePersistenceHydrated) {
+    debouncedPersistState.maybeExecute(state);
+    return;
+  }
+  if (!uiStateDocumentInvalid) {
+    continueUiStatePersistenceHydrationInBackground();
+  }
+});
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {
-    debouncedPersistState.flush();
+    void flushUiStatePersistence().catch((error) => {
+      console.error("[RENDERER_STATE] UI state shutdown flush failed.", error);
+    });
   });
 }

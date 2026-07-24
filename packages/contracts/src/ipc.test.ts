@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+import { DesktopEnvironmentBootstrapSchema, DesktopRendererStateWriteSchema } from "./ipc.ts";
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);
@@ -34,5 +34,21 @@ describe("DesktopEnvironmentBootstrapSchema", () => {
         wsBaseUrl: null,
       }).runningDistro,
     ).toBeNull();
+  });
+});
+
+describe("DesktopRendererStateWriteSchema", () => {
+  const decode = Schema.decodeUnknownSync(DesktopRendererStateWriteSchema);
+
+  it("limits renderer persistence to the two declared state documents", () => {
+    expect(decode({ key: "ui-state", value: '{"projectOrder":[]}' })).toEqual({
+      key: "ui-state",
+      value: '{"projectOrder":[]}',
+    });
+    expect(decode({ key: "composer-preferences", value: null })).toEqual({
+      key: "composer-preferences",
+      value: null,
+    });
+    expect(() => decode({ key: "../settings", value: "{}" })).toThrow();
   });
 });

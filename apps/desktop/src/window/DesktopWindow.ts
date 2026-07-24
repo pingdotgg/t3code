@@ -6,24 +6,33 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
+import * as NodeCrypto from "node:crypto";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+import {
+  MENU_ACTION_CHANNEL,
+  RENDERER_STATE_FLUSH_COMPLETE_CHANNEL,
+  REQUEST_RENDERER_STATE_FLUSH_CHANNEL,
+  WINDOW_FULLSCREEN_STATE_CHANNEL,
+} from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import { requestRendererStateFlush } from "./RendererStateFlush.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
 const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
 const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
+const RENDERER_STATE_FLUSH_TIMEOUT_MS = 10_000;
 const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([
   -2, // ERR_FAILED
@@ -44,6 +53,7 @@ type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
   | DesktopAssets.DesktopAssets
   | DesktopAppSettings.DesktopAppSettings
+  | DesktopState.DesktopState
   | ElectronMenu.ElectronMenu
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
@@ -79,6 +89,7 @@ export class DesktopWindow extends Context.Service<
     // produce a stranded window pointing at nothing.
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
+    readonly flushRendererState: Effect.Effect<void>;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
     readonly syncAppearance: Effect.Effect<void>;
   }
@@ -181,6 +192,48 @@ export function isRetryableDevelopmentRendererLoadFailure(input: {
   );
 }
 
+function flushRendererStateForWindow(window: Electron.BrowserWindow): Effect.Effect<void> {
+  return Effect.gen(function* () {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) {
+      return;
+    }
+    const target = window.webContents;
+    const result = yield* Effect.promise((signal) =>
+      requestRendererStateFlush({
+        requestId: NodeCrypto.randomUUID(),
+        target,
+        signal,
+        send: (requestId) => {
+          target.send(REQUEST_RENDERER_STATE_FLUSH_CHANNEL, requestId);
+        },
+        subscribe: (notify) => {
+          const listener = (
+            event: Electron.IpcMainEvent,
+            requestId: unknown,
+            succeeded: unknown,
+          ) => {
+            notify({ sender: event.sender, requestId, succeeded });
+          };
+          Electron.ipcMain.on(RENDERER_STATE_FLUSH_COMPLETE_CHANNEL, listener);
+          return () => {
+            Electron.ipcMain.removeListener(RENDERER_STATE_FLUSH_COMPLETE_CHANNEL, listener);
+          };
+        },
+      }),
+    ).pipe(
+      Effect.timeoutOrElse({
+        duration: RENDERER_STATE_FLUSH_TIMEOUT_MS,
+        orElse: () => Effect.succeed("timed-out" as const),
+      }),
+    );
+    if (result !== "flushed") {
+      yield* logWindowWarning("renderer state flush did not complete before shutdown", {
+        result,
+      });
+    }
+  });
+}
+
 function getWindowTitleBarOptions(
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
@@ -246,6 +299,7 @@ export const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const desktopState = yield* DesktopState.DesktopState;
   // Window-side latch for the primary backend's readiness. Set by
   // handleBackendReady (driven by the pool's onReady callback), cleared
   // by handleBackendNotReady (driven by onShutdown). Only consumed by
@@ -521,8 +575,29 @@ export const make = Effect.gen(function* () {
     window.on("move", scheduleBoundsPersist);
     window.on("maximize", scheduleBoundsPersist);
     window.on("unmaximize", scheduleBoundsPersist);
-    window.on("close", () => {
-      runFork(flushBoundsPersist);
+    let closeAllowed = false;
+    let closeFlushPending = false;
+    window.on("close", (event) => {
+      if (closeAllowed || Ref.getUnsafe(desktopState.quitting)) {
+        runFork(flushBoundsPersist);
+        return;
+      }
+      event.preventDefault();
+      if (closeFlushPending) {
+        return;
+      }
+      closeFlushPending = true;
+      void runPromise(
+        Effect.all([flushRendererStateForWindow(window), flushBoundsPersist], {
+          concurrency: "unbounded",
+          discard: true,
+        }),
+      ).finally(() => {
+        closeAllowed = true;
+        if (!window.isDestroyed()) {
+          window.close();
+        }
+      });
     });
 
     if (environment.platform === "darwin") {
@@ -681,6 +756,14 @@ export const make = Effect.gen(function* () {
     yield* createMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
+  const flushRendererState = Effect.gen(function* () {
+    const existingWindow = yield* currentMainWindow;
+    if (Option.isNone(existingWindow)) {
+      return;
+    }
+    yield* flushRendererStateForWindow(existingWindow.value);
+  }).pipe(Effect.withSpan("desktop.window.flushRendererState"));
+
   const showConnectingSplash = Effect.gen(function* () {
     // Only when nothing is shown yet: no real window, no existing splash.
     const existingSplash = yield* Ref.get(splashWindowRef);
@@ -765,6 +848,7 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds: Effect.suspend(() => flushMainWindowBounds).pipe(
       Effect.withSpan("desktop.window.flushMainWindowBounds"),
     ),
+    flushRendererState,
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action) {
       yield* Effect.annotateCurrentSpan({ action });
       const existingWindow = yield* focusedMainWindow;

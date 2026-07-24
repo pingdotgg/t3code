@@ -7,6 +7,7 @@ export interface StateStorage<R = unknown> {
 }
 
 export interface DebouncedStorage<R = unknown> extends StateStorage<R> {
+  cancel: () => void;
   flush: () => void;
 }
 
@@ -59,6 +60,9 @@ export function createDebouncedStorage(
     removeItem: (name) => {
       debouncedSetItem.cancel();
       resolvedStorage.removeItem(name);
+    },
+    cancel: () => {
+      debouncedSetItem.cancel();
     },
     flush: () => {
       debouncedSetItem.flush();

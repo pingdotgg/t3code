@@ -47,6 +47,29 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
+  getRendererState: (key) => ipcRenderer.invoke(IpcChannels.GET_RENDERER_STATE_CHANNEL, key),
+  setRendererState: (key, value) =>
+    ipcRenderer.invoke(IpcChannels.SET_RENDERER_STATE_CHANNEL, { key, value }),
+  onRendererStateFlush: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, requestId: unknown) => {
+      if (typeof requestId !== "string") return;
+      void Promise.resolve()
+        .then(listener)
+        .then(
+          () => {
+            ipcRenderer.send(IpcChannels.RENDERER_STATE_FLUSH_COMPLETE_CHANNEL, requestId, true);
+          },
+          () => {
+            ipcRenderer.send(IpcChannels.RENDERER_STATE_FLUSH_COMPLETE_CHANNEL, requestId, false);
+          },
+        );
+    };
+
+    ipcRenderer.on(IpcChannels.REQUEST_RENDERER_STATE_FLUSH_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.REQUEST_RENDERER_STATE_FLUSH_CHANNEL, wrappedListener);
+    };
+  },
   getConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.GET_CONNECTION_CATALOG_CHANNEL),
   setConnectionCatalog: (catalog) =>
     ipcRenderer.invoke(IpcChannels.SET_CONNECTION_CATALOG_CHANNEL, catalog),

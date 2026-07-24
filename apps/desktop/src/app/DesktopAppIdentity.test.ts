@@ -105,10 +105,12 @@ const withIdentity = <A, E, R>(
   input: {
     readonly calls?: ElectronAppCalls;
     readonly environment?: TestEnvironmentInput;
-    readonly legacyPathExists?: boolean;
-    readonly legacyPathProbeError?: PlatformError.PlatformError;
+    readonly existingUserDataPaths?: readonly string[];
+    readonly pathProbeError?: PlatformError.PlatformError;
+    readonly renameError?: PlatformError.PlatformError;
     readonly packageJson?: string;
     readonly pngIconPath?: Option.Option<string>;
+    readonly renamedPaths?: Array<{ readonly from: string; readonly to: string }>;
   } = {},
 ) => {
   const calls: ElectronAppCalls = input.calls ?? {
@@ -123,13 +125,17 @@ const withIdentity = <A, E, R>(
         Layer.provideMerge(
           FileSystem.layerNoop({
             exists: (path) =>
-              input.legacyPathProbeError
-                ? Effect.fail(input.legacyPathProbeError)
-                : Effect.succeed(
-                    input.legacyPathExists === true && path.includes("T3 Code (Alpha)"),
-                  ),
+              input.pathProbeError
+                ? Effect.fail(input.pathProbeError)
+                : Effect.succeed(input.existingUserDataPaths?.includes(path) === true),
             readFileString: () =>
               Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
+            rename: (from, to) =>
+              input.renameError
+                ? Effect.fail(input.renameError)
+                : Effect.sync(() => {
+                    input.renamedPaths?.push({ from, to });
+                  }),
           }),
         ),
         Layer.provideMerge(makeAssetsLayer(input.pngIconPath ?? Option.none())),
@@ -141,24 +147,105 @@ const withIdentity = <A, E, R>(
 };
 
 describe("DesktopAppIdentity", () => {
-  it.effect("keeps using the legacy userData path when it already exists", () =>
-    withIdentity(
+  it.effect("keeps the canonical userData path when canonical and legacy paths both exist", () => {
+    const renamedPaths: Array<{ readonly from: string; readonly to: string }> = [];
+
+    return withIdentity(
       Effect.gen(function* () {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const userDataPath = yield* identity.resolveUserDataPath;
 
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/T3 Code (Alpha)");
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/t3code");
+        assert.deepEqual(renamedPaths, []);
       }),
-      { legacyPathExists: true },
-    ),
-  );
+      {
+        existingUserDataPaths: [
+          "/Users/alice/Library/Application Support/t3code",
+          "/Users/alice/Library/Application Support/T3 Code (Alpha)",
+        ],
+        renamedPaths,
+      },
+    );
+  });
 
-  it.effect("preserves failures while inspecting the legacy userData path", () => {
+  it.effect("migrates the stage-matched legacy userData path into the canonical path", () => {
+    const renamedPaths: Array<{ readonly from: string; readonly to: string }> = [];
     const legacyPath = "/Users/alice/Library/Application Support/T3 Code (Alpha)";
+    const canonicalPath = "/Users/alice/Library/Application Support/t3code";
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const userDataPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(userDataPath, canonicalPath);
+        assert.deepEqual(renamedPaths, [{ from: legacyPath, to: canonicalPath }]);
+      }),
+      {
+        existingUserDataPaths: [legacyPath],
+        renamedPaths,
+      },
+    );
+  });
+
+  it.effect("prefers the historical packaged profile when Nightly legacy profiles coexist", () => {
+    const renamedPaths: Array<{ readonly from: string; readonly to: string }> = [];
+    const historicalLegacyPath = "/Users/alice/Library/Application Support/T3 Code (Alpha)";
+    const nightlyLegacyPath = "/Users/alice/Library/Application Support/T3 Code (Nightly)";
+    const canonicalPath = "/Users/alice/Library/Application Support/t3code";
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const userDataPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(userDataPath, canonicalPath);
+        assert.deepEqual(renamedPaths, [{ from: historicalLegacyPath, to: canonicalPath }]);
+      }),
+      {
+        environment: {
+          appVersion: "0.0.29-nightly.20260723.864",
+        },
+        existingUserDataPaths: [historicalLegacyPath, nightlyLegacyPath],
+        renamedPaths,
+      },
+    );
+  });
+
+  it.effect("preserves failures while inspecting the canonical userData path", () => {
+    const canonicalPath = "/Users/alice/Library/Application Support/t3code";
     const cause = PlatformError.systemError({
       _tag: "PermissionDenied",
       module: "FileSystem",
       method: "exists",
+      description: "permission denied",
+      pathOrDescriptor: canonicalPath,
+    });
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathInspectionError);
+        assert.equal(error.path, canonicalPath);
+        assert.strictEqual(error.cause, cause);
+        assert.equal(
+          error.message,
+          `Failed to inspect desktop user-data path at "${canonicalPath}".`,
+        );
+      }),
+      { pathProbeError: cause },
+    );
+  });
+
+  it.effect("preserves failures while migrating a legacy userData path", () => {
+    const legacyPath = "/Users/alice/Library/Application Support/T3 Code (Alpha)";
+    const canonicalPath = "/Users/alice/Library/Application Support/t3code";
+    const cause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "rename",
       description: "permission denied",
       pathOrDescriptor: legacyPath,
     });
@@ -168,15 +255,19 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
 
-        assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathResolutionError);
-        assert.equal(error.legacyPath, legacyPath);
+        assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathMigrationError);
+        assert.equal(error.path, legacyPath);
+        assert.equal(error.targetPath, canonicalPath);
         assert.strictEqual(error.cause, cause);
         assert.equal(
           error.message,
-          `Failed to inspect legacy desktop user-data path at "${legacyPath}".`,
+          `Failed to migrate legacy desktop user-data path from "${legacyPath}" to "${canonicalPath}".`,
         );
       }),
-      { legacyPathProbeError: cause },
+      {
+        existingUserDataPaths: [legacyPath],
+        renameError: cause,
+      },
     );
   });
 

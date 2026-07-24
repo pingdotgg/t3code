@@ -1,8 +1,66 @@
-import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type { ContextMenuItem, DesktopRendererStateKey, LocalApi } from "@t3tools/contracts";
 
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { showContextMenuFallback } from "./contextMenuFallback";
-import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
+import {
+  readBrowserClientSettings,
+  removeBrowserClientSettings,
+  writeBrowserClientSettings,
+} from "./clientPersistenceStorage";
+import {
+  COMPOSER_PREFERENCES_STORAGE_KEY,
+  parsePersistedComposerPreferences,
+  readLegacyComposerPreferences,
+} from "./composerPreferencesStorage";
+
+const rendererStateStorageKeys = {
+  "ui-state": "t3code:ui-state:v1",
+  "composer-preferences": COMPOSER_PREFERENCES_STORAGE_KEY,
+} as const satisfies Record<DesktopRendererStateKey, string>;
+
+interface BrowserRendererStateCandidate {
+  readonly raw: string;
+  readonly cleanupKey: string | null;
+}
+
+function readValidBrowserRendererState(
+  key: DesktopRendererStateKey,
+): BrowserRendererStateCandidate | null {
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(rendererStateStorageKeys[key]);
+  } catch {
+    return null;
+  }
+  if (raw === null) {
+    if (key !== "composer-preferences") {
+      return null;
+    }
+    const legacyPreferences = readLegacyComposerPreferences(window.localStorage);
+    return legacyPreferences === null
+      ? null
+      : {
+          raw: JSON.stringify(legacyPreferences),
+          cleanupKey: null,
+        };
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return null;
+    }
+    if (key === "composer-preferences" && parsePersistedComposerPreferences(raw) === null) {
+      return null;
+    }
+    return {
+      raw,
+      cleanupKey: rendererStateStorageKeys[key],
+    };
+  } catch {
+    return null;
+  }
+}
 
 let cachedApi: LocalApi | undefined;
 
@@ -52,7 +110,18 @@ function createBrowserLocalApi(): LocalApi {
     persistence: {
       getClientSettings: async () => {
         if (window.desktopBridge) {
-          return window.desktopBridge.getClientSettings();
+          const persistedSettings = await window.desktopBridge.getClientSettings();
+          if (persistedSettings) {
+            return persistedSettings;
+          }
+
+          const legacySettings = readBrowserClientSettings();
+          if (!legacySettings) {
+            return null;
+          }
+          await window.desktopBridge.setClientSettings(legacySettings);
+          removeBrowserClientSettings();
+          return legacySettings;
         }
         return readBrowserClientSettings();
       },
@@ -61,6 +130,51 @@ function createBrowserLocalApi(): LocalApi {
           return window.desktopBridge.setClientSettings(settings);
         }
         writeBrowserClientSettings(settings);
+      },
+      getRendererState: async (key) => {
+        if (window.desktopBridge) {
+          const persistedState = await window.desktopBridge.getRendererState(key);
+          if (persistedState !== null) {
+            return persistedState;
+          }
+
+          const browserState = readValidBrowserRendererState(key);
+          if (browserState === null) {
+            return null;
+          }
+          await window.desktopBridge.setRendererState(key, browserState.raw);
+          if (browserState.cleanupKey !== null) {
+            try {
+              window.localStorage.removeItem(browserState.cleanupKey);
+            } catch {
+              // The durable copy succeeded; blocked browser cleanup is harmless.
+            }
+          }
+          return browserState.raw;
+        }
+        const browserState = readValidBrowserRendererState(key);
+        if (browserState === null) {
+          return null;
+        }
+        if (browserState.cleanupKey === null) {
+          try {
+            window.localStorage.setItem(rendererStateStorageKeys[key], browserState.raw);
+          } catch {
+            // Returning the converted state still keeps the current session usable.
+          }
+        }
+        return browserState.raw;
+      },
+      setRendererState: async (key, value) => {
+        if (window.desktopBridge) {
+          return window.desktopBridge.setRendererState(key, value);
+        }
+        const storageKey = rendererStateStorageKeys[key];
+        if (value === null) {
+          window.localStorage.removeItem(storageKey);
+          return;
+        }
+        window.localStorage.setItem(storageKey, value);
       },
     },
     server: {

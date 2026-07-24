@@ -18,22 +18,38 @@ const AppPackageMetadata = Schema.Struct({
 });
 const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPackageMetadata));
 
-export class DesktopUserDataPathResolutionError extends Schema.TaggedErrorClass<DesktopUserDataPathResolutionError>()(
-  "DesktopUserDataPathResolutionError",
+export class DesktopUserDataPathInspectionError extends Schema.TaggedErrorClass<DesktopUserDataPathInspectionError>()(
+  "DesktopUserDataPathInspectionError",
   {
-    legacyPath: Schema.String,
+    path: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Failed to inspect legacy desktop user-data path at "${this.legacyPath}".`;
+    return `Failed to inspect desktop user-data path at "${this.path}".`;
+  }
+}
+
+export class DesktopUserDataPathMigrationError extends Schema.TaggedErrorClass<DesktopUserDataPathMigrationError>()(
+  "DesktopUserDataPathMigrationError",
+  {
+    path: Schema.String,
+    targetPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to migrate legacy desktop user-data path from "${this.path}" to "${this.targetPath}".`;
   }
 }
 
 export class DesktopAppIdentity extends Context.Service<
   DesktopAppIdentity,
   {
-    readonly resolveUserDataPath: Effect.Effect<string, DesktopUserDataPathResolutionError>;
+    readonly resolveUserDataPath: Effect.Effect<
+      string,
+      DesktopUserDataPathInspectionError | DesktopUserDataPathMigrationError
+    >;
     readonly configure: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopAppIdentity") {}
@@ -91,22 +107,51 @@ export const make = Effect.gen(function* () {
   });
 
   const resolveUserDataPath = Effect.gen(function* () {
-    const legacyPath = environment.path.join(
+    const canonicalPath = environment.path.join(
       environment.appDataDirectory,
-      environment.legacyUserDataDirName,
+      environment.userDataDirName,
     );
-    const legacyPathExists = yield* fileSystem.exists(legacyPath).pipe(
+    const canonicalPathExists = yield* fileSystem.exists(canonicalPath).pipe(
       Effect.mapError(
         (cause) =>
-          new DesktopUserDataPathResolutionError({
-            legacyPath,
+          new DesktopUserDataPathInspectionError({
+            path: canonicalPath,
             cause,
           }),
       ),
     );
-    return legacyPathExists
-      ? legacyPath
-      : environment.path.join(environment.appDataDirectory, environment.userDataDirName);
+    if (canonicalPathExists) {
+      return canonicalPath;
+    }
+
+    for (const legacyUserDataDirName of environment.legacyUserDataDirNames) {
+      const legacyPath = environment.path.join(environment.appDataDirectory, legacyUserDataDirName);
+      const legacyPathExists = yield* fileSystem.exists(legacyPath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopUserDataPathInspectionError({
+              path: legacyPath,
+              cause,
+            }),
+        ),
+      );
+      if (!legacyPathExists) {
+        continue;
+      }
+
+      yield* fileSystem.rename(legacyPath, canonicalPath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopUserDataPathMigrationError({
+              path: legacyPath,
+              targetPath: canonicalPath,
+              cause,
+            }),
+        ),
+      );
+      return canonicalPath;
+    }
+    return canonicalPath;
   }).pipe(Effect.withSpan("desktop.appIdentity.resolveUserDataPath"));
 
   const configure = Effect.gen(function* () {
