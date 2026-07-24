@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { CloudIcon, MonitorIcon } from "lucide-react";
+import { MonitorIcon, ServerIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";
@@ -47,7 +47,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         {activeEnvironment?.isPrimary ? (
           <MonitorIcon className="size-3" />
         ) : (
-          <CloudIcon className="size-3" />
+          <ServerIcon className="size-3" />
         )}
         {activeEnvironment?.label ?? "Run on"}
       </span>
@@ -65,7 +65,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         {activeEnvironment?.isPrimary ? (
           <MonitorIcon className="size-3" />
         ) : (
-          <CloudIcon className="size-3" />
+          <ServerIcon className="size-3" />
         )}
         <SelectValue />
       </SelectTrigger>
@@ -78,7 +78,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
                 {env.isPrimary ? (
                   <MonitorIcon className="size-3" />
                 ) : (
-                  <CloudIcon className="size-3" />
+                  <ServerIcon className="size-3" />
                 )}
                 {env.label}
               </span>
