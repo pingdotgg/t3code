@@ -59,9 +59,11 @@ const unitTestProject = {
     include: ["src/**/*.test.{ts,tsx}"],
     // The web runtime suite exercises auth bootstrap, saved environments,
     // and websocket subscription lifecycles. Under the full monorepo test
-    // run, those async tests can exceed Vitest's default 5s budget.
-    hookTimeout: 15_000,
-    testTimeout: 15_000,
+    // run every package's suite competes for the same CI cores, so even
+    // import/transform of heavy components (e.g. MessagesTimeline) has blown
+    // a 15s budget. Match the root config's 60s budget.
+    hookTimeout: 60_000,
+    testTimeout: 60_000,
   },
 } satisfies TestProjectInlineConfiguration;
 

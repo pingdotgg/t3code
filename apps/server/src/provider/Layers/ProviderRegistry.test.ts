@@ -49,6 +49,7 @@ import type { ProviderInstance } from "../ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import { pollUntil } from "../testUtils/pollUntil.ts";
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
@@ -1458,17 +1459,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
-            let providers = yield* registry.getProviders;
-            for (
-              let attempts = 0;
-              attempts < 50 &&
-              providers.find((provider) => provider.instanceId === "codex_personal")?.status !==
-                "error";
-              attempts += 1
-            ) {
-              yield* Effect.yieldNow;
-              providers = yield* registry.getProviders;
-            }
+            // The probe spawns a real child process, so its ENOENT arrives on
+            // the live event loop — poll with real wall-clock pauses.
+            const providers = yield* pollUntil({
+              poll: registry.getProviders,
+              until: (current) =>
+                current.find((provider) => provider.instanceId === "codex_personal")?.status ===
+                "error",
+              description: "the codex_personal probe error snapshot to reach the aggregator",
+            });
             const codexPersonal = providers.find(
               (provider) => provider.instanceId === "codex_personal",
             );
@@ -1554,19 +1553,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const registry = yield* ProviderRegistry.ProviderRegistry;
             // Boot-time probe: the default codex instance is enabled with
             // `firstMissing`, so the real spawner yields ENOENT and the
-            // snapshot should be `status: "error"`.
-            let initialProviders = yield* registry.getProviders;
-            for (
-              let attempts = 0;
-              attempts < 50 &&
-              initialProviders.find((provider) => provider.instanceId === "codex")?.status !==
-                "error";
-              attempts += 1
-            ) {
-              yield* TestClock.adjust("10 millis");
-              yield* Effect.yieldNow;
-              initialProviders = yield* registry.getProviders;
-            }
+            // snapshot should be `status: "error"`. The spawn error arrives
+            // on the live event loop, so poll with real wall-clock pauses
+            // while still nudging the virtual clock for any test timers.
+            const initialProviders = yield* pollUntil({
+              poll: TestClock.adjust("10 millis").pipe(Effect.andThen(registry.getProviders)),
+              until: (providers) =>
+                providers.find((provider) => provider.instanceId === "codex")?.status === "error",
+              description: "the boot-time codex probe to fail against the first missing binary",
+            });
             const initialCodex = initialProviders.find(
               (provider) => provider.instanceId === "codex",
             );
@@ -1590,22 +1585,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
             // Poll until the injected process boundary observes the new
             // executable. This verifies the public settings-to-probe behavior
-            // without depending on timestamps assigned by TestClock.
-            const refreshed = yield* Effect.gen(function* () {
-              for (let attempts = 0; attempts < 60; attempts += 1) {
-                const providers = yield* registry.getProviders;
+            // without depending on timestamps assigned by TestClock. The
+            // settings stream, reconcile, and re-probe all hop through real
+            // fibers and a real child-process spawn, so give them wall-clock
+            // time between attempts.
+            const refreshed = yield* pollUntil({
+              poll: TestClock.adjust("50 millis").pipe(Effect.andThen(registry.getProviders)),
+              until: (providers) => {
                 const codex = providers.find((provider) => provider.instanceId === "codex");
-                if (
+                return (
                   codex !== undefined &&
                   codex.status === "error" &&
                   spawnedCommands.includes(secondMissing)
-                ) {
-                  return providers;
-                }
-                yield* TestClock.adjust("50 millis");
-                yield* Effect.yieldNow;
-              }
-              return yield* registry.getProviders;
+                );
+              },
+              description: "the codex re-probe against the second missing binary",
             });
 
             const reprobedCodex = refreshed.find((provider) => provider.instanceId === "codex");

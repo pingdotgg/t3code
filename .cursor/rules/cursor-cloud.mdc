@@ -68,5 +68,9 @@ Gradle auto-downloads any additional pinned SDK packages on demand.
 
 ## Known flaky tests (unrelated to setup)
 
-- `apps/server/src/git/GitManager.test.ts` (cross-repo PR metadata, can time out at 12s).
-- `apps/server/src/provider/Layers/ProviderRegistry.test.ts` (codex binaryPath re-probe ordering).
+Previously flaky suites (`GitManager` cross-repo PR timeouts, `ProviderRegistry` codex binaryPath
+re-probe, `CursorAdapter` interrupt/cancel log polling) were fixed by removing tight per-test
+timeout overrides and polling on the live clock via `apps/server/src/provider/testUtils/pollUntil.ts`.
+If a test needs to wait for out-of-process work (child processes, real spawns, file appends from
+another process) under `it.effect`'s `TestClock`, use `pollUntil` — `Effect.yieldNow` loops and
+`TestClock.adjust` provide no wall-clock time and will flake on loaded CI hosts.
