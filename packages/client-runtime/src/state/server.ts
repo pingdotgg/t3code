@@ -72,6 +72,15 @@ export function applyServerConfigProjection(
         latestEvent: event,
         source: "live",
       }));
+    case "availableEditorsUpdated":
+      return Option.map(current, (projection) => ({
+        config: {
+          ...projection.config,
+          availableEditors: event.payload.availableEditors,
+        },
+        latestEvent: event,
+        source: "live",
+      }));
   }
 }
 

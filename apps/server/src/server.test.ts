@@ -569,7 +569,9 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mock(ExternalLauncher.ExternalLauncher)({
+          availableEditors: Effect.succeed([]),
           resolveAvailableEditors: () => Effect.succeed([]),
+          streamAvailableEditors: Stream.empty,
           ...options?.layers?.externalLauncher,
         }),
       ),
@@ -4283,6 +4285,42 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         version: 1,
         type: "keybindingsUpdated",
         payload: { keybindings: [], issues: [] },
+      });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("streams editor availability without blocking the config snapshot", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          externalLauncher: {
+            availableEditors: Effect.succeed([]),
+            resolveAvailableEditors: () => Effect.never,
+            streamAvailableEditors: Stream.succeed(["vscode"]),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const events = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeServerConfig]({}).pipe(
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.timeout("1 second"),
+          ),
+        ),
+      );
+
+      const [first, second] = Array.from(events);
+      assert.equal(first?.type, "snapshot");
+      if (first?.type === "snapshot") {
+        assert.deepEqual(first.config.availableEditors, []);
+      }
+      assert.deepEqual(second, {
+        version: 1,
+        type: "availableEditorsUpdated",
+        payload: { availableEditors: ["vscode"] },
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
