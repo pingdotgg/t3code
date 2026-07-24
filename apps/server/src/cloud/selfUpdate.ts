@@ -311,6 +311,17 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* (option
           nodePath: host.execPath,
           t3EntryPath: runtimePaths.entryPath,
           baseDir: serverConfig.baseDir,
+          storageRoots: {
+            layout: serverConfig.layout,
+            configDir: serverConfig.configDir,
+            dataDir: serverConfig.dataDir,
+            stateDir: serverConfig.stateDir,
+            cacheDir: serverConfig.cacheDir,
+            runtimeDir: serverConfig.runtimeDir,
+            ...(serverConfig.legacyBaseDir === undefined
+              ? {}
+              : { legacyBaseDir: serverConfig.legacyBaseDir }),
+          },
           logPath: path.join(serverConfig.logsDir, "boot-service.log"),
           unitPath,
         });

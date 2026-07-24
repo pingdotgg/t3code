@@ -2,7 +2,12 @@
 
 T3 Code reads keybindings from:
 
-- `~/.t3/keybindings.json`
+- `$XDG_CONFIG_HOME/t3code/keybindings.json` (normally
+  `~/.config/t3code/keybindings.json`) for a new installation
+- `~/.t3/userdata/keybindings.json` while using the legacy layout
+
+The exact active path is shown under **Settings → Diagnostics → Storage
+Locations**.
 
 The file must be a JSON array of rules:
 

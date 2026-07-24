@@ -16,7 +16,11 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
-import { resolveServerConfig } from "./config.ts";
+import {
+  resolveServerConfig,
+  StorageDirectoryConfigurationConflictError,
+  StorageLayoutConfigurationConflictError,
+} from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
@@ -602,6 +606,272 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
+    }),
+  );
+
+  it.effect("uses all five XDG roots for a new installation", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-config-xdg-" });
+      const homeDirectory = path.join(root, "home");
+      const configHome = path.join(root, "config");
+      const dataHome = path.join(root, "data");
+      const stateHome = path.join(root, "state");
+      const cacheHome = path.join(root, "cache");
+      const runtimeHome = path.join(root, "runtime");
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.none(),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+        { homeDirectory, temporaryDirectory: root, userId: 1000, platform: "linux" },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  XDG_CONFIG_HOME: configHome,
+                  XDG_DATA_HOME: dataHome,
+                  XDG_STATE_HOME: stateHome,
+                  XDG_CACHE_HOME: cacheHome,
+                  XDG_RUNTIME_DIR: runtimeHome,
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.layout).toBe("split");
+      expect(resolved.configDir).toBe(path.join(configHome, "t3code"));
+      expect(resolved.dataDir).toBe(path.join(dataHome, "t3code"));
+      expect(resolved.stateDir).toBe(path.join(stateHome, "t3code"));
+      expect(resolved.cacheDir).toBe(path.join(cacheHome, "t3code"));
+      expect(resolved.runtimeDir).toBe(path.join(runtimeHome, "t3code"));
+      expect(resolved.settingsPath).toBe(path.join(configHome, "t3code", "settings.json"));
+      expect(resolved.dbPath).toBe(path.join(stateHome, "t3code", "state.sqlite"));
+      expect(resolved.attachmentsDir).toBe(path.join(dataHome, "t3code", "attachments"));
+      expect(resolved.serverRuntimeStatePath).toBe(
+        path.join(runtimeHome, "t3code", "server-runtime.json"),
+      );
+    }),
+  );
+
+  it.effect("keeps initialized legacy storage even when split directories contain debris", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-config-legacy-" });
+      const homeDirectory = path.join(root, "home");
+      const legacyStateDir = path.join(homeDirectory, ".t3", "userdata");
+      const splitStateDir = path.join(root, "state", "t3code");
+      yield* fs.makeDirectory(legacyStateDir, { recursive: true });
+      yield* fs.makeDirectory(splitStateDir, { recursive: true });
+      yield* fs.writeFileString(path.join(legacyStateDir, "state.sqlite"), "legacy");
+      yield* fs.writeFileString(path.join(splitStateDir, "state.sqlite"), "");
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.none(),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+        { homeDirectory, temporaryDirectory: root, userId: 1000, platform: "linux" },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: { XDG_STATE_HOME: path.join(root, "state") },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.layout).toBe("legacy");
+      expect(resolved.stateDir).toBe(legacyStateDir);
+      expect(resolved.dbPath).toBe(path.join(legacyStateDir, "state.sqlite"));
+    }),
+  );
+
+  it.effect("forces XDG storage even when legacy storage is initialized", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-config-forced-xdg-",
+      });
+      const homeDirectory = path.join(root, "home");
+      const legacyStateDir = path.join(homeDirectory, ".t3", "userdata");
+      yield* fs.makeDirectory(legacyStateDir, { recursive: true });
+      yield* fs.writeFileString(path.join(legacyStateDir, "state.sqlite"), "legacy");
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.none(),
+          storageLayout: Option.some("xdg"),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+        { homeDirectory, temporaryDirectory: root, userId: 1000, platform: "linux" },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.layout).toBe("split");
+      expect(resolved.stateDir).toBe(path.join(homeDirectory, ".local", "state", "t3code"));
+    }),
+  );
+
+  it.effect("forces legacy storage when no legacy artifacts exist", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-config-forced-legacy-",
+      });
+      const homeDirectory = path.join(root, "home");
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.none(),
+          storageLayout: Option.some("legacy"),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+        { homeDirectory, temporaryDirectory: root, userId: 1000, platform: "linux" },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.layout).toBe("legacy");
+      expect(resolved.stateDir).toBe(path.join(homeDirectory, ".t3", "userdata"));
+    }),
+  );
+
+  it.effect("rejects mixing the legacy home override with granular directory overrides", () =>
+    Effect.gen(function* () {
+      const error = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.some("/tmp/legacy-t3"),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: { T3CODE_STATE_DIR: "/tmp/t3-state" },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(StorageDirectoryConfigurationConflictError);
+    }),
+  );
+
+  it.effect("rejects forced XDG storage with a legacy home override", () =>
+    Effect.gen(function* () {
+      const error = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.some("/tmp/legacy-t3"),
+          storageLayout: Option.some("xdg"),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(StorageLayoutConfigurationConflictError);
     }),
   );
 });

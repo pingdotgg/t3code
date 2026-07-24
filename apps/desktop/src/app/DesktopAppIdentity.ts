@@ -91,6 +91,9 @@ export const make = Effect.gen(function* () {
   });
 
   const resolveUserDataPath = Effect.gen(function* () {
+    if (environment.storageLayout === "split") {
+      return environment.electronUserDataPath;
+    }
     const legacyPath = environment.path.join(
       environment.appDataDirectory,
       environment.legacyUserDataDirName,

@@ -165,12 +165,15 @@ The backend reads observability config at process start. If you change OTLP env 
 
 The trace file is the fastest way to inspect raw span data.
 
-Resolve the production or explicitly configured trace file once. Runtime state lives under the
-base directory's `userdata` folder:
+Resolve the production trace file from **Settings → Diagnostics → Storage
+Locations**. For a new Linux installation using the default roots:
 
 ```bash
-TRACE_FILE="${T3CODE_HOME:-$HOME/.t3}/userdata/logs/server.trace.ndjson"
+TRACE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/t3code/logs/server.trace.ndjson"
 ```
+
+Legacy installations continue using
+`${T3CODE_HOME:-$HOME/.t3}/userdata/logs/server.trace.ndjson`.
 
 Tail it:
 

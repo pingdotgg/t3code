@@ -4,12 +4,23 @@ import type {
   DesktopRuntimeArch,
   DesktopRuntimeInfo,
 } from "@t3tools/contracts";
+import {
+  applyT3StorageDirectoryOverrides,
+  hasT3StorageDirectoryOverrides,
+  resolveDefaultT3StorageRoots,
+  resolveLegacyT3StorageRoots,
+  resolveT3StorageDirectoryOverrides,
+  selectT3StorageRoots,
+  type T3StorageLayout,
+} from "@t3tools/shared/storagePaths";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as NodeOS from "node:os";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
@@ -25,6 +36,18 @@ export interface MakeDesktopEnvironmentInput {
   readonly isPackaged: boolean;
   readonly resourcesPath: string;
   readonly runningUnderArm64Translation: boolean;
+  readonly temporaryDirectory?: string;
+  readonly userId?: number;
+}
+
+export class DesktopStorageDirectoryConfigurationConflictError extends Error {
+  override readonly name = "DesktopStorageDirectoryConfigurationConflictError";
+
+  constructor() {
+    super(
+      "T3CODE_HOME cannot be combined with T3CODE_CONFIG_DIR, T3CODE_DATA_DIR, T3CODE_STATE_DIR, T3CODE_CACHE_DIR, or T3CODE_RUNTIME_DIR.",
+    );
+  }
 }
 
 export class DesktopEnvironment extends Context.Service<
@@ -41,14 +64,21 @@ export class DesktopEnvironment extends Context.Service<
     readonly resourcesPath: string;
     readonly homeDirectory: string;
     readonly appDataDirectory: string;
+    readonly storageLayout: T3StorageLayout;
+    readonly configDir: string;
+    readonly dataDir: string;
     readonly baseDir: string;
     readonly stateDir: string;
+    readonly cacheDir: string;
+    readonly runtimeDir: string;
     readonly desktopSettingsPath: string;
     readonly clientSettingsPath: string;
     readonly savedEnvironmentRegistryPath: string;
     readonly serverSettingsPath: string;
     readonly logDir: string;
     readonly browserArtifactsDir: string;
+    readonly electronUserDataPath: string;
+    readonly electronCachePath: string;
     readonly rootDir: string;
     readonly appRoot: string;
     readonly backendEntryPath: string;
@@ -133,8 +163,13 @@ function resolveDesktopRuntimeInfo(input: {
 
 const make = Effect.fn("desktop.environment.make")(function* (
   input: MakeDesktopEnvironmentInput,
-): Effect.fn.Return<DesktopEnvironment["Service"], Config.ConfigError, Path.Path> {
+): Effect.fn.Return<
+  DesktopEnvironment["Service"],
+  Config.ConfigError | DesktopStorageDirectoryConfigurationConflictError,
+  FileSystem.FileSystem | Path.Path
+> {
   const path = yield* Path.Path;
+  const fileSystem = yield* FileSystem.FileSystem;
   const config = yield* DesktopConfig.DesktopConfig;
   const homeDirectory = input.homeDirectory;
   const devServerUrl = config.devServerUrl;
@@ -147,8 +182,97 @@ const make = Effect.fn("desktop.environment.make")(function* (
       : input.platform === "darwin"
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
-  const configuredBaseDir = config.t3Home;
-  const baseDir = Option.getOrElse(configuredBaseDir, () => path.join(homeDirectory, ".t3"));
+  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
+  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const pathOperations = {
+    join: (...paths: ReadonlyArray<string>) => path.join(...paths),
+    resolve: (...paths: ReadonlyArray<string>) => path.resolve(...paths),
+    isAbsolute: (candidate: string) => path.isAbsolute(candidate),
+  };
+  const storageEnvironment = {
+    T3CODE_CONFIG_DIR: Option.getOrUndefined(config.t3ConfigDir),
+    T3CODE_DATA_DIR: Option.getOrUndefined(config.t3DataDir),
+    T3CODE_STATE_DIR: Option.getOrUndefined(config.t3StateDir),
+    T3CODE_CACHE_DIR: Option.getOrUndefined(config.t3CacheDir),
+    T3CODE_RUNTIME_DIR: Option.getOrUndefined(config.t3RuntimeDir),
+    XDG_CONFIG_HOME: Option.getOrUndefined(config.xdgConfigHome),
+    XDG_DATA_HOME: Option.getOrUndefined(config.xdgDataHome),
+    XDG_STATE_HOME: Option.getOrUndefined(config.xdgStateHome),
+    XDG_CACHE_HOME: Option.getOrUndefined(config.xdgCacheHome),
+    XDG_RUNTIME_DIR: Option.getOrUndefined(config.xdgRuntimeDir),
+    APPDATA: Option.getOrUndefined(config.appDataDirectory),
+    LOCALAPPDATA: Option.getOrUndefined(config.localAppDataDirectory),
+  };
+  const defaultSplitRoots = resolveDefaultT3StorageRoots({
+    platform: input.platform,
+    homeDirectory,
+    temporaryDirectory: input.temporaryDirectory ?? NodeOS.tmpdir(),
+    ...(input.userId === undefined ? {} : { userId: input.userId }),
+    isDevelopment,
+    environment: storageEnvironment,
+    path: pathOperations,
+  });
+  const directoryOverrides = resolveT3StorageDirectoryOverrides({
+    environment: storageEnvironment,
+    homeDirectory,
+    path: pathOperations,
+  });
+  const explicitSplitRoots = hasT3StorageDirectoryOverrides(directoryOverrides)
+    ? applyT3StorageDirectoryOverrides(defaultSplitRoots, directoryOverrides)
+    : undefined;
+  const configuredBaseDir = Option.map(config.t3Home, (value) => {
+    const expanded =
+      value === "~"
+        ? homeDirectory
+        : value.startsWith("~/") || value.startsWith("~\\")
+          ? path.join(homeDirectory, value.slice(2))
+          : value;
+    return path.resolve(expanded);
+  });
+  if (Option.isSome(configuredBaseDir) && hasT3StorageDirectoryOverrides(directoryOverrides)) {
+    return yield* Effect.fail(new DesktopStorageDirectoryConfigurationConflictError());
+  }
+  const legacyBaseDir = path.join(homeDirectory, ".t3");
+  const legacyRoots = resolveLegacyT3StorageRoots({
+    baseDir: legacyBaseDir,
+    stateDirectoryName: isDevelopment ? "dev" : "userdata",
+    path,
+  });
+  const explicitLegacyRoots = Option.map(configuredBaseDir, (baseDir) =>
+    resolveLegacyT3StorageRoots({
+      baseDir,
+      stateDirectoryName: "userdata",
+      path,
+    }),
+  );
+  const legacyArtifacts = [
+    path.join(legacyRoots.stateDir, "state.sqlite"),
+    path.join(legacyRoots.configDir, "settings.json"),
+    path.join(legacyRoots.configDir, "keybindings.json"),
+    path.join(legacyRoots.stateDir, "environment-id"),
+    path.join(legacyRoots.stateDir, "connection-catalog.json"),
+    path.join(appDataDirectory, legacyUserDataDirName, "Local State"),
+    path.join(appDataDirectory, legacyUserDataDirName, "Preferences"),
+    path.join(appDataDirectory, userDataDirName, "Local State"),
+    path.join(appDataDirectory, userDataDirName, "Preferences"),
+  ];
+  const legacyStorageInitialized = (yield* Effect.all(
+    legacyArtifacts.map((artifact) =>
+      fileSystem.exists(artifact).pipe(Effect.orElseSucceed(() => false)),
+    ),
+    { concurrency: "unbounded" },
+  )).some(Boolean);
+  const storageRoots = selectT3StorageRoots({
+    ...(Option.isNone(explicitLegacyRoots)
+      ? {}
+      : { explicitLegacyRoots: explicitLegacyRoots.value }),
+    ...(explicitSplitRoots === undefined ? {} : { explicitSplitRoots }),
+    defaultSplitRoots,
+    legacyRoots,
+    legacyStorageInitialized,
+  });
+  const { cacheDir, configDir, dataDir, runtimeDir, stateDir } = storageRoots;
+  const baseDir = dataDir;
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
   const branding = resolveDesktopAppBranding({
@@ -156,12 +280,6 @@ const make = Effect.fn("desktop.environment.make")(function* (
     appVersion: input.appVersion,
   });
   const displayName = branding.displayName;
-  const stateDir = path.join(
-    baseDir,
-    isDevelopment && Option.isNone(configuredBaseDir) ? "dev" : "userdata",
-  );
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
   const resourcesPath = input.resourcesPath;
 
   return DesktopEnvironment.of({
@@ -176,14 +294,24 @@ const make = Effect.fn("desktop.environment.make")(function* (
     resourcesPath,
     homeDirectory,
     appDataDirectory,
+    storageLayout: storageRoots.layout,
+    configDir,
+    dataDir,
     baseDir,
     stateDir,
-    desktopSettingsPath: path.join(stateDir, "desktop-settings.json"),
-    clientSettingsPath: path.join(stateDir, "client-settings.json"),
+    cacheDir,
+    runtimeDir,
+    desktopSettingsPath: path.join(configDir, "desktop-settings.json"),
+    clientSettingsPath: path.join(configDir, "client-settings.json"),
     savedEnvironmentRegistryPath: path.join(stateDir, "saved-environments.json"),
-    serverSettingsPath: path.join(stateDir, "settings.json"),
+    serverSettingsPath: path.join(configDir, "settings.json"),
     logDir: path.join(stateDir, "logs"),
-    browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
+    browserArtifactsDir: path.join(
+      storageRoots.layout === "legacy" ? stateDir : cacheDir,
+      "browser-artifacts",
+    ),
+    electronUserDataPath: path.join(stateDir, "electron"),
+    electronCachePath: path.join(cacheDir, "electron"),
     rootDir,
     appRoot,
     backendEntryPath: path.join(appRoot, "apps/server/dist/bin.mjs"),
