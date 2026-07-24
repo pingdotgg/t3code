@@ -221,6 +221,62 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("requests commit avatars from the explicit Azure organization", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              author: {
+                imageUrl: "https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/aad.123",
+              },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const result = yield* az.getCommitAvatarUrl({
+        cwd: "/repo",
+        organization: "https://dev.azure.com/acme",
+        project: "project",
+        repository: "repo",
+        sha: "abc123",
+      });
+
+      assert.strictEqual(
+        result,
+        "https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/aad.123",
+      );
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: [
+          "devops",
+          "invoke",
+          "--organization",
+          "https://dev.azure.com/acme",
+          "--area",
+          "git",
+          "--resource",
+          "commits",
+          "--route-parameters",
+          "project=project",
+          "repositoryId=repo",
+          "commitId=abc123",
+          "--api-version",
+          "7.1",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("creates repositories through Azure Repos", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

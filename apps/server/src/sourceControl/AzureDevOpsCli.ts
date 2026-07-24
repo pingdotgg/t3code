@@ -226,6 +226,7 @@ export class AzureDevOpsCli extends Context.Service<
 
     readonly getCommitAvatarUrl: (input: {
       readonly cwd: string;
+      readonly organization: string;
       readonly repository: string;
       readonly sha: string;
       readonly project?: string;
@@ -484,8 +485,8 @@ export const make = Effect.gen(function* () {
         args: [
           "devops",
           "invoke",
-          "--detect",
-          "true",
+          "--organization",
+          input.organization,
           "--area",
           "git",
           "--resource",
@@ -495,7 +496,7 @@ export const make = Effect.gen(function* () {
           `repositoryId=${input.repository}`,
           `commitId=${input.sha}`,
           "--api-version",
-          "7.1-preview",
+          "7.1",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),

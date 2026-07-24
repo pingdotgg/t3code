@@ -156,6 +156,43 @@ it.effect("uses Azure DevOps commit author image URLs from the remote repository
     );
     assert.deepStrictEqual(avatarInput, {
       cwd: "/repo",
+      organization: "https://dev.azure.com/acme",
+      repository: "repo",
+      project: "project",
+      sha: "abc123",
+    });
+  }),
+);
+
+it.effect("routes Azure SSH avatar lookups through the remote organization", () =>
+  Effect.gen(function* () {
+    let avatarInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["getCommitAvatarUrl"]>[0]
+      | null = null;
+    const provider = yield* makeProvider({
+      getCommitAvatarUrl: (input) => {
+        avatarInput = input;
+        return Effect.succeed(null);
+      },
+    });
+
+    yield* provider.getCommitAvatarUrl({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "azure-devops",
+          name: "Azure DevOps",
+          baseUrl: "https://dev.azure.com",
+        },
+        remoteName: "upstream",
+        remoteUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
+      },
+      sha: "abc123",
+    });
+
+    assert.deepStrictEqual(avatarInput, {
+      cwd: "/repo",
+      organization: "https://dev.azure.com/acme",
       repository: "repo",
       project: "project",
       sha: "abc123",

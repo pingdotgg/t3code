@@ -15,6 +15,7 @@ import {
   mergeChangeGroups,
   namedBranchOperationCwd,
   resolveFederatedSourceControlTargets,
+  runPanelActionAndReconcile,
   stashIdentityKey,
   vcsPanelSnapshotFingerprint,
 } from "./SourceControlPanel.logic";
@@ -272,6 +273,24 @@ describe("SourceControlPanel stash identity", () => {
 });
 
 describe("SourceControlPanel refresh stability logic", () => {
+  it("reconciles repository state after a failed panel action", async () => {
+    const calls: string[] = [];
+    const failure = new Error("merge produced conflicts");
+
+    const result = await runPanelActionAndReconcile({
+      action: async () => {
+        calls.push("action");
+        throw failure;
+      },
+      reconcile: async () => {
+        calls.push("reconcile");
+      },
+    });
+
+    expect(calls).toEqual(["action", "reconcile"]);
+    expect(result).toEqual({ status: "failure", error: failure });
+  });
+
   it("drains a queued refresh after the active refresh fails", async () => {
     let queuedMode: "full" | "working-tree" | null = null;
     const calls: string[] = [];

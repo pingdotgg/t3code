@@ -89,6 +89,22 @@ export async function drainPanelRefreshQueue(options: {
   }
 }
 
+export type PanelActionResult =
+  | { readonly status: "success" }
+  | { readonly status: "failure"; readonly error: unknown };
+
+export async function runPanelActionAndReconcile(options: {
+  readonly action: () => Promise<void>;
+  readonly reconcile: () => Promise<void>;
+}): Promise<PanelActionResult> {
+  const result = await options.action().then(
+    () => ({ status: "success" }) as const,
+    (error: unknown) => ({ status: "failure", error }) as const,
+  );
+  await options.reconcile();
+  return result;
+}
+
 export function branchIsCheckedOut(branch: VcsRef | undefined): boolean {
   return branch?.current === true || branch?.worktreePath != null;
 }

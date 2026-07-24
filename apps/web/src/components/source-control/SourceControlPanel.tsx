@@ -133,6 +133,7 @@ import {
   mergeChangeGroups,
   namedBranchOperationCwd,
   resolveFederatedSourceControlTargets,
+  runPanelActionAndReconcile,
   type SourceControlEnvironmentCandidate,
   type PanelChangedFile,
   type PanelFileDiffLoadState,
@@ -2239,12 +2240,19 @@ function SourceControlEnvironmentPanel({
       setRunningActions((current) => new Set(current).add(actionKey));
       setError(null);
       try {
-        await action();
-        vcsStatus.refresh();
-        await refresh();
-      } catch (nextError) {
-        if (isSourceControlPanelCommandInterrupted(nextError)) return;
-        setError(errorMessage(nextError));
+        const result = await runPanelActionAndReconcile({
+          action,
+          reconcile: async () => {
+            vcsStatus.refresh();
+            await refresh();
+          },
+        });
+        if (result.status === "failure" && !isSourceControlPanelCommandInterrupted(result.error)) {
+          setError(errorMessage(result.error));
+        }
+      } catch (reconcileError) {
+        if (isSourceControlPanelCommandInterrupted(reconcileError)) return;
+        setError(errorMessage(reconcileError));
       } finally {
         setRunningActions((current) => {
           const next = new Set(current);

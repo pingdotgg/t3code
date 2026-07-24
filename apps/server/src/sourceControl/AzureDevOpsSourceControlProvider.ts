@@ -74,7 +74,13 @@ function toChangeRequest(summary: {
 
 function azureRepositoryFromContext(
   context: SourceControlProvider.SourceControlProviderContext | undefined,
-): { readonly repository: string; readonly project?: string } | undefined {
+):
+  | {
+      readonly organization: string;
+      readonly repository: string;
+      readonly project?: string;
+    }
+  | undefined {
   if (!context) return undefined;
   const path = SourceControlProvider.repositoryPathFromRemoteUrl(context.remoteUrl);
   if (!path) return undefined;
@@ -82,21 +88,44 @@ function azureRepositoryFromContext(
     .split("/")
     .map((part) => part.trim())
     .filter(Boolean);
+  const organization = (() => {
+    try {
+      const url = new URL(context.remoteUrl);
+      const hostname = url.hostname.toLowerCase();
+      if (hostname === "dev.azure.com") {
+        const name = parts[0];
+        return name ? `${url.origin}/${encodeURIComponent(name)}` : undefined;
+      }
+      if (hostname.endsWith(".visualstudio.com")) {
+        return url.origin;
+      }
+    } catch {
+      if (parts[0]?.toLowerCase() === "v3" && parts[1]) {
+        return `https://dev.azure.com/${encodeURIComponent(parts[1])}`;
+      }
+    }
+    return undefined;
+  })();
+  if (!organization) return undefined;
   const gitIndex = parts.findIndex((part) => part.toLowerCase() === "_git");
   const gitProject = parts[gitIndex - 1];
   const gitRepository = parts[gitIndex + 1];
   if (gitIndex >= 1 && gitProject && gitRepository) {
-    return { project: gitProject, repository: gitRepository };
+    return { organization, project: gitProject, repository: gitRepository };
   }
   const sshProject = parts[2];
   const sshRepository = parts[3];
   if (parts[0]?.toLowerCase() === "v3" && sshProject && sshRepository) {
-    return { project: sshProject, repository: sshRepository };
+    return { organization, project: sshProject, repository: sshRepository };
   }
   const fallbackProject = parts.at(-2);
   const repository = parts.at(-1);
   return repository
-    ? { repository, ...(fallbackProject ? { project: fallbackProject } : {}) }
+    ? {
+        organization,
+        repository,
+        ...(fallbackProject ? { project: fallbackProject } : {}),
+      }
     : undefined;
 }
 
@@ -113,7 +142,12 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           headSelector: input.headSelector,
           ...(source !== undefined ? { source } : {}),
-          ...(repository !== undefined ? repository : {}),
+          ...(repository !== undefined
+            ? {
+                repository: repository.repository,
+                ...(repository.project !== undefined ? { project: repository.project } : {}),
+              }
+            : {}),
           state: input.state,
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
         })
