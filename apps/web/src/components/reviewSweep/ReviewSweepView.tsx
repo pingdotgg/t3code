@@ -11,12 +11,15 @@ import {
   applySweepSettle,
   applySweepTitle,
   dismissSweepItem,
+  isSweepCandidate,
   retrySweepItem,
   startReviewSweep,
+  SWEEP_MAX_THREADS,
   useReviewSweepStore,
   type SweepItem,
 } from "../../reviewSweepStore";
-import { useProjects } from "../../state/entities";
+import { useClientSettings } from "../../hooks/useSettings";
+import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -142,6 +145,94 @@ function SweepItemCard({ item }: { item: SweepItem }) {
   );
 }
 
+/** Cost-transparency threshold: at or above this many candidate threads the
+    pre-run screen calls out that the sweep may be slow/expensive. */
+const SWEEP_COST_NOTE_THRESHOLD = 15;
+
+/** Pre-run summary: how many threads a sweep would cover and which model
+    each environment's server will use, so starting is an informed choice. */
+function SweepPreRunSummary() {
+  const shells = useThreadShells();
+  const serverConfigs = useServerConfigs();
+  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+
+  const { candidateCount, modelsByEnvironment } = useMemo(() => {
+    const now = new Date().toISOString();
+    let count = 0;
+    const models = new Map<string, { label: string; model: string; threads: number }>();
+    for (const shell of shells) {
+      const config = serverConfigs.get(shell.environmentId);
+      if (!isSweepCandidate(shell, config?.environment.capabilities, { now, autoSettleAfterDays }))
+        continue;
+      count += 1;
+      const selection = config?.settings.textGenerationModelSelection;
+      const entry = models.get(shell.environmentId);
+      if (entry) {
+        entry.threads += 1;
+      } else {
+        models.set(shell.environmentId, {
+          label: config?.environment.label ?? shell.environmentId,
+          model: selection ? `${selection.model}` : "server default",
+          threads: 1,
+        });
+      }
+    }
+    return { candidateCount: count, modelsByEnvironment: [...models.values()] };
+  }, [autoSettleAfterDays, serverConfigs, shells]);
+
+  const reviewedCount = Math.min(candidateCount, SWEEP_MAX_THREADS);
+
+  if (candidateCount === 0) {
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>All caught up</EmptyTitle>
+          <EmptyDescription>No unsettled threads to review right now.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+
+  return (
+    <Empty>
+      <EmptyHeader>
+        <EmptyTitle>Review your in-progress work</EmptyTitle>
+        <EmptyDescription>
+          This sweep runs one AI review per thread to summarize it, catch stale titles, and find
+          threads ready to settle. Nothing is applied without your click.
+        </EmptyDescription>
+      </EmptyHeader>
+      <div className="flex w-full max-w-md flex-col gap-1.5 rounded-lg border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+        <div>
+          <span className="font-medium text-foreground">{reviewedCount}</span>{" "}
+          {reviewedCount === 1 ? "thread" : "threads"} will be reviewed
+          {candidateCount > SWEEP_MAX_THREADS
+            ? ` (${candidateCount - SWEEP_MAX_THREADS} least-recently-active skipped)`
+            : ""}
+        </div>
+        {modelsByEnvironment.map((entry) => (
+          <div key={entry.label} className="truncate">
+            {entry.label}: <span className="text-foreground">{entry.model}</span> · {entry.threads}{" "}
+            {entry.threads === 1 ? "thread" : "threads"}
+          </div>
+        ))}
+        {reviewedCount >= SWEEP_COST_NOTE_THRESHOLD ? (
+          <div className="text-warning-foreground">
+            Heads up: {reviewedCount} model calls may take a few minutes and use noticeable credits.
+            You can change the model under Settings → Models.
+          </div>
+        ) : (
+          <div>Model is configurable under Settings → Models (text generation).</div>
+        )}
+      </div>
+      <Button size="sm" onClick={() => startReviewSweep()}>
+        <ListChecksIcon className="me-1.5 size-4" />
+        Review {reviewedCount} {reviewedCount === 1 ? "thread" : "threads"}
+      </Button>
+    </Empty>
+  );
+}
+
 export function ReviewSweepView() {
   const phase = useReviewSweepStore((state) => state.phase);
   const order = useReviewSweepStore((state) => state.order);
@@ -210,50 +301,42 @@ export function ReviewSweepView() {
                 )}
               </span>
             ) : null}
-            <div className="ms-auto flex items-center gap-2">
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={running}
-                onClick={() => startReviewSweep()}
-              >
-                <RotateCcwIcon className="mx-1 size-3.5" />
-                {phase === "idle" ? "Start review" : "Re-run"}
-              </Button>
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={running || applyingAll || applicableCount === 0}
-                onClick={() => {
-                  setApplyingAll(true);
-                  void applyAllSweepRecommendations().finally(() => setApplyingAll(false));
-                }}
-              >
-                Apply all{applicableCount > 0 ? ` (${applicableCount})` : ""}
-              </Button>
-            </div>
+            {phase !== "idle" ? (
+              <div className="ms-auto flex items-center gap-2">
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={running}
+                  onClick={() => startReviewSweep()}
+                >
+                  <RotateCcwIcon className="mx-1 size-3.5" />
+                  Re-run
+                </Button>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={running || applyingAll || applicableCount === 0}
+                  onClick={() => {
+                    setApplyingAll(true);
+                    void applyAllSweepRecommendations().finally(() => setApplyingAll(false));
+                  }}
+                >
+                  Apply all{applicableCount > 0 ? ` (${applicableCount})` : ""}
+                </Button>
+              </div>
+            ) : null}
           </div>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
-          {visibleItems.length === 0 ? (
+          {phase === "idle" ? (
+            <SweepPreRunSummary />
+          ) : visibleItems.length === 0 ? (
             <Empty>
               <EmptyHeader>
-                <EmptyTitle>
-                  {phase === "idle" ? "Review your in-progress work" : "All caught up"}
-                </EmptyTitle>
-                <EmptyDescription>
-                  {phase === "idle"
-                    ? "Run a sweep to summarize every unsettled thread, catch stale titles, and find threads ready to settle."
-                    : "No unsettled threads to review right now."}
-                </EmptyDescription>
+                <EmptyTitle>All caught up</EmptyTitle>
+                <EmptyDescription>No unsettled threads to review right now.</EmptyDescription>
               </EmptyHeader>
-              {phase === "idle" ? (
-                <Button size="sm" onClick={() => startReviewSweep()}>
-                  <ListChecksIcon className="me-1.5 size-4" />
-                  Review unsettled work
-                </Button>
-              ) : null}
             </Empty>
           ) : (
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">

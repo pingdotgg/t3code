@@ -91,21 +91,37 @@ function readServerCapabilities(environmentId: EnvironmentId) {
     .capabilities;
 }
 
+/** The sweep-eligibility predicate, mirroring SidebarV2's active-card
+    partition. Exported so the pre-run confirmation screen counts exactly
+    the threads a run would review. */
+export function isSweepCandidate(
+  shell: EnvironmentThreadShell,
+  capabilities: { threadSettlement?: boolean; reviewSweep?: boolean } | undefined,
+  options: { readonly now: string; readonly autoSettleAfterDays: number | null },
+): boolean {
+  if (shell.archivedAt !== null) return false;
+  if (capabilities?.threadSettlement !== true || capabilities.reviewSweep !== true) return false;
+  // PR state is owned by per-row VCS subscriptions in the sidebar and isn't
+  // readable here; passing null may include a few threads the sidebar shows
+  // as settled (merged PR + idle). Reviewing them is harmless.
+  return !effectiveSettled(shell, {
+    now: options.now,
+    autoSettleAfterDays: options.autoSettleAfterDays,
+    changeRequestState: null,
+  });
+}
+
 /** All unsettled, unarchived threads across every connected environment that
-    supports the sweep, mirroring SidebarV2's active-card predicate. */
+    supports the sweep. */
 function collectSweepCandidates(): EnvironmentThreadShell[] {
   const now = new Date().toISOString();
   const autoSettleAfterDays = getClientSettings().sidebarAutoSettleAfterDays;
   const candidates: EnvironmentThreadShell[] = [];
   for (const ref of readThreadRefs()) {
     const shell = readThreadShell(ref);
-    if (!shell || shell.archivedAt !== null) continue;
+    if (!shell) continue;
     const capabilities = readServerCapabilities(shell.environmentId);
-    if (capabilities?.threadSettlement !== true || capabilities.reviewSweep !== true) continue;
-    // PR state is owned by per-row VCS subscriptions in the sidebar and isn't
-    // readable here; passing null may include a few threads the sidebar shows
-    // as settled (merged PR + idle). Reviewing them is harmless.
-    if (effectiveSettled(shell, { now, autoSettleAfterDays, changeRequestState: null })) continue;
+    if (!isSweepCandidate(shell, capabilities, { now, autoSettleAfterDays })) continue;
     candidates.push(shell);
   }
   // Most recently active first, so the SWEEP_MAX_THREADS cap drops the

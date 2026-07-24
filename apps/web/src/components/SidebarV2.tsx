@@ -71,7 +71,6 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { startReviewSweep } from "../reviewSweepStore";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -1741,9 +1740,10 @@ export default function SidebarV2() {
     openCommandPalette({ open: "new-thread-in" });
   }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
 
+  // Navigate only — the review-sweep page shows a pre-run summary (thread
+  // count + models that will be used) and the sweep starts on explicit click.
   const handleReviewSweepClick = useCallback(() => {
     if (isMobile) setOpenMobile(false);
-    startReviewSweep();
     void router.navigate({ to: "/review-sweep" });
   }, [isMobile, router, setOpenMobile]);
 
