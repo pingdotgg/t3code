@@ -109,6 +109,17 @@ function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): bool
   );
 }
 
+const LEGACY_NEW_LOCAL_DEFAULT: KeybindingRule = {
+  key: "mod+shift+n",
+  command: "chat.newLocal",
+  when: "!terminalFocus",
+};
+const NEW_ENVIRONMENT_DEFAULT: KeybindingRule = {
+  key: "mod+shift+n",
+  command: "chat.newEnvironment",
+  when: "!terminalFocus",
+};
+
 function keybindingShortcutContext(rule: KeybindingRule): string | null {
   const parsed = parseKeybindingShortcut(rule.key);
   if (!parsed) return null;
@@ -493,7 +504,16 @@ const make = Effect.gen(function* () {
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
-      const customConfig = runtimeConfig.keybindings;
+      const shouldMigrateNewEnvironmentDefault =
+        !runtimeConfig.keybindings.some((entry) => entry.command === "chat.newEnvironment") &&
+        runtimeConfig.keybindings.some((entry) =>
+          isSameKeybindingRule(entry, LEGACY_NEW_LOCAL_DEFAULT),
+        );
+      const customConfig = shouldMigrateNewEnvironmentDefault
+        ? runtimeConfig.keybindings.map((entry) =>
+            isSameKeybindingRule(entry, LEGACY_NEW_LOCAL_DEFAULT) ? NEW_ENVIRONMENT_DEFAULT : entry,
+          )
+        : runtimeConfig.keybindings;
       const existingCommands = new Set(customConfig.map((entry) => entry.command));
       const missingDefaults: KeybindingRule[] = [];
       const shortcutConflictWarnings: Array<{
@@ -530,7 +550,7 @@ const make = Effect.gen(function* () {
           reason: "shortcut context already used by existing rule",
         });
       }
-      if (missingDefaults.length === 0) {
+      if (missingDefaults.length === 0 && !shouldMigrateNewEnvironmentDefault) {
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
