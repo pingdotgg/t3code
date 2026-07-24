@@ -1750,7 +1750,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     if (routeKind !== "server") {
-      markActiveThreadVisited(null, null);
+      markActiveThreadVisited(routeThreadKey, null);
       return;
     }
     const visitedAt =
