@@ -168,6 +168,110 @@ it.effect("keeps repository workers available when every favicon worker is hung"
   }),
 );
 
+it.effect("getAvailable returns immediately while repository identity is still unresolved", () =>
+  Effect.gen(function* () {
+    const repositoryStarted = yield* Deferred.make<void>();
+    const releaseRepository = yield* Deferred.make<void>();
+    const metadataLayer = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) =>
+          Deferred.succeed(repositoryStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseRepository)),
+            Effect.as(identity(workspaceRoot)),
+          ),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        resolvePath: (workspaceRoot) => Effect.succeed(`${workspaceRoot}/favicon.svg`),
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+
+      // Non-blocking path must not wait on hung git/identity resolution.
+      const immediate = yield* service.getAvailable("/pending-identity");
+      assert.isNull(immediate.repositoryIdentity);
+      assert.isNull(immediate.faviconPath);
+      assert.isFalse(immediate.repositoryIdentityResolved);
+
+      yield* Deferred.await(repositoryStarted);
+
+      // Background lane still resolves after the snapshot path has returned.
+      yield* Deferred.succeed(releaseRepository, undefined);
+      const resolved = yield* waitForAvailable(
+        service,
+        "/pending-identity",
+        (value) => value.repositoryIdentity !== null,
+      );
+      assert.equal(resolved.repositoryIdentity?.canonicalKey, "example.test/v1/pending-identity");
+      assert.isTrue(resolved.repositoryIdentityResolved);
+    }).pipe(Effect.provide(makeLayer(metadataLayer)));
+  }),
+);
+
+it.effect(
+  "reports successful cached null as resolved while cold and failed lookups stay unresolved",
+  () =>
+    Effect.gen(function* () {
+      const repositoryStarted = yield* Deferred.make<void>();
+      const releaseRepository = yield* Deferred.make<void>();
+      const metadataLayer = Layer.merge(
+        Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+          resolve: (workspaceRoot) => {
+            if (workspaceRoot === "/no-remote") {
+              return Effect.succeed(null);
+            }
+            if (workspaceRoot === "/fails") {
+              return Effect.die("repository resolver failed");
+            }
+            return Deferred.succeed(repositoryStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseRepository)),
+              Effect.as(identity(workspaceRoot)),
+            );
+          },
+        }),
+        Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+          resolvePath: () => Effect.succeed(null),
+        }),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+        const changes = yield* service.subscribeChanges;
+
+        const cold = yield* service.peek("/never-requested");
+        assert.isNull(cold.repositoryIdentity);
+        assert.isFalse(cold.repositoryIdentityResolved);
+
+        const inFlight = yield* service.getAvailable("/in-flight");
+        assert.isNull(inFlight.repositoryIdentity);
+        assert.isFalse(inFlight.repositoryIdentityResolved);
+        yield* Deferred.await(repositoryStarted);
+        assert.isFalse((yield* service.peek("/in-flight")).repositoryIdentityResolved);
+
+        yield* service.request("/no-remote");
+        const nullChange = yield* PubSub.take(changes);
+        assert.equal(nullChange.workspaceRoot, "/no-remote");
+        assert.isTrue(nullChange.repositoryIdentityResolved);
+        assert.isNull(nullChange.enrichment.repositoryIdentity);
+        assert.isTrue(nullChange.enrichment.repositoryIdentityResolved);
+
+        // Warm success null stays resolved and does not republish.
+        const warmNull = yield* service.getAvailable("/no-remote");
+        assert.isNull(warmNull.repositoryIdentity);
+        assert.isTrue(warmNull.repositoryIdentityResolved);
+
+        yield* service.request("/fails");
+        const failChange = yield* PubSub.take(changes);
+        assert.equal(failChange.workspaceRoot, "/fails");
+        assert.isFalse(failChange.repositoryIdentityResolved);
+        const failed = yield* service.peek("/fails");
+        assert.isNull(failed.repositoryIdentity);
+        assert.isFalse(failed.repositoryIdentityResolved);
+      }).pipe(Effect.provide(makeLayer(metadataLayer)));
+    }),
+);
+
 it.effect("deduplicates requests, bounds pending work, and reloads invalidated roots", () =>
   Effect.gen(function* () {
     const firstStarted = yield* Deferred.make<void>();
