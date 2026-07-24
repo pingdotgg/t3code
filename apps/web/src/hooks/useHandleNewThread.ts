@@ -54,14 +54,52 @@ export function useNewThreadHandler() {
       },
     ): Promise<void> => {
       const {
+        getComposerDraft,
         getDraftSessionByLogicalProjectKey,
         getDraftSession,
         getDraftThread,
         applyStickyState,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
+        setModelSelection,
       } = useComposerDraftStore.getState();
       const currentRouteTarget = getCurrentRouteTarget();
+      // A new thread carries the user's *working mode* from the thread being
+      // viewed: model (including options like reasoning effort and context
+      // window), permission mode, and interaction mode. Branch, worktree, and
+      // env mode never carry implicitly — those come from the configured
+      // defaults unless the caller passes them explicitly.
+      const carrySourceShell =
+        currentRouteTarget?.kind === "server"
+          ? readThreadShell(currentRouteTarget.threadRef)
+          : null;
+      const carrySourceDraft =
+        currentRouteTarget?.kind === "draft" ? getDraftSession(currentRouteTarget.draftId) : null;
+      // Composer overrides win over the persisted thread state — they are
+      // what the user currently sees in the composer controls.
+      const carrySourceComposer = currentRouteTarget
+        ? getComposerDraft(
+            currentRouteTarget.kind === "server"
+              ? currentRouteTarget.threadRef
+              : currentRouteTarget.draftId,
+          )
+        : null;
+      const composerActiveProvider = carrySourceComposer?.activeProvider ?? null;
+      const composerModelSelection = composerActiveProvider
+        ? (carrySourceComposer?.modelSelectionByProvider[composerActiveProvider] ?? null)
+        : null;
+      const carryModelSelection =
+        composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
+      const carryRuntimeMode =
+        carrySourceComposer?.runtimeMode ??
+        carrySourceShell?.runtimeMode ??
+        carrySourceDraft?.runtimeMode ??
+        null;
+      const carryInteractionMode =
+        carrySourceComposer?.interactionMode ??
+        carrySourceShell?.interactionMode ??
+        carrySourceDraft?.interactionMode ??
+        null;
       const project = projects.find(
         (candidate) =>
           candidate.id === projectRef.projectId &&
@@ -104,6 +142,32 @@ export function useNewThreadHandler() {
               ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
               ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
             });
+          } else if (
+            currentRouteTarget?.kind !== "draft" ||
+            currentRouteTarget.draftId !== reusableStoredDraftThread.draftId
+          ) {
+            // Resurrecting a stored draft must not resurrect its stale env
+            // context: drafts seeded before a defaults change (or by the old
+            // carry-over behavior) would otherwise keep landing on "current
+            // checkout" branches forever. Composer text is preserved; only
+            // the env context resets to the configured defaults. When the
+            // draft is already open, leave it alone — the user may have just
+            // picked a branch in the composer.
+            const defaultEnvMode = primaryServerSettings.defaultThreadEnvMode;
+            setDraftThreadContext(reusableStoredDraftThread.draftId, {
+              branch: null,
+              worktreePath: null,
+              envMode: defaultEnvMode,
+              startFromOrigin: resolveNewDraftStartFromOrigin({
+                envMode: defaultEnvMode,
+                newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+              }),
+              ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
+              ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+            });
+            if (carryModelSelection) {
+              setModelSelection(reusableStoredDraftThread.draftId, carryModelSelection);
+            }
           }
           setLogicalProjectDraftThreadId(
             logicalProjectKey,
@@ -176,9 +240,16 @@ export function useNewThreadHandler() {
               envMode: initialEnvMode,
               newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
             }),
-          runtimeMode: DEFAULT_RUNTIME_MODE,
+          runtimeMode: carryRuntimeMode ?? DEFAULT_RUNTIME_MODE,
+          ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
         applyStickyState(draftId);
+        if (carryModelSelection) {
+          // After sticky state so the viewed thread's exact selection
+          // (model + options like effort and context window) wins over the
+          // globally sticky one.
+          setModelSelection(draftId, carryModelSelection);
+        }
 
         await router.navigate({
           to: "/draft/$draftId",

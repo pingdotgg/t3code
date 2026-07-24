@@ -65,6 +65,43 @@ export function resolveLockedWorkspaceLabel(activeWorktreePath: string | null): 
   return activeWorktreePath ? "Worktree" : "Local checkout";
 }
 
+export interface PreviousWorktreeSeed {
+  branch: string | null;
+  worktreePath: string;
+}
+
+// The most recently touched worktree in the project that the composer isn't
+// already pointing at. Backs the "Previous worktree" entry in the workspace
+// selector so a follow-up thread can hop back into the worktree you just
+// worked in without hunting for its branch.
+export function resolvePreviousWorktreeSeed(input: {
+  threads: ReadonlyArray<{
+    branch: string | null;
+    worktreePath: string | null;
+    updatedAt: string;
+  }>;
+  currentWorktreePath: string | null;
+}): PreviousWorktreeSeed | null {
+  let latest: { branch: string | null; worktreePath: string; updatedAt: string } | null = null;
+  for (const thread of input.threads) {
+    if (!thread.worktreePath || thread.worktreePath === input.currentWorktreePath) {
+      continue;
+    }
+    if (latest === null || thread.updatedAt > latest.updatedAt) {
+      latest = {
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        updatedAt: thread.updatedAt,
+      };
+    }
+  }
+  return latest === null ? null : { branch: latest.branch, worktreePath: latest.worktreePath };
+}
+
+export function resolvePreviousWorktreeLabel(seed: PreviousWorktreeSeed): string {
+  return seed.branch ? `Previous worktree (${seed.branch})` : "Previous worktree";
+}
+
 export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
   hasServerThread: boolean;

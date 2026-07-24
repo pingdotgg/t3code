@@ -12,12 +12,72 @@ import {
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
   resolveLocalCheckoutBranchMismatch,
+  resolvePreviousWorktreeLabel,
+  resolvePreviousWorktreeSeed,
   shouldIncludeBranchPickerItem,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+describe("resolvePreviousWorktreeSeed", () => {
+  it("picks the most recently updated worktree thread", () => {
+    expect(
+      resolvePreviousWorktreeSeed({
+        threads: [
+          {
+            branch: "t3/older",
+            worktreePath: "/repo/.t3/worktrees/older",
+            updatedAt: "2026-07-20T00:00:00.000Z",
+          },
+          {
+            branch: "t3/newer",
+            worktreePath: "/repo/.t3/worktrees/newer",
+            updatedAt: "2026-07-22T00:00:00.000Z",
+          },
+          { branch: "main", worktreePath: null, updatedAt: "2026-07-23T00:00:00.000Z" },
+        ],
+        currentWorktreePath: null,
+      }),
+    ).toEqual({ branch: "t3/newer", worktreePath: "/repo/.t3/worktrees/newer" });
+  });
+
+  it("skips the worktree the composer already points at", () => {
+    expect(
+      resolvePreviousWorktreeSeed({
+        threads: [
+          {
+            branch: "t3/current",
+            worktreePath: "/repo/.t3/worktrees/current",
+            updatedAt: "2026-07-22T00:00:00.000Z",
+          },
+        ],
+        currentWorktreePath: "/repo/.t3/worktrees/current",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when no thread has a worktree", () => {
+    expect(
+      resolvePreviousWorktreeSeed({
+        threads: [{ branch: "main", worktreePath: null, updatedAt: "2026-07-22T00:00:00.000Z" }],
+        currentWorktreePath: null,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolvePreviousWorktreeLabel", () => {
+  it("includes the branch when known", () => {
+    expect(resolvePreviousWorktreeLabel({ branch: "t3/fix-thing", worktreePath: "/wt" })).toBe(
+      "Previous worktree (t3/fix-thing)",
+    );
+    expect(resolvePreviousWorktreeLabel({ branch: null, worktreePath: "/wt" })).toBe(
+      "Previous worktree",
+    );
+  });
+});
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
   it("switches to local mode when returning from an existing worktree to the main worktree", () => {
