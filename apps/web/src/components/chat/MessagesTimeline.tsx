@@ -681,6 +681,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
         {visibleEntries.map((workEntry) => (
           <SimpleWorkEntryRow
             key={`work-row:${workEntry.id}`}
+            canExpandCommand={onlyToolEntries}
             workEntry={workEntry}
             workspaceRoot={workspaceRoot}
           />
@@ -1161,10 +1162,11 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 }
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
+  canExpandCommand?: boolean;
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
 }) {
-  const { workEntry, workspaceRoot } = props;
+  const { canExpandCommand = false, workEntry, workspaceRoot } = props;
   const [isCommandExpanded, setIsCommandExpanded] = useState(false);
   if (workEntry.agentRun) {
     return <AgentRunRow agentRun={workEntry.agentRun} workspaceRoot={workspaceRoot} />;
@@ -1184,6 +1186,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
   const CommandToggleIcon = isCommandExpanded ? ChevronDownIcon : ChevronRightIcon;
+  const expandableCommand = canExpandCommand ? fullCommand : null;
 
   return (
     <div className="rounded-lg px-1 py-1">
@@ -1194,27 +1197,37 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           {entryIcon}
         </span>
         <div className="min-w-0 flex-1 overflow-hidden">
-          {fullCommand ? (
+          {expandableCommand ? (
             <button
               type="button"
-              className="flex w-full min-w-0 items-center gap-1 text-left"
+              className="flex w-full min-w-0 items-start gap-1 text-left"
               onClick={() => setIsCommandExpanded((value) => !value)}
               aria-expanded={isCommandExpanded}
               aria-label={`${isCommandExpanded ? "Collapse" : "Expand"} command: ${heading}`}
             >
-              <p
-                className={cn(
-                  "min-w-0 flex-1 truncate text-[length:inherit] leading-[1.67]",
-                  workToneClass(workEntry.tone),
-                  preview ? "text-muted-foreground/70" : "",
-                )}
-                title={displayText}
-              >
-                <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                  {heading}
-                </span>
-                {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
-              </p>
+              {isCommandExpanded ? (
+                <code
+                  data-tool-command-details
+                  data-testid="tool-command-details"
+                  className="block min-w-0 flex-1 overflow-x-auto rounded-md border border-border/45 bg-background/60 px-2 py-1.5 font-mono text-[0.9em] leading-[1.5] whitespace-pre-wrap wrap-break-word text-foreground/80"
+                >
+                  {expandableCommand}
+                </code>
+              ) : (
+                <p
+                  className={cn(
+                    "min-w-0 flex-1 truncate text-[length:inherit] leading-[1.67]",
+                    workToneClass(workEntry.tone),
+                    preview ? "text-muted-foreground/70" : "",
+                  )}
+                  title={displayText}
+                >
+                  <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
+                    {heading}
+                  </span>
+                  {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
+                </p>
+              )}
               <CommandToggleIcon
                 className="size-3 shrink-0 text-muted-foreground/55"
                 aria-hidden="true"
@@ -1249,15 +1262,6 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           )}
         </div>
       </div>
-      {fullCommand && isCommandExpanded && (
-        <pre
-          data-tool-command-details
-          data-testid="tool-command-details"
-          className="mt-1 ml-7 overflow-x-auto rounded-md border border-border/45 bg-background/60 px-2 py-1.5 font-mono text-[0.9em] leading-[1.5] whitespace-pre-wrap wrap-break-word text-foreground/80"
-        >
-          {fullCommand}
-        </pre>
-      )}
       {hasChangedFiles && !previewIsChangedFiles && (
         <div className="mt-1 flex flex-wrap gap-1 pl-6">
           {workEntry.changedFiles?.slice(0, 4).map((filePath) => {
