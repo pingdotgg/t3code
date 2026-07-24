@@ -22,6 +22,7 @@ import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts
 import * as ProviderService from "../Services/ProviderService.ts";
 import { makePiAdapter } from "./PiAdapter.ts";
 import type {
+  PiPromptInput,
   PiSessionRuntimeOptions,
   PiSessionRuntimeShape,
 } from "../Drivers/PiSessionRuntime.ts";
@@ -36,37 +37,46 @@ const WORK = ProviderInstanceId.make("pi_work");
 const THREAD_ID = ThreadId.make("thread-pi-continuation");
 
 function makePiRuntimeFactory() {
-  const options: PiSessionRuntimeOptions[] = [];
+  return Effect.gen(function* () {
+    const options: PiSessionRuntimeOptions[] = [];
+    const prompts: PiPromptInput[] = [];
+    const events = yield* PubSub.unbounded<unknown>();
 
-  return {
-    options,
-    factory: (runtimeOptions: PiSessionRuntimeOptions) => {
-      options.push(runtimeOptions);
-      const runtime: PiSessionRuntimeShape = {
-        start: () =>
-          Effect.succeed({
-            sessionId: runtimeOptions.sessionId ?? "model-probe",
-            sessionFile: `/tmp/${runtimeOptions.sessionId ?? "model-probe"}.jsonl`,
-            model: { provider: "pi-provider", id: "model", name: "Pi Model" },
-          }),
-        getState: () =>
-          Effect.succeed({
-            sessionId: runtimeOptions.sessionId ?? "model-probe",
-            model: { provider: "pi-provider", id: "model", name: "Pi Model" },
-          }),
-        getAvailableModels: () => Effect.succeed([]),
-        setModel: () => Effect.void,
-        getAvailableThinkingLevels: () => Effect.succeed(["off", "high"]),
-        setThinkingLevel: () => Effect.void,
-        prompt: () => Effect.void,
-        abort: () => Effect.void,
-        respondToExtensionUI: () => Effect.void,
-        events: Stream.empty,
-        close: Effect.void,
-      };
-      return Effect.succeed(runtime);
-    },
-  };
+    return {
+      options,
+      prompts,
+      emit: (event: unknown) => PubSub.publish(events, event).pipe(Effect.asVoid),
+      factory: (runtimeOptions: PiSessionRuntimeOptions) => {
+        options.push(runtimeOptions);
+        const runtime: PiSessionRuntimeShape = {
+          start: () =>
+            Effect.succeed({
+              sessionId: runtimeOptions.sessionId ?? "model-probe",
+              sessionFile: `/tmp/${runtimeOptions.sessionId ?? "model-probe"}.jsonl`,
+              model: { provider: "pi-provider", id: "model", name: "Pi Model" },
+            }),
+          getState: () =>
+            Effect.succeed({
+              sessionId: runtimeOptions.sessionId ?? "model-probe",
+              model: { provider: "pi-provider", id: "model", name: "Pi Model" },
+            }),
+          getAvailableModels: () => Effect.succeed([]),
+          setModel: () => Effect.void,
+          getAvailableThinkingLevels: () => Effect.succeed(["off", "high"]),
+          setThinkingLevel: () => Effect.void,
+          prompt: (input) =>
+            Effect.sync(() => {
+              prompts.push(input);
+            }),
+          abort: () => Effect.void,
+          respondToExtensionUI: () => Effect.void,
+          events: Stream.fromPubSub(events),
+          close: Effect.void,
+        };
+        return Effect.succeed(runtime);
+      },
+    };
+  });
 }
 
 function makeInstanceRegistry(input: {
@@ -107,15 +117,15 @@ function makeInstanceRegistry(input: {
 
 /**
  * ProviderService owns persisted continuation routing. This contract test uses
- * two real Pi adapters and proves that recovering a stopped thread never
- * starts the other runtime instance, even though it is available in the
- * registry.
+ * two real Pi adapters and proves that a lost Pi transport does not replay an
+ * accepted prompt, then recovers only after an explicit later continuation on
+ * the originating runtime instance.
  */
 describe("Pi native continuation", () => {
-  it.effect("rejects an incompatible instance and reopens the original native session", () =>
+  it.effect("does not replay after loss and resumes the original session", () =>
     Effect.gen(function* () {
-      const personalRuntime = makePiRuntimeFactory();
-      const workRuntime = makePiRuntimeFactory();
+      const personalRuntime = yield* makePiRuntimeFactory();
+      const workRuntime = yield* makePiRuntimeFactory();
       const personal = yield* makePiAdapter(decodePiSettings({}), {
         instanceId: PERSONAL,
         sessionDirectory: "/tmp/t3/pi-sessions/pi_personal",
@@ -158,7 +168,28 @@ describe("Pi native continuation", () => {
             model: "pi-provider/model",
           },
         });
-        yield* provider.stopSession({ threadId: THREAD_ID });
+        yield* Effect.yieldNow;
+        yield* provider.sendTurn({
+          threadId: THREAD_ID,
+          input: "Persist this accepted Pi prompt exactly once.",
+          attachments: [],
+        });
+        yield* personalRuntime.emit({
+          type: "pi_rpc_transport_failure",
+          operation: "process-exit",
+          detail: "Pi RPC process exited with code 23.",
+        });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+
+        // A transport loss closes the live adapter but cannot trigger a new
+        // process or re-send the accepted prompt by itself.
+        expect(personalRuntime.options).toHaveLength(1);
+        expect(personalRuntime.prompts).toEqual([
+          { message: "Persist this accepted Pi prompt exactly once." },
+        ]);
+        expect(yield* provider.listSessions()).toEqual([]);
 
         const incompatibleInstanceError = yield* provider
           .startSession(THREAD_ID, {
@@ -179,11 +210,11 @@ describe("Pi native continuation", () => {
         );
         expect(workRuntime.options).toEqual([]);
 
-        // Prompt delivery recovers the persisted native session through its
-        // original runtime binding before it reaches Pi.
+        // A later user action explicitly recovers the persisted native session
+        // through its original runtime binding, delivering only that new prompt.
         yield* provider.sendTurn({
           threadId: THREAD_ID,
-          input: "continue this native session",
+          input: "Continue this native session after checking the interruption.",
           attachments: [],
         });
 
@@ -196,6 +227,10 @@ describe("Pi native continuation", () => {
         expect(personalRuntime.options.map((options) => options.sessionDirectory)).toEqual([
           "/tmp/t3/pi-sessions/pi_personal",
           "/tmp/t3/pi-sessions/pi_personal",
+        ]);
+        expect(personalRuntime.prompts).toEqual([
+          { message: "Persist this accepted Pi prompt exactly once." },
+          { message: "Continue this native session after checking the interruption." },
         ]);
         expect(workRuntime.options).toEqual([]);
       }).pipe(Effect.provide(providerLayer));

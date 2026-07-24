@@ -1,6 +1,8 @@
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -34,6 +36,23 @@ export class PiSessionRuntimeError extends Schema.TaggedErrorClass<PiSessionRunt
 }
 
 const isPiSessionRuntimeError = Schema.is(PiSessionRuntimeError);
+
+/** Synthetic raw event emitted when Pi's process or RPC transport becomes unusable. */
+export const PI_RPC_TRANSPORT_FAILURE_EVENT_TYPE = "pi_rpc_transport_failure";
+
+export interface PiRpcTransportFailureEvent {
+  readonly type: typeof PI_RPC_TRANSPORT_FAILURE_EVENT_TYPE;
+  readonly operation: string;
+  readonly detail: string;
+}
+
+export function isPiSessionRuntimeTransportError(error: PiSessionRuntimeError): boolean {
+  return (
+    error.operation === "read-stdout" ||
+    error.operation === "process-exit" ||
+    error.operation === "write-stdin"
+  );
+}
 
 export interface PiSessionRuntimeOptions {
   readonly binaryPath: string;
@@ -158,6 +177,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+export function isPiRpcTransportFailureEvent(value: unknown): value is PiRpcTransportFailureEvent {
+  return (
+    isRecord(value) &&
+    value.type === PI_RPC_TRANSPORT_FAILURE_EVENT_TYPE &&
+    stringValue(value.operation) !== undefined &&
+    stringValue(value.detail) !== undefined
+  );
 }
 
 function parseModel(value: unknown): PiRpcModel | undefined {
@@ -288,7 +316,7 @@ export const makePiSessionRuntime = (
     const pendingRequests = yield* Ref.make(new Map<string, PendingRequest>());
     const requestNumber = yield* Ref.make(0);
     const writeLock = yield* Semaphore.make(1);
-    const rawEvents = yield* Queue.unbounded<unknown>();
+    const rawEvents = yield* Queue.unbounded<unknown, Cause.Done>();
     const closed = yield* Ref.make(false);
     const decoder = makePiJsonlDecoder();
 
@@ -302,6 +330,26 @@ export const makePiSessionRuntime = (
           ),
         ),
       );
+
+    const finishUnexpectedTransportFailure = Effect.fn(
+      "PiSessionRuntime.finishUnexpectedTransportFailure",
+    )(function* (error: PiSessionRuntimeError) {
+      if (yield* Ref.getAndSet(closed, true)) {
+        return;
+      }
+
+      yield* Queue.offer(rawEvents, {
+        type: PI_RPC_TRANSPORT_FAILURE_EVENT_TYPE,
+        operation: error.operation,
+        detail: error.detail,
+      } satisfies PiRpcTransportFailureEvent);
+      yield* failPendingRequests(error);
+      yield* child.kill({ forceKillAfter: PI_RPC_FORCE_KILL_AFTER }).pipe(Effect.ignore);
+      // `end` drains the failure event before completing the event stream.
+      // `shutdown` would interrupt the adapter before it could mark an active
+      // T3 turn interrupted and retain the diagnostic payload.
+      yield* Queue.end(rawEvents);
+    });
 
     const removePendingRequest = (id: string) =>
       Ref.update(pendingRequests, (pending) => {
@@ -370,12 +418,19 @@ export const makePiSessionRuntime = (
         Effect.forEach(decoder.push(chunk), handleRecord, { discard: true }).pipe(Effect.asVoid),
       ),
       Effect.ensuring(flushDecoder()),
-      Effect.catch(() =>
-        failPendingRequests(
-          new PiSessionRuntimeError({
-            operation: "read-stdout",
-            detail: "Pi RPC stdout closed unexpectedly.",
-          }),
+      Effect.exit,
+      Effect.flatMap((exit) =>
+        finishUnexpectedTransportFailure(
+          Exit.isSuccess(exit)
+            ? new PiSessionRuntimeError({
+                operation: "read-stdout",
+                detail: "Pi RPC stdout closed unexpectedly.",
+              })
+            : new PiSessionRuntimeError({
+                operation: "read-stdout",
+                detail: "Pi RPC stdout connection failed.",
+                cause: exit.cause,
+              }),
         ),
       ),
       Effect.forkIn(runtimeScope),
@@ -388,7 +443,7 @@ export const makePiSessionRuntime = (
     yield* child.exitCode.pipe(
       Effect.matchEffect({
         onFailure: (cause) =>
-          failPendingRequests(
+          finishUnexpectedTransportFailure(
             new PiSessionRuntimeError({
               operation: "process-exit",
               detail: "Could not read Pi process exit status.",
@@ -396,7 +451,7 @@ export const makePiSessionRuntime = (
             }),
           ),
         onSuccess: (code) =>
-          failPendingRequests(
+          finishUnexpectedTransportFailure(
             new PiSessionRuntimeError({
               operation: "process-exit",
               detail:
@@ -406,7 +461,6 @@ export const makePiSessionRuntime = (
             }),
           ),
       }),
-      Effect.andThen(Queue.shutdown(rawEvents)),
       Effect.forkIn(runtimeScope),
     );
 
@@ -433,6 +487,9 @@ export const makePiSessionRuntime = (
                 detail: "Could not write Pi RPC command.",
                 cause,
               }),
+        ),
+        Effect.tapError((error) =>
+          error.operation === "write-stdin" ? finishUnexpectedTransportFailure(error) : Effect.void,
         ),
       );
 
@@ -480,7 +537,9 @@ export const makePiSessionRuntime = (
       return response;
     });
 
-    const getState = (timeout = PI_RPC_REQUEST_TIMEOUT) =>
+    const getState = (
+      timeout: typeof PI_RPC_REQUEST_TIMEOUT | typeof PI_RPC_START_TIMEOUT = PI_RPC_REQUEST_TIMEOUT,
+    ) =>
       request({ type: "get_state" }, timeout).pipe(
         Effect.flatMap((response) => {
           const state = parseState(response);

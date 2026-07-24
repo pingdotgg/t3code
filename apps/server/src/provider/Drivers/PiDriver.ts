@@ -17,6 +17,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makePiAdapter, makePiImageAttachmentLoader } from "../Layers/PiAdapter.ts";
+import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makePiSessionRuntime } from "./PiSessionRuntime.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
@@ -79,6 +80,7 @@ export type PiDriverEnv =
   | FileSystem.FileSystem
   | Path.Path
   | ProcessRunner
+  | ProviderEventLoggers
   | ServerConfig
   | ServerSettingsService;
 
@@ -115,6 +117,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
+      const eventLoggers = yield* ProviderEventLoggers;
       const processRunner = yield* ProcessRunner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -140,6 +143,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         instanceId,
         sessionDirectory,
         environment: processEnv,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         loadImageAttachment: makePiImageAttachmentLoader({
           attachmentsDir: serverConfig.attachmentsDir,
           fileSystem,

@@ -37,12 +37,16 @@ import {
 } from "../Errors.ts";
 import { parsePiModelSlug, makePiModelSlug } from "../Drivers/PiModels.ts";
 import {
+  isPiRpcTransportFailureEvent,
+  isPiSessionRuntimeTransportError,
   type PiPromptImage,
+  type PiRpcTransportFailureEvent,
   type PiSessionRuntimeError,
   type PiSessionRuntimeOptions,
   type PiSessionRuntimeShape,
 } from "../Drivers/PiSessionRuntime.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = ProviderDriverKind.make("pi");
 const UNSUPPORTED_OPERATION_MESSAGE =
@@ -60,6 +64,8 @@ export interface PiAdapterOptions<R = never> {
   readonly instanceId: ProviderInstanceId;
   readonly sessionDirectory: string;
   readonly environment?: NodeJS.ProcessEnv | undefined;
+  /** Retains raw Pi RPC events and transport failures in provider diagnostics. */
+  readonly nativeEventLogger?: EventNdjsonLogger | undefined;
   /** Resolves persisted T3 image attachments into Pi's native prompt images. */
   readonly loadImageAttachment?: PiImageAttachmentLoader | undefined;
   readonly makeRuntime: PiRuntimeFactory<R>;
@@ -515,6 +521,48 @@ export function makePiAdapter<R>(
       messageType,
       payload: event,
     });
+    const piNativeEventMethod = (event: unknown) => {
+      if (isPiRpcTransportFailureEvent(event)) {
+        return `pi.rpc.transport.${event.operation}`;
+      }
+      return `pi.rpc.${piEventType(event) ?? "unknown"}`;
+    };
+    const writeNativePiEvent = Effect.fn("PiAdapter.writeNativePiEvent")(function* (
+      context: PiAdapterSessionContext,
+      event: unknown,
+    ) {
+      if (!options.nativeEventLogger) {
+        return;
+      }
+      const observedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* options.nativeEventLogger
+        .write(
+          {
+            observedAt,
+            event: {
+              id: NodeCrypto.randomUUID(),
+              kind: "notification",
+              provider: PROVIDER,
+              createdAt: observedAt,
+              method: piNativeEventMethod(event),
+              threadId: context.threadId,
+              providerThreadId: context.threadId,
+              ...(context.activeTurnId ? { turnId: context.activeTurnId } : {}),
+              payload: event,
+            },
+          },
+          context.threadId,
+        )
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to write native Pi RPC event log.", {
+              cause,
+              threadId: context.threadId,
+              method: piNativeEventMethod(event),
+            }),
+          ),
+        );
+    });
     const newSyntheticItemId = (context: PiAdapterSessionContext, kind: string) => {
       context.nextSyntheticItemId += 1;
       return RuntimeItemId.make(
@@ -608,6 +656,10 @@ export function makePiAdapter<R>(
     const mapPiRuntimeEvent = (context: PiAdapterSessionContext, raw: unknown) =>
       Effect.gen(function* () {
         if (context.stopped) {
+          return;
+        }
+        if (isPiRpcTransportFailureEvent(raw)) {
+          yield* handlePiTransportFailure(context, raw);
           return;
         }
         const type = piEventType(raw);
@@ -1441,25 +1493,81 @@ export function makePiAdapter<R>(
         }
       });
 
+    const detachStoppedSession = (context: PiAdapterSessionContext) => {
+      context.stopped = true;
+      context.pendingExtensionDialogs.clear();
+      if (sessions.get(context.threadId) === context) {
+        sessions.delete(context.threadId);
+      }
+    };
+
+    const releaseSessionResources = (context: PiAdapterSessionContext) =>
+      context.runtime.close.pipe(
+        Effect.ignore,
+        Effect.andThen(Scope.close(context.scope, Exit.void).pipe(Effect.ignore)),
+      );
+
     const stopSessionInternal = (context: PiAdapterSessionContext): Effect.Effect<void> =>
       Effect.suspend(() => {
         if (context.stopped) {
           return Effect.void;
         }
-        context.stopped = true;
-        context.pendingExtensionDialogs.clear();
-        return context.runtime.close.pipe(
-          Effect.ignore,
-          Effect.andThen(Scope.close(context.scope, Exit.void).pipe(Effect.ignore)),
-          Effect.andThen(
-            Effect.sync(() => {
-              if (sessions.get(context.threadId) === context) {
-                sessions.delete(context.threadId);
-              }
-            }),
-          ),
-        );
+        detachStoppedSession(context);
+        return releaseSessionResources(context);
       });
+
+    const handlePiTransportFailure = Effect.fn("PiAdapter.handlePiTransportFailure")(function* (
+      context: PiAdapterSessionContext,
+      failure: PiRpcTransportFailureEvent,
+    ) {
+      if (context.stopped) {
+        return;
+      }
+      const turnId = context.activeTurnId;
+      // Claim the session before emitting lifecycle events. This prevents a
+      // concurrent stop from closing this event fiber and dropping the
+      // interruption/diagnostic sequence below.
+      detachStoppedSession(context);
+      // A lost transport leaves Pi's last command outcome unknowable. Never
+      // reinterpret a prior terminal hint as a completed/failed turn: the
+      // safe T3 outcome is interruption and explicit user continuation.
+      context.terminalOutcome = undefined;
+      if (turnId) {
+        yield* completeActiveTurn(
+          context,
+          failure,
+          "pi_rpc_transport_failure",
+          "interrupted",
+          failure.detail,
+        );
+      }
+      yield* publishRuntimeEvent({
+        type: "runtime.error",
+        ...(yield* makeEventStamp()),
+        provider: PROVIDER,
+        threadId: context.threadId,
+        ...(turnId ? { turnId } : {}),
+        payload: {
+          message: failure.detail,
+          class: "transport_error",
+          detail: { operation: failure.operation },
+        },
+        raw: rawPiEvent(failure, "pi_rpc_transport_failure"),
+      });
+      yield* publishRuntimeEvent({
+        type: "session.exited",
+        ...(yield* makeEventStamp()),
+        provider: PROVIDER,
+        threadId: context.threadId,
+        payload: {
+          reason: failure.detail,
+          recoverable: true,
+          exitKind: "error",
+        },
+        raw: rawPiEvent(failure, "pi_rpc_transport_failure"),
+      });
+      yield* releaseSessionResources(context);
+    });
 
     const requireSession = (
       threadId: ThreadId,
@@ -1621,8 +1729,26 @@ export function makePiAdapter<R>(
           };
           sessions.set(input.threadId, context);
           yield* Stream.runForEach(runtime.events, (event) =>
-            mapPiRuntimeEvent(context, event),
+            writeNativePiEvent(context, event).pipe(
+              Effect.andThen(mapPiRuntimeEvent(context, event)),
+            ),
           ).pipe(
+            Effect.exit,
+            Effect.flatMap((exit) => {
+              if (context.stopped) {
+                return Effect.void;
+              }
+              const failure = {
+                type: "pi_rpc_transport_failure" as const,
+                operation: "event-stream",
+                detail: Exit.isSuccess(exit)
+                  ? "Pi RPC event stream ended unexpectedly."
+                  : "Pi RPC event stream failed unexpectedly.",
+              };
+              return writeNativePiEvent(context, failure).pipe(
+                Effect.andThen(mapPiRuntimeEvent(context, failure)),
+              );
+            }),
             Effect.catchCause((cause) =>
               Effect.logWarning("Failed to map Pi RPC runtime event.", {
                 cause,
@@ -1690,9 +1816,8 @@ export function makePiAdapter<R>(
                 ...(activeTurnId ? { streamingBehavior: "followUp" as const } : {}),
               })
               .pipe(
-                Effect.mapError((error) => runtimeRequestError("prompt", error)),
                 Effect.tapError((error) =>
-                  activeTurnId
+                  activeTurnId || isPiSessionRuntimeTransportError(error)
                     ? Effect.void
                     : completeActiveTurn(
                         context,
@@ -1702,6 +1827,7 @@ export function makePiAdapter<R>(
                         error.message,
                       ),
                 ),
+                Effect.mapError((error) => runtimeRequestError("prompt", error)),
               );
             return {
               threadId: input.threadId,

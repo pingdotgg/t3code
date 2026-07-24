@@ -1109,4 +1109,123 @@ describe("PiAdapter", () => {
       expect(yield* second.hasSession(THREAD_ID)).toBe(false);
     }).pipe(Effect.scoped),
   );
+
+  it.effect(
+    "interrupts an accepted turn, closes Pi, and retains its transport failure in native logs",
+    () =>
+      Effect.gen(function* () {
+        const runtime = yield* makeRuntimeFactory();
+        const nativeEvents: Array<{
+          readonly event?: {
+            readonly method?: string;
+            readonly payload?: unknown;
+            readonly provider?: string;
+            readonly providerThreadId?: string;
+            readonly threadId?: string;
+          };
+        }> = [];
+        const nativeThreadIds: Array<ThreadId | null> = [];
+        const adapter = yield* makePiAdapter(decodePiSettings({}), {
+          instanceId: INSTANCE_A,
+          sessionDirectory: "/tmp/t3-pi-sessions/pi_personal",
+          nativeEventLogger: {
+            filePath: "memory://pi-native-events",
+            write: (event, threadId) =>
+              Effect.sync(() => {
+                nativeEvents.push(event as (typeof nativeEvents)[number]);
+                nativeThreadIds.push(threadId);
+              }),
+            close: () => Effect.void,
+          },
+          makeRuntime: runtime.factory,
+        });
+        const events: ProviderRuntimeEvent[] = [];
+        yield* adapter.streamEvents.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              events.push(event);
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        yield* adapter.startSession(sessionStart(INSTANCE_A));
+        yield* Effect.yieldNow;
+        const turn = yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "Persist this accepted prompt exactly once.",
+          attachments: [],
+        });
+
+        yield* runtime.emit({
+          type: "pi_rpc_transport_failure",
+          operation: "process-exit",
+          detail: "Pi RPC process exited with code 23.",
+        });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "turn.completed",
+              turnId: turn.turnId,
+              payload: expect.objectContaining({
+                state: "interrupted",
+                errorMessage: "Pi RPC process exited with code 23.",
+              }),
+            }),
+            expect.objectContaining({
+              type: "runtime.error",
+              turnId: turn.turnId,
+              payload: expect.objectContaining({
+                class: "transport_error",
+                message: "Pi RPC process exited with code 23.",
+              }),
+            }),
+            expect.objectContaining({
+              type: "session.exited",
+              payload: {
+                reason: "Pi RPC process exited with code 23.",
+                recoverable: true,
+                exitKind: "error",
+              },
+            }),
+          ]),
+        );
+        expect(runtime.getCloseCount()).toBe(1);
+        expect(yield* adapter.hasSession(THREAD_ID)).toBe(false);
+        expect(yield* adapter.listSessions()).toEqual([]);
+
+        const replayAttempt = yield* adapter
+          .sendTurn({
+            threadId: THREAD_ID,
+            input: "This must not be replayed automatically.",
+            attachments: [],
+          })
+          .pipe(Effect.flip);
+        expect(replayAttempt._tag).toBe("ProviderAdapterSessionNotFoundError");
+        expect(runtime.prompts).toEqual([
+          { message: "Persist this accepted prompt exactly once." },
+        ]);
+        expect(nativeEvents).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              event: expect.objectContaining({
+                provider: "pi",
+                providerThreadId: THREAD_ID,
+                threadId: THREAD_ID,
+                method: "pi.rpc.transport.process-exit",
+                payload: {
+                  type: "pi_rpc_transport_failure",
+                  operation: "process-exit",
+                  detail: "Pi RPC process exited with code 23.",
+                },
+              }),
+            }),
+          ]),
+        );
+        expect(nativeThreadIds).toEqual([THREAD_ID]);
+      }).pipe(Effect.scoped),
+  );
 });

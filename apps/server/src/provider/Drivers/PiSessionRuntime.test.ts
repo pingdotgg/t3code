@@ -79,6 +79,10 @@ function handle(command) {
       respond(command);
       return;
     case "prompt":
+      if (process.env.PI_TEST_EXIT_ON_PROMPT === "true") {
+        process.stderr.write("simulated Pi process loss\\n");
+        process.exit(23);
+      }
       if (sessionDirectory) {
         mkdirSync(sessionDirectory, { recursive: true });
         writeFileSync(sessionFile, JSON.stringify({ type: "session", id: sessionId, message: command.message }) + "\\n");
@@ -236,5 +240,40 @@ it.effect("starts Pi in the configured project and extension configuration conte
     NodeFS.rmSync(NodePath.dirname(binaryPath), { recursive: true, force: true });
     NodeFS.rmSync(projectDirectory, { recursive: true, force: true });
     NodeFS.rmSync(configDirectory, { recursive: true, force: true });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reports a diagnosable transport failure when Pi exits during an accepted prompt", () =>
+  Effect.gen(function* () {
+    const binaryPath = makeMockPiBinary();
+    const runtime = yield* makePiSessionRuntime({
+      binaryPath,
+      configDirectory: "",
+      launchArgs: "",
+      cwd: process.cwd(),
+      environment: { PI_TEST_EXIT_ON_PROMPT: "true" },
+    });
+    yield* runtime.start();
+    const eventFiber = yield* Stream.take(runtime.events, 1).pipe(
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+    yield* Effect.yieldNow;
+
+    const promptFailure = yield* runtime
+      .prompt({ message: "Persist this prompt before the transport fails." })
+      .pipe(Effect.flip);
+    const events = Array.from(yield* Fiber.join(eventFiber).pipe(Effect.timeout("1 second")));
+
+    expect(["read-stdout", "process-exit"]).toContain(promptFailure.operation);
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "pi_rpc_transport_failure",
+        operation: expect.stringMatching(/read-stdout|process-exit/),
+        detail: expect.stringContaining("Pi RPC"),
+      }),
+    ]);
+
+    NodeFS.rmSync(NodePath.dirname(binaryPath), { recursive: true, force: true });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
