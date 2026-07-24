@@ -142,7 +142,7 @@ export default Effect.gen(function* () {
     projectRows,
     (project) =>
       Effect.gen(function* () {
-        const createdEventId = `migration:38:project:${project.project_id}:baseline`;
+        const createdEventId = `migration:39:project:${project.project_id}:baseline`;
         const createdPayload = {
           projectId: project.project_id,
           title: project.title,
@@ -158,7 +158,7 @@ export default Effect.gen(function* () {
         const createdPayloadJson = yield* encodeJson(createdPayload);
         const migrationMetadataJson = yield* encodeJson({
           applicationEventVersion: 2,
-          migration: 38,
+          migration: 39,
         });
         yield* sql`
           INSERT INTO orchestration_events (
@@ -222,7 +222,7 @@ export default Effect.gen(function* () {
               application_event_version
             )
             VALUES (
-              ${`migration:38:project:${project.project_id}:deleted`},
+              ${`migration:39:project:${project.project_id}:deleted`},
               'project',
               ${project.project_id},
               (

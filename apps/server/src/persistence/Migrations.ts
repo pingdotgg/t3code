@@ -60,6 +60,14 @@ import Migration037V2 from "./Migrations/037_OrchestrationV2ThreadLaunchWorkflow
 import Migration038V2 from "./Migrations/038_ApplicationEventSource.ts";
 import Migration039V2 from "./Migrations/039_OrchestrationV2EffectCancellation.ts";
 import Migration040V2 from "./Migrations/040_ScheduledTasks.ts";
+import Migration034V2 from "./Migrations/034_OrchestrationV2.ts";
+import Migration035V2 from "./Migrations/035_OrchestrationV2Subagents.ts";
+import Migration036V2 from "./Migrations/036_OrchestrationV2Foundation.ts";
+import Migration037V2 from "./Migrations/037_OrchestrationV2ProviderSessionBindings.ts";
+import Migration038V2 from "./Migrations/038_OrchestrationV2ThreadLaunchWorkflows.ts";
+import Migration039V2 from "./Migrations/039_ApplicationEventSource.ts";
+import Migration040V2 from "./Migrations/040_OrchestrationV2EffectCancellation.ts";
+import Migration041V2 from "./Migrations/041_ScheduledTasks.ts";
 
 /**
  * Migration loader with all migrations defined inline.
