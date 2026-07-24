@@ -138,7 +138,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -231,13 +231,17 @@ import {
 } from "./chat/draftHeroTransition";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
   buildThreadTurnInterruptInput,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  dismissBranchMismatchForSession,
   hasServerAcknowledgedLocalDispatch,
+  isBranchMismatchDismissedForSession,
+  shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
@@ -260,6 +264,16 @@ import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ServerUpdateAction } from "./ServerUpdateAction";
 import {
   buildVersionMismatchDismissalKey,
@@ -3809,52 +3823,57 @@ function ChatViewContent(props: ChatViewProps) {
         : null,
     [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
   );
-  const [branchRepairAction, setBranchRepairAction] = useState<
-    "update-thread" | "switch-checkout" | null
-  >(null);
-  const handleUpdateThreadToCheckout = useCallback(async () => {
-    if (!activeThread || !localCheckoutBranchMismatch || branchRepairAction !== null) {
-      return;
-    }
-    setBranchRepairAction("update-thread");
-    const updateResult = await updateThreadMetadata({
-      environmentId,
-      input: {
-        threadId: activeThread.id,
-        branch: localCheckoutBranchMismatch.currentBranch,
-        worktreePath: null,
-      },
-    });
-    setBranchRepairAction(null);
-    if (updateResult._tag === "Failure" && !isAtomCommandInterrupted(updateResult)) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to update thread branch",
-          description: chatActionErrorMessage(squashAtomCommandFailure(updateResult)),
-        }),
-      );
-      return;
-    }
-    scheduleComposerFocus();
-  }, [
-    activeThread,
-    branchRepairAction,
-    environmentId,
+  const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
+  const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
+  // Once revealed for a given mismatch, the banner stays mounted until the
+  // mismatch changes or resolves, so clearing the draft doesn't flicker it.
+  const [revealedBranchMismatchKey, setRevealedBranchMismatchKey] = useState<string | null>(null);
+  // Dismissal lives in a module-level set (survives remounts); this tick just
+  // forces a re-render so the banner leaves immediately.
+  const [, setBranchMismatchDismissTick] = useState(0);
+  const composerHasDraftContent = useComposerDraftStore((store) => {
+    const draft = store.getComposerDraft(composerDraftTarget);
+    return Boolean(
+      draft &&
+      (draft.prompt.trim().length > 0 ||
+        draft.images.length > 0 ||
+        draft.terminalContexts.length > 0 ||
+        draft.elementContexts.length > 0 ||
+        draft.previewAnnotations.length > 0 ||
+        draft.reviewComments.length > 0),
+    );
+  });
+  const activeBranchMismatchKey = branchMismatchKey(
+    activeThread?.id ?? null,
     localCheckoutBranchMismatch,
-    scheduleComposerFocus,
-    updateThreadMetadata,
-  ]);
+  );
+  const showBranchMismatchBanner = shouldShowBranchMismatchBanner({
+    hasMismatch: localCheckoutBranchMismatch !== null,
+    isDismissed: isBranchMismatchDismissedForSession(activeBranchMismatchKey),
+    composerHasContent: composerHasDraftContent,
+    wasShownForCurrentMismatch:
+      revealedBranchMismatchKey !== null && revealedBranchMismatchKey === activeBranchMismatchKey,
+  });
+  useEffect(() => {
+    setRevealedBranchMismatchKey((revealed) => {
+      if (showBranchMismatchBanner) {
+        return activeBranchMismatchKey;
+      }
+      // Hysteresis is scoped to an uninterrupted mismatch: reset when the
+      // mismatch resolves or changes so a recurrence re-gates on intent.
+      return revealed !== null && revealed !== activeBranchMismatchKey ? null : revealed;
+    });
+  }, [activeBranchMismatchKey, showBranchMismatchBanner]);
   const handleSwitchCheckoutToThread = useCallback(async () => {
     if (
       !activeProjectCwd ||
       !activeThread ||
       !localCheckoutBranchMismatch ||
-      branchRepairAction !== null
+      isRestoringThreadBranch
     ) {
       return;
     }
-    setBranchRepairAction("switch-checkout");
+    setIsRestoringThreadBranch(true);
     const checkoutResult = await switchGitRef({
       environmentId,
       input: {
@@ -3863,7 +3882,7 @@ function ChatViewContent(props: ChatViewProps) {
       },
     });
     if (checkoutResult._tag === "Failure") {
-      setBranchRepairAction(null);
+      setIsRestoringThreadBranch(false);
       if (!isAtomCommandInterrupted(checkoutResult)) {
         toastManager.add(
           stackedThreadToast({
@@ -3883,7 +3902,7 @@ function ChatViewContent(props: ChatViewProps) {
         input: { threadId: activeThread.id, branch: nextBranch, worktreePath: null },
       });
       if (updateResult._tag === "Failure") {
-        setBranchRepairAction(null);
+        setIsRestoringThreadBranch(false);
         if (!isAtomCommandInterrupted(updateResult)) {
           toastManager.add(
             stackedThreadToast({
@@ -3898,76 +3917,78 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
     gitStatusQuery.refresh();
-    setBranchRepairAction(null);
+    setIsRestoringThreadBranch(false);
     scheduleComposerFocus();
   }, [
     activeProjectCwd,
     activeThread,
-    branchRepairAction,
     environmentId,
     gitStatusQuery,
+    isRestoringThreadBranch,
     localCheckoutBranchMismatch,
     scheduleComposerFocus,
     switchGitRef,
     updateThreadMetadata,
   ]);
+  const handleRestoreThreadBranch = useCallback(() => {
+    if (gitStatusQuery.data?.hasWorkingTreeChanges) {
+      setBranchRestoreConfirmOpen(true);
+      return;
+    }
+    void handleSwitchCheckoutToThread();
+  }, [gitStatusQuery.data?.hasWorkingTreeChanges, handleSwitchCheckoutToThread]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
-    if (!localCheckoutBranchMismatch) {
+    if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return systemComposerBannerItems;
     }
-    const isRepairingBranch = branchRepairAction !== null;
     return [
       ...systemComposerBannerItems,
       {
-        id: `branch-mismatch:${activeThread?.id ?? "unknown"}:${localCheckoutBranchMismatch.threadBranch}:${localCheckoutBranchMismatch.currentBranch}`,
-        variant: "warning",
-        icon: <TriangleAlertIcon />,
-        title: "You're on a different branch",
-        className:
-          "text-base sm:text-sm [&>div]:items-start max-sm:[&>div]:flex-wrap max-sm:[&>div>div:last-child]:w-full max-sm:[&>div>div:last-child]:self-start dark:shadow-none",
-        actionClassName:
-          "max-sm:w-full max-sm:border-t max-sm:border-border/60 max-sm:pt-2 max-sm:pl-6 sm:border-l sm:border-border/60 sm:pl-3",
-        description: (
-          <p className="text-pretty">
-            This thread is on{" "}
-            <code className="font-medium text-foreground">
-              {localCheckoutBranchMismatch.threadBranch}
-            </code>
-            , but you're currently checked out at{" "}
-            <code className="font-medium text-foreground">
-              {localCheckoutBranchMismatch.currentBranch}
-            </code>
-            . Sending a message will update the thread.
-          </p>
+        id: `branch-mismatch:${activeBranchMismatchKey}`,
+        variant: "info",
+        icon: <GitBranchIcon />,
+        title: (
+          <span className="flex min-w-0 items-baseline gap-1.5">
+            <span className="shrink-0 font-normal text-muted-foreground">Branch changed — was</span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <code className="min-w-0 truncate font-medium text-foreground">
+                    {localCheckoutBranchMismatch.threadBranch}
+                  </code>
+                }
+              />
+              <TooltipPopup side="top" className="max-w-80">
+                This thread last ran on {localCheckoutBranchMismatch.threadBranch}. Sending will
+                continue on {localCheckoutBranchMismatch.currentBranch}.
+              </TooltipPopup>
+            </Tooltip>
+          </span>
         ),
+        className: "dark:shadow-none",
         actions: (
-          <>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={isRepairingBranch}
-              onClick={() => void handleUpdateThreadToCheckout()}
-            >
-              {branchRepairAction === "update-thread" ? "Moving..." : "Move thread here"}
-            </Button>
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={isRepairingBranch}
-              onClick={() => void handleSwitchCheckoutToThread()}
-            >
-              {branchRepairAction === "switch-checkout" ? "Switching..." : "Checkout thread branch"}
-            </Button>
-          </>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={isRestoringThreadBranch}
+            onClick={handleRestoreThreadBranch}
+          >
+            {isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
+          </Button>
         ),
+        dismissLabel: "Dismiss branch change notice",
+        onDismiss: () => {
+          dismissBranchMismatchForSession(activeBranchMismatchKey);
+          setBranchMismatchDismissTick((tick) => tick + 1);
+        },
       },
     ];
   }, [
-    activeThread?.id,
-    branchRepairAction,
-    handleSwitchCheckoutToThread,
-    handleUpdateThreadToCheckout,
+    activeBranchMismatchKey,
+    handleRestoreThreadBranch,
+    isRestoringThreadBranch,
     localCheckoutBranchMismatch,
+    showBranchMismatchBanner,
     systemComposerBannerItems,
   ]);
 
@@ -5725,6 +5746,36 @@ function ChatViewContent(props: ChatViewProps) {
                 </div>
               </div>
             </div>
+
+            <AlertDialog open={branchRestoreConfirmOpen} onOpenChange={setBranchRestoreConfirmOpen}>
+              <AlertDialogPopup>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    Switch to{" "}
+                    <code className="font-medium">
+                      {localCheckoutBranchMismatch?.threadBranch ?? ""}
+                    </code>
+                    ?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    You have uncommitted changes. They'll carry over to the other branch, or block
+                    the switch if they conflict.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+                  <Button
+                    variant="default"
+                    onClick={() => {
+                      setBranchRestoreConfirmOpen(false);
+                      void handleSwitchCheckoutToThread();
+                    }}
+                  >
+                    Switch branch
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogPopup>
+            </AlertDialog>
 
             {pullRequestDialogState ? (
               <PullRequestThreadDialog
