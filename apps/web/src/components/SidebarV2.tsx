@@ -503,10 +503,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // pill (invariant I4). A freshly woken snoozed thread also keeps its explicit
   // user-action pill instead of being swallowed by monitor state.
   const isBlockedOrFailed = status === "approval" || status === "input" || status === "failed";
-  const topStatus =
-    isWoke
-      ? baseTopStatus
-      : isMonitorReady && !isBlockedOrFailed
+  const topStatus = isWoke
+    ? baseTopStatus
+    : isMonitorReady && !isBlockedOrFailed
       ? {
           label: resolveMonitorReadyLabel(thread.monitor?.blockersSummary ?? ""),
           icon: "done" as const,
@@ -523,8 +522,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               label: "Monitoring stopped",
               icon: null,
               className: "text-muted-foreground/80",
-             }
-           : baseTopStatus;
+            }
+          : baseTopStatus;
 
   const gitCwd = thread.worktreePath ?? props.projectCwd;
   const gitStatus = useEnvironmentQuery(
