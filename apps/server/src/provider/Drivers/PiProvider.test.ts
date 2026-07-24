@@ -121,7 +121,7 @@ describe("checkPiProviderStatus", () => {
         Effect.sync(() => {
           expect(receivedEnvironment).toMatchObject({
             EXAMPLE: "value",
-            PI_AGENT_DIR: "/Users/example/.pi-work",
+            PI_CODING_AGENT_DIR: "/Users/example/.pi-work",
           });
         }),
       ),

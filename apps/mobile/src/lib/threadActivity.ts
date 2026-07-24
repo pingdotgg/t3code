@@ -3,6 +3,7 @@ import type {
   OrchestrationLatestTurn,
   OrchestrationThread,
   OrchestrationThreadActivity,
+  ProviderUserInputAnswers,
   ToolLifecycleItemType,
   TurnId,
   UserInputQuestion,
@@ -195,7 +196,13 @@ function parseUserInputQuestions(
           };
         })
         .filter((option): option is UserInputQuestion["options"][number] => option !== null);
-      if (options.length === 0) {
+      const cancelOptionLabel = question.cancelOptionLabel;
+      if (
+        options.length === 0 ||
+        (cancelOptionLabel !== undefined &&
+          (typeof cancelOptionLabel !== "string" ||
+            !options.some((option) => option.label === cancelOptionLabel)))
+      ) {
         return null;
       }
       return {
@@ -203,6 +210,7 @@ function parseUserInputQuestions(
         header: question.header,
         question: question.question,
         options,
+        ...(cancelOptionLabel !== undefined ? { cancelOptionLabel } : {}),
         multiSelect: question.multiSelect === true,
       };
     })
@@ -1295,15 +1303,22 @@ export function setPendingUserInputCustomAnswer(
 export function buildPendingUserInputAnswers(
   questions: ReadonlyArray<UserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
-): Record<string, string> | null {
-  const answers: Record<string, string> = {};
+): ProviderUserInputAnswers | null {
+  const answers: Record<string, unknown> = {};
 
   for (const question of questions) {
-    const answer = resolvePendingUserInputAnswer(draftAnswers[question.id]);
+    const draft = draftAnswers[question.id];
+    const answer = resolvePendingUserInputAnswer(draft);
     if (!answer) {
       return null;
     }
-    answers[question.id] = answer;
+    const customAnswer = normalizeDraftAnswer(draft?.customAnswer);
+    answers[question.id] =
+      question.cancelOptionLabel && customAnswer
+        ? { value: customAnswer }
+        : question.cancelOptionLabel && answer === question.cancelOptionLabel
+          ? { cancelled: true }
+          : answer;
   }
 
   return answers;

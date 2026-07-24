@@ -1,4 +1,4 @@
-import type { UserInputQuestion } from "@t3tools/contracts";
+import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
 
 export interface PendingUserInputDraftAnswer {
   selectedOptionLabels?: string[];
@@ -105,15 +105,22 @@ export function togglePendingUserInputOptionSelection(
 export function buildPendingUserInputAnswers(
   questions: ReadonlyArray<UserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
-): Record<string, string | string[]> | null {
-  const answers: Record<string, string | string[]> = {};
+): ProviderUserInputAnswers | null {
+  const answers: Record<string, unknown> = {};
 
   for (const question of questions) {
-    const answer = resolvePendingUserInputAnswer(question, draftAnswers[question.id]);
+    const draft = draftAnswers[question.id];
+    const answer = resolvePendingUserInputAnswer(question, draft);
     if (!answer) {
       return null;
     }
-    answers[question.id] = answer;
+    const customAnswer = normalizeDraftAnswer(draft?.customAnswer);
+    answers[question.id] =
+      question.cancelOptionLabel && customAnswer
+        ? { value: customAnswer }
+        : question.cancelOptionLabel && answer === question.cancelOptionLabel
+          ? { cancelled: true }
+          : answer;
   }
 
   return answers;

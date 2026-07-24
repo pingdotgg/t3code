@@ -6,6 +6,7 @@ const MANAGED_FLAGS = new Set([
   "continue",
   "fork",
   "mode",
+  "no-extensions",
   "no-session",
   "resume",
   "session",
@@ -54,12 +55,13 @@ export function buildPiLaunchPlan(input: {
       ...userArgs,
       "--mode",
       "rpc",
+      "--no-extensions",
       "--session-dir",
       input.sessionDirectory,
       "--session-id",
       input.sessionId,
     ],
-    environment: input.configDirectory ? { PI_AGENT_DIR: input.configDirectory } : {},
+    environment: input.configDirectory ? { PI_CODING_AGENT_DIR: input.configDirectory } : {},
   };
 }
 
@@ -77,8 +79,14 @@ export function buildPiModelProbeLaunchPlan(input: {
 
   return {
     _tag: "Success",
-    args: [...tokenizeCliArgs(input.launchArgs), "--mode", "rpc", "--no-session"],
-    environment: input.configDirectory ? { PI_AGENT_DIR: input.configDirectory } : {},
+    args: [
+      ...tokenizeCliArgs(input.launchArgs),
+      "--mode",
+      "rpc",
+      "--no-extensions",
+      "--no-session",
+    ],
+    environment: input.configDirectory ? { PI_CODING_AGENT_DIR: input.configDirectory } : {},
   };
 }
 

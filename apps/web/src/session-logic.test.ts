@@ -178,6 +178,58 @@ describe("derivePendingApprovals", () => {
 });
 
 describe("derivePendingUserInputs", () => {
+  it("preserves cancellable free-text prompts", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-open-cancellable-text",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-cancellable-text",
+          questions: [
+            {
+              id: "release_summary",
+              header: "Release summary",
+              question: "Describe the release.",
+              options: [
+                {
+                  label: "Cancel",
+                  description: "Cancel this input request",
+                },
+              ],
+              cancelOptionLabel: "Cancel",
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)).toEqual([
+      {
+        requestId: "req-user-input-cancellable-text",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        questions: [
+          {
+            id: "release_summary",
+            header: "Release summary",
+            question: "Describe the release.",
+            options: [
+              {
+                label: "Cancel",
+                description: "Cancel this input request",
+              },
+            ],
+            cancelOptionLabel: "Cancel",
+            multiSelect: false,
+          },
+        ],
+      },
+    ]);
+  });
+
   it("tracks open structured prompts and removes resolved ones", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

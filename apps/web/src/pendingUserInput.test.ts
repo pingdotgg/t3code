@@ -40,6 +40,20 @@ const multiSelectQuestion = {
   multiSelect: true,
 } as const;
 
+const cancellableInputQuestion = {
+  id: "release_summary",
+  header: "Release summary",
+  question: "Describe the release.",
+  options: [
+    {
+      label: "Cancel",
+      description: "Cancel this input request",
+    },
+  ],
+  cancelOptionLabel: "Cancel",
+  multiSelect: false,
+} as const;
+
 describe("resolvePendingUserInputAnswer", () => {
   it("prefers a custom answer over selected options", () => {
     expect(
@@ -152,6 +166,23 @@ describe("buildPendingUserInputAnswers", () => {
 
   it("returns null when any question is unanswered", () => {
     expect(buildPendingUserInputAnswers([singleSelectQuestion], {})).toBeNull();
+  });
+
+  it("distinguishes a custom value from a selected cancellation option", () => {
+    expect(
+      buildPendingUserInputAnswers([cancellableInputQuestion], {
+        release_summary: { customAnswer: "Cancel" },
+      }),
+    ).toEqual({
+      release_summary: { value: "Cancel" },
+    });
+    expect(
+      buildPendingUserInputAnswers([cancellableInputQuestion], {
+        release_summary: { selectedOptionLabels: ["Cancel"] },
+      }),
+    ).toEqual({
+      release_summary: { cancelled: true },
+    });
   });
 });
 

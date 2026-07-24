@@ -1,6 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  ApprovalRequestId,
   type ChatImageAttachment,
   EventId,
   type ModelSelection,
@@ -8,11 +9,14 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRuntimeEvent,
+  type ProviderUserInputAnswers,
   type ProviderSession,
   RuntimeItemId,
+  RuntimeRequestId,
   RuntimeTaskId,
   type ThreadId,
   TurnId,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
@@ -117,6 +121,7 @@ interface PiAdapterSessionContext {
   compactionItemId: RuntimeItemId | undefined;
   readonly retryTaskIds: Map<number, RuntimeTaskId>;
   summarizationRetryTaskId: RuntimeTaskId | undefined;
+  readonly pendingExtensionDialogs: Map<ApprovalRequestId, PiExtensionDialog>;
   nextSyntheticItemId: number;
   nextSyntheticTaskId: number;
   stopped: boolean;
@@ -331,6 +336,129 @@ function piToolExecution(value: unknown):
         : {}),
     ...(typeof value.isError === "boolean" ? { isError: value.isError } : {}),
   };
+}
+
+const PI_EXTENSION_CONFIRM_LABEL = "Confirm";
+const PI_EXTENSION_CANCEL_LABEL = "Cancel";
+
+type PiExtensionDialog =
+  | {
+      readonly id: string;
+      readonly method: "confirm";
+      readonly question: UserInputQuestion;
+    }
+  | {
+      readonly id: string;
+      readonly method: "select";
+      readonly options: ReadonlyArray<string>;
+      readonly question: UserInputQuestion;
+    }
+  | {
+      readonly id: string;
+      readonly method: "input";
+      readonly question: UserInputQuestion;
+    };
+
+function piExtensionDialog(value: Record<string, unknown>): PiExtensionDialog | undefined {
+  const id = nonEmptyString(value.id);
+  const method = nonEmptyString(value.method);
+  const title = nonEmptyString(value.title);
+  if (!id || !method || !title) {
+    return undefined;
+  }
+
+  if (method === "confirm") {
+    const message = nonEmptyString(value.message) ?? title;
+    return {
+      id,
+      method,
+      question: {
+        id,
+        header: title,
+        question: message,
+        options: [
+          { label: PI_EXTENSION_CONFIRM_LABEL, description: PI_EXTENSION_CONFIRM_LABEL },
+          { label: PI_EXTENSION_CANCEL_LABEL, description: PI_EXTENSION_CANCEL_LABEL },
+        ],
+        multiSelect: false,
+      },
+    };
+  }
+
+  if (method === "select") {
+    const options = Array.isArray(value.options)
+      ? Array.from(
+          new Set(
+            value.options.flatMap((option) => {
+              const label = nonEmptyString(option);
+              return label ? [label] : [];
+            }),
+          ),
+        )
+      : [];
+    if (options.length === 0) {
+      return undefined;
+    }
+    return {
+      id,
+      method,
+      options,
+      question: {
+        id,
+        header: title,
+        question: "Choose an option.",
+        options: options.map((label) => ({ label, description: label })),
+        multiSelect: false,
+      },
+    };
+  }
+
+  if (method === "input") {
+    return {
+      id,
+      method,
+      question: {
+        id,
+        header: title,
+        question: nonEmptyString(value.placeholder) ?? "Type your response in the composer.",
+        options: [
+          {
+            label: PI_EXTENSION_CANCEL_LABEL,
+            description: "Cancel this input request",
+          },
+        ],
+        cancelOptionLabel: PI_EXTENSION_CANCEL_LABEL,
+        multiSelect: false,
+      },
+    };
+  }
+
+  return undefined;
+}
+
+function piExtensionDialogResponse(dialog: PiExtensionDialog, answers: ProviderUserInputAnswers) {
+  const answer = answers[dialog.question.id];
+  if (dialog.method === "confirm") {
+    return {
+      id: dialog.id,
+      confirmed: answer === PI_EXTENSION_CONFIRM_LABEL,
+    } as const;
+  }
+  if (dialog.method === "select") {
+    return typeof answer === "string" && dialog.options.includes(answer)
+      ? ({ id: dialog.id, value: answer } as const)
+      : ({ id: dialog.id, cancelled: true } as const);
+  }
+
+  if (isRecord(answer) && answer.cancelled === true) {
+    return { id: dialog.id, cancelled: true } as const;
+  }
+  if (isRecord(answer) && typeof answer.value === "string") {
+    return { id: dialog.id, value: answer.value } as const;
+  }
+  return typeof answer === "string"
+    ? ({ id: dialog.id, value: answer } as const)
+    : ({ id: dialog.id, cancelled: true } as const);
 }
 
 function runtimeProcessError(
@@ -1264,6 +1392,46 @@ export function makePiAdapter<R>(
             });
             return;
           }
+          case "extension_ui_request": {
+            const extensionId = nonEmptyString(raw.id);
+            const method = nonEmptyString(raw.method) ?? "unknown";
+            const dialog = piExtensionDialog(raw);
+            if (dialog) {
+              const requestId = ApprovalRequestId.make(dialog.id);
+              context.pendingExtensionDialogs.set(requestId, dialog);
+              yield* publishRuntimeEvent({
+                type: "user-input.requested",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: context.threadId,
+                ...(context.activeTurnId ? { turnId: context.activeTurnId } : {}),
+                requestId: RuntimeRequestId.make(dialog.id),
+                payload: { questions: [dialog.question] },
+                raw: rawPiEvent(raw, type),
+              });
+              return;
+            }
+
+            yield* publishRuntimeEvent({
+              type: "runtime.warning",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: context.threadId,
+              ...(context.activeTurnId ? { turnId: context.activeTurnId } : {}),
+              payload: {
+                message: `Pi extension UI '${method}' requires Pi's terminal interface.`,
+              },
+              raw: rawPiEvent(raw, type),
+            });
+            if (extensionId && method === "editor") {
+              yield* context.runtime
+                .respondToExtensionUI({ id: extensionId, cancelled: true })
+                .pipe(
+                  Effect.mapError((error) => runtimeRequestError("extension_ui_response", error)),
+                );
+            }
+            return;
+          }
           case "agent_settled": {
             yield* completeActiveTurn(context, raw, type);
             return;
@@ -1279,6 +1447,7 @@ export function makePiAdapter<R>(
           return Effect.void;
         }
         context.stopped = true;
+        context.pendingExtensionDialogs.clear();
         return context.runtime.close.pipe(
           Effect.ignore,
           Effect.andThen(Scope.close(context.scope, Exit.void).pipe(Effect.ignore)),
@@ -1445,6 +1614,7 @@ export function makePiAdapter<R>(
             compactionItemId: undefined,
             retryTaskIds: new Map(),
             summarizationRetryTaskId: undefined,
+            pendingExtensionDialogs: new Map(),
             nextSyntheticItemId: 0,
             nextSyntheticTaskId: 0,
             stopped: false,
@@ -1576,6 +1746,34 @@ export function makePiAdapter<R>(
         ),
       );
 
+    const respondToUserInput: ProviderAdapterShape<ProviderAdapterError>["respondToUserInput"] =
+      Effect.fn("PiAdapter.respondToUserInput")(function* (threadId, requestId, answers) {
+        const context = yield* requireSession(threadId);
+        const dialog = context.pendingExtensionDialogs.get(requestId);
+        if (!dialog) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "extension_ui_response",
+            detail: `Unknown pending Pi extension dialog: ${requestId}`,
+          });
+        }
+        const response = piExtensionDialogResponse(dialog, answers);
+        yield* context.runtime
+          .respondToExtensionUI(response)
+          .pipe(Effect.mapError((error) => runtimeRequestError("extension_ui_response", error)));
+        context.pendingExtensionDialogs.delete(requestId);
+        yield* publishRuntimeEvent({
+          type: "user-input.resolved",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: context.threadId,
+          ...(context.activeTurnId ? { turnId: context.activeTurnId } : {}),
+          requestId: RuntimeRequestId.make(dialog.id),
+          payload: { answers },
+          raw: rawPiEvent(response, "extension_ui_response"),
+        });
+      });
+
     const adapter: ProviderAdapterShape<ProviderAdapterError> = {
       provider: PROVIDER,
       // Pi natively applies model/thinking changes to a live RPC session.
@@ -1584,7 +1782,7 @@ export function makePiAdapter<R>(
       sendTurn,
       interruptTurn,
       respondToRequest: (threadId) => unavailableOperation("extension_ui_response", threadId),
-      respondToUserInput: (threadId) => unavailableOperation("extension_ui_response", threadId),
+      respondToUserInput,
       stopSession: (threadId) =>
         requireSession(threadId).pipe(Effect.flatMap(stopSessionInternal), Effect.asVoid),
       listSessions: () =>

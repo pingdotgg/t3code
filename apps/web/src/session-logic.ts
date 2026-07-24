@@ -444,7 +444,13 @@ function parseUserInputQuestions(
           };
         })
         .filter((option): option is UserInputQuestion["options"][number] => option !== null);
-      if (options.length === 0) {
+      const cancelOptionLabel = question.cancelOptionLabel;
+      if (
+        options.length === 0 ||
+        (cancelOptionLabel !== undefined &&
+          (typeof cancelOptionLabel !== "string" ||
+            !options.some((option) => option.label === cancelOptionLabel)))
+      ) {
         return null;
       }
       return {
@@ -452,6 +458,7 @@ function parseUserInputQuestions(
         header: question.header,
         question: question.question,
         options,
+        ...(cancelOptionLabel !== undefined ? { cancelOptionLabel } : {}),
         multiSelect: question.multiSelect === true,
       };
     })

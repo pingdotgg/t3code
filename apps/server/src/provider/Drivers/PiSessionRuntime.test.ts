@@ -6,6 +6,8 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Stream from "effect/Stream";
 
 import { makePiJsonlDecoder, makePiSessionRuntime } from "./PiSessionRuntime.ts";
 
@@ -49,6 +51,10 @@ const sessionDirectory = argumentValue("--session-dir");
 const sessionId = argumentValue("--session-id") ?? "thread-native";
 const sessionFile = sessionDirectory ? join(sessionDirectory, \`\${sessionId}.jsonl\`) : "/tmp/thread-native.jsonl";
 
+if (process.env.PI_TEST_EMIT_LAUNCH_CONTEXT === "true") {
+  process.stdout.write(JSON.stringify({ type: "pi_test_launch_context", cwd: process.cwd(), piAgentDir: process.env.PI_CODING_AGENT_DIR ?? null }) + "\\n");
+}
+
 function respond(command, data) {
   process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, ...(data === undefined ? {} : { data }) }) + "\\n");
 }
@@ -81,6 +87,9 @@ function handle(command) {
       return;
     case "abort":
       respond(command);
+      return;
+    case "extension_ui_response":
+      process.stdout.write(JSON.stringify({ type: "extension_ui_response_received", response: command }) + "\\n");
       return;
     default:
       process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: command.type, success: false, error: "Unknown command" }) + "\\n");
@@ -158,5 +167,74 @@ it.effect("starts Pi persistent mode with a stable native ID and drives model RP
     NodeFS.rmSync(NodePath.dirname(binaryPath), { recursive: true, force: true });
     NodeFS.rmSync(sessionDirectory, { recursive: true, force: true });
     NodeFS.rmSync(siblingInstanceDirectory, { recursive: true, force: true });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("sends extension UI responses without waiting for a Pi RPC response", () =>
+  Effect.gen(function* () {
+    const binaryPath = makeMockPiBinary();
+    const runtime = yield* makePiSessionRuntime({
+      binaryPath,
+      configDirectory: "",
+      launchArgs: "",
+      cwd: process.cwd(),
+    });
+    yield* runtime.start();
+    const eventFiber = yield* Stream.take(runtime.events, 1).pipe(
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+    yield* Effect.yieldNow;
+
+    yield* runtime.respondToExtensionUI({
+      id: "extension-dialog",
+      value: "Continue",
+    });
+
+    expect(Array.from(yield* Fiber.join(eventFiber).pipe(Effect.timeout("1 second")))).toEqual([
+      {
+        type: "extension_ui_response_received",
+        response: {
+          type: "extension_ui_response",
+          id: "extension-dialog",
+          value: "Continue",
+        },
+      },
+    ]);
+
+    NodeFS.rmSync(NodePath.dirname(binaryPath), { recursive: true, force: true });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("starts Pi in the configured project and extension configuration context", () =>
+  Effect.gen(function* () {
+    const binaryPath = makeMockPiBinary();
+    const projectDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pi-project-"));
+    const configDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pi-config-"));
+    const runtime = yield* makePiSessionRuntime({
+      binaryPath,
+      configDirectory,
+      launchArgs: "",
+      cwd: projectDirectory,
+      environment: { PI_TEST_EMIT_LAUNCH_CONTEXT: "true" },
+    });
+    const eventFiber = yield* Stream.take(runtime.events, 1).pipe(
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+
+    yield* runtime.start();
+
+    expect(Array.from(yield* Fiber.join(eventFiber).pipe(Effect.timeout("1 second")))).toEqual([
+      {
+        type: "pi_test_launch_context",
+        cwd: NodeFS.realpathSync(projectDirectory),
+        piAgentDir: configDirectory,
+      },
+    ]);
+
+    NodeFS.rmSync(NodePath.dirname(binaryPath), { recursive: true, force: true });
+    NodeFS.rmSync(projectDirectory, { recursive: true, force: true });
+    NodeFS.rmSync(configDirectory, { recursive: true, force: true });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

@@ -9,7 +9,7 @@ import {
 } from "./PiRuntime.ts";
 
 describe("Pi runtime launch plan", () => {
-  it("keeps the Pi configuration directory in PI_AGENT_DIR", () => {
+  it("keeps the Pi configuration directory in PI_CODING_AGENT_DIR", () => {
     const plan = buildPiLaunchPlan({
       configDirectory: "/Users/example/.pi-work",
       launchArgs: "--verbose",
@@ -23,16 +23,17 @@ describe("Pi runtime launch plan", () => {
         "--verbose",
         "--mode",
         "rpc",
+        "--no-extensions",
         "--session-dir",
         "/tmp/t3/pi/work",
         "--session-id",
         "thread_123",
       ],
-      environment: { PI_AGENT_DIR: "/Users/example/.pi-work" },
+      environment: { PI_CODING_AGENT_DIR: "/Users/example/.pi-work" },
     });
   });
 
-  it("leaves Pi's normal configuration untouched when no config directory is selected", () => {
+  it("disables discovered extensions when no config directory is selected", () => {
     const plan = buildPiLaunchPlan({
       configDirectory: "",
       launchArgs: "",
@@ -42,7 +43,43 @@ describe("Pi runtime launch plan", () => {
 
     expect(plan).toEqual({
       _tag: "Success",
-      args: ["--mode", "rpc", "--session-dir", "/tmp/t3/pi/work", "--session-id", "thread_123"],
+      args: [
+        "--mode",
+        "rpc",
+        "--no-extensions",
+        "--session-dir",
+        "/tmp/t3/pi/work",
+        "--session-id",
+        "thread_123",
+      ],
+      environment: {},
+    });
+    if (plan._tag === "Success") {
+      expect(plan.args).toContain("--no-extensions");
+    }
+  });
+
+  it("keeps explicit extension paths while disabling extension discovery", () => {
+    expect(
+      buildPiLaunchPlan({
+        configDirectory: "",
+        launchArgs: "--extension /tmp/t3-pi-extension.ts",
+        sessionDirectory: "/tmp/t3/pi/work",
+        sessionId: "thread_123",
+      }),
+    ).toEqual({
+      _tag: "Success",
+      args: [
+        "--extension",
+        "/tmp/t3-pi-extension.ts",
+        "--mode",
+        "rpc",
+        "--no-extensions",
+        "--session-dir",
+        "/tmp/t3/pi/work",
+        "--session-id",
+        "thread_123",
+      ],
       environment: {},
     });
   });
@@ -54,6 +91,7 @@ describe("Pi runtime launch plan", () => {
     "--session=other",
     "--session-id=other",
     "--no-session",
+    "--no-extensions",
     "--continue",
     "-c",
     "--resume",
@@ -80,8 +118,8 @@ describe("Pi model probe launch plan", () => {
       }),
     ).toEqual({
       _tag: "Success",
-      args: ["--verbose", "--mode", "rpc", "--no-session"],
-      environment: { PI_AGENT_DIR: "/Users/example/.pi-work" },
+      args: ["--verbose", "--mode", "rpc", "--no-extensions", "--no-session"],
+      environment: { PI_CODING_AGENT_DIR: "/Users/example/.pi-work" },
     });
   });
 });
@@ -92,6 +130,7 @@ describe("validatePiLaunchArgs", () => {
     expect(validatePiLaunchArgs("--session-dir=/tmp/other")).toContain("managed by T3 Code");
     expect(validatePiLaunchArgs("--session-id=other")).toContain("managed by T3 Code");
     expect(validatePiLaunchArgs("--no-session")).toContain("managed by T3 Code");
+    expect(validatePiLaunchArgs("--no-extensions")).toContain("managed by T3 Code");
     expect(validatePiLaunchArgs("--verbose")).toBeUndefined();
   });
 });

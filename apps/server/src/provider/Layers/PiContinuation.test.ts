@@ -60,6 +60,7 @@ function makePiRuntimeFactory() {
         setThinkingLevel: () => Effect.void,
         prompt: () => Effect.void,
         abort: () => Effect.void,
+        respondToExtensionUI: () => Effect.void,
         events: Stream.empty,
         close: Effect.void,
       };

@@ -147,7 +147,7 @@ export function checkPiProviderStatus<R = never>(
         command: settings.binaryPath || "pi",
         args: ["--version"],
         env: settings.configDirectory
-          ? { ...environment, PI_AGENT_DIR: settings.configDirectory }
+          ? { ...environment, PI_CODING_AGENT_DIR: settings.configDirectory }
           : environment,
       }),
     );

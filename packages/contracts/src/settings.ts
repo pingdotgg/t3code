@@ -271,7 +271,7 @@ export const PiSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Pi config directory",
         description:
-          "Optional Pi configuration directory. T3 Code passes it to Pi as PI_AGENT_DIR.",
+          "Optional Pi configuration directory. T3 Code passes it to Pi as PI_CODING_AGENT_DIR.",
         providerSettingsForm: { placeholder: "~/.pi", clearWhenEmpty: "omit" },
       }),
     ),
@@ -280,7 +280,7 @@ export const PiSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Launch arguments",
         description:
-          "Additional Pi arguments. RPC mode, session directory, and session ID are managed by T3 Code.",
+          "Additional Pi arguments. T3 Code disables discovered extensions; use --extension <path> to load a specific trusted extension. RPC mode, session directory, and session ID are managed by T3 Code.",
         providerSettingsForm: { placeholder: "e.g. --verbose", clearWhenEmpty: "omit" },
       }),
     ),

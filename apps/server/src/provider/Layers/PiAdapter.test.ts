@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import { PiSettings, ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  PiSettings,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  type ProviderRuntimeEvent,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
@@ -7,6 +14,7 @@ import * as Stream from "effect/Stream";
 
 import { ProviderAdapterValidationError, type ProviderAdapterError } from "../Errors.ts";
 import type {
+  PiExtensionUiResponse,
   PiPromptInput,
   PiSessionRuntimeOptions,
   PiSessionRuntimeShape,
@@ -25,6 +33,7 @@ function makeRuntimeFactory(input?: { readonly thinkingLevels?: ReadonlyArray<st
     const modelCalls: Array<{ provider: string; modelId: string }> = [];
     const thinkingCalls: string[] = [];
     const prompts: PiPromptInput[] = [];
+    const extensionUiResponses: PiExtensionUiResponse[] = [];
     const events = yield* PubSub.unbounded<unknown>();
     let abortCount = 0;
     let closeCount = 0;
@@ -34,6 +43,7 @@ function makeRuntimeFactory(input?: { readonly thinkingLevels?: ReadonlyArray<st
       const runtime: PiSessionRuntimeShape & {
         readonly prompt: (input: PiPromptInput) => Effect.Effect<void>;
         readonly abort: () => Effect.Effect<void>;
+        readonly respondToExtensionUI: (response: PiExtensionUiResponse) => Effect.Effect<void>;
       } = {
         start: () =>
           Effect.succeed({
@@ -67,6 +77,10 @@ function makeRuntimeFactory(input?: { readonly thinkingLevels?: ReadonlyArray<st
           Effect.sync(() => {
             abortCount += 1;
           }),
+        respondToExtensionUI: (response) =>
+          Effect.sync(() => {
+            extensionUiResponses.push(response);
+          }),
         events: Stream.fromPubSub(events),
         close: Effect.sync(() => {
           closeCount += 1;
@@ -81,6 +95,7 @@ function makeRuntimeFactory(input?: { readonly thinkingLevels?: ReadonlyArray<st
       modelCalls,
       thinkingCalls,
       prompts,
+      getExtensionUiResponses: () => extensionUiResponses,
       emit: (event: unknown) => PubSub.publish(events, event).pipe(Effect.asVoid),
       getAbortCount: () => abortCount,
       getCloseCount: () => closeCount,
@@ -240,6 +255,231 @@ describe("PiAdapter", () => {
         resumeCursor: { schemaVersion: 1, sessionId: "thread-native" },
       });
       expect(started.turnId).toBeTruthy();
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("round-trips compatible Pi extension dialogs through T3 user input", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeRuntimeFactory();
+      const adapter = yield* makePiAdapter(decodePiSettings({}), {
+        instanceId: INSTANCE_A,
+        sessionDirectory: "/tmp/t3-pi-sessions/pi_personal",
+        makeRuntime: runtime.factory,
+      });
+      const events: ProviderRuntimeEvent[] = [];
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* adapter.startSession(sessionStart(INSTANCE_A));
+      yield* Effect.yieldNow;
+
+      yield* runtime.emit({
+        type: "extension_ui_request",
+        id: "dialog-confirm",
+        method: "confirm",
+        title: "Deploy release",
+        message: "Deploy this release to production?",
+      });
+      yield* runtime.emit({
+        type: "extension_ui_request",
+        id: "dialog-select",
+        method: "select",
+        title: "Choose environment",
+        options: ["Staging", "Production"],
+      });
+      yield* runtime.emit({
+        type: "extension_ui_request",
+        id: "dialog-input",
+        method: "input",
+        title: "Release summary",
+        placeholder: "Describe the release",
+      });
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "user-input.requested",
+            requestId: "dialog-confirm",
+            payload: {
+              questions: [
+                {
+                  id: "dialog-confirm",
+                  header: "Deploy release",
+                  question: "Deploy this release to production?",
+                  options: [
+                    { label: "Confirm", description: "Confirm" },
+                    { label: "Cancel", description: "Cancel" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          }),
+          expect.objectContaining({
+            type: "user-input.requested",
+            requestId: "dialog-select",
+            payload: {
+              questions: [
+                {
+                  id: "dialog-select",
+                  header: "Choose environment",
+                  question: "Choose an option.",
+                  options: [
+                    { label: "Staging", description: "Staging" },
+                    { label: "Production", description: "Production" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          }),
+          expect.objectContaining({
+            type: "user-input.requested",
+            requestId: "dialog-input",
+            payload: {
+              questions: [
+                {
+                  id: "dialog-input",
+                  header: "Release summary",
+                  question: "Describe the release",
+                  options: [{ label: "Cancel", description: "Cancel this input request" }],
+                  cancelOptionLabel: "Cancel",
+                  multiSelect: false,
+                },
+              ],
+            },
+          }),
+        ]),
+      );
+
+      yield* adapter.respondToUserInput(THREAD_ID, ApprovalRequestId.make("dialog-confirm"), {
+        "dialog-confirm": "Confirm",
+      });
+      yield* adapter.respondToUserInput(THREAD_ID, ApprovalRequestId.make("dialog-select"), {
+        "dialog-select": "Production",
+      });
+      yield* adapter.respondToUserInput(THREAD_ID, ApprovalRequestId.make("dialog-input"), {
+        "dialog-input": { value: "Cancel" },
+      });
+      yield* Effect.yieldNow;
+
+      expect(runtime.getExtensionUiResponses()).toEqual([
+        { id: "dialog-confirm", confirmed: true },
+        { id: "dialog-select", value: "Production" },
+        { id: "dialog-input", value: "Cancel" },
+      ]);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "user-input.resolved",
+            requestId: "dialog-confirm",
+            payload: { answers: { "dialog-confirm": "Confirm" } },
+          }),
+          expect.objectContaining({
+            type: "user-input.resolved",
+            requestId: "dialog-select",
+            payload: { answers: { "dialog-select": "Production" } },
+          }),
+          expect.objectContaining({
+            type: "user-input.resolved",
+            requestId: "dialog-input",
+            payload: { answers: { "dialog-input": { value: "Cancel" } } },
+          }),
+        ]),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("maps selected Pi input cancellation back to the native RPC response", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeRuntimeFactory();
+      const adapter = yield* makePiAdapter(decodePiSettings({}), {
+        instanceId: INSTANCE_A,
+        sessionDirectory: "/tmp/t3-pi-sessions/pi_personal",
+        makeRuntime: runtime.factory,
+      });
+      yield* adapter.startSession(sessionStart(INSTANCE_A));
+      yield* Effect.yieldNow;
+      yield* runtime.emit({
+        type: "extension_ui_request",
+        id: "dialog-input-cancel",
+        method: "input",
+        title: "Release summary",
+      });
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      yield* adapter.respondToUserInput(THREAD_ID, ApprovalRequestId.make("dialog-input-cancel"), {
+        "dialog-input-cancel": { cancelled: true },
+      });
+
+      expect(runtime.getExtensionUiResponses()).toEqual([
+        { id: "dialog-input-cancel", cancelled: true },
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("surfaces Pi extension UI that requires Pi's terminal interface", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeRuntimeFactory();
+      const adapter = yield* makePiAdapter(decodePiSettings({}), {
+        instanceId: INSTANCE_A,
+        sessionDirectory: "/tmp/t3-pi-sessions/pi_personal",
+        makeRuntime: runtime.factory,
+      });
+      const events: ProviderRuntimeEvent[] = [];
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* adapter.startSession(sessionStart(INSTANCE_A));
+      yield* Effect.yieldNow;
+
+      yield* runtime.emit({
+        type: "extension_ui_request",
+        id: "widget-status",
+        method: "setWidget",
+        widgetKey: "release-status",
+        widgetLines: ["Deploying..."],
+      });
+      yield* runtime.emit({
+        type: "extension_ui_request",
+        id: "editor-dialog",
+        method: "editor",
+        title: "Edit release notes",
+        prefill: "Initial notes",
+      });
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "runtime.warning",
+            payload: expect.objectContaining({
+              message: "Pi extension UI 'setWidget' requires Pi's terminal interface.",
+            }),
+          }),
+          expect.objectContaining({
+            type: "runtime.warning",
+            payload: expect.objectContaining({
+              message: "Pi extension UI 'editor' requires Pi's terminal interface.",
+            }),
+          }),
+        ]),
+      );
+      expect(runtime.getExtensionUiResponses()).toEqual([{ id: "editor-dialog", cancelled: true }]);
     }).pipe(Effect.scoped),
   );
 

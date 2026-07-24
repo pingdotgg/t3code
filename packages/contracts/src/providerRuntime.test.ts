@@ -94,6 +94,7 @@ describe("ProviderRuntimeEvent", () => {
                 description: "Allow unrestricted access",
               },
             ],
+            cancelOptionLabel: "Cancel",
           },
         ],
       },
@@ -105,6 +106,7 @@ describe("ProviderRuntimeEvent", () => {
     }
     expect(parsed.payload.questions[0]?.id).toBe("sandbox_mode");
     expect(parsed.payload.questions[0]?.options).toHaveLength(2);
+    expect(parsed.payload.questions[0]?.cancelOptionLabel).toBe("Cancel");
   });
 
   it("decodes user-input.resolved with answer map", () => {

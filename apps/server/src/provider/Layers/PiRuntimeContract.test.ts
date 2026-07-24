@@ -104,6 +104,7 @@ const makeControlledPiRuntime = Effect.fn("makeControlledPiRuntime")(function* (
         Effect.sync(() => {
           aborts += 1;
         }),
+      respondToExtensionUI: () => Effect.void,
       events: Stream.fromPubSub(events),
       close: Effect.void,
     } satisfies PiSessionRuntimeShape);

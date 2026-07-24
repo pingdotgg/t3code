@@ -15,6 +15,7 @@ import type { PiRpcModel } from "./PiModels.ts";
 import { buildPiLaunchPlan, buildPiModelProbeLaunchPlan } from "./PiRuntime.ts";
 
 const PI_RPC_REQUEST_TIMEOUT = "15 seconds" as const;
+const PI_RPC_START_TIMEOUT = "30 seconds" as const;
 const PI_RPC_FORCE_KILL_AFTER = "2 seconds" as const;
 const decodeUnknownJson = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
 const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
@@ -64,6 +65,11 @@ export interface PiPromptInput {
   readonly streamingBehavior?: "steer" | "followUp" | undefined;
 }
 
+export type PiExtensionUiResponse =
+  | { readonly id: string; readonly value: string }
+  | { readonly id: string; readonly confirmed: boolean }
+  | { readonly id: string; readonly cancelled: true };
+
 export interface PiSessionRuntimeShape {
   readonly start: () => Effect.Effect<PiSessionRuntimeState, PiSessionRuntimeError>;
   readonly getState: () => Effect.Effect<PiSessionRuntimeState, PiSessionRuntimeError>;
@@ -84,6 +90,10 @@ export interface PiSessionRuntimeShape {
   readonly prompt: (input: PiPromptInput) => Effect.Effect<void, PiSessionRuntimeError>;
   /** Invoke Pi's native abort command for the active operation. */
   readonly abort: () => Effect.Effect<void, PiSessionRuntimeError>;
+  /** Respond to a pending Pi extension UI dialog without awaiting an RPC response. */
+  readonly respondToExtensionUI: (
+    response: PiExtensionUiResponse,
+  ) => Effect.Effect<void, PiSessionRuntimeError>;
   /** Raw Pi protocol events retained for later lifecycle/diagnostic mapping. */
   readonly events: Stream.Stream<unknown>;
   readonly close: Effect.Effect<void>;
@@ -428,6 +438,7 @@ export const makePiSessionRuntime = (
 
     const request = Effect.fn("PiSessionRuntime.request")(function* (
       command: Record<string, unknown>,
+      timeout = PI_RPC_REQUEST_TIMEOUT,
     ) {
       const closedNow = yield* Ref.get(closed);
       if (closedNow) {
@@ -450,7 +461,7 @@ export const makePiSessionRuntime = (
       yield* writeCommand({ ...command, id }).pipe(Effect.onError(() => removePendingRequest(id)));
 
       const response = yield* Deferred.await(deferred).pipe(
-        Effect.timeoutOption(PI_RPC_REQUEST_TIMEOUT),
+        Effect.timeoutOption(timeout),
         Effect.flatMap(
           Option.match({
             onNone: () =>
@@ -458,7 +469,7 @@ export const makePiSessionRuntime = (
                 Effect.andThen(
                   new PiSessionRuntimeError({
                     operation: commandName,
-                    detail: `Timed out waiting for Pi RPC response after ${PI_RPC_REQUEST_TIMEOUT}.`,
+                    detail: `Timed out waiting for Pi RPC response after ${timeout}.`,
                   }),
                 ),
               ),
@@ -469,8 +480,8 @@ export const makePiSessionRuntime = (
       return response;
     });
 
-    const getState = () =>
-      request({ type: "get_state" }).pipe(
+    const getState = (timeout = PI_RPC_REQUEST_TIMEOUT) =>
+      request({ type: "get_state" }, timeout).pipe(
         Effect.flatMap((response) => {
           const state = parseState(response);
           return state
@@ -485,7 +496,7 @@ export const makePiSessionRuntime = (
       );
 
     const start = () =>
-      getState().pipe(
+      getState(PI_RPC_START_TIMEOUT).pipe(
         Effect.flatMap((state) => {
           if (options.sessionId !== undefined && state.sessionId !== options.sessionId) {
             return Effect.fail(
@@ -564,6 +575,19 @@ export const makePiSessionRuntime = (
 
     const abort = () => request({ type: "abort" }).pipe(Effect.asVoid);
 
+    const respondToExtensionUI = Effect.fn("PiSessionRuntime.respondToExtensionUI")(function* (
+      response: PiExtensionUiResponse,
+    ) {
+      const closedNow = yield* Ref.get(closed);
+      if (closedNow) {
+        return yield* new PiSessionRuntimeError({
+          operation: "extension_ui_response",
+          detail: "Pi RPC session is closed.",
+        });
+      }
+      yield* writeCommand({ type: "extension_ui_response", ...response });
+    });
+
     const close = Ref.getAndSet(closed, true).pipe(
       Effect.flatMap((wasClosed) => {
         if (wasClosed) {
@@ -599,6 +623,7 @@ export const makePiSessionRuntime = (
       setThinkingLevel,
       prompt,
       abort,
+      respondToExtensionUI,
       events: Stream.fromQueue(rawEvents),
       close,
     } satisfies PiSessionRuntimeShape;

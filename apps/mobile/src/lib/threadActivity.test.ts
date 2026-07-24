@@ -12,7 +12,9 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  buildPendingUserInputAnswers,
   buildThreadFeed,
+  derivePendingUserInputs,
   deriveThreadFeedPresentation,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
@@ -52,6 +54,47 @@ function makeThread(
     ...input,
   };
 }
+
+describe("pending user input", () => {
+  it("preserves tagged cancellation answers for Pi input dialogs", () => {
+    const pendingInputs = derivePendingUserInputs([
+      makeActivity({
+        id: EventId.make("input-requested"),
+        kind: "user-input.requested",
+        summary: "User input requested",
+        createdAt: "2026-04-01T00:00:00.000Z",
+        payload: {
+          requestId: "release-summary",
+          questions: [
+            {
+              id: "release-summary",
+              header: "Release summary",
+              question: "Describe the release.",
+              options: [{ label: "Cancel", description: "Cancel this input request" }],
+              cancelOptionLabel: "Cancel",
+            },
+          ],
+        },
+      }),
+    ]);
+    const question = pendingInputs[0]?.questions[0];
+    if (!question) {
+      throw new Error("expected pending user input question");
+    }
+
+    expect(question.cancelOptionLabel).toBe("Cancel");
+    expect(
+      buildPendingUserInputAnswers([question], {
+        "release-summary": { customAnswer: "Cancel" },
+      }),
+    ).toEqual({ "release-summary": { value: "Cancel" } });
+    expect(
+      buildPendingUserInputAnswers([question], {
+        "release-summary": { selectedOptionLabel: "Cancel" },
+      }),
+    ).toEqual({ "release-summary": { cancelled: true } });
+  });
+});
 
 describe("buildThreadFeed", () => {
   it("keeps historic work entries attributed to their turns", () => {
