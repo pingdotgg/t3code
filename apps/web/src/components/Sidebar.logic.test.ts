@@ -22,6 +22,7 @@ import {
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
+  shouldSuspendSidebarThreadListAnimation,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
@@ -45,6 +46,29 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("shouldSuspendSidebarThreadListAnimation", () => {
+  it("skips expensive collapse animations only for large expanded lists", () => {
+    expect(
+      shouldSuspendSidebarThreadListAnimation({
+        projectExpanded: true,
+        renderedThreadCount: 31,
+      }),
+    ).toBe(true);
+    expect(
+      shouldSuspendSidebarThreadListAnimation({
+        projectExpanded: true,
+        renderedThreadCount: 30,
+      }),
+    ).toBe(false);
+    expect(
+      shouldSuspendSidebarThreadListAnimation({
+        projectExpanded: false,
+        renderedThreadCount: 100,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
