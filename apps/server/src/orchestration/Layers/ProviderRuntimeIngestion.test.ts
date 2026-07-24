@@ -3174,6 +3174,207 @@ describe("ProviderRuntimeIngestion", () => {
     ).toBe("# Plan title");
   });
 
+  it("parks the session on idle when a turn completes with open tasks", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-waiting-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-waiting-1"),
+    });
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-waiting-task-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-waiting-1"),
+      payload: {
+        taskId: "bg-task-1",
+        description: "Babysit PR checks",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-waiting-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId: asTurnId("turn-waiting-1"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    const waiting = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "idle" && entry.session?.activeTurnId === null,
+    );
+    expect(waiting.session?.lastError).toBeNull();
+
+    // The wake-up turn flips waiting straight back to running.
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-waiting-wakeup-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      turnId: asTurnId("turn-waiting-2"),
+    });
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-waiting-task-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:03.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-waiting-2"),
+      payload: {
+        taskId: "bg-task-1",
+        status: "completed",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-waiting-wakeup-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:04.000Z",
+      turnId: asTurnId("turn-waiting-2"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    // With the task closed before this turn ended, the thread is genuinely done.
+    await waitForThread(harness.readModel, (entry) => entry.session?.status === "ready");
+  });
+
+  it("keeps a turn completion ready when its tasks already completed", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-closed-task-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        taskId: "fg-task-1",
+      },
+    });
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-closed-task-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        taskId: "fg-task-1",
+        status: "completed",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-closed-task-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId: asTurnId("turn-closed-task"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "ready" && entry.session?.activeTurnId === null,
+    );
+  });
+
+  it("demotes a ready session to idle when a task start arrives after turn completion", async () => {
+    const harness = await createHarness();
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-late-task-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      turnId: asTurnId("turn-late-task"),
+      payload: {
+        state: "completed",
+      },
+    });
+    await waitForThread(harness.readModel, (entry) => entry.session?.status === "ready");
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-late-task-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        taskId: "late-task-1",
+        description: "Monitor deploy",
+      },
+    });
+
+    await waitForThread(harness.readModel, (entry) => entry.session?.status === "idle");
+  });
+
+  it("clears open tasks on session exit so they cannot park a later session", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-orphan-task-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        taskId: "orphan-task-1",
+      },
+    });
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-orphan-task-session-exited"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: {},
+    });
+    await waitForThread(harness.readModel, (entry) => entry.session?.status === "stopped");
+
+    // A fresh session's turn must not inherit the orphaned task.
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-orphan-task-new-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      turnId: asTurnId("turn-after-orphan"),
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-orphan-task-new-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:03.000Z",
+      turnId: asTurnId("turn-after-orphan"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    await waitForThread(harness.readModel, (entry) => entry.session?.status === "ready");
+  });
+
   it("titles task activities with the task description, including on completion", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

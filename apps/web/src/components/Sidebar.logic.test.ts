@@ -628,6 +628,22 @@ describe("resolveSidebarV2Status", () => {
     ).toBe("working");
   });
 
+  it("reports waiting for an idle session, below approval and input", () => {
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        session: { ...session, status: "idle" as const, activeTurnId: null },
+      }),
+    ).toBe("waiting");
+    expect(
+      resolveSidebarV2Status({
+        ...idle,
+        hasPendingApprovals: true,
+        session: { ...session, status: "idle" as const, activeTurnId: null },
+      }),
+    ).toBe("approval");
+  });
+
   it("reports failed only while the session status is error", () => {
     expect(
       resolveSidebarV2Status({

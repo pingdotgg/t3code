@@ -6,11 +6,12 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
  * Thread List v2 model, ported from the web sidebar v2
  * (apps/web/src/components/Sidebar.logic.ts + SidebarV2.tsx).
  *
- * Four visual states, three colors: color is reserved for "act now"
+ * Six visual states, three colors: color is reserved for "act now"
  * (approval), "in motion" (working), and "broken" (failed). Ready is the
- * unlabeled resting state.
+ * unlabeled resting state; waiting (session status "idle") is the agent
+ * parked on open background tasks — grey like working, not a false Done.
  */
-export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
+export type ThreadListV2Status = "approval" | "input" | "working" | "waiting" | "failed" | "ready";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more. Shared by the compact Home list and
@@ -29,6 +30,9 @@ export function resolveThreadListV2Status(
   }
   if (thread.session?.status === "running" || thread.session?.status === "starting") {
     return "working";
+  }
+  if (thread.session?.status === "idle") {
+    return "waiting";
   }
   if (thread.session?.status === "error") {
     return "failed";
