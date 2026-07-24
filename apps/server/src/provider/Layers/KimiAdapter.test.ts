@@ -623,4 +623,208 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }).pipe(TestClock.withLive),
   );
+
+  it.effect("maps Kimi Agent tool calls to task.* events instead of generic tool-call items", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("kimi-subagent-task-events");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockKimiWrapper({
+          T3_ACP_EMIT_SUBAGENT_TOOL_CALL: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("kimi"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "delegate to a subagent", attachments: [] });
+
+      const threadEvents = runtimeEvents.filter(
+        (event) => String(event.threadId) === String(threadId),
+      );
+      const taskStarted = threadEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "task.started" }> =>
+          event.type === "task.started" && String(event.payload.taskId) === "subagent-tool-call-1",
+      );
+      const taskProgress = threadEvents.filter(
+        (event) =>
+          event.type === "task.progress" && String(event.payload.taskId) === "subagent-tool-call-1",
+      );
+      const taskCompleted = threadEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "task.completed" }> =>
+          event.type === "task.completed" &&
+          String(event.payload.taskId) === "subagent-tool-call-1",
+      );
+      const genericItems = threadEvents.filter(
+        (event) =>
+          (event.type === "item.updated" || event.type === "item.completed") &&
+          String(event.itemId) === "subagent-tool-call-1",
+      );
+      const regularItems = threadEvents.filter(
+        (event) =>
+          (event.type === "item.updated" || event.type === "item.completed") &&
+          String(event.itemId) === "regular-tool-call-1",
+      );
+
+      assert.lengthOf(taskStarted, 1);
+      assert.equal(taskStarted[0]?.payload.entityType, "subagent");
+      assert.equal(taskStarted[0]?.payload.subagentType, "coder");
+      assert.equal(taskStarted[0]?.payload.description, "investigate the bug");
+      assert.equal(taskStarted[0]?.payload.taskType, "sub-agent");
+      assert.equal(taskStarted[0]?.payload.toolUseId, "subagent-tool-call-1");
+      assert.isAtLeast(taskProgress.length, 1);
+      assert.lengthOf(taskCompleted, 1);
+      assert.equal(taskCompleted[0]?.payload.status, "completed");
+      assert.equal(taskCompleted[0]?.payload.summary, "sub-agent final report");
+      // No duplicate generic dynamic_tool_call row for the sub-agent call.
+      assert.deepEqual(genericItems, []);
+      // Regular tool calls in the same turn still flow through unchanged.
+      assert.isNotEmpty(regularItems);
+      assert.isTrue(regularItems.every((event) => event.payload.itemType === "command_execution"));
+      const startedIndex = threadEvents.findIndex((event) => event.type === "task.started");
+      const completedIndex = threadEvents.findIndex((event) => event.type === "task.completed");
+      assert.isAtLeast(startedIndex, 0);
+      assert.isAbove(completedIndex, startedIndex);
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("maps failed Kimi Agent tool calls to task.completed with status failed", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("kimi-subagent-task-failed");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockKimiWrapper({
+          T3_ACP_EMIT_SUBAGENT_TOOL_CALL: "1",
+          T3_ACP_SUBAGENT_TOOL_CALL_FAILS: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("kimi"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "delegate to a failing subagent",
+        attachments: [],
+      });
+
+      const threadEvents = runtimeEvents.filter(
+        (event) => String(event.threadId) === String(threadId),
+      );
+      const taskCompleted = threadEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "task.completed" }> =>
+          event.type === "task.completed" &&
+          String(event.payload.taskId) === "subagent-tool-call-1",
+      );
+      const genericItems = threadEvents.filter(
+        (event) =>
+          (event.type === "item.updated" || event.type === "item.completed") &&
+          String(event.itemId) === "subagent-tool-call-1",
+      );
+
+      assert.lengthOf(taskCompleted, 1);
+      assert.equal(taskCompleted[0]?.payload.status, "failed");
+      assert.equal(taskCompleted[0]?.payload.summary, "sub-agent failed to finish");
+      assert.deepEqual(genericItems, []);
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("stops open Kimi sub-agent tasks when the turn is interrupted", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("kimi-subagent-task-interrupt");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-acp-subagent-interrupt-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockKimiWrapper({
+          T3_ACP_EMIT_SUBAGENT_THEN_HANG: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnStarted = yield* Deferred.make<TurnId>();
+      const subagentTaskStarted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          runtimeEvents.push(event);
+          if (String(event.threadId) !== String(threadId)) {
+            return;
+          }
+          if (event.type === "turn.started" && event.turnId !== undefined) {
+            yield* Deferred.succeed(turnStarted, event.turnId).pipe(Effect.ignore);
+          }
+          if (event.type === "task.started") {
+            yield* Deferred.succeed(subagentTaskStarted, undefined).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("kimi"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "delegate then interrupt", attachments: [] })
+        .pipe(Effect.forkChild);
+      const turnId = yield* Deferred.await(turnStarted).pipe(Effect.timeout("2 seconds"));
+      // Wait until the sub-agent task is actually open before interrupting.
+      yield* Deferred.await(subagentTaskStarted).pipe(Effect.timeout("2 seconds"));
+      yield* waitForFileContent(requestLogPath, 80, '"method":"session/prompt"');
+      yield* adapter.interruptTurn(threadId, turnId).pipe(Effect.timeout("2 seconds"));
+      yield* Fiber.join(sendTurnFiber).pipe(Effect.timeout("2 seconds"));
+
+      const threadEvents = runtimeEvents.filter(
+        (event) => String(event.threadId) === String(threadId),
+      );
+      const taskStarted = threadEvents.filter(
+        (event) =>
+          event.type === "task.started" && String(event.payload.taskId) === "subagent-tool-call-1",
+      );
+      const taskCompleted = threadEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "task.completed" }> =>
+          event.type === "task.completed" &&
+          String(event.payload.taskId) === "subagent-tool-call-1",
+      );
+
+      assert.lengthOf(taskStarted, 1);
+      assert.lengthOf(taskCompleted, 1);
+      assert.equal(taskCompleted[0]?.payload.status, "stopped");
+      assert.equal(String(taskCompleted[0]?.turnId), String(turnId));
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
 });

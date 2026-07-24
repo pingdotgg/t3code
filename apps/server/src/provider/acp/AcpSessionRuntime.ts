@@ -34,6 +34,7 @@ import {
   type AcpSessionModeState,
   type AcpToolCallState,
 } from "./AcpRuntimeModel.ts";
+import { detectKimiSubagentToolCall } from "./KimiSubagentTasks.ts";
 
 function formatConfigOptionValue(value: string | boolean): string {
   return JSON.stringify(value);
@@ -986,6 +987,11 @@ function shouldEmitToolCallUpdate(
   next: AcpToolCallState,
 ): boolean {
   if (next.status === "completed" || next.status === "failed") {
+    return true;
+  }
+  // Sub-agent tool calls (Agent/AgentSwarm) carry no detail line, but their
+  // start/update boundaries drive the task lifecycle, so they always emit.
+  if (detectKimiSubagentToolCall(next)) {
     return true;
   }
   if (!next.detail) {

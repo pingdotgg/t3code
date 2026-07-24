@@ -8,7 +8,9 @@ import {
   type ProviderUserInputAnswers,
   ProviderDriverKind,
   ProviderInstanceId,
+  RuntimeItemId,
   RuntimeRequestId,
+  RuntimeTaskId,
   type ThreadId,
   type ThreadTokenUsageSnapshot,
   TurnId,
@@ -67,6 +69,11 @@ import {
   kimiAskUserQuestionSkipOptionId,
   selectKimiAskUserQuestionOptionId,
 } from "../acp/KimiAcpExtension.ts";
+import {
+  detectKimiSubagentToolCall,
+  extractSubagentSummary,
+  type KimiSubagentTaskInfo,
+} from "../acp/KimiSubagentTasks.ts";
 import {
   applyKimiAcpModelSelection,
   applyKimiThinkingEffort,
@@ -172,6 +179,8 @@ interface KimiSessionContext {
   lastTurnInterruptedAtMs: number | undefined;
   currentModelId: string | undefined;
   stopped: boolean;
+  /** Open Kimi Agent/AgentSwarm tool calls keyed by ACP toolCallId. */
+  readonly openSubagentTasks: Map<string, KimiSubagentTaskInfo>;
   /**
    * Monotonic count of ACP session events processed by the notification fiber.
    * Used as a settlement barrier so turn.completed waits for late content.
@@ -340,6 +349,134 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
           payload: { usage },
         }),
       );
+
+    /**
+     * Map a Kimi Agent/AgentSwarm ACP tool call to task.* runtime events
+     * (mirroring Codex's collabAgentToolCall mapping) instead of the generic
+     * dynamic_tool_call item events. Returns true when the tool call was
+     * handled as a sub-agent task.
+     */
+    const emitKimiSubagentTaskEvents = (
+      ctx: KimiSessionContext,
+      turnId: TurnId | undefined,
+      stamp: { readonly eventId: EventId; readonly createdAt: string },
+      toolCall: {
+        readonly toolCallId: string;
+        readonly title?: string;
+        readonly status?: "pending" | "inProgress" | "completed" | "failed";
+        readonly data: Record<string, unknown>;
+      },
+      rawPayload: unknown,
+    ): Effect.Effect<boolean> =>
+      Effect.gen(function* () {
+        const tracked = ctx.openSubagentTasks.get(toolCall.toolCallId);
+        // Structural detection on rawInput; once tracked, keep mapping even if
+        // a later update somehow loses the rawInput seed.
+        const taskInfo = detectKimiSubagentToolCall(toolCall) ?? tracked;
+        if (!taskInfo) {
+          return false;
+        }
+        const isTerminal = toolCall.status === "completed" || toolCall.status === "failed";
+        const taskId = RuntimeTaskId.make(toolCall.toolCallId);
+        const base = {
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          turnId,
+          itemId: RuntimeItemId.make(toolCall.toolCallId),
+          raw: {
+            source: "acp.jsonrpc" as const,
+            method: "session/update",
+            payload: rawPayload,
+          },
+        };
+        if (!tracked) {
+          ctx.openSubagentTasks.set(toolCall.toolCallId, taskInfo);
+          yield* offerRuntimeEvent({
+            type: "task.started",
+            ...stamp,
+            ...base,
+            payload: {
+              taskId,
+              entityType: "subagent" as const,
+              description: taskInfo.description,
+              taskType: "sub-agent",
+              subagentType: taskInfo.subagentType,
+              toolUseId: toolCall.toolCallId,
+            },
+          });
+        }
+        if (!isTerminal) {
+          yield* offerRuntimeEvent({
+            type: "task.progress",
+            ...stamp,
+            ...(tracked ? {} : { eventId: EventId.make(`${stamp.eventId}:progress`) }),
+            ...base,
+            payload: {
+              taskId,
+              entityType: "subagent" as const,
+              description: taskInfo.description,
+              ...(toolCall.title ? { summary: toolCall.title } : {}),
+              subagentType: taskInfo.subagentType,
+              toolUseId: toolCall.toolCallId,
+            },
+          });
+          return true;
+        }
+        ctx.openSubagentTasks.delete(toolCall.toolCallId);
+        const summary = extractSubagentSummary(toolCall.data.rawOutput) ?? toolCall.title;
+        yield* offerRuntimeEvent({
+          type: "task.completed",
+          ...stamp,
+          ...(tracked ? {} : { eventId: EventId.make(`${stamp.eventId}:completed`) }),
+          ...base,
+          payload: {
+            taskId,
+            entityType: "subagent" as const,
+            status: toolCall.status === "failed" ? ("failed" as const) : ("completed" as const),
+            ...(summary ? { summary } : {}),
+          },
+        });
+        return true;
+      });
+
+    /**
+     * Emit synthetic task.completed (status "stopped") for every still-open
+     * sub-agent task so the projection/UI stops treating them as running.
+     * Mirrors ClaudeAdapter's closeOpenSubagentTasks.
+     */
+    const closeOpenSubagentTasks = (
+      ctx: KimiSessionContext,
+      turnId: TurnId | undefined,
+      summary: string,
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        if (ctx.openSubagentTasks.size === 0) {
+          return;
+        }
+        const openToolCallIds = Array.from(ctx.openSubagentTasks.keys());
+        ctx.openSubagentTasks.clear();
+        for (const toolCallId of openToolCallIds) {
+          yield* offerRuntimeEvent({
+            type: "task.completed",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId: ctx.threadId,
+            turnId,
+            itemId: RuntimeItemId.make(toolCallId),
+            payload: {
+              taskId: RuntimeTaskId.make(toolCallId),
+              entityType: "subagent" as const,
+              status: "stopped" as const,
+              summary,
+            },
+            raw: {
+              source: "acp.jsonrpc",
+              method: "kimi/synthetic/task_stopped",
+              payload: { toolCallId, reason: summary },
+            },
+          });
+        }
+      });
 
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
@@ -880,6 +1017,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             currentModelId: boundModelId,
             eventSequence: 0,
             stopped: false,
+            openSubagentTasks: new Map(),
           };
 
           const nf = yield* Stream.runDrain(
@@ -1031,7 +1169,17 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                       "session/update",
                     );
                     return;
-                  case "ToolCallUpdated":
+                  case "ToolCallUpdated": {
+                    const handledAsSubagentTask = yield* emitKimiSubagentTaskEvents(
+                      ctx,
+                      notificationTurnId,
+                      stamp,
+                      event.toolCall,
+                      event.rawPayload,
+                    );
+                    if (handledAsSubagentTask) {
+                      return;
+                    }
                     yield* offerRuntimeEvent(
                       makeAcpToolCallEvent({
                         stamp,
@@ -1043,6 +1191,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                       }),
                     );
                     return;
+                  }
                   case "ContentDelta":
                     yield* offerRuntimeEvent(
                       makeAcpContentDeltaEvent({
@@ -1588,6 +1737,13 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
                   mapAcpToAdapterError(PROVIDER, threadId, "session/cancel", error),
                 ),
               ),
+            );
+            // The agent drops in-flight Agent/AgentSwarm tool calls on cancel
+            // without terminal updates; settle them so no task stays "running".
+            yield* closeOpenSubagentTasks(
+              ctx,
+              interruptedTurnId,
+              "Subagent task stopped (turn interrupted).",
             );
             if (interruptedTurnId) {
               ctx.interruptedTurnIds.add(interruptedTurnId);
