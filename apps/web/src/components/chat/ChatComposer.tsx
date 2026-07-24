@@ -51,13 +51,28 @@ import {
   type ComposerImageAttachment,
   type DraftId,
   type PersistedComposerImageAttachment,
+  hydrateImagesFromPersisted,
   useComposerDraftStore,
   useComposerThreadDraft,
   useEffectiveComposerModelState,
 } from "../../composerDraftStore";
 import {
+  EMPTY_PROMPT_STASH_QUEUE,
+  flushPromptStashStorage,
+  partitionStashAttachments,
+  promptStashScopeKey,
+  usePromptStashStore,
+  type PromptStashEntry,
+} from "../../promptStashStore";
+import { ComposerStashBadge, type StashFlyGhost } from "./ComposerStashBadge";
+import { ComposerStashMenu } from "./ComposerStashMenu";
+import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { getTerminalFocusOwner } from "../../lib/terminalFocus";
+import { resolveShortcutCommand } from "../../keybindings";
+import {
   type TerminalContextDraft,
   type TerminalContextSelection,
+  INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
@@ -723,6 +738,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const clearComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.clearPersistedAttachments,
   );
+  const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const syncComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.syncPersistedAttachments,
   );
@@ -961,6 +978,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
+  const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
+  const [stashGhost, setStashGhost] = useState<StashFlyGhost | null>(null);
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile =
     isMobileViewport && !forceExpandedOnMobile && !isComposerFocused;
@@ -980,6 +999,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
+  const stashGhostKeyRef = useRef(0);
+  const stashGhostTimeoutRef = useRef<number | null>(null);
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1862,6 +1883,268 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   // ------------------------------------------------------------------
+  // Prompt stash (⌘S)
+  // ------------------------------------------------------------------
+  const stashScopeInstanceId = noProviderAvailable ? null : selectedInstanceId;
+  const stashScope = promptStashScopeKey(stashScopeInstanceId);
+  const stashQueue = usePromptStashStore(
+    (state) => state.queuesByScopeKey[stashScope] ?? EMPTY_PROMPT_STASH_QUEUE,
+  );
+  const stashOtherScopesCount = usePromptStashStore((state) =>
+    Object.entries(state.queuesByScopeKey).reduce(
+      (total, [key, queue]) => (key === stashScope ? total : total + queue.length),
+      0,
+    ),
+  );
+  const stashEntryToQueue = usePromptStashStore((state) => state.stashEntry);
+  const takeStashEntry = usePromptStashStore((state) => state.takeEntry);
+  const stashProviderLabel = noProviderAvailable
+    ? "No provider"
+    : getProviderDisplayName(providerStatuses, selectedProvider);
+
+  useEffect(() => {
+    return () => {
+      if (stashGhostTimeoutRef.current !== null) {
+        window.clearTimeout(stashGhostTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const playStashGhost = useCallback((snippet: string) => {
+    stashGhostKeyRef.current += 1;
+    setStashGhost({ key: stashGhostKeyRef.current, snippet });
+    if (stashGhostTimeoutRef.current !== null) {
+      window.clearTimeout(stashGhostTimeoutRef.current);
+    }
+    stashGhostTimeoutRef.current = window.setTimeout(() => {
+      stashGhostTimeoutRef.current = null;
+      setStashGhost(null);
+    }, 600);
+  }, []);
+
+  const restoreStashEntry = useCallback(
+    (entry: PromptStashEntry) => {
+      // Remove first so a double activation (click + Enter) can't restore twice.
+      const taken = takeStashEntry(promptStashScopeKey(entry.providerInstanceId), entry.id);
+      if (!taken) return;
+      flushPromptStashStorage();
+      setIsStashMenuOpen(false);
+
+      const currentPrompt = promptRef.current;
+      const nextPrompt = currentPrompt.trim().length
+        ? `${currentPrompt.replace(/\s+$/, "")}\n\n${entry.prompt}`
+        : entry.prompt;
+      promptRef.current = nextPrompt;
+      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
+      setComposerCursor(nextCursor);
+      setComposerTrigger(null);
+
+      if (entry.attachments.length > 0) {
+        const existingIds = new Set(composerImagesRef.current.map((image) => image.id));
+        const capacity = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - composerImagesRef.current.length;
+        const restoredImages = hydrateImagesFromPersisted(
+          entry.attachments.filter((attachment) => !existingIds.has(attachment.id)),
+        ).slice(0, Math.max(0, capacity));
+        if (restoredImages.length > 0) {
+          addComposerDraftImages(composerDraftTarget, restoredImages);
+        }
+      }
+
+      const restorableSelection =
+        entry.modelSelection &&
+        providerInstanceEntries.some(
+          (candidate) =>
+            candidate.instanceId === entry.modelSelection?.instanceId &&
+            candidate.enabled &&
+            candidate.isAvailable,
+        )
+          ? entry.modelSelection
+          : null;
+      if (restorableSelection) {
+        setComposerDraftModelSelection(composerDraftTarget, restorableSelection, {
+          replaceOptions: true,
+        });
+      }
+
+      if (entry.droppedImageNames.length > 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Some images were not stashed",
+          description: `${entry.droppedImageNames.join(", ")} exceeded the stash size limit when this prompt was saved.`,
+        });
+      }
+
+      window.requestAnimationFrame(() => {
+        composerEditorRef.current?.focusAtEnd();
+      });
+    },
+    [
+      addComposerDraftImages,
+      composerDraftTarget,
+      composerImagesRef,
+      promptRef,
+      providerInstanceEntries,
+      setComposerDraftModelSelection,
+      setComposerDraftPrompt,
+      takeStashEntry,
+    ],
+  );
+
+  const deleteStashEntry = useCallback(
+    (entry: PromptStashEntry) => {
+      takeStashEntry(promptStashScopeKey(entry.providerInstanceId), entry.id);
+      flushPromptStashStorage();
+    },
+    [takeStashEntry],
+  );
+
+  const stashCurrentPrompt = useCallback(async () => {
+    // Terminal-context placeholders reference live sessions the stash can't
+    // round-trip, so they are stripped from the stashed prompt.
+    const prompt = promptRef.current.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim();
+    const images = composerImagesRef.current;
+    if (prompt.length === 0 && images.length === 0) {
+      setIsStashMenuOpen((open) => !open);
+      return;
+    }
+
+    const persistedById = new Map(
+      (getComposerDraft(composerDraftTarget)?.persistedAttachments ?? []).map(
+        (attachment) => [attachment.id, attachment] as const,
+      ),
+    );
+    const candidateAttachments: PersistedComposerImageAttachment[] = [];
+    const unreadableImageNames: string[] = [];
+    for (const image of images) {
+      const persisted = persistedById.get(image.id);
+      if (persisted) {
+        candidateAttachments.push(persisted);
+        continue;
+      }
+      try {
+        candidateAttachments.push({
+          id: image.id,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: await readFileAsDataUrl(image.file),
+        });
+      } catch {
+        unreadableImageNames.push(image.name);
+      }
+    }
+    const { kept, droppedNames } = partitionStashAttachments(candidateAttachments);
+    const allDroppedNames = [...droppedNames, ...unreadableImageNames];
+
+    const entry: PromptStashEntry = {
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+      prompt,
+      attachments: kept,
+      providerInstanceId: stashScopeInstanceId,
+      modelSelection: noProviderAvailable ? null : selectedModelSelection,
+      droppedImageNames: allDroppedNames,
+    };
+    const evicted = stashEntryToQueue(entry);
+    flushPromptStashStorage();
+
+    promptRef.current = "";
+    clearComposerDraftContent(composerDraftTarget);
+    setComposerCursor(0);
+    setComposerTrigger(null);
+
+    playStashGhost(
+      prompt.length > 0 ? prompt : `${images.length} image${images.length === 1 ? "" : "s"}`,
+    );
+
+    toastManager.add({
+      type: "success",
+      title: `Stashed to ${stashProviderLabel}`,
+      description:
+        allDroppedNames.length > 0
+          ? `Saved without ${allDroppedNames.join(", ")} (too large to stash).`
+          : evicted
+            ? "Oldest stashed prompt was discarded to make room."
+            : "Press ⌘S in an empty composer to bring it back.",
+      actionProps: {
+        children: "Undo",
+        onClick: () => {
+          restoreStashEntry(entry);
+        },
+      },
+      data: { hideCopyButton: true },
+    });
+  }, [
+    clearComposerDraftContent,
+    composerDraftTarget,
+    composerImagesRef,
+    getComposerDraft,
+    noProviderAvailable,
+    playStashGhost,
+    promptRef,
+    restoreStashEntry,
+    selectedModelSelection,
+    stashEntryToQueue,
+    stashProviderLabel,
+    stashScopeInstanceId,
+  ]);
+
+  const toggleStashMenu = useCallback(() => {
+    setIsStashMenuOpen((open) => !open);
+  }, []);
+
+  // Close the stash menu whenever the trigger-driven command menu opens so
+  // the two popovers never stack in the same layer, and when the user
+  // resumes typing (the menu is a transient picker, not a panel).
+  useEffect(() => {
+    if (composerMenuOpen) {
+      setIsStashMenuOpen(false);
+    }
+  }, [composerMenuOpen]);
+  useEffect(() => {
+    setIsStashMenuOpen(false);
+  }, [prompt]);
+
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: getTerminalFocusOwner() !== null,
+          terminalOpen,
+          modelPickerOpen: isComposerModelPickerOpen,
+        },
+      });
+      if (command !== "composer.stash") return;
+      // Always claim the shortcut so the browser save dialog never opens,
+      // even when the composer is in a state that can't stash.
+      event.preventDefault();
+      event.stopPropagation();
+      if (
+        isCommandPaletteOpen() ||
+        isComposerApprovalState ||
+        pendingUserInputs.length > 0 ||
+        projectSelectionRequired ||
+        activePendingProgress !== null
+      ) {
+        return;
+      }
+      void stashCurrentPrompt();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [
+    activePendingProgress,
+    isComposerApprovalState,
+    isComposerModelPickerOpen,
+    keybindings,
+    pendingUserInputs.length,
+    projectSelectionRequired,
+    stashCurrentPrompt,
+    terminalOpen,
+  ]);
+
+  // ------------------------------------------------------------------
   // Callbacks: images
   // ------------------------------------------------------------------
   const addComposerImages = (files: File[]) => {
@@ -2402,6 +2685,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               isComposerCollapsedMobile && "hidden",
             )}
           >
+            <ComposerStashBadge
+              count={stashQueue.length}
+              ghost={stashGhost}
+              menuOpen={isStashMenuOpen}
+              onToggleMenu={toggleStashMenu}
+            />
+
+            {isStashMenuOpen && !composerMenuOpen && !isComposerApprovalState && (
+              <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
+                <ComposerStashMenu
+                  entries={stashQueue}
+                  providerLabel={stashProviderLabel}
+                  otherScopesCount={stashOtherScopesCount}
+                  onRestore={restoreStashEntry}
+                  onDelete={deleteStashEntry}
+                  onClose={() => setIsStashMenuOpen(false)}
+                />
+              </ComposerCommandMenuLayer>
+            )}
+
             {composerMenuOpen && !isComposerApprovalState && (
               <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                 <ComposerCommandMenu
