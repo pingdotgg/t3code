@@ -2,12 +2,7 @@
 
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
-import {
-  type PointerEvent as ReactPointerEvent,
-  useCallback,
-  useLayoutEffect,
-  useRef,
-} from "react";
+import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useRef } from "react";
 
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { Button } from "~/components/ui/button";
@@ -48,16 +43,16 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
       ? "New tab"
       : snapshot?.navStatus.title || snapshot?.navStatus.url || "Preview";
 
-  const close = useCallback(() => {
+  const close = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
-  }, [threadRef]);
+  };
 
-  const openInPanel = useCallback(() => {
+  const openInPanel = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
     useRightPanelStore.getState().openBrowser(threadRef, tabId);
-  }, [tabId, threadRef]);
+  };
 
-  const toggleNativePictureInPicture = useCallback(() => {
+  const toggleNativePictureInPicture = () => {
     if (!previewBridge) return;
     const operation = desktopOverlay?.pictureInPicture
       ? previewBridge.pictureInPicture.close
@@ -69,21 +64,21 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
         description: error instanceof Error ? error.message : "An error occurred.",
       });
     });
-  }, [desktopOverlay?.pictureInPicture, tabId]);
-
-  const clampAndMove = useCallback(() => {
-    const root = rootRef.current;
-    const parent = root?.offsetParent;
-    if (!root || !(parent instanceof HTMLElement)) return;
-    const next = clampPreviewMiniPlayerPosition(
-      position ?? { x: root.offsetLeft, y: root.offsetTop },
-      { width: parent.clientWidth, height: parent.clientHeight },
-      { width: root.offsetWidth, height: root.offsetHeight },
-    );
-    usePreviewMiniPlayerStore.getState().move(threadRef, tabId, next);
-  }, [position, tabId, threadRef]);
+  };
 
   useLayoutEffect(() => {
+    const clampAndMove = () => {
+      const root = rootRef.current;
+      const parent = root?.offsetParent;
+      if (!root || !(parent instanceof HTMLElement)) return;
+      const next = clampPreviewMiniPlayerPosition(
+        position ?? { x: root.offsetLeft, y: root.offsetTop },
+        { width: parent.clientWidth, height: parent.clientHeight },
+        { width: root.offsetWidth, height: root.offsetHeight },
+        bottomInset,
+      );
+      usePreviewMiniPlayerStore.getState().move(threadRef, tabId, next);
+    };
     clampAndMove();
     const root = rootRef.current;
     const parent = root?.offsetParent;
@@ -94,9 +89,9 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
     observer.observe(root);
     observer.observe(parent);
     return () => observer.disconnect();
-  }, [clampAndMove]);
+  }, [bottomInset, position, tabId, threadRef]);
 
-  const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     const root = rootRef.current;
     const parent = root?.offsetParent;
@@ -112,41 +107,34 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
-  }, []);
+  };
 
-  const handlePointerMove = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const drag = dragRef.current;
-      const root = rootRef.current;
-      const parent = root?.offsetParent;
-      if (
-        !drag ||
-        drag.pointerId !== event.pointerId ||
-        !root ||
-        !(parent instanceof HTMLElement)
-      ) {
-        return;
-      }
-      const next = clampPreviewMiniPlayerPosition(
-        {
-          x: drag.playerX + event.clientX - drag.pointerX,
-          y: drag.playerY + event.clientY - drag.pointerY,
-        },
-        { width: parent.clientWidth, height: parent.clientHeight },
-        { width: root.offsetWidth, height: root.offsetHeight },
-      );
-      usePreviewMiniPlayerStore.getState().move(threadRef, tabId, next);
-    },
-    [tabId, threadRef],
-  );
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    const root = rootRef.current;
+    const parent = root?.offsetParent;
+    if (!drag || drag.pointerId !== event.pointerId || !root || !(parent instanceof HTMLElement)) {
+      return;
+    }
+    const next = clampPreviewMiniPlayerPosition(
+      {
+        x: drag.playerX + event.clientX - drag.pointerX,
+        y: drag.playerY + event.clientY - drag.pointerY,
+      },
+      { width: parent.clientWidth, height: parent.clientHeight },
+      { width: root.offsetWidth, height: root.offsetHeight },
+      bottomInset,
+    );
+    usePreviewMiniPlayerStore.getState().move(threadRef, tabId, next);
+  };
 
-  const endDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+  const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (dragRef.current?.pointerId !== event.pointerId) return;
     dragRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-  }, []);
+  };
 
   if (!snapshot || miniPlayer?.tabId !== tabId) return null;
 

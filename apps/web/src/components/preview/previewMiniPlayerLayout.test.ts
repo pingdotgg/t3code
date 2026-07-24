@@ -31,4 +31,18 @@ describe("clampPreviewMiniPlayerPosition", () => {
       y: PREVIEW_MINI_PLAYER_EDGE_GAP,
     });
   });
+
+  it("keeps the player above a growing composer inset", () => {
+    expect(
+      clampPreviewMiniPlayerPosition(
+        { x: 500, y: 448 },
+        { width: 1_000, height: 700 },
+        { width: 360, height: 240 },
+        160,
+      ),
+    ).toEqual({
+      x: 500,
+      y: 288,
+    });
+  });
 });
