@@ -1814,7 +1814,7 @@ export default function SidebarV2() {
           // the partition. Background settles never navigate.
           const shell = allThreadByKeyRef.current.get(threadKey);
           let navigateAfterSettle: (() => void) | null = null;
-          if (routeThreadKey === threadKey) {
+          if (routeThreadKeyRef.current === threadKey) {
             const nextThreadKey = resolveNextActiveThreadIdAfterSettle({
               threadIds: orderedThreadKeysRef.current,
               fallbackThreadIds: allUnarchivedThreadKeysRef.current,
@@ -1863,7 +1863,7 @@ export default function SidebarV2() {
         }
       })();
     },
-    [planForwardNavigation, settleThread],
+    [navigateToThread, router, settleThread],
   );
   const attemptUnsettle = useCallback(
     (threadRef: ScopedThreadRef) => {
