@@ -1,6 +1,7 @@
 import { memo } from "react";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
 import { cn } from "~/lib/utils";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface ChatHeaderProps {
   activeThreadTitle: string;
