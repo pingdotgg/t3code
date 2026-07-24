@@ -35,7 +35,11 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import { buildCodexInitializeParams } from "./CodexProvider.ts";
+import {
+  buildCodexInitializeParams,
+  refreshCodexSkillsAfterPluginSync,
+  type CodexSkillDiscoveryClient,
+} from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
@@ -447,14 +451,14 @@ type CodexThreadOpenResponse =
 
 type CodexThreadOpenMethod = "thread/start" | "thread/resume";
 
-interface CodexThreadOpenClient {
+interface CodexThreadOpenClient extends CodexSkillDiscoveryClient {
   readonly request: <M extends CodexThreadOpenMethod>(
     method: M,
     payload: CodexRpc.ClientRequestParamsByMethod[M],
   ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexErrors.CodexAppServerError>;
 }
 
-export const openCodexThread = (input: {
+export const openCodexThread = Effect.fn("openCodexThread")(function* (input: {
   readonly client: CodexThreadOpenClient;
   readonly threadId: ThreadId;
   readonly runtimeMode: RuntimeMode;
@@ -462,7 +466,12 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
-}): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
+}): Effect.fn.Return<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> {
+  yield* refreshCodexSkillsAfterPluginSync({
+    client: input.client,
+    cwd: input.cwd,
+  });
+
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
     cwd: input.cwd,
@@ -472,10 +481,10 @@ export const openCodexThread = (input: {
   });
 
   if (resumeThreadId === undefined) {
-    return input.client.request("thread/start", startParams);
+    return yield* input.client.request("thread/start", startParams);
   }
 
-  return input.client
+  return yield* input.client
     .request("thread/resume", {
       threadId: resumeThreadId,
       ...startParams,
@@ -491,7 +500,7 @@ export const openCodexThread = (input: {
         }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
       ),
     );
-};
+});
 
 function readNotificationThreadId(notification: CodexServerNotification): string | undefined {
   switch (notification.method) {

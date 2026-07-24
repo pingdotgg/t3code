@@ -393,27 +393,79 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
-  it.effect("falls back to thread/start when resume fails recoverably", () =>
+  it.effect("refreshes skills after plugin sync before starting a thread", () =>
     Effect.gen(function* () {
-      const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+      const calls: Array<{ method: string; payload: unknown }> = [];
       const started = makeThreadOpenResponse("fresh-thread");
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
-          method: M,
-          payload: CodexRpc.ClientRequestParamsByMethod[M],
-        ) => {
+        request: (method: string, payload: unknown) => {
           calls.push({ method, payload });
-          if (method === "thread/resume") {
-            return Effect.fail(
-              new CodexErrors.CodexAppServerRequestError({
-                code: -32603,
-                errorMessage: "thread not found",
-              }),
-            );
+          switch (method) {
+            case "plugin/installed":
+              return Effect.succeed({ marketplaces: [] });
+            case "skills/list":
+              return Effect.succeed({
+                data: [{ cwd: "/tmp/project", errors: [], skills: [] }],
+              });
+            case "thread/start":
+              return Effect.succeed(started);
+            default:
+              return Effect.die(new Error(`Unexpected request: ${method}`));
           }
-          return Effect.succeed(started as CodexRpc.ClientRequestResponsesByMethod[M]);
         },
-      };
+      } as unknown as Parameters<typeof openCodexThread>[0]["client"];
+
+      const opened = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+      });
+
+      NodeAssert.equal(opened.thread.id, "fresh-thread");
+      NodeAssert.deepStrictEqual(
+        calls.map((call) => call.method),
+        ["plugin/installed", "skills/list", "thread/start"],
+      );
+      NodeAssert.deepStrictEqual(calls[0]?.payload, { cwds: ["/tmp/project"] });
+      NodeAssert.deepStrictEqual(calls[1]?.payload, {
+        cwds: ["/tmp/project"],
+        forceReload: true,
+      });
+    }),
+  );
+
+  it.effect("falls back to thread/start when resume fails recoverably", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: string; payload: unknown }> = [];
+      const started = makeThreadOpenResponse("fresh-thread");
+      const client = {
+        request: (method: string, payload: unknown) => {
+          calls.push({ method, payload });
+          switch (method) {
+            case "plugin/installed":
+              return Effect.succeed({ marketplaces: [] });
+            case "skills/list":
+              return Effect.succeed({
+                data: [{ cwd: "/tmp/project", errors: [], skills: [] }],
+              });
+            case "thread/resume":
+              return Effect.fail(
+                new CodexErrors.CodexAppServerRequestError({
+                  code: -32603,
+                  errorMessage: "thread not found",
+                }),
+              );
+            case "thread/start":
+              return Effect.succeed(started);
+            default:
+              return Effect.die(new Error(`Unexpected request: ${method}`));
+          }
+        },
+      } as unknown as Parameters<typeof openCodexThread>[0]["client"];
 
       const opened = yield* openCodexThread({
         client,
@@ -428,7 +480,7 @@ describe("openCodexThread", () => {
       NodeAssert.equal(opened.thread.id, "fresh-thread");
       NodeAssert.deepStrictEqual(
         calls.map((call) => call.method),
-        ["thread/resume", "thread/start"],
+        ["plugin/installed", "skills/list", "thread/resume", "thread/start"],
       );
     }),
   );
@@ -436,23 +488,28 @@ describe("openCodexThread", () => {
   it.effect("propagates non-recoverable resume failures", () =>
     Effect.gen(function* () {
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
-          method: M,
-          _payload: CodexRpc.ClientRequestParamsByMethod[M],
-        ) => {
-          if (method === "thread/resume") {
-            return Effect.fail(
-              new CodexErrors.CodexAppServerRequestError({
-                code: -32603,
-                errorMessage: "timed out waiting for server",
-              }),
-            );
+        request: (method: string) => {
+          switch (method) {
+            case "plugin/installed":
+              return Effect.succeed({ marketplaces: [] });
+            case "skills/list":
+              return Effect.succeed({
+                data: [{ cwd: "/tmp/project", errors: [], skills: [] }],
+              });
+            case "thread/resume":
+              return Effect.fail(
+                new CodexErrors.CodexAppServerRequestError({
+                  code: -32603,
+                  errorMessage: "timed out waiting for server",
+                }),
+              );
+            case "thread/start":
+              return Effect.succeed(makeThreadOpenResponse("fresh-thread"));
+            default:
+              return Effect.die(new Error(`Unexpected request: ${method}`));
           }
-          return Effect.succeed(
-            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
-          );
         },
-      };
+      } as unknown as Parameters<typeof openCodexThread>[0]["client"];
 
       const error = yield* openCodexThread({
         client,
