@@ -104,6 +104,38 @@ function withContentSecurityPolicy(response: Response, policy: string): Response
   });
 }
 
+/**
+ * Must run synchronously during process bootstrap, before Electron emits `ready`.
+ */
+export function registerDesktopSchemePrivilegesSync(): void {
+  Electron.protocol.registerSchemesAsPrivileged([
+    {
+      scheme: DESKTOP_PRODUCTION_SCHEME,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+      },
+    },
+    {
+      scheme: DESKTOP_DEVELOPMENT_SCHEME,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+      },
+    },
+  ]);
+}
+
+const registerDesktopSchemePrivileges = Effect.sync(registerDesktopSchemePrivilegesSync).pipe(
+  Effect.withSpan("desktop.electron.protocol.registerSchemePrivileges"),
+);
+
+export const layerSchemePrivileges = Layer.effectDiscard(registerDesktopSchemePrivileges);
+
 async function proxyRequest(
   request: Request,
   targetOrigin: URL,
