@@ -333,11 +333,15 @@ const program = Effect.gen(function* () {
     }),
   );
 
+  const requireAuthentication = Effect.fn("acpMockAgent.requireAuthentication")(function* () {
+    if (!authenticated) {
+      return yield* AcpError.AcpRequestError.authRequired();
+    }
+  });
+
   yield* agent.handleCreateSession(() =>
     Effect.gen(function* () {
-      if (!authenticated) {
-        return yield* AcpError.AcpRequestError.authRequired();
-      }
+      yield* requireAuthentication();
       return {
         sessionId,
         modes: modeState(),
@@ -410,36 +414,50 @@ const program = Effect.gen(function* () {
   );
 
   yield* agent.handleListSessions((request) =>
-    Effect.succeed({
-      sessions: [
-        {
-          sessionId,
-          cwd: request.cwd ?? process.cwd(),
-          title: "Mock session",
-          updatedAt: "1970-01-01T00:00:00.000Z",
-        },
-      ],
+    Effect.gen(function* () {
+      yield* requireAuthentication();
+      return {
+        sessions: [
+          {
+            sessionId,
+            cwd: request.cwd ?? process.cwd(),
+            title: "Mock session",
+            updatedAt: "1970-01-01T00:00:00.000Z",
+          },
+        ],
+      };
     }),
   );
 
   yield* agent.handleForkSession((request) =>
-    Effect.succeed({
-      sessionId: `${request.sessionId}-fork`,
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.gen(function* () {
+      yield* requireAuthentication();
+      return {
+        sessionId: `${request.sessionId}-fork`,
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
     }),
   );
 
   yield* agent.handleResumeSession(() =>
-    Effect.succeed({
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.gen(function* () {
+      yield* requireAuthentication();
+      return {
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
     }),
   );
 
-  yield* agent.handleCloseSession(() => Effect.succeed({}));
+  yield* agent.handleCloseSession(() =>
+    Effect.gen(function* () {
+      yield* requireAuthentication();
+      return {};
+    }),
+  );
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
