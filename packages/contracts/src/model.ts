@@ -132,6 +132,7 @@ const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CLAUDE_SYNTHERO_DRIVER_KIND = ProviderDriverKind.make("claude-synthero");
 const CLAUDEX_DRIVER_KIND = ProviderDriverKind.make("claudex");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+const KIMI_DRIVER_KIND = ProviderDriverKind.make("kimi");
 const FUGU_DRIVER_KIND = ProviderDriverKind.make("fugu");
 const CHATGPT_DRIVER_KIND = ProviderDriverKind.make("chatgpt");
 
@@ -144,6 +145,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CLAUDE_SYNTHERO_DRIVER_KIND]: "claude-sonnet-5",
   [CLAUDEX_DRIVER_KIND]: "claudex-luna",
   [GROK_DRIVER_KIND]: "grok-4.5",
+  [KIMI_DRIVER_KIND]: "kimi-code/k3",
   [FUGU_DRIVER_KIND]: "fugu",
   [CHATGPT_DRIVER_KIND]: "chatgpt",
 };
@@ -155,6 +157,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CODEX_DRIVER_KIND]: DEFAULT_GIT_TEXT_GENERATION_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CLAUDE_SYNTHERO_DRIVER_KIND]: "claude-haiku-4-5",
+  [KIMI_DRIVER_KIND]: "kimi-code/kimi-for-coding-highspeed",
   [FUGU_DRIVER_KIND]: "fugu",
   [CHATGPT_DRIVER_KIND]: "chatgpt",
 };
@@ -211,6 +214,16 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
   [GROK_DRIVER_KIND]: {
     "grok-4-5": "grok-4.5",
   },
+  [KIMI_DRIVER_KIND]: {
+    k3: "kimi-code/k3",
+    "kimi-k3": "kimi-code/k3",
+    "kimi-code": "kimi-code/kimi-for-coding",
+    "k2.7": "kimi-code/kimi-for-coding",
+    "k2.7-coding": "kimi-code/kimi-for-coding",
+    "kimi-for-coding": "kimi-code/kimi-for-coding",
+    "k2.7-highspeed": "kimi-code/kimi-for-coding-highspeed",
+    "kimi-for-coding-highspeed": "kimi-code/kimi-for-coding-highspeed",
+  },
   [FUGU_DRIVER_KIND]: {
     ultra: "fugu-ultra",
     "fugu-ultra-latest": "fugu-ultra",
@@ -225,6 +238,7 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CLAUDE_DRIVER_KIND]: "Claude",
   [CLAUDEX_DRIVER_KIND]: "Claudex",
   [GROK_DRIVER_KIND]: "Grok",
+  [KIMI_DRIVER_KIND]: "Kimi",
   [FUGU_DRIVER_KIND]: "Fugu",
   [CHATGPT_DRIVER_KIND]: "ChatGPT",
 };
