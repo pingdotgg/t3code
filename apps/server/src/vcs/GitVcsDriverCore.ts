@@ -273,49 +273,42 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   return remotes;
 }
 
-function parseUpstreamRefWithRemoteNames(
-  upstreamRef: string,
-  remoteNames: ReadonlyArray<string>,
-): { upstreamRef: string; remoteName: string; branchName: string } | null {
-  const parsed = parseRemoteRefWithRemoteNames(upstreamRef, remoteNames);
-  if (!parsed) {
-    return null;
-  }
-
-  return {
-    upstreamRef,
-    remoteName: parsed.remoteName,
-    branchName: parsed.branchName,
-  };
-}
-
-function parseUpstreamRefByFirstSeparator(
-  upstreamRef: string,
-): { upstreamRef: string; remoteName: string; branchName: string } | null {
-  const separatorIndex = upstreamRef.indexOf("/");
-  if (separatorIndex <= 0 || separatorIndex === upstreamRef.length - 1) {
-    return null;
-  }
-
-  const remoteName = upstreamRef.slice(0, separatorIndex).trim();
-  const branchName = upstreamRef.slice(separatorIndex + 1).trim();
-  if (remoteName.length === 0 || branchName.length === 0) {
-    return null;
-  }
-
-  return {
-    upstreamRef,
-    remoteName,
-    branchName,
-  };
-}
-
-function parseCurrentUpstreamRemoteRef(stdout: string): string | null {
+function parseCurrentUpstream(stdout: string): {
+  upstreamRef: string;
+  remoteName: string;
+  branchName: string;
+  remoteRef: string;
+} | null {
   for (const line of stdout.split("\n")) {
-    const [headMarker = "", remoteRef = ""] = line.split("\t");
-    if (headMarker.trim() === "*" && remoteRef.trim().length > 0) {
-      return remoteRef.trim();
+    const [
+      headMarker = "",
+      upstreamRef = "",
+      upstreamTargetRef = "",
+      remoteName = "",
+      remoteRef = "",
+    ] = line.split("\t");
+    if (
+      headMarker.trim() !== "*" ||
+      upstreamRef.trim().length === 0 ||
+      remoteName.trim().length === 0 ||
+      remoteRef.trim().length === 0
+    ) {
+      continue;
     }
+
+    const normalizedRemoteName = remoteName.trim();
+    const remoteTrackingPrefix = `refs/remotes/${normalizedRemoteName}/`;
+    const normalizedUpstreamTargetRef = upstreamTargetRef.trim();
+    if (!normalizedUpstreamTargetRef.startsWith(remoteTrackingPrefix)) {
+      return null;
+    }
+
+    return {
+      upstreamRef: upstreamRef.trim(),
+      remoteName: normalizedRemoteName,
+      branchName: normalizedUpstreamTargetRef.slice(remoteTrackingPrefix.length),
+      remoteRef: remoteRef.trim(),
+    };
   }
   return null;
 }
@@ -937,42 +930,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   const resolveCurrentUpstream = Effect.fn("resolveCurrentUpstream")(function* (cwd: string) {
-    const upstreamRef = yield* runGitStdout(
+    const upstream = yield* runGitStdout(
       "GitVcsDriver.resolveCurrentUpstream",
       cwd,
-      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
-      true,
-    ).pipe(Effect.map((stdout) => stdout.trim()));
-
-    if (upstreamRef.length === 0 || upstreamRef === "@{upstream}") {
-      return null;
-    }
-
-    const remoteNames = yield* runGitStdout("GitVcsDriver.listRemoteNames", cwd, ["remote"]).pipe(
-      Effect.map(parseRemoteNames),
-      Effect.orElseSucceed((): ReadonlyArray<string> => []),
-    );
-    const parsedUpstream =
-      parseUpstreamRefWithRemoteNames(upstreamRef, remoteNames) ??
-      parseUpstreamRefByFirstSeparator(upstreamRef);
-    if (!parsedUpstream) {
-      return null;
-    }
-
-    const upstreamRemoteRef = yield* runGitStdout(
-      "GitVcsDriver.resolveCurrentUpstreamRemoteRef",
-      cwd,
-      ["for-each-ref", "--format=%(HEAD)%09%(upstream:remoteref)", "refs/heads"],
+      [
+        "for-each-ref",
+        "--format=%(HEAD)%09%(upstream:short)%09%(upstream)%09%(upstream:remotename)%09%(upstream:remoteref)",
+        "refs/heads",
+      ],
       true,
     ).pipe(
-      Effect.map(parseCurrentUpstreamRemoteRef),
+      Effect.map(parseCurrentUpstream),
       Effect.orElseSucceed(() => null),
     );
-
-    return {
-      ...parsedUpstream,
-      remoteRef: upstreamRemoteRef ?? `refs/heads/${parsedUpstream.branchName}`,
-    };
+    return upstream;
   });
 
   const fetchRemoteForStatus = (
@@ -1183,53 +1154,52 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ),
       );
 
-      yield* Effect.gen(function* () {
-        const targetsWithExpectedOids = yield* Effect.forEach(
-          fetchTargets,
-          Effect.fn("GitVcsDriver.fetchRemoteForStatus.readTarget")(function* (fetchTarget) {
-            const previousTarget = yield* executeGit(
-              "GitVcsDriver.fetchRemoteForStatus.readTarget",
-              fetchCwd,
-              ["--git-dir", gitCommonDir, "rev-parse", "--verify", fetchTarget.targetRef],
-              { allowNonZeroExit: true },
-            );
-            return {
-              ...fetchTarget,
-              expectedTarget:
-                previousTarget.exitCode === 0 ? previousTarget.stdout.trim() : GIT_ZERO_OID,
-            };
-          }),
-          { concurrency: "unbounded" },
-        );
-        const result = yield* executeGit(
-          "GitVcsDriver.fetchRemoteForStatus",
+      const fetchAndPromoteTarget = Effect.fn(
+        "GitVcsDriver.fetchRemoteForStatus.fetchAndPromoteTarget",
+      )(function* (fetchTarget: (typeof fetchTargets)[number]) {
+        const previousTarget = yield* executeGit(
+          "GitVcsDriver.fetchRemoteForStatus.readTarget",
           fetchCwd,
-          [
-            "--git-dir",
-            gitCommonDir,
-            "-c",
-            "fetch.unpackLimit=0",
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            "--no-write-fetch-head",
-            "--refmap=",
-            remoteName,
-            ...fetchTargets.map(
-              ({ remoteRef: sourceRef, temporaryRef }) => `+${sourceRef}:${temporaryRef}`,
-            ),
-          ],
-          {
-            allowNonZeroExit: true,
-            env: {
-              ...STATUS_UPSTREAM_REFRESH_ENV,
-              GIT_OBJECT_DIRECTORY: temporaryObjectDirectory,
-              GIT_ALTERNATE_OBJECT_DIRECTORIES: objectDirectory,
-            },
-            timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
-          },
+          ["--git-dir", gitCommonDir, "rev-parse", "--verify", fetchTarget.targetRef],
+          { allowNonZeroExit: true },
         );
-        if (result.exitCode !== 0) return;
+        const expectedTarget =
+          previousTarget.exitCode === 0 ? previousTarget.stdout.trim() : GIT_ZERO_OID;
+        const fetchArgs = [
+          "--git-dir",
+          gitCommonDir,
+          "-c",
+          "fetch.unpackLimit=0",
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          "--no-write-fetch-head",
+          "--refmap=",
+          remoteName,
+          `+${fetchTarget.remoteRef}:${fetchTarget.temporaryRef}`,
+        ];
+        const result = yield* executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, fetchArgs, {
+          allowNonZeroExit: true,
+          env: {
+            ...STATUS_UPSTREAM_REFRESH_ENV,
+            GIT_OBJECT_DIRECTORY: temporaryObjectDirectory,
+            GIT_ALTERNATE_OBJECT_DIRECTORIES: objectDirectory,
+          },
+          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+        });
+        if (result.exitCode !== 0) {
+          return yield* new GitCommandError({
+            ...gitCommandContext({
+              operation: "GitVcsDriver.fetchRemoteForStatus",
+              cwd: fetchCwd,
+              args: fetchArgs,
+            }),
+            detail: `Git status fetch failed for '${fetchTarget.remoteRef}'.`,
+            exitCode: result.exitCode,
+            stdoutLength: result.stdout.length,
+            stderrLength: result.stderr.length,
+          });
+        }
 
         yield* fileSystem.makeDirectory(packDirectory, { recursive: true }).pipe(
           Effect.mapError(
@@ -1244,27 +1214,38 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
         );
         yield* promoteObjectFiles;
+        const fetchedCommit = yield* runGitStdout(
+          "GitVcsDriver.fetchRemoteForStatus.resolve",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "rev-parse", "--verify", fetchTarget.temporaryRef],
+        ).pipe(Effect.map((stdout) => stdout.trim()));
+        yield* runGit("GitVcsDriver.fetchRemoteForStatus.promoteRef", fetchCwd, [
+          "--git-dir",
+          gitCommonDir,
+          "update-ref",
+          fetchTarget.targetRef,
+          fetchedCommit,
+          expectedTarget,
+        ]);
+      });
+
+      yield* Effect.gen(function* () {
+        const [upstreamFetchTarget, ...optionalFetchTargets] = fetchTargets;
+        if (!upstreamFetchTarget) return;
+
+        yield* fetchAndPromoteTarget(upstreamFetchTarget);
         yield* Effect.forEach(
-          targetsWithExpectedOids,
-          Effect.fn("GitVcsDriver.fetchRemoteForStatus.promoteRef")(function* ({
-            temporaryRef,
-            targetRef: destinationRef,
-            expectedTarget,
-          }) {
-            const fetchedCommit = yield* runGitStdout(
-              "GitVcsDriver.fetchRemoteForStatus.resolve",
-              fetchCwd,
-              ["--git-dir", gitCommonDir, "rev-parse", "--verify", temporaryRef],
-            ).pipe(Effect.map((stdout) => stdout.trim()));
-            yield* runGit("GitVcsDriver.fetchRemoteForStatus.promoteRef", fetchCwd, [
-              "--git-dir",
-              gitCommonDir,
-              "update-ref",
-              destinationRef,
-              fetchedCommit,
-              expectedTarget,
-            ]);
-          }),
+          optionalFetchTargets,
+          (fetchTarget) =>
+            fetchAndPromoteTarget(fetchTarget).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to refresh the default branch during Git status fetch.", {
+                  cause,
+                  remoteName,
+                  defaultBranchName,
+                }),
+              ),
+            ),
           { concurrency: 1, discard: true },
         );
       }).pipe(Effect.ensuring(cleanupIsolatedFetch));
