@@ -41,6 +41,7 @@ struct EmptyStateView: View {
                     .frame(width: 44, height: 44)
                 BrandWordmark(size: 26)
                 Text("Select a session, start a quick chat, or choose a project.")
+                    .font(SurgeTypography.chatBody)
                     .foregroundStyle(.white.opacity(0.88))
                     .multilineTextAlignment(.center)
                 HStack(spacing: 12) {

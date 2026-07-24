@@ -196,7 +196,7 @@ private struct PullRequestThreadCard: View {
                     .foregroundStyle(statusColor)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(thread.path + (line.map { ":\($0)" } ?? ""))
-                        .font(.system(.callout, design: .monospaced).weight(.semibold))
+                        .font(SurgeTypography.technicalMetadata)
                         .textSelection(.enabled)
                     Text(status)
                         .font(.caption.weight(.semibold))

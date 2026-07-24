@@ -617,7 +617,7 @@ private func inlineAttributed(markup: Markup) -> AttributedString {
     case let inlineCode as Markdown.InlineCode:
         var result = AttributedString(inlineCode.code)
         result.inlinePresentationIntent = .code
-        result.font = .system(.body, design: .monospaced)
+        result.font = SurgeTypography.code
         return result
 
     case let link as Markdown.Link:
@@ -1054,6 +1054,8 @@ private struct MarkdownListRow: View {
                     foreground: MarkdownTheme.tokens(for: style).checkedTaskTextForeground)
             } else {
                 Text(text)
+                    .font(SurgeTypography.chatBody)
+                    .lineSpacing(3.75)
                     .foregroundStyle(textForeground)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1071,15 +1073,15 @@ private struct MarkdownListRow: View {
         switch marker {
         case .bullet:
             Text(MarkdownTheme.bulletGlyph(depth: level))
-                .font(.body)
+                .font(SurgeTypography.chatBody)
                 .foregroundStyle(markerForeground)
         case .ordered(let number):
             Text("\(number).")
-                .font(.body.monospacedDigit())
+                .font(SurgeTypography.chatBody.monospacedDigit())
                 .foregroundStyle(markerForeground)
         case .task(let checked):
             Image(systemName: checked ? "checkmark.square.fill" : "square")
-                .font(.body)
+                .font(SurgeTypography.chatBody)
                 .foregroundStyle(taskMarkerForeground(checked: checked))
         }
     }
@@ -1157,8 +1159,12 @@ private struct MarkdownProseText: View {
 
     var body: some View {
         Text(attributed)
+            .font(SurgeTypography.chatBody)
+            .lineSpacing(3.75)
             .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // Long prose stays in the 620–700pt readability band instead of
+            // filling the whole transcript column.
+            .frame(maxWidth: 680, alignment: .leading)
     }
 }
 
@@ -1186,7 +1192,7 @@ private struct MarkdownUserInlineText: View {
                     ? tokens.proseForeground.color
                     : (foreground ?? tokens.proseForeground).color
                 Text(segment)
-                    .font(isCode ? .system(.body, design: .monospaced) : font)
+                    .font(isCode ? SurgeTypography.code : (font ?? SurgeTypography.chatBody))
                     .foregroundStyle(foregroundColor)
                     .italic(italic && !isCode)
                     .underline(isLink, color: tokens.proseForeground.color)
@@ -1199,6 +1205,7 @@ private struct MarkdownUserInlineText: View {
                         in: RoundedRectangle(cornerRadius: 4))
             }
         }
+        .lineSpacing(3.75)
         .textSelection(.enabled)
     }
 }
@@ -1419,7 +1426,7 @@ private func attributedCode(_ code: String) -> AttributedString {
     // Fenced code intentionally stays unlinked. Inline code is linkified by
     // inlineAttributed(children:) before it reaches a MarkdownBlock.
     var result = AttributedString(code)
-    result.font = .system(.body, design: .monospaced)
+    result.font = SurgeTypography.code
     result.backgroundColor = Color(nsColor: .textBackgroundColor)
     return result
 }
@@ -1498,7 +1505,7 @@ private struct MarkdownPlainCodePanel: View {
 
     var body: some View {
         Text(text)
-            .font(.system(.callout, design: .monospaced))
+            .font(SurgeTypography.toolPayload)
             .foregroundStyle(.white)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
@@ -1545,7 +1552,7 @@ private struct MarkdownCodeBlock: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text(languageLabel)
-                    .font(.caption.weight(.medium))
+                    .font(SurgeTypography.technicalMetadata)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
                 if isHovering {
@@ -1604,14 +1611,14 @@ private struct MarkdownCodeBlock: View {
     private var codeContent: some View {
         if isWrapped {
             Text(displayedText)
-                .font(.system(.body, design: .monospaced))
+                .font(SurgeTypography.code)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(displayedText)
-                    .font(.system(.body, design: .monospaced))
+                    .font(SurgeTypography.code)
                     .textSelection(.enabled)
                     .fixedSize()
             }
@@ -1635,7 +1642,7 @@ private struct MarkdownCodeBlock: View {
 
     private static func plainCode(_ code: String) -> AttributedString {
         var result = AttributedString(code)
-        result.font = .system(.body, design: .monospaced)
+        result.font = SurgeTypography.code
         return result
     }
 }
@@ -1681,7 +1688,7 @@ private struct MarkdownTableView: View {
             let columnAlignment = table.columnAlignments.indices.contains(index)
                 ? table.columnAlignments[index] : nil
             Text(cell)
-                .font(isHeader ? .body.weight(.semibold) : .body)
+                .font(isHeader ? SurgeTypography.chatEmphasis : SurgeTypography.chatBody)
                 .textSelection(.enabled)
                 .multilineTextAlignment(columnAlignment ?? .leading)
                 .frame(minWidth: 72, alignment: alignment(columnAlignment))

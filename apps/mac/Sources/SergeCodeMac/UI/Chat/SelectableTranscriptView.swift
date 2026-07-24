@@ -100,7 +100,7 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.containerSize = NSSize(
             width: 0, height: CGFloat.greatestFiniteMagnitude)
-        textView.font = .systemFont(ofSize: NSFont.systemFontSize)
+        textView.font = TranscriptTextBuilder.bodyFont
         rebuild(
             textView: textView,
             scrollView: scrollView,
@@ -223,17 +223,21 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
 /// Pure builder: raw timeline items → one selectable attributed string.
 @MainActor
 enum TranscriptTextBuilder {
-    private static var bodyFont: NSFont {
-        NSFont.systemFont(ofSize: NSFont.systemFontSize)
+    static var bodyFont: NSFont {
+        NSFont(name: "Geist-Regular", size: 14.5)
+            ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
     }
     private static var monoFont: NSFont {
-        NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        NSFont(name: "GeistMono-Regular", size: 13)
+            ?? NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
     }
     private static var captionMono: NSFont {
-        NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        NSFont(name: "GeistMono-Regular", size: 11.5)
+            ?? NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
     }
     private static var headerFont: NSFont {
-        NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        NSFont(name: "Geist-SemiBold", size: 14)
+            ?? NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
     }
 
     static func attributedString(

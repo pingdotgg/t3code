@@ -34,7 +34,7 @@ public struct ApprovalCard: View {
             if !request.detail.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     Text(request.detail)
-                        .font(.system(.callout, design: .monospaced))
+                        .font(SurgeTypography.toolPayload)
                         .textSelection(.enabled)
                 }
                 .padding(10)

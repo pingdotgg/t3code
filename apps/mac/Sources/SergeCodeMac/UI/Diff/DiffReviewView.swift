@@ -252,7 +252,7 @@ public struct DiffReviewView: View {
                             .frame(width: 12)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(file.path)
-                                .font(.system(.body, design: .monospaced))
+                                .font(SurgeTypography.code)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             if let oldPath = file.oldPath, file.status == .renamed {
@@ -416,7 +416,7 @@ public struct DiffReviewView: View {
 
     private func hunkHeader(_ header: String, zoom: Double) -> some View {
         Text(header)
-            .font(.system(size: DiffZoom.captionFontSize(for: zoom), design: .monospaced))
+            .font(SurgeTypography.code(size: DiffZoom.captionFontSize(for: zoom)))
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .truncationMode(.middle)
@@ -654,7 +654,7 @@ private struct UnifiedLineView: View {
     }
 
     private var contentFont: Font {
-        .system(size: DiffZoom.contentFontSize(for: zoomFactor), design: .monospaced)
+        SurgeTypography.code(size: DiffZoom.contentFontSize(for: zoomFactor))
     }
 
     private var baseBackground: Color {
@@ -671,7 +671,7 @@ private struct UnifiedLineView: View {
 
     private func gutter(_ number: Int?) -> some View {
         Text(number.map(String.init) ?? "")
-            .font(.system(size: DiffZoom.captionFontSize(for: zoomFactor), design: .monospaced))
+            .font(SurgeTypography.code(size: DiffZoom.captionFontSize(for: zoomFactor)))
             .foregroundStyle(.secondary)
             .frame(width: gutterWidth, alignment: .trailing)
     }
@@ -710,24 +710,18 @@ private struct SideBySideLineView: View {
     ) -> some View {
         HStack(alignment: .top, spacing: 0) {
             Text(number.map(String.init) ?? "")
-                .font(.system(size: DiffZoom.captionFontSize(for: zoomFactor), design: .monospaced))
+                .font(SurgeTypography.code(size: DiffZoom.captionFontSize(for: zoomFactor)))
                 .foregroundStyle(.secondary)
                 .frame(width: gutterWidth, alignment: .trailing)
             Group {
                 if let attributed {
                     Text(attributed)
-                        .font(
-                            .system(
-                                size: DiffZoom.contentFontSize(for: zoomFactor), design: .monospaced)
-                        )
+                        .font(SurgeTypography.code(size: DiffZoom.contentFontSize(for: zoomFactor)))
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text(" ")
-                        .font(
-                            .system(
-                                size: DiffZoom.contentFontSize(for: zoomFactor), design: .monospaced)
-                        )
+                        .font(SurgeTypography.code(size: DiffZoom.contentFontSize(for: zoomFactor)))
                 }
             }
             .padding(.leading, DiffZoom.codeLeadingPadding)
