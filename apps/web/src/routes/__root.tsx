@@ -1,5 +1,9 @@
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+} from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   Outlet,
@@ -7,6 +11,7 @@ import {
   type ErrorComponentProps,
   useLocation,
   useNavigate,
+  useRouterState,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
@@ -27,6 +32,7 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { useMarkFirstSeenCompletedThreadsUnread } from "../hooks/useMarkFirstSeenCompletedThreadsUnread";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -48,6 +54,7 @@ import {
   primaryServerWelcomeAtom,
 } from "../state/server";
 import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import { resolveThreadRouteTarget } from "../threadRoutes";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -134,6 +141,8 @@ function RootRouteView() {
         <SshPasswordPromptDialog />
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
+        <ActiveThreadRouteTracker />
+        <CompletedThreadUnreadTracker />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
@@ -193,6 +202,34 @@ function HostedStaticEnvironmentBootstrap() {
 
     setActiveEnvironmentId(firstSavedEnvironment.environmentId);
   }, [activeEnvironmentId, environments]);
+
+  return null;
+}
+
+function CompletedThreadUnreadTracker() {
+  useMarkFirstSeenCompletedThreadsUnread();
+  return null;
+}
+
+function ActiveThreadRouteTracker() {
+  const routeTarget = useRouterState({
+    select: (state) => {
+      const params = state.matches[state.matches.length - 1]?.params ?? {};
+      return resolveThreadRouteTarget(params);
+    },
+  });
+  const routeKind = routeTarget?.kind ?? null;
+  const serverThreadKey =
+    routeTarget?.kind === "server" ? scopedThreadKey(routeTarget.threadRef) : null;
+  const markActiveThreadVisited = useUiStateStore((state) => state.markActiveThreadVisited);
+
+  useEffect(() => {
+    if (serverThreadKey !== null) {
+      markActiveThreadVisited(serverThreadKey, null);
+    } else if (routeKind === null) {
+      markActiveThreadVisited(null, null);
+    }
+  }, [markActiveThreadVisited, routeKind, serverThreadKey]);
 
   return null;
 }

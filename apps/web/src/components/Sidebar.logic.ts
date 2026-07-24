@@ -98,6 +98,7 @@ export interface ThreadStatusPill {
   label:
     | "Working"
     | "Connecting"
+    | "Unread"
     | "Completed"
     | "Pending Approval"
     | "Awaiting Input"
@@ -113,6 +114,7 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   Working: 3,
   Connecting: 3,
   "Plan Ready": 2,
+  Unread: 1,
   Completed: 1,
 };
 
@@ -126,6 +128,7 @@ type ThreadStatusInput = Pick<
   | "session"
 > & {
   lastVisitedAt?: string | undefined;
+  isExplicitlyUnread?: boolean | undefined;
 };
 
 export interface ThreadJumpHintVisibilityController {
@@ -424,6 +427,22 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   return "ready";
 }
 
+export type SidebarV2TopStatus = Exclude<SidebarV2Status, "ready"> | "unread" | "done" | null;
+
+export function resolveSidebarV2TopStatus(input: {
+  readonly status: SidebarV2Status;
+  readonly isExplicitlyUnread: boolean;
+  readonly isUnread: boolean;
+}): SidebarV2TopStatus {
+  if (input.status !== "ready") {
+    return input.status;
+  }
+  if (input.isExplicitlyUnread) {
+    return "unread";
+  }
+  return input.isUnread ? "done" : null;
+}
+
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
     poison the whole ordering, so it sinks to the epoch instead. */
 export function parseTimestampMs(isoDate: string): number {
@@ -589,6 +608,15 @@ export function resolveThreadStatusPill(input: {
       label: "Plan Ready",
       colorClass: "text-violet-600 dark:text-violet-300/90",
       dotClass: "bg-violet-500 dark:bg-violet-300/90",
+      pulse: false,
+    };
+  }
+
+  if (thread.isExplicitlyUnread) {
+    return {
+      label: "Unread",
+      colorClass: "text-blue-600 dark:text-blue-300/90",
+      dotClass: "bg-blue-500 dark:bg-blue-300/90",
       pulse: false,
     };
   }

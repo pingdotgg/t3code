@@ -17,6 +17,7 @@ import {
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarV2Status,
+  resolveSidebarV2TopStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   formatWorkingDurationLabel,
@@ -654,6 +655,38 @@ describe("resolveSidebarV2Status", () => {
   });
 });
 
+describe("resolveSidebarV2TopStatus", () => {
+  it.each(["approval", "input", "working", "failed"] as const)(
+    "keeps %s above an explicit unread marker",
+    (status) => {
+      expect(
+        resolveSidebarV2TopStatus({
+          status,
+          isExplicitlyUnread: true,
+          isUnread: true,
+        }),
+      ).toBe(status);
+    },
+  );
+
+  it("uses unread only for a ready thread", () => {
+    expect(
+      resolveSidebarV2TopStatus({
+        status: "ready",
+        isExplicitlyUnread: true,
+        isUnread: true,
+      }),
+    ).toBe("unread");
+    expect(
+      resolveSidebarV2TopStatus({
+        status: "ready",
+        isExplicitlyUnread: false,
+        isUnread: true,
+      }),
+    ).toBe("done");
+  });
+});
+
 describe("sortThreadsForSidebarV2", () => {
   const sortable = (input: { id: string; createdAt: string }) => ({
     id: input.id,
@@ -835,6 +868,23 @@ describe("resolveThreadStatusPill", () => {
     },
   };
 
+  it("shows explicit unread even without a completed turn", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          isExplicitlyUnread: true,
+          latestTurn: null,
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            activeTurnId: null,
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Unread", pulse: false });
+  });
+
   it("shows pending approval before all other statuses", () => {
     expect(
       resolveThreadStatusPill({
@@ -842,9 +892,21 @@ describe("resolveThreadStatusPill", () => {
           ...baseThread,
           hasPendingApprovals: true,
           hasPendingUserInput: true,
+          isExplicitlyUnread: true,
         },
       }),
     ).toMatchObject({ label: "Pending Approval", pulse: false });
+  });
+
+  it("shows active work before an explicit unread marker", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          isExplicitlyUnread: true,
+        },
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
   });
 
   it("shows awaiting input when plan mode is blocked on user answers", () => {
