@@ -85,6 +85,7 @@ vi.mock("./browserSurfaceStore", () => ({
 }));
 
 import {
+  BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS,
   BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS,
   BrowserRecordingConflictError,
   BrowserRecordingOperationError,
@@ -185,6 +186,25 @@ describe("browser recording", () => {
     expect(events).toEqual(["start-screencast", "publish:recording-tab"]);
 
     await stopBrowserRecording("recording-tab");
+  });
+
+  it("fails startup instead of locking a fallback size when no frame arrives", async () => {
+    vi.useFakeTimers();
+    startScreencast.mockImplementationOnce(async () => {
+      events.push("start-screencast");
+    });
+
+    const startPromise = startBrowserRecording("recording-tab");
+    const rejection = expect(startPromise).rejects.toMatchObject({
+      operation: "wait-first-frame",
+      tabId: "recording-tab",
+    });
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS);
+
+    await rejection;
+    expect(stopScreencast).toHaveBeenCalledWith("recording-tab");
+    expect(events.at(-1)).toBe("clear");
   });
 
   it("fixes hidden recording dimensions before MediaRecorder starts", async () => {
@@ -321,8 +341,15 @@ describe("browser recording", () => {
 
   it("does not report success for a second start while the first is still starting", async () => {
     let finishStartingScreencast: (() => void) | undefined;
-    startScreencast.mockImplementationOnce(async () => {
+    startScreencast.mockImplementationOnce(async (tabId: string) => {
       events.push("start-screencast");
+      frameSubscription.listener?.({
+        tabId,
+        data: "initial-frame",
+        width: 800,
+        height: 600,
+        receivedAt: "2026-06-26T00:00:00.000Z",
+      });
       await new Promise<void>((resolve) => {
         finishStartingScreencast = resolve;
       });
@@ -435,6 +462,38 @@ describe("browser recording", () => {
     await stopBrowserRecording("recording-tab");
 
     expect(startCallsBeforeFirstSettled).toBe(1);
+  });
+
+  it("keeps the recording slot while a failed stop waits for startup", async () => {
+    let finishStartingScreencast: (() => void) | undefined;
+    startScreencast.mockImplementationOnce(async () => {
+      events.push("start-screencast");
+      await new Promise<void>((resolve) => {
+        finishStartingScreencast = resolve;
+      });
+    });
+    stopScreencast.mockRejectedValueOnce(new Error("initial stop failed"));
+
+    const firstStart = startBrowserRecording("recording-tab");
+    const rejectedStart = expect(firstStart).rejects.toBeInstanceOf(BrowserRecordingOperationError);
+    await vi.waitFor(() => expect(startScreencast).toHaveBeenCalledOnce());
+
+    const stopPromise = stopBrowserRecording("recording-tab");
+    const rejectedStop = expect(stopPromise).rejects.toMatchObject({
+      operation: "stop-screencast",
+      tabId: "recording-tab",
+    });
+    await vi.waitFor(() => expect(stopScreencast).toHaveBeenCalledOnce());
+    await expect(startBrowserRecording("recording-tab")).rejects.toBeInstanceOf(
+      BrowserRecordingConflictError,
+    );
+
+    finishStartingScreencast?.();
+    await rejectedStart;
+    await rejectedStop;
+
+    await startBrowserRecording("recording-tab");
+    await stopBrowserRecording("recording-tab");
   });
 
   it("fails a stop that waits too long for startup without freeing the recording slot", async () => {

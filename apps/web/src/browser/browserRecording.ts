@@ -55,6 +55,7 @@ export class BrowserRecordingOperationError extends Schema.TaggedErrorClass<Brow
       "start-media-recorder",
       "start-screencast",
       "stop-screencast",
+      "wait-first-frame",
       "wait-startup",
       "stop-media-recorder",
       "save-artifact",
@@ -86,8 +87,8 @@ interface ActiveRecording {
   readonly chunks: Blob[];
   readonly startedAt: string;
   readonly startupSettled: Promise<void>;
-  readonly firstFrameSize: Promise<void>;
-  readonly settleFirstFrameSize: () => void;
+  readonly firstFrameSize: Promise<"frame" | "cancelled">;
+  readonly settleFirstFrameSize: (outcome: "frame" | "cancelled") => void;
   recorder: MediaRecorder | null;
   mimeType: string | null;
   frameSizeEstablished: boolean;
@@ -112,7 +113,7 @@ const activeRecordings = new Map<string, ActiveRecording>();
 let unsubscribeFrames: (() => void) | null = null;
 
 export const BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS = 5_000;
-const BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS = 250;
+export const BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS = 5_000;
 
 const preferredMimeType = (): string => {
   const candidates = ["video/mp4;codecs=avc1.42E01E", "video/webm;codecs=vp9", "video/webm"];
@@ -136,7 +137,7 @@ const drawFrame = (frame: DesktopPreviewRecordingFrame): void => {
     recording.canvas.width = width;
     recording.canvas.height = height;
     recording.frameSizeEstablished = true;
-    recording.settleFirstFrameSize();
+    recording.settleFirstFrameSize("frame");
   }
   const frameSequence = ++recording.frameSequence;
   const image = new Image();
@@ -175,7 +176,7 @@ const stopMediaRecorder = async (recorder: MediaRecorder | null): Promise<void> 
 
 const clearActiveRecording = (recording: ActiveRecording): void => {
   if (activeRecordings.get(recording.tabId) !== recording) return;
-  recording.settleFirstFrameSize();
+  recording.settleFirstFrameSize("cancelled");
   activeRecordings.delete(recording.tabId);
   if (activeRecordings.size === 0) {
     unsubscribeFrames?.();
@@ -225,17 +226,17 @@ const recordingStartupCancelledError = (
 const isRecordingStarting = (recording: ActiveRecording): boolean =>
   activeRecordings.get(recording.tabId) === recording && recording.lifecycle.phase === "starting";
 
-const waitForFirstFrameSize = async (recording: ActiveRecording): Promise<void> => {
-  if (recording.frameSizeEstablished) return;
+const waitForFirstFrameSize = async (recording: ActiveRecording): Promise<boolean> => {
+  if (recording.frameSizeEstablished) return true;
   let timeout: ReturnType<typeof setTimeout> | null = null;
-  await Promise.race([
+  const outcome = await Promise.race([
     recording.firstFrameSize,
-    new Promise<void>((resolve) => {
-      timeout = setTimeout(resolve, BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS);
+    new Promise<"timeout">((resolve) => {
+      timeout = setTimeout(() => resolve("timeout"), BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS);
     }),
   ]);
   if (timeout !== null) clearTimeout(timeout);
-  recording.frameSizeEstablished = true;
+  return outcome === "frame";
 };
 
 const waitForRecordingStartupToSettle = async (recording: ActiveRecording): Promise<void> => {
@@ -295,8 +296,8 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
   const startupSettled = new Promise<void>((resolve) => {
     settleStartup = resolve;
   });
-  let settleFirstFrameSize: (() => void) | undefined;
-  const firstFrameSize = new Promise<void>((resolve) => {
+  let settleFirstFrameSize: ((outcome: "frame" | "cancelled") => void) | undefined;
+  const firstFrameSize = new Promise<"frame" | "cancelled">((resolve) => {
     settleFirstFrameSize = resolve;
   });
   const recording: ActiveRecording = {
@@ -307,7 +308,7 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
     startedAt,
     startupSettled,
     firstFrameSize,
-    settleFirstFrameSize: () => settleFirstFrameSize?.(),
+    settleFirstFrameSize: (outcome) => settleFirstFrameSize?.(outcome),
     recorder: null,
     mimeType: null,
     frameSizeEstablished: false,
@@ -357,8 +358,24 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
       throw recordingStartupCancelledError(recording);
     };
     await throwIfStartupCancelled();
-    await waitForFirstFrameSize(recording);
+    const hasFirstFrame = await waitForFirstFrameSize(recording);
     await throwIfStartupCancelled();
+    if (!hasFirstFrame) {
+      const cause = new Error(`No valid recording frame arrived for tab ${tabId}.`);
+      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
+      throw new BrowserRecordingOperationError({
+        operation: "wait-first-frame",
+        tabId,
+        cause:
+          cleanupCause === undefined
+            ? cause
+            : new AggregateError(
+                [cause, cleanupCause],
+                `Browser recording frame wait and cleanup failed for tab ${tabId}.`,
+                { cause },
+              ),
+      });
+    }
 
     let mimeType: string;
     let recorder: MediaRecorder;
@@ -427,16 +444,33 @@ const finalizeBrowserRecording = async (
       }
     | { readonly _tag: "Failure"; readonly error: unknown };
   try {
+    let stopScreencastError: BrowserRecordingOperationError | undefined;
     try {
       await bridge.recording.stopScreencast(tabId);
     } catch (cause) {
-      throw new BrowserRecordingOperationError({
+      stopScreencastError = new BrowserRecordingOperationError({
         operation: "stop-screencast",
         tabId,
         cause,
       });
     }
-    await waitForRecordingStartupToSettle(recording);
+    try {
+      await waitForRecordingStartupToSettle(recording);
+    } catch (startupError) {
+      if (stopScreencastError) {
+        throw new BrowserRecordingOperationError({
+          operation: "wait-startup",
+          tabId,
+          cause: new AggregateError(
+            [startupError, stopScreencastError],
+            `Browser recording stop failed while startup remained pending for tab ${tabId}.`,
+            { cause: startupError },
+          ),
+        });
+      }
+      throw startupError;
+    }
+    if (stopScreencastError) throw stopScreencastError;
     if (!recording.recorder || !recording.mimeType) {
       result = { _tag: "Success", artifact: null };
     } else {
@@ -529,7 +563,7 @@ export function stopBrowserRecording(
   if (!bridge || !recording) return Promise.resolve(null);
   if (recording.lifecycle.phase === "stopping") return recording.lifecycle.stopPromise;
 
-  recording.settleFirstFrameSize();
+  recording.settleFirstFrameSize("cancelled");
   const stopPromise = Promise.resolve()
     .then(() => finalizeBrowserRecording(bridge, recording))
     .catch((error) => {
