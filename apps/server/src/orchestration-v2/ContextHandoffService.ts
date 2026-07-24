@@ -33,6 +33,14 @@ export const ContextHandoffServiceV2Error = Schema.Union([ContextHandoffPrepareE
 export type ContextHandoffServiceV2Error = typeof ContextHandoffServiceV2Error.Type;
 
 export interface ContextHandoffServiceV2Shape {
+  readonly prepareLegacyImport: (input: {
+    readonly threadId: ThreadId;
+    readonly targetRunId: RunId;
+    readonly toProviderThreadId: ProviderThreadId;
+    readonly toProviderInstanceId: ProviderInstanceId;
+    readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly createdAt: DateTime.Utc;
+  }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   readonly prepare: (input: {
     readonly threadId: ThreadId;
     readonly targetRunId: RunId;
@@ -153,6 +161,32 @@ function makeProviderHandoffSummary(input: {
   ].join("\n");
 }
 
+function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>): string {
+  const sections = items.flatMap((item) => {
+    switch (item.type) {
+      case "user_message":
+        return [`User:\n${item.text}`];
+      case "assistant_message":
+        return [`Assistant:\n${item.text}`];
+      default:
+        return [];
+    }
+  });
+  const header =
+    "Imported conversation history from the previous T3 Code orchestrator. Use it as context; do not repeat it unless the user asks.";
+  const maxChars = 32_000;
+  const selected: Array<string> = [];
+  let remaining = maxChars - header.length - 2;
+  for (const section of sections.toReversed()) {
+    if (remaining <= 0) break;
+    const suffix =
+      section.length <= remaining ? section : section.slice(section.length - remaining);
+    selected.unshift(suffix);
+    remaining -= suffix.length + 2;
+  }
+  return [header, ...selected].join("\n\n");
+}
+
 export function providerMessageWithContextHandoff(input: {
   readonly handoff: OrchestrationV2ContextHandoff;
   readonly userText: string;
@@ -180,6 +214,52 @@ export function providerMessageWithContextHandoffs(input: {
 const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffService.layer")(
   function* () {
     const idAllocator = yield* IdAllocatorV2;
+
+    const prepareLegacyImport = Effect.fn("orchestrationV2.contextHandoff.prepareLegacyImport")(
+      function* (input: {
+        readonly threadId: ThreadId;
+        readonly targetRunId: RunId;
+        readonly toProviderThreadId: ProviderThreadId;
+        readonly toProviderInstanceId: ProviderInstanceId;
+        readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+        readonly createdAt: DateTime.Utc;
+      }) {
+        const handoffId = yield* idAllocator.allocate
+          .contextHandoff({
+            threadId: input.threadId,
+            fromProviderInstanceId: ProviderInstanceId.make("legacy"),
+            toProviderInstanceId: input.toProviderInstanceId,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ContextHandoffPrepareError({
+                  threadId: input.threadId,
+                  targetRunId: input.targetRunId,
+                  fromProviderThreadIds: [],
+                  toProviderThreadId: input.toProviderThreadId,
+                  cause,
+                }),
+            ),
+          );
+        return {
+          id: handoffId,
+          transferId: null,
+          threadId: input.threadId,
+          targetRunId: input.targetRunId,
+          fromProviderThreadIds: [],
+          toProviderThreadId: input.toProviderThreadId,
+          coveredRunOrdinals: { from: 1, to: 1 },
+          strategy: "manual_context",
+          status: "ready",
+          summaryMessageId: null,
+          summaryText: makeLegacyImportSummary(input.items),
+          createdByProviderInstanceId: null,
+          createdAt: input.createdAt,
+          updatedAt: input.createdAt,
+        } satisfies OrchestrationV2ContextHandoff;
+      },
+    );
 
     const prepare = Effect.fn("orchestrationV2.contextHandoff.prepare")(function* (input: {
       readonly threadId: ThreadId;
@@ -330,6 +410,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
     });
 
     return ContextHandoffServiceV2.of({
+      prepareLegacyImport,
       prepare,
       prepareForkDelta,
       prepareProviderHandoff,

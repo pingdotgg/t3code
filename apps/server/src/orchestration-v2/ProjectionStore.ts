@@ -766,6 +766,9 @@ export function threadShellFromProjection(
     lineage: projection.thread.lineage,
     forkedFrom: projection.thread.forkedFrom,
     activeProviderThreadId: projection.thread.activeProviderThreadId,
+    ...(projection.thread.historyOrigin === undefined
+      ? {}
+      : { historyOrigin: projection.thread.historyOrigin }),
     latestRunId: latestRun?.id ?? null,
     activeRunId: activeRun?.id ?? null,
     status: latestRun?.status ?? "idle",
