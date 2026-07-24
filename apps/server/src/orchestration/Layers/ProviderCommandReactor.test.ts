@@ -161,6 +161,10 @@ describe("ProviderCommandReactor", () => {
     readonly runtimeBindingsByRead?: ReadonlyArray<
       ReadonlyArray<ProviderRuntimeBindingWithMetadata>
     >;
+    readonly sessionUpdateOnRuntimeBindingRead?: {
+      readonly readIndex: number;
+      readonly session: OrchestrationSession;
+    };
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -366,6 +370,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(SqlitePersistenceMemory),
     );
     let runtimeBindingReadCount = 0;
+    let engineForRuntimeBindingRead: OrchestrationEngineService["Service"] | undefined;
     const providerSessionDirectoryLayer = Layer.succeed(ProviderSessionDirectory, {
       upsert: () => Effect.void,
       getProvider: () =>
@@ -373,8 +378,23 @@ describe("ProviderCommandReactor", () => {
       getBinding: () => Effect.succeed(Option.none()),
       listThreadIds: () => Effect.succeed([]),
       listBindings: () =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           const readIndex = runtimeBindingReadCount++;
+          if (
+            engineForRuntimeBindingRead &&
+            input?.sessionUpdateOnRuntimeBindingRead?.readIndex === readIndex
+          ) {
+            const session = input.sessionUpdateOnRuntimeBindingRead.session;
+            yield* engineForRuntimeBindingRead
+              .dispatch({
+                type: "thread.session.set",
+                commandId: CommandId.make(`cmd-session-update-on-binding-read-${readIndex}`),
+                threadId: session.threadId,
+                session,
+                createdAt: session.updatedAt,
+              })
+              .pipe(Effect.orDie);
+          }
           const bindingsByRead = input?.runtimeBindingsByRead;
           if (bindingsByRead && bindingsByRead.length > 0) {
             return bindingsByRead[Math.min(readIndex, bindingsByRead.length - 1)]!;
@@ -417,6 +437,7 @@ describe("ProviderCommandReactor", () => {
     runtime = ManagedRuntime.make(layer);
 
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    engineForRuntimeBindingRead = engine;
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
     const drain = () => Effect.runPromise(reactor.drain);
@@ -643,6 +664,48 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.status).toBe("running");
     expect(thread?.session?.activeTurnId).toBe("orchestration-turn-1");
+  });
+
+  it("checks the projected session again immediately before settling it", async () => {
+    const runningAt = "2026-01-01T00:01:00.000Z";
+    const stoppedAt = "2026-01-01T00:02:00.000Z";
+    const recoveredAt = "2026-01-01T00:03:00.000Z";
+    const initialSession: OrchestrationSession = {
+      threadId: ThreadId.make("thread-1"),
+      status: "running",
+      providerName: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeMode: "approval-required",
+      activeTurnId: asTurnId("orchestration-turn-1"),
+      lastError: null,
+      updatedAt: runningAt,
+    };
+    const stoppedBinding: ProviderRuntimeBindingWithMetadata = {
+      threadId: ThreadId.make("thread-1"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "stopped",
+      runtimeMode: "approval-required",
+      lastSeenAt: stoppedAt,
+    };
+    const harness = await createHarness({
+      initialSession,
+      runtimeBindings: [stoppedBinding],
+      sessionUpdateOnRuntimeBindingRead: {
+        readIndex: 2,
+        session: {
+          ...initialSession,
+          activeTurnId: asTurnId("orchestration-turn-recovered"),
+          updatedAt: recoveredAt,
+        },
+      },
+    });
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe("orchestration-turn-recovered");
+    expect(thread?.session?.updatedAt).toBe(recoveredAt);
   });
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {

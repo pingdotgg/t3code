@@ -344,14 +344,22 @@ const make = Effect.gen(function* () {
             // been replaced by a live binding.
             const finalBindings = yield* providerSessionDirectory.listBindings();
             const finalBinding = finalBindings.find((entry) => entry.threadId === thread.id);
-            if (!finalBinding || !canReconcileStoppedRuntimeBinding(latestSession, finalBinding)) {
+            const finalThread = yield* projectionSnapshotQuery
+              .getThreadShellById(thread.id)
+              .pipe(Effect.map(Option.getOrUndefined));
+            const finalSession = finalThread?.session;
+            if (
+              !finalSession ||
+              !finalBinding ||
+              !canReconcileStoppedRuntimeBinding(finalSession, finalBinding)
+            ) {
               return;
             }
 
             yield* setThreadSession({
               threadId: thread.id,
               session: {
-                ...latestSession,
+                ...finalSession,
                 status: "stopped",
                 activeTurnId: null,
                 updatedAt: finalBinding.lastSeenAt,
@@ -361,8 +369,8 @@ const make = Effect.gen(function* () {
               Effect.tap(() =>
                 Effect.logWarning("provider.session.reconciled-stopped-runtime", {
                   threadId: thread.id,
-                  previousStatus: latestSession.status,
-                  activeTurnId: latestSession.activeTurnId,
+                  previousStatus: finalSession.status,
+                  activeTurnId: finalSession.activeTurnId,
                   provider: finalBinding.provider,
                   providerInstanceId: finalBinding.providerInstanceId,
                   stoppedAt: finalBinding.lastSeenAt,
