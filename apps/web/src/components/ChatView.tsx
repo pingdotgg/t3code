@@ -54,7 +54,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import {
   isAtomCommandInterrupted,
@@ -161,7 +161,11 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import {
+  buildDraftThreadRouteParams,
+  resolveThreadRouteTarget,
+  shouldKeepActiveThreadVisitOnUnmount,
+} from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -1149,10 +1153,7 @@ function ChatViewContent(props: ChatViewProps) {
   const composerDraftTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
   const serverThread = useThread(routeThreadRef);
-  const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
-  const activeThreadLastVisitedAt = useUiStateStore(
-    (store) => store.threadLastVisitedAtById[routeThreadKey],
-  );
+  const markActiveThreadVisited = useUiStateStore((store) => store.markActiveThreadVisited);
   const settings = useEnvironmentSettings(environmentId);
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
@@ -1164,6 +1165,7 @@ function ChatViewContent(props: ChatViewProps) {
   const timestampFormat = settings.timestampFormat;
   const autoOpenPlanSidebar = settings.autoOpenPlanSidebar;
   const navigate = useNavigate();
+  const router = useRouter();
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
@@ -1751,23 +1753,37 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   useEffect(() => {
-    if (!serverThread?.id) return;
-    const threadUpdatedAt = Date.parse(serverThread.updatedAt);
-    if (Number.isNaN(threadUpdatedAt)) return;
-    const lastVisitedAt = activeThreadLastVisitedAt ? Date.parse(activeThreadLastVisitedAt) : NaN;
-    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= threadUpdatedAt) return;
+    if (routeKind !== "server") {
+      markActiveThreadVisited(routeThreadKey, null);
+      return;
+    }
+    const visitedAt =
+      !serverThread || Number.isNaN(Date.parse(serverThread.updatedAt))
+        ? null
+        : serverThread.updatedAt;
+    markActiveThreadVisited(routeThreadKey, visitedAt);
+  }, [markActiveThreadVisited, routeKind, routeThreadKey, serverThread?.updatedAt]);
 
-    markThreadVisited(
-      scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      serverThread.updatedAt,
-    );
-  }, [
-    activeThreadLastVisitedAt,
-    markThreadVisited,
-    serverThread?.environmentId,
-    serverThread?.id,
-    serverThread?.updatedAt,
-  ]);
+  useEffect(
+    () => () => {
+      const currentRouteParams =
+        router.state.matches[router.state.matches.length - 1]?.params ?? {};
+      const currentRouteTarget = resolveThreadRouteTarget(currentRouteParams);
+      if (
+        shouldKeepActiveThreadVisitOnUnmount({
+          currentRouteTarget,
+          routeThreadKey,
+          draftId,
+        })
+      ) {
+        return;
+      }
+      if (useUiStateStore.getState().activeThreadVisit?.threadId === routeThreadKey) {
+        markActiveThreadVisited(null, null);
+      }
+    },
+    [draftId, markActiveThreadVisited, routeThreadKey, router],
+  );
 
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =

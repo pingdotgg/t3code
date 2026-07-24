@@ -7,6 +7,7 @@ import {
   type ErrorComponentProps,
   useLocation,
   useNavigate,
+  useRouterState,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
@@ -27,6 +28,7 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { useMarkFirstSeenCompletedThreadsUnread } from "../hooks/useMarkFirstSeenCompletedThreadsUnread";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -48,6 +50,7 @@ import {
   primaryServerWelcomeAtom,
 } from "../state/server";
 import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import { resolveEagerActiveThreadRouteKey, resolveThreadRouteTarget } from "../threadRoutes";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -134,6 +137,8 @@ function RootRouteView() {
         <SshPasswordPromptDialog />
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
+        <ActiveThreadRouteTracker />
+        <CompletedThreadUnreadTracker />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
@@ -193,6 +198,29 @@ function HostedStaticEnvironmentBootstrap() {
 
     setActiveEnvironmentId(firstSavedEnvironment.environmentId);
   }, [activeEnvironmentId, environments]);
+
+  return null;
+}
+
+function CompletedThreadUnreadTracker() {
+  useMarkFirstSeenCompletedThreadsUnread();
+  return null;
+}
+
+function ActiveThreadRouteTracker() {
+  const routeThreadKey = useRouterState({
+    select: (state) => {
+      const params = state.matches[state.matches.length - 1]?.params ?? {};
+      return resolveEagerActiveThreadRouteKey(resolveThreadRouteTarget(params));
+    },
+  });
+  const markActiveThreadVisited = useUiStateStore((state) => state.markActiveThreadVisited);
+
+  useEffect(() => {
+    if (routeThreadKey !== undefined) {
+      markActiveThreadVisited(routeThreadKey, null);
+    }
+  }, [markActiveThreadVisited, routeThreadKey]);
 
   return null;
 }

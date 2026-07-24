@@ -1,4 +1,4 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -35,6 +35,77 @@ export interface SidebarProjectPickerEntry {
   group: SidebarProjectSnapshot;
   targetProject: SidebarProjectGroupMember;
   isPreferred: boolean;
+}
+
+const FLAT_THREAD_LIST_PROJECT_KEY = "__all_threads__";
+
+export function buildFlatSidebarProjectSnapshot(
+  projects: ReadonlyArray<SidebarProjectSnapshot>,
+): SidebarProjectSnapshot | null {
+  const representative = projects[0];
+  if (!representative) {
+    return null;
+  }
+
+  const membersByKey = new Map<string, SidebarProjectGroupMember>();
+  const memberProjectRefsByKey = new Map<string, ScopedProjectRef>();
+  for (const project of projects) {
+    for (const member of project.memberProjects) {
+      membersByKey.set(scopedProjectKey(scopeProjectRef(member.environmentId, member.id)), member);
+    }
+    for (const projectRef of project.memberProjectRefs) {
+      memberProjectRefsByKey.set(scopedProjectKey(projectRef), projectRef);
+    }
+  }
+  const memberProjects = [...membersByKey.values()];
+  const memberProjectRefs = [...memberProjectRefsByKey.values()];
+
+  return {
+    ...representative,
+    projectKey: FLAT_THREAD_LIST_PROJECT_KEY,
+    displayName: "Threads",
+    groupedProjectCount: memberProjects.length,
+    memberProjects,
+    memberProjectRefs,
+    remoteEnvironmentLabels: projects
+      .flatMap((project) => project.remoteEnvironmentLabels)
+      .filter((label, index, labels) => labels.indexOf(label) === index),
+  };
+}
+
+export function getSidebarProjectRemovalRefs(input: {
+  projectGroup: SidebarProjectSnapshot;
+  members: readonly SidebarProjectGroupMember[];
+  projects: readonly Project[];
+}): ScopedProjectRef[] {
+  const selectedPhysicalProjectKeys = new Set(
+    input.members.map((member) => member.physicalProjectKey),
+  );
+  const removesWholeGroup = input.projectGroup.memberProjects.every((member) =>
+    selectedPhysicalProjectKeys.has(member.physicalProjectKey),
+  );
+  if (removesWholeGroup) {
+    return [...input.projectGroup.memberProjectRefs];
+  }
+
+  const projectByRefKey = new Map(
+    input.projects.map((project) => [
+      scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+      project,
+    ]),
+  );
+  const selectedMemberRefKeys = new Set(
+    input.members.map((member) =>
+      scopedProjectKey(scopeProjectRef(member.environmentId, member.id)),
+    ),
+  );
+  return input.projectGroup.memberProjectRefs.filter((projectRef) => {
+    const projectRefKey = scopedProjectKey(projectRef);
+    const project = projectByRefKey.get(projectRefKey);
+    return project
+      ? selectedPhysicalProjectKeys.has(derivePhysicalProjectKey(project))
+      : selectedMemberRefKeys.has(projectRefKey);
+  });
 }
 
 interface SidebarProjectGroupCandidate {

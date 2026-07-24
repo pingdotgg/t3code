@@ -1,14 +1,20 @@
 import { autoAnimate } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
 import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  scopeThreadShell,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
   scopeThreadRef,
+  scopedProjectKey,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type { SidebarThreadFilters } from "@t3tools/contracts/settings";
 import {
+  ArchiveRestoreIcon,
   CheckIcon,
   ChevronDownIcon,
   CircleAlertIcon,
@@ -67,6 +73,7 @@ import {
 } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
+  getSidebarProjectRemovalRefs,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
@@ -91,13 +98,20 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
+  filterSidebarThreadsForActiveRoute,
+  firstValidTimestampMs,
   formatWorkingDurationLabel,
   hasUnseenCompletion,
+  hasActiveSidebarThreadFilters,
   isTrailingDoubleClick,
+  matchesSidebarThreadFilters,
   orderItemsByPreferredIds,
+  removeProjectKeysFromSidebarThreadFilters,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
+  resolveSidebarArchiveEnvironmentIds,
   resolveSidebarV2Status,
+  resolveSidebarV2TopStatus,
   resolveWorkingStartedAt,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
@@ -109,8 +123,7 @@ import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
-import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
-import { primaryServerProvidersAtom } from "../state/server";
+import type { ProviderInstanceEntry } from "../providerInstances";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { CommandDialogTrigger } from "./ui/command";
 import { Button } from "./ui/button";
@@ -125,12 +138,22 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Kbd } from "./ui/kbd";
-import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
+import {
+  SidebarFilterMenu,
+  toggleSidebarFilterValues,
+  type SidebarFilterProjectOption,
+} from "./sidebar/SidebarFilterMenu";
+import {
+  buildSidebarProviderFilterState,
+  sidebarProviderInstanceKey,
+} from "./sidebar/sidebarProviderFilters";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -279,7 +302,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   variant: "card" | "slim";
   // Slim rows are either settled (action: un-settle) or merely quiet
   // (seen Ready threads — action: settle).
-  variantAction: "settle" | "unsettle";
+  variantAction: "settle" | "unsettle" | "unarchive";
   // False on environments whose server predates thread.settle/unsettle:
   // the lifecycle affordances hide entirely rather than fail on click.
   settlementSupported: boolean;
@@ -289,7 +312,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   environmentLabel: string | null;
   projectCwd: string | null;
   projectTitle: string | null;
-  providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
+  providerEntryByScopedInstanceKey: ReadonlyMap<string, ProviderInstanceEntry>;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
   onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
@@ -301,6 +324,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   onContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
   onSettle: (threadRef: ScopedThreadRef) => void;
   onUnsettle: (threadRef: ScopedThreadRef) => void;
+  onUnarchive: (threadRef: ScopedThreadRef) => void;
   onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
 }) {
   const {
@@ -315,6 +339,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     onThreadActivate,
     onThreadClick,
     onUnsettle,
+    onUnarchive,
     renamingTitle,
     thread,
     variant,
@@ -325,14 +350,23 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const isArchived = thread.archivedAt !== null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const isExplicitlyUnread = useUiStateStore(
+    (state) => state.threadExplicitlyUnreadById[threadKey] === true,
+  );
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
 
   // Same semantics as v1 (never-visited counts as read): flipping the beta
   // flag must not light up every historical thread as unread.
-  const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
+  const isUnread = isExplicitlyUnread || hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarV2Status(thread);
+  const topStatusKind = resolveSidebarV2TopStatus({
+    status,
+    isExplicitlyUnread,
+    isUnread,
+  });
   // In-flight rows (working, or waiting on approval/input) fade as a whole:
   // there is nothing for the user to do yet, so prominence is reserved for
   // rows that need a human — done (unread), read-but-unsettled, and failed.
@@ -346,38 +380,44 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
   const topStatus =
-    status === "working"
+    topStatusKind === "working"
       ? {
           label: "Working",
           icon: "working" as const,
           className:
             "animate-sidebar-working-text text-sky-600 motion-reduce:animate-none dark:text-sky-400",
         }
-      : status === "approval"
+      : topStatusKind === "approval"
         ? {
             label: "Approval",
             icon: null,
             className: "text-amber-700 dark:text-amber-300",
           }
-        : status === "input"
+        : topStatusKind === "input"
           ? {
               label: "Input",
               icon: null,
               className: "text-indigo-600 dark:text-indigo-300",
             }
-          : status === "failed"
+          : topStatusKind === "failed"
             ? {
                 label: "Failed",
                 icon: null,
                 className: "text-red-700 dark:text-red-300",
               }
-            : isUnread
+            : topStatusKind === "unread"
               ? {
-                  label: "Done",
-                  icon: "done" as const,
-                  className: "text-emerald-700 dark:text-emerald-300",
+                  label: "Unread",
+                  icon: null,
+                  className: "text-blue-600 dark:text-blue-300",
                 }
-              : null;
+              : topStatusKind === "done"
+                ? {
+                    label: "Done",
+                    icon: "done" as const,
+                    className: "text-emerald-700 dark:text-emerald-300",
+                  }
+                : null;
 
   const gitCwd = thread.worktreePath ?? props.projectCwd;
   const gitStatus = useEnvironmentQuery(
@@ -408,7 +448,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   }, [onChangeRequestState, prState, threadKey]);
 
   const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
-  const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
+  const providerEntry =
+    props.providerEntryByScopedInstanceKey.get(
+      sidebarProviderInstanceKey(thread.environmentId, modelInstanceId),
+    ) ?? null;
   const driverKind = providerEntry?.driverKind ?? null;
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
@@ -435,9 +478,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
 
   const handleClick = useCallback(
     (event: ReactMouseEvent) => {
+      if (isArchived) {
+        event.preventDefault();
+        return;
+      }
       onThreadClick(event, threadRef);
     },
-    [onThreadClick, threadRef],
+    [isArchived, onThreadClick, threadRef],
   );
   const handleContextMenu = useCallback(
     (event: ReactMouseEvent) => {
@@ -451,20 +498,28 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       if (event.target !== event.currentTarget) return;
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
+      if (isArchived) return;
       onThreadActivate(threadRef);
     },
-    [onThreadActivate, threadRef],
+    [isArchived, onThreadActivate, threadRef],
   );
   const handleDoubleClick = useCallback(
     (event: ReactMouseEvent) => {
-      if (isRenaming || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      if (
+        isArchived ||
+        isRenaming ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
         return;
       }
       if ((event.target as HTMLElement).closest("button, a, input")) return;
       event.preventDefault();
       onStartRename(threadRef, thread.title);
     },
-    [isRenaming, onStartRename, thread.title, threadRef],
+    [isArchived, isRenaming, onStartRename, thread.title, threadRef],
   );
   const renameCommittedRef = useRef(false);
   useEffect(() => {
@@ -506,6 +561,14 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     },
     [onUnsettle, threadRef],
   );
+  const handleUnarchiveClick = useCallback(
+    (event: ReactMouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onUnarchive(threadRef);
+    },
+    [onUnarchive, threadRef],
+  );
   const handlePrClick = useCallback(
     (event: ReactMouseEvent<HTMLElement>) => {
       if (pr?.url) openPrLink(event, pr.url);
@@ -518,8 +581,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // a useful hierarchy nor a reliable hover cue. Status now lives in the row
   // content; surface is reserved for interaction (hover, multi-select, route).
   const rowSurfaceClassName = cn(
-    "group/v2-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none",
+    "group/v2-row relative w-full overflow-hidden rounded-md text-left outline-none select-none",
+    isArchived ? "cursor-default" : "cursor-pointer",
     variant === "card" && "backdrop-blur-[16px]",
+    isArchived && "opacity-65",
     props.isActive
       ? "bg-sidebar-row-active text-sidebar-foreground"
       : isSelected
@@ -605,8 +670,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
           <TooltipTrigger
             render={
               <div
-                role="button"
-                tabIndex={0}
+                role={isArchived ? undefined : "button"}
+                tabIndex={isArchived ? undefined : 0}
                 data-testid="sidebar-v2-row-slim"
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
                 onClick={handleClick}
@@ -645,7 +710,16 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     : threadTimeLabel(thread)}
                 </span>
               </span>
-              {!props.settlementSupported ? null : variantAction === "unsettle" ? (
+              {variantAction === "unarchive" ? (
+                <button
+                  type="button"
+                  aria-label="Unarchive thread"
+                  onClick={handleUnarchiveClick}
+                  className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md border border-sidebar-border bg-sidebar-row-hover px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100 dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5"
+                >
+                  <ArchiveRestoreIcon className="size-3" />
+                </button>
+              ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
                 <button
                   type="button"
                   aria-label="Un-settle thread"
@@ -818,7 +892,8 @@ export default function SidebarV2() {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const { settleThread, unsettleThread, deleteThread } = useThreadActions();
+  const sidebarThreadFilters = useClientSettings((s) => s.sidebarThreadFilters);
+  const { settleThread, unsettleThread, unarchiveThread, deleteThread } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -857,6 +932,7 @@ export default function SidebarV2() {
     [],
   );
   const { environments } = useEnvironments();
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
@@ -918,16 +994,98 @@ export default function SidebarV2() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const providerEntryByInstanceId = useMemo(
+  const providerFilterState = useMemo(
+    () => buildSidebarProviderFilterState(serverConfigs),
+    [serverConfigs],
+  );
+  const filterProjectOptions = useMemo<SidebarFilterProjectOption[]>(
+    () =>
+      projectGroups.map((project) => ({
+        id: project.projectKey,
+        label: project.displayName,
+        projectKeys: project.memberProjectRefs.map(scopedProjectKey),
+      })),
+    [projectGroups],
+  );
+  const selectedProjectGroups = useMemo(
+    () =>
+      sidebarThreadFilters.projectKeys.length === 0
+        ? []
+        : projectGroups.filter((project) =>
+            project.memberProjectRefs
+              .map(scopedProjectKey)
+              .every((projectKey) => sidebarThreadFilters.projectKeys.includes(projectKey)),
+          ),
+    [projectGroups, sidebarThreadFilters.projectKeys],
+  );
+  const projectActionEnvironmentIds = useMemo(
+    () =>
+      projectActionsTarget
+        ? [
+            ...new Set(
+              projectActionsTarget.memberProjectRefs.map((projectRef) => projectRef.environmentId),
+            ),
+          ]
+        : [],
+    [projectActionsTarget],
+  );
+  const archiveEnvironmentIds = useMemo(
+    () =>
+      resolveSidebarArchiveEnvironmentIds({
+        availableEnvironmentIds: environments.map((environment) => environment.environmentId),
+        selectedEnvironmentIds: sidebarThreadFilters.environmentIds,
+        includeArchived: sidebarThreadFilters.includeArchived,
+        requiredEnvironmentIds: projectActionEnvironmentIds,
+      }),
+    [
+      environments,
+      projectActionEnvironmentIds,
+      sidebarThreadFilters.environmentIds,
+      sidebarThreadFilters.includeArchived,
+    ],
+  );
+  const {
+    snapshots: archivedSnapshots,
+    isLoading: archiveLoading,
+    error: archiveError,
+  } = useArchivedThreadSnapshots(archiveEnvironmentIds);
+  const archivedThreads = useMemo(
+    () =>
+      archivedSnapshots.flatMap((entry) =>
+        entry.snapshot.threads
+          .filter((thread) => thread.archivedAt !== null)
+          .map((thread) => scopeThreadShell(entry.environmentId, thread)),
+      ),
+    [archivedSnapshots],
+  );
+  const projectByRefKey = useMemo(
     () =>
       new Map(
-        deriveProviderInstanceEntries(serverProviders).map(
-          (entry) => [entry.instanceId as string, entry] as const,
+        projects.map(
+          (project) =>
+            [
+              scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+              project,
+            ] as const,
         ),
       ),
-    [serverProviders],
+    [projects],
   );
+  const threadsWithArchived = useMemo(() => {
+    const byKey = new Map(
+      threads.map(
+        (thread) =>
+          [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
+      ),
+    );
+    for (const thread of archivedThreads) {
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      if (!byKey.has(threadKey)) {
+        byKey.set(threadKey, thread);
+      }
+    }
+    return [...byKey.values()];
+  }, [archivedThreads, threads]);
   const projectCwdByKey = useMemo(
     () =>
       new Map(
@@ -982,46 +1140,54 @@ export default function SidebarV2() {
     [],
   );
 
-  // Project scope: one menu above the list. Scoping filters the list without
-  // making the header width depend on the number or length of project names.
-  const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
-  const scopedProjectGroup = useMemo(
-    () =>
-      projectScopeKey === null
-        ? null
-        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
-    [projectGroups, projectScopeKey],
+  const handleSidebarThreadFiltersChange = useCallback(
+    (filters: SidebarThreadFilters) => {
+      updateSettings({ sidebarThreadFilters: filters });
+    },
+    [updateSettings],
   );
-  const scopedProjectKeys = useMemo(
-    () =>
-      scopedProjectGroup === null
-        ? null
-        : new Set(
-            scopedProjectGroup.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
-          ),
-    [scopedProjectGroup],
+  const selectOnlyProjectGroup = useCallback(
+    (project: SidebarProjectSnapshot | null) => {
+      handleSidebarThreadFiltersChange({
+        ...sidebarThreadFilters,
+        projectKeys: project === null ? [] : project.memberProjectRefs.map(scopedProjectKey),
+      });
+    },
+    [handleSidebarThreadFiltersChange, sidebarThreadFilters],
   );
-  useEffect(() => {
-    if (projectScopeKey !== null && scopedProjectGroup === null) {
-      setProjectScopeKey(null);
-    }
-  }, [projectScopeKey, scopedProjectGroup]);
-  // Scope flips drop the selection: rows selected under the old scope may be
-  // hidden now, and bulk actions must never count or touch invisible rows.
+  const singleSelectedProjectGroup =
+    selectedProjectGroups.length === 1 &&
+    selectedProjectGroups[0]!.memberProjectRefs.length === sidebarThreadFilters.projectKeys.length
+      ? selectedProjectGroups[0]!
+      : null;
+  const selectedProjectCount =
+    selectedProjectGroups.length || sidebarThreadFilters.projectKeys.length;
+  const projectFilterLabel =
+    sidebarThreadFilters.projectKeys.length === 0
+      ? "All projects"
+      : singleSelectedProjectGroup
+        ? singleSelectedProjectGroup.displayName
+        : `${selectedProjectCount} ${selectedProjectCount === 1 ? "project" : "projects"}`;
+
+  // Filter changes drop the selection: rows selected under the old filter may
+  // be hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, sidebarThreadFilters]);
 
   const handleRemoveProjectMembers = useCallback(
     async (projectGroup: SidebarProjectSnapshot, members: readonly SidebarProjectGroupMember[]) => {
       const api = readLocalApi();
-      if (!api) return;
+      if (!api || archiveLoading || archiveError !== null) return;
 
-      const memberKeys = new Set(members.map((member) => `${member.environmentId}:${member.id}`));
-      const projectThreads = threads.filter((thread) =>
-        memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
+      const projectRefs = getSidebarProjectRemovalRefs({
+        projectGroup,
+        members,
+        projects,
+      });
+      const memberKeys = new Set(projectRefs.map(scopedProjectKey));
+      const projectThreads = threadsWithArchived.filter((thread) =>
+        memberKeys.has(scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId))),
       );
       const isWholeGroup = members.length === projectGroup.memberProjects.length;
       const singleMember = members.length === 1 ? members[0]! : null;
@@ -1038,7 +1204,7 @@ export default function SidebarV2() {
                         ? [`Environment: ${singleMember.environmentLabel}`]
                         : []),
                     ]
-                  : [`This removes ${members.length} grouped project entries.`]),
+                  : [`This removes ${projectRefs.length} grouped project entries.`]),
                 "This permanently clears conversation history for those threads.",
                 isWholeGroup
                   ? "This removes only the project entries, not the files on disk."
@@ -1054,7 +1220,7 @@ export default function SidebarV2() {
                         ? [`Environment: ${singleMember.environmentLabel}`]
                         : []),
                     ]
-                  : [`This removes ${members.length} grouped project entries.`]),
+                  : [`This removes ${projectRefs.length} grouped project entries.`]),
                 isWholeGroup
                   ? "This removes only the project entries, not the files on disk."
                   : "Other entries in this grouped project are unaffected.",
@@ -1065,12 +1231,12 @@ export default function SidebarV2() {
 
       const draftStore = useComposerDraftStore.getState();
       let shouldNavigate = false;
-      for (const project of members) {
+      for (const projectRef of projectRefs) {
         const memberThreads = projectThreads.filter(
           (thread) =>
-            thread.environmentId === project.environmentId && thread.projectId === project.id,
+            thread.environmentId === projectRef.environmentId &&
+            thread.projectId === projectRef.projectId,
         );
-        const projectRef = scopeProjectRef(project.environmentId, project.id);
         const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
         const memberRemovalNeedsNavigation = shouldNavigateAfterProjectRemoval({
           routeTarget: routeTargetRef.current,
@@ -1079,9 +1245,9 @@ export default function SidebarV2() {
         });
 
         const result = await deleteProject({
-          environmentId: project.environmentId,
+          environmentId: projectRef.environmentId,
           input: {
-            projectId: project.id,
+            projectId: projectRef.projectId,
             ...(memberThreads.length > 0 ? { force: true } : {}),
           },
         });
@@ -1091,7 +1257,9 @@ export default function SidebarV2() {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: `Failed to remove "${project.title}"`,
+                title: `Failed to remove "${
+                  projectByRefKey.get(scopedProjectKey(projectRef))?.title ?? targetLabel
+                }"`,
                 description: error instanceof Error ? error.message : "An error occurred.",
               }),
             );
@@ -1109,11 +1277,29 @@ export default function SidebarV2() {
         draftStore.clearProjectDraftThreadId(projectRef);
       }
 
+      const nextSidebarThreadFilters = removeProjectKeysFromSidebarThreadFilters(
+        sidebarThreadFilters,
+        new Set(projectRefs.map(scopedProjectKey)),
+      );
+      if (nextSidebarThreadFilters !== sidebarThreadFilters) {
+        handleSidebarThreadFiltersChange(nextSidebarThreadFilters);
+      }
+
       if (shouldNavigate) {
         void router.navigate({ to: "/" });
       }
     },
-    [deleteProject, router, threads],
+    [
+      deleteProject,
+      archiveError,
+      archiveLoading,
+      handleSidebarThreadFiltersChange,
+      projectByRefKey,
+      projects,
+      router,
+      sidebarThreadFilters,
+      threadsWithArchived,
+    ],
   );
 
   const renameProjectMember = useCallback(
@@ -1166,22 +1352,43 @@ export default function SidebarV2() {
     [],
   );
 
-  // Settled threads stay in the live shell stream (settled ≠ archived), so
-  // the partition works directly off live shells: no archived-snapshot
-  // merging, no optimistic holds. Archived threads remain hidden here —
-  // archive keeps its original "remove from sidebar" meaning.
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const { activeThreads, settledThreads } = useMemo(() => {
+  const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const threadExplicitlyUnreadById = useUiStateStore((state) => state.threadExplicitlyUnreadById);
+  const filtersActive = hasActiveSidebarThreadFilters(sidebarThreadFilters);
+
+  // V2 keeps its active/settled visual partition after applying the same
+  // persisted filter predicate as the classic sidebar. Archived snapshots
+  // form a third, explicit tail only while the Archived filter is enabled.
+  const { activeThreads, settledThreads, filteredArchivedThreads } = useMemo(() => {
     const now = `${nowMinute}:00.000Z`;
-    const visible = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
-    );
+    const visible = filterSidebarThreadsForActiveRoute({
+      threads: threadsWithArchived,
+      activeThreadKey: routeThreadKey,
+      getThreadKey: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      matchesFilters: (thread) => {
+        const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+        const providerInstanceId =
+          thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+        return matchesSidebarThreadFilters({
+          thread,
+          lastVisitedAt: threadLastVisitedAtById[threadKey],
+          isExplicitlyUnread: threadExplicitlyUnreadById[threadKey],
+          providerDriverKind:
+            providerFilterState.driverKindByScopedInstanceKey.get(
+              sidebarProviderInstanceKey(thread.environmentId, providerInstanceId),
+            ) ?? null,
+          filters: sidebarThreadFilters,
+        });
+      },
+    });
     const active: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
+    const archived: EnvironmentThreadShell[] = [];
     for (const thread of visible) {
+      if (thread.archivedAt !== null) {
+        archived.push(thread);
+        continue;
+      }
       // Threads on servers without the settlement capability (old server,
       // or descriptor not loaded yet) never classify as settled: the user
       // could neither un-settle nor pin them, so auto-settling them would
@@ -1202,14 +1409,23 @@ export default function SidebarV2() {
     return {
       activeThreads: sortThreadsForSidebarV2(active),
       settledThreads: sortSettledThreadsForSidebarV2(settled),
+      filteredArchivedThreads: archived.toSorted(
+        (left, right) =>
+          firstValidTimestampMs(right.latestUserMessageAt, right.updatedAt) -
+          firstValidTimestampMs(left.latestUserMessageAt, left.updatedAt),
+      ),
     };
   }, [
     autoSettleAfterDays,
     changeRequestStateByKey,
     nowMinute,
-    scopedProjectKeys,
+    providerFilterState.driverKindByScopedInstanceKey,
+    routeThreadKey,
     serverConfigs,
-    threads,
+    sidebarThreadFilters,
+    threadExplicitlyUnreadById,
+    threadLastVisitedAtById,
+    threadsWithArchived,
   ]);
 
   // The settled tail renders in pages: history shouldn't dominate the
@@ -1217,7 +1433,7 @@ export default function SidebarV2() {
   // filter context changes so a scope/search flip never inherits a deep
   // page state.
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
-  const settledResetKey = projectScopeKey ?? "all";
+  const settledResetKey = JSON.stringify(sidebarThreadFilters);
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -1234,14 +1450,14 @@ export default function SidebarV2() {
   );
 
   const orderedThreads = useMemo(
-    () => [...activeThreads, ...visibleSettledThreads],
-    [activeThreads, visibleSettledThreads],
+    () => [...activeThreads, ...visibleSettledThreads, ...filteredArchivedThreads],
+    [activeThreads, filteredArchivedThreads, visibleSettledThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
-      orderedThreads.map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
+      orderedThreads
+        .filter((thread) => thread.archivedAt === null)
+        .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
     [orderedThreads],
   );
   // Rows call back into the click handler without carrying the ordered list as
@@ -1280,6 +1496,15 @@ export default function SidebarV2() {
   );
   const settledThreadKeysRef = useRef(settledThreadKeys);
   settledThreadKeysRef.current = settledThreadKeys;
+  const archivedThreadKeys = useMemo(
+    () =>
+      new Set(
+        filteredArchivedThreads.map((thread) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        ),
+      ),
+    [filteredArchivedThreads],
+  );
 
   const jumpLabelByKey = useMemo(() => {
     const mapping = new Map<string, string>();
@@ -1455,6 +1680,24 @@ export default function SidebarV2() {
     },
     [unsettleThread],
   );
+  const attemptUnarchive = useCallback(
+    (threadRef: ScopedThreadRef) => {
+      void (async () => {
+        const result = await unarchiveThread(threadRef);
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to unarchive thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+      })();
+    },
+    [unarchiveThread],
+  );
 
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
   const handleMultiSelectContextMenu = useCallback(
@@ -1566,6 +1809,7 @@ export default function SidebarV2() {
         }
         const thread = threadByKeyRef.current.get(threadKey);
         if (!thread) return;
+        const isArchived = thread.archivedAt !== null;
         // Un-settle works on every settled row: for explicit settles it
         // clears the override, for auto-settled rows it pins the thread
         // active until real activity clears the pin. Environments without
@@ -1576,18 +1820,23 @@ export default function SidebarV2() {
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            [
-              ...(supportsSettlement
-                ? [
-                    isSettled
-                      ? { id: "unsettle", label: "Un-settle thread" }
-                      : { id: "settle", label: "Settle thread" },
-                  ]
-                : []),
-              { id: "rename", label: "Rename thread" },
-              { id: "mark-unread", label: "Mark unread" },
-              { id: "delete", label: "Delete", destructive: true, icon: "trash" },
-            ],
+            isArchived
+              ? [
+                  { id: "unarchive", label: "Unarchive thread" },
+                  { id: "delete", label: "Delete", destructive: true, icon: "trash" },
+                ]
+              : [
+                  ...(supportsSettlement
+                    ? [
+                        isSettled
+                          ? { id: "unsettle", label: "Un-settle thread" }
+                          : { id: "settle", label: "Settle thread" },
+                      ]
+                    : []),
+                  { id: "rename", label: "Rename thread" },
+                  { id: "mark-unread", label: "Mark unread" },
+                  { id: "delete", label: "Delete", destructive: true, icon: "trash" },
+                ],
             position,
           ),
         );
@@ -1598,6 +1847,9 @@ export default function SidebarV2() {
             return;
           case "unsettle":
             attemptUnsettle(threadRef);
+            return;
+          case "unarchive":
+            attemptUnarchive(threadRef);
             return;
           case "rename":
             startThreadRename(threadRef, thread.title);
@@ -1638,6 +1890,7 @@ export default function SidebarV2() {
     },
     [
       attemptSettle,
+      attemptUnarchive,
       attemptUnsettle,
       confirmThreadDelete,
       deleteThread,
@@ -1745,6 +1998,19 @@ export default function SidebarV2() {
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.newLocal") ??
     shortcutLabelForCommand(keybindings, "chat.new");
+  const showMoreSettledRow =
+    hiddenSettledCount > 0 ? (
+      <li key="show-more-settled" className="list-none">
+        <button
+          type="button"
+          onClick={showMoreSettled}
+          className="mt-1 flex h-[30px] w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border font-mono text-[11px] text-muted-foreground transition-colors hover:border-solid hover:border-input hover:bg-background/45 hover:text-foreground dark:border-white/15 dark:hover:border-white/30 dark:hover:bg-transparent"
+        >
+          Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
+          <span className="text-muted-foreground/50">({hiddenSettledCount} settled hidden)</span>
+        </button>
+      </li>
+    ) : null;
   return (
     <>
       <SidebarChromeHeader isElectron={isElectron} />
@@ -1807,50 +2073,61 @@ export default function SidebarV2() {
                   aria-label="Filter threads by project"
                   className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                 >
-                  {scopedProjectGroup ? (
+                  {singleSelectedProjectGroup ? (
                     <ProjectFavicon
-                      environmentId={scopedProjectGroup.environmentId}
-                      cwd={scopedProjectGroup.workspaceRoot}
+                      environmentId={singleSelectedProjectGroup.environmentId}
+                      cwd={singleSelectedProjectGroup.workspaceRoot}
                       className="size-4 shrink-0"
                     />
                   ) : (
                     <FolderIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
                   )}
-                  <span className="min-w-0 flex-1 truncate">
-                    {scopedProjectGroup?.displayName ?? "All projects"}
-                  </span>
+                  <span className="min-w-0 flex-1 truncate">{projectFilterLabel}</span>
                   <ChevronDownIcon className="size-4 shrink-0 text-sidebar-muted-foreground/70" />
                 </MenuTrigger>
                 <MenuPopup align="start" className="w-(--anchor-width)">
-                  <MenuRadioGroup
-                    value={projectScopeKey ?? "all"}
-                    onValueChange={(value) =>
-                      setProjectScopeKey(value === "all" ? null : (value as string))
-                    }
+                  <MenuItem
+                    closeOnClick
+                    className="h-8 min-h-8 px-2 py-0 text-sm font-medium"
+                    onClick={() => selectOnlyProjectGroup(null)}
                   >
-                    <MenuRadioItem
-                      value="all"
-                      closeOnClick
-                      className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
-                    >
-                      <FolderIcon className="size-4 shrink-0" />
-                      <span className="min-w-0 truncate text-sm">All projects</span>
-                    </MenuRadioItem>
-                    {projectGroups.map((project) => {
-                      const scopeKey = project.projectKey;
-                      return (
-                        <MenuRadioItem
-                          key={scopeKey}
-                          value={scopeKey}
-                          closeOnClick
-                          className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
-                        >
+                    <FolderIcon className="size-4 shrink-0" />
+                    <span className="min-w-0 truncate text-sm">All projects</span>
+                  </MenuItem>
+                  <MenuSeparator />
+                  {projectGroups.map((project) => {
+                    const projectKeys = project.memberProjectRefs.map(scopedProjectKey);
+                    const checked =
+                      projectKeys.length > 0 &&
+                      projectKeys.every((projectKey) =>
+                        sidebarThreadFilters.projectKeys.includes(projectKey),
+                      );
+                    return (
+                      <MenuCheckboxItem
+                        key={project.projectKey}
+                        checked={checked}
+                        closeOnClick={false}
+                        className="h-8 min-h-8 py-0 text-sm font-medium"
+                        onCheckedChange={(nextChecked) => {
+                          handleSidebarThreadFiltersChange({
+                            ...sidebarThreadFilters,
+                            projectKeys: toggleSidebarFilterValues(
+                              sidebarThreadFilters.projectKeys,
+                              projectKeys,
+                              nextChecked,
+                            ),
+                          });
+                        }}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
                           <ProjectFavicon
                             environmentId={project.environmentId}
                             cwd={project.workspaceRoot}
                             className="size-4 shrink-0"
                           />
-                          <span className="min-w-0 truncate text-sm">{project.displayName}</span>
+                          <span className="min-w-0 flex-1 truncate text-sm">
+                            {project.displayName}
+                          </span>
                           <button
                             type="button"
                             aria-label={`Project actions for ${project.displayName}`}
@@ -1863,12 +2140,23 @@ export default function SidebarV2() {
                           >
                             <EllipsisIcon className="size-3.5" />
                           </button>
-                        </MenuRadioItem>
-                      );
-                    })}
-                  </MenuRadioGroup>
+                        </span>
+                      </MenuCheckboxItem>
+                    );
+                  })}
                 </MenuPopup>
               </Menu>
+              <SidebarFilterMenu
+                filters={sidebarThreadFilters}
+                environments={environments}
+                projects={filterProjectOptions}
+                providerSources={providerFilterState.sources}
+                archiveLoading={archiveLoading}
+                archiveError={archiveError}
+                onFiltersChange={handleSidebarThreadFiltersChange}
+                showGroupByProject={false}
+                triggerClassName="size-8 min-w-8 bg-transparent p-0 text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+              />
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -1902,12 +2190,13 @@ export default function SidebarV2() {
             <ul ref={attachListAutoAnimateRef} role="list" className="flex flex-col gap-px">
               {orderedThreads.flatMap((thread, threadIndex) => {
                 const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-                const isSettledRow = settledThreadKeys.has(threadKey);
+                const isArchivedRow = archivedThreadKeys.has(threadKey);
+                const isSettledRow = !isArchivedRow && settledThreadKeys.has(threadKey);
                 // Settled is the ONLY thing that collapses a row: every
                 // not-settled thread is a full card. Density comes from users
                 // (or the auto rules) actually settling work, not from the
                 // sidebar second-guessing what still matters.
-                const isCard = !isSettledRow;
+                const isCard = !isSettledRow && !isArchivedRow;
                 const previousThread = threadIndex > 0 ? orderedThreads[threadIndex - 1] : null;
                 const previousWasCard =
                   previousThread != null &&
@@ -1917,6 +2206,14 @@ export default function SidebarV2() {
                     ),
                   );
                 const showSettledGap = !isCard && previousWasCard;
+                const showArchivedGap =
+                  isArchivedRow &&
+                  (previousThread == null ||
+                    !archivedThreadKeys.has(
+                      scopedThreadKey(
+                        scopeThreadRef(previousThread.environmentId, previousThread.id),
+                      ),
+                    ));
                 const row = (
                   <SidebarV2Row
                     // Keyed per variant on purpose: when a thread settles, the
@@ -1929,7 +2226,9 @@ export default function SidebarV2() {
                     variant={isCard ? "card" : "slim"}
                     // Every settled row can un-settle: explicit settles clear
                     // the override, auto-settled rows get pinned active.
-                    variantAction={isSettledRow ? "unsettle" : "settle"}
+                    variantAction={
+                      isArchivedRow ? "unarchive" : isSettledRow ? "unsettle" : "settle"
+                    }
                     settlementSupported={
                       serverConfigs.get(thread.environmentId)?.environment.capabilities
                         .threadSettlement === true
@@ -1945,7 +2244,7 @@ export default function SidebarV2() {
                       projectDisplayNameByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
                       null
                     }
-                    providerEntryByInstanceId={providerEntryByInstanceId}
+                    providerEntryByScopedInstanceKey={providerFilterState.entryByScopedInstanceKey}
                     onThreadClick={handleThreadClick}
                     onThreadActivate={navigateToThread}
                     onStartRename={startThreadRename}
@@ -1957,10 +2256,30 @@ export default function SidebarV2() {
                     onContextMenu={handleThreadContextMenu}
                     onSettle={attemptSettle}
                     onUnsettle={attemptUnsettle}
+                    onUnarchive={attemptUnarchive}
                     onChangeRequestState={handleChangeRequestState}
                   />
                 );
-                if (!showSettledGap) return [row];
+                if (showArchivedGap) {
+                  return [
+                    ...(showMoreSettledRow ? [showMoreSettledRow] : []),
+                    <li
+                      key="archived-divider"
+                      aria-hidden
+                      data-thread-selection-safe
+                      className="list-none"
+                    >
+                      <div className="mb-1 mt-3 flex items-center gap-2 px-2.5">
+                        <span className="text-xs font-medium text-muted-foreground/50">
+                          Archived
+                        </span>
+                        <span className="h-px flex-1 bg-sidebar-border/60" />
+                      </div>
+                    </li>,
+                    row,
+                  ];
+                }
+                if (!showSettledGap || isArchivedRow) return [row];
                 // The divider is its own keyed list item (not part of the first
                 // settled row): it keeps one stable DOM node at the boundary,
                 // so settling a thread slides it instead of teleporting it
@@ -1981,20 +2300,7 @@ export default function SidebarV2() {
                   row,
                 ];
               })}
-              {hiddenSettledCount > 0 ? (
-                <li className="list-none">
-                  <button
-                    type="button"
-                    onClick={showMoreSettled}
-                    className="mt-1 flex h-[30px] w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border font-mono text-[11px] text-muted-foreground transition-colors hover:border-solid hover:border-input hover:bg-background/45 hover:text-foreground dark:border-white/15 dark:hover:border-white/30 dark:hover:bg-transparent"
-                  >
-                    Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
-                    <span className="text-muted-foreground/50">
-                      ({hiddenSettledCount} settled hidden)
-                    </span>
-                  </button>
-                </li>
-              ) : null}
+              {filteredArchivedThreads.length === 0 ? showMoreSettledRow : null}
             </ul>
           </TooltipProvider>
           {orderedThreads.length === 0 ? (
@@ -2011,8 +2317,8 @@ export default function SidebarV2() {
                     Add project
                   </button>
                 </>
-              ) : scopedProjectGroup ? (
-                `No threads in ${scopedProjectGroup.displayName} yet`
+              ) : filtersActive ? (
+                "No threads match these filters"
               ) : (
                 "No threads yet"
               )}
@@ -2034,6 +2340,15 @@ export default function SidebarV2() {
                 ? `${projectActionsTarget.displayName} has an entry in each environment. Changes apply only to the entry you choose.`
                 : `Manage ${projectActionsTarget?.displayName ?? "this project"} in this environment.`}
             </DialogDescription>
+            {archiveLoading ? (
+              <p className="text-xs text-muted-foreground">
+                Checking archived conversations before project removal…
+              </p>
+            ) : archiveError ? (
+              <p className="text-xs text-destructive-foreground">
+                Archived conversations could not be checked, so project removal is unavailable.
+              </p>
+            ) : null}
           </DialogHeader>
           <DialogPanel className="p-0">
             <div className="divide-y divide-border/60">
@@ -2146,6 +2461,7 @@ export default function SidebarV2() {
                     <Button
                       size="sm"
                       variant="ghost"
+                      disabled={archiveLoading || archiveError !== null}
                       className="text-destructive-foreground hover:bg-destructive/8 hover:text-destructive-foreground sm:ml-auto"
                       onClick={() => {
                         const projectGroup = projectActionsTarget;
@@ -2174,6 +2490,7 @@ export default function SidebarV2() {
                 <Button
                   size="sm"
                   variant="destructive-outline"
+                  disabled={archiveLoading || archiveError !== null}
                   className="shrink-0"
                   onClick={() => {
                     const projectGroup = projectActionsTarget;
