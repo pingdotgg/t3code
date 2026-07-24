@@ -163,6 +163,41 @@ export function isSameOpenCodeDirectory(
   );
 }
 
+export function resolveOpenCodeAssistantForkPoint(
+  messages: ReadonlyArray<{
+    readonly info: {
+      readonly id: string;
+      readonly role: string;
+    };
+  }>,
+  sourceTurnIndex: number | undefined,
+): string | undefined {
+  const terminalAssistantMessageIds: string[] = [];
+  let currentTurnAssistantMessageId: string | undefined;
+  let hasHumanTurn = false;
+
+  for (const message of messages) {
+    if (message.info.role === "user") {
+      if (hasHumanTurn && currentTurnAssistantMessageId !== undefined) {
+        terminalAssistantMessageIds.push(currentTurnAssistantMessageId);
+      }
+      hasHumanTurn = true;
+      currentTurnAssistantMessageId = undefined;
+      continue;
+    }
+    if (message.info.role === "assistant" && hasHumanTurn) {
+      currentTurnAssistantMessageId = message.info.id;
+    }
+  }
+  if (hasHumanTurn && currentTurnAssistantMessageId !== undefined) {
+    terminalAssistantMessageIds.push(currentTurnAssistantMessageId);
+  }
+
+  return sourceTurnIndex === undefined
+    ? terminalAssistantMessageIds.at(-1)
+    : terminalAssistantMessageIds[sourceTurnIndex];
+}
+
 interface OpenCodeTurnSnapshot {
   readonly id: TurnId;
   readonly items: Array<unknown>;
@@ -1191,6 +1226,14 @@ export function makeOpenCodeAdapter(
         const serverPassword = openCodeSettings.serverPassword;
         const directory = input.cwd ?? serverConfig.cwd;
         const resumeSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
+        const forkSessionId = parseOpenCodeResume(input.forkFrom?.resumeCursor)?.sessionId;
+        if (input.forkFrom !== undefined && forkSessionId === undefined) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue: "OpenCode forks require a valid persisted source session id.",
+          });
+        }
         const existing = sessions.get(input.threadId);
         if (existing) {
           yield* stopOpenCodeContext(existing);
@@ -1214,6 +1257,30 @@ export function makeOpenCodeAdapter(
                 directory,
                 ...(server.external && serverPassword ? { serverPassword } : {}),
               });
+              const updateForkedSessionPermissions = Effect.fn(
+                "updateForkedOpenCodeSessionPermissions",
+              )(function* (forkedSessionId: string) {
+                yield* runOpenCodeSdk("session.update", () =>
+                  client.session.update({
+                    sessionID: forkedSessionId,
+                    permission: buildOpenCodePermissionRules(input.runtimeMode),
+                  }),
+                ).pipe(
+                  Effect.catchCause((updateCause) =>
+                    runOpenCodeSdk("session.abort", () =>
+                      client.session.abort({ sessionID: forkedSessionId }),
+                    ).pipe(
+                      Effect.catchCause((abortCause) =>
+                        Effect.logWarning("opencode.fork.cleanup-failed", {
+                          sessionId: forkedSessionId,
+                          abortCause,
+                        }),
+                      ),
+                      Effect.andThen(Effect.failCause(updateCause)),
+                    ),
+                  ),
+                );
+              });
               const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
               if (mcpSession && !server.external) {
                 yield* runOpenCodeSdk("mcp.add", () =>
@@ -1235,6 +1302,43 @@ export function makeOpenCodeAdapter(
               // a confirmed not-found (start fresh); transport/auth/server
               // errors propagate instead of masking as a new empty session.
               const resolved = yield* Effect.gen(function* () {
+                if (forkSessionId !== undefined) {
+                  const sourceMessages = yield* runOpenCodeSdk("session.messages", () =>
+                    client.session.messages({ sessionID: forkSessionId }),
+                  );
+                  const sourceTurnIndex = input.forkFrom?.sourceTurnIndex;
+                  const sourceMessageId = resolveOpenCodeAssistantForkPoint(
+                    sourceMessages.data ?? [],
+                    sourceTurnIndex,
+                  );
+                  if (!sourceMessageId) {
+                    return yield* new OpenCodeRuntimeError({
+                      operation: "session.fork",
+                      detail:
+                        sourceTurnIndex === undefined
+                          ? `OpenCode source session '${forkSessionId}' has no assistant response to fork.`
+                          : `OpenCode source session '${forkSessionId}' has no assistant response at position ${sourceTurnIndex}.`,
+                    });
+                  }
+
+                  const forkedResponse = yield* runOpenCodeSdk("session.fork", () =>
+                    client.session.fork({
+                      sessionID: forkSessionId,
+                      directory,
+                      messageID: sourceMessageId,
+                    }),
+                  );
+                  const forked = forkedResponse.data;
+                  if (!forked) {
+                    return yield* new OpenCodeRuntimeError({
+                      operation: "session.fork",
+                      detail: "OpenCode session.fork returned no session payload.",
+                    });
+                  }
+                  yield* updateForkedSessionPermissions(forked.id);
+                  return { openCodeSession: forked, created: true };
+                }
+
                 const adopted = resumeSessionId
                   ? yield* runOpenCodeSdk("session.get", () =>
                       client.session.get({ sessionID: resumeSessionId }),
@@ -1286,12 +1390,7 @@ export function makeOpenCodeAdapter(
                       detail: "OpenCode session.fork returned no session payload.",
                     });
                   }
-                  yield* runOpenCodeSdk("session.update", () =>
-                    client.session.update({
-                      sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
-                    }),
-                  );
+                  yield* updateForkedSessionPermissions(forked.id);
                   return { openCodeSession: forked, created: true };
                 }
 
@@ -1701,6 +1800,7 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        sessionFork: "native",
       },
       startSession,
       sendTurn,

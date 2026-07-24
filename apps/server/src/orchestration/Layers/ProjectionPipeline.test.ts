@@ -660,6 +660,200 @@ it.layer(
   );
 });
 
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-fork-ownership-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("copies inherited attachments and preserves fork-owned history on revert", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sql = yield* SqlClient.SqlClient;
+        const { attachmentsDir } = yield* ServerConfig;
+        const now = "2026-01-01T00:00:00.000Z";
+        const sourceThreadId = ThreadId.make("thread-source");
+        const forkThreadId = ThreadId.make("thread-fork");
+        const sourceAttachmentId = "thread-source-00000000-0000-4000-8000-000000000001";
+        const forkAttachmentId = "thread-fork-00000000-0000-4000-8000-000000000001";
+        const sourceAttachmentPath = path.join(attachmentsDir, `${sourceAttachmentId}.png`);
+        const forkAttachmentPath = path.join(attachmentsDir, `${forkAttachmentId}.png`);
+
+        const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore
+            .append(event)
+            .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+        yield* appendAndProject({
+          type: "project.created",
+          eventId: EventId.make("evt-fork-owner-1"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.make("project-fork-owner"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-fork-owner-1"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-fork-owner-1"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.make("project-fork-owner"),
+            title: "Fork ownership",
+            workspaceRoot: "/tmp/project-fork-owner",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* appendAndProject({
+          type: "thread.created",
+          eventId: EventId.make("evt-fork-owner-2"),
+          aggregateKind: "thread",
+          aggregateId: sourceThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-fork-owner-2"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-fork-owner-2"),
+          metadata: {},
+          payload: {
+            threadId: sourceThreadId,
+            projectId: ProjectId.make("project-fork-owner"),
+            title: "Source",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+
+        const savedForkEvent = yield* eventStore.append({
+          type: "thread.forked",
+          eventId: EventId.make("evt-fork-owner-3"),
+          aggregateKind: "thread",
+          aggregateId: forkThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-fork-owner-3"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-fork-owner-3"),
+          metadata: {},
+          payload: {
+            threadId: forkThreadId,
+            projectId: ProjectId.make("project-fork-owner"),
+            title: "Fork",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            forkedFrom: {
+              threadId: sourceThreadId,
+              turnId: TurnId.make("source-turn"),
+            },
+            inheritedMessages: [
+              {
+                id: MessageId.make("thread-fork:fork:0"),
+                role: "user",
+                text: "inherited",
+                attachments: [
+                  {
+                    type: "image",
+                    id: forkAttachmentId,
+                    name: "question.png",
+                    mimeType: "image/png",
+                    sizeBytes: 16,
+                  },
+                ],
+                turnId: TurnId.make("thread-fork:fork-turn:0"),
+                streaming: false,
+                createdAt: now,
+                updatedAt: now,
+              },
+            ],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        const firstProjection = yield* Effect.result(
+          projectionPipeline.projectEvent(savedForkEvent),
+        );
+        assert.equal(firstProjection._tag, "Failure");
+        const rolledBackForkRows = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS "count"
+          FROM projection_thread_messages
+          WHERE thread_id = ${forkThreadId}
+        `;
+        assert.equal(rolledBackForkRows[0]?.count ?? 0, 0);
+        const rolledBackProjectionState = yield* sql<{
+          readonly lastAppliedSequence: number;
+        }>`
+          SELECT last_applied_sequence AS "lastAppliedSequence"
+          FROM projection_state
+          WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.threadMessages}
+        `;
+        assert.equal(rolledBackProjectionState[0]?.lastAppliedSequence, 2);
+
+        yield* fileSystem.writeFileString(sourceAttachmentPath, "fork-owned-image");
+        yield* projectionPipeline.projectEvent(savedForkEvent);
+        assert.equal(yield* fileSystem.readFileString(forkAttachmentPath), "fork-owned-image");
+
+        yield* appendAndProject({
+          type: "thread.reverted",
+          eventId: EventId.make("evt-fork-owner-4"),
+          aggregateKind: "thread",
+          aggregateId: forkThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-fork-owner-4"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-fork-owner-4"),
+          metadata: {},
+          payload: {
+            threadId: forkThreadId,
+            turnCount: 0,
+          },
+        });
+        const forkRows = yield* sql<{ readonly messageId: string }>`
+        SELECT message_id AS "messageId"
+        FROM projection_thread_messages
+        WHERE thread_id = ${forkThreadId}
+      `;
+        assert.deepEqual(
+          forkRows.map((row) => row.messageId),
+          ["thread-fork:fork:0"],
+        );
+
+        yield* appendAndProject({
+          type: "thread.deleted",
+          eventId: EventId.make("evt-fork-owner-5"),
+          aggregateKind: "thread",
+          aggregateId: sourceThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-fork-owner-5"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-fork-owner-5"),
+          metadata: {},
+          payload: {
+            threadId: sourceThreadId,
+            deletedAt: now,
+          },
+        });
+
+        assert.isFalse(yield* exists(sourceAttachmentPath));
+        assert.equal(yield* fileSystem.readFileString(forkAttachmentPath), "fork-owned-image");
+      }),
+    );
+  },
+);
+
 it.layer(
   Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-attachments-rollback-")),
 )("OrchestrationProjectionPipeline", (it) => {

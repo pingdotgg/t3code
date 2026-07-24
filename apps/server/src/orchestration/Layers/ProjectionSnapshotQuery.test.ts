@@ -293,6 +293,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          forkedFrom: null,
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -407,6 +408,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          forkedFrom: null,
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -447,6 +449,120 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       if (threadDetail._tag === "Some") {
         assert.deepEqual(threadDetail.value, snapshot.threads[0]);
       }
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      assert.deepEqual(commandReadModel.threads[0]?.messages, snapshot.threads[0]?.messages);
+    }),
+  );
+
+  it.effect("hydrates command history beyond the shell snapshot message cap", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-command-history',
+          'Command History',
+          '/tmp/project-command-history',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-02-24T00:00:00.000Z',
+          '2026-02-24T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-command-history',
+          'project-command-history',
+          'Command History',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          'history-turn-2001',
+          NULL,
+          0,
+          0,
+          0,
+          '2026-02-24T00:00:00.000Z',
+          '2026-02-24T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        WITH RECURSIVE sequence(value) AS (
+          SELECT 1
+          UNION ALL
+          SELECT value + 1 FROM sequence WHERE value < 2001
+        )
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          turn_id,
+          role,
+          text,
+          is_streaming,
+          created_at,
+          updated_at
+        )
+        SELECT
+          printf('history-message-%04d', value),
+          'thread-command-history',
+          printf('history-turn-%04d', value),
+          'assistant',
+          printf('history message %d', value),
+          0,
+          '2026-02-24T00:00:00.000Z',
+          '2026-02-24T00:00:00.000Z'
+        FROM sequence
+      `;
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      const thread = commandReadModel.threads.find(
+        (candidate) => candidate.id === ThreadId.make("thread-command-history"),
+      );
+
+      assert.isDefined(thread);
+      assert.lengthOf(thread.messages, 2001);
+      assert.equal(thread.messages[0]?.id, asMessageId("history-message-0001"));
+      assert.equal(thread.messages[2000]?.id, asMessageId("history-message-2001"));
     }),
   );
 

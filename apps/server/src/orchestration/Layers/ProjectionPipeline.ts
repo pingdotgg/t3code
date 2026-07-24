@@ -13,7 +13,11 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
+import {
+  ProjectionAttachmentMaterializationError,
+  toPersistenceSqlError,
+  type ProjectionRepositoryError,
+} from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
@@ -50,6 +54,7 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import {
   attachmentRelativePath,
+  createForkedAttachmentId,
   parseAttachmentIdFromRelativePath,
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
@@ -102,6 +107,7 @@ interface ProjectorDefinition {
 }
 
 interface AttachmentSideEffects {
+  readonly copiedAttachmentRelativePaths: Map<string, string>;
   readonly deletedThreadIds: Set<string>;
   readonly prunedThreadRelativePaths: Map<string, Set<string>>;
 }
@@ -229,7 +235,7 @@ function retainProjectionMessagesAfterRevert(
   }
 
   for (const message of messages) {
-    if (message.role === "system") {
+    if (message.role === "system" || message.messageId.startsWith(`${message.threadId}:fork:`)) {
       retainedMessageIds.add(message.messageId);
       continue;
     }
@@ -350,6 +356,46 @@ function collectThreadAttachmentRelativePaths(
   }
   return relativePaths;
 }
+
+const materializeForkedAttachments = Effect.fn("materializeForkedAttachments")(function* (
+  sideEffects: AttachmentSideEffects,
+) {
+  const serverConfig = yield* Effect.service(ServerConfig);
+  const fileSystem = yield* Effect.service(FileSystem.FileSystem);
+  const path = yield* Effect.service(Path.Path);
+
+  const attachmentsRootDir = serverConfig.attachmentsDir;
+
+  yield* Effect.forEach(
+    sideEffects.copiedAttachmentRelativePaths.entries(),
+    ([destinationRelativePath, sourceRelativePath]) =>
+      destinationRelativePath === sourceRelativePath
+        ? Effect.void
+        : Effect.gen(function* () {
+            const destinationPath = path.join(attachmentsRootDir, destinationRelativePath);
+            if (yield* fileSystem.exists(destinationPath)) {
+              return;
+            }
+            const temporaryDestinationPath = `${destinationPath}.fork-copy.tmp`;
+            yield* fileSystem.makeDirectory(attachmentsRootDir, { recursive: true });
+            yield* fileSystem.copyFile(
+              path.join(attachmentsRootDir, sourceRelativePath),
+              temporaryDestinationPath,
+            );
+            yield* fileSystem.rename(temporaryDestinationPath, destinationPath);
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectionAttachmentMaterializationError({
+                  operation: "ProjectionPipeline.materializeForkedAttachments",
+                  detail: `Could not copy '${sourceRelativePath}' to '${destinationRelativePath}'.`,
+                  cause,
+                }),
+            ),
+          ),
+    { concurrency: 1 },
+  );
+});
 
 const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function* (
   sideEffects: AttachmentSideEffects,
@@ -603,6 +649,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            forkedFromThreadId: null,
+            forkedFromTurnId: null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -612,6 +660,37 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             snoozedUntil: null,
             snoozedAt: null,
             latestUserMessageAt: null,
+            pendingApprovalCount: 0,
+            pendingUserInputCount: 0,
+            hasActionableProposedPlan: 0,
+            deletedAt: null,
+          });
+          return;
+
+        case "thread.forked":
+          yield* projectionThreadRepository.upsert({
+            threadId: event.payload.threadId,
+            projectId: event.payload.projectId,
+            title: event.payload.title,
+            modelSelection: event.payload.modelSelection,
+            runtimeMode: event.payload.runtimeMode,
+            interactionMode: event.payload.interactionMode,
+            branch: event.payload.branch,
+            worktreePath: event.payload.worktreePath,
+            forkedFromThreadId: event.payload.forkedFrom.threadId,
+            forkedFromTurnId: event.payload.forkedFrom.turnId,
+            latestTurnId: null,
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            snoozedUntil: null,
+            snoozedAt: null,
+            latestUserMessageAt:
+              event.payload.inheritedMessages
+                .toReversed()
+                .find((message) => message.role === "user")?.createdAt ?? null,
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
@@ -879,6 +958,43 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadMessagesProjection",
     )(function* (event, attachmentSideEffects) {
       switch (event.type) {
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.inheritedMessages,
+            (message) => {
+              const attachments = message.attachments?.map((attachment) => {
+                const sourceAttachmentId = createForkedAttachmentId(
+                  event.payload.forkedFrom.threadId,
+                  attachment.id,
+                );
+                if (sourceAttachmentId !== null) {
+                  const sourceAttachment = {
+                    ...attachment,
+                    id: sourceAttachmentId,
+                  };
+                  attachmentSideEffects.copiedAttachmentRelativePaths.set(
+                    attachmentRelativePath(attachment),
+                    attachmentRelativePath(sourceAttachment),
+                  );
+                }
+                return attachment;
+              });
+              return projectionThreadMessageRepository.upsert({
+                messageId: message.id,
+                threadId: event.payload.threadId,
+                turnId: message.turnId,
+                role: message.role,
+                text: message.text,
+                ...(attachments !== undefined ? { attachments } : {}),
+                isStreaming: message.streaming,
+                createdAt: message.createdAt,
+                updatedAt: message.updatedAt,
+              });
+            },
+            { concurrency: 1, discard: true },
+          );
+          return;
+
         case "thread.message-sent": {
           const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
             messageId: event.payload.messageId,
@@ -1580,12 +1696,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       event: OrchestrationEvent,
     ) {
       const attachmentSideEffects: AttachmentSideEffects = {
+        copiedAttachmentRelativePaths: new Map<string, string>(),
         deletedThreadIds: new Set<string>(),
         prunedThreadRelativePaths: new Map<string, Set<string>>(),
       };
 
       yield* sql.withTransaction(
         projector.apply(event, attachmentSideEffects).pipe(
+          Effect.flatMap(() => materializeForkedAttachments(attachmentSideEffects)),
           Effect.flatMap(() =>
             projectionStateRepository.upsert({
               projector: projector.name,

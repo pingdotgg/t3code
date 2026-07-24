@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ApprovalRequestId,
   EventId,
@@ -50,6 +50,15 @@ export const ProviderSession = Schema.Struct({
 });
 export type ProviderSession = typeof ProviderSession.Type;
 
+export const ProviderSessionForkSource = Schema.Struct({
+  threadId: ThreadId,
+  sourceTurnId: Schema.optional(TurnId),
+  /** Zero-based provider response position for adapters whose native fork API uses a message id. */
+  sourceTurnIndex: Schema.optional(NonNegativeInt),
+  resumeCursor: Schema.optional(Schema.Unknown),
+});
+export type ProviderSessionForkSource = typeof ProviderSessionForkSource.Type;
+
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
   provider: Schema.optional(ProviderDriverKind),
@@ -58,6 +67,7 @@ export const ProviderSessionStartInput = Schema.Struct({
   cwd: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
   resumeCursor: Schema.optional(Schema.Unknown),
+  forkFrom: Schema.optional(ProviderSessionForkSource),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,

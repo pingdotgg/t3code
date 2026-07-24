@@ -62,6 +62,10 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  resolveLatestForkableTurnId,
+  supportsThreadFork,
+} from "@t3tools/client-runtime/thread-forking";
 import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -106,6 +110,7 @@ import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useForkThread } from "../hooks/useForkThread";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 
@@ -191,7 +196,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -1110,6 +1115,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const forkSidebarThread = useForkThread();
   const updateSettings = useUpdateClientSettings();
   const sidebarThreadPreviewCount = useClientSettings<SidebarThreadPreviewCount>(
     (settings) => settings.sidebarThreadPreviewCount,
@@ -2112,10 +2119,22 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
       const threadWorkspacePath =
         thread.worktreePath ?? threadProject?.workspaceRoot ?? project.workspaceRoot ?? null;
+      const providerInstanceId =
+        thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+      const providerDriver =
+        serverConfigs
+          .get(thread.environmentId)
+          ?.providers.find((provider) => provider.instanceId === providerInstanceId)?.driver ??
+        null;
+      const forkSupported = supportsThreadFork(providerDriver);
+      const sourceTurnId = resolveLatestForkableTurnId(thread.latestTurn);
       const clicked = await api.contextMenu.show(
         [
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
+            : []),
+          ...(forkSupported
+            ? [{ id: "fork-thread", label: "Fork thread", disabled: sourceTurnId === null }]
             : []),
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
@@ -2146,6 +2165,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               description: error instanceof Error ? error.message : "An error occurred.",
             }),
           );
+        }
+        return;
+      }
+
+      if (clicked === "fork-thread") {
+        if (sourceTurnId === null) return;
+        const forkedThreadRef = await forkSidebarThread(thread, sourceTurnId);
+        if (forkedThreadRef !== null) {
+          navigateToThread(forkedThreadRef);
         }
         return;
       }
@@ -2206,10 +2234,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
+      forkSidebarThread,
       handleNewThread,
       markThreadUnread,
       memberProjectByScopedKey,
+      navigateToThread,
       project.workspaceRoot,
+      serverConfigs,
       startThreadRename,
     ],
   );

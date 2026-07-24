@@ -88,6 +88,32 @@ const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
 
+export function findCompletedTurnIndex(
+  messages: ReadonlyArray<{
+    readonly role: string;
+    readonly turnId: TurnId | null;
+    readonly streaming: boolean;
+  }>,
+  sourceTurnId: TurnId,
+): number | undefined {
+  const completedTurnIds: TurnId[] = [];
+  for (const message of messages) {
+    if (
+      message.role !== "assistant" ||
+      message.turnId === null ||
+      message.streaming ||
+      completedTurnIds.some((turnId) => turnId === message.turnId)
+    ) {
+      continue;
+    }
+    completedTurnIds.push(message.turnId);
+    if (message.turnId === sourceTurnId) {
+      return completedTurnIds.length - 1;
+    }
+  }
+  return undefined;
+}
+
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : "unknown";
@@ -493,19 +519,91 @@ const make = Effect.gen(function* () {
       projects: project ? [project] : [],
     });
 
-    const startProviderSession = (input?: {
+    const startProviderSession = Effect.fn("startProviderSession")(function* (input?: {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
-    }) =>
-      providerService.startSession(threadId, {
+      readonly includeForkSource?: boolean;
+    }) {
+      const forkedFrom = input?.includeForkSource === true ? thread.forkedFrom : null;
+      const forkSource =
+        forkedFrom != null
+          ? yield* Effect.gen(function* () {
+              const sourceTurnId = forkedFrom.turnId;
+              let sourceThreadId = forkedFrom.threadId;
+              let sourceThread = yield* resolveThread(sourceThreadId);
+              const visitedThreadIds = new Set<string>();
+
+              if (sourceTurnId !== null) {
+                // An inherited message still belongs to the provider session that
+                // originally produced it. Walk fork-owned message ids back to that
+                // ancestor so nested forks use its durable binding and native turn id.
+                while (true) {
+                  if (sourceThread === undefined) {
+                    return yield* new ProviderAdapterRequestError({
+                      provider: desiredInfo.driverKind,
+                      method: "thread.turn.start",
+                      detail: `Cannot fork from turn '${sourceTurnId}' because source thread '${sourceThreadId}' is unavailable.`,
+                    });
+                  }
+                  if (visitedThreadIds.has(sourceThread.id)) {
+                    return yield* new ProviderAdapterRequestError({
+                      provider: desiredInfo.driverKind,
+                      method: "thread.turn.start",
+                      detail: `Cannot resolve fork lineage for turn '${sourceTurnId}' because it contains a cycle at thread '${sourceThread.id}'.`,
+                    });
+                  }
+                  visitedThreadIds.add(sourceThread.id);
+
+                  const sourceAssistantMessage = sourceThread.messages.find(
+                    (message) =>
+                      message.role === "assistant" &&
+                      message.turnId === sourceTurnId &&
+                      !message.streaming,
+                  );
+                  if (sourceAssistantMessage === undefined) {
+                    return yield* new ProviderAdapterRequestError({
+                      provider: desiredInfo.driverKind,
+                      method: "thread.turn.start",
+                      detail: `Cannot fork from turn '${sourceTurnId}' because its completed response was not found in source thread '${sourceThread.id}'.`,
+                    });
+                  }
+
+                  const parentFork = sourceThread.forkedFrom;
+                  if (
+                    !sourceAssistantMessage.id.startsWith(`${sourceThread.id}:fork:`) ||
+                    parentFork == null
+                  ) {
+                    break;
+                  }
+
+                  sourceThreadId = parentFork.threadId;
+                  sourceThread = yield* resolveThread(sourceThreadId);
+                }
+              }
+
+              const sourceTurnIndex =
+                sourceThread !== undefined && sourceTurnId !== null
+                  ? findCompletedTurnIndex(sourceThread.messages, sourceTurnId)
+                  : undefined;
+              return {
+                threadId: sourceThreadId,
+                ...(sourceTurnId !== null ? { sourceTurnId } : {}),
+                ...(sourceTurnIndex !== undefined ? { sourceTurnIndex } : {}),
+              };
+            })
+          : undefined;
+
+      return yield* providerService.startSession(threadId, {
         threadId,
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+        ...(forkSource !== undefined ? { forkFrom: forkSource } : {}),
         runtimeMode: desiredRuntimeMode,
       });
+    });
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
@@ -603,7 +701,7 @@ const make = Effect.gen(function* () {
       return restartedSession.threadId;
     }
 
-    const startedSession = yield* startProviderSession(undefined);
+    const startedSession = yield* startProviderSession({ includeForkSource: true });
     yield* bindSessionToThread(startedSession);
     return startedSession.threadId;
   });

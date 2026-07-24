@@ -49,6 +49,7 @@ import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import {
+  findCompletedTurnIndex,
   providerErrorLabel,
   providerErrorLabelFromInstanceHint,
   ProviderCommandReactorLive,
@@ -66,6 +67,24 @@ const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+
+describe("findCompletedTurnIndex", () => {
+  it("maps a selected T3 turn to its provider response position", () => {
+    const first = asTurnId("turn-1");
+    const second = asTurnId("turn-2");
+    expect(
+      findCompletedTurnIndex(
+        [
+          { role: "assistant", turnId: first, streaming: false },
+          { role: "assistant", turnId: first, streaming: false },
+          { role: "assistant", turnId: second, streaming: true },
+          { role: "assistant", turnId: second, streaming: false },
+        ],
+        second,
+      ),
+    ).toBe(1);
+  });
+});
 
 const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
   Effect.runSync(deriveServerPaths(baseDir, devUrl).pipe(Effect.provide(NodeServices.layer)));
@@ -441,7 +460,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-1"),
@@ -475,6 +494,186 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("hydrates persisted source history and passes the completed turn position to native forks", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const sourceTurnId = asTurnId("source-turn-1");
+    const forkThreadId = ThreadId.make("thread-fork");
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.make("cmd-source-assistant-complete"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("source-assistant-1"),
+        turnId: sourceTurnId,
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-thread-fork"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.make("thread-1"),
+        sourceTurnId,
+        title: "Forked thread",
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fork-turn-start"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("fork-user-message"),
+          role: "user",
+          text: "continue here",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      forkFrom: {
+        threadId: ThreadId.make("thread-1"),
+        sourceTurnId,
+        sourceTurnIndex: 0,
+      },
+    });
+  });
+
+  it("resolves inherited fork history to the provider-owning ancestor", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const sourceThreadId = ThreadId.make("thread-1");
+    const sourceTurnId = asTurnId("source-turn-nested");
+    const parentForkThreadId = ThreadId.make("thread-parent-fork");
+    const nestedForkThreadId = ThreadId.make("thread-nested-fork");
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.make("cmd-nested-source-complete"),
+        threadId: sourceThreadId,
+        messageId: asMessageId("nested-source-assistant"),
+        turnId: sourceTurnId,
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-parent-fork"),
+        threadId: parentForkThreadId,
+        sourceThreadId,
+        sourceTurnId,
+        title: "Parent fork",
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-nested-fork"),
+        threadId: nestedForkThreadId,
+        sourceThreadId: parentForkThreadId,
+        sourceTurnId,
+        title: "Nested fork",
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-nested-fork-turn-start"),
+        threadId: nestedForkThreadId,
+        message: {
+          messageId: asMessageId("nested-fork-user-message"),
+          role: "user",
+          text: "continue from inherited history",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      forkFrom: {
+        threadId: sourceThreadId,
+        sourceTurnId,
+        sourceTurnIndex: 0,
+      },
+    });
+  });
+
+  it("does not fall back to the latest provider response when the fork source is unavailable", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const sourceTurnId = asTurnId("source-turn-1");
+    const forkThreadId = ThreadId.make("thread-fork-missing-source");
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.make("cmd-missing-source-assistant-complete"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("missing-source-assistant"),
+        turnId: sourceTurnId,
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-missing-source-fork"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.make("thread-1"),
+        sourceTurnId,
+        title: "Forked thread",
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("cmd-delete-fork-source"),
+        threadId: ThreadId.make("thread-1"),
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-missing-source-turn-start"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("missing-source-user-message"),
+          role: "user",
+          text: "continue here",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.startSession).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const fork = readModel.threads.find((thread) => thread.id === forkThreadId);
+    expect(fork?.session?.status).toBe("error");
+    expect(fork?.session?.lastError).toContain("source thread 'thread-1' is unavailable");
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>

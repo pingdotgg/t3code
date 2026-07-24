@@ -6,6 +6,7 @@ import {
   ThreadId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
+import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -703,6 +704,102 @@ describe("orchestration projector", () => {
     expect(thread?.latestTurn?.turnId).toBe("turn-1");
   });
 
+  effectIt.effect("retains inherited fork messages when reverting fork-local turns", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-02-25T10:00:00.000Z";
+      const model = createEmptyReadModel(createdAt);
+      const events: ReadonlyArray<OrchestrationEvent> = [
+        makeEvent({
+          sequence: 1,
+          type: "thread.forked",
+          aggregateKind: "thread",
+          aggregateId: "thread-fork",
+          occurredAt: createdAt,
+          commandId: "cmd-fork",
+          payload: {
+            threadId: "thread-fork",
+            projectId: "project-1",
+            title: "Fork",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5.3-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            forkedFrom: {
+              threadId: "thread-source",
+              turnId: "source-turn",
+            },
+            inheritedMessages: [
+              {
+                id: "thread-fork:fork:0",
+                role: "user",
+                text: "Inherited question",
+                turnId: "source-turn",
+                streaming: false,
+                createdAt,
+                updatedAt: createdAt,
+              },
+              {
+                id: "thread-fork:fork:1",
+                role: "assistant",
+                text: "Inherited answer",
+                turnId: "source-turn",
+                streaming: false,
+                createdAt,
+                updatedAt: createdAt,
+              },
+            ],
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+        makeEvent({
+          sequence: 2,
+          type: "thread.message-sent",
+          aggregateKind: "thread",
+          aggregateId: "thread-fork",
+          occurredAt: "2026-02-25T10:00:01.000Z",
+          commandId: "cmd-fork-local",
+          payload: {
+            threadId: "thread-fork",
+            messageId: "fork-local-assistant",
+            role: "assistant",
+            text: "Fork-local answer",
+            turnId: "fork-local-turn",
+            streaming: false,
+            createdAt: "2026-02-25T10:00:01.000Z",
+            updatedAt: "2026-02-25T10:00:01.000Z",
+          },
+        }),
+        makeEvent({
+          sequence: 3,
+          type: "thread.reverted",
+          aggregateKind: "thread",
+          aggregateId: "thread-fork",
+          occurredAt: "2026-02-25T10:00:02.000Z",
+          commandId: "cmd-revert",
+          payload: {
+            threadId: "thread-fork",
+            turnCount: 0,
+          },
+        }),
+      ];
+
+      let afterRevert = model;
+      for (const event of events) {
+        afterRevert = yield* projectEvent(afterRevert, event);
+      }
+
+      expect(afterRevert.threads[0]?.messages.map((message) => message.id)).toEqual([
+        "thread-fork:fork:0",
+        "thread-fork:fork:1",
+      ]);
+    }),
+  );
+
   it("does not fallback-retain messages tied to removed turn IDs", async () => {
     const createdAt = "2026-02-26T12:00:00.000Z";
     const model = createEmptyReadModel(createdAt);
@@ -856,7 +953,7 @@ describe("orchestration projector", () => {
     ).toEqual([{ id: "assistant-keep", role: "assistant", turnId: "turn-1" }]);
   });
 
-  it("caps message and checkpoint retention for long-lived threads", async () => {
+  it("retains complete message history while capping checkpoints for long-lived threads", async () => {
     const createdAt = "2026-03-01T10:00:00.000Z";
     const model = createEmptyReadModel(createdAt);
 
@@ -949,8 +1046,8 @@ describe("orchestration projector", () => {
     );
 
     const thread = finalState.threads[0];
-    expect(thread?.messages).toHaveLength(2_000);
-    expect(thread?.messages[0]?.id).toBe("msg-100");
+    expect(thread?.messages).toHaveLength(2_100);
+    expect(thread?.messages[0]?.id).toBe("msg-0");
     expect(thread?.messages.at(-1)?.id).toBe("msg-2099");
     expect(thread?.checkpoints).toHaveLength(500);
     expect(thread?.checkpoints[0]?.turnId).toBe("turn-100");
