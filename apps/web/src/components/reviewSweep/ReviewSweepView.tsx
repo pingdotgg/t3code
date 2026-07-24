@@ -159,6 +159,9 @@ function SweepPreRunSummary() {
   const shells = useThreadShells();
   const serverConfigs = useServerConfigs();
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  // Recompute when the sidebar publishes fresh PR states — merged-PR
+  // auto-settle changes which threads count as unsettled.
+  const candidateVersion = useReviewSweepStore((state) => state.candidateVersion);
 
   const { candidateCount, reviewedCount, modelsByEnvironment } = useMemo(() => {
     const now = new Date().toISOString();
@@ -198,7 +201,7 @@ function SweepPreRunSummary() {
       reviewedCount: reviewed.length,
       modelsByEnvironment: [...models.values()],
     };
-  }, [autoSettleAfterDays, serverConfigs, shells]);
+  }, [autoSettleAfterDays, candidateVersion, serverConfigs, shells]);
 
   if (candidateCount === 0) {
     return (

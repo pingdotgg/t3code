@@ -23,6 +23,22 @@ import { reviewEnvironment } from "./state/review";
 import { environmentServerConfigsAtom } from "./state/server";
 import { threadEnvironment } from "./state/threads";
 
+/** PR states mirrored from SidebarV2's per-row VCS subscriptions (keyed by
+    scoped thread key). The sidebar auto-settles merged/closed+idle threads
+    using this data; the sweep must see the same states or it will count
+    those threads as unsettled. Module-level because the sidebar is mounted
+    for the app's lifetime and owns the subscriptions. */
+let changeRequestStateByKey: ReadonlyMap<string, "open" | "closed" | "merged"> = new Map();
+
+export function publishSweepChangeRequestStates(
+  states: ReadonlyMap<string, "open" | "closed" | "merged">,
+): void {
+  changeRequestStateByKey = states;
+  // Bump the store version so the pre-run summary recomputes its candidate
+  // count as PR states stream in from the sidebar rows.
+  useReviewSweepStore.getState().bumpCandidateVersion();
+}
+
 const SWEEP_CONCURRENCY = 3;
 /** Soft cap so a giant backlog doesn't spawn an unbounded number of LLM
     generations in one click. */
@@ -52,6 +68,9 @@ interface ReviewSweepState {
   items: Readonly<Record<string, SweepItem>>;
   /** Count of candidates dropped by SWEEP_MAX_THREADS (0 = full coverage). */
   truncatedCount: number;
+  /** Bumped when sidebar-owned PR states change; the pre-run summary
+      subscribes so its candidate count tracks the sidebar's partition. */
+  candidateVersion: number;
   startRun: (input: {
     runId: number;
     items: ReadonlyArray<SweepItem>;
@@ -59,6 +78,7 @@ interface ReviewSweepState {
   }) => void;
   patchItem: (key: string, patch: Partial<SweepItem>) => void;
   finishRun: (runId: number) => void;
+  bumpCandidateVersion: () => void;
   reset: () => void;
 }
 
@@ -68,6 +88,7 @@ export const useReviewSweepStore = create<ReviewSweepState>((set) => ({
   order: [],
   items: {},
   truncatedCount: 0,
+  candidateVersion: 0,
   startRun: ({ runId, items, truncatedCount }) =>
     set({
       phase: "running",
@@ -83,6 +104,7 @@ export const useReviewSweepStore = create<ReviewSweepState>((set) => ({
       return { items: { ...state.items, [key]: { ...existing, ...patch } } };
     }),
   finishRun: (runId) => set((state) => (state.runId === runId ? { phase: "complete" } : state)),
+  bumpCandidateVersion: () => set((state) => ({ candidateVersion: state.candidateVersion + 1 })),
   reset: () => set({ phase: "idle", order: [], items: {}, truncatedCount: 0 }),
 }));
 
@@ -101,13 +123,18 @@ export function isSweepCandidate(
 ): boolean {
   if (shell.archivedAt !== null) return false;
   if (capabilities?.threadSettlement !== true || capabilities.reviewSweep !== true) return false;
-  // PR state is owned by per-row VCS subscriptions in the sidebar and isn't
-  // readable here; passing null may include a few threads the sidebar shows
-  // as settled (merged PR + idle). Reviewing them is harmless.
+  // PR state comes from SidebarV2's per-row subscriptions via
+  // publishSweepChangeRequestStates, so merged-PR+idle threads classify as
+  // settled here exactly like they do in the sidebar. Rows that haven't
+  // reported yet fall back to null (treated as unsettled) — same as a
+  // freshly mounted sidebar.
+  const changeRequestState =
+    changeRequestStateByKey.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id))) ??
+    null;
   return !effectiveSettled(shell, {
     now: options.now,
     autoSettleAfterDays: options.autoSettleAfterDays,
-    changeRequestState: null,
+    changeRequestState,
   });
 }
 

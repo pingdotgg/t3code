@@ -81,6 +81,7 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import { publishSweepChangeRequestStates } from "../reviewSweepStore";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -1163,6 +1164,11 @@ export default function SidebarV2() {
     },
     [],
   );
+  // Mirror PR states to the review-sweep store so its unsettled-candidate
+  // predicate matches this sidebar's partition (merged-PR auto-settle).
+  useEffect(() => {
+    publishSweepChangeRequestStates(changeRequestStateByKey);
+  }, [changeRequestStateByKey]);
 
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
