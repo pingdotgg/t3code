@@ -1,4 +1,5 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
+import { useRef } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -10,28 +11,41 @@ type TooltipProps = TooltipPrimitive.Root.Props & {
   preserveOnNestedTriggerHover?: boolean;
 };
 
-function hasHoveredNestedTooltipTrigger(target: EventTarget | null) {
-  if (!target || typeof (target as Element).closest !== "function") return false;
+function hasHoveredNestedTooltipTrigger(parentTrigger: Element | null, target: EventTarget | null) {
+  if (!parentTrigger) return false;
+  if (!target || typeof (target as Element).closest !== "function") {
+    return parentTrigger.querySelector('[data-slot="tooltip-trigger"]:hover') !== null;
+  }
   const nestedTrigger = (target as Element).closest<HTMLElement>('[data-slot="tooltip-trigger"]');
-  if (!nestedTrigger?.matches(":hover")) return false;
   return (
-    nestedTrigger.parentElement?.closest('[data-slot="tooltip-trigger"][data-popup-open]') != null
+    nestedTrigger !== null &&
+    nestedTrigger !== parentTrigger &&
+    parentTrigger.contains(nestedTrigger) &&
+    nestedTrigger.matches(":hover")
   );
 }
 
 function Tooltip({ preserveOnNestedTriggerHover = false, onOpenChange, ...props }: TooltipProps) {
+  const triggerRef = useRef<Element | null>(null);
+
   return (
     <TooltipPrimitive.Root
       onOpenChange={(open, eventDetails) => {
+        if (open && eventDetails.trigger) {
+          triggerRef.current = eventDetails.trigger;
+        }
         if (
           !open &&
           preserveOnNestedTriggerHover &&
-          hasHoveredNestedTooltipTrigger(eventDetails.event.target)
+          hasHoveredNestedTooltipTrigger(triggerRef.current, eventDetails.event.target)
         ) {
           eventDetails.cancel();
           return;
         }
         onOpenChange?.(open, eventDetails);
+        if (!open && !eventDetails.isCanceled) {
+          triggerRef.current = null;
+        }
       }}
       {...props}
     />
