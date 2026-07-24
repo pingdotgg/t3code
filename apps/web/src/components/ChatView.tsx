@@ -488,8 +488,6 @@ function useLocalDispatchState(input: {
   threadError: string | null | undefined;
 }) {
   const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
-  const latestUserMessageId =
-    input.activeThread?.messages.findLast((message) => message.role === "user")?.id ?? null;
 
   const resetLocalDispatch = useCallback(() => {
     setLocalDispatch(null);
@@ -501,8 +499,8 @@ function useLocalDispatchState(input: {
         localDispatch,
         phase: input.phase,
         latestTurn: input.activeLatestTurn,
-        latestUserMessageId,
         session: input.activeThread?.session ?? null,
+        projectedMessages: input.activeThread?.messages ?? [],
         hasPendingApproval: input.activePendingApproval !== null,
         hasPendingUserInput: input.activePendingUserInput !== null,
         threadError: input.threadError,
@@ -511,16 +509,16 @@ function useLocalDispatchState(input: {
       input.activeLatestTurn,
       input.activePendingApproval,
       input.activePendingUserInput,
+      input.activeThread?.messages,
       input.activeThread?.session,
       input.phase,
       input.threadError,
-      latestUserMessageId,
       localDispatch,
     ],
   );
   const activeLocalDispatch = serverAcknowledgedLocalDispatch ? null : localDispatch;
   const beginLocalDispatch = useCallback(
-    (options?: { preparingWorktree?: boolean }) => {
+    (options?: { preparingWorktree?: boolean; expectedUserMessageId?: MessageId }) => {
       const preparingWorktree = Boolean(options?.preparingWorktree);
       setLocalDispatch((current) => {
         const active = serverAcknowledgedLocalDispatch ? null : current;
@@ -4564,8 +4562,6 @@ function ChatViewContent(props: ChatViewProps) {
       void dockTransition.catch(() => resolveDockStarted?.());
       await dockStarted;
     }
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
-
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerElementContextsSnapshot = [...composerElementContexts];
@@ -4584,6 +4580,10 @@ function ChatViewContent(props: ChatViewProps) {
       composerReviewCommentsSnapshot,
     );
     const messageIdForSend = newMessageId();
+    beginLocalDispatch({
+      preparingWorktree: Boolean(baseBranchForWorktree),
+      expectedUserMessageId: messageIdForSend,
+    });
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
@@ -4748,7 +4748,7 @@ function ChatViewContent(props: ChatViewProps) {
                 : {}),
             }
           : undefined;
-      beginLocalDispatch({ preparingWorktree: false });
+      beginLocalDispatch({ preparingWorktree: false, expectedUserMessageId: messageIdForSend });
       const startResult = await startThreadTurn({
         environmentId,
         input: {
@@ -5051,7 +5051,7 @@ function ChatViewContent(props: ChatViewProps) {
       });
 
       sendInFlightRef.current = true;
-      beginLocalDispatch({ preparingWorktree: false });
+      beginLocalDispatch({ preparingWorktree: false, expectedUserMessageId: messageIdForSend });
       setThreadError(threadIdForSend, null);
 
       // Position this sent row once LegendList has measured the anchored tail.

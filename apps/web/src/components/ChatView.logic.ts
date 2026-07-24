@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   isProviderDriverKind,
+  type MessageId,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
@@ -456,8 +457,8 @@ export async function waitForStartedServerThread(
 export interface LocalDispatchSnapshot {
   startedAt: string;
   preparingWorktree: boolean;
-  latestUserMessageId: ChatMessage["id"] | null;
-  latestTurnTurnId: TurnId | null;
+  expectedUserMessageId: MessageId | null;
+  latestTurnId: TurnId | null;
   latestTurnRequestedAt: string | null;
   latestTurnStartedAt: string | null;
   latestTurnCompletedAt: string | null;
@@ -467,16 +468,15 @@ export interface LocalDispatchSnapshot {
 
 export function createLocalDispatchSnapshot(
   activeThread: Thread | undefined,
-  options?: { preparingWorktree?: boolean },
+  options?: { preparingWorktree?: boolean; expectedUserMessageId?: MessageId },
 ): LocalDispatchSnapshot {
   const latestTurn = activeThread?.latestTurn ?? null;
   const session = activeThread?.session ?? null;
-  const latestUserMessage = activeThread?.messages.findLast((message) => message.role === "user");
   return {
     startedAt: new Date().toISOString(),
     preparingWorktree: Boolean(options?.preparingWorktree),
-    latestUserMessageId: latestUserMessage?.id ?? null,
-    latestTurnTurnId: latestTurn?.turnId ?? null,
+    expectedUserMessageId: options?.expectedUserMessageId ?? null,
+    latestTurnId: latestTurn?.turnId ?? null,
     latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
     latestTurnStartedAt: latestTurn?.startedAt ?? null,
     latestTurnCompletedAt: latestTurn?.completedAt ?? null,
@@ -489,8 +489,8 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   localDispatch: LocalDispatchSnapshot | null;
   phase: SessionPhase;
   latestTurn: Thread["latestTurn"] | null;
-  latestUserMessageId: ChatMessage["id"] | null;
   session: Thread["session"] | null;
+  projectedMessages: ReadonlyArray<Pick<ChatMessage, "id" | "role">>;
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
   threadError: string | null | undefined;
@@ -502,24 +502,29 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     return true;
   }
 
+  // The projected message with the exact outbound id is authoritative server
+  // acknowledgement even when the dispatch snapshot has stale session state.
+  // This matters for steers because providers can apply them to the existing
+  // turn without changing the latest turn/session fields until it finishes.
+  const expectedUserMessageId = input.localDispatch.expectedUserMessageId;
+  if (expectedUserMessageId !== null) {
+    for (let index = input.projectedMessages.length - 1; index >= 0; index -= 1) {
+      const message = input.projectedMessages[index];
+      if (message?.role === "user" && message.id === expectedUserMessageId) {
+        return true;
+      }
+    }
+  }
+
   const latestTurn = input.latestTurn ?? null;
   const session = input.session ?? null;
-  const latestUserMessageChanged =
-    input.localDispatch.latestUserMessageId !== input.latestUserMessageId;
   const latestTurnChanged =
-    input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
+    input.localDispatch.latestTurnId !== (latestTurn?.turnId ?? null) ||
     input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||
     input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
     input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
 
   if (input.phase === "running") {
-    // Steering adds a user message to the current running turn without
-    // necessarily changing any of the turn timestamps. Treat that projected
-    // message as the server acknowledgment so the composer does not remain
-    // stuck in its local "Sending" state until the turn settles.
-    if (latestUserMessageChanged) {
-      return true;
-    }
     if (!latestTurnChanged) {
       return false;
     }
