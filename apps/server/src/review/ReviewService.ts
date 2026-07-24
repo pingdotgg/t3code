@@ -79,7 +79,10 @@ export const make = Effect.gen(function* () {
         }).pipe(Effect.as(DEFAULT_WORKTREE_PATH_TEMPLATE)),
       ),
     );
-    const matchesConfiguredWorktreePath = (input.repositoryRoots ?? []).some((repositoryRoot) =>
+    const repositoryRoots = yield* Effect.forEach(input.repositoryRoots ?? [], canonicalizePath, {
+      concurrency: "unbounded",
+    });
+    const matchesConfiguredWorktreePath = repositoryRoots.some((repositoryRoot) =>
       matchesWorktreePathTemplate(path, {
         candidate,
         cwd: repositoryRoot,

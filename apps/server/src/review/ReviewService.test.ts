@@ -90,15 +90,20 @@ describe("ReviewService", () => {
       const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
       const repositoryRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-repo-" });
+      const repositoryAliasesRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-review-repo-aliases-",
+      });
+      const repositoryRootAlias = path.join(repositoryAliasesRoot, "repo");
       const worktreeRoot = path.join(repositoryRoot, ".worktrees", "feature-local");
       const detectCalls: Array<{ readonly cwd: string }> = [];
+      yield* fs.symlink(repositoryRoot, repositoryRootAlias);
       yield* fs.makeDirectory(worktreeRoot, { recursive: true });
 
       const result = yield* Effect.gen(function* () {
         const review = yield* ReviewService.ReviewService;
         return yield* review.getDiffPreview({
           cwd: worktreeRoot,
-          repositoryRoots: [repositoryRoot],
+          repositoryRoots: [repositoryRootAlias],
         });
       }).pipe(
         Effect.provide(
