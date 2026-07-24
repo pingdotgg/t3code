@@ -2922,6 +2922,99 @@ describe("ProviderRuntimeIngestion", () => {
     ).toHaveLength(2);
   });
 
+  it("resets assistant segment state after deferred finalization succeeds", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-deferred-finalization-segment-reset");
+    const itemId = asItemId("item-deferred-finalization-segment-reset");
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-deferred-finalization-segment-reset"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-first-delta-deferred-finalization-segment-reset"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { streamKind: "assistant_text", delta: "first" },
+    });
+
+    const getCompleteFailureCount = harness.failDispatches(
+      3,
+      (command) => command.type === "thread.message.assistant.complete",
+    );
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-first-complete-deferred-finalization-segment-reset"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-deferred-finalization-segment-reset" &&
+            !message.streaming &&
+            message.text === "first",
+        ),
+      5000,
+    );
+    expect(getCompleteFailureCount()).toBe(3);
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-second-delta-deferred-finalization-segment-reset"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { streamKind: "assistant_text", delta: " second" },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-second-complete-deferred-finalization-segment-reset"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-deferred-finalization-segment-reset" &&
+            !message.streaming &&
+            message.text === "first second",
+        ),
+      5000,
+    );
+    expect(
+      thread.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-deferred-finalization-segment-reset:segment:1",
+      ),
+    ).toBe(false);
+  });
+
   it("does not duplicate a recovered final delta when completion also retries", async () => {
     const harness = await createHarness();
     const turnId = asTurnId("turn-finalization-stage-retry");
@@ -3677,6 +3770,66 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(assistantCompletionIndex).toBeGreaterThanOrEqual(0);
     expect(turnReadyIndex).toBeGreaterThan(assistantCompletionIndex);
+  });
+
+  it("publishes the completed session before later plan finalization fails", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-session-before-plan-finalization");
+    const itemId = asItemId("item-session-before-plan-finalization");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-session-before-plan-finalization"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-content-delta-session-before-plan-finalization"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { streamKind: "assistant_text", delta: "assistant completed" },
+    });
+    harness.emit({
+      type: "turn.proposed.delta",
+      eventId: asEventId("evt-plan-delta-session-before-plan-finalization"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { delta: "# Proposed plan" },
+    });
+    const didFailPlanUpsert = harness.failNextDispatch(
+      (command) => command.type === "thread.proposed-plan.upsert",
+    );
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-session-before-plan-finalization"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { state: "completed" },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "ready" &&
+        thread.session.activeTurnId === null &&
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-session-before-plan-finalization" && !message.streaming,
+        ),
+    );
+    expect(didFailPlanUpsert()).toBe(true);
   });
 
   it("keeps a turn boundary behind deferred item finalization", async () => {

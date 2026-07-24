@@ -1004,6 +1004,16 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const resetFinalizedAssistantMessageForTurn = Effect.fn("resetFinalizedAssistantMessageForTurn")(
+    function* (threadId: ThreadId, turnId: TurnId, messageId: MessageId) {
+      yield* forgetAssistantMessageId(threadId, turnId, messageId);
+      const state = yield* getAssistantSegmentStateForTurn(threadId, turnId);
+      if (Option.isSome(state) && state.value.activeMessageId === messageId) {
+        yield* clearAssistantSegmentStateForTurn(threadId, turnId);
+      }
+    },
+  );
+
   const startAssistantSegmentForTurn = (input: {
     threadId: ThreadId;
     turnId: TurnId;
@@ -1953,6 +1963,27 @@ const make = Effect.gen(function* () {
           return loadedThreadDetail;
         });
       let deferredThreadSession: NonNullable<typeof thread.session> | null = null;
+      const flushDeferredThreadSession = Effect.fnUntraced(function* () {
+        if (deferredThreadSession === null) {
+          return false;
+        }
+        if (yield* deferBoundaryEventForAssistantDeltas(event, thread.id)) {
+          return true;
+        }
+        const session = deferredThreadSession;
+        yield* orchestrationEngine.dispatch({
+          type: "thread.session.set",
+          commandId: yield* providerCommandId(
+            event,
+            event.type === "runtime.error" ? "runtime-error-session-set" : "thread-session-set",
+          ),
+          threadId: thread.id,
+          session,
+          createdAt: event.createdAt,
+        });
+        deferredThreadSession = null;
+        return false;
+      });
 
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
@@ -2122,6 +2153,9 @@ const make = Effect.gen(function* () {
           threadId: thread.id,
           createdAt: now,
         });
+        if (yield* flushDeferredThreadSession()) {
+          return;
+        }
       }
 
       const assistantDelta =
@@ -2337,6 +2371,9 @@ const make = Effect.gen(function* () {
           if (finalizedAssistantMessages.every(Boolean)) {
             yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
             yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
+            if (event.type === "turn.completed" && (yield* flushDeferredThreadSession())) {
+              return;
+            }
           }
 
           yield* finalizeBufferedProposedPlan({
@@ -2356,7 +2393,7 @@ const make = Effect.gen(function* () {
           threadId: thread.id,
           createdAt: now,
         });
-        if (yield* deferBoundaryEventForAssistantDeltas(event, thread.id)) {
+        if (yield* flushDeferredThreadSession()) {
           return;
         }
         yield* clearTurnStateForSession(thread.id);
@@ -2387,6 +2424,9 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             createdAt: now,
           });
+          if (yield* flushDeferredThreadSession()) {
+            return;
+          }
         }
       }
 
@@ -2451,20 +2491,8 @@ const make = Effect.gen(function* () {
         }
       }
 
-      if (deferredThreadSession !== null) {
-        if (yield* deferBoundaryEventForAssistantDeltas(event, thread.id)) {
-          return;
-        }
-        yield* orchestrationEngine.dispatch({
-          type: "thread.session.set",
-          commandId: yield* providerCommandId(
-            event,
-            event.type === "runtime.error" ? "runtime-error-session-set" : "thread-session-set",
-          ),
-          threadId: thread.id,
-          session: deferredThreadSession,
-          createdAt: now,
-        });
+      if (yield* flushDeferredThreadSession()) {
+        return;
       }
 
       const activities = runtimeEventToActivities(event, taskTitle);
@@ -2690,7 +2718,7 @@ const make = Effect.gen(function* () {
           }
           const finalized = yield* finalizeAssistantMessage(input);
           if (finalized && input.turnId) {
-            yield* releaseFinalizedAssistantMessageForTurn(
+            yield* resetFinalizedAssistantMessageForTurn(
               input.threadId,
               input.turnId,
               input.messageId,
@@ -2741,7 +2769,7 @@ const make = Effect.gen(function* () {
               yield* clearAssistantMessageState(input.messageId);
               yield* forgetAssistantMessageIdForThread(input.threadId, input.messageId);
               if (input.turnId) {
-                yield* releaseFinalizedAssistantMessageForTurn(
+                yield* resetFinalizedAssistantMessageForTurn(
                   input.threadId,
                   input.turnId,
                   input.messageId,
