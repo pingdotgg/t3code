@@ -6022,7 +6022,7 @@ function ChatViewContent(props: ChatViewProps) {
                 </div>
               </div>
               {!isDraftHeroState ? (
-                <div className="chat-composer-horizontal-inset chat-composer-lower-chrome relative z-10 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]" />
+                <div className="chat-composer-horizontal-inset relative z-10 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]" />
               ) : null}
             </div>
 

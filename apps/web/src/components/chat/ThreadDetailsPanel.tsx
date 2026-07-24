@@ -103,7 +103,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const card = (
     <div
       className={cn(
-        "floating-glass-surface overflow-x-hidden rounded-[20px] border border-border",
+        "dropdown-glass overflow-x-hidden rounded-[20px]",
         props.mode === "inline"
           ? "max-h-full overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           : "max-h-[calc(100dvh-6.5rem)] overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
