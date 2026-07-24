@@ -160,6 +160,21 @@ describe("uiStateStore pure functions", () => {
     expect(updated.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:35:00.000Z");
   });
 
+  it("preserves explicit unread when an active visit timestamp regresses", () => {
+    const threadId = ThreadId.make("thread-1");
+    const active = markActiveThreadVisited(makeUiState(), threadId, "2026-02-25T12:35:00.000Z");
+    const unread = markThreadUnread(active, threadId, null);
+
+    const stale = markActiveThreadVisited(unread, threadId, "2026-02-25T12:30:00.000Z");
+
+    expect(stale).toBe(unread);
+    expect(stale.threadExplicitlyUnreadById[threadId]).toBe(true);
+    expect(stale.activeThreadVisit).toEqual({
+      threadId,
+      visitedAt: "2026-02-25T12:35:00.000Z",
+    });
+  });
+
   it("resolves project expansion from logical, physical, and legacy preference keys", () => {
     const physicalKey = "environment:/repo/project";
     const legacyKey = legacyProjectCwdPreferenceKey("/repo/project");

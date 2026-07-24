@@ -312,6 +312,15 @@ export function markActiveThreadVisited(
         activeThreadVisit: { threadId, visitedAt },
       };
     }
+
+    const previousVisitedAtMs = Date.parse(state.activeThreadVisit.visitedAt);
+    const nextVisitedAtMs = Date.parse(visitedAt);
+    if (
+      !Number.isFinite(nextVisitedAtMs) ||
+      (Number.isFinite(previousVisitedAtMs) && nextVisitedAtMs <= previousVisitedAtMs)
+    ) {
+      return state;
+    }
   }
 
   const visitedState = visitedAt === null ? state : markThreadVisited(state, threadId, visitedAt);
