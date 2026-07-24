@@ -10,6 +10,7 @@ import type * as Electron from "electron";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopApplicationMenu from "./DesktopApplicationMenu.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -91,12 +92,36 @@ const makeElectronMenuLayer = (
     showContextMenu: () => Effect.succeed(Option.none()),
   } satisfies ElectronMenu.ElectronMenu["Service"]);
 
+const makeElectronWindowLayer = (zoomLevel: { value: number }) =>
+  Layer.succeed(ElectronWindow.ElectronWindow, {
+    create: () => Effect.die("unexpected create"),
+    main: Effect.succeed(Option.none()),
+    currentMainOrFirst: Effect.succeed(Option.none()),
+    focusedMainOrFirst: Effect.succeed(
+      Option.some({
+        webContents: {
+          getZoomLevel: () => zoomLevel.value,
+          setZoomLevel: (value: number) => {
+            zoomLevel.value = value;
+          },
+        },
+      } as Electron.BrowserWindow),
+    ),
+    setMain: () => Effect.void,
+    clearMain: () => Effect.void,
+    reveal: () => Effect.void,
+    sendAll: () => Effect.void,
+    destroyAll: Effect.void,
+    syncAllAppearance: () => Effect.void,
+  } satisfies ElectronWindow.ElectronWindow["Service"]);
+
 describe("DesktopApplicationMenu", () => {
   it.effect("installs the native menu and routes Settings through DesktopWindow", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();
       const applicationMenuTemplate =
         yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      const zoomLevel = { value: 9 };
 
       yield* Effect.gen(function* () {
         const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
@@ -105,6 +130,7 @@ describe("DesktopApplicationMenu", () => {
         Effect.provide(
           DesktopApplicationMenu.layer.pipe(
             Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
+            Layer.provideMerge(makeElectronWindowLayer(zoomLevel)),
             Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
             Layer.provideMerge(desktopUpdatesLayer),
             Layer.provideMerge(electronDialogLayer),
@@ -133,6 +159,21 @@ describe("DesktopApplicationMenu", () => {
 
       settingsClick({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
       assert.equal(yield* Deferred.await(selectedAction), "open-settings");
+
+      const viewMenu = template.find((item) => item.label === "View");
+      assert.isDefined(viewMenu);
+      if (!Array.isArray(viewMenu.submenu)) {
+        throw new Error("Expected View menu submenu to be an array.");
+      }
+      const zoomOutItem = viewMenu.submenu.find((item) => item.label === "Zoom Out");
+      assert.isDefined(zoomOutItem);
+      const zoomOutClick = zoomOutItem.click;
+      if (typeof zoomOutClick !== "function") {
+        throw new Error("Expected Zoom Out menu item to have a click handler.");
+      }
+      zoomOutClick({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+      yield* Effect.yieldNow;
+      assert.equal(zoomLevel.value, 8);
     }),
   );
 });
