@@ -250,6 +250,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     display: none;
   }
 
+  .thread-remote-environment-label {
+    display: none;
+  }
+
+  @container thread-row (min-width: 13rem) {
+    .thread-remote-environment-label {
+      display: inline;
+    }
+  }
+
   @media (min-width: 48rem) {
     @container sidebar-header (min-width: 13.5rem) {
       .sidebar-brand {

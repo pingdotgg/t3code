@@ -22,6 +22,7 @@ import {
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { RemoteEnvironmentIndicator } from "./RemoteEnvironmentIndicator";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -669,7 +670,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         size="sm"
         isActive={isActive}
         data-testid={`thread-row-${thread.id}`}
-        className={`${resolveThreadRowClassName({
+        className={`@container/thread-row ${resolveThreadRowClassName({
           isActive,
           isSelected,
         })} relative isolate`}
@@ -830,14 +831,14 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                   <Tooltip>
                     <TooltipTrigger
                       render={
-                        <span
-                          aria-label={threadEnvironmentLabel ?? "Remote"}
-                          className="inline-flex items-center justify-center"
+                        <RemoteEnvironmentIndicator
+                          icon={CloudIcon}
+                          label={threadEnvironmentLabel ?? "Remote"}
+                          className="max-w-24"
+                          iconClassName="size-3 text-muted-foreground/40"
                         />
                       }
-                    >
-                      <CloudIcon className="size-3 text-muted-foreground/40" />
-                    </TooltipTrigger>
+                    />
                     <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
                   </Tooltip>
                 )}

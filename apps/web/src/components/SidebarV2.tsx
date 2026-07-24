@@ -108,6 +108,7 @@ import {
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { RemoteEnvironmentIndicator } from "./RemoteEnvironmentIndicator";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
@@ -688,7 +689,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               role="button"
               tabIndex={0}
               data-testid="sidebar-v2-row-card"
-              className={rowSurfaceClassName}
+              className={cn("@container/thread-row", rowSurfaceClassName)}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}
@@ -770,14 +771,14 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
                 </span>
               ) : null}
-              <span
-                aria-hidden
-                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-              >
+              <span className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1">
                 {isRemote ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-                    <ServerIcon aria-hidden className="size-3.5" />
-                  </span>
+                  <RemoteEnvironmentIndicator
+                    icon={ServerIcon}
+                    label={props.environmentLabel ?? "Remote"}
+                    className="max-w-24 shrink-0 text-sidebar-muted-foreground/70"
+                    iconClassName="size-3.5"
+                  />
                 ) : null}
                 {driverKind ? (
                   <span className="inline-flex shrink-0 items-center opacity-60">
