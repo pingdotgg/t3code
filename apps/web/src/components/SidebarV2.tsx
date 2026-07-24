@@ -90,7 +90,7 @@ import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import { readThreadShell, useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -1958,10 +1958,23 @@ export default function SidebarV2() {
     [confirmThreadArchive],
   );
   const archiveThreadEntries = useCallback(
-    async (entries: readonly { threadKey: string; threadRef: ScopedThreadRef }[]) => {
+    async (
+      entries: readonly { threadKey: string; threadRef: ScopedThreadRef }[],
+      options: {
+        onArchived?: (threadKey: string) => void;
+        recheckLiveEligibility?: boolean;
+      } = {},
+    ) => {
       const outcome = await archiveSelectedThreadEntries({
         entries,
         archive: ({ threadRef }, onArchived) => archiveThread(threadRef, { onArchived }),
+        ...(options.recheckLiveEligibility
+          ? {
+              canArchive: ({ threadRef }: { threadRef: ScopedThreadRef }) =>
+                !isThreadSessionRunning(readThreadShell(threadRef)?.session),
+            }
+          : {}),
+        onArchived: ({ threadKey }) => options.onArchived?.(threadKey),
       });
       for (const failure of outcome.followupFailures) {
         if (isAtomCommandInterrupted(failure)) continue;
@@ -1999,7 +2012,7 @@ export default function SidebarV2() {
         await withCoordinatedThreadArchiveEntries({
           entries: [{ threadKey, threadRef }],
           reservations: archivingThreadReservationsRef.current,
-          run: async (entries) => {
+          run: async (entries, onArchived) => {
             const thread = threadByKeyRef.current.get(threadKey);
             if (
               !(await confirmArchive(
@@ -2008,7 +2021,7 @@ export default function SidebarV2() {
             ) {
               return [];
             }
-            const outcome = await archiveThreadEntries(entries);
+            const outcome = await archiveThreadEntries(entries, { onArchived });
             removeFromSelection(outcome.archivedThreadKeys);
             return outcome.archivedThreadKeys;
           },
@@ -2031,7 +2044,7 @@ export default function SidebarV2() {
             return { threadKey: scopedThreadKey(threadRef), threadRef };
           }),
           reservations: archivingThreadReservationsRef.current,
-          run: async (entries) => {
+          run: async (entries, onArchived) => {
             const count = entries.length;
             if (
               !(await confirmArchive(
@@ -2040,7 +2053,10 @@ export default function SidebarV2() {
             ) {
               return [];
             }
-            const outcome = await archiveThreadEntries(entries);
+            const outcome = await archiveThreadEntries(entries, {
+              onArchived,
+              recheckLiveEligibility: true,
+            });
             removeFromSelection(outcome.archivedThreadKeys);
             return outcome.archivedThreadKeys;
           },
@@ -2153,7 +2169,7 @@ export default function SidebarV2() {
             ];
           }),
           reservations: archivingThreadReservationsRef.current,
-          run: async (entries) => {
+          run: async (entries, onArchived) => {
             const archiveCount = entries.length;
             if (
               !(await confirmArchive(
@@ -2162,7 +2178,10 @@ export default function SidebarV2() {
             ) {
               return [];
             }
-            const outcome = await archiveThreadEntries(entries);
+            const outcome = await archiveThreadEntries(entries, {
+              onArchived,
+              recheckLiveEligibility: true,
+            });
             removeFromSelection(outcome.archivedThreadKeys);
             return outcome.archivedThreadKeys;
           },

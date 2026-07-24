@@ -51,6 +51,8 @@ export async function archiveSelectedThreadEntries<
 >(input: {
   entries: readonly TEntry[];
   archive: (entry: TEntry, onArchived: () => void) => Promise<TResult>;
+  canArchive?: (entry: TEntry) => boolean;
+  onArchived?: (entry: TEntry) => void;
 }): Promise<{
   archivedThreadKeys: readonly string[];
   mutationFailure: Extract<TResult, { readonly _tag: "Failure" }> | null;
@@ -60,9 +62,12 @@ export async function archiveSelectedThreadEntries<
   const followupFailures: Extract<TResult, { readonly _tag: "Failure" }>[] = [];
 
   for (const entry of input.entries) {
+    if (input.canArchive && !input.canArchive(entry)) continue;
     let didArchive = false;
     const result = await input.archive(entry, () => {
+      if (didArchive) return;
       didArchive = true;
+      input.onArchived?.(entry);
     });
     if (didArchive || result._tag === "Success") {
       archivedThreadKeys.push(entry.threadKey);
@@ -84,7 +89,10 @@ export async function withCoordinatedThreadArchiveEntries<
 >(input: {
   entries: readonly TEntry[];
   reservations: Map<string, Promise<ReadonlySet<string>>>;
-  run: (entries: readonly TEntry[]) => Promise<readonly string[]>;
+  run: (
+    entries: readonly TEntry[],
+    onArchived: (threadKey: string) => void,
+  ) => Promise<readonly string[]>;
 }): Promise<readonly string[]> {
   const uniqueEntries: TEntry[] = [];
   const uniqueThreadKeys = new Set<string>();
@@ -93,49 +101,57 @@ export async function withCoordinatedThreadArchiveEntries<
     uniqueThreadKeys.add(entry.threadKey);
     uniqueEntries.push(entry);
   }
+  let resolveReservation: (archivedThreadKeys: ReadonlySet<string>) => void = () => undefined;
+  const reservation = new Promise<ReadonlySet<string>>((resolve) => {
+    resolveReservation = resolve;
+  });
+  const ownedThreadKeys = new Set<string>();
+  const archivedThreadKeys = new Set<string>();
   let pendingEntries = uniqueEntries;
 
-  while (pendingEntries.length > 0) {
-    const activeReservations = [
-      ...new Set(
-        pendingEntries.flatMap((entry) => {
-          const reservation = input.reservations.get(entry.threadKey);
-          return reservation ? [reservation] : [];
-        }),
-      ),
-    ];
-    if (activeReservations.length > 0) {
+  try {
+    while (pendingEntries.length > 0) {
+      const activeReservations = new Set<Promise<ReadonlySet<string>>>();
+      for (const entry of pendingEntries) {
+        const activeReservation = input.reservations.get(entry.threadKey);
+        if (activeReservation && activeReservation !== reservation) {
+          activeReservations.add(activeReservation);
+          continue;
+        }
+        input.reservations.set(entry.threadKey, reservation);
+        ownedThreadKeys.add(entry.threadKey);
+      }
+      if (activeReservations.size === 0) break;
+
       const archivedByOwners = new Set(
         (await Promise.all(activeReservations)).flatMap((threadKeys) => [...threadKeys]),
       );
       pendingEntries = pendingEntries.filter((entry) => !archivedByOwners.has(entry.threadKey));
-      continue;
     }
 
-    let resolveReservation: (archivedThreadKeys: ReadonlySet<string>) => void = () => undefined;
-    const reservation = new Promise<ReadonlySet<string>>((resolve) => {
-      resolveReservation = resolve;
-    });
-    for (const entry of pendingEntries) {
-      input.reservations.set(entry.threadKey, reservation);
+    if (pendingEntries.length === 0) {
+      resolveReservation(archivedThreadKeys);
+      return [];
     }
-    try {
-      const archivedThreadKeys = await input.run(pendingEntries);
-      resolveReservation(new Set(archivedThreadKeys));
-      return archivedThreadKeys;
-    } catch (error) {
-      resolveReservation(new Set());
-      throw error;
-    } finally {
-      for (const entry of pendingEntries) {
-        if (input.reservations.get(entry.threadKey) === reservation) {
-          input.reservations.delete(entry.threadKey);
-        }
+
+    const completedThreadKeys = await input.run(pendingEntries, (threadKey) => {
+      if (ownedThreadKeys.has(threadKey)) archivedThreadKeys.add(threadKey);
+    });
+    for (const threadKey of completedThreadKeys) {
+      if (ownedThreadKeys.has(threadKey)) archivedThreadKeys.add(threadKey);
+    }
+    resolveReservation(archivedThreadKeys);
+    return completedThreadKeys;
+  } catch (error) {
+    resolveReservation(archivedThreadKeys);
+    throw error;
+  } finally {
+    for (const threadKey of ownedThreadKeys) {
+      if (input.reservations.get(threadKey) === reservation) {
+        input.reservations.delete(threadKey);
       }
     }
   }
-
-  return [];
 }
 
 export function buildMultiSelectThreadContextMenuItems(input: {
