@@ -260,6 +260,31 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    it.effect("omits an untracked file after it is deleted", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const createdPath = pathService.join(cwd, "created.ts");
+        yield* writeTextFile(cwd, "created.ts", "export const created = true;\n");
+
+        const beforeDelete = yield* driver.getReviewDiffPreview({ cwd });
+        yield* fileSystem.remove(createdPath);
+        const afterDelete = yield* driver.getReviewDiffPreview({ cwd });
+
+        assert.include(
+          beforeDelete.sources.find((source) => source.kind === "working-tree")?.diff ?? "",
+          "created.ts",
+        );
+        assert.strictEqual(
+          afterDelete.sources.find((source) => source.kind === "working-tree")?.diff,
+          "",
+        );
+      }),
+    );
+
     it.effect("drops an unterminated path from truncated NUL-separated git output", () =>
       Effect.sync(() => {
         const paths = splitNullSeparatedGitStdoutPaths({
@@ -396,6 +421,32 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(status.aheadOfDefaultCount, 1);
         assert.notProperty(status, "workingTree");
         assert.notProperty(status, "hasWorkingTreeChanges");
+      }),
+    );
+
+    it.effect("changes the remote ref hash when a remote-tracking ref moves", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const initialCommit = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* writeTextFile(cwd, "next.txt", "next\n");
+        yield* git(cwd, ["add", "next.txt"]);
+        yield* git(cwd, ["commit", "-m", "next commit"]);
+        const nextCommit = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* git(cwd, ["update-ref", "refs/remotes/origin/base", initialCommit]);
+        const initialStatus = yield* driver.statusDetailsRemote(cwd, {
+          refreshUpstream: false,
+        });
+        yield* git(cwd, ["update-ref", "refs/remotes/origin/base", nextCommit]);
+        const nextStatus = yield* driver.statusDetailsRemote(cwd, {
+          refreshUpstream: false,
+        });
+
+        assert.isString(initialStatus.remoteRefHash);
+        assert.isString(nextStatus.remoteRefHash);
+        assert.notEqual(initialStatus.remoteRefHash, nextStatus.remoteRefHash);
       }),
     );
 

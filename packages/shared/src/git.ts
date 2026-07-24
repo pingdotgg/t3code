@@ -224,10 +224,12 @@ const EMPTY_GIT_STATUS_REMOTE: VcsStatusRemoteResult = {
 export function mergeGitStatusParts(
   local: VcsStatusLocalResult,
   remote: VcsStatusRemoteResult | null,
+  localGeneration?: number,
 ): VcsStatusResult {
   return {
     ...local,
     ...(remote ?? EMPTY_GIT_STATUS_REMOTE),
+    ...(localGeneration === undefined ? {} : { localGeneration }),
   };
 }
 
@@ -239,6 +241,7 @@ function toRemoteStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
     ...(status.aheadOfDefaultCount === undefined
       ? {}
       : { aheadOfDefaultCount: status.aheadOfDefaultCount }),
+    ...(status.remoteRefHash === undefined ? {} : { remoteRefHash: status.remoteRefHash }),
     pr: status.pr,
   };
 }
@@ -263,9 +266,13 @@ export function applyGitStatusStreamEvent(
 ): VcsStatusResult {
   switch (event._tag) {
     case "snapshot":
-      return mergeGitStatusParts(event.local, event.remote);
+      return mergeGitStatusParts(event.local, event.remote, event.localGeneration);
     case "localUpdated":
-      return mergeGitStatusParts(event.local, current ? toRemoteStatusPart(current) : null);
+      return mergeGitStatusParts(
+        event.local,
+        current ? toRemoteStatusPart(current) : null,
+        event.localGeneration ?? current?.localGeneration,
+      );
     case "remoteUpdated":
       if (current === null) {
         return mergeGitStatusParts(
@@ -280,6 +287,6 @@ export function applyGitStatusStreamEvent(
           event.remote,
         );
       }
-      return mergeGitStatusParts(toLocalStatusPart(current), event.remote);
+      return mergeGitStatusParts(toLocalStatusPart(current), event.remote, current.localGeneration);
   }
 }

@@ -159,6 +159,9 @@ describe("environmentRpcKey", () => {
         input: originalTarget.input,
       }),
     ).not.toBe(environmentRpcKey(originalTarget));
+    expect(environmentRpcKey({ ...originalTarget, cacheKey: "clean" })).not.toBe(
+      environmentRpcKey({ ...originalTarget, cacheKey: "dirty" }),
+    );
   });
 });
 

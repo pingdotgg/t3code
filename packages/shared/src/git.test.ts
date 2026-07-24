@@ -145,6 +145,7 @@ describe("applyGitStatusStreamEvent", () => {
       aheadCount: 0,
       behindCount: 0,
       pr: null,
+      localGeneration: 3,
     };
 
     const remote: VcsStatusRemoteResult = {
@@ -160,6 +161,42 @@ describe("applyGitStatusStreamEvent", () => {
       aheadCount: 2,
       behindCount: 1,
       pr: null,
+    });
+  });
+
+  it("replaces the local generation even when the status summary is unchanged", () => {
+    const unchangedLocal = {
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/demo",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    } as const;
+    const current: VcsStatusResult = {
+      ...unchangedLocal,
+      hasUpstream: true,
+      aheadCount: 1,
+      behindCount: 0,
+      pr: null,
+      localGeneration: 1,
+      remoteRefHash: "remote-ref-hash",
+    };
+
+    expect(
+      applyGitStatusStreamEvent(current, {
+        _tag: "localUpdated",
+        local: unchangedLocal,
+        localGeneration: 2,
+      }),
+    ).toEqual({
+      ...unchangedLocal,
+      hasUpstream: true,
+      aheadCount: 1,
+      behindCount: 0,
+      pr: null,
+      localGeneration: 2,
+      remoteRefHash: "remote-ref-hash",
     });
   });
 });

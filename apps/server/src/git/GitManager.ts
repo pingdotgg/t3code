@@ -984,6 +984,7 @@ export const make = Effect.gen(function* () {
       aheadCount: details.aheadCount,
       behindCount: details.behindCount,
       aheadOfDefaultCount: details.aheadOfDefaultCount,
+      ...(details.remoteRefHash == null ? {} : { remoteRefHash: details.remoteRefHash }),
       pr,
     } satisfies VcsStatusRemoteResult;
   });

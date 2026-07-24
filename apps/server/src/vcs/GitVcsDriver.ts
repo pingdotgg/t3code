@@ -73,6 +73,7 @@ export interface GitRemoteStatusDetails {
   isDefaultBranch: boolean;
   branch: string | null;
   upstreamRef: string | null;
+  remoteRefHash?: string | null;
   hasUpstream: boolean;
   aheadCount: number;
   behindCount: number;

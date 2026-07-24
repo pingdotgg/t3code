@@ -124,8 +124,9 @@ interface CachedValue<T> {
 }
 
 interface CachedVcsStatus {
-  readonly local: CachedValue<VcsStatusLocalResult> | null;
+  readonly local: VcsStatusLocalResult | null;
   readonly remote: CachedValue<VcsStatusRemoteResult | null> | null;
+  readonly localGeneration: number;
 }
 
 interface ActiveRemotePoller {
@@ -199,26 +200,25 @@ export const make = Effect.gen(function* () {
 
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
     function* (cwd: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
-      const nextLocal = {
-        fingerprint: fingerprintStatusPart(local),
-        value: local,
-      } satisfies CachedValue<VcsStatusLocalResult>;
-      const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
-        const previous = cache.get(cwd) ?? { local: null, remote: null };
+      const localGeneration = yield* Ref.modify(cacheRef, (cache) => {
+        const previous = cache.get(cwd) ?? { local: null, remote: null, localGeneration: 0 };
+        const nextLocalGeneration = previous.localGeneration + 1;
         const nextCache = new Map(cache);
         nextCache.set(cwd, {
           ...previous,
-          local: nextLocal,
+          local,
+          localGeneration: nextLocalGeneration,
         });
-        return [previous.local?.fingerprint !== nextLocal.fingerprint, nextCache] as const;
+        return [nextLocalGeneration, nextCache] as const;
       });
 
-      if (options?.publish && shouldPublish) {
+      if (options?.publish) {
         yield* PubSub.publish(changesPubSub, {
           cwd,
           event: {
             _tag: "localUpdated",
             local,
+            localGeneration,
           },
         });
       }
@@ -234,7 +234,7 @@ export const make = Effect.gen(function* () {
         value: remote,
       } satisfies CachedValue<VcsStatusRemoteResult | null>;
       const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
-        const previous = cache.get(cwd) ?? { local: null, remote: null };
+        const previous = cache.get(cwd) ?? { local: null, remote: null, localGeneration: 0 };
         const nextCache = new Map(cache);
         nextCache.set(cwd, {
           ...previous,
@@ -263,35 +263,30 @@ export const make = Effect.gen(function* () {
     remote: VcsStatusRemoteResult | null,
     options?: { publish?: boolean },
   ) {
-    const nextLocal = {
-      fingerprint: fingerprintStatusPart(local),
-      value: local,
-    } satisfies CachedValue<VcsStatusLocalResult>;
     const nextRemote = {
       fingerprint: fingerprintStatusPart(remote),
       value: remote,
     } satisfies CachedValue<VcsStatusRemoteResult | null>;
-    const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
-      const previous = cache.get(cwd) ?? { local: null, remote: null };
+    const localGeneration = yield* Ref.modify(cacheRef, (cache) => {
+      const previous = cache.get(cwd) ?? { local: null, remote: null, localGeneration: 0 };
+      const nextLocalGeneration = previous.localGeneration + 1;
       const nextCache = new Map(cache);
       nextCache.set(cwd, {
-        local: nextLocal,
+        local,
         remote: nextRemote,
+        localGeneration: nextLocalGeneration,
       });
-      return [
-        previous.local?.fingerprint !== nextLocal.fingerprint ||
-          previous.remote?.fingerprint !== nextRemote.fingerprint,
-        nextCache,
-      ] as const;
+      return [nextLocalGeneration, nextCache] as const;
     });
 
-    if (options?.publish && shouldPublish) {
+    if (options?.publish) {
       yield* PubSub.publish(changesPubSub, {
         cwd,
         event: {
           _tag: "snapshot",
           local,
           remote,
+          localGeneration,
         },
       });
     }
@@ -311,7 +306,7 @@ export const make = Effect.gen(function* () {
   ) {
     const cached = yield* getCachedStatus(cwd);
     if (cached?.local) {
-      return cached.local.value;
+      return cached.local;
     }
     return yield* loadLocalStatus(cwd);
   });
@@ -324,11 +319,11 @@ export const make = Effect.gen(function* () {
     const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
     const cached = yield* getCachedStatus(cwd);
     if (cached?.local && cached.remote) {
-      return mergeGitStatusParts(cached.local.value, cached.remote.value);
+      return mergeGitStatusParts(cached.local, cached.remote.value);
     }
     const [local, remote] = yield* Effect.all(
       [
-        cached?.local ? Effect.succeed(cached.local.value) : workflow.localStatus({ cwd }),
+        cached?.local ? Effect.succeed(cached.local) : workflow.localStatus({ cwd }),
         cached?.remote ? Effect.succeed(cached.remote.value) : workflow.remoteStatus({ cwd }),
       ],
       { concurrency: "unbounded" },
@@ -522,6 +517,7 @@ export const make = Effect.gen(function* () {
             _tag: "snapshot" as const,
             local: initialLocal,
             remote: initialRemote,
+            localGeneration: cachedStatus?.localGeneration,
           }),
           Stream.fromSubscription(subscription).pipe(
             Stream.filter((event) => event.cwd === cwd),

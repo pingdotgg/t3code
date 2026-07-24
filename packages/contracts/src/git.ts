@@ -223,6 +223,7 @@ const VcsStatusRemoteShape = {
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
   aheadOfDefaultCount: Schema.optional(NonNegativeInt),
+  remoteRefHash: Schema.optional(TrimmedNonEmptyStringSchema),
   pr: Schema.NullOr(VcsStatusChangeRequest),
 };
 
@@ -235,6 +236,7 @@ export type VcsStatusRemoteResult = typeof VcsStatusRemoteResult.Type;
 export const VcsStatusResult = Schema.Struct({
   ...VcsStatusLocalShape,
   ...VcsStatusRemoteShape,
+  localGeneration: Schema.optional(NonNegativeInt),
 });
 export type VcsStatusResult = typeof VcsStatusResult.Type;
 
@@ -242,9 +244,11 @@ export const VcsStatusStreamEvent = Schema.Union([
   Schema.TaggedStruct("snapshot", {
     local: VcsStatusLocalResult,
     remote: Schema.NullOr(VcsStatusRemoteResult),
+    localGeneration: Schema.optional(NonNegativeInt),
   }),
   Schema.TaggedStruct("localUpdated", {
     local: VcsStatusLocalResult,
+    localGeneration: Schema.optional(NonNegativeInt),
   }),
   Schema.TaggedStruct("remoteUpdated", {
     remote: Schema.NullOr(VcsStatusRemoteResult),

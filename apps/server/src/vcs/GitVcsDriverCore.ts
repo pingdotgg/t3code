@@ -79,6 +79,7 @@ const NON_REPOSITORY_REMOTE_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitRemot
   isDefaultBranch: false,
   branch: null,
   upstreamRef: null,
+  remoteRefHash: null,
   hasUpstream: false,
   aheadCount: 0,
   behindCount: 0,
@@ -1224,6 +1225,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const branchValue = branchResult.stdout.trim();
     const branch = branchValue.length > 0 && branchValue !== "HEAD" ? branchValue : null;
+    const remoteRefs = yield* runGitStdout("GitVcsDriver.statusDetailsRemote.remoteRefs", cwd, [
+      "for-each-ref",
+      "--sort=refname",
+      "--format=%(refname)%00%(objectname)",
+      "refs/remotes",
+    ]);
+    const remoteRefHash = yield* crypto
+      .digest("SHA-256", new TextEncoder().encode(remoteRefs))
+      .pipe(
+        Effect.map(Encoding.encodeHex),
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.statusDetailsRemote.remoteRefHash",
+              command: "crypto.digest SHA-256",
+              cwd,
+              detail: "Failed to hash remote refs.",
+              cause,
+            }),
+        ),
+      );
     const upstream = yield* resolveCurrentUpstream(cwd);
     const upstreamRef = upstream?.upstreamRef ?? null;
     let aheadCount = 0;
@@ -1266,6 +1288,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       isDefaultBranch,
       branch,
       upstreamRef,
+      remoteRefHash,
       hasUpstream: upstreamRef !== null,
       aheadCount,
       behindCount,
