@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>T3 Code — Agent-Friendly Development Authentication</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #000;
+        --text: #fff;
+        --muted: #a3a3a3;
+        --surface: #101010;
+        --surface-2: #171717;
+        --line: #292929;
+        --green: #55e6a5;
+        --blue: #67b7ff;
+        --amber: #f4c65d;
+        --red: #ff7d7d;
+        --radius: 14px;
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 64px 0 96px; }
+      h1, h2, h3 { margin: 0; line-height: 1.15; letter-spacing: -0.025em; }
+      h1 { max-width: 850px; font-size: clamp(2.4rem, 7vw, 5.4rem); }
+      h2 { font-size: clamp(1.5rem, 3vw, 2.25rem); }
+      h3 { font-size: 1rem; letter-spacing: 0; }
+      p { margin: 0; }
+      code {
+        color: #dff7eb;
+        font: 0.9em ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+      pre {
+        margin: 0;
+        overflow: auto;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #080808;
+        color: #dff7eb;
+        font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+      section { margin-top: 72px; }
+      .eyebrow {
+        margin-bottom: 18px;
+        color: var(--green);
+        font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      .lede { max-width: 760px; margin-top: 24px; color: #d4d4d4; font-size: 1.15rem; }
+      .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+      .pill {
+        padding: 7px 11px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .pill strong { color: var(--text); }
+      .callout {
+        margin-top: 32px;
+        padding: 22px;
+        border: 1px solid #245d45;
+        border-radius: var(--radius);
+        background: #07150f;
+      }
+      .callout strong { color: var(--green); }
+      .section-head { display: grid; gap: 10px; max-width: 740px; margin-bottom: 26px; }
+      .section-head p { color: var(--muted); }
+      .grid { display: grid; gap: 16px; }
+      .grid.three { grid-template-columns: repeat(3, 1fr); }
+      .grid.two { grid-template-columns: repeat(2, 1fr); }
+      .card {
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+      .card p { margin-top: 9px; color: var(--muted); }
+      .card .number {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        margin-bottom: 18px;
+        border-radius: 50%;
+        background: var(--text);
+        color: var(--bg);
+        font-weight: 800;
+      }
+      .command-grid { display: grid; grid-template-columns: 170px 1fr; gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--line); }
+      .command-grid > div { padding: 14px 16px; background: var(--surface); }
+      .command-grid .label { color: var(--muted); }
+      .diagram {
+        overflow-x: auto;
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+      .diagram svg { display: block; min-width: 840px; width: 100%; height: auto; }
+      .steps { counter-reset: step; display: grid; gap: 14px; }
+      .step {
+        position: relative;
+        padding: 20px 20px 20px 66px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+      .step::before {
+        counter-increment: step;
+        content: counter(step);
+        position: absolute;
+        top: 18px;
+        left: 20px;
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+        background: var(--surface-2);
+        color: var(--green);
+        font-weight: 800;
+      }
+      .step p { margin-top: 7px; color: var(--muted); }
+      .file-list { display: grid; gap: 8px; }
+      .file {
+        display: grid;
+        grid-template-columns: minmax(230px, 0.8fr) 1.2fr;
+        gap: 18px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      .file:last-child { border-bottom: 0; }
+      .file span { color: var(--muted); }
+      .checklist { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+      .checklist li { position: relative; padding-left: 30px; color: #d4d4d4; }
+      .checklist li::before { content: "✓"; position: absolute; left: 0; color: var(--green); font-weight: 800; }
+      .warning { border-color: #5b4820; background: #161105; }
+      .warning strong { color: var(--amber); }
+      .not-doing { color: var(--red); }
+      footer { margin-top: 80px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+
+      @media (max-width: 820px) {
+        main { padding-top: 40px; }
+        section { margin-top: 52px; }
+        .grid.three, .grid.two { grid-template-columns: 1fr; }
+        .command-grid, .file { grid-template-columns: 1fr; }
+        .command-grid .label { padding-bottom: 6px; }
+        .file { gap: 4px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">Implementation plan · T3 Code</div>
+        <h1>Development auth that agents never have to think about.</h1>
+        <p class="lede">
+          Derive a reusable development key from the canonical worktree path, print it in ordinary
+          pairing URLs, and let the existing browser and mobile pairing flows do the rest.
+        </p>
+        <div class="meta">
+          <span class="pill"><strong>Scope:</strong> web, iOS Simulator, Android Emulator</span>
+          <span class="pill"><strong>Boundary:</strong> explicit, loopback-only development mode</span>
+          <span class="pill"><strong>Steady state:</strong> existing sessions and WebSocket tickets</span>
+        </div>
+        <div class="callout">
+          <strong>Core decision:</strong> the path-derived value is a development instance key, not a secret.
+          It may appear in development pairing URLs. Its value is unlimited reuse, not secrecy.
+        </div>
+      </header>
+
+      <section>
+        <div class="section-head">
+          <div class="eyebrow">Target experience</div>
+          <h2>Keep the commands agents already use</h2>
+          <p>The runner prepares the server and prints reusable web, iOS, and Android connection URLs; the testing skills continue to own browsers, Metro, simulators, and emulators.</p>
+        </div>
+        <div class="command-grid" role="table" aria-label="Development commands">
+          <div class="label">Web stack</div><div><code>vp run dev --home-dir &lt;base-dir&gt;</code></div>
+          <div class="label">Mobile backend</div><div><code>vp run dev:server --home-dir &lt;base-dir&gt; --host 127.0.0.1</code></div>
+          <div class="label">Mobile client</div><div><span class="label">Reuse/start Metro and drive the selected device with </span><code>test-t3-mobile</code></div>
+          <div class="label">Physical device</div><div><span class="label">Use existing real pairing; the development key is never accepted on a LAN bind.</span></div>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div class="eyebrow">Architecture</div>
+          <h2>A bootstrap, not a bypass</h2>
+          <p>The only new server behavior is a reusable, loopback-only grant. Existing pairing screens and token exchanges remain the client implementation.</p>
+        </div>
+        <div class="diagram">
+          <svg viewBox="0 0 1000 330" role="img" aria-labelledby="diagram-title diagram-desc">
+            <title id="diagram-title">Development authentication flow</title>
+            <desc id="diagram-desc">The dev runner derives a key, seeds it on the server, prints an ordinary reusable pairing URL, and the existing client pairing flow exchanges it for a normal session.</desc>
+            <defs>
+              <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+                <path d="M0,0 L9,4.5 L0,9 Z" fill="#67b7ff" />
+              </marker>
+            </defs>
+            <rect x="30" y="80" width="210" height="150" rx="16" fill="#171717" stroke="#3a3a3a" />
+            <text x="55" y="116" fill="#55e6a5" font-size="14" font-weight="700">DEV RUNNER</text>
+            <text x="55" y="151" fill="#fff" font-size="18" font-weight="700">Canonical Git root</text>
+            <text x="55" y="180" fill="#a3a3a3" font-size="14">realpath → SHA-256</text>
+            <text x="55" y="207" fill="#a3a3a3" font-size="14">print reusable pair URLs</text>
+
+            <rect x="395" y="25" width="230" height="120" rx="16" fill="#171717" stroke="#3a3a3a" />
+            <text x="420" y="60" fill="#67b7ff" font-size="14" font-weight="700">SERVER</text>
+            <text x="420" y="91" fill="#fff" font-size="17" font-weight="700">Reusable dev grant</text>
+            <text x="420" y="120" fill="#a3a3a3" font-size="14">administrative bootstrap scopes</text>
+
+            <rect x="395" y="185" width="230" height="120" rx="16" fill="#171717" stroke="#3a3a3a" />
+            <text x="420" y="220" fill="#f4c65d" font-size="14" font-weight="700">CLIENT</text>
+            <text x="420" y="251" fill="#fff" font-size="17" font-weight="700">Existing pair flow</text>
+            <text x="420" y="280" fill="#a3a3a3" font-size="14">browser or mobile deep link</text>
+
+            <rect x="775" y="80" width="195" height="150" rx="16" fill="#07150f" stroke="#245d45" />
+            <text x="800" y="116" fill="#55e6a5" font-size="14" font-weight="700">STEADY STATE</text>
+            <text x="800" y="151" fill="#fff" font-size="17" font-weight="700">Normal session</text>
+            <text x="800" y="180" fill="#a3a3a3" font-size="14">cookie / bearer / DPoP</text>
+            <text x="800" y="207" fill="#a3a3a3" font-size="14">existing WS tickets</text>
+
+            <path d="M240 125 H380" stroke="#67b7ff" stroke-width="2" marker-end="url(#arrow)" />
+            <path d="M240 190 C300 190 320 245 380 245" fill="none" stroke="#67b7ff" stroke-width="2" marker-end="url(#arrow)" />
+            <path d="M625 245 C700 245 690 185 760 185" fill="none" stroke="#67b7ff" stroke-width="2" marker-end="url(#arrow)" />
+            <path d="M625 86 H760" stroke="#67b7ff" stroke-width="2" marker-end="url(#arrow)" />
+            <text x="654" y="72" fill="#a3a3a3" font-size="12">accept key</text>
+            <text x="658" y="266" fill="#a3a3a3" font-size="12">issue session</text>
+          </svg>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div class="eyebrow">Implementation</div>
+          <h2>Four small changes</h2>
+        </div>
+        <div class="steps">
+          <article class="step">
+            <h3>Derive and print one stable development key</h3>
+            <p>Resolve the canonical Git worktree root and compute <code>sha256("t3-dev:" + realpath(root))</code>. The runner exports <code>T3CODE_DEV_AUTH=1</code> and <code>T3CODE_DEV_AUTH_KEY</code> to its server child, then prints a reusable web pairing URL plus separate iOS and Android connection deep links containing the same key.</p>
+          </article>
+          <article class="step">
+            <h3>Seed a reusable server bootstrap grant</h3>
+            <p>Read the two environment variables in server configuration. When explicitly enabled on a loopback bind, seed the key with administrative bootstrap scopes and unlimited exchanges for the process lifetime. Refuse dev auth for wildcard or non-loopback hosts.</p>
+          </article>
+          <article class="step">
+            <h3>Use existing clients with one tiny mobile adapter</h3>
+            <p>Web requires no changes: opening <code>/pair#token=…</code> already creates its cookie session. Mobile accepts the printed host and credential on the existing <code>connections/new</code> route and forwards them to current connection onboarding.</p>
+          </article>
+          <article class="step">
+            <h3>Simplify the testing skills</h3>
+            <p>The web skill opens the reusable URL exactly as it opens today’s one-time URL. The mobile skill keeps responsibility for Metro reuse, device selection, and platform-specific origins, then opens the printed deep link. Real one-time pairing remains the physical-device and auth-test path.</p>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div class="eyebrow">Likely touchpoints</div>
+          <h2>Keep the change narrow</h2>
+        </div>
+        <div class="card file-list">
+          <div class="file"><code>scripts/dev-runner.ts</code><span>Derive/export the key and print reusable web/mobile connection information. Do not orchestrate devices.</span></div>
+          <div class="file"><code>apps/server/src/cli/config.ts</code><span>Read the explicit dev-auth configuration.</span></div>
+          <div class="file"><code>apps/server/src/config.ts</code><span>Carry the dev-auth key and enabled state.</span></div>
+          <div class="file"><code>apps/server/src/auth/PairingGrantStore.ts</code><span>Seed the reusable grant using the existing desktop pattern and enforce loopback-only use.</span></div>
+          <div class="file"><code>apps/server/src/auth/utils.ts</code><span>Namespace development cookies by server port.</span></div>
+          <div class="file"><code>apps/mobile/src/Stack.tsx</code><span>Accept host and credential parameters on the existing connections route.</span></div>
+          <div class="file"><code>apps/mobile/src/connection/onboarding.ts</code><span>Feed the development deep link into existing pairing onboarding.</span></div>
+          <div class="file"><code>.agents/skills/test-t3-app/SKILL.md</code><span>Open the reusable dev pairing URL; keep one-time recovery for real-auth tests.</span></div>
+          <div class="file"><code>.agents/skills/test-t3-mobile/SKILL.md</code><span>Use dev:server output for simulators/emulators; keep real pairing for physical devices.</span></div>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div class="eyebrow">Guardrails</div>
+          <h2>Deliberately unsafe, tightly contained</h2>
+        </div>
+        <div class="grid three">
+          <article class="card">
+            <h3>Explicit activation</h3>
+            <p>The server accepts the key only when <code>T3CODE_DEV_AUTH=1</code>. Production defaults never infer it from the filesystem.</p>
+          </article>
+          <article class="card">
+            <h3>Loopback only</h3>
+            <p>The server refuses this guessable key on wildcard, LAN, Tailnet, or other non-loopback binds. Physical-device verification uses real pairing.</p>
+          </article>
+          <article class="card">
+            <h3>Real auth coexists</h3>
+            <p>Existing startup pairing output and <code>auth pairing create</code> remain available. No special <code>--auth real</code> mode is needed.</p>
+          </article>
+        </div>
+        <div class="callout warning">
+          <strong>The key is intentionally public.</strong> It may appear in terminal output and development URLs. Never substitute <code>T3_MCP_BEARER_TOKEN</code>, which authorizes agent MCP access.
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div class="eyebrow">Verification</div>
+          <h2>Acceptance checklist</h2>
+        </div>
+        <div class="grid two">
+          <article class="card">
+            <h3>Focused automated coverage</h3>
+            <ul class="checklist">
+              <li>Same canonical worktree produces the same key.</li>
+              <li>Different worktrees produce different keys.</li>
+              <li>The dev grant supports repeated exchange.</li>
+              <li>A mismatched or absent key is rejected.</li>
+              <li>Non-loopback dev auth is rejected.</li>
+              <li>Production behavior is unchanged.</li>
+              <li>Parallel dev cookies do not collide.</li>
+              <li>Mobile deep-link registration is idempotent.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Integrated proof</h3>
+            <ul class="checklist">
+              <li>Run one isolated web environment and open its printed reusable pairing URL.</li>
+              <li>Open that URL again in a fresh browser context and confirm both exchanges succeed.</li>
+              <li>Run one representative iOS Simulator or Android Emulator environment.</li>
+              <li>Start/reuse Metro with the mobile skill and open the printed connection deep link.</li>
+              <li>Confirm seeded projects load from the intended backend.</li>
+              <li>Confirm a LAN-bound backend falls back to real one-time pairing.</li>
+              <li>Stop all owned processes and clean disposable state.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div class="eyebrow">Non-goals</div>
+          <h2>What this plan avoids</h2>
+        </div>
+        <div class="card">
+          <ul class="checklist">
+            <li><span class="not-doing">No</span> custom authorization header on every request.</li>
+            <li><span class="not-doing">No</span> alternate WebSocket authentication protocol.</li>
+            <li><span class="not-doing">No</span> persisted development secret or token recovery workflow.</li>
+            <li><span class="not-doing">No</span> Vite, web-auth bootstrap, or mobile bundle configuration changes.</li>
+            <li><span class="not-doing">No</span> new runner flag for device selection or lifecycle.</li>
+            <li><span class="not-doing">No</span> changes to desktop, whose reusable bootstrap already works.</li>
+            <li><span class="not-doing">No</span> weakening of production pairing, scopes, sessions, or DPoP.</li>
+            <li><span class="not-doing">No</span> automatic native rebuild when a compatible dev client already exists.</li>
+          </ul>
+        </div>
+      </section>
+
+      <footer>
+        Proposed implementation order: runner key and URLs → loopback-only reusable server grant → mobile route adapter → skill updates → focused integrated verification.
+      </footer>
+    </main>
+  </body>
+</html>

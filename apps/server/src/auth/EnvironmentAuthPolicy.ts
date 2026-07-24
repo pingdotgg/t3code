@@ -1,11 +1,11 @@
 import type { ServerAuthDescriptor } from "@t3tools/contracts";
+import { isLoopbackHost, isWildcardHost } from "@t3tools/shared/networkHost";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import { resolveSessionCookieName } from "./utils.ts";
-import { isLoopbackHost, isWildcardHost } from "../startupAccess.ts";
 
 export class EnvironmentAuthPolicy extends Context.Service<
   EnvironmentAuthPolicy,
@@ -16,7 +16,8 @@ export class EnvironmentAuthPolicy extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const isRemoteReachable = isWildcardHost(config.host) || !isLoopbackHost(config.host);
+  const effectiveHost = config.host ?? "127.0.0.1";
+  const isRemoteReachable = isWildcardHost(effectiveHost) || !isLoopbackHost(effectiveHost);
 
   const policy =
     config.mode === "desktop"
@@ -41,6 +42,7 @@ export const make = Effect.gen(function* () {
     sessionCookieName: resolveSessionCookieName({
       mode: config.mode,
       port: config.port,
+      devAuthEnabled: config.devAuthKey !== undefined,
     }),
   };
 

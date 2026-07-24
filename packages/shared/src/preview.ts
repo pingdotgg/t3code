@@ -18,20 +18,25 @@ export function newPreviewTabId(): string {
   return `${TAB_ID_PREFIX}${nextPreviewTabSequence.toString(36)}`;
 }
 
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
+const PREVIEW_LOCAL_HOSTS: ReadonlySet<string> = new Set([
+  "localhost",
+  "127.0.0.1",
+  "0.0.0.0",
+  "::1",
+]);
 
 /** Internal — used by `lsof` parsing where the host string is wire-formatted. */
 export const LSOF_LOCAL_HOST_TOKENS: ReadonlySet<string> = new Set([
-  ...LOOPBACK_HOSTS,
+  ...PREVIEW_LOCAL_HOSTS,
   "*",
   "[::]",
   "[::1]",
 ]);
 
-const LOOPBACK_PREFIX_PATTERN = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\])(?::|\/|$)/i;
+const PREVIEW_LOCAL_PREFIX_PATTERN = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\])(?::|\/|$)/i;
 
-export function isLoopbackHost(host: string): boolean {
-  if (LOOPBACK_HOSTS.has(host)) return true;
+export function isPreviewLocalHost(host: string): boolean {
+  if (PREVIEW_LOCAL_HOSTS.has(host)) return true;
   if (host === "[::1]") return true;
   return false;
 }
@@ -41,7 +46,7 @@ export function isPreviewableUrl(rawUrl: string): boolean {
   try {
     const parsed = new URL(rawUrl);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    return isLoopbackHost(parsed.hostname);
+    return isPreviewLocalHost(parsed.hostname);
   } catch {
     return false;
   }
@@ -83,7 +88,7 @@ export function normalizePreviewUrl(rawUrl: string): string {
   if (trimmed.length === 0) {
     throw new PreviewUrlNormalizationError({ inputLength: rawUrl.length, reason: "empty" });
   }
-  const useHttp = LOOPBACK_PREFIX_PATTERN.test(trimmed);
+  const useHttp = PREVIEW_LOCAL_PREFIX_PATTERN.test(trimmed);
   const candidate = trimmed.includes("://")
     ? trimmed
     : `${useHttp ? "http" : "https"}://${trimmed}`;

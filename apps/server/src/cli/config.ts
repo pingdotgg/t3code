@@ -1,4 +1,5 @@
 import * as NetService from "@t3tools/shared/Net";
+import { isLoopbackAddress } from "@t3tools/shared/networkHost";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
 import * as Config from "effect/Config";
@@ -16,6 +17,33 @@ import { Argument, Flag } from "effect/unstable/cli";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+
+export class MissingDevAuthKeyError extends Schema.TaggedErrorClass<MissingDevAuthKeyError>()(
+  "MissingDevAuthKeyError",
+  {},
+) {
+  override get message(): string {
+    return "T3CODE_DEV_AUTH_KEY is required when T3CODE_DEV_AUTH is enabled.";
+  }
+}
+
+export class NonLoopbackDevAuthHostError extends Schema.TaggedErrorClass<NonLoopbackDevAuthHostError>()(
+  "NonLoopbackDevAuthHostError",
+  { host: Schema.optional(Schema.String) },
+) {
+  override get message(): string {
+    return `T3CODE_DEV_AUTH requires an explicit loopback address; received ${this.host ?? "an omitted host"}.`;
+  }
+}
+
+export class TailscaleServeDevAuthError extends Schema.TaggedErrorClass<TailscaleServeDevAuthError>()(
+  "TailscaleServeDevAuthError",
+  {},
+) {
+  override get message(): string {
+    return "T3CODE_DEV_AUTH cannot be enabled with Tailscale Serve.";
+  }
+}
 
 export const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -104,6 +132,11 @@ const EnvServerConfig = Config.all({
   ),
   port: Config.port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  devAuthEnabled: Config.boolean("T3CODE_DEV_AUTH").pipe(Config.withDefault(false)),
+  devAuthKey: Config.string("T3CODE_DEV_AUTH_KEY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   t3Home: Config.string("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.url("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   noBrowser: Config.boolean("T3CODE_NO_BROWSER").pipe(
@@ -335,6 +368,16 @@ export const resolveServerConfig = (
       ),
       () => (mode === "desktop" ? "127.0.0.1" : undefined),
     );
+    const devAuthKey = env.devAuthEnabled ? env.devAuthKey?.trim() : undefined;
+    if (env.devAuthEnabled && !devAuthKey) {
+      return yield* new MissingDevAuthKeyError();
+    }
+    if (devAuthKey && !isLoopbackAddress(host)) {
+      return yield* new NonLoopbackDevAuthHostError(host === undefined ? {} : { host });
+    }
+    if (devAuthKey && tailscaleServeEnabled) {
+      return yield* new TailscaleServeDevAuthError();
+    }
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
     const config: ServerConfig.ServerConfig["Service"] = {
@@ -366,6 +409,7 @@ export const resolveServerConfig = (
       noBrowser,
       startupPresentation,
       desktopBootstrapToken,
+      devAuthKey,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
       tailscaleServeEnabled,

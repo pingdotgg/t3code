@@ -13,7 +13,9 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   checkPortAvailabilityOnHosts,
+  createDevAccessUrls,
   createDevRunnerEnv,
+  deriveDevAuthKey,
   findFirstAvailableOffset,
   getDevRunnerModeArgs,
   resolveModePortOffsets,
@@ -125,6 +127,42 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     );
   });
 
+  describe("development authentication", () => {
+    it.effect("derives a stable opaque key from the canonical worktree root", () =>
+      Effect.sync(() => {
+        const first = deriveDevAuthKey("/tmp/t3-worktree-a");
+        const repeated = deriveDevAuthKey("/tmp/t3-worktree-a");
+        const other = deriveDevAuthKey("/tmp/t3-worktree-b");
+
+        assert.match(first, /^[a-f0-9]{64}$/);
+        assert.equal(first, repeated);
+        assert.notEqual(first, other);
+        assert.notInclude(first, "t3-worktree-a");
+      }),
+    );
+
+    it.effect("prints reusable web and platform-specific mobile pairing urls", () =>
+      Effect.sync(() => {
+        const urls = createDevAccessUrls({
+          mode: "dev",
+          serverPort: 13_773,
+          webUrl: "http://localhost:5733",
+          credential: "development-key",
+        });
+
+        assert.equal(urls.web, "http://localhost:5733/pair#token=development-key");
+        assert.include(
+          decodeURIComponent(urls.ios),
+          "pairingUrl=http://127.0.0.1:13773/pair#token=development-key",
+        );
+        assert.include(
+          decodeURIComponent(urls.android),
+          "pairingUrl=http://10.0.2.2:13773/pair#token=development-key",
+        );
+      }),
+    );
+  });
+
   describe("createDevRunnerEnv", () => {
     it.effect("leaves the shared home implicit and disables browser auto-open", () =>
       Effect.gen(function* () {
@@ -144,6 +182,36 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
         assert.equal(env.T3CODE_HOME, undefined);
         assert.equal(env.T3CODE_NO_BROWSER, "1");
+        assert.equal(env.T3CODE_HOST, "127.0.0.1");
+        assert.equal(env.T3CODE_DEV_AUTH, "1");
+        assert.match(env.T3CODE_DEV_AUTH_KEY ?? "", /^[a-f0-9]{64}$/);
+      }),
+    );
+
+    it.effect("only provisions reusable auth on the Android-compatible loopback bind", () =>
+      Effect.gen(function* () {
+        for (const host of ["127.0.0.2", "::1", "127.attacker.example"]) {
+          const env = yield* createDevRunnerEnv({
+            mode: "dev:server",
+            baseEnv: {
+              T3CODE_DEV_AUTH: "1",
+              T3CODE_DEV_AUTH_KEY: "inherited-key",
+            },
+            serverOffset: 0,
+            webOffset: 0,
+            t3Home: undefined,
+            browser: undefined,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host,
+            port: undefined,
+            devUrl: undefined,
+          });
+
+          assert.equal(env.T3CODE_HOST, host);
+          assert.equal(env.T3CODE_DEV_AUTH, undefined);
+          assert.equal(env.T3CODE_DEV_AUTH_KEY, undefined);
+        }
       }),
     );
 
@@ -213,6 +281,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.T3CODE_LOG_WS_EVENTS, "1");
         assert.equal(env.T3CODE_HOST, "0.0.0.0");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:7331/");
+        assert.equal(env.T3CODE_DEV_AUTH, undefined);
+        assert.equal(env.T3CODE_DEV_AUTH_KEY, undefined);
       }),
     );
 
@@ -316,6 +386,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.T3CODE_NO_BROWSER, undefined);
         assert.equal(env.T3CODE_HOST, undefined);
         assert.equal(env.VITE_WS_URL, "ws://127.0.0.1:4222");
+        assert.equal(env.T3CODE_DEV_AUTH, undefined);
+        assert.equal(env.T3CODE_DEV_AUTH_KEY, undefined);
       }),
     );
 

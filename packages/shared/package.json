@@ -51,6 +51,10 @@
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"
     },
+    "./networkHost": {
+      "types": "./src/networkHost.ts",
+      "import": "./src/networkHost.ts"
+    },
     "./DrainableWorker": {
       "types": "./src/DrainableWorker.ts",
       "import": "./src/DrainableWorker.ts"
