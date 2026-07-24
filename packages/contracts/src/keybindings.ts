@@ -49,6 +49,7 @@ export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMA
 
 export const BUILT_IN_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
+  "terminal.focus",
   "terminal.toggle",
   "terminal.split",
   "terminal.splitVertical",

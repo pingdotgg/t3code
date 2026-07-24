@@ -348,6 +348,14 @@ export function shouldShowModelPickerJumpHintsForModifiers(
   return false;
 }
 
+export function isTerminalFocusShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "terminal.focus", options);
+}
+
 export function isTerminalToggleShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,

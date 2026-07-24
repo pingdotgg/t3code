@@ -122,6 +122,7 @@ describe("KeybindingsSettings.logic", () => {
 
   it("formats static and project script command labels", () => {
     expect(commandLabel("commandPalette.toggle")).toBe("Command Palette: Toggle");
+    expect(commandLabel("terminal.focus")).toBe("Terminal: Focus");
     expect(commandLabel("script.setup-db.run")).toBe("Run Script: Setup Db");
   });
 
@@ -150,7 +151,12 @@ describe("KeybindingsSettings.logic", () => {
     ] satisfies ResolvedKeybindingsConfig);
 
     expect(options).toEqual(
-      expect.arrayContaining(["chat.new", "threadPanel.toggle", "script.setup-db.run"]),
+      expect.arrayContaining([
+        "chat.new",
+        "terminal.focus",
+        "threadPanel.toggle",
+        "script.setup-db.run",
+      ]),
     );
   });
 

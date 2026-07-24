@@ -16,6 +16,7 @@ import {
   isOpenFavoriteEditorShortcut,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
+  isTerminalFocusShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
@@ -87,6 +88,7 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
 const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("b"), command: "sidebar.toggle" },
   { shortcut: modShortcut("j"), command: "terminal.toggle" },
+  { shortcut: modShortcut("t"), command: "terminal.focus" },
   { shortcut: modShortcut("b", { altKey: true }), command: "rightPanel.toggle" },
   {
     shortcut: modShortcut("d"),
@@ -147,6 +149,24 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenIdentifier("modelPickerOpen"),
   },
 ]);
+
+describe("isTerminalFocusShortcut", () => {
+  it("matches Cmd+T on macOS", () => {
+    assert.isTrue(
+      isTerminalFocusShortcut(event({ key: "t", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+    );
+  });
+
+  it("matches Ctrl+T on non-macOS", () => {
+    assert.isTrue(
+      isTerminalFocusShortcut(event({ key: "t", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Win32",
+      }),
+    );
+  });
+});
 
 describe("isTerminalToggleShortcut", () => {
   it("matches Cmd+J on macOS", () => {

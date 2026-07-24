@@ -20,6 +20,7 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
 ```json
 [
   { "key": "mod+j", "command": "terminal.toggle" },
+  { "key": "mod+t", "command": "terminal.focus" },
   { "key": "mod+d", "command": "terminal.split", "when": "terminalFocus" },
   { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
   { "key": "mod+w", "command": "terminal.close", "when": "terminalFocus" },
@@ -53,6 +54,7 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 
 ### Available Commands
 
+- `terminal.focus`: open or focus a terminal without toggling it closed; targets the right panel when it is open, otherwise the drawer
 - `terminal.toggle`: open/close terminal drawer
 - `terminal.split`: split terminal (in focused terminal context by default)
 - `terminal.new`: create new terminal (in focused terminal context by default)

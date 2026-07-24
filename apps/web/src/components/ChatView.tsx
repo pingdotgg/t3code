@@ -3197,6 +3197,49 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadRef, diffOpen, dismissPlanSidebarForCurrentTurn, onDiffPanelOpen, planSidebarOpen],
   );
+  const focusTerminal = useCallback(() => {
+    if (!activeThreadRef) return;
+    const terminalFocusOwner = getTerminalFocusOwner();
+    if (terminalFocusOwner !== null) return;
+
+    const store = useRightPanelStore.getState();
+    const panelState = selectThreadRightPanelState(store.byThreadKey, activeThreadRef);
+    if (panelState.isOpen) {
+      const activeSurface = panelState.surfaces.find(
+        (surface) => surface.id === panelState.activeSurfaceId,
+      );
+      if (activeSurface?.kind === "terminal") {
+        setTerminalFocusRequestId((value) => value + 1);
+        return;
+      }
+      const terminalSurface = panelState.surfaces.find((surface) => surface.kind === "terminal");
+      if (terminalSurface) {
+        activateRightPanelSurface(terminalSurface);
+        return;
+      }
+      if (!activeThreadId || !activeProject) return;
+      if (activeSurface?.kind === "plan") {
+        dismissPlanSidebarForCurrentTurn();
+      }
+      addTerminalSurface();
+      return;
+    }
+
+    if (terminalUiState.terminalOpen) {
+      setTerminalFocusRequestId((value) => value + 1);
+      return;
+    }
+    toggleTerminalVisibility();
+  }, [
+    activeProject,
+    activeThreadId,
+    activeThreadRef,
+    activateRightPanelSurface,
+    addTerminalSurface,
+    dismissPlanSidebarForCurrentTurn,
+    terminalUiState.terminalOpen,
+    toggleTerminalVisibility,
+  ]);
   const toggleRightPanel = useCallback(() => {
     if (!activeThreadRef) return;
     if (rightPanelOpen) {
@@ -4164,6 +4207,13 @@ function ChatViewContent(props: ChatViewProps) {
       });
       if (!command) return;
 
+      if (command === "terminal.focus") {
+        event.preventDefault();
+        event.stopPropagation();
+        focusTerminal();
+        return;
+      }
+
       if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -4277,6 +4327,7 @@ function ChatViewContent(props: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     splitPanelTerminal,
+    focusTerminal,
     keybindings,
     onToggleDiff,
     toggleRightPanel,
