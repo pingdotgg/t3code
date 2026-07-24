@@ -5,13 +5,16 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   archivedThreadActionExceptionDescription,
+  archivedThreadActionKey,
   archivedThreadActionSummaryDescription,
   archivedThreadTimestampValue,
   buildArchivedThreadGroups,
   formatArchivedThreadRelativeTime,
   nextArchivedThreadSortState,
   parseArchivedThreadSearchInput,
+  releaseArchivedThreadActionLock,
   runArchivedThreadActions,
+  tryAcquireArchivedThreadActionLock,
   type ArchivedThreadSortState,
 } from "./archivedThreadList";
 
@@ -377,6 +380,45 @@ describe("archive list controls", () => {
     expect(archivedThreadActionExceptionDescription(error)).toBe(
       "One or more archived thread actions failed unexpectedly. Failures: Connection failed; An error occurred.; Permission denied; 1 more",
     );
+  });
+});
+
+describe("archived thread action locks", () => {
+  const firstThread = {
+    environmentId,
+    id: ThreadId.make("thread-1"),
+  };
+  const secondThread = {
+    environmentId,
+    id: ThreadId.make("thread-2"),
+  };
+
+  it("blocks overlapping row and bulk actions until the original lock is released", () => {
+    const reservedThreadKeys = new Set<string>();
+    const bulkLock = tryAcquireArchivedThreadActionLock(reservedThreadKeys, [
+      firstThread,
+      secondThread,
+    ]);
+
+    expect(bulkLock).not.toBeNull();
+    expect(tryAcquireArchivedThreadActionLock(reservedThreadKeys, [firstThread])).toBeNull();
+
+    releaseArchivedThreadActionLock(reservedThreadKeys, bulkLock!);
+
+    expect(tryAcquireArchivedThreadActionLock(reservedThreadKeys, [firstThread])).not.toBeNull();
+  });
+
+  it("uses collision-safe environment and thread identity", () => {
+    const firstKey = archivedThreadActionKey({
+      environmentId: EnvironmentId.make("environment:a"),
+      id: ThreadId.make("thread"),
+    });
+    const secondKey = archivedThreadActionKey({
+      environmentId: EnvironmentId.make("environment"),
+      id: ThreadId.make("a:thread"),
+    });
+
+    expect(firstKey).not.toBe(secondKey);
   });
 });
 

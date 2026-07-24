@@ -2,7 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Alert, Platform } from "react-native";
 
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
@@ -18,12 +18,13 @@ import {
   archivedThreadActionSummaryDescription,
   buildArchivedThreadGroups,
   parseArchivedThreadSearchInput,
+  releaseArchivedThreadActionLock,
   runArchivedThreadActions,
+  tryAcquireArchivedThreadActionLock,
   type ArchivedThreadSortState,
 } from "./archivedThreadList";
 import { useArchivedThreadSnapshots } from "./useArchivedThreadSnapshots";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { scopedThreadKey } from "../../lib/scopedEntities";
 
 function confirmArchivedProjectAction(input: {
   readonly title: string;
@@ -63,6 +64,10 @@ export function ArchivedThreadsRouteScreen() {
     field: "archivedAt",
     direction: "desc",
   });
+  const reservedThreadKeysRef = useRef(new Set<string>());
+  const [reservedThreadKeys, setReservedThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [busyThreadKeys, setBusyThreadKeys] = useState<ReadonlySet<string>>(() => new Set());
   const environments = useMemo<ReadonlyArray<ArchivedThreadsHeaderEnvironment>>(
     () =>
@@ -93,31 +98,85 @@ export function ArchivedThreadsRouteScreen() {
       }),
     [search, selectedEnvironmentId, snapshots, sort],
   );
-  const { unarchiveThread, deleteThread, confirmDeleteThread } = useArchivedThreadListActions();
-  const updateBusyThreads = useCallback(
-    (threads: ReadonlyArray<EnvironmentThreadShell>, busy: boolean) => {
-      setBusyThreadKeys((current) => {
-        const next = new Set(current);
-        for (const thread of threads) {
-          const key = scopedThreadKey(thread.environmentId, thread.id);
-          if (busy) next.add(key);
-          else next.delete(key);
-        }
-        return next;
-      });
+  const { unarchiveThread, deleteThread } = useArchivedThreadListActions();
+  const tryReserveThreadActions = useCallback(
+    (
+      threads: ReadonlyArray<EnvironmentThreadShell>,
+    ): { readonly start: () => void; readonly finish: () => void } | null => {
+      const lock = tryAcquireArchivedThreadActionLock(reservedThreadKeysRef.current, threads);
+      if (!lock) {
+        Alert.alert(
+          "Archive action already in progress",
+          "Wait for the current archived thread action to finish.",
+        );
+        return null;
+      }
+      setReservedThreadKeys(new Set(reservedThreadKeysRef.current));
+      let started = false;
+      return {
+        start: () => {
+          if (started) return;
+          started = true;
+          setBusyThreadKeys((current) => {
+            const next = new Set(current);
+            for (const key of lock.keys) next.add(key);
+            return next;
+          });
+        },
+        finish: () => {
+          releaseArchivedThreadActionLock(reservedThreadKeysRef.current, lock);
+          setReservedThreadKeys(new Set(reservedThreadKeysRef.current));
+          if (!started) return;
+          setBusyThreadKeys((current) => {
+            const next = new Set(current);
+            for (const key of lock.keys) next.delete(key);
+            return next;
+          });
+        },
+      };
     },
     [],
   );
+  const showSkippedActionFeedback = useCallback(() => {
+    Alert.alert(
+      "Archive action already in progress",
+      "Wait for the current archived thread action to finish.",
+    );
+  }, []);
   const handleUnarchiveThread = useCallback(
     async (thread: EnvironmentThreadShell) => {
-      updateBusyThreads([thread], true);
+      const reservation = tryReserveThreadActions([thread]);
+      if (!reservation) return;
+      reservation.start();
       try {
-        await unarchiveThread(thread);
+        const result = await unarchiveThread(thread);
+        if (result === "skipped") showSkippedActionFeedback();
       } finally {
-        updateBusyThreads([thread], false);
+        reservation.finish();
       }
     },
-    [unarchiveThread, updateBusyThreads],
+    [showSkippedActionFeedback, tryReserveThreadActions, unarchiveThread],
+  );
+  const handleDeleteThread = useCallback(
+    async (thread: EnvironmentThreadShell) => {
+      const reservation = tryReserveThreadActions([thread]);
+      if (!reservation) return;
+      try {
+        const confirmed = await confirmArchivedProjectAction({
+          title: "Delete thread?",
+          message: `“${thread.title}” will be permanently deleted, including its terminal history.`,
+          confirmText: "Delete",
+          destructive: true,
+        });
+        if (!confirmed) return;
+        reservation.start();
+        const result = await deleteThread(thread);
+        if (result === "skipped") showSkippedActionFeedback();
+      } finally {
+        reservation.finish();
+      }
+    },
+    [deleteThread, showSkippedActionFeedback, tryReserveThreadActions],
   );
   const handleProjectAction = useCallback(
     async (
@@ -126,50 +185,55 @@ export function ArchivedThreadsRouteScreen() {
       scope: "all" | "matching",
       action: "unarchive" | "delete",
     ) => {
-      const scopeLabel =
-        scope === "matching" ? "matching archived conversations" : "all archived conversations";
-      const actionLabel = action === "unarchive" ? "Unarchive" : "Delete";
-      const confirmed = await confirmArchivedProjectAction({
-        title: `${actionLabel} ${scopeLabel}?`,
-        message:
-          action === "unarchive"
-            ? `Restore ${threads.length} conversation${threads.length === 1 ? "" : "s"} from “${projectTitle}”?`
-            : `Permanently delete ${threads.length} conversation${threads.length === 1 ? "" : "s"} from “${projectTitle}”? This also clears their terminal history.`,
-        confirmText: actionLabel,
-        destructive: action === "delete",
-      });
-      if (!confirmed) return;
-
-      updateBusyThreads(threads, true);
+      const reservation = tryReserveThreadActions(threads);
+      if (!reservation) return;
       try {
-        const summary = await runArchivedThreadActions(threads, (thread) =>
-          action === "unarchive"
-            ? unarchiveThread(thread, {
-                reportFailure: false,
-                refreshArchivedThreads: false,
-              })
-            : deleteThread(thread, {
-                reportFailure: false,
-                refreshArchivedThreads: false,
-              }),
-        );
-        if (summary.failed > 0 || summary.skipped > 0) {
+        const scopeLabel =
+          scope === "matching" ? "matching archived conversations" : "all archived conversations";
+        const actionLabel = action === "unarchive" ? "Unarchive" : "Delete";
+        const confirmed = await confirmArchivedProjectAction({
+          title: `${actionLabel} ${scopeLabel}?`,
+          message:
+            action === "unarchive"
+              ? `Restore ${threads.length} conversation${threads.length === 1 ? "" : "s"} from “${projectTitle}”?`
+              : `Permanently delete ${threads.length} conversation${threads.length === 1 ? "" : "s"} from “${projectTitle}”? This also clears their terminal history.`,
+          confirmText: actionLabel,
+          destructive: action === "delete",
+        });
+        if (!confirmed) return;
+
+        reservation.start();
+        try {
+          const summary = await runArchivedThreadActions(threads, (thread) =>
+            action === "unarchive"
+              ? unarchiveThread(thread, {
+                  reportFailure: false,
+                  refreshArchivedThreads: false,
+                })
+              : deleteThread(thread, {
+                  reportFailure: false,
+                  refreshArchivedThreads: false,
+                }),
+          );
+          if (summary.failed > 0 || summary.skipped > 0) {
+            Alert.alert(
+              `Archived threads not fully ${action === "unarchive" ? "unarchived" : "deleted"}`,
+              archivedThreadActionSummaryDescription(summary),
+            );
+          }
+        } catch (error) {
           Alert.alert(
             `Archived threads not fully ${action === "unarchive" ? "unarchived" : "deleted"}`,
-            archivedThreadActionSummaryDescription(summary),
+            archivedThreadActionExceptionDescription(error),
           );
+        } finally {
+          refresh();
         }
-      } catch (error) {
-        Alert.alert(
-          `Archived threads not fully ${action === "unarchive" ? "unarchived" : "deleted"}`,
-          archivedThreadActionExceptionDescription(error),
-        );
       } finally {
-        updateBusyThreads(threads, false);
-        refresh();
+        reservation.finish();
       }
     },
-    [deleteThread, refresh, unarchiveThread, updateBusyThreads],
+    [deleteThread, refresh, tryReserveThreadActions, unarchiveThread],
   );
 
   useFocusEffect(
@@ -185,7 +249,7 @@ export function ArchivedThreadsRouteScreen() {
       error={error}
       groups={groups}
       isLoading={isLoading}
-      onDeleteThread={confirmDeleteThread}
+      onDeleteThread={(thread) => void handleDeleteThread(thread)}
       onEnvironmentChange={setSelectedEnvironmentId}
       onProjectAction={(projectTitle, threads, scope, action) =>
         void handleProjectAction(projectTitle, threads, scope, action)
@@ -198,6 +262,7 @@ export function ArchivedThreadsRouteScreen() {
       selectedEnvironmentId={selectedEnvironmentId}
       sort={sort}
       busyThreadKeys={busyThreadKeys}
+      reservedThreadKeys={reservedThreadKeys}
     />
   );
 }

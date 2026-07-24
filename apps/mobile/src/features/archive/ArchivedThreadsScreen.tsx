@@ -27,6 +27,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
 import {
+  archivedThreadActionKey,
   formatArchivedThreadRelativeTime,
   archivedThreadTimestampValue,
   nextArchivedThreadSortState,
@@ -34,7 +35,6 @@ import {
   type ArchivedThreadSortField,
   type ArchivedThreadSortState,
 } from "./archivedThreadList";
-import { scopedThreadKey } from "../../lib/scopedEntities";
 
 export interface ArchivedThreadsHeaderEnvironment {
   readonly environmentId: EnvironmentId;
@@ -49,6 +49,7 @@ type ArchivedThreadListItem =
       readonly expanded: boolean;
       readonly group: ArchivedThreadGroup;
       readonly isSearching: boolean;
+      readonly isReserved: boolean;
       readonly isBusy: boolean;
     }
   | {
@@ -465,6 +466,7 @@ function ProjectGroupHeader(props: {
   readonly expanded: boolean;
   readonly group: ArchivedThreadGroup;
   readonly isBusy: boolean;
+  readonly isReserved: boolean;
   readonly isSearching: boolean;
   readonly onProjectAction: (action: "unarchive" | "delete") => void;
   readonly onSortChange: (sort: ArchivedThreadSortState) => void;
@@ -532,6 +534,15 @@ function ProjectGroupHeader(props: {
           >
             <ActivityIndicator color={iconColor} size="small" />
           </Pressable>
+        ) : props.isReserved ? (
+          <Pressable
+            accessibilityLabel={`Project actions for ${props.group.project.title}`}
+            accessibilityRole="button"
+            className="size-9 items-center justify-center rounded-full opacity-50"
+            disabled
+          >
+            <SymbolView name="ellipsis" size={17} tintColor={iconColor} type="monochrome" />
+          </Pressable>
         ) : (
           <ControlPillMenu
             actions={actions}
@@ -579,6 +590,7 @@ function ArchivedThreadRow(props: {
   readonly isFirst: boolean;
   readonly isLast: boolean;
   readonly isBusy: boolean;
+  readonly isReserved: boolean;
   readonly onDelete: () => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
@@ -599,7 +611,8 @@ function ArchivedThreadRow(props: {
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
-  const onDelete = props.isBusy ? () => undefined : props.onDelete;
+  const isBlocked = props.isReserved || props.isBusy;
+  const onDelete = isBlocked ? () => undefined : props.onDelete;
   const menuActions = useMemo<MenuAction[]>(
     () => [
       { id: "unarchive", title: "Unarchive", image: "arrow.uturn.backward" },
@@ -658,7 +671,7 @@ function ArchivedThreadRow(props: {
         borderBottomRightRadius: props.isLast ? 20 : 0,
         overflow: "hidden",
       }}
-      enabled={!props.isBusy}
+      enabled={!isBlocked}
       fullSwipeWidth={windowWidth - 32}
       onDelete={onDelete}
       onSwipeableClose={props.onSwipeableClose}
@@ -667,13 +680,13 @@ function ArchivedThreadRow(props: {
         accessibilityLabel: `Unarchive ${props.thread.title}`,
         icon: "arrow.uturn.backward",
         label: "Unarchive",
-        onPress: props.isBusy ? () => undefined : props.onUnarchive,
+        onPress: isBlocked ? () => undefined : props.onUnarchive,
       }}
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
       threadTitle={props.thread.title}
     >
       {() =>
-        props.isBusy ? (
+        isBlocked ? (
           rowContent
         ) : (
           <ControlPillMenu
@@ -712,6 +725,7 @@ export function ArchivedThreadsScreen(props: {
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly sort: ArchivedThreadSortState;
   readonly busyThreadKeys: ReadonlySet<string>;
+  readonly reservedThreadKeys: ReadonlySet<string>;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectAction: (
@@ -753,8 +767,11 @@ export function ArchivedThreadsScreen(props: {
         expanded,
         group,
         isSearching,
+        isReserved: group.threads.some((thread) =>
+          props.reservedThreadKeys.has(archivedThreadActionKey(thread)),
+        ),
         isBusy: group.threads.some((thread) =>
-          props.busyThreadKeys.has(scopedThreadKey(thread.environmentId, thread.id)),
+          props.busyThreadKeys.has(archivedThreadActionKey(thread)),
         ),
       });
 
@@ -762,7 +779,7 @@ export function ArchivedThreadsScreen(props: {
       group.threads.forEach((thread, index) => {
         items.push({
           kind: "thread",
-          key: scopedThreadKey(thread.environmentId, thread.id),
+          key: archivedThreadActionKey(thread),
           environmentLabel,
           isFirst: index === 0,
           isLast: index === group.threads.length - 1,
@@ -771,7 +788,14 @@ export function ArchivedThreadsScreen(props: {
       });
     }
     return items;
-  }, [environmentLabelsById, expandedProjectKeys, isSearching, props.busyThreadKeys, props.groups]);
+  }, [
+    environmentLabelsById,
+    expandedProjectKeys,
+    isSearching,
+    props.busyThreadKeys,
+    props.groups,
+    props.reservedThreadKeys,
+  ]);
   const toggleProject = useCallback((projectKey: string) => {
     setExpandedProjectKeys((current) => {
       const next = new Set(current);
@@ -802,6 +826,7 @@ export function ArchivedThreadsScreen(props: {
             expanded={item.expanded}
             group={item.group}
             isBusy={item.isBusy}
+            isReserved={item.isReserved}
             isSearching={item.isSearching}
             onProjectAction={(action) =>
               props.onProjectAction(
@@ -823,9 +848,8 @@ export function ArchivedThreadsScreen(props: {
           environmentLabel={item.environmentLabel}
           isFirst={item.isFirst}
           isLast={item.isLast}
-          isBusy={props.busyThreadKeys.has(
-            scopedThreadKey(item.thread.environmentId, item.thread.id),
-          )}
+          isBusy={props.busyThreadKeys.has(archivedThreadActionKey(item.thread))}
+          isReserved={props.reservedThreadKeys.has(archivedThreadActionKey(item.thread))}
           onDelete={() => onDeleteThread(item.thread)}
           onSwipeableClose={handleSwipeableClose}
           onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -842,6 +866,7 @@ export function ArchivedThreadsScreen(props: {
       onDeleteThread,
       onUnarchiveThread,
       props.busyThreadKeys,
+      props.reservedThreadKeys,
       props.onProjectAction,
       props.onSortChange,
       props.sort,

@@ -48,6 +48,39 @@ export interface ArchivedThreadActionSummary {
 
 export type ArchivedThreadActionResult = "succeeded" | "failed" | "skipped";
 
+export interface ArchivedThreadActionLock {
+  readonly keys: ReadonlyArray<string>;
+}
+
+export function archivedThreadActionKey(
+  thread: Pick<EnvironmentThreadShell, "environmentId" | "id">,
+): string {
+  return JSON.stringify([thread.environmentId, thread.id]);
+}
+
+export function tryAcquireArchivedThreadActionLock(
+  reservedThreadKeys: Set<string>,
+  threads: ReadonlyArray<Pick<EnvironmentThreadShell, "environmentId" | "id">>,
+): ArchivedThreadActionLock | null {
+  const keys = [...new Set(threads.map(archivedThreadActionKey))];
+  if (keys.some((key) => reservedThreadKeys.has(key))) {
+    return null;
+  }
+  for (const key of keys) {
+    reservedThreadKeys.add(key);
+  }
+  return { keys };
+}
+
+export function releaseArchivedThreadActionLock(
+  reservedThreadKeys: Set<string>,
+  lock: ArchivedThreadActionLock,
+): void {
+  for (const key of lock.keys) {
+    reservedThreadKeys.delete(key);
+  }
+}
+
 export function archivedThreadActionSummaryDescription(
   summary: ArchivedThreadActionSummary,
 ): string {
