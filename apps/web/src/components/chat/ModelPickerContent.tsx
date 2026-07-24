@@ -471,6 +471,26 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return mapping.size > 0 ? mapping : EMPTY_MODEL_JUMP_LABELS;
   }, [keybindings, modelJumpCommandByKey, modelJumpShortcutContext]);
+  const modelListExtraData = useMemo(
+    () => ({
+      activeInstanceId: props.activeInstanceId,
+      activeModel: props.model,
+      favoritesSet,
+      getModelDisabledReason,
+      isLocked,
+      modelJumpLabelByKey,
+      toggleFavorite,
+    }),
+    [
+      favoritesSet,
+      getModelDisabledReason,
+      isLocked,
+      modelJumpLabelByKey,
+      props.activeInstanceId,
+      props.model,
+      toggleFavorite,
+    ],
+  );
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -618,7 +638,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 <LegendList<string>
                   ref={modelListRef}
                   data={filteredModelKeys}
-                  extraData={favoritesSet}
+                  // LegendList caches rows by model key. Shortcut labels are
+                  // positional, so an unchanged model must rerender when
+                  // models ahead of it are inserted, removed, or reordered.
+                  extraData={modelListExtraData}
                   keyExtractor={(modelKey) => modelKey}
                   renderItem={({ item: modelKey, index }) => {
                     const model = filteredModelByKey.get(modelKey);
