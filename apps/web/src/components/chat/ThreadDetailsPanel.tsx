@@ -103,146 +103,151 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const card = (
     <div
       className={cn(
-        "dropdown-glass overflow-x-hidden rounded-[20px]",
-        props.mode === "inline"
-          ? "max-h-full overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          : "max-h-[calc(100dvh-6.5rem)] overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        "panel-glass overflow-hidden rounded-[20px]",
+        props.mode === "inline" ? "max-h-full" : "max-h-[calc(100dvh-6.5rem)]",
       )}
       data-thread-details-card
     >
-      <section aria-labelledby="thread-details-workspace-heading">
-        <div className="flex min-h-10 items-center justify-between gap-3 px-3.5 pb-1 pt-3">
-          <h3
-            id="thread-details-workspace-heading"
-            className="text-[11px] font-medium text-muted-foreground"
-          >
-            Workspace
-          </h3>
-        </div>
+      <div
+        className={cn(
+          "overflow-x-hidden overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+          props.mode === "inline" ? "max-h-full" : "max-h-[calc(100dvh-6.5rem)]",
+        )}
+      >
+        <section aria-labelledby="thread-details-workspace-heading">
+          <div className="flex min-h-10 items-center justify-between gap-3 px-3.5 pb-1 pt-3">
+            <h3
+              id="thread-details-workspace-heading"
+              className="text-[11px] font-medium text-muted-foreground"
+            >
+              Workspace
+            </h3>
+          </div>
 
-        {connectionIssue ? (
-          <div className="mx-3 mb-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
-            <div className="flex gap-2">
-              <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium">Environment unavailable</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                  {props.environmentConnection?.error ??
-                    "Reconnect this environment before sending messages or running actions."}
-                </p>
-                <div className="mt-2 flex items-center gap-1.5">
-                  <Button
-                    size="xs"
-                    disabled={isReconnecting}
-                    onClick={props.onReconnectEnvironment}
-                  >
-                    {isReconnecting ? "Reconnecting..." : "Reconnect"}
-                  </Button>
-                  <Button size="xs" variant="ghost" onClick={props.onOpenConnectionSettings}>
-                    Connections
-                  </Button>
+          {connectionIssue ? (
+            <div className="mx-3 mb-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
+              <div className="flex gap-2">
+                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium">Environment unavailable</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                    {props.environmentConnection?.error ??
+                      "Reconnect this environment before sending messages or running actions."}
+                  </p>
+                  <div className="mt-2 flex items-center gap-1.5">
+                    <Button
+                      size="xs"
+                      disabled={isReconnecting}
+                      onClick={props.onReconnectEnvironment}
+                    >
+                      {isReconnecting ? "Reconnecting..." : "Reconnect"}
+                    </Button>
+                    <Button size="xs" variant="ghost" onClick={props.onOpenConnectionSettings}>
+                      Connections
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        ) : null}
+          ) : null}
 
-        {props.versionMismatch ? (
-          <div className="mx-3 mb-2 flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
-            <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium">Client and server versions differ</p>
-              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                Client {props.versionMismatch.clientVersion} · {props.versionMismatch.serverLabel}{" "}
-                {props.versionMismatch.serverVersion}
-              </p>
+          {props.versionMismatch ? (
+            <div className="mx-3 mb-2 flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
+              <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium">Client and server versions differ</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                  Client {props.versionMismatch.clientVersion} · {props.versionMismatch.serverLabel}{" "}
+                  {props.versionMismatch.serverVersion}
+                </p>
+              </div>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Dismiss version mismatch warning"
+                onClick={props.onDismissVersionMismatch}
+              >
+                <XIcon className="size-3.5" />
+              </Button>
             </div>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label="Dismiss version mismatch warning"
-              onClick={props.onDismissVersionMismatch}
-            >
-              <XIcon className="size-3.5" />
-            </Button>
-          </div>
-        ) : null}
-
-        <div className="flex flex-col px-2 pb-2.5">
-          {props.availableEnvironments.length > 1 ? (
-            <BranchToolbarEnvironmentSelector
-              displayMode="panel"
-              envLocked={props.envLocked}
-              environmentId={props.environmentId}
-              availableEnvironments={props.availableEnvironments}
-              onEnvironmentChange={props.onEnvironmentChange}
-            />
           ) : null}
 
-          <BranchToolbar layout="panel" panelSection="workspace" {...branchToolbarProps} />
-
-          {props.showOpenInPicker ? (
-            <OpenInPicker
-              environmentId={props.environmentId}
-              keybindings={props.keybindings}
-              availableEditors={props.availableEditors}
-              openInCwd={props.gitCwd}
-              displayMode="panel"
-            />
-          ) : null}
-
-          {props.activeProjectScripts ? (
-            <ProjectScriptsControl
-              displayMode="panel"
-              scripts={props.activeProjectScripts}
-              keybindings={props.keybindings}
-              preferredScriptId={props.preferredScriptId}
-              onRunScript={props.onRunProjectScript}
-              onAddScript={props.onAddProjectScript}
-              onUpdateScript={props.onUpdateProjectScript}
-              onDeleteScript={props.onDeleteProjectScript}
-            />
-          ) : null}
-        </div>
-      </section>
-
-      {props.gitCwd ? (
-        <section
-          aria-labelledby="thread-details-version-control-heading"
-          className="border-t border-border/65"
-        >
-          <div className="px-3.5 pb-1 pt-3">
-            <h3
-              id="thread-details-version-control-heading"
-              className="text-[11px] font-medium text-muted-foreground"
-            >
-              Version Control
-            </h3>
-          </div>
           <div className="flex flex-col px-2 pb-2.5">
-            {props.isGitRepo ? (
-              <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
-            ) : null}
-            {props.activeProjectName ? (
-              <GitActionsControl
+            {props.availableEnvironments.length > 1 ? (
+              <BranchToolbarEnvironmentSelector
                 displayMode="panel"
-                gitCwd={props.gitCwd}
-                activeThreadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
-                {...(props.draftId ? { draftId: props.draftId } : {})}
-                {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                envLocked={props.envLocked}
+                environmentId={props.environmentId}
+                availableEnvironments={props.availableEnvironments}
+                onEnvironmentChange={props.onEnvironmentChange}
+              />
+            ) : null}
+
+            <BranchToolbar layout="panel" panelSection="workspace" {...branchToolbarProps} />
+
+            {props.showOpenInPicker ? (
+              <OpenInPicker
+                environmentId={props.environmentId}
+                keybindings={props.keybindings}
+                availableEditors={props.availableEditors}
+                openInCwd={props.gitCwd}
+                displayMode="panel"
+              />
+            ) : null}
+
+            {props.activeProjectScripts ? (
+              <ProjectScriptsControl
+                displayMode="panel"
+                scripts={props.activeProjectScripts}
+                keybindings={props.keybindings}
+                preferredScriptId={props.preferredScriptId}
+                onRunScript={props.onRunProjectScript}
+                onAddScript={props.onAddProjectScript}
+                onUpdateScript={props.onUpdateProjectScript}
+                onDeleteScript={props.onDeleteProjectScript}
               />
             ) : null}
           </div>
         </section>
-      ) : null}
 
-      {!props.draftId ? (
-        <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />
-      ) : null}
+        {props.gitCwd ? (
+          <section
+            aria-labelledby="thread-details-version-control-heading"
+            className="border-t border-border/65"
+          >
+            <div className="px-3.5 pb-1 pt-3">
+              <h3
+                id="thread-details-version-control-heading"
+                className="text-[11px] font-medium text-muted-foreground"
+              >
+                Version Control
+              </h3>
+            </div>
+            <div className="flex flex-col px-2 pb-2.5">
+              {props.isGitRepo ? (
+                <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
+              ) : null}
+              {props.activeProjectName ? (
+                <GitActionsControl
+                  displayMode="panel"
+                  gitCwd={props.gitCwd}
+                  activeThreadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
+                  {...(props.draftId ? { draftId: props.draftId } : {})}
+                  {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                />
+              ) : null}
+            </div>
+          </section>
+        ) : null}
 
-      {!props.draftId ? (
-        <ThreadRelationshipsPanel environmentId={props.environmentId} threadId={props.threadId} />
-      ) : null}
+        {!props.draftId ? (
+          <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />
+        ) : null}
+
+        {!props.draftId ? (
+          <ThreadRelationshipsPanel environmentId={props.environmentId} threadId={props.threadId} />
+        ) : null}
+      </div>
     </div>
   );
 
