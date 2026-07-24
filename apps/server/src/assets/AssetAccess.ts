@@ -100,7 +100,7 @@ export type ResolvedAsset =
     };
 
 export function extractSvgDocument(source: string): string | null {
-  const documentMatch = source.match(/<svg\b[\s\S]*<\/svg\s*>/i);
+  const documentMatch = source.match(/<svg\b[\s\S]*?<\/svg\s*>/i);
   if (documentMatch) {
     return documentMatch[0];
   }

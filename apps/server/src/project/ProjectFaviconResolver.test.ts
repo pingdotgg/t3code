@@ -180,6 +180,47 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect("continues across unreadable monorepo roots", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const appsRoot = path.join(cwd, "apps");
+        const packagesRoot = path.join(cwd, "packages");
+        yield* writeTextFile(cwd, "apps/dashboard/package.json", "{}");
+        yield* writeTextFile(cwd, "packages/ui/package.json", "{}");
+        yield* writeTextFile(cwd, "services/api/favicon.svg", "<svg>api</svg>");
+        const statCause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "stat",
+          pathOrDescriptor: appsRoot,
+        });
+        const readCause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readDirectory",
+          pathOrDescriptor: packagesRoot,
+        });
+        const resolver = yield* makeResolverWithFileSystem(
+          FileSystem.FileSystem.of({
+            ...fileSystem,
+            stat: (filePath) =>
+              filePath === appsRoot ? Effect.fail(statCause) : fileSystem.stat(filePath),
+            readDirectory: (directoryPath, options) =>
+              directoryPath === packagesRoot
+                ? Effect.fail(readCause)
+                : fileSystem.readDirectory(directoryPath, options),
+          }),
+        );
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("services/api/favicon.svg");
+      }),
+    );
+
     it.effect("returns null when no icon is present", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;

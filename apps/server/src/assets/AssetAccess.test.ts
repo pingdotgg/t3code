@@ -40,6 +40,14 @@ describe("AssetAccess", () => {
     );
   });
 
+  it("extracts only the first SVG document when the source has multiple roots", () => {
+    expect(
+      extractSvgDocument(
+        '<svg viewBox="0 0 1 1"><path /></svg><script>unsafe()</script><svg></svg>',
+      ),
+    ).toBe('<svg viewBox="0 0 1 1"><path /></svg>');
+  });
+
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

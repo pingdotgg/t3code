@@ -71,7 +71,6 @@ export class ProjectFaviconResolutionError extends Schema.TaggedErrorClass<Proje
       "resolve-path",
       "stat-candidate",
       "read-source",
-      "read-monorepo-root",
     ]),
     workspaceRoot: Schema.String,
     relativePath: Schema.optional(Schema.String),
@@ -222,39 +221,20 @@ export const make = Effect.gen(function* () {
   });
 
   const listMonorepoProjectBases = Effect.fn("ProjectFaviconResolver.listMonorepoProjectBases")(
-    function* (
-      projectCwd: string,
-    ): Effect.fn.Return<ReadonlyArray<string>, ProjectFaviconResolutionError> {
+    function* (projectCwd: string): Effect.fn.Return<ReadonlyArray<string>> {
       const bases: Array<string> = [];
       for (const monorepoRoot of MONOREPO_PROJECT_ROOTS) {
         const absoluteRoot = path.join(projectCwd, monorepoRoot);
-        const stats = yield* optionOnNotFound(fileSystem.stat(absoluteRoot)).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProjectFaviconResolutionError({
-                operation: "read-monorepo-root",
-                workspaceRoot: projectCwd,
-                relativePath: monorepoRoot,
-                absolutePath: absoluteRoot,
-                cause,
-              }),
-          ),
+        const stats = yield* fileSystem.stat(absoluteRoot).pipe(
+          Effect.map(Option.some),
+          Effect.orElseSucceed(() => Option.none()),
         );
         if (Option.isNone(stats) || stats.value.type !== "Directory") {
           continue;
         }
-        const entries = yield* fileSystem.readDirectory(absoluteRoot, { recursive: false }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProjectFaviconResolutionError({
-                operation: "read-monorepo-root",
-                workspaceRoot: projectCwd,
-                relativePath: monorepoRoot,
-                absolutePath: absoluteRoot,
-                cause,
-              }),
-          ),
-        );
+        const entries = yield* fileSystem
+          .readDirectory(absoluteRoot, { recursive: false })
+          .pipe(Effect.orElseSucceed(() => [] as Array<string>));
         for (const entry of entries.toSorted()) {
           if (!entry.startsWith(".")) {
             bases.push(path.join(monorepoRoot, entry));
