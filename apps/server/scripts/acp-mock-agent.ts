@@ -3,6 +3,7 @@
 import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -25,6 +26,8 @@ const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATE
 const emitThoughtChunks = process.env.T3_ACP_EMIT_THOUGHT_CHUNKS === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
+const rejectPromptWhileTurnActive = process.env.T3_ACP_REJECT_PROMPT_WHILE_TURN_ACTIVE === "1";
+const cancelTeardownDelayMs = Number(process.env.T3_ACP_CANCEL_TEARDOWN_DELAY_MS ?? "0");
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
@@ -76,6 +79,13 @@ let currentFast = false;
 let promptCount = 0;
 let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
+// Gates for prompts currently parked in a "hang forever" branch. Per ACP, a
+// session/cancel must resolve the pending prompt with stopReason "cancelled",
+// so the cancel handler completes these gates to release the hung handlers.
+const pendingHangGates: Array<Deferred.Deferred<AcpSchema.PromptResponse>> = [];
+// Tracks a hung (in-flight, not yet torn down) prompt turn so the mock can
+// reject overlapping prompts like strict agents (e.g. the kimi CLI) do.
+let hungTurnActive = false;
 
 function promptIdFromRequestMeta(
   request: Pick<AcpSchema.PromptRequest, "_meta">,
@@ -497,6 +507,25 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
+      const releaseHungPrompts = Effect.gen(function* () {
+        const gates = pendingHangGates.splice(0, pendingHangGates.length);
+        yield* Effect.forEach(
+          gates,
+          (gate) => Deferred.succeed(gate, { stopReason: "cancelled" }),
+          { discard: true },
+        );
+      });
+      // Simulate agents whose turn teardown takes noticeable time (e.g. the
+      // kimi CLI winding down an active turn before accepting a new one) by
+      // releasing hung prompts off the read loop, so a prompt sent before the
+      // teardown finished is still rejected.
+      if (Number.isFinite(cancelTeardownDelayMs) && cancelTeardownDelayMs > 0) {
+        yield* Effect.forkDetach(
+          Effect.sleep(`${cancelTeardownDelayMs} millis`).pipe(Effect.andThen(releaseHungPrompts)),
+        );
+      } else {
+        yield* releaseHungPrompts;
+      }
       if (emitLateUpdateAfterCancel) {
         yield* Effect.sleep("50 millis");
         yield* Effect.sync(() => {
@@ -587,8 +616,31 @@ const program = Effect.gen(function* () {
         return yield* Effect.never;
       }
 
+      if (rejectPromptWhileTurnActive && hungTurnActive) {
+        return yield* AcpError.AcpRequestError.invalidParams(
+          "Cannot launch a new turn while another turn is active",
+          {
+            method: "session/prompt",
+            params: request,
+          },
+        );
+      }
+
       if (hangPromptForever || (hangFirstPromptForever && promptCount === 1)) {
-        return yield* Effect.never;
+        hungTurnActive = true;
+        const gate = yield* Deferred.make<AcpSchema.PromptResponse>();
+        pendingHangGates.push(gate);
+        // Uninterruptible like a real agent's turn teardown: only a
+        // session/cancel (which completes the gate) ends the turn, never a
+        // client-side request cancellation frame.
+        return yield* Deferred.await(gate).pipe(
+          Effect.uninterruptible,
+          Effect.ensuring(
+            Effect.sync(() => {
+              hungTurnActive = false;
+            }),
+          ),
+        );
       }
 
       if (emitXAiPromptCompleteThenHang) {

@@ -300,6 +300,52 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("gates a follow-up prompt on the cancelled turn finishing agent-side", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      const promptFiber = yield* runtime
+        .prompt({
+          prompt: [{ type: "text", text: "hang forever" }],
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* TestClock.adjust("500 millis");
+      yield* runtime.cancel;
+
+      const firstPromptResult = yield* Fiber.join(promptFiber);
+      expect(firstPromptResult).toMatchObject({ stopReason: "cancelled" });
+
+      // The mock rejects session/prompt while the previous turn is still
+      // active (like the kimi CLI does), so this only succeeds when cancel
+      // waited for the agent-side teardown of the first turn.
+      const secondPromptResult = yield* runtime.prompt({
+        prompt: [{ type: "text", text: "second" }],
+      });
+      expect(secondPromptResult).toMatchObject({ stopReason: "end_turn" });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+              T3_ACP_REJECT_PROMPT_WHILE_TURN_ACTIVE: "1",
+              T3_ACP_CANCEL_TEARDOWN_DELAY_MS: "200",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("segments assistant text around ACP tool calls", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
