@@ -1223,11 +1223,24 @@ export default function SidebarV2() {
     lastSettledResetKeyRef.current = settledResetKey;
     setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
   }
-  const hiddenSettledCount = Math.max(0, settledThreads.length - settledVisibleCount);
-  const visibleSettledThreads = useMemo(
-    () => (hiddenSettledCount > 0 ? settledThreads.slice(0, settledVisibleCount) : settledThreads),
-    [hiddenSettledCount, settledThreads, settledVisibleCount],
-  );
+  const visibleSettledThreads = useMemo(() => {
+    if (settledThreads.length <= settledVisibleCount) return settledThreads;
+    const visible = settledThreads.slice(0, settledVisibleCount);
+    // The open thread must never hide under "Show more": navigating into a
+    // deep settled thread (search, deep link) pulls its row into the visible
+    // tail so the highlight and the un-settle affordance stay reachable.
+    if (routeThreadKey !== null) {
+      const routeThread = settledThreads
+        .slice(settledVisibleCount)
+        .find(
+          (thread) =>
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+        );
+      if (routeThread !== undefined) visible.push(routeThread);
+    }
+    return visible;
+  }, [routeThreadKey, settledThreads, settledVisibleCount]);
+  const hiddenSettledCount = settledThreads.length - visibleSettledThreads.length;
   const showMoreSettled = useCallback(
     () => setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT),
     [],

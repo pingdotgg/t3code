@@ -25,6 +25,7 @@ import {
   connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
+import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -138,7 +139,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
+import { CheckCircle2Icon, ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -153,7 +154,7 @@ import {
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
-import { useEnvironmentSettings } from "../hooks/useSettings";
+import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
@@ -202,6 +203,7 @@ import {
   useThread,
   useThreadProposedPlans,
   useThreadRefs,
+  useThreadShell,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -220,6 +222,7 @@ import {
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import { resolveThreadPr } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
@@ -3809,6 +3812,51 @@ function ChatViewContent(props: ChatViewProps) {
         : null,
     [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
   );
+  // Settled state of the open thread, resolved exactly like the sidebar
+  // partition (same shell, same capability gate, same PR auto-settle input)
+  // so the banner and the sidebar row never disagree.
+  const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const activeThreadPr = resolveThreadPr({
+    threadBranch: activeThread?.branch ?? null,
+    gitStatus: gitStatusQuery.data ?? null,
+    hasDedicatedWorktree: (activeThread?.worktreePath ?? null) !== null,
+  });
+  const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
+  const activeThreadSettled = useMemo(() => {
+    if (activeThreadShell === null || !supportsSettlement) return false;
+    return effectiveSettled(activeThreadShell, {
+      now: new Date().toISOString(),
+      autoSettleAfterDays,
+      changeRequestState: activeThreadPr?.state ?? null,
+    });
+  }, [activeThreadPr?.state, activeThreadShell, autoSettleAfterDays, supportsSettlement]);
+  const unsettleThreadMutation = useAtomCommand(threadEnvironment.unsettle, {
+    reportFailure: false,
+  });
+  const [isUnsettling, setIsUnsettling] = useState(false);
+  const handleUnsettleActiveThread = useCallback(async () => {
+    if (!activeThreadRef) return;
+    setIsUnsettling(true);
+    try {
+      const result = await unsettleThreadMutation({
+        environmentId: activeThreadRef.environmentId,
+        input: { threadId: activeThreadRef.threadId, reason: "user" },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to un-settle thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    } finally {
+      setIsUnsettling(false);
+    }
+  }, [activeThreadRef, unsettleThreadMutation]);
   const [branchRepairAction, setBranchRepairAction] = useState<
     "update-thread" | "switch-checkout" | null
   >(null);
@@ -3912,12 +3960,32 @@ function ChatViewContent(props: ChatViewProps) {
     updateThreadMetadata,
   ]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const items = [...systemComposerBannerItems];
+    if (activeThreadSettled) {
+      items.push({
+        id: `thread-settled:${activeThread?.id ?? "unknown"}`,
+        variant: "info",
+        icon: <CheckCircle2Icon />,
+        title: "This thread is settled",
+        description: "Sending a message moves it back to Active in the sidebar.",
+        actions: (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={isUnsettling}
+            onClick={() => void handleUnsettleActiveThread()}
+          >
+            {isUnsettling ? "Un-settling..." : "Un-settle"}
+          </Button>
+        ),
+      });
+    }
     if (!localCheckoutBranchMismatch) {
-      return systemComposerBannerItems;
+      return items;
     }
     const isRepairingBranch = branchRepairAction !== null;
     return [
-      ...systemComposerBannerItems,
+      ...items,
       {
         id: `branch-mismatch:${activeThread?.id ?? "unknown"}:${localCheckoutBranchMismatch.threadBranch}:${localCheckoutBranchMismatch.currentBranch}`,
         variant: "warning",
@@ -3964,9 +4032,12 @@ function ChatViewContent(props: ChatViewProps) {
     ];
   }, [
     activeThread?.id,
+    activeThreadSettled,
     branchRepairAction,
     handleSwitchCheckoutToThread,
+    handleUnsettleActiveThread,
     handleUpdateThreadToCheckout,
+    isUnsettling,
     localCheckoutBranchMismatch,
     systemComposerBannerItems,
   ]);
