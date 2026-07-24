@@ -1813,9 +1813,7 @@ public final class AppModel {
     /// One-click general session: ensure General workspace, last-used provider,
     /// scene-named thread. Local Mac only.
     @discardableResult
-    public func startQuickChat(scenery: SceneryStore, passport: PassportStore? = nil) async
-        -> ChatThread?
-    {
+    public func startQuickChat(scenery: SceneryStore) async -> ChatThread? {
         guard capabilities.canBrowseLocalFolders else {
             lastError = "Quick Chat is only available on this Mac."
             return nil
@@ -1828,8 +1826,7 @@ public final class AppModel {
         return await createSceneThread(
             projectID: project.id,
             provider: provider,
-            scenery: scenery,
-            passport: passport)
+            scenery: scenery)
     }
 
     /// Every session of a project, archived included — the delete cascade
