@@ -41,6 +41,18 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+// Opt-in autonomous (out-of-prompt) activity: after session/new the mock emits
+// bursts of session/update notifications while no prompt is in flight, then
+// goes quiet. The burst stops early if a prompt arrives (the client turn folds
+// the autonomous work in, like a real agent would).
+const emitAutonomousBursts = process.env.T3_ACP_EMIT_AUTONOMOUS_BURSTS === "1";
+const emitAutonomousReplayOnly = process.env.T3_ACP_EMIT_AUTONOMOUS_REPLAY_ONLY === "1";
+const autonomousBurstCount = Number(process.env.T3_ACP_AUTONOMOUS_BURST_COUNT ?? "1");
+const autonomousChunkCount = Number(process.env.T3_ACP_AUTONOMOUS_CHUNK_COUNT ?? "3");
+const autonomousInitialDelayMs = Number(process.env.T3_ACP_AUTONOMOUS_INITIAL_DELAY_MS ?? "300");
+const autonomousBurstGapMs = Number(process.env.T3_ACP_AUTONOMOUS_BURST_GAP_MS ?? "800");
+const autonomousChunkGapMs = Number(process.env.T3_ACP_AUTONOMOUS_CHUNK_GAP_MS ?? "60");
+const autonomousText = process.env.T3_ACP_AUTONOMOUS_TEXT ?? "autonomous chunk";
 const exitOnPrompt = process.env.T3_ACP_EXIT_ON_PROMPT === "1";
 const exitStderr = process.env.T3_ACP_EXIT_STDERR;
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
@@ -107,6 +119,69 @@ function logExit(reason: string): void {
 
 function writeJsonRpcNotification(method: string, params: unknown): void {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+}
+
+function writeAutonomousChunk(requestedSessionId: string, text: string): void {
+  writeJsonRpcNotification("session/update", {
+    sessionId: requestedSessionId,
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text },
+    },
+  });
+}
+
+/**
+ * Emit session/update notifications while no session/prompt is in flight,
+ * mimicking an agent that resumes on its own (e.g. after a background
+ * subagent completes). In replay-only mode, emit one replay-flagged chunk and
+ * a mode update instead: neither is content-bearing for a new turn.
+ */
+function runAutonomousEmitter(requestedSessionId: string) {
+  return Effect.gen(function* () {
+    yield* Effect.sleep(`${autonomousInitialDelayMs} millis`);
+    if (emitAutonomousReplayOnly) {
+      yield* Effect.sync(() => {
+        writeJsonRpcNotification("session/update", {
+          _meta: { isReplay: true },
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "replayed idle text" },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "current_mode_update",
+            currentModeId,
+          },
+        });
+      });
+      return;
+    }
+    const promptCountAtStart = promptCount;
+    for (let burst = 0; burst < autonomousBurstCount; burst += 1) {
+      if (burst > 0) {
+        yield* Effect.sleep(`${autonomousBurstGapMs} millis`);
+      }
+      for (let chunk = 0; chunk < autonomousChunkCount; chunk += 1) {
+        if (chunk > 0) {
+          yield* Effect.sleep(`${autonomousChunkGapMs} millis`);
+        }
+        // A prompt folds autonomous work into the client's turn: stop streaming.
+        if (promptCount > promptCountAtStart) {
+          return;
+        }
+        yield* Effect.sync(() =>
+          writeAutonomousChunk(
+            requestedSessionId,
+            `${autonomousText} burst ${burst + 1} chunk ${chunk + 1}`,
+          ),
+        );
+      }
+    }
+  });
 }
 
 process.once("SIGTERM", () => {
@@ -380,11 +455,16 @@ const program = Effect.gen(function* () {
   yield* agent.handleAuthenticate(() => Effect.succeed({}));
 
   yield* agent.handleCreateSession(() =>
-    Effect.succeed({
-      sessionId,
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.gen(function* () {
+      if (emitAutonomousBursts || emitAutonomousReplayOnly) {
+        yield* Effect.forkDetach(runAutonomousEmitter(sessionId));
+      }
+      return {
+        sessionId,
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
     }),
   );
 
