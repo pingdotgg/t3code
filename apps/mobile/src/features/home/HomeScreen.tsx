@@ -852,7 +852,19 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2SnoozedCount = threadListV2Layout.snoozedCount;
   const v2ListEmpty =
     v2PendingTasks.length > 0 ? null : hasSearchQuery ? (
-      <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+      v2SnoozedCount > 0 ? (
+        // The snoozed threads already passed this search filter: "No
+        // results" would claim nothing matched when matches are merely
+        // parked.
+        <EmptyState
+          title={
+            v2SnoozedCount === 1 ? "1 matching thread snoozed" : `All matching threads snoozed`
+          }
+          detail={`Threads matching "${props.searchQuery}" are snoozed and return when their wake time passes.`}
+        />
+      ) : (
+        <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+      )
     ) : v2SnoozedCount > 0 ? (
       <EmptyState
         title={v2SnoozedCount === 1 ? "1 thread snoozed" : `${v2SnoozedCount} threads snoozed`}

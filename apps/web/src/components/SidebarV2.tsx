@@ -1473,7 +1473,19 @@ export default function SidebarV2() {
   // shortcuts or multi-select), matching the settled tail's paging model.
   const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useState(false);
   const toggleSnoozedShelf = useCallback(() => setSnoozedShelfExpanded((value) => !value), []);
-  const visibleSnoozedThreads = snoozedShelfExpanded ? snoozedThreads : [];
+  const visibleSnoozedThreads = useMemo(() => {
+    if (snoozedShelfExpanded) return snoozedThreads;
+    // The open thread must never vanish behind the collapsed shelf: a
+    // snoozed thread reached by route (deep link, open before snoozing
+    // elsewhere) keeps its row — with highlight and wake affordance — same
+    // exception the settled tail's "Show more" makes.
+    if (routeThreadKey === null) return [];
+    const routeThread = snoozedThreads.find(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+    );
+    return routeThread === undefined ? [] : [routeThread];
+  }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
   const orderedThreads = useMemo(
     () => [...activeThreads, ...visibleSnoozedThreads, ...visibleSettledThreads],

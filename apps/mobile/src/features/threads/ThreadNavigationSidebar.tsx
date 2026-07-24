@@ -970,7 +970,13 @@ function ThreadNavigationSidebarPane(
       {catalogState.isLoadingConnections
         ? "Loading threads…"
         : props.searchQuery.trim().length > 0
-          ? "No matching threads"
+          ? snoozedCount > 0
+            ? // Snoozed matches passed this same search filter — "No
+              // matching threads" would misreport them as nonexistent.
+              snoozedCount === 1
+              ? "1 matching thread snoozed"
+              : "All matching threads snoozed"
+            : "No matching threads"
           : snoozedCount > 0
             ? snoozedCount === 1
               ? "1 thread snoozed"
