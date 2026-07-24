@@ -474,7 +474,6 @@ describe("resolveBranchSelectionTarget", () => {
         activeProjectCwd: "/repo",
         activeWorktreePath: "/repo/.t3/worktrees/feature-a",
         refName: {
-          isDefault: false,
           worktreePath: "/repo/.t3/worktrees/feature-b",
         },
       }),
@@ -491,7 +490,6 @@ describe("resolveBranchSelectionTarget", () => {
         activeProjectCwd: "/repo",
         activeWorktreePath: "/repo/.t3/worktrees/feature-a",
         refName: {
-          isDefault: true,
           worktreePath: "/repo",
         },
       }),
@@ -502,30 +500,12 @@ describe("resolveBranchSelectionTarget", () => {
     });
   });
 
-  it("checks out the default ref in the main repo when leaving a secondary worktree", () => {
+  it("keeps checkout in the current worktree when the selected ref has no existing worktree", () => {
     expect(
       resolveBranchSelectionTarget({
         activeProjectCwd: "/repo",
         activeWorktreePath: "/repo/.t3/worktrees/feature-a",
         refName: {
-          isDefault: true,
-          worktreePath: null,
-        },
-      }),
-    ).toEqual({
-      checkoutCwd: "/repo",
-      nextWorktreePath: null,
-      reuseExistingWorktree: false,
-    });
-  });
-
-  it("keeps checkout in the current worktree for non-default refs", () => {
-    expect(
-      resolveBranchSelectionTarget({
-        activeProjectCwd: "/repo",
-        activeWorktreePath: "/repo/.t3/worktrees/feature-a",
-        refName: {
-          isDefault: false,
           worktreePath: null,
         },
       }),
