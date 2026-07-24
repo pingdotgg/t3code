@@ -598,6 +598,93 @@ struct ActivityRowTests {
         #expect(output == nil)
     }
 
+    // MARK: Context compaction
+
+    @Test func compactionStartedMapsToDedicatedRow() {
+        let row = ActivityRows.row(
+            for: activity(
+                id: "compact-1", tone: .info, kind: ActivityKind.contextCompaction,
+                summary: "Compacting context…",
+                payload: .object(["status": .string("started")])))
+        #expect(
+            row == .compaction(
+                id: "compact-1", status: .started, summary: "Compacting context…",
+                usedTokensBefore: nil, usedTokensAfter: nil, maxTokens: nil, detail: nil))
+    }
+
+    @Test func compactionCompletedCarriesTokenCounts() {
+        let row = ActivityRows.row(
+            for: activity(
+                id: "compact-1", tone: .info, kind: ActivityKind.contextCompaction,
+                summary: "Context compacted",
+                payload: .object([
+                    "status": .string("completed"),
+                    "usedTokensBefore": .int(128_000),
+                    "usedTokensAfter": .int(24_000),
+                    "maxTokens": .int(200_000),
+                ])))
+        #expect(
+            row == .compaction(
+                id: "compact-1", status: .completed, summary: "Context compacted",
+                usedTokensBefore: 128_000, usedTokensAfter: 24_000, maxTokens: 200_000,
+                detail: nil))
+    }
+
+    @Test func compactionFailedCarriesDiagnosticDetail() {
+        let row = ActivityRows.row(
+            for: activity(
+                id: "compact-1", tone: .error, kind: ActivityKind.contextCompaction,
+                summary: "Context compaction failed",
+                payload: .object([
+                    "status": .string("failed"),
+                    "detail": .string("provider rejected the transcript"),
+                ])))
+        #expect(
+            row == .compaction(
+                id: "compact-1", status: .failed, summary: "Context compaction failed",
+                usedTokensBefore: nil, usedTokensAfter: nil, maxTokens: nil,
+                detail: "provider rejected the transcript"))
+    }
+
+    @Test func compactionLifecycleSharesOneRowId() {
+        // The server coalesces started → completed onto the same activity id,
+        // so the rows must share an id for the timeline upsert to replace the
+        // in-progress row in place.
+        let started = ActivityRows.row(
+            for: activity(
+                id: "compact-7", tone: .info, kind: ActivityKind.contextCompaction,
+                summary: "Compacting context…",
+                payload: .object(["status": .string("started")])))
+        let completed = ActivityRows.row(
+            for: activity(
+                id: "compact-7", tone: .info, kind: ActivityKind.contextCompaction,
+                summary: "Context compacted",
+                payload: .object(["status": .string("completed")])))
+        #expect(started?.id == "compact-7")
+        #expect(completed?.id == "compact-7")
+    }
+
+    @Test func compactionUnknownStatusDegradesToGenericNotice() {
+        let row = ActivityRows.row(
+            for: activity(
+                id: "compact-1", tone: .info, kind: ActivityKind.contextCompaction,
+                summary: "Context compacted",
+                payload: .object(["status": .string("some-future-status")])))
+        #expect(row == .notice(id: "compact-1", text: "Context compacted"))
+    }
+
+    @Test func compactionMissingSummaryUsesDefaultForStatus() {
+        let row = ActivityRows.row(
+            for: activity(
+                id: "compact-1", tone: .info, kind: ActivityKind.contextCompaction,
+                summary: "",
+                payload: .object(["status": .string("canceled")])))
+        #expect(
+            row == .compaction(
+                id: "compact-1", status: .canceled, summary: "Context compaction canceled",
+                usedTokensBefore: nil, usedTokensAfter: nil, maxTokens: nil, detail: nil))
+    }
+
     // MARK: Tone fallbacks
 
     @Test func errorToneUsesSummaryAsTitleAndPayloadMessageAsDetail() {

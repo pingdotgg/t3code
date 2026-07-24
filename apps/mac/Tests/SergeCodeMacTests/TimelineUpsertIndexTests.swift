@@ -127,4 +127,38 @@ struct TimelineUpsertIndexTests {
         #expect(signatures(indexed) == signatures(reference))
         #expect(indexByID["tool:1"] == 1)
     }
+
+    @Test("compaction started→completed replaces the row in place")
+    func compactionReplaceInPlace() {
+        let started = TimelineItem.compaction(
+            CompactionNotice(
+                id: "compact-1", threadID: "thread-1", status: .started,
+                summary: "Compacting context…", createdAt: date(2)))
+        let completed = TimelineItem.compaction(
+            CompactionNotice(
+                id: "compact-1", threadID: "thread-1", status: .completed,
+                summary: "Context compacted",
+                usedTokensBefore: 128_000, usedTokensAfter: 24_000, createdAt: date(5)))
+
+        var indexed: [TimelineItem] = [
+            .userMessage(id: "user-1", text: "hi", attachments: [], at: date(1))
+        ]
+        var indexByID: [String: Int] = ["user-1": 0]
+        indexed.upsertTimelineItem(started, indexByID: &indexByID)
+        indexed.upsertTimelineItem(completed, indexByID: &indexByID)
+
+        // One row, replaced in place — never a stacked second notice.
+        #expect(indexed.count == 2)
+        guard case .compaction(let notice) = indexed[1] else {
+            Issue.record("expected the compaction row to survive the terminal upsert")
+            return
+        }
+        #expect(notice.status == .completed)
+        #expect(notice.usedTokensBefore == 128_000)
+        #expect(notice.usedTokensAfter == 24_000)
+        // The terminal event keeps the started row's timestamp so the row
+        // cannot jump across a day/gap boundary mid-replacement.
+        #expect(notice.createdAt == date(2))
+        assertIndexMatchesArray(indexed, indexByID: indexByID)
+    }
 }

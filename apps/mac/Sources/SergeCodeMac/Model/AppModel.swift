@@ -840,7 +840,7 @@ public final class AppModel {
     ) -> Bool {
         if !existed { return true }
         switch item {
-        case .subagentTask, .reasoning, .assistantMessage:
+        case .subagentTask, .reasoning, .assistantMessage, .compaction:
             return false
         case .toolEvent(_, _, _, _, let status, _, _, _):
             let nowRunning = status == .running
@@ -1629,6 +1629,19 @@ public final class AppModel {
             usageLimitResumeTasks[id] = nil
             usageLimitActions[id] = nil
         }
+    }
+
+    /// Recovery action on a failed/canceled context compaction: start a fresh
+    /// thread in the same project with the same provider and select it, since
+    /// the compacted transcript can no longer be trusted to continue.
+    @discardableResult
+    public func startNewThread(afterFailedCompaction notice: CompactionNotice) async -> ChatThread? {
+        guard let source = threads.first(where: { $0.id == notice.threadID }) else { return nil }
+        guard let thread = await createThread(
+            projectID: source.projectID, provider: source.provider)
+        else { return nil }
+        selectedThreadID = thread.id
+        return thread
     }
 
     public func setReasoningEffort(_ value: String) async {

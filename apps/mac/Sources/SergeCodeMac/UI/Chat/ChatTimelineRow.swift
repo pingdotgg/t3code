@@ -187,6 +187,10 @@ struct ChatTimelineRowView: View, Equatable {
             CheckpointRow(checkpoint: checkpoint, model: model)
         case .notice(_, let text, _):
             NoticeRow(text: text)
+        case .compaction(let notice):
+            CompactionRow(notice: notice) {
+                Task { await model.startNewThread(afterFailedCompaction: notice) }
+            }
         case .reasoning(_, let text, _):
             ReasoningRow(text: text)
         case .sessionExit(_, let summary, let stderrTail, _):
@@ -1253,6 +1257,92 @@ private struct SessionExitRow: View {
             .background(
                 Color.primary.opacity(0.06),
                 in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+}
+
+
+/// Context-compaction lifecycle row. In progress it is a centered system
+/// notice with a live indicator so a long compaction never reads as stalled;
+/// completed it is the same notice plus the token delta; failed/canceled it
+/// becomes a diagnostic card with a "Start New Thread" recovery action (the
+/// compacted transcript can no longer be trusted to continue). The started
+/// and terminal states share the row id, so one replaces the other in place.
+private struct CompactionRow: View {
+    let notice: CompactionNotice
+    let onStartNewThread: () -> Void
+
+    var body: some View {
+        switch notice.status {
+        case .started:
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(notice.summary)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+        case .completed:
+            Text(completedLine)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, alignment: .center)
+        case .failed, .canceled:
+            failureCard
+        }
+    }
+
+    private var completedLine: String {
+        guard let before = notice.usedTokensBefore, let after = notice.usedTokensAfter else {
+            return notice.summary
+        }
+        return
+            "\(notice.summary) · \(Self.compactTokenCount(before)) → \(Self.compactTokenCount(after)) tokens"
+    }
+
+    private var failureTint: Color {
+        notice.status == .failed ? .red : AlpineTheme.clay
+    }
+
+    private var failureCard: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: notice.status == .failed ? "exclamationmark.triangle.fill" : "xmark.circle")
+                .foregroundStyle(failureTint)
+                .frame(width: TranscriptMetrics.iconColumn)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(notice.summary)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail = notice.detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            Button("Start New Thread") {
+                onStartNewThread()
+            }
+            .buttonStyle(.glass)
+            .controlSize(.small)
+        }
+        .transcriptCard(fill: failureTint.opacity(0.08), showRail: true, railColor: failureTint)
+    }
+
+    /// Compact token counts in the style the composer context meter deals in:
+    /// "800", "9.5k", "128k".
+    private static func compactTokenCount(_ value: Int) -> String {
+        switch value {
+        case ..<1_000:
+            return value.formatted()
+        case ..<10_000:
+            return (Double(value) / 1_000).formatted(.number.precision(.fractionLength(1))) + "k"
+        default:
+            return Int((Double(value) / 1_000).rounded()).formatted() + "k"
         }
     }
 }

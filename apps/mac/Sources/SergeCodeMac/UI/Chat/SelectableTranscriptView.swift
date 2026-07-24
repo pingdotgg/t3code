@@ -425,6 +425,16 @@ enum TranscriptTextBuilder {
             appendHeader("Usage limit", to: result)
             appendPlain(notice.message, font: bodyFont, color: .secondaryLabelColor, to: result)
             return true
+
+        case .compaction(let notice):
+            if leadingBreak { appendBlankLine(to: result) }
+            appendHeader("Context compaction", to: result)
+            appendPlain(notice.summary, font: bodyFont, color: .secondaryLabelColor, to: result)
+            if let detail = notice.detail, !detail.isEmpty {
+                result.append(NSAttributedString(string: "\n"))
+                appendPlain(detail, font: bodyFont, color: .secondaryLabelColor, to: result)
+            }
+            return true
         }
     }
 
