@@ -818,28 +818,19 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       });
     }
     const parent = callerThread.value;
-    // Advisor/Planner with a configured executor model: run the child on that
-    // model. Sub-agents always inherit the parent thread's stored runtimeMode.
-    const executor =
-      parent.interactionMode === "advisor" ? (parent.executorModelSelection ?? null) : null;
-    const requestedInstanceId = executor?.instanceId ?? input.providerInstanceId;
+    // Sub-agents always inherit the parent thread's stored runtimeMode.
+    const requestedInstanceId = input.providerInstanceId;
     const target = providers.find((provider) => provider.instanceId === requestedInstanceId);
     if (!target) {
       return yield* new SubAgentError({
         reason: "provider-not-found",
-        description:
-          executor !== null
-            ? `Advisor/Planner executor provider instance "${requestedInstanceId}" is not configured. Set a different executor model or call agent_list for valid instance ids.`
-            : `No provider instance "${input.providerInstanceId}" is configured. Call agent_list for valid instance ids.`,
+        description: `No provider instance "${input.providerInstanceId}" is configured. Call agent_list for valid instance ids.`,
       });
     }
     if (!isSpawnableProvider(target)) {
       return yield* new SubAgentError({
         reason: "provider-not-spawnable",
-        description:
-          executor !== null
-            ? `Advisor/Planner executor provider "${target.instanceId}" (${target.driver}) is not ready (status: ${target.status}, auth: ${target.auth.status}). Choose a spawnable executor model, or clear the executor to advise only.`
-            : `Provider instance "${target.instanceId}" (${target.driver}) is not ready (status: ${target.status}, auth: ${target.auth.status}). Call agent_list to pick a spawnable provider.`,
+        description: `Provider instance "${target.instanceId}" (${target.driver}) is not ready (status: ${target.status}, auth: ${target.auth.status}). Call agent_list to pick a spawnable provider.`,
       });
     }
     const inheritedModel =
@@ -847,13 +838,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       target.models.some((candidate) => candidate.slug === parent.modelSelection.model)
         ? parent.modelSelection.model
         : undefined;
-    // Executor selection is authoritative: pass the configured slug through
-    // even when the provider catalog does not currently list it. Catalogs are
-    // advisory; a stale slug surfaces as a provider session-start error.
-    const model =
-      executor !== null
-        ? executor.model
-        : (input.model ?? inheritedModel ?? target.models[0]?.slug);
+    const model = input.model ?? inheritedModel ?? target.models[0]?.slug;
     if (model === undefined) {
       return yield* new SubAgentError({
         reason: "model-not-resolved",
@@ -887,10 +872,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
     });
     const modelSelection = policy.selection;
     const policyNotices = policy.notices;
-    const title =
-      executor !== null
-        ? truncateTitle(`${baseTitle} [executor: ${target.instanceId}/${effectiveModel}]`)
-        : baseTitle;
+    const title = baseTitle;
     const effort = resolveSpawnEffort(target, modelSelection);
     const parentTurnId = yield* readParentTurnId(scope.threadId);
 

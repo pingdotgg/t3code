@@ -329,21 +329,6 @@ public actor T3Client {
                     interactionMode: interactionMode, createdAt: T3Clock.nowISO8601())))
     }
 
-    /// Sets or clears the Advisor/Planner executor model. Pass `nil` to clear
-    /// (advise only — sub-agents are not bound to a specific executor model).
-    /// Spawned sub-agents always inherit the parent thread's stored runtime mode.
-    @discardableResult
-    public func setExecutorModel(
-        threadId: String, executorModelSelection: ModelSelection?
-    ) async throws -> DispatchResult {
-        try await dispatch(
-            .threadExecutorModelSet(
-                ThreadExecutorModelSetCommand(
-                    commandId: T3Ids.newCommandId(), threadId: threadId,
-                    executorModelSelection: executorModelSelection,
-                    createdAt: T3Clock.nowISO8601())))
-    }
-
     /// Partial thread-meta update; `nil` fields are omitted (left untouched).
     @discardableResult
     public func updateThreadMeta(

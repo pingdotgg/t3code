@@ -69,10 +69,6 @@ miss them. Driver is only the fallback for unknown slugs.
   children map to find the root).
 - Rate limit: max **3 spawns per caller thread per 60s** sliding window.
 
-**Executor-mode spawns are NOT exempt:** when Advisor/Planner executor selection is
-authoritative (`SubAgentCoordinator.ts:693-726`), the policy clamps the executor's
-model/effort the same way, with a notice.
-
 ## Phase 1 — server (TypeScript)
 
 ### 1a. `packages/contracts/src/subAgents.ts` (schema-only package — constants + schemas only)

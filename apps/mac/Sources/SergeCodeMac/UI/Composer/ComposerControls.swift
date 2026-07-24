@@ -236,8 +236,7 @@ private struct RunProfileMenu: View {
 
 /// Menu selecting how much the agent may do without asking.
 ///
-/// Interaction mode (normal / plan / advisor) is independent of this permission
-/// axis — Full Access and Auto-accept Edits remain available in Advisor/Planner.
+/// Interaction mode (normal / plan) is independent of this permission axis.
 private struct RuntimeModeMenu: View {
     let thread: ChatThread
     let model: AppModel
@@ -300,38 +299,16 @@ private struct RuntimeModeMenu: View {
     }
 }
 
-/// Menu selecting how the agent engages with the request: do it (default),
-/// plan it, or advise/plan-and-delegate. Mirrors the `/default`, `/plan` and
-/// `/advisor` slash commands. When Advisor/Planner is active, also picks the
-/// per-thread executor model used for delegated sub-agents.
+/// Menu selecting how the agent engages with the request: do it (default) or
+/// plan it. Mirrors the `/default` and `/plan` slash commands.
 private struct InteractionModeMenu: View {
     let thread: ChatThread
     let model: AppModel
 
     @UIState private var isHovering = false
     @UIState private var isPresented = false
-    @UIState private var showingExecutorPicker = false
 
     private var mode: ThreadInteractionMode { thread.interactionMode }
-
-    private var advisorDetail: String {
-        if let name = executorDisplayName {
-            return "Executor: \(name)"
-        }
-        return ThreadInteractionMode.advisor.helpText
-    }
-
-    private var executorDisplayName: String? {
-        if let instanceID = thread.executorModelInstanceID,
-            let modelID = thread.executorModelID,
-            let option = model.models.first(where: {
-                $0.instanceID == instanceID && $0.modelID == modelID
-            })
-        {
-            return option.displayName
-        }
-        return thread.executorModelID
-    }
 
     var body: some View {
         Button {
@@ -348,51 +325,9 @@ private struct InteractionModeMenu: View {
         .buttonStyle(.plain)
         .fixedSize()
         .animation(Motion.feedback, value: mode)
-        .help(
-            mode == .advisor
-                ? (executorDisplayName.map { "Advisor/Planner · Executor: \($0)" }
-                    ?? mode.helpText)
-                : mode.helpText
-        )
+        .help(mode.helpText)
         .onHover { isHovering = $0 }
         .popover(isPresented: $isPresented, arrowEdge: .top) {
-            interactionModePopover
-        }
-        .onChange(of: isPresented) { _, presented in
-            if !presented {
-                showingExecutorPicker = false
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var interactionModePopover: some View {
-        if showingExecutorPicker {
-            ModelPickerPopoverContent(
-                models: model.models,
-                selectedInstanceID: thread.executorModelInstanceID,
-                selectedModelID: thread.executorModelID,
-                onSelect: { option in
-                    Task {
-                        await model.setExecutorModel(
-                            instanceID: option.instanceID, modelID: option.modelID)
-                    }
-                    showingExecutorPicker = false
-                },
-                title: "Executor model",
-                subtitle: "Used for delegated sub-agents",
-                clearRow: ModelPickerClearRowConfig(
-                    icon: "slash.circle",
-                    title: "None — advise only",
-                    detail: "No executor model; the agent plans and advises itself.",
-                    action: {
-                        Task { await model.setExecutorModel(instanceID: nil, modelID: nil) }
-                        showingExecutorPicker = false
-                    }
-                ),
-                onBack: { showingExecutorPicker = false }
-            )
-        } else {
             interactionModeList
         }
     }
@@ -411,37 +346,15 @@ private struct InteractionModeMenu: View {
                         ComposerPickerChoiceRow(
                             icon: choice.symbolName,
                             title: choice.displayName,
-                            detail: choice == .advisor ? advisorDetail : choice.helpText,
+                            detail: choice.helpText,
                             isSelected: choice == mode
                         ) {
                             Task { await model.setInteractionMode(choice) }
-                            if choice != .advisor {
-                                isPresented = false
-                            }
+                            isPresented = false
                         }
                     }
                 }
                 .padding(8)
-                if mode == .advisor {
-                    Divider().opacity(0.55)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Executor model")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.top, 8)
-                        ComposerPickerChoiceRow(
-                            icon: "cpu",
-                            title: "Executor model",
-                            detail: executorDisplayName ?? "None — advise only",
-                            isSelected: false
-                        ) {
-                            showingExecutorPicker = true
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 8)
-                }
             }
         }
     }

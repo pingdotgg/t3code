@@ -81,16 +81,15 @@ public enum ThreadRuntimeMode: String, CaseIterable, Sendable, Identifiable {
 }
 
 /// UI mirror of the wire `ProviderInteractionMode` (how the agent engages with
-/// the request: do it, plan it, or advise on it).
+/// the request: do it, or plan it).
 public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable {
-    case normal, plan, advisor
+    case normal, plan
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
         case .normal: "Default"
         case .plan: "Plan"
-        case .advisor: "Advisor/Planner"
         }
     }
 
@@ -98,7 +97,6 @@ public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable 
         switch self {
         case .normal: "text.bubble"
         case .plan: "list.clipboard"
-        case .advisor: "lightbulb.max"
         }
     }
 
@@ -106,8 +104,6 @@ public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable 
         switch self {
         case .normal: "The agent does the work."
         case .plan: "The agent proposes a plan instead of editing."
-        case .advisor:
-            "The agent plans and advises rather than editing itself. With an executor model configured it may delegate implementation to sub-agents; otherwise it advises only. Workspace permissions follow the access setting."
         }
     }
 }
@@ -193,9 +189,6 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// modelSelection); used to mark the active row in the model picker.
     public var modelInstanceID: String?
     public var modelID: String?
-    /// Advisor/Planner executor model (instance + slug); nil means advise only.
-    public var executorModelInstanceID: String?
-    public var executorModelID: String?
     /// Explicit reasoning-effort choice id from the thread's modelSelection
     /// options; nil means the provider default applies.
     public var reasoningEffort: String?
@@ -221,7 +214,6 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         runtimeMode: ThreadRuntimeMode = .fullAccess,
         interactionMode: ThreadInteractionMode = .normal,
         modelInstanceID: String? = nil, modelID: String? = nil,
-        executorModelInstanceID: String? = nil, executorModelID: String? = nil,
         reasoningEffort: String? = nil, serviceTier: String? = nil,
         backgroundAgentCount: Int = 0, parentThreadId: String? = nil,
         health: ThreadHealth? = nil
@@ -236,8 +228,6 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         self.interactionMode = interactionMode
         self.modelInstanceID = modelInstanceID
         self.modelID = modelID
-        self.executorModelInstanceID = executorModelInstanceID
-        self.executorModelID = executorModelID
         self.reasoningEffort = reasoningEffort
         self.serviceTier = serviceTier
         self.backgroundAgentCount = backgroundAgentCount
@@ -257,8 +247,6 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
             && interactionMode == other.interactionMode
             && modelInstanceID == other.modelInstanceID
             && modelID == other.modelID
-            && executorModelInstanceID == other.executorModelInstanceID
-            && executorModelID == other.executorModelID
             && reasoningEffort == other.reasoningEffort
             && serviceTier == other.serviceTier
             && backgroundAgentCount == other.backgroundAgentCount

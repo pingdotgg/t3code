@@ -353,7 +353,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     }),
   );
 
-  it.effect("emits thread.executor-model-set from thread.executor-model.set and projects it", () =>
+  it.effect("projects legacy thread.executor-model-set events without accepting the command", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";
       const initial = createEmptyReadModel(now);
@@ -413,54 +413,25 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         model: "gpt-5-codex",
       };
 
-      const setResult = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.executor-model.set",
-          commandId: CommandId.make("cmd-executor-model-set"),
-          threadId: ThreadId.make("thread-1"),
-          executorModelSelection: executorSelection,
-          createdAt: now,
-        },
-        readModel,
-      });
-
-      const setEvent = Array.isArray(setResult) ? null : setResult;
-      if (setEvent === null) {
-        throw new Error("Expected a single executor-model-set event.");
-      }
-      expect(setEvent).toMatchObject({
+      // Historical events still project so event-store replay remains valid.
+      const withExecutor = yield* projectEvent(readModel, {
+        sequence: 3,
+        eventId: asEventId("evt-executor-model-set"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
         type: "thread.executor-model-set",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-executor-model-set"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-executor-model-set"),
+        metadata: {},
         payload: {
           threadId: ThreadId.make("thread-1"),
           executorModelSelection: executorSelection,
+          updatedAt: now,
         },
-      });
-
-      const withExecutor = yield* projectEvent(readModel, {
-        ...setEvent,
-        sequence: 3,
       } as Parameters<typeof projectEvent>[1]);
       expect(withExecutor.threads[0]?.executorModelSelection).toEqual(executorSelection);
-
-      const clearResult = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.executor-model.set",
-          commandId: CommandId.make("cmd-executor-model-clear"),
-          threadId: ThreadId.make("thread-1"),
-          executorModelSelection: null,
-          createdAt: now,
-        },
-        readModel: withExecutor,
-      });
-      const clearEvent = Array.isArray(clearResult) ? null : clearResult;
-      if (clearEvent === null) {
-        throw new Error("Expected a single executor-model clear event.");
-      }
-      const cleared = yield* projectEvent(withExecutor, {
-        ...clearEvent,
-        sequence: 4,
-      } as Parameters<typeof projectEvent>[1]);
-      expect(cleared.threads[0]?.executorModelSelection).toBeNull();
     }),
   );
 });

@@ -96,8 +96,7 @@ struct ModelPickerClearRowConfig {
     }
 }
 
-/// Searchable, height-capped model browser shared by the thread model picker
-/// and the Advisor/Planner executor picker.
+/// Searchable, height-capped model browser used by the thread model picker.
 struct ModelPickerPopoverContent: View {
     let models: [ModelOption]
     let selectedInstanceID: String?

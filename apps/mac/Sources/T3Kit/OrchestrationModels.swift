@@ -40,9 +40,22 @@ public enum RuntimeMode: String, Codable, Sendable {
 public enum ProviderInteractionMode: String, Codable, Sendable {
     case `default`
     case plan
-    case advisor
 
     public static let wireDefault: ProviderInteractionMode = .default
+
+    /// Historical Advisor/Planner wire value; maps to default so old payloads still decode.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        switch raw {
+        case "plan": self = .plan
+        case "default", "advisor": self = .default
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unknown ProviderInteractionMode: \(raw)")
+        }
+    }
 }
 
 public enum ProviderApprovalDecision: String, Codable, Sendable {
@@ -527,7 +540,7 @@ public struct OrchestrationThread: Codable, Sendable {
     public var modelSelection: ModelSelection
     public var runtimeMode: RuntimeMode
     public var interactionMode: ProviderInteractionMode
-    /// Advisor/Planner executor model; nil means advise-only (no delegated write agents).
+    /// Legacy field from the removed Advisor/Planner mode; unused.
     public var executorModelSelection: ModelSelection?
     public var branch: String?
     public var worktreePath: String?
@@ -1064,7 +1077,7 @@ public struct ThreadExecutorModelSetCommand: Encodable, Sendable {
     public let type: String = "thread.executor-model.set"
     public var commandId: String
     public var threadId: String
-    /// Null clears the per-thread executor model (advise-only advisor).
+    /// Legacy field from the removed Advisor/Planner mode; unused.
     public var executorModelSelection: ModelSelection?
     public var createdAt: String
 

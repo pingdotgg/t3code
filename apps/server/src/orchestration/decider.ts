@@ -85,7 +85,6 @@ function hasOpenBlockingRequest(thread: {
   return openRequestIds.size > 0;
 }
 
-
 function withEventBase(
   input: Pick<OrchestrationCommand, "commandId"> & {
     readonly aggregateKind: OrchestrationEvent["aggregateKind"];
@@ -593,29 +592,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           interactionMode: command.interactionMode,
-          updatedAt: occurredAt,
-        },
-      };
-    }
-
-    case "thread.executor-model.set": {
-      yield* requireThread({
-        readModel,
-        command,
-        threadId: command.threadId,
-      });
-      const occurredAt = yield* nowIso;
-      return {
-        ...(yield* withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt,
-          commandId: command.commandId,
-        })),
-        type: "thread.executor-model-set",
-        payload: {
-          threadId: command.threadId,
-          executorModelSelection: command.executorModelSelection,
           updatedAt: occurredAt,
         },
       };
