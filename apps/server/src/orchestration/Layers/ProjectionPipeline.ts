@@ -879,6 +879,16 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadMessagesProjection",
     )(function* (event, attachmentSideEffects) {
       switch (event.type) {
+        case "thread.created":
+          // Re-creating a soft-deleted thread id reuses the same threadId (a
+          // draft's bootstrap retry). Clear any child rows left over from the
+          // prior lifecycle so the re-created thread starts clean, matching the
+          // in-memory projector which resets the thread to empty on create.
+          yield* projectionThreadMessageRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+
         case "thread.message-sent": {
           const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
             messageId: event.payload.messageId,
@@ -958,6 +968,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadProposedPlansProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.created":
+          // Clear stale proposed plans when a soft-deleted thread id is reused.
+          yield* projectionThreadProposedPlanRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+
         case "thread.proposed-plan-upserted":
           yield* projectionThreadProposedPlanRepository.upsert({
             planId: event.payload.proposedPlan.id,
@@ -1009,6 +1026,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadActivitiesProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.created":
+          // Clear stale activities when a soft-deleted thread id is reused.
+          yield* projectionThreadActivityRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+
         case "thread.activity-appended":
           yield* projectionThreadActivityRepository.upsert({
             activityId: event.payload.activity.id,
@@ -1060,6 +1084,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const applyThreadSessionsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadSessionsProjection",
     )(function* (event, _attachmentSideEffects) {
+      if (event.type === "thread.created") {
+        // Clear a stale session when a soft-deleted thread id is reused.
+        yield* projectionThreadSessionRepository.deleteByThreadId({
+          threadId: event.payload.threadId,
+        });
+        return;
+      }
       if (event.type !== "thread.session-set") {
         return;
       }
@@ -1079,6 +1110,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadTurnsProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.created": {
+          // Clear stale turns/checkpoints when a soft-deleted thread id is
+          // reused.
+          yield* projectionTurnRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+        }
+
         case "thread.turn-start-requested": {
           yield* projectionTurnRepository.replacePendingTurnStart({
             threadId: event.payload.threadId,
@@ -1416,6 +1456,22 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyPendingApprovalsProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.created": {
+          // Clear stale pending approvals when a soft-deleted thread id is
+          // reused. These rows are keyed by requestId (no thread-level delete),
+          // so drop each row the prior lifecycle left for this thread.
+          const staleApprovals = yield* projectionPendingApprovalRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* Effect.forEach(
+            staleApprovals,
+            (row) =>
+              projectionPendingApprovalRepository.deleteByRequestId({ requestId: row.requestId }),
+            { concurrency: 1 },
+          );
+          return;
+        }
+
         case "thread.activity-appended": {
           const requestId =
             extractActivityRequestId(event.payload.activity.payload) ??

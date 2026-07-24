@@ -214,4 +214,92 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
       expect(normalizeDeleteEvent(forcedResult)).toEqual(normalizeDeleteEvent(sequentialEvents));
     }),
   );
+
+  it.effect("allows re-creating a thread id after it was soft-deleted", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const threadId = asThreadId("thread-delete-1");
+      let readModel = yield* seedReadModel;
+      let nextSequence = readModel.snapshotSequence;
+
+      const projectDecided = function* (command: OrchestrationCommand) {
+        const decided = yield* decideOrchestrationCommand({ command, readModel });
+        const events = Array.isArray(decided) ? decided : [decided];
+        for (const event of events) {
+          nextSequence += 1;
+          readModel = yield* projectEvent(readModel, { ...event, sequence: nextSequence });
+        }
+        return events;
+      };
+
+      // Soft-delete the freshly-created (content-free) thread — this is what the
+      // server does when a bootstrap turn start fails partway and cleans up the
+      // just-created thread, before any turn, message, or activity exists.
+      yield* projectDecided({
+        type: "thread.delete",
+        commandId: asCommandId("cmd-thread-delete-recreate"),
+        threadId,
+      });
+      expect(readModel.threads.find((thread) => thread.id === threadId)?.deletedAt).not.toBeNull();
+
+      // Re-creating the same thread id (client retries with the same draft id)
+      // must succeed instead of failing with "already exists".
+      const recreatedEvents = yield* projectDecided({
+        type: "thread.create",
+        commandId: asCommandId("cmd-thread-recreate"),
+        threadId,
+        projectId: asProjectId("project-delete"),
+        title: "Recreated Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      });
+
+      expect(recreatedEvents.map((event) => event.type)).toEqual(["thread.created"]);
+      const resurrected = readModel.threads.find((thread) => thread.id === threadId);
+      expect(resurrected?.deletedAt).toBeNull();
+      expect(resurrected?.title).toBe("Recreated Thread");
+      // The in-memory projector resets the resurrected thread to empty; the
+      // persistent projectors purge their own child rows on thread.created
+      // (covered in ProjectionPipeline.test.ts) so no stale data survives.
+      expect(resurrected?.messages).toEqual([]);
+      expect(resurrected?.activities).toEqual([]);
+      expect(resurrected?.latestTurn).toBeNull();
+      expect(resurrected?.session).toBeNull();
+    }),
+  );
+
+  it.effect("still blocks creating a thread id that is live (not deleted)", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModel;
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.create",
+            commandId: asCommandId("cmd-thread-recreate-live"),
+            threadId: asThreadId("thread-delete-1"),
+            projectId: asProjectId("project-delete"),
+            title: "Duplicate Of Live Thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+          readModel,
+        }),
+      );
+      expect(error.message).toContain("already exists");
+    }),
+  );
 });
