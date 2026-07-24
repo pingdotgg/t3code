@@ -104,9 +104,19 @@ const SharedApplicationDataPlaneTestLayer = Layer.merge(
 ).pipe(
   Layer.provide(
     Layer.succeed(ProjectEnrichmentService, {
-      peek: () => Effect.succeed({ repositoryIdentity: null, faviconPath: null }),
+      peek: () =>
+        Effect.succeed({
+          repositoryIdentity: null,
+          faviconPath: null,
+          repositoryIdentityResolved: false,
+        }),
       request: () => Effect.void,
-      getAvailable: () => Effect.succeed({ repositoryIdentity: null, faviconPath: null }),
+      getAvailable: () =>
+        Effect.succeed({
+          repositoryIdentity: null,
+          faviconPath: null,
+          repositoryIdentityResolved: false,
+        }),
       invalidate: () => Effect.void,
       subscribeChanges: Effect.never,
     }),
