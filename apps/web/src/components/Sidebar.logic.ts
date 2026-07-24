@@ -55,12 +55,14 @@ export function shouldDismissThreadSettleConfirmation<T>(input: {
   readonly routeThreadKey: T | null;
   readonly targetExists: boolean;
   readonly targetExplicitlySettled: boolean;
+  readonly targetCanSettle: boolean;
 }): boolean {
   return (
     input.confirmationThreadKey !== null &&
     (input.confirmationThreadKey !== input.routeThreadKey ||
       !input.targetExists ||
-      input.targetExplicitlySettled)
+      input.targetExplicitlySettled ||
+      !input.targetCanSettle)
   );
 }
 

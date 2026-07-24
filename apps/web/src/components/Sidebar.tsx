@@ -206,6 +206,7 @@ import { sortThreads } from "../lib/threadSort";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
+import { useNowMinute } from "~/hooks/useNowMinute";
 import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -3111,16 +3112,7 @@ export default function Sidebar() {
     null,
   );
   const settleConfirmationButtonRef = useRef<HTMLButtonElement>(null);
-  const [settlementNowMinute, setSettlementNowMinute] = useState(() =>
-    new Date().toISOString().slice(0, 16),
-  );
-  useEffect(() => {
-    const id = window.setInterval(
-      () => setSettlementNowMinute(new Date().toISOString().slice(0, 16)),
-      60_000,
-    );
-    return () => window.clearInterval(id);
-  }, []);
+  const settlementNowMinute = useNowMinute();
   const settlementNow = `${settlementNowMinute}:00.000Z`;
   const [changeRequestStateByThreadKey, setChangeRequestStateByThreadKey] = useState<
     ReadonlyMap<string, ChangeRequestStateLike>
@@ -3715,13 +3707,26 @@ export default function Sidebar() {
   const settleConfirmationThread = settleConfirmationThreadKey
     ? (sidebarThreadByKey.get(settleConfirmationThreadKey) ?? null)
     : null;
+  const settleConfirmationCanSettle =
+    settleConfirmationThread !== null &&
+    serverConfigs.get(settleConfirmationThread.environmentId)?.environment.capabilities
+      .threadSettlement === true &&
+    canSettleLegacySidebarRouteThread({
+      thread: settleConfirmationThread,
+      settlementSupported: true,
+      now: new Date().toISOString(),
+    });
   const confirmShortcutSettle = useCallback(() => {
-    if (!settleConfirmationThreadKey || settleConfirmationThreadKey !== routeThreadKeyRef.current) {
+    if (
+      !settleConfirmationThreadKey ||
+      settleConfirmationThreadKey !== routeThreadKeyRef.current ||
+      !settleConfirmationCanSettle
+    ) {
       setSettleConfirmationThreadKey(null);
       return;
     }
     attemptShortcutSettle(settleConfirmationThreadKey);
-  }, [attemptShortcutSettle, settleConfirmationThreadKey]);
+  }, [attemptShortcutSettle, settleConfirmationCanSettle, settleConfirmationThreadKey]);
 
   useEffect(() => {
     if (
@@ -3730,11 +3735,17 @@ export default function Sidebar() {
         routeThreadKey,
         targetExists: settleConfirmationThread !== null,
         targetExplicitlySettled: settleConfirmationThread?.settledOverride === "settled",
+        targetCanSettle: settleConfirmationCanSettle,
       })
     ) {
       setSettleConfirmationThreadKey(null);
     }
-  }, [routeThreadKey, settleConfirmationThread, settleConfirmationThreadKey]);
+  }, [
+    routeThreadKey,
+    settleConfirmationCanSettle,
+    settleConfirmationThread,
+    settleConfirmationThreadKey,
+  ]);
 
   useEffect(() => {
     const onMouseDown = (event: globalThis.MouseEvent) => {
@@ -3918,7 +3929,7 @@ export default function Sidebar() {
         </>
       )}
       <AlertDialog
-        open={settleConfirmationThread !== null}
+        open={settleConfirmationThread !== null && settleConfirmationCanSettle}
         onOpenChange={(open) => {
           if (!open) setSettleConfirmationThreadKey(null);
         }}
@@ -3934,7 +3945,11 @@ export default function Sidebar() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            <Button ref={settleConfirmationButtonRef} onClick={confirmShortcutSettle}>
+            <Button
+              ref={settleConfirmationButtonRef}
+              disabled={!settleConfirmationCanSettle}
+              onClick={confirmShortcutSettle}
+            >
               Settle thread
               <Kbd className="ml-1 h-5 px-1.5">Enter</Kbd>
             </Button>

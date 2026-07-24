@@ -819,6 +819,7 @@ describe("shouldDismissThreadSettleConfirmation", () => {
         routeThreadKey: "thread-2",
         targetExists: true,
         targetExplicitlySettled: false,
+        targetCanSettle: true,
       }),
     ).toBe(true);
   });
@@ -830,6 +831,7 @@ describe("shouldDismissThreadSettleConfirmation", () => {
         routeThreadKey: "thread-1",
         targetExists: true,
         targetExplicitlySettled: false,
+        targetCanSettle: true,
       }),
     ).toBe(false);
   });
@@ -855,6 +857,7 @@ describe("shouldDismissThreadSettleConfirmation", () => {
         routeThreadKey: "thread-1",
         targetExists: true,
         targetExplicitlySettled: target.settledOverride === "settled",
+        targetCanSettle: true,
       }),
     ).toBe(false);
   });
@@ -866,6 +869,19 @@ describe("shouldDismissThreadSettleConfirmation", () => {
         routeThreadKey: "thread-1",
         targetExists: true,
         targetExplicitlySettled: true,
+        targetCanSettle: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("dismisses a confirmation when live work makes the target unsettleable", () => {
+    expect(
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: "thread-1",
+        routeThreadKey: "thread-1",
+        targetExists: true,
+        targetExplicitlySettled: false,
+        targetCanSettle: false,
       }),
     ).toBe(true);
   });
