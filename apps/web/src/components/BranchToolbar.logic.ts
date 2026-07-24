@@ -16,6 +16,93 @@ export interface EnvironmentOption {
 export const EnvMode = Schema.Literals(["local", "worktree"]);
 export type EnvMode = typeof EnvMode.Type;
 
+export type BranchToolbarPicker = "environment" | "env-mode" | "mobile-run-context" | "branch";
+
+export type BranchToolbarRunContextControl = "environment" | "env-mode";
+
+export function resolveBranchToolbarRunContextShortcutTarget(input: {
+  readonly control: BranchToolbarRunContextControl;
+  readonly isRendered: boolean;
+  readonly isMobile: boolean;
+  readonly environmentPickerAvailable: boolean;
+  readonly envLocked: boolean;
+  readonly envModeLocked: boolean;
+}): BranchToolbarPicker | null {
+  if (!input.isRendered) return null;
+
+  const controlAvailable =
+    input.control === "environment"
+      ? input.environmentPickerAvailable && !input.envLocked
+      : !input.envModeLocked;
+  if (!controlAvailable) return null;
+
+  if (input.isMobile) return "mobile-run-context";
+  return input.control;
+}
+
+export interface BranchToolbarPickerAvailability {
+  readonly environment: boolean;
+  readonly envMode: boolean;
+  readonly mobileRunContext: boolean;
+  readonly branch: boolean;
+}
+
+export function resolveAvailableBranchToolbarPicker(
+  picker: BranchToolbarPicker | null,
+  availability: BranchToolbarPickerAvailability,
+): BranchToolbarPicker | null {
+  switch (picker) {
+    case "environment":
+      return availability.environment ? picker : null;
+    case "env-mode":
+      return availability.envMode ? picker : null;
+    case "mobile-run-context":
+      return availability.mobileRunContext ? picker : null;
+    case "branch":
+      return availability.branch ? picker : null;
+    case null:
+      return null;
+  }
+}
+
+export function shouldShowBranchPickerShortcutHint(input: {
+  readonly shortcutHintLabel: string | null | undefined;
+  readonly isInitialBranchesLoadPending: boolean;
+  readonly isBranchActionPending: boolean;
+}): boolean {
+  return Boolean(
+    input.shortcutHintLabel && !input.isInitialBranchesLoadPending && !input.isBranchActionPending,
+  );
+}
+
+export function resolveBranchPickerShortcutOpenState(input: {
+  readonly open: boolean;
+  readonly unavailable: boolean;
+}): boolean | null {
+  if (input.open) return false;
+  return input.unavailable ? null : true;
+}
+
+export function resolveBranchToolbarPickerOpenChange(
+  current: BranchToolbarPicker | null,
+  picker: BranchToolbarPicker,
+  open: boolean,
+): BranchToolbarPicker | null {
+  if (open) return picker;
+  return current === picker ? null : current;
+}
+
+export function resolveBranchToolbarPickerToggle(
+  current: BranchToolbarPicker | null,
+  picker: BranchToolbarPicker,
+): BranchToolbarPicker | null {
+  return current === picker ? null : picker;
+}
+
+export function resolveBranchPickerQueryForOpenState(query: string, open: boolean): string {
+  return open ? query : "";
+}
+
 const GENERIC_LOCAL_ENVIRONMENT_LABELS = new Set(["local", "local environment"]);
 
 function normalizeDisplayLabel(value: string | null | undefined): string | null {

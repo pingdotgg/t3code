@@ -10,6 +10,9 @@ import {
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
+  resolveComposerPickerOpenChange,
+  resolveModelOptionsShortcutTarget,
+  toggleCompactControlsMenuForShortcut,
 } from "./composerProviderState";
 
 // Everything in composerProviderState is now data-driven by the model's
@@ -60,6 +63,116 @@ const ULTRATHINK_FRAME_CLASSES = {
   composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.07)_inset]",
   modelPickerIconClassName: "ultrathink-chroma",
 } as const;
+
+describe("resolveModelOptionsShortcutTarget", () => {
+  const available = {
+    isComposerUnavailable: false,
+    compactTraitsAvailable: true,
+    expandedTraitsAvailable: true,
+  };
+
+  it("opens the layout-specific model options control", () => {
+    expect(resolveModelOptionsShortcutTarget({ ...available, isCompact: true })).toBe(
+      "compact-controls-menu",
+    );
+    expect(resolveModelOptionsShortcutTarget({ ...available, isCompact: false })).toBe(
+      "traits-picker",
+    );
+  });
+
+  it("does not open the generic compact menu when model options are unavailable", () => {
+    expect(
+      resolveModelOptionsShortcutTarget({
+        ...available,
+        isCompact: true,
+        compactTraitsAvailable: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects the shortcut while the composer controls are unavailable", () => {
+    expect(
+      resolveModelOptionsShortcutTarget({
+        ...available,
+        isCompact: false,
+        isComposerUnavailable: true,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("toggleCompactControlsMenuForShortcut", () => {
+  it("keeps the shared menu open when switching shortcut targets", () => {
+    expect(toggleCompactControlsMenuForShortcut("model-options", "runtime-mode")).toBe(
+      "runtime-mode",
+    );
+    expect(toggleCompactControlsMenuForShortcut("runtime-mode", "model-options")).toBe(
+      "model-options",
+    );
+  });
+
+  it("closes the shared menu when the same shortcut is repeated", () => {
+    expect(toggleCompactControlsMenuForShortcut("model-options", "model-options")).toBeNull();
+    expect(toggleCompactControlsMenuForShortcut("runtime-mode", "runtime-mode")).toBeNull();
+  });
+
+  it("closes a menu that was opened directly", () => {
+    expect(toggleCompactControlsMenuForShortcut("direct", "model-options")).toBeNull();
+    expect(toggleCompactControlsMenuForShortcut("direct", "runtime-mode")).toBeNull();
+  });
+});
+
+describe("resolveComposerPickerOpenChange", () => {
+  const closed = {
+    modelOpen: false,
+    traitsOpen: false,
+    runtimeModeOpen: false,
+    compactControlsMenuOpenSource: null,
+  } as const;
+
+  it("keeps keyboard-opened composer pickers mutually exclusive", () => {
+    const modelOpen = resolveComposerPickerOpenChange(closed, "model", true);
+    const traitsOpen = resolveComposerPickerOpenChange(modelOpen, "traits", true);
+    const runtimeModeOpen = resolveComposerPickerOpenChange(traitsOpen, "runtime-mode", true);
+
+    expect(modelOpen).toEqual({ ...closed, modelOpen: true });
+    expect(traitsOpen).toEqual({ ...closed, traitsOpen: true });
+    expect(runtimeModeOpen).toEqual({ ...closed, runtimeModeOpen: true });
+  });
+
+  it("treats the compact controls menu as the only open picker", () => {
+    const modelOpen = resolveComposerPickerOpenChange(closed, "model", true);
+    const compactOpen = resolveComposerPickerOpenChange(
+      modelOpen,
+      "compact-controls-menu",
+      true,
+      "model-options",
+    );
+    const switchedSource = resolveComposerPickerOpenChange(
+      compactOpen,
+      "compact-controls-menu",
+      true,
+      "runtime-mode",
+    );
+
+    expect(compactOpen).toEqual({
+      ...closed,
+      compactControlsMenuOpenSource: "model-options",
+    });
+    expect(switchedSource).toEqual({
+      ...closed,
+      compactControlsMenuOpenSource: "runtime-mode",
+    });
+  });
+
+  it("does not close the active picker when a previous picker reports closing", () => {
+    const runtimeModeOpen = { ...closed, runtimeModeOpen: true };
+
+    expect(resolveComposerPickerOpenChange(runtimeModeOpen, "traits", false)).toEqual(
+      runtimeModeOpen,
+    );
+  });
+});
 
 describe("getComposerProviderState", () => {
   it("derives a stable prompt injection state for ordinary prompt edits", () => {

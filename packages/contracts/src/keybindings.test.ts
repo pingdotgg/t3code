@@ -85,6 +85,22 @@ it.effect("parses keybinding rules", () =>
   }),
 );
 
+it.effect("parses composer control commands", () =>
+  Effect.gen(function* () {
+    for (const [key, command] of [
+      ["mod+shift+e", "modelOptionsPicker.toggle"],
+      ["mod+shift+a", "runtimeModePicker.toggle"],
+      ["mod+shift+p", "planMode.toggle"],
+      ["mod+shift+v", "environmentPicker.toggle"],
+      ["mod+shift+l", "envModePicker.toggle"],
+      ["mod+shift+b", "branchPicker.toggle"],
+    ] as const) {
+      const parsed = yield* decode(KeybindingRule, { key, command });
+      assert.strictEqual(parsed.command, command);
+    }
+  }),
+);
+
 it.effect("rejects invalid command values", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(

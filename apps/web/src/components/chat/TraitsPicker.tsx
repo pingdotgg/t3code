@@ -14,7 +14,7 @@ import {
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ChevronDownIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
@@ -31,6 +31,7 @@ import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
+import { ComposerControlShortcutHint } from "./ComposerControlShortcutHint";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -220,6 +221,12 @@ export interface TraitsMenuContentProps {
   triggerClassName?: string;
 }
 
+export interface TraitsPickerControlProps {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  shortcutHintLabel?: string | null;
+}
+
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   provider,
   instanceId,
@@ -390,9 +397,14 @@ export const TraitsPicker = memo(function TraitsPicker({
   allowPromptInjectedEffort = true,
   triggerVariant,
   triggerClassName,
+  open,
+  onOpenChange,
+  shortcutHintLabel,
   ...persistence
-}: TraitsMenuContentProps & TraitsPersistence) {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+}: TraitsMenuContentProps & TraitsPickerControlProps & TraitsPersistence) {
+  const [uncontrolledMenuOpen, setUncontrolledMenuOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const isMenuOpen = open ?? uncontrolledMenuOpen;
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
@@ -438,13 +450,17 @@ export const TraitsPicker = memo(function TraitsPicker({
   return (
     <Menu
       open={isMenuOpen}
-      onOpenChange={(open) => {
-        setIsMenuOpen(open);
+      onOpenChange={(nextOpen) => {
+        onOpenChange?.(nextOpen);
+        if (open === undefined) {
+          setUncontrolledMenuOpen(nextOpen);
+        }
       }}
     >
       <MenuTrigger
         render={
           <Button
+            ref={triggerRef}
             size="sm"
             variant={triggerVariant ?? "ghost"}
             className={cn(
@@ -481,6 +497,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           {...persistence}
         />
       </MenuPopup>
+      <ComposerControlShortcutHint anchorRef={triggerRef} label={shortcutHintLabel ?? null} />
     </Menu>
   );
 });

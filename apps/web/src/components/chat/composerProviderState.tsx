@@ -15,7 +15,12 @@ import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
-import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
+import {
+  shouldRenderTraitsControls,
+  TraitsMenuContent,
+  TraitsPicker,
+  type TraitsPickerControlProps,
+} from "./TraitsPicker";
 
 export type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
@@ -35,6 +40,67 @@ export type ComposerProviderState = {
   composerSurfaceClassName?: string;
   modelPickerIconClassName?: string;
 };
+
+export type ModelOptionsShortcutTarget = "compact-controls-menu" | "traits-picker";
+export type CompactControlsMenuOpenSource = "direct" | "model-options" | "runtime-mode";
+export type ComposerPicker = "model" | "traits" | "runtime-mode" | "compact-controls-menu";
+
+export type ComposerPickerState = {
+  readonly modelOpen: boolean;
+  readonly traitsOpen: boolean;
+  readonly runtimeModeOpen: boolean;
+  readonly compactControlsMenuOpenSource: CompactControlsMenuOpenSource | null;
+};
+
+export function resolveComposerPickerOpenChange(
+  current: ComposerPickerState,
+  picker: ComposerPicker,
+  open: boolean,
+  compactControlsMenuOpenSource: CompactControlsMenuOpenSource = "direct",
+): ComposerPickerState {
+  if (!open) {
+    switch (picker) {
+      case "model":
+        return { ...current, modelOpen: false };
+      case "traits":
+        return { ...current, traitsOpen: false };
+      case "runtime-mode":
+        return { ...current, runtimeModeOpen: false };
+      case "compact-controls-menu":
+        return { ...current, compactControlsMenuOpenSource: null };
+    }
+  }
+
+  return {
+    modelOpen: picker === "model",
+    traitsOpen: picker === "traits",
+    runtimeModeOpen: picker === "runtime-mode",
+    compactControlsMenuOpenSource:
+      picker === "compact-controls-menu" ? compactControlsMenuOpenSource : null,
+  };
+}
+
+export function toggleCompactControlsMenuForShortcut(
+  current: CompactControlsMenuOpenSource | null,
+  source: Exclude<CompactControlsMenuOpenSource, "direct">,
+): CompactControlsMenuOpenSource | null {
+  if (current === null) return source;
+  if (current === "direct" || current === source) return null;
+  return source;
+}
+
+export function resolveModelOptionsShortcutTarget(input: {
+  readonly isComposerUnavailable: boolean;
+  readonly isCompact: boolean;
+  readonly compactTraitsAvailable: boolean;
+  readonly expandedTraitsAvailable: boolean;
+}): ModelOptionsShortcutTarget | null {
+  if (input.isComposerUnavailable) return null;
+  if (input.isCompact) {
+    return input.compactTraitsAvailable ? "compact-controls-menu" : null;
+  }
+  return input.expandedTraitsAvailable ? "traits-picker" : null;
+}
 
 type TraitsRenderInput = {
   provider: ProviderDriverKind;
@@ -83,6 +149,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
 function renderTraitsControl(
   Component: typeof TraitsMenuContent | typeof TraitsPicker,
   input: TraitsRenderInput,
+  pickerControlProps?: TraitsPickerControlProps,
 ): ReactNode {
   const {
     provider,
@@ -113,6 +180,7 @@ function renderTraitsControl(
       modelOptions={modelOptions}
       prompt={prompt}
       onPromptChange={onPromptChange}
+      {...(pickerControlProps ?? {})}
     />
   );
 }
@@ -121,6 +189,13 @@ export function renderProviderTraitsMenuContent(input: TraitsRenderInput): React
   return renderTraitsControl(TraitsMenuContent, input);
 }
 
-export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactNode {
-  return renderTraitsControl(TraitsPicker, input);
+export function renderProviderTraitsPicker(
+  input: TraitsRenderInput & TraitsPickerControlProps,
+): ReactNode {
+  const { open, onOpenChange, shortcutHintLabel, ...rest } = input;
+  return renderTraitsControl(TraitsPicker, rest, {
+    ...(open !== undefined ? { open } : {}),
+    ...(onOpenChange ? { onOpenChange } : {}),
+    ...(shortcutHintLabel !== undefined ? { shortcutHintLabel } : {}),
+  });
 }

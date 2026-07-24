@@ -63,6 +63,11 @@ import {
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
 import { type ElementContextDraft } from "../../lib/elementContext";
+import {
+  useLayoutScopedOpenState,
+  useLayoutScopedState,
+} from "../../hooks/useLayoutScopedOpenState";
+import { useTerminalFocus } from "../../hooks/useTerminalFocus";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
 import { ComposerPreviewAnnotationCards } from "./ComposerPreviewAnnotationCards";
@@ -74,7 +79,10 @@ import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../Compos
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
-import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import {
+  compactComposerShortcutHintLabel,
+  CompactComposerControlsMenu,
+} from "./CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
@@ -85,7 +93,13 @@ import {
   getComposerPromptInjectionState,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
+  type ComposerPicker,
+  type ComposerPickerState,
+  type CompactControlsMenuOpenSource,
+  resolveComposerPickerOpenChange,
+  toggleCompactControlsMenuForShortcut,
   renderProviderTraitsPicker,
+  resolveModelOptionsShortcutTarget,
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -190,6 +204,9 @@ import { formatProviderSkillDisplayName } from "../../providerSkillPresentation"
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import { shortcutLabelForCommand, shouldShowCommandHintForModifiers } from "../../keybindings";
+import { useShortcutModifierState } from "../../shortcutModifierState";
+import { ComposerControlShortcutHint } from "./ComposerControlShortcutHint";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -267,12 +284,18 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   showPlanToggle: boolean;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
+  runtimeModePickerOpen: boolean;
+  runtimeModeShortcutHintLabel: string | null;
+  interactionModeShortcutHintLabel: string | null;
+  onRuntimeModePickerOpenChange: (open: boolean) => void;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
   onTogglePlanSidebar: () => void;
 }) {
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
+  const interactionModeTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const runtimeModeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const interactionModeTooltip =
     props.interactionMode === "plan"
       ? "Plan mode — click to return to normal build mode"
@@ -288,6 +311,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         <TooltipTrigger
           render={
             <Button
+              ref={interactionModeTriggerRef}
               variant="ghost"
               className={cn(
                 "shrink-0 whitespace-nowrap px-2 sm:px-3",
@@ -313,6 +337,10 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         </TooltipTrigger>
         <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
       </Tooltip>
+      <ComposerControlShortcutHint
+        anchorRef={interactionModeTriggerRef}
+        label={props.interactionModeShortcutHintLabel}
+      />
     </>
   ) : null;
 
@@ -323,11 +351,14 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
       <Tooltip>
         <Select
           value={props.runtimeMode}
+          open={props.runtimeModePickerOpen}
+          onOpenChange={props.onRuntimeModePickerOpenChange}
           onValueChange={(value) => props.onRuntimeModeChange(value!)}
         >
           <TooltipTrigger
             render={
               <SelectTrigger
+                ref={runtimeModeTriggerRef}
                 variant="ghost"
                 size="sm"
                 className="font-medium"
@@ -362,6 +393,10 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         </Select>
         <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
       </Tooltip>
+      <ComposerControlShortcutHint
+        anchorRef={runtimeModeTriggerRef}
+        label={props.runtimeModeShortcutHintLabel}
+      />
 
       {interactionModeToggle}
 
@@ -465,6 +500,10 @@ export interface ChatComposerHandle {
   openModelPicker: () => void;
   toggleModelPicker: () => void;
   isModelPickerOpen: () => boolean;
+  /** Return false (without side effects) when the target control is unavailable. */
+  toggleModelOptionsPicker: () => boolean;
+  toggleRuntimeModePicker: () => boolean;
+  toggleInteractionMode: () => boolean;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -959,6 +998,52 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  const composerControlsLayout = isComposerFooterCompact ? "compact" : "expanded";
+  const [isComposerTraitsPickerOpen, setIsComposerTraitsPickerOpen] =
+    useLayoutScopedOpenState(composerControlsLayout);
+  const [isComposerRuntimeModePickerOpen, setIsComposerRuntimeModePickerOpen] =
+    useLayoutScopedOpenState(composerControlsLayout);
+  const [compactControlsMenuOpenSource, setCompactControlsMenuOpenSource] = useLayoutScopedState<
+    typeof composerControlsLayout,
+    CompactControlsMenuOpenSource | null
+  >(composerControlsLayout, null);
+  const isCompactControlsMenuOpen = compactControlsMenuOpenSource !== null;
+  const composerPickerStateRef = useRef<ComposerPickerState>({
+    modelOpen: isComposerModelPickerOpen,
+    traitsOpen: isComposerTraitsPickerOpen,
+    runtimeModeOpen: isComposerRuntimeModePickerOpen,
+    compactControlsMenuOpenSource,
+  });
+  composerPickerStateRef.current = {
+    modelOpen: isComposerModelPickerOpen,
+    traitsOpen: isComposerTraitsPickerOpen,
+    runtimeModeOpen: isComposerRuntimeModePickerOpen,
+    compactControlsMenuOpenSource,
+  };
+  const applyComposerPickerOpenChange = useCallback(
+    (
+      picker: ComposerPicker,
+      open: boolean,
+      nextCompactControlsMenuOpenSource: CompactControlsMenuOpenSource = "direct",
+    ) => {
+      const nextState = resolveComposerPickerOpenChange(
+        composerPickerStateRef.current,
+        picker,
+        open,
+        nextCompactControlsMenuOpenSource,
+      );
+      composerPickerStateRef.current = nextState;
+      setIsComposerModelPickerOpen(nextState.modelOpen);
+      setIsComposerTraitsPickerOpen(nextState.traitsOpen);
+      setIsComposerRuntimeModePickerOpen(nextState.runtimeModeOpen);
+      setCompactControlsMenuOpenSource(nextState.compactControlsMenuOpenSource);
+    },
+    [
+      setCompactControlsMenuOpenSource,
+      setIsComposerRuntimeModePickerOpen,
+      setIsComposerTraitsPickerOpen,
+    ],
+  );
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const isMobileViewport = useMediaQuery("max-sm");
@@ -1191,6 +1276,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     onPromptChange: setPromptFromTraits,
   });
+  // Hint badges show while the held modifiers are a subset of a composer
+  // control shortcut's modifiers; computed once here and passed down.
+  const shortcutModifiers = useShortcutModifierState();
+  const terminalFocus = useTerminalFocus();
+  const shortcutContext = useMemo(() => ({ terminalFocus }), [terminalFocus]);
+  const composerControlHintLabels = useMemo(() => {
+    const hintLabel = (command: Parameters<typeof shortcutLabelForCommand>[1]) =>
+      shouldShowCommandHintForModifiers(shortcutModifiers, keybindings, command, {
+        platform: navigator.platform,
+        context: shortcutContext,
+      })
+        ? shortcutLabelForCommand(keybindings, command, { context: shortcutContext })
+        : null;
+
+    return {
+      modelPicker: hintLabel("modelPicker.toggle"),
+      modelOptionsPicker: hintLabel("modelOptionsPicker.toggle"),
+      runtimeModePicker: hintLabel("runtimeModePicker.toggle"),
+      planMode: hintLabel("planMode.toggle"),
+    };
+  }, [keybindings, shortcutContext, shortcutModifiers]);
+
   const providerTraitsPicker = renderProviderTraitsPicker({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
@@ -1201,6 +1308,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
     onPromptChange: setPromptFromTraits,
+    open: isComposerTraitsPickerOpen,
+    onOpenChange: (open) => {
+      applyComposerPickerOpenChange("traits", open);
+    },
+    shortcutHintLabel: composerControlHintLabels?.modelOptionsPicker ?? null,
   });
   const pendingPrimaryAction = useMemo(
     () =>
@@ -1667,7 +1779,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           });
           if (applied) {
             setComposerHighlightedItemId(null);
-            setIsComposerModelPickerOpen(true);
+            applyComposerPickerOpenChange("model", true);
           }
           return;
         }
@@ -1717,7 +1829,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
     },
-    [applyPromptReplacement, handleInteractionModeChange, resolveActiveComposerTrigger],
+    [
+      applyComposerPickerOpenChange,
+      applyPromptReplacement,
+      handleInteractionModeChange,
+      resolveActiveComposerTrigger,
+    ],
   );
 
   const onComposerMenuItemHighlighted = useCallback(
@@ -2084,12 +2201,61 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       insertTextAtEnd: insertComposerTextAtEnd,
       openModelPicker: () => {
-        setIsComposerModelPickerOpen(true);
+        applyComposerPickerOpenChange("model", true);
       },
       toggleModelPicker: () => {
-        setIsComposerModelPickerOpen((open) => !open);
+        applyComposerPickerOpenChange("model", !composerPickerStateRef.current.modelOpen);
       },
       isModelPickerOpen: () => isComposerModelPickerOpen,
+      toggleModelOptionsPicker: () => {
+        const target = resolveModelOptionsShortcutTarget({
+          isComposerUnavailable: isComposerCollapsedMobile || isComposerApprovalState,
+          isCompact: isComposerFooterCompact,
+          compactTraitsAvailable: providerTraitsMenuContent !== null,
+          expandedTraitsAvailable: providerTraitsPicker !== null,
+        });
+        if (target === null) return false;
+        if (target === "compact-controls-menu") {
+          const nextSource = toggleCompactControlsMenuForShortcut(
+            composerPickerStateRef.current.compactControlsMenuOpenSource,
+            "model-options",
+          );
+          applyComposerPickerOpenChange(
+            "compact-controls-menu",
+            nextSource !== null,
+            nextSource ?? "model-options",
+          );
+        } else {
+          applyComposerPickerOpenChange("traits", !composerPickerStateRef.current.traitsOpen);
+        }
+        return true;
+      },
+      toggleRuntimeModePicker: () => {
+        if (isComposerCollapsedMobile || isComposerApprovalState) return false;
+        if (isComposerFooterCompact) {
+          const nextSource = toggleCompactControlsMenuForShortcut(
+            composerPickerStateRef.current.compactControlsMenuOpenSource,
+            "runtime-mode",
+          );
+          applyComposerPickerOpenChange(
+            "compact-controls-menu",
+            nextSource !== null,
+            nextSource ?? "runtime-mode",
+          );
+          return true;
+        }
+        applyComposerPickerOpenChange(
+          "runtime-mode",
+          !composerPickerStateRef.current.runtimeModeOpen,
+        );
+        return true;
+      },
+      toggleInteractionMode: () => {
+        if (isComposerCollapsedMobile || isComposerApprovalState) return false;
+        if (!composerProviderControls.showInteractionModeToggle) return false;
+        toggleInteractionMode();
+        return true;
+      },
       readSnapshot: () => {
         return readComposerSnapshot();
       },
@@ -2176,10 +2342,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerReviewComments,
       isConnecting,
       isComposerApprovalState,
+      isComposerCollapsedMobile,
+      isComposerFooterCompact,
+      composerProviderControls,
+      providerTraitsPicker,
+      providerTraitsMenuContent,
+      toggleInteractionMode,
+      applyComposerPickerOpenChange,
+      compactControlsMenuOpenSource,
       pendingUserInputs.length,
       projectSelectionRequired,
       applyPromptReplacement,
       isComposerModelPickerOpen,
+      isComposerRuntimeModePickerOpen,
+      isComposerTraitsPickerOpen,
       readComposerSnapshot,
       selectedModel,
       selectedModelOptionsForDispatch,
@@ -2657,6 +2833,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     modelOptionsByInstance={modelOptionsByInstance}
                     terminalOpen={terminalOpen}
                     open={isComposerModelPickerOpen}
+                    shortcutHintLabel={composerControlHintLabels?.modelPicker ?? null}
                     {...(composerProviderState.modelPickerIconClassName
                       ? {
                           activeProviderIconClassName:
@@ -2664,7 +2841,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         }
                       : {})}
                     onOpenChange={(open) => {
-                      setIsComposerModelPickerOpen(open);
+                      applyComposerPickerOpenChange("model", open);
                     }}
                     getModelDisabledReason={getModelDisabledReason}
                     onInstanceModelChange={onProviderModelSelect}
@@ -2679,7 +2856,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     planSidebarOpen={planSidebarOpen}
                     runtimeMode={runtimeMode}
                     showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                    shortcutHintLabel={compactComposerShortcutHintLabel({
+                      modelOptions: composerControlHintLabels?.modelOptionsPicker ?? null,
+                      modelOptionsAvailable: providerTraitsMenuContent !== null,
+                      runtimeMode: composerControlHintLabels?.runtimeModePicker ?? null,
+                      runtimeModeAvailable: !isComposerCollapsedMobile && !isComposerApprovalState,
+                      planMode: composerControlHintLabels?.planMode ?? null,
+                      planModeAvailable:
+                        !isComposerCollapsedMobile &&
+                        !isComposerApprovalState &&
+                        composerProviderControls.showInteractionModeToggle,
+                    })}
                     traitsMenuContent={providerTraitsMenuContent}
+                    open={isCompactControlsMenuOpen}
+                    onOpenChange={(open) => {
+                      applyComposerPickerOpenChange(
+                        "compact-controls-menu",
+                        open,
+                        composerPickerStateRef.current.compactControlsMenuOpenSource ?? "direct",
+                      );
+                    }}
                     onToggleInteractionMode={toggleInteractionMode}
                     onTogglePlanSidebar={togglePlanSidebar}
                     onRuntimeModeChange={handleRuntimeModeChange}
@@ -2699,6 +2895,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showPlanToggle={showPlanSidebarToggle}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
+                      runtimeModePickerOpen={isComposerRuntimeModePickerOpen}
+                      runtimeModeShortcutHintLabel={
+                        composerControlHintLabels?.runtimeModePicker ?? null
+                      }
+                      interactionModeShortcutHintLabel={composerControlHintLabels?.planMode ?? null}
+                      onRuntimeModePickerOpenChange={(open) => {
+                        applyComposerPickerOpenChange("runtime-mode", open);
+                      }}
                       onToggleInteractionMode={toggleInteractionMode}
                       onRuntimeModeChange={handleRuntimeModeChange}
                       onTogglePlanSidebar={togglePlanSidebar}

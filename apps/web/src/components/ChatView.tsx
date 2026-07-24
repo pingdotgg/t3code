@@ -135,7 +135,7 @@ import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
-import { BranchToolbar } from "./BranchToolbar";
+import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -1239,6 +1239,7 @@ function ChatViewContent(props: ChatViewProps) {
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
+  const branchToolbarRef = useRef<BranchToolbarHandle | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -4344,6 +4345,56 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      // Each toggle reports whether its control was available; when it was
+      // not, leave the event alone so the browser default still fires.
+      if (command === "modelOptionsPicker.toggle") {
+        if (composerRef.current?.toggleModelOptionsPicker()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+
+      if (command === "runtimeModePicker.toggle") {
+        if (composerRef.current?.toggleRuntimeModePicker()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+
+      if (command === "planMode.toggle") {
+        if (composerRef.current?.toggleInteractionMode()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+
+      if (command === "environmentPicker.toggle") {
+        if (branchToolbarRef.current?.toggleEnvironmentPicker()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+
+      if (command === "envModePicker.toggle") {
+        if (branchToolbarRef.current?.toggleEnvModePicker()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+
+      if (command === "branchPicker.toggle") {
+        if (branchToolbarRef.current?.toggleBranchPicker()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -5872,6 +5923,8 @@ function ChatViewContent(props: ChatViewProps) {
                                 environmentId={activeThread.environmentId}
                                 threadId={activeThread.id}
                                 {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                                keybindings={keybindings}
+                                toolbarRef={branchToolbarRef}
                                 onEnvModeChange={onEnvModeChange}
                                 startFromOrigin={startFromOrigin}
                                 onStartFromOriginChange={onStartFromOriginChange}

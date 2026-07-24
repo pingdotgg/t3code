@@ -4,7 +4,13 @@ import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
+  resolveAvailableBranchToolbarPicker,
+  resolveBranchToolbarRunContextShortcutTarget,
   resolveBranchSelectionTarget,
+  resolveBranchPickerQueryForOpenState,
+  resolveBranchPickerShortcutOpenState,
+  resolveBranchToolbarPickerOpenChange,
+  resolveBranchToolbarPickerToggle,
   resolveCurrentWorkspaceLabel,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
@@ -14,9 +20,184 @@ import {
   resolveLocalCheckoutBranchMismatch,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
+  shouldShowBranchPickerShortcutHint,
   shouldIncludeBranchPickerItem,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
+
+describe("resolveBranchToolbarRunContextShortcutTarget", () => {
+  const available = {
+    isRendered: true,
+    environmentPickerAvailable: true,
+    envLocked: false,
+    envModeLocked: false,
+  };
+
+  it("routes either run-context shortcut to the combined picker on mobile", () => {
+    expect(
+      resolveBranchToolbarRunContextShortcutTarget({
+        ...available,
+        control: "environment",
+        isMobile: true,
+      }),
+    ).toBe("mobile-run-context");
+    expect(
+      resolveBranchToolbarRunContextShortcutTarget({
+        ...available,
+        control: "env-mode",
+        isMobile: true,
+      }),
+    ).toBe("mobile-run-context");
+  });
+
+  it("keeps the mobile environment shortcut available when only workspace mode is locked", () => {
+    expect(
+      resolveBranchToolbarRunContextShortcutTarget({
+        ...available,
+        control: "environment",
+        isMobile: true,
+        envModeLocked: true,
+      }),
+    ).toBe("mobile-run-context");
+  });
+
+  it("keeps the mobile workspace shortcut available when only environment is locked", () => {
+    expect(
+      resolveBranchToolbarRunContextShortcutTarget({
+        ...available,
+        control: "env-mode",
+        isMobile: true,
+        envLocked: true,
+      }),
+    ).toBe("mobile-run-context");
+  });
+
+  it("rejects only the shortcut whose specific control is unavailable", () => {
+    expect(
+      resolveBranchToolbarRunContextShortcutTarget({
+        ...available,
+        control: "environment",
+        isMobile: true,
+        environmentPickerAvailable: false,
+      }),
+    ).toBeNull();
+    expect(
+      resolveBranchToolbarRunContextShortcutTarget({
+        ...available,
+        control: "env-mode",
+        isMobile: true,
+        envModeLocked: true,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveBranchToolbarPickerOpenChange", () => {
+  it("replaces the active picker instead of stacking keyboard-opened overlays", () => {
+    expect(resolveBranchToolbarPickerOpenChange("environment", "env-mode", true)).toBe("env-mode");
+    expect(resolveBranchToolbarPickerOpenChange("env-mode", "branch", true)).toBe("branch");
+  });
+
+  it("ignores a stale close event from a picker that is no longer active", () => {
+    expect(resolveBranchToolbarPickerOpenChange("branch", "environment", false)).toBe("branch");
+    expect(resolveBranchToolbarPickerOpenChange("branch", "branch", false)).toBeNull();
+  });
+});
+
+describe("resolveBranchToolbarPickerToggle", () => {
+  it("uses each preceding result when shortcuts repeat before a render", () => {
+    let current = resolveBranchToolbarPickerToggle(null, "environment");
+    current = resolveBranchToolbarPickerToggle(current, "environment");
+    expect(current).toBeNull();
+  });
+});
+
+describe("resolveAvailableBranchToolbarPicker", () => {
+  const allAvailable = {
+    environment: true,
+    envMode: true,
+    mobileRunContext: true,
+    branch: true,
+  };
+
+  it("preserves a picker while its interactive control is available", () => {
+    expect(resolveAvailableBranchToolbarPicker("environment", allAvailable)).toBe("environment");
+    expect(resolveAvailableBranchToolbarPicker("mobile-run-context", allAvailable)).toBe(
+      "mobile-run-context",
+    );
+  });
+
+  it("clears each picker when its interactive control stops being available", () => {
+    expect(
+      resolveAvailableBranchToolbarPicker("environment", {
+        ...allAvailable,
+        environment: false,
+      }),
+    ).toBeNull();
+    expect(
+      resolveAvailableBranchToolbarPicker("env-mode", { ...allAvailable, envMode: false }),
+    ).toBeNull();
+    expect(
+      resolveAvailableBranchToolbarPicker("mobile-run-context", {
+        ...allAvailable,
+        mobileRunContext: false,
+      }),
+    ).toBeNull();
+    expect(
+      resolveAvailableBranchToolbarPicker("branch", { ...allAvailable, branch: false }),
+    ).toBeNull();
+  });
+});
+
+describe("shouldShowBranchPickerShortcutHint", () => {
+  it("only shows a hint while the corresponding shortcut can toggle the picker", () => {
+    expect(
+      shouldShowBranchPickerShortcutHint({
+        shortcutHintLabel: "⌘B",
+        isInitialBranchesLoadPending: false,
+        isBranchActionPending: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowBranchPickerShortcutHint({
+        shortcutHintLabel: "⌘B",
+        isInitialBranchesLoadPending: true,
+        isBranchActionPending: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowBranchPickerShortcutHint({
+        shortcutHintLabel: "⌘B",
+        isInitialBranchesLoadPending: false,
+        isBranchActionPending: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("resolveBranchPickerShortcutOpenState", () => {
+  it("always permits closing an already-open picker", () => {
+    expect(resolveBranchPickerShortcutOpenState({ open: true, unavailable: true })).toBe(false);
+  });
+
+  it("only permits opening while the picker is available", () => {
+    expect(resolveBranchPickerShortcutOpenState({ open: false, unavailable: false })).toBe(true);
+    expect(resolveBranchPickerShortcutOpenState({ open: false, unavailable: true })).toBeNull();
+  });
+
+  it("uses each preceding result when shortcuts repeat before a render", () => {
+    let open = resolveBranchPickerShortcutOpenState({ open: false, unavailable: false }) ?? false;
+    open = resolveBranchPickerShortcutOpenState({ open, unavailable: false }) ?? open;
+    expect(open).toBe(false);
+  });
+});
+
+describe("resolveBranchPickerQueryForOpenState", () => {
+  it("clears a search when the controlled picker is closed externally", () => {
+    expect(resolveBranchPickerQueryForOpenState("feature/search", false)).toBe("");
+    expect(resolveBranchPickerQueryForOpenState("feature/search", true)).toBe("feature/search");
+  });
+});
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");

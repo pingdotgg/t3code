@@ -3,6 +3,7 @@ import { CloudIcon, MonitorIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";
+import { Kbd } from "./ui/kbd";
 import {
   Select,
   SelectGroup,
@@ -17,6 +18,9 @@ interface BranchToolbarEnvironmentSelectorProps {
   envLocked: boolean;
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  shortcutHintLabel?: string | null;
   // Absent when there is only one environment to show: the indicator still
   // renders (as a static label) so remote projects are always identifiable.
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
@@ -26,6 +30,9 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   envLocked,
   environmentId,
   availableEnvironments,
+  open,
+  onOpenChange,
+  shortcutHintLabel,
   onEnvironmentChange,
 }: BranchToolbarEnvironmentSelectorProps) {
   const activeEnvironment = useMemo(() => {
@@ -58,6 +65,8 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     <Select
       modal={false}
       value={environmentId}
+      {...(open !== undefined ? { open } : {})}
+      {...(onOpenChange ? { onOpenChange } : {})}
       onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
       items={environmentItems}
     >
@@ -68,6 +77,9 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           <CloudIcon className="size-3" />
         )}
         <SelectValue />
+        {shortcutHintLabel ? (
+          <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">{shortcutHintLabel}</Kbd>
+        ) : null}
       </SelectTrigger>
       <SelectPopup>
         <SelectGroup>

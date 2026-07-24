@@ -1,4 +1,5 @@
 import {
+  COMPOSER_KEYBINDING_COMMANDS,
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -345,6 +346,54 @@ export function shouldShowModelPickerJumpHintsForModifiers(
   }
 
   return false;
+}
+
+const COMPOSER_CONTROL_HINT_COMMANDS = [
+  "modelPicker.toggle",
+  ...COMPOSER_KEYBINDING_COMMANDS,
+] as const;
+
+// Subset (not exact) modifier matching: holding just the mod key must reveal
+// hints for chords like mod+shift+e, but holding a modifier the shortcut does
+// not use must hide them.
+function modifiersAreSubsetOfShortcutModifiers(
+  modifiers: ShortcutModifierStateLike,
+  shortcut: KeybindingShortcut,
+  platform = navigator.platform,
+): boolean {
+  const useMetaForMod = isMacPlatform(platform);
+  const expectedMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
+  const expectedCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
+  return (
+    (!modifiers.metaKey || expectedMeta) &&
+    (!modifiers.ctrlKey || expectedCtrl) &&
+    (!modifiers.shiftKey || shortcut.shiftKey) &&
+    (!modifiers.altKey || shortcut.altKey)
+  );
+}
+
+export function shouldShowComposerControlHintsForModifiers(
+  modifiers: ShortcutModifierStateLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return COMPOSER_CONTROL_HINT_COMMANDS.some((command) =>
+    shouldShowCommandHintForModifiers(modifiers, keybindings, command, options),
+  );
+}
+
+export function shouldShowCommandHintForModifiers(
+  modifiers: ShortcutModifierStateLike,
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+  options?: ShortcutMatchOptions,
+): boolean {
+  const platform = resolvePlatform(options);
+  const modKeyHeld = isMacPlatform(platform) ? modifiers.metaKey : modifiers.ctrlKey;
+  if (!modKeyHeld) return false;
+
+  const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
+  return shortcut ? modifiersAreSubsetOfShortcutModifiers(modifiers, shortcut, platform) : false;
 }
 
 export function isTerminalToggleShortcut(
