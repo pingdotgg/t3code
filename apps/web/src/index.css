@@ -377,21 +377,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   }
 
-  .chat-composer-glass-host {
+  .chat-composer-glass-shell {
     --chat-composer-glass-surface: var(--card);
+    --chat-composer-outline: rgb(0 0 0 / 8%);
 
     position: relative;
-    box-shadow:
-      0 0 0 1px rgb(0 0 0 / 8%),
-      0 12px 28px -18px rgb(0 0 0 / 40%);
+    isolation: isolate;
   }
 
-  .chat-composer-glass-host::before {
+  .chat-composer-glass-shell::before {
     pointer-events: none;
     position: absolute;
     z-index: 0;
     inset: 0;
-    border-radius: inherit;
+    border-radius: 22px;
     background: color-mix(
       in srgb,
       var(--chat-composer-glass-surface) var(--glass-opacity),
@@ -402,9 +401,76 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     content: "";
   }
 
-  .chat-composer-context-strip {
-    --chat-composer-context-surface: var(--card);
+  .chat-composer-glass-shell-with-context {
+    --chat-composer-context-extension: 2.25rem;
+  }
 
+  .chat-composer-glass-shell-with-context::before {
+    border-radius: 0;
+    /*
+     * One continuous glass layer: a 22px composer joined to a 16px strip,
+     * whose visible sides align with the composer's bottom tangents.
+     */
+    clip-path: shape(
+      from 0 22px,
+      curve to 22px 0 with 0 9.85px / 9.85px 0,
+      line to calc(100% - 22px) 0,
+      curve to 100% 22px with calc(100% - 9.85px) 0 / 100% 9.85px,
+      line to 100% calc(100% - var(--chat-composer-context-extension) - 22px),
+      curve to calc(100% - 22px) calc(100% - var(--chat-composer-context-extension)) with 100%
+        calc(100% - var(--chat-composer-context-extension) - 9.85px) / calc(100% - 9.85px)
+        calc(100% - var(--chat-composer-context-extension)),
+      line to calc(100% - 22px) calc(100% - 16px),
+      curve to calc(100% - 38px) 100% with calc(100% - 22px) calc(100% - 7.16px) /
+        calc(100% - 29.16px) 100%,
+      line to 38px 100%,
+      curve to 22px calc(100% - 16px) with 29.16px 100% / 22px calc(100% - 7.16px),
+      line to 22px calc(100% - var(--chat-composer-context-extension)),
+      curve to 0 calc(100% - var(--chat-composer-context-extension) - 22px) with 9.85px
+        calc(100% - var(--chat-composer-context-extension)) / 0
+        calc(100% - var(--chat-composer-context-extension) - 9.85px),
+      line to 0 22px,
+      close
+    );
+  }
+
+  @media (min-width: 40rem) {
+    .chat-composer-glass-shell-with-context {
+      /* The xs toolbar controls shrink by 4px at Tailwind's sm breakpoint. */
+      --chat-composer-context-extension: 2rem;
+    }
+  }
+
+  .chat-composer-glass-host {
+    position: relative;
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+  }
+
+  .chat-composer-glass-host::after {
+    pointer-events: none;
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-outline);
+    border-radius: inherit;
+    content: "";
+  }
+
+  .chat-composer-glass-shell-with-context .chat-composer-glass-host::after {
+    /* Keep the attachment seam open; the strip continues the outer outline below. */
+    clip-path: polygon(
+      0 0,
+      100% 0,
+      100% 100%,
+      calc(100% - 22px) 100%,
+      calc(100% - 22px) calc(100% - 2px),
+      22px calc(100% - 2px),
+      22px 100%,
+      0 100%
+    );
+  }
+
+  .chat-composer-context-strip {
     position: relative;
     isolation: isolate;
   }
@@ -413,28 +479,70 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     position: absolute;
     z-index: -1;
     inset: 0;
+    border: 1px solid var(--chat-composer-outline);
     border-radius: 0 0 16px 16px;
-    background: color-mix(
-      in srgb,
-      var(--chat-composer-context-surface) var(--glass-opacity),
-      transparent
-    );
+    /* Start the strip outline exactly where the composer's 22px curve reaches its tangent. */
     -webkit-mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
     mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
     box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
     content: "";
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  }
+
+  .dark .chat-composer-glass-shell {
+    --chat-composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
+    --chat-composer-outline: color-mix(in srgb, var(--color-white) 5%, transparent);
+    --chat-composer-highlight: rgb(255 255 255 / 3%);
   }
 
   .dark .chat-composer-glass-host {
-    --chat-composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
-
     box-shadow: none;
   }
 
+  .dark .chat-composer-glass-host::after {
+    box-shadow: inset 0 1px var(--chat-composer-highlight);
+  }
+
   .dark .chat-composer-context-strip::before {
+    border-color: rgb(255 255 255 / 7%);
+    background:
+      linear-gradient(
+        to bottom,
+        transparent 0 1rem,
+        rgb(0 0 0 / 18%) 1rem,
+        transparent calc(1rem + 10px)
+      ),
+      rgb(255 255 255 / 2%);
     box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
+  }
+
+  @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
+    .chat-composer-glass-shell-with-context::before {
+      inset-block-end: var(--chat-composer-context-extension);
+      border-radius: 22px;
+      clip-path: none;
+    }
+
+    .chat-composer-context-strip::before {
+      background: color-mix(
+        in srgb,
+        var(--chat-composer-glass-surface) var(--glass-opacity),
+        transparent
+      );
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    }
+
+    .dark .chat-composer-context-strip::before {
+      background:
+        linear-gradient(
+          to bottom,
+          transparent 0 1rem,
+          rgb(0 0 0 / 18%) 1rem,
+          transparent calc(1rem + 10px)
+        ),
+        linear-gradient(rgb(255 255 255 / 2%), rgb(255 255 255 / 2%)),
+        color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent);
+    }
   }
 
   .alert-glass {
@@ -466,7 +574,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --alert-glass-tint: var(--warning);
   }
 
-  .dropdown-glass,
   .dialog-glass {
     background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -480,6 +587,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .dropdown-glass {
+    /*
+     * Elevated glass needs a denser tint than broad ambient surfaces. Nesting
+     * the user-controlled mix inside an 18% popover tint preserves the full
+     * opacity setting range (40% -> 51%, 80% -> 84%, 100% -> 100%) while
+     * keeping high-contrast page content from blooming through menus.
+     */
+    background: color-mix(
+      in srgb,
+      var(--popover) 18%,
+      color-mix(in srgb, var(--popover) var(--glass-opacity), transparent)
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    backdrop-filter: blur(var(--glass-blur));
     border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
     box-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%);
   }
@@ -494,7 +614,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .dark .model-picker-surface.model-picker-surface {
-    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+    background: color-mix(
+      in srgb,
+      var(--popover) 18%,
+      color-mix(in srgb, var(--popover) var(--glass-opacity), transparent)
+    );
   }
 
   .dark .dialog-glass {
@@ -641,7 +765,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       background: var(--background) !important;
     }
 
-    .chat-composer-glass-host::before {
+    .chat-composer-glass-shell::before {
       background: var(--chat-composer-glass-surface);
     }
 
