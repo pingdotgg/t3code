@@ -1803,11 +1803,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       const refName = branch.name;
       const upstreamRef = branch.isRemote ? null : yield* upstreamForRef(cwd, refName);
       const createdBaseRef = upstreamRef ? null : yield* createdFromRef(cwd, refName);
-      const baseRef =
-        compareBaseRef ??
-        upstreamRef ??
-        createdBaseRef ??
-        (!branch.isDefault ? defaultCompareRef : null);
+      const baseRef = compareBaseRef ?? upstreamRef ?? createdBaseRef ?? defaultCompareRef;
       const unsyncedBaseRef = branch.isRemote ? null : (upstreamRef ?? defaultCompareRef);
       const historyRef = refName;
       const [
@@ -2221,20 +2217,24 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
               worktreeChangeSets: incremental.worktreeChangeSets,
             };
       } else {
-        nextSnapshot = yield* readFullSnapshot(input.cwd);
+        nextSnapshot = yield* readFullSnapshot(input.cwd).pipe(
+          Effect.ensuring(
+            Ref.update(snapshotCacheRef, (state) => ({
+              ...state,
+              completedFullRequestByCwd: setBoundedMapEntry(
+                state.completedFullRequestByCwd,
+                cacheKey,
+                Math.max(state.completedFullRequestByCwd.get(cacheKey) ?? 0, request.requestId),
+                PANEL_SNAPSHOT_CACHE_CAPACITY,
+              ),
+            })),
+          ),
+        );
       }
 
       yield* Ref.update(snapshotCacheRef, (state) => {
-        const completedFullRequestByCwd = request.full
-          ? setBoundedMapEntry(
-              state.completedFullRequestByCwd,
-              cacheKey,
-              Math.max(state.completedFullRequestByCwd.get(cacheKey) ?? 0, request.requestId),
-              PANEL_SNAPSHOT_CACHE_CAPACITY,
-            )
-          : state.completedFullRequestByCwd;
         if (state.latestRequestByCwd.get(cacheKey) !== request.requestId) {
-          return { ...state, completedFullRequestByCwd };
+          return state;
         }
         const snapshotsByCwd = setBoundedMapEntry(
           state.snapshotsByCwd,
@@ -2242,7 +2242,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           nextSnapshot,
           PANEL_SNAPSHOT_CACHE_CAPACITY,
         );
-        return { ...state, completedFullRequestByCwd, snapshotsByCwd };
+        return { ...state, snapshotsByCwd };
       });
       return nextSnapshot;
     },
@@ -2672,6 +2672,14 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         input.cwd,
         ["branch", "-d", input.branchName],
         "Cannot delete the current branch.",
+      );
+    }
+    if (localBranch?.worktreePath) {
+      return yield* gitError(
+        "vcs.panel.deleteBranch",
+        input.cwd,
+        ["branch", "-d", input.branchName],
+        "Cannot delete a branch that is checked out in another worktree.",
       );
     }
     if (localBranch) {

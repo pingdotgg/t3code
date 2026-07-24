@@ -121,6 +121,47 @@ it.effect("lists GitLab MRs through provider-neutral input names", () =>
   }),
 );
 
+it.effect("sanitizes GitLab list-MR errors before transport", () =>
+  Effect.gen(function* () {
+    const provider = yield* makeProvider({
+      listMergeRequests: () =>
+        Effect.fail(
+          new GitLabCli.GitLabCliCommandError({
+            operation: "execute",
+            command: "glab",
+            cwd: "/repo",
+            cause: new Error(
+              "raw upstream https://secret:token@gitlab.example.test/group/repo?access_token=secret",
+            ),
+          }),
+        ),
+    });
+
+    const error = yield* provider
+      .listChangeRequests({
+        cwd: "/repo",
+        headSelector:
+          "https://user:token@gitlab.example.test/group/repo?access_token=secret#fragment",
+        state: "open",
+      })
+      .pipe(Effect.flip);
+
+    assert.equal(error.provider, "gitlab");
+    assert.equal(error.operation, "listChangeRequests");
+    assert.equal(error.command, "glab");
+    assert.equal(error.reference, "https://gitlab.example.test/group/repo");
+    assert.equal(error.detail, "GitLab CLI command failed.");
+    assert.deepStrictEqual(error.cause, {
+      _tag: "GitLabCliCommandError",
+      name: "GitLabCliCommandError",
+      command: "glab",
+      operation: "execute",
+      detail: "GitLab CLI command failed.",
+      message: "GitLab CLI failed in execute: GitLab CLI command failed.",
+    });
+  }),
+);
+
 it.effect("lists GitLab MRs against the requested remote repository context", () =>
   Effect.gen(function* () {
     let listInput: Parameters<GitLabCli.GitLabCli["Service"]["listMergeRequests"]>[0] | null = null;

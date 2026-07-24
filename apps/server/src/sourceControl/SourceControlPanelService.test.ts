@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -194,6 +195,31 @@ const localStatus: VcsStatusLocalResult = {
 };
 
 describe("SourceControlPanelService", () => {
+  it.effect("keeps the default branch as its own stable comparison base", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const details = yield* service.branchDetails({
+        cwd: "/repo",
+        branch: {
+          name: "develop",
+          current: true,
+          isDefault: true,
+          worktreePath: "/repo",
+        },
+        defaultCompareRef: "develop",
+      });
+
+      assert.equal(details.baseRef, "develop");
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => success(input.args[0] === "rev-list" ? "0" : "")),
+        ),
+      ),
+    ),
+  );
+
   it.effect("uses the selected branch head for history queries", () => {
     const calls: ExecuteGitInput[] = [];
     return Effect.gen(function* () {
@@ -1887,6 +1913,54 @@ describe("SourceControlPanelService", () => {
     );
   });
 
+  it.effect("rejects deletion of a branch checked out in another worktree", () => {
+    const calls: ExecuteGitInput[] = [];
+    const siblingWorktreePath = process.cwd();
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const error = yield* service
+        .deleteBranch({
+          cwd: "/repo",
+          branchName: "feature/source-control",
+          force: true,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error.operation, "vcs.panel.deleteBranch");
+      assert.equal(error.detail, "Cannot delete a branch that is checked out in another worktree.");
+      assert.isFalse(calls.some((call) => call.operation === "vcs.panel.deleteLocalBranch"));
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              switch (input.operation) {
+                case "vcs.panel.localBranches":
+                  return success(
+                    `feature/source-control\t\t${siblingWorktreePath}\t2026-06-20T12:00:00.000Z\torigin/feature/source-control\t`,
+                  );
+                case "vcs.panel.statusPorcelain":
+                  return success("# branch.oid abc\n# branch.head main");
+                case "vcs.panel.remotes":
+                case "vcs.panel.stashes":
+                case "vcs.panel.stagedNumstat":
+                case "vcs.panel.stagedNameStatus":
+                case "vcs.panel.unstagedNumstat":
+                  return success("");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            localStatus: () => Effect.succeed(localStatus),
+          },
+        ),
+      ),
+    );
+  });
+
   it.effect("resolves remote branch deletion from the server snapshot", () => {
     const calls: ExecuteGitInput[] = [];
     return Effect.gen(function* () {
@@ -3046,6 +3120,63 @@ describe("SourceControlPanelService", () => {
                 default:
                   return success("");
               }
+            }),
+          {
+            status: () =>
+              Effect.succeed({
+                ...localStatus,
+                refName: "main",
+                isDefaultRef: true,
+                hasWorkingTreeChanges: false,
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                aheadOfDefaultCount: 0,
+                pr: null,
+              }),
+          },
+        ),
+      ),
+    );
+  });
+
+  it.effect("allows incremental refreshes after a full snapshot fails", () => {
+    let localBranchesCalls = 0;
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.snapshot({ cwd: "/repo", refresh: "full" });
+
+      const failedFullExit = yield* Effect.exit(
+        service.snapshot({ cwd: "/repo", refresh: "full" }),
+      );
+      assert.isTrue(Exit.isFailure(failedFullExit));
+
+      yield* service.snapshot({ cwd: "/repo", refresh: "working-tree" });
+      assert.equal(localBranchesCalls, 2);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              if (input.operation === "vcs.panel.localBranches") {
+                localBranchesCalls += 1;
+                if (localBranchesCalls === 2) {
+                  return failure("failed full snapshot");
+                }
+                return success("main\t*\t/repo\t2026-07-20T10:00:00.000Z\torigin/main\t");
+              }
+              if (input.operation === "vcs.panel.statusPorcelain") {
+                return success(
+                  [
+                    "# branch.oid abc",
+                    "# branch.head main",
+                    "# branch.upstream origin/main",
+                    "# branch.ab +0 -0",
+                  ].join("\n"),
+                );
+              }
+              return success("");
             }),
           {
             status: () =>
