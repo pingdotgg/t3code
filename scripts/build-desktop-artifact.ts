@@ -569,6 +569,7 @@ interface StagePackageJson {
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
+  readonly homepage: string;
   readonly author: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
@@ -1443,10 +1444,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 
   if (platform === "linux") {
     buildConfig.linux = {
-      target: [target],
+      // Comma-separated so one Linux run can emit several targets, for example
+      // "AppImage,deb". Each target writes a distinct file via artifactName's
+      // ${ext}, so a single build produces all of them without collisions.
+      target: target.split(",").map((entry) => entry.trim()),
       executableName: "t3code",
       icon: "icons",
       category: "Development",
+      // Required by the deb target (FpmTarget), which otherwise derives it from
+      // author and fails because author carries no email address.
+      maintainer: "T3 Tools <hello@t3.tools>",
       desktop: {
         entry: {
           StartupWMClass: "t3code",
@@ -1761,6 +1768,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     private: true,
     packageManager: rootPackageJson.packageManager,
     description: "T3 Code desktop build",
+    // Required by electron-builder's deb target (FpmTarget); unused by the
+    // other targets.
+    homepage: "https://github.com/pingdotgg/t3code",
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(

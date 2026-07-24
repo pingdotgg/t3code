@@ -334,7 +334,7 @@ jobs:
           - label: Linux x64
             runner: blacksmith-32vcpu-ubuntu-2404
             platform: linux
-            target: AppImage
+            target: AppImage,deb
             arch: x64
           - label: Windows x64
             runner: blacksmith-32vcpu-windows-2025
@@ -571,6 +571,7 @@ jobs:
             "release/*.dmg" \
             "release/*.zip" \
             "release/*.AppImage" \
+            "release/*.deb" \
             "release/*.exe" \
             "release/*.blockmap" \
             "release/*.yml"; do
@@ -753,6 +754,7 @@ jobs:
             release-assets/*.dmg
             release-assets/*.zip
             release-assets/*.AppImage
+            release-assets/*.deb
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
@@ -773,6 +775,7 @@ jobs:
             release-assets/*.dmg
             release-assets/*.zip
             release-assets/*.AppImage
+            release-assets/*.deb
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
