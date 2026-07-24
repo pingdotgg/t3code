@@ -16,7 +16,11 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
-import { resolveServerConfig, StorageDirectoryConfigurationConflictError } from "./config.ts";
+import {
+  resolveServerConfig,
+  StorageDirectoryConfigurationConflictError,
+  StorageLayoutConfigurationConflictError,
+} from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
@@ -717,6 +721,91 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  it.effect("forces XDG storage even when legacy storage is initialized", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-config-forced-xdg-",
+      });
+      const homeDirectory = path.join(root, "home");
+      const legacyStateDir = path.join(homeDirectory, ".t3", "userdata");
+      yield* fs.makeDirectory(legacyStateDir, { recursive: true });
+      yield* fs.writeFileString(path.join(legacyStateDir, "state.sqlite"), "legacy");
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.none(),
+          storageLayout: Option.some("xdg"),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+        { homeDirectory, temporaryDirectory: root, userId: 1000, platform: "linux" },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.layout).toBe("split");
+      expect(resolved.stateDir).toBe(path.join(homeDirectory, ".local", "state", "t3code"));
+    }),
+  );
+
+  it.effect("forces legacy storage when no legacy artifacts exist", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-config-forced-legacy-",
+      });
+      const homeDirectory = path.join(root, "home");
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.none(),
+          storageLayout: Option.some("legacy"),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+        { homeDirectory, temporaryDirectory: root, userId: 1000, platform: "linux" },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.layout).toBe("legacy");
+      expect(resolved.stateDir).toBe(path.join(homeDirectory, ".t3", "userdata"));
+    }),
+  );
+
   it.effect("rejects mixing the legacy home override with granular directory overrides", () =>
     Effect.gen(function* () {
       const error = yield* resolveServerConfig(
@@ -750,6 +839,39 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       );
 
       expect(error).toBeInstanceOf(StorageDirectoryConfigurationConflictError);
+    }),
+  );
+
+  it.effect("rejects forced XDG storage with a legacy home override", () =>
+    Effect.gen(function* () {
+      const error = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.some("/tmp/legacy-t3"),
+          storageLayout: Option.some("xdg"),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(StorageLayoutConfigurationConflictError);
     }),
   );
 });

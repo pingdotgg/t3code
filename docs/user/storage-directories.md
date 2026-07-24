@@ -40,6 +40,13 @@ in host-local directories.
 the old unified layout beneath the supplied directory and cannot be combined
 with the granular overrides.
 
+Use `--storage-layout xdg` to force the platform-native split layout, even when
+an initialized legacy installation exists. Use `--storage-layout legacy` to
+force the default legacy tree under `~/.t3`, even when it has not been
+initialized. These values override automatic layout selection; `xdg` cannot be
+combined with `T3CODE_HOME` or `--base-dir`, and `legacy` cannot be combined
+with granular directory overrides.
+
 ## Existing installations
 
 If T3 Code finds initialized storage under `~/.t3`, it continues using that
