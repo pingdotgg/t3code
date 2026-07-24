@@ -22,13 +22,12 @@ import {
   ArrowDownIcon,
   ArrowLeftIcon,
   ArrowUpIcon,
-  CloudIcon,
-  ContainerIcon,
   CornerLeftUpIcon,
   FolderIcon,
   FolderPlusIcon,
   LinkIcon,
   MessageSquareIcon,
+  ServerIcon,
   SettingsIcon,
   SquarePenIcon,
 } from "lucide-react";
@@ -161,33 +160,26 @@ function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
   return typeof navigator === "undefined" ? "" : navigator.platform;
 }
 
-// Badge showing which remote T3 Code connection a project lives on. Mirrors
-// the sidebar's project-header treatment: a cloud (or container, for a
-// desktop-local sandbox like WSL) icon plus the environment label(s). Local
-// (this-device) projects have no remote, so nothing is rendered for them.
+// Badge showing which remote T3 Code environment a project lives on: a server
+// icon plus the environment label(s), matching SidebarV2's environment
+// treatment. Local (this-device) projects have no remote, so nothing is
+// rendered for them.
 function renderProjectRemoteBadge(group: SidebarProjectSnapshot | undefined): ReactNode {
   if (!group || group.remoteEnvironmentLabels.length === 0) {
     return undefined;
   }
   const label = group.remoteEnvironmentLabels.join(", ");
-  const isSandbox = group.allRemoteMembersAreDesktopLocal;
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <span className="flex min-w-0 shrink items-center gap-1 text-muted-foreground/70 text-xs">
-            {isSandbox ? (
-              <ContainerIcon className="size-3 shrink-0" />
-            ) : (
-              <CloudIcon className="size-3 shrink-0" />
-            )}
+            <ServerIcon className="size-3 shrink-0" />
             <span className="max-w-32 truncate">{label}</span>
           </span>
         }
       />
-      <TooltipPopup side="top">
-        {isSandbox ? `Local sandbox: ${label}` : `Remote environment: ${label}`}
-      </TooltipPopup>
+      <TooltipPopup side="top">Remote environment: {label}</TooltipPopup>
     </Tooltip>
   );
 }
