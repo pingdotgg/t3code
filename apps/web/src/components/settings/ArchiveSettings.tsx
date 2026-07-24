@@ -30,6 +30,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
+  archivedProjectBulkActionExceptionDescription,
   archivedProjectBulkScopeLabel,
   archivedProjectBulkFailureDescription,
   archivedThreadTimestampValue,
@@ -214,13 +215,20 @@ export function ArchivedThreadsPanel() {
         start: () => {
           if (started) return;
           started = true;
-          setInFlightArchivedThreadKeys(new Set(inFlightArchivedThreadKeysRef.current));
+          setInFlightArchivedThreadKeys((current) => {
+            const next = new Set(current);
+            for (const key of lock.keys) next.add(key);
+            return next;
+          });
         },
         finish: () => {
           releaseArchivedThreadActionLock(inFlightArchivedThreadKeysRef.current, lock);
-          if (started) {
-            setInFlightArchivedThreadKeys(new Set(inFlightArchivedThreadKeysRef.current));
-          }
+          if (!started) return;
+          setInFlightArchivedThreadKeys((current) => {
+            const next = new Set(current);
+            for (const key of lock.keys) next.delete(key);
+            return next;
+          });
         },
       };
     },
@@ -293,27 +301,11 @@ export function ArchivedThreadsPanel() {
   );
 
   const showArchivedBulkActionException = useCallback((title: string, error: unknown) => {
-    const errors = error instanceof AggregateError ? error.errors : [error];
-    const failureMessages = [
-      ...new Set(
-        errors.map((entry) => (entry instanceof Error ? entry.message : "An error occurred.")),
-      ),
-    ];
-    const shownFailureMessages = failureMessages.slice(0, 3);
     toastManager.add(
       stackedThreadToast({
         type: "error",
         title,
-        description: [
-          `One or more archived thread actions failed unexpectedly.`,
-          failureMessages.length <= 1
-            ? (shownFailureMessages[0] ?? "An error occurred.")
-            : `Failures: ${shownFailureMessages.join("; ")}${
-                failureMessages.length > shownFailureMessages.length
-                  ? `; ${failureMessages.length - shownFailureMessages.length} more`
-                  : ""
-              }`,
-        ].join(" "),
+        description: archivedProjectBulkActionExceptionDescription(error),
       }),
     );
   }, []);

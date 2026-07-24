@@ -80,6 +80,27 @@ export interface ArchivedProjectBulkActionOptions {
   readonly concurrency?: number;
 }
 
+export interface ArchivedProjectBulkActionSummary {
+  readonly succeeded: number;
+  readonly failures: ReadonlyArray<ArchivedProjectBulkFailure>;
+}
+
+export class ArchivedProjectBulkActionError extends AggregateError {
+  readonly summary: ArchivedProjectBulkActionSummary;
+  readonly totalCount: number;
+
+  constructor(
+    errors: Iterable<unknown>,
+    summary: ArchivedProjectBulkActionSummary,
+    totalCount: number,
+  ) {
+    super(errors, "Archived project thread action failed");
+    this.name = "ArchivedProjectBulkActionError";
+    this.summary = summary;
+    this.totalCount = totalCount;
+  }
+}
+
 export interface ArchivedThreadActionLock {
   readonly keys: ReadonlyArray<string>;
 }
@@ -230,6 +251,7 @@ export async function runArchivedProjectThreadActions(
 ): Promise<ReadonlyArray<ArchivedProjectBulkFailure>> {
   const failures: Array<ArchivedProjectBulkFailure> = [];
   const thrownErrors: unknown[] = [];
+  let succeeded = 0;
   const concurrency =
     options.concurrency === undefined || !Number.isFinite(options.concurrency)
       ? DEFAULT_ARCHIVED_PROJECT_BULK_ACTION_CONCURRENCY
@@ -251,6 +273,8 @@ export async function runArchivedProjectThreadActions(
         const result = await action(thread);
         if (result._tag === "Failure") {
           failures.push(result);
+        } else {
+          succeeded += 1;
         }
       } catch (error) {
         thrownErrors.push(error);
@@ -266,7 +290,7 @@ export async function runArchivedProjectThreadActions(
   }
   await Promise.all(workers);
   if (thrownErrors.length > 0) {
-    throw new AggregateError(thrownErrors, "Archived project thread action failed");
+    throw new ArchivedProjectBulkActionError(thrownErrors, { succeeded, failures }, threads.length);
   }
   return failures;
 }
@@ -322,6 +346,59 @@ export function archivedProjectBulkFailureDescription(
             : ""
         }`;
   return `${outcome} ${details}`;
+}
+
+export function archivedProjectBulkActionExceptionDescription(error: unknown): string {
+  const errors = error instanceof AggregateError ? error.errors : [error];
+  const commandFailures =
+    error instanceof ArchivedProjectBulkActionError
+      ? error.summary.failures
+          .filter((failure) => !isAtomCommandInterrupted(failure))
+          .map((failure) => squashAtomCommandFailure(failure))
+      : [];
+  const failureMessages = [
+    ...new Set(
+      [...errors, ...commandFailures].map((entry) =>
+        entry instanceof Error ? entry.message : "An error occurred.",
+      ),
+    ),
+  ];
+  const shownFailureMessages = failureMessages.slice(0, 3);
+  const outcome =
+    error instanceof ArchivedProjectBulkActionError
+      ? (() => {
+          const visibleFailures = error.summary.failures.filter(
+            (failure) => !isAtomCommandInterrupted(failure),
+          );
+          const interruptedCount = error.summary.failures.length - visibleFailures.length;
+          const notAttemptedCount = Math.max(
+            0,
+            error.totalCount -
+              error.summary.succeeded -
+              error.summary.failures.length -
+              error.errors.length,
+          );
+          const parts = [`${error.summary.succeeded} succeeded`];
+          if (visibleFailures.length > 0) parts.push(`${visibleFailures.length} failed`);
+          if (interruptedCount > 0) parts.push(`${interruptedCount} interrupted`);
+          parts.push(
+            `${error.errors.length} failed unexpectedly`,
+            `${notAttemptedCount} not attempted`,
+          );
+          return `Partial outcome: ${parts.join(", ")}.`;
+        })()
+      : "One or more archived thread actions failed unexpectedly.";
+
+  return [
+    outcome,
+    failureMessages.length <= 1
+      ? (shownFailureMessages[0] ?? "An error occurred.")
+      : `Failures: ${shownFailureMessages.join("; ")}${
+          failureMessages.length > shownFailureMessages.length
+            ? `; ${failureMessages.length - shownFailureMessages.length} more`
+            : ""
+        }`,
+  ].join(" ");
 }
 
 export function compareArchivedThreads<

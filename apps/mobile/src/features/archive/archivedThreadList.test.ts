@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   archivedThreadActionExceptionDescription,
+  ArchivedThreadActionError,
   archivedThreadActionKey,
   archivedThreadActionSummaryDescription,
   archivedThreadTimestampValue,
@@ -379,6 +380,36 @@ describe("archive list controls", () => {
 
     expect(archivedThreadActionExceptionDescription(error)).toBe(
       "One or more archived thread actions failed unexpectedly. Failures: Connection failed; An error occurred.; Permission denied; 1 more",
+    );
+  });
+
+  it("preserves completed bulk action counts when an action throws", async () => {
+    let caughtError: unknown;
+
+    try {
+      await runArchivedThreadActions(
+        [1, 2, 3, 4, 5, 6],
+        async (value) => {
+          await Promise.resolve();
+          if (value === 1) throw new Error("Connection failed");
+          if (value === 3) return "failed";
+          if (value === 4) return "skipped";
+          return "succeeded";
+        },
+        { concurrency: 4 },
+      );
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(ArchivedThreadActionError);
+    expect((caughtError as ArchivedThreadActionError).summary).toEqual({
+      succeeded: 1,
+      failed: 1,
+      skipped: 1,
+    });
+    expect(archivedThreadActionExceptionDescription(caughtError)).toBe(
+      "Partial outcome: 1 succeeded, 1 failed, 1 skipped because already in progress, 1 failed unexpectedly, 2 not attempted. Connection failed",
     );
   });
 });

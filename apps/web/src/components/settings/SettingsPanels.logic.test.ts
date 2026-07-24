@@ -17,6 +17,8 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  archivedProjectBulkActionExceptionDescription,
+  ArchivedProjectBulkActionError,
   archivedProjectBulkFailureDescription,
   archivedThreadActionKey,
   archivedThreadSearchScore,
@@ -538,6 +540,9 @@ describe("runArchivedProjectThreadActions", () => {
           if (thread.id === "thread-0" || thread.id === "thread-1") {
             throw new Error("failed");
           }
+          if (thread.id === "thread-2") {
+            return failureResult(new Error("command failed"));
+          }
           return successResult();
         } finally {
           activeCount -= 1;
@@ -548,8 +553,15 @@ describe("runArchivedProjectThreadActions", () => {
     }
 
     expect(activeCount).toBe(0);
-    expect(caughtError).toBeInstanceOf(AggregateError);
-    expect((caughtError as AggregateError).errors).toHaveLength(2);
+    expect(caughtError).toBeInstanceOf(ArchivedProjectBulkActionError);
+    expect((caughtError as ArchivedProjectBulkActionError).errors).toHaveLength(2);
+    expect((caughtError as ArchivedProjectBulkActionError).summary).toEqual({
+      succeeded: 1,
+      failures: [failureResult(new Error("command failed"))],
+    });
+    expect(archivedProjectBulkActionExceptionDescription(caughtError)).toBe(
+      "Partial outcome: 1 succeeded, 1 failed, 2 failed unexpectedly, 2 not attempted. Failures: failed; command failed",
+    );
     expect(attemptedThreadIds).toHaveLength(4);
     expect(new Set(attemptedThreadIds)).toEqual(
       new Set(["thread-0", "thread-1", "thread-2", "thread-3"]),

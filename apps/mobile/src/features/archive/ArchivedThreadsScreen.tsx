@@ -911,10 +911,10 @@ export function ArchivedThreadsScreen(props: {
       <GestureDetector gesture={archiveScrollGesture}>
         {/* The detented iOS settings sheet and its keyboard-integrated search
             toolbar resize this viewport together. Reset the native render
-            window when either the query or viewport changes so rows do not
-            retain an off-screen window after those transitions. */}
+            window when its viewport changes so rows do not retain an
+            off-screen window after those transitions. */}
         <FlatList
-          key={`archive-results:${props.searchQuery}:${listViewportHeight}`}
+          key={`archive-results:${listViewportHeight}`}
           style={{ flex: 1 }}
           contentContainerStyle={{
             paddingBottom: 32,

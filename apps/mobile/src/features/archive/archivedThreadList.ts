@@ -46,6 +46,18 @@ export interface ArchivedThreadActionSummary {
   readonly skipped: number;
 }
 
+export class ArchivedThreadActionError extends AggregateError {
+  readonly summary: ArchivedThreadActionSummary;
+  readonly totalCount: number;
+
+  constructor(errors: Iterable<unknown>, summary: ArchivedThreadActionSummary, totalCount: number) {
+    super(errors, "Archived thread action failed");
+    this.name = "ArchivedThreadActionError";
+    this.summary = summary;
+    this.totalCount = totalCount;
+  }
+}
+
 export type ArchivedThreadActionResult = "succeeded" | "failed" | "skipped";
 
 export interface ArchivedThreadActionLock {
@@ -100,8 +112,31 @@ export function archivedThreadActionExceptionDescription(error: unknown): string
     ),
   ];
   const shownFailureMessages = failureMessages.slice(0, 3);
+  const outcome =
+    error instanceof ArchivedThreadActionError
+      ? (() => {
+          const notAttemptedCount = Math.max(
+            0,
+            error.totalCount -
+              error.summary.succeeded -
+              error.summary.failed -
+              error.summary.skipped -
+              error.errors.length,
+          );
+          const parts = [`${error.summary.succeeded} succeeded`];
+          if (error.summary.failed > 0) parts.push(`${error.summary.failed} failed`);
+          if (error.summary.skipped > 0) {
+            parts.push(`${error.summary.skipped} skipped because already in progress`);
+          }
+          parts.push(
+            `${error.errors.length} failed unexpectedly`,
+            `${notAttemptedCount} not attempted`,
+          );
+          return `Partial outcome: ${parts.join(", ")}.`;
+        })()
+      : "One or more archived thread actions failed unexpectedly.";
   return [
-    "One or more archived thread actions failed unexpectedly.",
+    outcome,
     failureMessages.length <= 1
       ? (shownFailureMessages[0] ?? "An error occurred.")
       : `Failures: ${shownFailureMessages.join("; ")}${
@@ -331,7 +366,7 @@ export async function runArchivedThreadActions<T>(
 
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
   if (thrownErrors.length > 0) {
-    throw new AggregateError(thrownErrors, "Archived thread action failed");
+    throw new ArchivedThreadActionError(thrownErrors, { succeeded, failed, skipped }, items.length);
   }
   return { succeeded, failed, skipped };
 }
