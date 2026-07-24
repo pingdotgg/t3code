@@ -1715,33 +1715,38 @@ function applyEnvironmentOrchestrationEvent(
           updatedAt: event.payload.updatedAt,
         });
 
-        const existingMessage = thread.messages.find((entry) => entry.id === message.id);
-        const messages = existingMessage
-          ? thread.messages.map((entry) =>
-              entry.id !== message.id
-                ? entry
-                : {
-                    ...entry,
-                    text: message.streaming
-                      ? `${entry.text}${message.text}`
-                      : message.text.length > 0
-                        ? message.text
-                        : entry.text,
-                    streaming: message.streaming,
-                    ...(message.turnId !== undefined ? { turnId: message.turnId } : {}),
-                    ...(message.streaming
-                      ? entry.completedAt !== undefined
-                        ? { completedAt: entry.completedAt }
-                        : {}
-                      : message.completedAt !== undefined
-                        ? { completedAt: message.completedAt }
-                        : {}),
-                    ...(message.attachments !== undefined
-                      ? { attachments: message.attachments }
+        const lastMessage = thread.messages.at(-1);
+        const messageIndex =
+          lastMessage?.id === message.id
+            ? thread.messages.length - 1
+            : thread.messages.findIndex((entry) => entry.id === message.id);
+        const messages =
+          messageIndex === -1
+            ? [...thread.messages, message]
+            : [
+                ...thread.messages.slice(0, messageIndex),
+                {
+                  ...thread.messages[messageIndex]!,
+                  text: message.streaming
+                    ? `${thread.messages[messageIndex]!.text}${message.text}`
+                    : message.text.length > 0
+                      ? message.text
+                      : thread.messages[messageIndex]!.text,
+                  streaming: message.streaming,
+                  ...(message.turnId !== undefined ? { turnId: message.turnId } : {}),
+                  ...(message.streaming
+                    ? thread.messages[messageIndex]!.completedAt !== undefined
+                      ? { completedAt: thread.messages[messageIndex]!.completedAt }
+                      : {}
+                    : message.completedAt !== undefined
+                      ? { completedAt: message.completedAt }
                       : {}),
-                  },
-            )
-          : [...thread.messages, message];
+                  ...(message.attachments !== undefined
+                    ? { attachments: message.attachments }
+                    : {}),
+                },
+                ...thread.messages.slice(messageIndex + 1),
+              ];
         const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
         const turnDiffSummaries =
           event.payload.role === "assistant" && event.payload.turnId !== null
