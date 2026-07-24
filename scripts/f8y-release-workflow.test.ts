@@ -50,7 +50,10 @@ it("builds and verifies versioned self-contained full CLIs for macOS and Linux",
   assert.include(workflow, 'cli="apps/server/dist/t3-linux-x64"');
   assert.include(workflow, 'cli_version="$("$cli" --version)"');
   assert.include(workflow, '"$cli" remote --help');
-  assert.include(workflow, '"$cli" serve --help');
+  assert.include(
+    workflow,
+    '"$cli" serve --help | grep -F "Run the T3 Code server without opening a browser and print headless pairing details."',
+  );
   assert.include(workflow, '"$cli" service --help');
   assert.include(workflow, 'codesign --force --sign - "$cli"');
   assert.include(workflow, 'shasum -a 256 "$(basename "$cli_asset")"');
