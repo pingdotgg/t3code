@@ -1621,6 +1621,36 @@ export default function SidebarV2() {
   // A settle per thread at a time: double clicks and repeated menu picks
   // must not dispatch a second settle that fails and toasts a false error.
   const settlingThreadKeysRef = useRef(new Set<string>());
+  // Parking the thread you're looking at (settle or snooze) moves you
+  // forward: the next remaining card (never a settled or snoozed row, never
+  // one leaving in the same batch), or a fresh draft in this project when it
+  // was the last active one. Callers snapshot the plan BEFORE the command
+  // mutates the partition; background parks never navigate (null plan).
+  const planForwardNavigation = useCallback(
+    (threadKey: string, coParkingKeys?: ReadonlySet<string>): (() => void) | null => {
+      if (routeThreadKeyRef.current !== threadKey) return null;
+      const shell = threadByKeyRef.current.get(threadKey);
+      const orderedKeys = orderedThreadKeysRef.current;
+      const settledKeys = settledThreadKeysRef.current;
+      const snoozedKeys = snoozedThreadKeysRef.current;
+      const currentIndex = orderedKeys.indexOf(threadKey);
+      const nextCardKey =
+        currentIndex === -1
+          ? null
+          : ([...orderedKeys.slice(currentIndex + 1), ...orderedKeys.slice(0, currentIndex)].find(
+              (key) => !settledKeys.has(key) && !snoozedKeys.has(key) && !coParkingKeys?.has(key),
+            ) ?? null);
+      const nextThread = nextCardKey ? threadByKeyRef.current.get(nextCardKey) : null;
+      return nextThread
+        ? () => navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id))
+        : shell
+          ? () =>
+              void handleNewThreadRef.current(scopeProjectRef(shell.environmentId, shell.projectId))
+          : () => void router.navigate({ to: "/" });
+    },
+    [navigateToThread, router],
+  );
+
   const attemptSettle = useCallback(
     (threadRef: ScopedThreadRef, opts: { coSettlingKeys?: ReadonlySet<string> } = {}) => {
       void (async () => {
@@ -1628,40 +1658,7 @@ export default function SidebarV2() {
         if (settlingThreadKeysRef.current.has(threadKey)) return;
         settlingThreadKeysRef.current.add(threadKey);
         try {
-          // Settling the thread you're looking at moves you forward: the next
-          // remaining card (never a settled or snoozed row, never one
-          // settling in the same batch), or a fresh draft in this project
-          // when it was the last active one. Snapshot the target before the
-          // settle mutates the partition. Background settles never navigate.
-          const shell = threadByKeyRef.current.get(threadKey);
-          let navigateAfterSettle: (() => void) | null = null;
-          if (routeThreadKey === threadKey) {
-            const orderedKeys = orderedThreadKeysRef.current;
-            const settledKeys = settledThreadKeysRef.current;
-            const snoozedKeys = snoozedThreadKeysRef.current;
-            const currentIndex = orderedKeys.indexOf(threadKey);
-            const nextCardKey =
-              currentIndex === -1
-                ? null
-                : ([
-                    ...orderedKeys.slice(currentIndex + 1),
-                    ...orderedKeys.slice(0, currentIndex),
-                  ].find(
-                    (key) =>
-                      !settledKeys.has(key) &&
-                      !snoozedKeys.has(key) &&
-                      !opts.coSettlingKeys?.has(key),
-                  ) ?? null);
-            const nextThread = nextCardKey ? threadByKeyRef.current.get(nextCardKey) : null;
-            navigateAfterSettle = nextThread
-              ? () => navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id))
-              : shell
-                ? () =>
-                    void handleNewThreadRef.current(
-                      scopeProjectRef(shell.environmentId, shell.projectId),
-                    )
-                : () => void router.navigate({ to: "/" });
-          }
+          const navigateAfterSettle = planForwardNavigation(threadKey, opts.coSettlingKeys);
           const result = await settleThread(threadRef);
           if (result._tag === "Failure") {
             // Never navigate away from a thread that did not settle.
@@ -1687,7 +1684,7 @@ export default function SidebarV2() {
         }
       })();
     },
-    [navigateToThread, routeThreadKey, router, settleThread],
+    [planForwardNavigation, settleThread],
   );
   const attemptUnsettle = useCallback(
     (threadRef: ScopedThreadRef) => {
@@ -1728,14 +1725,22 @@ export default function SidebarV2() {
   // One snooze per thread at a time — same double-dispatch guard as settle.
   const snoozingThreadKeysRef = useRef(new Set<string>());
   const attemptSnooze = useCallback(
-    (threadRef: ScopedThreadRef, preset: SnoozePreset) => {
+    (
+      threadRef: ScopedThreadRef,
+      preset: SnoozePreset,
+      opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
+    ) => {
       void (async () => {
         const threadKey = scopedThreadKey(threadRef);
         if (snoozingThreadKeysRef.current.has(threadKey)) return;
         snoozingThreadKeysRef.current.add(threadKey);
         try {
+          // Snoozing the open thread moves you forward, same as settle —
+          // both park the thread you're done with for now.
+          const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
           const result = await snoozeThread(threadRef, preset.snoozedUntil);
           if (result._tag === "Failure") {
+            // Never navigate away from a thread that did not snooze.
             if (!isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
               toastManager.add(
@@ -1761,12 +1766,17 @@ export default function SidebarV2() {
               },
             }),
           );
+          // Only move forward if the user is still on the snoozed thread —
+          // a navigation made during the await wins over ours.
+          if (routeThreadKeyRef.current === threadKey) {
+            navigateAfterSnooze?.();
+          }
         } finally {
           snoozingThreadKeysRef.current.delete(threadKey);
         }
       })();
     },
-    [attemptUnsnooze, snoozeThread],
+    [attemptUnsnooze, planForwardNavigation, snoozeThread],
   );
 
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
@@ -1824,8 +1834,13 @@ export default function SidebarV2() {
           (candidate) => `snooze:${candidate.id}` === clicked.value,
         );
         if (preset) {
+          // Post-snooze navigation must skip threads snoozing in this same
+          // batch — they are all leaving the card block together.
+          const coSnoozingKeys = new Set(threadKeys);
           for (const thread of snoozableThreads) {
-            attemptSnooze(scopeThreadRef(thread.environmentId, thread.id), preset);
+            attemptSnooze(scopeThreadRef(thread.environmentId, thread.id), preset, {
+              coSnoozingKeys,
+            });
           }
           clearSelection();
         }
