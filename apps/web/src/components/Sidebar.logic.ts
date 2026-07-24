@@ -51,6 +51,8 @@ export async function archiveSelectedThreadEntries<
 >(input: {
   entries: readonly TEntry[];
   archive: (entry: TEntry, onArchived: () => void) => Promise<TResult>;
+  canArchive?: (entry: TEntry) => boolean;
+  onArchived?: (entry: TEntry) => void;
 }): Promise<{
   archivedThreadKeys: readonly string[];
   mutationFailure: Extract<TResult, { readonly _tag: "Failure" }> | null;
@@ -60,9 +62,12 @@ export async function archiveSelectedThreadEntries<
   const followupFailures: Extract<TResult, { readonly _tag: "Failure" }>[] = [];
 
   for (const entry of input.entries) {
+    if (input.canArchive && !input.canArchive(entry)) continue;
     let didArchive = false;
     const result = await input.archive(entry, () => {
+      if (didArchive) return;
       didArchive = true;
+      input.onArchived?.(entry);
     });
     if (didArchive || result._tag === "Success") {
       archivedThreadKeys.push(entry.threadKey);
@@ -79,6 +84,76 @@ export async function archiveSelectedThreadEntries<
   return { archivedThreadKeys, mutationFailure: null, followupFailures };
 }
 
+export async function withCoordinatedThreadArchiveEntries<
+  TEntry extends { readonly threadKey: string },
+>(input: {
+  entries: readonly TEntry[];
+  reservations: Map<string, Promise<ReadonlySet<string>>>;
+  run: (
+    entries: readonly TEntry[],
+    onArchived: (threadKey: string) => void,
+  ) => Promise<readonly string[]>;
+}): Promise<readonly string[]> {
+  const uniqueEntries: TEntry[] = [];
+  const uniqueThreadKeys = new Set<string>();
+  for (const entry of input.entries) {
+    if (uniqueThreadKeys.has(entry.threadKey)) continue;
+    uniqueThreadKeys.add(entry.threadKey);
+    uniqueEntries.push(entry);
+  }
+  let resolveReservation: (archivedThreadKeys: ReadonlySet<string>) => void = () => undefined;
+  const reservation = new Promise<ReadonlySet<string>>((resolve) => {
+    resolveReservation = resolve;
+  });
+  const ownedThreadKeys = new Set<string>();
+  const archivedThreadKeys = new Set<string>();
+  let pendingEntries = uniqueEntries;
+
+  try {
+    while (pendingEntries.length > 0) {
+      const activeReservations = new Set<Promise<ReadonlySet<string>>>();
+      for (const entry of pendingEntries) {
+        const activeReservation = input.reservations.get(entry.threadKey);
+        if (activeReservation && activeReservation !== reservation) {
+          activeReservations.add(activeReservation);
+          continue;
+        }
+        input.reservations.set(entry.threadKey, reservation);
+        ownedThreadKeys.add(entry.threadKey);
+      }
+      if (activeReservations.size === 0) break;
+
+      const archivedByOwners = new Set(
+        (await Promise.all(activeReservations)).flatMap((threadKeys) => [...threadKeys]),
+      );
+      pendingEntries = pendingEntries.filter((entry) => !archivedByOwners.has(entry.threadKey));
+    }
+
+    if (pendingEntries.length === 0) {
+      resolveReservation(archivedThreadKeys);
+      return [];
+    }
+
+    const completedThreadKeys = await input.run(pendingEntries, (threadKey) => {
+      if (ownedThreadKeys.has(threadKey)) archivedThreadKeys.add(threadKey);
+    });
+    for (const threadKey of completedThreadKeys) {
+      if (ownedThreadKeys.has(threadKey)) archivedThreadKeys.add(threadKey);
+    }
+    resolveReservation(archivedThreadKeys);
+    return completedThreadKeys;
+  } catch (error) {
+    resolveReservation(archivedThreadKeys);
+    throw error;
+  } finally {
+    for (const threadKey of ownedThreadKeys) {
+      if (input.reservations.get(threadKey) === reservation) {
+        input.reservations.delete(threadKey);
+      }
+    }
+  }
+}
+
 export function buildMultiSelectThreadContextMenuItems(input: {
   count: number;
   hasRunningThread: boolean;
@@ -92,6 +167,56 @@ export function buildMultiSelectThreadContextMenuItems(input: {
     },
     { id: "delete", label: `Delete (${input.count})`, destructive: true },
   ];
+}
+
+export type SidebarV2ThreadContextMenuItemId =
+  | "settle"
+  | "unsettle"
+  | "archive"
+  | "rename"
+  | "mark-unread"
+  | "delete";
+
+export function buildSidebarV2ThreadContextMenuItems(input: {
+  canUseLifecycleActions: boolean;
+  supportsSettlement: boolean;
+  isSettled: boolean;
+  isRunning: boolean;
+}): readonly ContextMenuItem<SidebarV2ThreadContextMenuItemId>[] {
+  return [
+    ...(input.supportsSettlement
+      ? [
+          input.isSettled
+            ? ({ id: "unsettle", label: "Un-settle thread" } as const)
+            : ({ id: "settle", label: "Settle thread" } as const),
+        ]
+      : []),
+    ...(input.canUseLifecycleActions
+      ? [{ id: "archive" as const, label: "Archive thread", disabled: input.isRunning }]
+      : []),
+    { id: "rename", label: "Rename thread" },
+    { id: "mark-unread", label: "Mark unread" },
+    ...(input.canUseLifecycleActions
+      ? [{ id: "delete" as const, label: "Delete", destructive: true, icon: "trash" as const }]
+      : []),
+  ];
+}
+
+export function isThreadSessionRunning(
+  session: { readonly status: string; readonly activeTurnId?: unknown } | null | undefined,
+): boolean {
+  return session?.status === "running" && session.activeTurnId != null;
+}
+
+export function filterArchivableSidebarThreads<
+  T extends {
+    readonly session?:
+      | { readonly status: string; readonly activeTurnId?: unknown }
+      | null
+      | undefined;
+  },
+>(threads: readonly T[]): T[] {
+  return threads.filter((thread) => !isThreadSessionRunning(thread.session));
 }
 
 export interface ThreadStatusPill {
