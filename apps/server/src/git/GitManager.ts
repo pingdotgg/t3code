@@ -13,6 +13,7 @@ import * as Order from "effect/Order";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import {
+  DEFAULT_WORKTREE_PATH_TEMPLATE,
   GitActionProgressEvent,
   GitActionProgressPhase,
   GitCommandError,
@@ -1807,6 +1808,14 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         refName: localPullRequestBranch,
         path: null,
+        pathTemplate: yield* serverSettingsService.getSettings.pipe(
+          Effect.map((settings) => settings.worktreePathTemplate),
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to read worktree path template; using the default", {
+              cause,
+            }).pipe(Effect.as(DEFAULT_WORKTREE_PATH_TEMPLATE)),
+          ),
+        ),
       });
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);
