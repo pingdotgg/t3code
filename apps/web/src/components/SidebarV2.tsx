@@ -316,7 +316,7 @@ function SnoozePopoverButton(props: {
             aria-label="Snooze thread"
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
-            className="inline-flex h-full cursor-pointer items-center gap-0.5 rounded-md border border-sidebar-border bg-sidebar-row-hover px-1.5 text-xs text-muted-foreground hover:text-foreground dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5"
+            className="inline-flex h-full cursor-pointer items-center gap-0.5 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
           />
         }
       >
@@ -770,8 +770,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                   // Snoozed rows show when they come BACK, not when they were
                   // last touched — the return ticket is the row's whole story.
-                  <span className="inline-flex items-center gap-1 font-mono text-xs text-primary/70">
-                    <ClockIcon aria-hidden className="size-3" />
+                  <span className="text-xs text-blue-600 tabular-nums dark:text-blue-400">
                     {props.snoozeWakeLabelText}
                   </span>
                 ) : isWoke ? (
@@ -799,7 +798,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     type="button"
                     aria-label="Wake thread now"
                     onClick={handleUnsnoozeClick}
-                    className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md border border-sidebar-border bg-sidebar-row-hover px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100 dark:border-transparent dark:inset-ring-1 dark:inset-ring-white/5"
+                    className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100"
                   >
                     <AlarmClockOffIcon className="size-3" />
                   </button>
@@ -911,7 +910,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 {props.settlementSupported || showSnoozeButton ? (
                   <span
                     className={cn(
-                      "absolute inset-y-0 right-0 flex items-stretch gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
+                      "absolute inset-y-0 right-0 flex items-stretch gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
                       snoozeMenuOpen && "opacity-100",
                     )}
                   >
@@ -1467,6 +1466,17 @@ export default function SidebarV2() {
     () => setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT),
     [],
   );
+  const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
+  const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
+  const renderedSettledThreads = useMemo(() => {
+    if (settledShelfExpanded) return visibleSettledThreads;
+    if (routeThreadKey === null) return [];
+    const routeThread = visibleSettledThreads.find(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+    );
+    return routeThread === undefined ? [] : [routeThread];
+  }, [routeThreadKey, settledShelfExpanded, visibleSettledThreads]);
 
   // The snoozed shelf is collapsed by default: out of the way, never gone.
   // Collapsed threads don't render (and so don't participate in jump
@@ -1488,8 +1498,8 @@ export default function SidebarV2() {
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
   const orderedThreads = useMemo(
-    () => [...activeThreads, ...visibleSnoozedThreads, ...visibleSettledThreads],
-    [activeThreads, visibleSnoozedThreads, visibleSettledThreads],
+    () => [...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
+    [activeThreads, visibleSnoozedThreads, renderedSettledThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -2341,7 +2351,7 @@ export default function SidebarV2() {
             </div>
           </SidebarGroup>
         ) : null}
-        <SidebarGroup className="min-h-0 flex-1 overflow-y-auto px-2 py-1">
+        <SidebarGroup className="min-h-0 flex-1 overflow-y-auto px-2 py-1 [scrollbar-gutter:stable]">
           <TooltipProvider
             key="sidebar-thread-tooltips-150"
             delay={150}
@@ -2450,17 +2460,17 @@ export default function SidebarV2() {
                         data-testid="sidebar-v2-snoozed-shelf-toggle"
                         className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
                       >
-                        <ChevronRightIcon
+                        <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                          {snoozedShelfExpanded ? "Snoozed" : `Snoozed (${snoozedThreads.length})`}
+                        </span>
+                        <span className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
+                        <ChevronDownIcon
                           aria-hidden
                           className={cn(
-                            "size-3 text-primary/60 transition-transform",
-                            snoozedShelfExpanded && "rotate-90",
+                            "size-3 text-blue-600 transition-transform dark:text-blue-400",
+                            snoozedShelfExpanded && "rotate-180",
                           )}
                         />
-                        <span className="text-xs font-medium text-primary/70">
-                          Snoozed · {snoozedThreads.length}
-                        </span>
-                        <span className="h-px flex-1 bg-primary/15" />
                       </button>
                     </li>,
                   );
@@ -2468,38 +2478,37 @@ export default function SidebarV2() {
                     items.push(renderThreadRow(thread, "snoozed"));
                   }
                 }
-                // The divider is its own keyed list item (not part of the
-                // first settled row): it keeps one stable DOM node at the
-                // boundary, so settling a thread slides it instead of
-                // teleporting it along with whichever row happens to be
-                // first in the tail. Matching the pre-shelf behavior, it
-                // only shows when something sits above it.
-                if (
-                  visibleSettledThreads.length > 0 &&
-                  (activeThreads.length > 0 || snoozedThreads.length > 0)
-                ) {
+                if (settledThreads.length > 0) {
                   items.push(
-                    <li
-                      key="settled-divider"
-                      aria-hidden
-                      data-thread-selection-safe
-                      className="list-none"
-                    >
-                      <div className="mb-1 mt-3 flex items-center gap-2 px-2.5">
+                    <li key="settled-shelf-header" data-thread-selection-safe className="list-none">
+                      <button
+                        type="button"
+                        onClick={toggleSettledShelf}
+                        aria-expanded={settledShelfExpanded}
+                        data-testid="sidebar-v2-settled-shelf-toggle"
+                        className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+                      >
                         <span className="text-xs font-medium text-muted-foreground/50">
-                          Settled
+                          {settledShelfExpanded ? "Settled" : `Settled (${settledThreads.length})`}
                         </span>
                         <span className="h-px flex-1 bg-sidebar-border/60" />
-                      </div>
+                        <ChevronDownIcon
+                          aria-hidden
+                          className={cn(
+                            "size-3 text-muted-foreground/50 transition-transform",
+                            settledShelfExpanded && "rotate-180",
+                          )}
+                        />
+                      </button>
                     </li>,
                   );
                 }
-                for (const thread of visibleSettledThreads) {
+                for (const thread of renderedSettledThreads) {
                   items.push(renderThreadRow(thread, "settled"));
                 }
                 return items;
               })()}
-              {hiddenSettledCount > 0 ? (
+              {settledShelfExpanded && hiddenSettledCount > 0 ? (
                 <li className="list-none">
                   <button
                     type="button"
@@ -2515,7 +2524,7 @@ export default function SidebarV2() {
               ) : null}
             </ul>
           </TooltipProvider>
-          {orderedThreads.length === 0 ? (
+          {activeThreads.length + snoozedThreads.length + settledThreads.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
                 <>
