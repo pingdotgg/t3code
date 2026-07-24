@@ -663,6 +663,7 @@ public final class AppModel {
                 // A snapshot can truncate or replace an in-flight message;
                 // the old settled prefix is no longer valid for this thread.
                 StreamingMarkdownCache.evict(threadID: scopedThreadKey(threadID))
+                StreamingRevealStore.evict(threadID: scopedThreadKey(threadID))
                 let filtered = items.filter { !isDismissedUsageLimit($0) }
                 touched[threadID] = filtered
                 indexByThread[threadID] = nil
@@ -780,6 +781,7 @@ public final class AppModel {
             pruneTimelineTasks.removeValue(forKey: id)?.cancel()
             TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
             StreamingMarkdownCache.evict(threadID: scopedThreadKey(id))
+            StreamingRevealStore.evict(threadID: scopedThreadKey(id))
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested(let request):
             considerApprovalNotification(request)
@@ -2073,6 +2075,7 @@ public final class AppModel {
         // re-select renders the retained snapshot instantly; only streaming
         // parse sessions are dropped.
         StreamingMarkdownCache.evict(threadID: scopedThreadKey(threadID))
+        StreamingRevealStore.evict(threadID: scopedThreadKey(threadID))
     }
 
     private func pruneTimelineSubscriptions() {
@@ -2102,6 +2105,7 @@ public final class AppModel {
                     // Stale-while-revalidate: keep the display cache (see
                     // releaseTimeline); only streaming parse sessions drop.
                     StreamingMarkdownCache.evict(threadID: self.scopedThreadKey(threadID))
+                    StreamingRevealStore.evict(threadID: self.scopedThreadKey(threadID))
                     if !Task.isCancelled {
                         await self.backend.closeTimeline(threadID: threadID)
                     }
