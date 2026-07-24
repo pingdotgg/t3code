@@ -4,9 +4,14 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadReviewPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
-import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
+import {
+  normalizeCliError,
+  normalizeThreadReview,
+  sanitizeThreadTitle,
+} from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 describe("buildCommitMessagePrompt", () => {
@@ -133,6 +138,91 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("thread.png");
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("67890 bytes");
+  });
+});
+
+describe("buildThreadReviewPrompt", () => {
+  it("includes title, first user message, and transcript", () => {
+    const result = buildThreadReviewPrompt({
+      title: "New thread",
+      isActive: false,
+      firstUserMessage: "Fix the settle default",
+      recentMessages: [
+        { role: "user", text: "Fix the settle default" },
+        { role: "assistant", text: "Done, merged." },
+      ],
+    });
+
+    expect(result.prompt).toContain("Current title: New thread");
+    expect(result.prompt).toContain("Fix the settle default");
+    expect(result.prompt).toContain("[assistant] Done, merged.");
+    expect(result.prompt).not.toContain("ACTIVE");
+  });
+
+  it("adds the never-settle rule for active threads", () => {
+    const result = buildThreadReviewPrompt({
+      title: "Working thread",
+      isActive: true,
+      firstUserMessage: "Do a thing",
+      recentMessages: [],
+    });
+
+    expect(result.prompt).toContain("recommendSettle must be false");
+    expect(result.prompt).toContain("(no messages)");
+  });
+
+  it("caps the transcript to the most recent 20 messages", () => {
+    const result = buildThreadReviewPrompt({
+      title: "Long thread",
+      isActive: false,
+      firstUserMessage: "start",
+      recentMessages: Array.from({ length: 30 }, (_, index) => ({
+        role: "assistant" as const,
+        text: `message-${index}`,
+      })),
+    });
+
+    expect(result.prompt).not.toContain("message-9\n");
+    expect(result.prompt).toContain("message-10");
+    expect(result.prompt).toContain("message-29");
+  });
+});
+
+describe("normalizeThreadReview", () => {
+  const raw = {
+    summary: "  Work   finished.  ",
+    nextStep: "  Settle   it.  ",
+    suggestedTitle: '"Ship settle default"',
+    recommendSettle: true,
+    settleReason: "  PR merged.  ",
+  };
+
+  it("sanitizes fields and keeps settle recommendation for inactive threads", () => {
+    expect(normalizeThreadReview(raw, false)).toEqual({
+      summary: "Work finished.",
+      nextStep: "Settle it.",
+      suggestedTitle: "Ship settle default",
+      recommendSettle: true,
+      settleReason: "PR merged.",
+    });
+  });
+
+  it("forces recommendSettle off for active threads even if the model says settle", () => {
+    const result = normalizeThreadReview(raw, true);
+    expect(result.recommendSettle).toBe(false);
+    expect(result.settleReason).toBeNull();
+  });
+
+  it("drops empty and placeholder title suggestions", () => {
+    expect(
+      normalizeThreadReview({ ...raw, suggestedTitle: "   " }, false).suggestedTitle,
+    ).toBeNull();
+    expect(
+      normalizeThreadReview({ ...raw, suggestedTitle: "New thread" }, false).suggestedTitle,
+    ).toBeNull();
+    expect(
+      normalizeThreadReview({ ...raw, suggestedTitle: null }, false).suggestedTitle,
+    ).toBeNull();
   });
 });
 

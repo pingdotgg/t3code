@@ -23,10 +23,12 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadReviewPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
+  normalizeThreadReview,
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
@@ -85,7 +87,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateThreadReview",
     value: unknown,
     detail: string,
   ): Effect.Effect<string, TextGenerationError> =>
@@ -115,7 +118,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateThreadReview";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -355,10 +359,32 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       };
     });
 
+  const generateThreadReview: TextGeneration.TextGeneration["Service"]["generateThreadReview"] =
+    Effect.fn("ClaudeTextGeneration.generateThreadReview")(function* (input) {
+      const { prompt, outputSchema } = buildThreadReviewPrompt({
+        title: input.title,
+        isActive: input.isActive,
+        firstUserMessage: input.firstUserMessage,
+        recentMessages: input.recentMessages,
+        pullRequest: input.pullRequest,
+      });
+
+      const generated = yield* runClaudeJson({
+        operation: "generateThreadReview",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return normalizeThreadReview(generated, input.isActive);
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadReview,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

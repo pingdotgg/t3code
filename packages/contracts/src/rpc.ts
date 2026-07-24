@@ -43,6 +43,12 @@ import {
   ReviewDiffPreviewError,
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
+  ReviewMergePullRequestError,
+  ReviewMergePullRequestInput,
+  ReviewMergePullRequestResult,
+  ReviewThreadSummaryError,
+  ReviewThreadSummaryInput,
+  ReviewThreadSummaryResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
@@ -181,6 +187,8 @@ export const WS_METHODS = {
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
+  reviewSummarizeThread: "review.summarizeThread",
+  reviewMergePullRequest: "review.mergePullRequest",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -495,6 +503,24 @@ export const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPrevie
   error: Schema.Union([ReviewDiffPreviewError, EnvironmentAuthorizationError]),
 });
 
+/** One-shot agentic review of a single thread for the sidebar work-review
+    sweep: summary, optional corrected title, and a settle recommendation. */
+export const WsReviewSummarizeThreadRpc = Rpc.make(WS_METHODS.reviewSummarizeThread, {
+  payload: ReviewThreadSummaryInput,
+  success: ReviewThreadSummaryResult,
+  error: Schema.Union([ReviewThreadSummaryError, EnvironmentAuthorizationError]),
+});
+
+/** Merge a review-sweep thread's PR after re-validating merge readiness
+    against live GitHub state. Non-exceptional failures (conflict, already
+    closed, no longer ready) are outcomes, not errors, so the client's merge
+    queue can branch on them. */
+export const WsReviewMergePullRequestRpc = Rpc.make(WS_METHODS.reviewMergePullRequest, {
+  payload: ReviewMergePullRequestInput,
+  success: ReviewMergePullRequestResult,
+  error: Schema.Union([ReviewMergePullRequestError, EnvironmentAuthorizationError]),
+});
+
 export const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
@@ -738,6 +764,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
   WsReviewGetDiffPreviewRpc,
+  WsReviewSummarizeThreadRpc,
+  WsReviewMergePullRequestRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
   WsTerminalWriteRpc,

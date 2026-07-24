@@ -21,10 +21,12 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadReviewPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
+  normalizeThreadReview,
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
@@ -98,7 +100,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateThreadReview",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -117,7 +120,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateThreadReview",
     attachments: TextGeneration.BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -159,7 +163,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateThreadReview";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -398,10 +403,33 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateThreadReview: TextGeneration.TextGeneration["Service"]["generateThreadReview"] =
+    Effect.fn("CodexTextGeneration.generateThreadReview")(function* (input) {
+      const { prompt, outputSchema } = buildThreadReviewPrompt({
+        title: input.title,
+        isActive: input.isActive,
+        firstUserMessage: input.firstUserMessage,
+        recentMessages: input.recentMessages,
+        pullRequest: input.pullRequest,
+      });
+
+      const generated = yield* runCodexJson({
+        operation: "generateThreadReview",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        imagePaths: [],
+        modelSelection: input.modelSelection,
+      });
+
+      return normalizeThreadReview(generated, input.isActive);
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadReview,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

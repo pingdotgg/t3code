@@ -365,6 +365,7 @@ function createTextGeneration(
             }),
         ),
       ),
+    generateThreadReview: () => Effect.die("generateThreadReview is not used by GitManager tests"),
   };
 }
 

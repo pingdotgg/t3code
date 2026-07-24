@@ -22,10 +22,12 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadReviewPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
+  normalizeThreadReview,
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
@@ -39,6 +41,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generatePrContent",
   "generateBranchName",
   "generateThreadTitle",
+  "generateThreadReview",
 ]);
 
 type OpenCodeTextGenerationOperation = typeof OpenCodeTextGenerationOperation.Type;
@@ -253,7 +256,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateThreadReview";
   }) =>
     sharedServerMutex.withPermit(
       Effect.gen(function* () {
@@ -611,10 +615,32 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       };
     });
 
+  const generateThreadReview: TextGeneration.TextGeneration["Service"]["generateThreadReview"] =
+    Effect.fn("OpenCodeTextGeneration.generateThreadReview")(function* (input) {
+      const { prompt, outputSchema } = buildThreadReviewPrompt({
+        title: input.title,
+        isActive: input.isActive,
+        firstUserMessage: input.firstUserMessage,
+        recentMessages: input.recentMessages,
+        pullRequest: input.pullRequest,
+      });
+
+      const generated = yield* runOpenCodeJson({
+        operation: "generateThreadReview",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return normalizeThreadReview(generated, input.isActive);
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadReview,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

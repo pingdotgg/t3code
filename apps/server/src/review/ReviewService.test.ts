@@ -3,17 +3,85 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
+
+import {
+  ThreadId,
+  type OrchestrationThread,
+  type OrchestrationThreadShell,
+} from "@t3tools/contracts";
 
 import { ServerConfig } from "../config.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ReviewService from "./ReviewService.ts";
+
+const GhPrViewFixture = Schema.Struct({
+  number: Schema.Int,
+  url: Schema.String,
+  state: Schema.String,
+  reviewDecision: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  mergeable: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  statusCheckRollup: Schema.optionalKey(Schema.Array(Schema.Struct({ conclusion: Schema.String }))),
+  comments: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        author: Schema.Struct({ login: Schema.String }),
+        body: Schema.String,
+        createdAt: Schema.String,
+      }),
+    ),
+  ),
+});
+const encodeGhPrViewFixture = Schema.encodeUnknownSync(Schema.fromJsonString(GhPrViewFixture));
+
+function ghPrViewJson(fixture: typeof GhPrViewFixture.Type): string {
+  return encodeGhPrViewFixture(fixture);
+}
+
+function makeShellFromThread(
+  thread: OrchestrationThread,
+  overrides: Partial<OrchestrationThreadShell> = {},
+): OrchestrationThreadShell {
+  return {
+    id: thread.id,
+    projectId: thread.projectId,
+    title: thread.title,
+    modelSelection: thread.modelSelection,
+    runtimeMode: thread.runtimeMode,
+    interactionMode: thread.interactionMode,
+    branch: thread.branch,
+    worktreePath: thread.worktreePath,
+    latestTurn: thread.latestTurn,
+    createdAt: thread.createdAt,
+    updatedAt: thread.updatedAt,
+    archivedAt: thread.archivedAt,
+    settledOverride: thread.settledOverride,
+    settledAt: thread.settledAt,
+    session: thread.session,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    ...overrides,
+  };
+}
 
 function makeLayer(input: {
   readonly workspaceRoot: string;
   readonly baseDir: string;
   readonly detectCalls?: Array<{ readonly cwd: string }>;
+  readonly thread?: OrchestrationThread;
+  readonly shellOverrides?: Partial<OrchestrationThreadShell>;
+  readonly generateThreadReview?: TextGeneration.TextGeneration["Service"]["generateThreadReview"];
+  readonly reviewCalls?: Array<TextGeneration.ThreadReviewGenerationInput>;
+  readonly ghExecute?: GitHubCli.GitHubCli["Service"]["execute"];
 }) {
   return ReviewService.layer.pipe(
     Layer.provide(
@@ -28,9 +96,100 @@ function makeLayer(input: {
       }),
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+    Layer.provide(
+      Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+        getThreadDetailById: (threadId) =>
+          Effect.succeed(
+            input.thread && input.thread.id === threadId
+              ? Option.some(input.thread)
+              : Option.none(),
+          ),
+        getThreadShellById: (threadId) =>
+          Effect.succeed(
+            input.thread && input.thread.id === threadId
+              ? Option.some(makeShellFromThread(input.thread, input.shellOverrides))
+              : Option.none(),
+          ),
+        getProjectShellById: () => Effect.succeed(Option.none()),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(TextGeneration.TextGeneration)({
+        generateThreadReview: (reviewInput) => {
+          input.reviewCalls?.push(reviewInput);
+          return (
+            input.generateThreadReview?.(reviewInput) ??
+            Effect.succeed({
+              summary: "Did the thing.",
+              nextStep: "Settle this thread.",
+              suggestedTitle: null,
+              recommendSettle: true,
+              settleReason: "Work concluded.",
+            })
+          );
+        },
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(GitHubCli.GitHubCli)({
+        // Threads in these tests have no PR; investigation must degrade to
+        // "no context" without touching gh.
+        execute: input.ghExecute ?? (() => Effect.die("gh not stubbed in this test")),
+      }),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
     Layer.provide(ServerConfig.layerTest(input.workspaceRoot, input.baseDir)),
     Layer.provideMerge(NodeServices.layer),
   );
+}
+
+function makeThread(overrides: Partial<OrchestrationThread> = {}): OrchestrationThread {
+  return {
+    id: ThreadId.make("thread_review_1"),
+    projectId: "project_1" as OrchestrationThread["projectId"],
+    title: "New thread",
+    modelSelection: {
+      instanceId: "codex" as OrchestrationThread["modelSelection"]["instanceId"],
+      model: "gpt-5",
+      options: [],
+    },
+    runtimeMode: "local",
+    interactionMode: "chat",
+    branch: null,
+    // Tests mock getProjectShellById to None, so cwd resolution relies on
+    // the worktree path; a thread with neither now fails loudly by design.
+    worktreePath: "/tmp/t3-review-test-worktree",
+    latestTurn: null,
+    createdAt: "2026-07-20T00:00:00.000Z",
+    updatedAt: "2026-07-20T00:00:00.000Z",
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    deletedAt: null,
+    messages: [],
+    proposedPlans: [],
+    activities: [],
+    checkpoints: [],
+    session: null,
+    ...overrides,
+  } as OrchestrationThread;
+}
+
+function makeMessage(input: {
+  readonly id: string;
+  readonly role: "user" | "assistant" | "system";
+  readonly text: string;
+  readonly streaming?: boolean;
+}): OrchestrationThread["messages"][number] {
+  return {
+    id: input.id as OrchestrationThread["messages"][number]["id"],
+    role: input.role,
+    text: input.text,
+    turnId: null,
+    streaming: input.streaming ?? false,
+    createdAt: "2026-07-20T00:00:00.000Z",
+    updatedAt: "2026-07-20T00:00:00.000Z",
+  };
 }
 
 describe("ReviewService", () => {
@@ -95,6 +254,394 @@ describe("ReviewService", () => {
       assert.match(error.detail, /Failed to resolve a path/);
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.deepStrictEqual(detectCalls, []);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("summarizeThread fails with ReviewThreadNotFoundError for unknown threads", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+
+      const error = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review
+          .summarizeThread({ threadId: ThreadId.make("thread_missing"), canSettleNow: true })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(makeLayer({ workspaceRoot, baseDir })));
+
+      assert.strictEqual(error._tag, "ReviewThreadNotFoundError");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("summarizeThread passes transcript context and returns the review", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const reviewCalls: Array<TextGeneration.ThreadReviewGenerationInput> = [];
+      const thread = makeThread({
+        messages: [
+          makeMessage({ id: "msg_1", role: "user", text: "Fix the settle default" }),
+          makeMessage({ id: "msg_2", role: "assistant", text: "Done, merged in PR #1" }),
+          makeMessage({ id: "msg_3", role: "assistant", text: "streaming...", streaming: true }),
+        ],
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.summarizeThread({ threadId: thread.id, canSettleNow: true });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            thread,
+            reviewCalls,
+            generateThreadReview: () =>
+              Effect.succeed({
+                summary: "Bumped the settle default; PR merged.",
+                nextStep: "Nothing left — settle this thread.",
+                suggestedTitle: "Bump settle default",
+                recommendSettle: true,
+                settleReason: "PR merged, nothing pending.",
+              }),
+          }),
+        ),
+      );
+
+      assert.strictEqual(result.threadId, thread.id);
+      assert.strictEqual(result.summary, "Bumped the settle default; PR merged.");
+      assert.strictEqual(result.suggestedTitle, "Bump settle default");
+      assert.strictEqual(result.recommendSettle, true);
+      assert.strictEqual(result.settleReason, "PR merged, nothing pending.");
+
+      assert.strictEqual(reviewCalls.length, 1);
+      const call = reviewCalls[0]!;
+      assert.strictEqual(call.title, "New thread");
+      assert.strictEqual(call.isActive, false);
+      assert.strictEqual(call.firstUserMessage, "Fix the settle default");
+      // Streaming messages are excluded from the transcript.
+      assert.deepStrictEqual(
+        call.recentMessages.map((message) => message.text),
+        ["Fix the settle default", "Done, merged in PR #1"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("summarizeThread never recommends settling when canSettleNow is false", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const reviewCalls: Array<TextGeneration.ThreadReviewGenerationInput> = [];
+      const thread = makeThread({});
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.summarizeThread({ threadId: thread.id, canSettleNow: false });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            thread,
+            reviewCalls,
+            // Model misbehaves and recommends settle anyway.
+            generateThreadReview: () =>
+              Effect.succeed({
+                summary: "Still working.",
+                nextStep: "Wait for the agent.",
+                suggestedTitle: null,
+                recommendSettle: true,
+                settleReason: "Looks done to me.",
+              }),
+          }),
+        ),
+      );
+
+      assert.strictEqual(reviewCalls[0]?.isActive, true);
+      assert.strictEqual(result.recommendSettle, false);
+      assert.strictEqual(result.settleReason, null);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "summarizeThread overrides a stale client canSettleNow when the projection shows activity",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-review-workspace-",
+        });
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+        const reviewCalls: Array<TextGeneration.ThreadReviewGenerationInput> = [];
+        const thread = makeThread({});
+
+        const result = yield* Effect.gen(function* () {
+          const review = yield* ReviewService.ReviewService;
+          // Client believed the thread was settleable, but the server-side
+          // shell says approvals are pending.
+          return yield* review.summarizeThread({ threadId: thread.id, canSettleNow: true });
+        }).pipe(
+          Effect.provide(
+            makeLayer({
+              workspaceRoot,
+              baseDir,
+              thread,
+              reviewCalls,
+              shellOverrides: { hasPendingApprovals: true },
+              generateThreadReview: () =>
+                Effect.succeed({
+                  summary: "Looks finished.",
+                  nextStep: "Settle this thread.",
+                  suggestedTitle: null,
+                  recommendSettle: true,
+                  settleReason: "Done.",
+                }),
+            }),
+          ),
+        );
+
+        assert.strictEqual(reviewCalls[0]?.isActive, true);
+        assert.strictEqual(result.recommendSettle, false);
+        assert.strictEqual(result.settleReason, null);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("summarizeThread fails loudly when no workspace cwd can be resolved", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      // No worktree and (per the mock) no project shell: cwd is unresolvable.
+      const thread = makeThread({ worktreePath: null });
+
+      const error = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review
+          .summarizeThread({ threadId: thread.id, canSettleNow: true })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(makeLayer({ workspaceRoot, baseDir, thread })));
+
+      assert.strictEqual(error._tag, "TextGenerationError");
+      if (error._tag === "TextGenerationError") {
+        assert.match(error.detail, /Unable to resolve a workspace directory/);
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("summarizeThread attaches PR status and prompt context when gh finds a PR", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const reviewCalls: Array<TextGeneration.ThreadReviewGenerationInput> = [];
+      const thread = makeThread({ branch: "feat/settle-default" });
+      const ghPayload = ghPrViewJson({
+        number: 4415,
+        url: "https://github.com/pingdotgg/t3code/pull/4415",
+        state: "OPEN",
+        reviewDecision: "APPROVED",
+        mergeable: "MERGEABLE",
+        statusCheckRollup: [{ conclusion: "SUCCESS" }, { conclusion: "SKIPPED" }],
+        comments: [
+          { author: { login: "reviewer" }, body: "LGTM", createdAt: "2026-07-24T00:00:00Z" },
+        ],
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.summarizeThread({ threadId: thread.id, canSettleNow: true });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            thread,
+            reviewCalls,
+            ghExecute: () =>
+              Effect.succeed({
+                exitCode: 0,
+                stdout: ghPayload,
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              } as never),
+          }),
+        ),
+      );
+
+      assert.strictEqual(result.prStatus?.number, 4415);
+      assert.strictEqual(result.prStatus?.state, "open");
+      assert.strictEqual(result.prStatus?.mergeReady, true);
+      assert.strictEqual(result.prStatus?.checksPassing, true);
+      assert.strictEqual(reviewCalls[0]?.pullRequest?.number, 4415);
+      assert.strictEqual(reviewCalls[0]?.pullRequest?.recentComments[0]?.body, "LGTM");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("summarizeThread degrades to no PR context when gh fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const reviewCalls: Array<TextGeneration.ThreadReviewGenerationInput> = [];
+      const thread = makeThread({ branch: "feat/no-pr" });
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.summarizeThread({ threadId: thread.id, canSettleNow: true });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            thread,
+            reviewCalls,
+            ghExecute: (ghInput) =>
+              Effect.fail(
+                new GitHubCli.GitHubCliUnavailableError({
+                  command: "gh",
+                  cwd: ghInput.cwd,
+                  cause: "gh missing in test",
+                }) as never,
+              ),
+          }),
+        ),
+      );
+
+      assert.strictEqual(result.prStatus, undefined);
+      assert.strictEqual(reviewCalls[0]?.pullRequest, undefined);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("mergePullRequest reports conflict when the branch no longer merges cleanly", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const thread = makeThread({ branch: "feat/conflicting" });
+      const ghPayload = ghPrViewJson({
+        number: 77,
+        url: "https://github.com/x/y/pull/77",
+        state: "OPEN",
+        reviewDecision: "APPROVED",
+        mergeable: "CONFLICTING",
+        statusCheckRollup: [{ conclusion: "SUCCESS" }],
+        comments: [],
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.mergePullRequest({ threadId: thread.id, pullRequestNumber: 77 });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            thread,
+            ghExecute: () =>
+              Effect.succeed({
+                exitCode: 0,
+                stdout: ghPayload,
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              } as never),
+          }),
+        ),
+      );
+
+      assert.strictEqual(result.outcome, "conflict");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("mergePullRequest merges and reports merged for a ready PR", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const thread = makeThread({ branch: "feat/ready" });
+      const ghCalls: string[] = [];
+      const ghPayload = ghPrViewJson({
+        number: 88,
+        url: "https://github.com/x/y/pull/88",
+        state: "OPEN",
+        reviewDecision: "APPROVED",
+        mergeable: "MERGEABLE",
+        statusCheckRollup: [{ conclusion: "SUCCESS" }],
+        comments: [],
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.mergePullRequest({ threadId: thread.id, pullRequestNumber: 88 });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            thread,
+            ghExecute: (ghInput) => {
+              ghCalls.push(ghInput.args.join(" "));
+              return Effect.succeed({
+                exitCode: 0,
+                stdout: ghInput.args[1] === "view" ? ghPayload : "",
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              } as never);
+            },
+          }),
+        ),
+      );
+
+      assert.strictEqual(result.outcome, "merged");
+      assert.ok(ghCalls.some((call) => call.startsWith("pr merge 88")));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("summarizeThread treats a queued turn start as active", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const reviewCalls: Array<TextGeneration.ThreadReviewGenerationInput> = [];
+      const thread = makeThread({});
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.summarizeThread({ threadId: thread.id, canSettleNow: true });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            thread,
+            reviewCalls,
+            // A just-sent user message with no adopting turn: session still
+            // null, but the thread has in-flight work. it.effect runs on the
+            // TestClock (epoch 0), so "just sent" is the epoch.
+            shellOverrides: {
+              latestUserMessageAt: "1970-01-01T00:00:00.000Z",
+              latestTurn: null,
+              session: null,
+            },
+            generateThreadReview: () =>
+              Effect.succeed({
+                summary: "Looks finished.",
+                nextStep: "Settle this thread.",
+                suggestedTitle: null,
+                recommendSettle: true,
+                settleReason: "Done.",
+              }),
+          }),
+        ),
+      );
+
+      assert.strictEqual(reviewCalls[0]?.isActive, true);
+      assert.strictEqual(result.recommendSettle, false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

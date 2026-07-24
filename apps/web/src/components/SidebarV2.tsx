@@ -27,6 +27,7 @@ import {
   FolderPlusIcon,
   GitBranchIcon,
   EllipsisIcon,
+  ListChecksIcon,
   MessageSquareIcon,
   PlusIcon,
   SearchIcon,
@@ -79,6 +80,8 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import { publishSweepChangeRequestStates } from "../reviewSweepStore";
+import { ReviewSweepLaunchDialog } from "./reviewSweep/ReviewSweepLaunchDialog";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -1169,6 +1172,11 @@ export default function SidebarV2() {
     },
     [],
   );
+  // Mirror PR states to the review-sweep store so its unsettled-candidate
+  // predicate matches this sidebar's partition (merged-PR auto-settle).
+  useEffect(() => {
+    publishSweepChangeRequestStates(changeRequestStateByKey);
+  }, [changeRequestStateByKey]);
 
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
@@ -2205,6 +2213,14 @@ export default function SidebarV2() {
     openCommandPalette({ open: "new-thread-in" });
   }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
 
+  // Open the launch modal — the sweep itself runs in the background and
+  // announces completion with a toast, so no navigation happens here.
+  const [reviewSweepDialogOpen, setReviewSweepDialogOpen] = useState(false);
+  const handleReviewSweepClick = useCallback(() => {
+    if (isMobile) setOpenMobile(false);
+    setReviewSweepDialogOpen(true);
+  }, [isMobile, setOpenMobile]);
+
   const commandPaletteShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
   // Same resolution as v1: prefer the local-thread binding, fall back to
   // chat.new, no platform gating — web users have working shortcuts too.
@@ -2214,6 +2230,10 @@ export default function SidebarV2() {
   return (
     <>
       <SidebarChromeHeader isElectron={isElectron} />
+      <ReviewSweepLaunchDialog
+        open={reviewSweepDialogOpen}
+        onOpenChange={setReviewSweepDialogOpen}
+      />
       <SidebarContent className="gap-0">
         <SidebarGroup className="px-2 pb-2 pt-3">
           <div className="flex items-center gap-1">
@@ -2237,6 +2257,29 @@ export default function SidebarV2() {
                   </Kbd>
                 ) : null}
               </CommandDialogTrigger>
+            </div>
+            <div className="shrink-0">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <SidebarMenuButton
+                      size="sm"
+                      type="button"
+                      className="relative size-8 justify-center rounded-md border-0 bg-transparent p-0 text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                      onClick={handleReviewSweepClick}
+                      disabled={projects.length === 0}
+                      aria-label="Review unsettled work"
+                    />
+                  }
+                >
+                  <ListChecksIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+                  <span
+                    className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+                    aria-hidden="true"
+                  />
+                </TooltipTrigger>
+                <TooltipPopup side="right">Review unsettled work</TooltipPopup>
+              </Tooltip>
             </div>
             <div className="shrink-0">
               <Tooltip>

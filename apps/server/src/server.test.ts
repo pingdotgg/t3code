@@ -86,7 +86,9 @@ import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -522,6 +524,24 @@ const buildAppUnderTest = (options?: {
       : ReviewService.layer.pipe(
           Layer.provideMerge(gitVcsDriverLayer),
           Layer.provide(vcsDriverRegistryLayer),
+          Layer.provide(
+            Layer.mock(TextGeneration.TextGeneration)({
+              generateThreadReview: () => Effect.die("TextGeneration not stubbed in this test"),
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+              getThreadDetailById: () => Effect.succeed(Option.none()),
+              getProjectShellById: () => Effect.succeed(Option.none()),
+              ...options?.layers?.projectionSnapshotQuery,
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(GitHubCli.GitHubCli)({
+              execute: () => Effect.die("GitHubCli not stubbed in this test"),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
         );
     const vcsStatusBroadcasterLayer = options?.layers?.vcsStatusBroadcaster
       ? Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({

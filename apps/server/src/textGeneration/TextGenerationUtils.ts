@@ -63,6 +63,58 @@ export function sanitizeThreadTitle(raw: string): string {
   return `${normalized.slice(0, 47).trimEnd()}...`;
 }
 
+/**
+ * Normalise a raw thread-review generation into the service result shape:
+ * collapse whitespace, drop empty/no-op title suggestions, and force
+ * `recommendSettle` off for active threads regardless of model output.
+ */
+export function normalizeThreadReview(
+  raw: {
+    summary: string;
+    nextStep: string;
+    suggestedTitle: string | null;
+    recommendSettle: boolean;
+    settleReason: string | null;
+  },
+  isActive: boolean,
+): {
+  summary: string;
+  nextStep: string;
+  suggestedTitle: string | null;
+  recommendSettle: boolean;
+  settleReason: string | null;
+} {
+  const summary = raw.summary.trim().replace(/\s+/g, " ");
+  // Backstop against rambling: first sentence only, hard-capped. The prompt
+  // asks for a <=10-word command, but models drift — never render a recap.
+  const nextStepFirstSentence =
+    raw.nextStep
+      .trim()
+      .replace(/\s+/g, " ")
+      .match(/^[^.!?]*[.!?]?/)?.[0]
+      ?.trim() ?? "";
+  const nextStep =
+    nextStepFirstSentence.length > 80
+      ? `${nextStepFirstSentence.slice(0, 77).trimEnd()}...`
+      : nextStepFirstSentence;
+  const suggestedTitle =
+    raw.suggestedTitle && raw.suggestedTitle.trim().length > 0
+      ? sanitizeThreadTitle(raw.suggestedTitle)
+      : null;
+  const recommendSettle = raw.recommendSettle && !isActive;
+  const settleReason =
+    recommendSettle && raw.settleReason && raw.settleReason.trim().length > 0
+      ? raw.settleReason.trim().replace(/\s+/g, " ")
+      : null;
+  return {
+    summary: summary.length > 0 ? summary : "No summary available.",
+    nextStep: nextStep.length > 0 ? nextStep : "Review this thread.",
+    suggestedTitle: suggestedTitle === "New thread" ? null : suggestedTitle,
+    recommendSettle,
+    settleReason,
+  };
+}
+
 /** CLI name to human-readable label, e.g. "codex" → "Codex CLI (`codex`)" */
 function cliLabel(cliName: string): string {
   const capitalized = cliName.charAt(0).toUpperCase() + cliName.slice(1);
