@@ -10,11 +10,12 @@ type TooltipProps = TooltipPrimitive.Root.Props & {
   preserveOnNestedTriggerHover?: boolean;
 };
 
-function hasHoveredNestedTooltipTrigger() {
+function hasHoveredNestedTooltipTrigger(target: EventTarget | null) {
+  if (!target || typeof (target as Element).closest !== "function") return false;
+  const nestedTrigger = (target as Element).closest<HTMLElement>('[data-slot="tooltip-trigger"]');
+  if (!nestedTrigger?.matches(":hover")) return false;
   return (
-    document.querySelector(
-      '[data-slot="tooltip-trigger"][data-popup-open] [data-slot="tooltip-trigger"]:hover',
-    ) !== null
+    nestedTrigger.parentElement?.closest('[data-slot="tooltip-trigger"][data-popup-open]') != null
   );
 }
 
@@ -22,7 +23,11 @@ function Tooltip({ preserveOnNestedTriggerHover = false, onOpenChange, ...props 
   return (
     <TooltipPrimitive.Root
       onOpenChange={(open, eventDetails) => {
-        if (!open && preserveOnNestedTriggerHover && hasHoveredNestedTooltipTrigger()) {
+        if (
+          !open &&
+          preserveOnNestedTriggerHover &&
+          hasHoveredNestedTooltipTrigger(eventDetails.event.target)
+        ) {
           eventDetails.cancel();
           return;
         }
@@ -103,4 +108,5 @@ export {
   TooltipTrigger,
   TooltipPopup,
   TooltipCardPopup,
+  hasHoveredNestedTooltipTrigger,
 };

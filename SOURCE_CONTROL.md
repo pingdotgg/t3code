@@ -151,7 +151,7 @@ The working-tree file list is not a nested vertical scroller. Rows render in nor
 
 The `Working tree` context menu includes selected-file commit and stash actions plus a separated destructive `Discard selected changes` action.
 
-The web panel shares the Sidebar v2 tooltip presentation and timing for informational row targets: rich glass cards open to the left after a short delay, close immediately, and switch instantly between adjacent targets. Action buttons nested inside branch, commit, and file rows retain their terse top-positioned label tooltips, while those rich item cards opt out of Base UI's normal parent-close behavior for nested tooltip hover so both remain visible as the pointer moves across the actions.
+The web panel shares the Sidebar v2 tooltip presentation and timing for informational row targets: rich glass cards open to the left after a short delay, close immediately, and switch instantly between adjacent targets. Action buttons nested inside branch, commit, and file rows retain their terse top-positioned label tooltips, while those rich item cards opt out of Base UI's normal parent-close behavior only for a nested trigger inside the same row, so both remain visible as the pointer moves across that row's actions without affecting unrelated open tooltips elsewhere on the page.
 
 ## Branch Rows
 

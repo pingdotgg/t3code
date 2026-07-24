@@ -790,6 +790,48 @@ function FilePathTooltip({
   );
 }
 
+function WorkingFileTooltipRow({
+  children,
+  file,
+  onContextMenu,
+  onToggle,
+}: {
+  readonly children: ReactNode;
+  readonly file: VcsPanelFileChange;
+  readonly onContextMenu: (event: ReactMouseEvent<HTMLDivElement>) => void;
+  readonly onToggle: () => void;
+}) {
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const tooltipAnchor = useCallback(() => fileTooltipAnchor(triggerRef.current), []);
+
+  return (
+    <Tooltip preserveOnNestedTriggerHover>
+      <TooltipTrigger
+        render={
+          <div
+            ref={triggerRef}
+            role="button"
+            tabIndex={0}
+            data-file-change-tooltip-anchor
+            className="group relative flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
+            onClick={onToggle}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget) return;
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              onToggle();
+            }}
+            onContextMenu={onContextMenu}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <FilePathTooltip file={file} anchor={tooltipAnchor} />
+    </Tooltip>
+  );
+}
+
 function FileChangeTooltipRow({
   expanded,
   file,
@@ -3168,7 +3210,6 @@ function SourceControlEnvironmentPanel({
   };
 
   const renderWorkingFile = (changeSet: WorkingTreeChangeSetView) => (file: PanelChangedFile) => {
-    const tooltipTriggerRef: { current: HTMLDivElement | null } = { current: null };
     const selected = changeSet.selectedPaths.has(file.path);
     const discardKey = `${changeSet.id}:file-discard:${file.path}`;
     const diffSource = {
@@ -3192,113 +3233,87 @@ function SourceControlEnvironmentPanel({
       })();
     return (
       <div key={file.path} className="space-y-0.5">
-        <Tooltip preserveOnNestedTriggerHover>
-          <TooltipTrigger
-            render={
-              <div
-                ref={tooltipTriggerRef}
-                role="button"
-                tabIndex={0}
-                data-file-change-tooltip-anchor
-                className="group relative flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
-                onClick={() => toggleFileDiff(file, diffSource, changeSet.cwd)}
-                onKeyDown={(event) => {
-                  if (event.target !== event.currentTarget) return;
-                  if (event.key !== "Enter" && event.key !== " ") return;
-                  event.preventDefault();
-                  toggleFileDiff(file, diffSource, changeSet.cwd);
-                }}
-                onContextMenu={(event) =>
-                  openContextMenu(
-                    event,
-                    [
-                      ...(filePanelThreadRef
-                        ? ([{ id: "open-file", label: "Open file" }] as const)
-                        : []),
-                      { id: "open-vscode", label: "Open in VS Code" },
-                      contextMenuSeparator("discard-separator"),
-                      {
-                        id: "discard",
-                        label: "Discard change",
-                        destructive: true,
-                        disabled: isActionRunning(discardKey),
-                        icon: "trash",
-                      },
-                      contextMenuSeparator("copy-separator"),
-                      { id: "copy-filename", label: "Copy filename", icon: "copy" },
-                      { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
-                    ],
-                    {
-                      discard: discardFile,
-                      ...(filePanelThreadRef
-                        ? { "open-file": () => openFilePanel(file.path, changeSet.cwd) }
-                        : {}),
-                      "open-vscode": () => openInVsCode(file.path, changeSet.cwd),
-                      "copy-filename": () => copyText(fileBasename(file.path)),
-                      "copy-full-path": () =>
-                        copyText(resolvePathLinkTarget(file.path, changeSet.cwd)),
-                    },
-                  )
-                }
-              />
-            }
-          >
-            {diffExpanded ? (
-              <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-            ) : (
-              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+        <WorkingFileTooltipRow
+          file={file}
+          onToggle={() => toggleFileDiff(file, diffSource, changeSet.cwd)}
+          onContextMenu={(event) =>
+            openContextMenu(
+              event,
+              [
+                ...(filePanelThreadRef ? ([{ id: "open-file", label: "Open file" }] as const) : []),
+                { id: "open-vscode", label: "Open in VS Code" },
+                contextMenuSeparator("discard-separator"),
+                {
+                  id: "discard",
+                  label: "Discard change",
+                  destructive: true,
+                  disabled: isActionRunning(discardKey),
+                  icon: "trash",
+                },
+                contextMenuSeparator("copy-separator"),
+                { id: "copy-filename", label: "Copy filename", icon: "copy" },
+                { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
+              ],
+              {
+                discard: discardFile,
+                ...(filePanelThreadRef
+                  ? { "open-file": () => openFilePanel(file.path, changeSet.cwd) }
+                  : {}),
+                "open-vscode": () => openInVsCode(file.path, changeSet.cwd),
+                "copy-filename": () => copyText(fileBasename(file.path)),
+                "copy-full-path": () => copyText(resolvePathLinkTarget(file.path, changeSet.cwd)),
+              },
+            )
+          }
+        >
+          {diffExpanded ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <span onClick={(event) => event.stopPropagation()}>
+            <Checkbox
+              checked={selected}
+              disabled={isActionRunning(discardKey)}
+              aria-label={selected ? `Deselect ${file.path}` : `Select ${file.path}`}
+              onCheckedChange={(checked) =>
+                toggleChangeSetFileSelection(changeSet, file.path, checked === true)
+              }
+            />
+          </span>
+          <span
+            className={cn(
+              "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
+              fileStatusColor(file.status),
             )}
-            <span onClick={(event) => event.stopPropagation()}>
-              <Checkbox
-                checked={selected}
-                disabled={isActionRunning(discardKey)}
-                aria-label={selected ? `Deselect ${file.path}` : `Select ${file.path}`}
-                onCheckedChange={(checked) =>
-                  toggleChangeSetFileSelection(changeSet, file.path, checked === true)
-                }
-              />
-            </span>
-            <span
-              className={cn(
-                "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
-                fileStatusColor(file.status),
-              )}
+          >
+            {fileStatusLetter(file.status)}
+          </span>
+          <span className="min-w-0 flex-1 truncate">{file.path}</span>
+          <StatLabels insertions={file.insertions} deletions={file.deletions} />
+          <RowActions>
+            <IconButton
+              label="Discard changes"
+              destructive
+              disabled={isActionRunning(discardKey)}
+              loading={isActionRunning(discardKey)}
+              onClick={discardFile}
             >
-              {fileStatusLetter(file.status)}
-            </span>
-            <span className="min-w-0 flex-1 truncate">{file.path}</span>
-            <StatLabels insertions={file.insertions} deletions={file.deletions} />
-            <RowActions>
-              <IconButton
-                label="Discard changes"
-                destructive
-                disabled={isActionRunning(discardKey)}
-                loading={isActionRunning(discardKey)}
-                onClick={discardFile}
-              >
-                <Trash2 className="size-3.5" />
+              <Trash2 className="size-3.5" />
+            </IconButton>
+            {filePanelThreadRef ? (
+              <IconButton label="Open file" onClick={() => openFilePanel(file.path, changeSet.cwd)}>
+                <FileText className="size-3.5" />
               </IconButton>
-              {filePanelThreadRef ? (
-                <IconButton
-                  label="Open file"
-                  onClick={() => openFilePanel(file.path, changeSet.cwd)}
-                >
-                  <FileText className="size-3.5" />
-                </IconButton>
-              ) : null}
-              <IconButton
-                label="Open in VS Code"
-                onClick={() => void openInVsCode(file.path, changeSet.cwd)}
-              >
-                <VisualStudioCode className="size-3.5" />
-              </IconButton>
-            </RowActions>
-          </TooltipTrigger>
-          <FilePathTooltip
-            file={file}
-            anchor={() => fileTooltipAnchor(tooltipTriggerRef.current)}
-          />
-        </Tooltip>
+            ) : null}
+            <IconButton
+              label="Open in VS Code"
+              onClick={() => void openInVsCode(file.path, changeSet.cwd)}
+            >
+              <VisualStudioCode className="size-3.5" />
+            </IconButton>
+          </RowActions>
+        </WorkingFileTooltipRow>
         {diffExpanded ? (
           <div className="ml-4 border-l border-border/60 pl-1">
             {renderFileDiff(file, diffSource, changeSet.cwd)}
