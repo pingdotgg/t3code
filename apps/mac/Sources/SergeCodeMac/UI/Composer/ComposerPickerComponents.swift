@@ -104,9 +104,14 @@ struct ComposerPickerChoiceRow: View {
     let title: String
     var detail: String?
     let isSelected: Bool
+    /// Per-choice accent (effort level / mode colors). Nil keeps the shared
+    /// meadow accent so plain pickers are unchanged.
+    var tint: Color? = nil
     let action: () -> Void
 
     @UIState private var isHovering = false
+
+    private var accent: Color { tint ?? AlpineTheme.accent }
 
     var body: some View {
         Button(action: action) {
@@ -117,7 +122,7 @@ struct ComposerPickerChoiceRow: View {
                         .foregroundStyle(isSelected ? AlpineTheme.forest : Color.secondary)
                         .frame(width: 28, height: 28)
                         .background(
-                            isSelected ? AlpineTheme.accent.opacity(0.85) : Color.secondary.opacity(0.09),
+                            isSelected ? accent.opacity(0.85) : Color.secondary.opacity(0.09),
                             in: RoundedRectangle(cornerRadius: 7, style: .continuous)
                         )
                 }
@@ -140,7 +145,7 @@ struct ComposerPickerChoiceRow: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(AlpineTheme.forest)
                     .frame(width: 22, height: 22)
-                    .background(AlpineTheme.accent, in: Circle())
+                    .background(accent, in: Circle())
                     .opacity(isSelected ? 1 : 0)
             }
             .padding(.horizontal, 9)
@@ -154,11 +159,14 @@ struct ComposerPickerChoiceRow: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .animation(Motion.feedback, value: isHovering)
+        // Selection changes ease the tile, checkmark, and row wash into the
+        // new choice's color instead of snapping.
+        .animation(Motion.feedback, value: isSelected)
     }
 
     private var rowBackground: Color {
         if isHovering { return Color.primary.opacity(0.075) }
-        if isSelected { return AlpineTheme.accent.opacity(0.14) }
+        if isSelected { return accent.opacity(0.14) }
         return .clear
     }
 }

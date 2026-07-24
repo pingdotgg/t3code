@@ -81,6 +81,17 @@ enum AlpineTheme {
     static let userBubbleTop = Color(red: 0.72, green: 0.89, blue: 0.76)
     static let userBubbleBottom = Color(red: 0.58, green: 0.81, blue: 0.65)
 
+    /// Playful pastel ramp for reasoning-effort levels, calm → intense. Slot
+    /// indices line up with `EffortLevelStyle.slot`; all entries come from the
+    /// shared nature palette above so the fun stays on-identity.
+    static let effortLevelColors: [Color] = [sky, meadow, lichen, clay, lavender]
+
+    /// Color for an effort ramp slot, clamped so out-of-range slots degrade
+    /// to the nearest ramp edge instead of crashing a picker.
+    static func effortColor(slot: Int) -> Color {
+        effortLevelColors[min(max(slot, 0), effortLevelColors.count - 1)]
+    }
+
     /// A restrained, squarer geometry scale for the app's custom surfaces.
     /// Capsules remain reserved for true tags and circular status marks.
     enum Corners {
@@ -172,5 +183,31 @@ enum AlpineTheme {
             hash = hash &* 0x0000_0100_0000_01B3
         }
         return Int(hash % UInt64(count))
+    }
+}
+
+// MARK: - Mode tints
+
+extension ThreadRuntimeMode {
+    /// Semantic tint for the access level: warmer pastels ask for more
+    /// caution, cooler ones signal more autonomy.
+    var tint: Color {
+        switch self {
+        case .approvalRequired: AlpineTheme.clay
+        case .autoAcceptEdits: AlpineTheme.lichen
+        case .auto: AlpineTheme.sky
+        case .fullAccess: AlpineTheme.meadow
+        }
+    }
+}
+
+extension ThreadInteractionMode {
+    /// Tint distinguishing plan mode from default; normal stays unaccented
+    /// so the quiet state reads as the absence of color.
+    var tint: Color? {
+        switch self {
+        case .normal: nil
+        case .plan: AlpineTheme.lavender
+        }
     }
 }

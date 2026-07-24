@@ -70,19 +70,35 @@ private struct ComposerSegmentLabel: View {
     var isAccented: Bool = false
     /// When true, icon changes animate with a symbol replace transition.
     var animateSymbol: Bool = false
+    /// Overrides the accent color used when `isAccented` (per-mode tints).
+    var tint: Color? = nil
+    /// Small leading dot communicating a level color (reasoning effort).
+    var leadingDot: Color? = nil
+    /// When this value changes, the leading dot plays a one-shot bounce.
+    var dotPulse: AnyHashable? = nil
+
+    private var accentColor: Color { tint ?? AlpineTheme.accent }
 
     var body: some View {
         HStack(spacing: 6) {
+            if let leadingDot {
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 7))
+                    .foregroundStyle(leadingDot)
+                    .shadow(color: leadingDot.opacity(0.9), radius: 3)
+                    .symbolEffect(.bounce, value: dotPulse)
+            }
             Image(systemName: icon)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(isAccented ? AlpineTheme.accent : Color.secondary)
+                .foregroundStyle(isAccented ? accentColor : Color.secondary)
                 .contentTransition(
                     animateSymbol && !Motion.reduceMotion
                         ? .symbolEffect(.replace) : .identity)
             Text(title)
                 .font(.callout.weight(.medium))
-                .foregroundStyle(isAccented ? AlpineTheme.accent : Color.primary)
+                .foregroundStyle(isAccented ? accentColor : Color.primary)
                 .lineLimit(1)
+                .contentTransition(Motion.reduceMotion ? .identity : .interpolate)
         }
         .padding(.horizontal, AlpineControls.segmentHorizontalPadding)
         .padding(.vertical, AlpineControls.segmentVerticalPadding)
@@ -133,6 +149,12 @@ private struct RunProfileMenu: View {
 
     @UIState private var isHovering = false
     @UIState private var isPresented = false
+    /// Incremented on each acknowledged effort change to replay the burst.
+    @UIState private var burstToken = 0
+    /// Guards the burst so opening a thread or first appearance never fires
+    /// it — only a genuine effort change on the same thread does.
+    @UIState private var lastEffort: String?
+    @UIState private var lastThreadID: String?
 
     var body: some View {
         if let option = currentModelOption {
@@ -142,13 +164,37 @@ private struct RunProfileMenu: View {
                 ComposerSegmentLabel(
                     icon: "slider.horizontal.3",
                     title: summary(of: option),
-                    isHovering: isHovering || isPresented
+                    isHovering: isHovering || isPresented,
+                    leadingDot: effortColor(of: option),
+                    dotPulse: effectiveEffort(of: option)
                 )
             }
             .buttonStyle(.plain)
             .fixedSize()
             .help("Run profile: reasoning effort and service tier")
             .onHover { isHovering = $0 }
+            .background {
+                // The ripple lives behind the label at its natural size, so
+                // it never moves layout or delays the setting change.
+                if burstToken > 0, let color = effortColor(of: option) {
+                    EffortBurstView(color: color, token: burstToken)
+                }
+            }
+            .animation(Motion.feedback, value: effectiveEffort(of: option))
+            .onAppear {
+                lastEffort = effectiveEffort(of: option)
+                lastThreadID = thread.id
+            }
+            .onChange(of: effectiveEffort(of: option)) { oldEffort, newEffort in
+                let sameThread = lastThreadID == thread.id
+                let firstObservation = lastEffort == nil
+                lastEffort = newEffort
+                lastThreadID = thread.id
+                guard sameThread, !firstObservation, oldEffort != newEffort,
+                    Motion.profile.allowsDecorativeEffects
+                else { return }
+                burstToken += 1
+            }
             .popover(isPresented: $isPresented, arrowEdge: .top) {
                 runProfilePopover(option)
             }
@@ -167,12 +213,15 @@ private struct RunProfileMenu: View {
                 VStack(spacing: 3) {
                     if !option.effortChoices.isEmpty {
                         ComposerPickerSectionLabel(title: "Reasoning effort")
-                        ForEach(option.effortChoices) { choice in
+                        ForEach(Array(option.effortChoices.enumerated()), id: \.element.id) { index, choice in
+                            let style = EffortLevelStyle.resolve(
+                                choiceID: choice.id, index: index, count: option.effortChoices.count)
                             ComposerPickerChoiceRow(
-                                icon: "brain.head.profile",
+                                icon: style.symbolName,
                                 title: choice.label,
                                 detail: choice.isDefault ? "Provider default" : nil,
-                                isSelected: choice.id == effectiveEffort(of: option)
+                                isSelected: choice.id == effectiveEffort(of: option),
+                                tint: AlpineTheme.effortColor(slot: style.slot)
                             ) {
                                 Task { await model.setReasoningEffort(choice.id) }
                             }
@@ -212,6 +261,17 @@ private struct RunProfileMenu: View {
         thread.reasoningEffort ?? option.effortChoices.first(where: \.isDefault)?.id
     }
 
+    /// Ramp color of the currently effective effort; nil when the model has
+    /// no effort choices, so the summary stays dotless for plain models.
+    private func effortColor(of option: ModelOption) -> Color? {
+        guard let id = effectiveEffort(of: option),
+            let index = option.effortChoices.firstIndex(where: { $0.id == id })
+        else { return nil }
+        let style = EffortLevelStyle.resolve(
+            choiceID: id, index: index, count: option.effortChoices.count)
+        return AlpineTheme.effortColor(slot: style.slot)
+    }
+
     private func effectiveTier(of option: ModelOption) -> String? {
         thread.serviceTier ?? option.serviceTierChoices.first(where: \.isDefault)?.id
     }
@@ -234,6 +294,34 @@ private struct RunProfileMenu: View {
     }
 }
 
+/// One-shot colorful ripple behind the run-profile summary when the
+/// reasoning effort changes. It lives in the button's background at the
+/// control's natural size, so it never moves layout; Reduce Motion never
+/// creates it — the tint crossfade alone carries the state change.
+private struct EffortBurstView: View {
+    let color: Color
+    let token: Int
+
+    @UIState private var progress = 0.0
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
+            .stroke(color.opacity(0.9), lineWidth: 2)
+            .background(
+                RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
+                    .fill(color.opacity(0.30))
+            )
+            .scaleEffect(1 + progress * 0.22)
+            .blur(radius: progress * 3)
+            .opacity(1 - progress)
+            .allowsHitTesting(false)
+            .onChange(of: token, initial: true) { _, _ in
+                progress = 0
+                withAnimation(Motion.burst) { progress = 1 }
+            }
+    }
+}
+
 /// Menu selecting how much the agent may do without asking.
 ///
 /// Interaction mode (normal / plan) is independent of this permission axis.
@@ -251,11 +339,17 @@ private struct RuntimeModeMenu: View {
             ComposerSegmentLabel(
                 icon: thread.runtimeMode.symbolName,
                 title: thread.runtimeMode.displayName,
-                isHovering: isHovering || isPresented
+                isHovering: isHovering || isPresented,
+                isAccented: true,
+                animateSymbol: true,
+                tint: thread.runtimeMode.tint
             )
         }
         .buttonStyle(.plain)
         .fixedSize()
+        // Symbol swap, tint, and title width all ease through one curve, so
+        // switching access levels never reads as a layout jump.
+        .animation(Motion.feedback, value: thread.runtimeMode)
         .help("How much the agent may do without asking")
         .onHover { isHovering = $0 }
         .popover(isPresented: $isPresented, arrowEdge: .top) {
@@ -278,7 +372,8 @@ private struct RuntimeModeMenu: View {
                             icon: mode.symbolName,
                             title: mode.displayName,
                             detail: runtimeModeDetail(mode),
-                            isSelected: mode == thread.runtimeMode
+                            isSelected: mode == thread.runtimeMode,
+                            tint: mode.tint
                         ) {
                             Task { await model.setRuntimeMode(mode) }
                             isPresented = false
@@ -319,8 +414,9 @@ private struct InteractionModeMenu: View {
                 icon: mode.symbolName,
                 title: mode.displayName,
                 isHovering: isHovering || isPresented,
-                isAccented: mode != .normal,
-                animateSymbol: true
+                isAccented: mode.tint != nil,
+                animateSymbol: true,
+                tint: mode.tint
             )
         }
         .buttonStyle(.plain)
@@ -348,7 +444,8 @@ private struct InteractionModeMenu: View {
                             icon: choice.symbolName,
                             title: choice.displayName,
                             detail: choice.helpText,
-                            isSelected: choice == mode
+                            isSelected: choice == mode,
+                            tint: choice.tint
                         ) {
                             Task { await model.setInteractionMode(choice) }
                             isPresented = false
