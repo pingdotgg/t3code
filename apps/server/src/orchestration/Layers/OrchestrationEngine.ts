@@ -30,8 +30,10 @@ import {
   orchestrationCommandDuration,
 } from "../../observability/Metrics.ts";
 import { toPersistenceSqlError } from "../../persistence/Errors.ts";
+import { QueuedProviderTurnStartRepositoryLive } from "../../persistence/Layers/QueuedProviderTurnStarts.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
+import { QueuedProviderTurnStartRepository } from "../../persistence/Services/QueuedProviderTurnStarts.ts";
 import {
   OrchestrationCommandInvariantError,
   OrchestrationCommandPreviouslyRejectedError,
@@ -81,6 +83,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const eventStore = yield* OrchestrationEventStore;
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
+  const queuedProviderTurnStartRepository = yield* QueuedProviderTurnStartRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const crypto = yield* Crypto.Crypto;
@@ -178,6 +181,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 const savedEvent = yield* eventStore.append(nextEvent);
                 nextCommandReadModel = yield* projectEvent(nextCommandReadModel, savedEvent);
                 yield* projectionPipeline.projectEvent(savedEvent);
+                if (savedEvent.type === "thread.turn-start-requested") {
+                  yield* queuedProviderTurnStartRepository.enqueue({
+                    eventSequence: savedEvent.sequence,
+                    threadId: savedEvent.payload.threadId,
+                    messageId: savedEvent.payload.messageId,
+                  });
+                }
                 committedEvents.push(savedEvent);
               }
 
@@ -350,4 +360,4 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 export const OrchestrationEngineLive = Layer.effect(
   OrchestrationEngineService,
   makeOrchestrationEngine,
-);
+).pipe(Layer.provide(QueuedProviderTurnStartRepositoryLive));

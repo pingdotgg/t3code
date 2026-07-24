@@ -32,26 +32,26 @@ it("publishes the desktop, mobile, and standalone CLI artifacts for every main p
   assert.notInclude(workflow.toLowerCase(), "personal");
 });
 
-it("builds and verifies versioned self-contained remote CLIs for macOS and Linux", () => {
-  const macosBuildScript = serverPackageJson.scripts["build:remote-binary:darwin-arm64"];
-  const linuxBuildScript = serverPackageJson.scripts["build:remote-binary:linux-x64"];
+it("builds and verifies versioned self-contained full CLIs for macOS and Linux", () => {
+  const macosBuildScript = serverPackageJson.scripts["build:binary:darwin-arm64"];
+  const linuxBuildScript = serverPackageJson.scripts["build:binary:linux-x64"];
 
-  assert.include(macosBuildScript, "bun build src/remote-bin.ts");
-  assert.include(macosBuildScript, "--compile");
-  assert.include(macosBuildScript, "--target=bun-darwin-arm64");
-  assert.include(macosBuildScript, "--outfile dist/t3-darwin-arm64");
-  assert.include(linuxBuildScript, "bun build src/remote-bin.ts");
-  assert.include(linuxBuildScript, "--compile");
-  assert.include(linuxBuildScript, "--target=bun-linux-x64-baseline");
-  assert.include(linuxBuildScript, "--outfile dist/t3-linux-x64");
+  assert.include(macosBuildScript, "vp run --filter @t3tools/web build");
+  assert.include(macosBuildScript, "bun scripts/buildStandaloneBinary.ts");
+  assert.include(macosBuildScript, "bun-darwin-arm64 dist/t3-darwin-arm64");
+  assert.include(linuxBuildScript, "vp run --filter @t3tools/web build");
+  assert.include(linuxBuildScript, "bun scripts/buildStandaloneBinary.ts");
+  assert.include(linuxBuildScript, "bun-linux-x64-baseline dist/t3-linux-x64");
   assert.include(workflow, "oven-sh/setup-bun@v2");
   assert.include(workflow, "bun-version: 1.3.14");
-  assert.include(workflow, "vp run --filter t3 build:remote-binary:darwin-arm64");
-  assert.include(workflow, "vp run --filter t3 build:remote-binary:linux-x64");
+  assert.include(workflow, "vp run --filter t3 build:binary:darwin-arm64");
+  assert.include(workflow, "vp run --filter t3 build:binary:linux-x64");
   assert.include(workflow, 'cli="apps/server/dist/t3-darwin-arm64"');
   assert.include(workflow, 'cli="apps/server/dist/t3-linux-x64"');
   assert.include(workflow, 'cli_version="$("$cli" --version)"');
   assert.include(workflow, '"$cli" remote --help');
+  assert.include(workflow, '"$cli" serve --help');
+  assert.include(workflow, '"$cli" service --help');
   assert.include(workflow, 'codesign --force --sign - "$cli"');
   assert.include(workflow, 'shasum -a 256 "$(basename "$cli_asset")"');
   assert.include(workflow, 'sha256sum "$(basename "$cli_asset")"');

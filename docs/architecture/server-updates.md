@@ -77,14 +77,40 @@ preflight also removes the candidate runtime so retrying the same version perfor
 
 ## Host Service Lifecycle
 
-The systemd user service is a host lifecycle concern, not a T3 Connect resource. The standalone
+The systemd or s6 service is a host lifecycle concern, not a T3 Connect resource. The standalone
 `t3 service install`, `uninstall`, `update`, and `status` commands own it. Install and update both
 reconcile the unit through `BootService`; running `npx t3@latest service update` therefore pins and
 activates the latest CLI release without requiring a connected client.
 
+Systemd is the default. Classic s6 scan directories are selected explicitly with
+`--supervisor s6 --service-dir <absolute-path>`. The generated service definition marks the running
+process with its supervisor and definition location so automatic updates never guess which host
+service they are allowed to replace.
+
 The `t3 connect` onboarding flow may offer service installation, but it calls the same reconciliation
 operation as `t3 service install`. Connect logout only disables cloud access and clears its
 authorization; it does not uninstall the host service.
+
+## GitHub Release Auto-Update
+
+`serviceUpdateRepository` is an empty-by-default server setting. When it contains an exact
+`https://github.com/<owner>/<repository>` URL and the process is running in a T3-managed systemd or
+s6 service, the server checks GitHub releases every 15 minutes.
+
+The updater:
+
+1. selects a strictly newer release with a binary and adjacent `.sha256` asset for the host;
+2. verifies SHA-256 and runs the staged binary with `--version`;
+3. enters update-pending, continuing to persist new turn starts without invoking providers;
+4. drains already-admitted provider work and waits for all existing provider turns to finish;
+5. atomically replaces the supervisor definition and restarts the service.
+
+Every turn-start event is recorded in a durable provider-start outbox and removed only after the
+provider accepts it. The replacement process replays remaining outbox entries after boot, so the
+queue supports multiple starts per thread and survives the supervisor restart without depending on
+in-memory work. The admission lock is shared by WebSocket and HTTP orchestration dispatch. Download
+or preflight failures never enter pending. Definition reload/restart failures restore the prior
+systemd unit or s6 run script and resume provider execution.
 
 ## Process Handoff
 

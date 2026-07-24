@@ -23,10 +23,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TxRef from "effect/TxRef";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
+import { serviceUpdateCoordinator } from "../../cloud/serviceUpdateCoordinator.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
+import { QueuedProviderTurnStartRepositoryLive } from "../../persistence/Layers/QueuedProviderTurnStarts.ts";
+import { QueuedProviderTurnStartRepository } from "../../persistence/Services/QueuedProviderTurnStarts.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
@@ -189,6 +193,7 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
+  const queuedProviderTurnStartRepository = yield* QueuedProviderTurnStartRepository;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
@@ -204,6 +209,8 @@ const make = Effect.gen(function* () {
     timeToLive: HANDLED_TURN_START_KEY_TTL,
     lookup: () => Effect.succeed(true),
   });
+  const inFlightTurnStartKeys = new Set<string>();
+  const inFlightTurnStarts = yield* TxRef.make(0);
 
   const hasHandledTurnStartRecently = (key: string) =>
     Cache.getOption(handledTurnStartKeys, key).pipe(
@@ -213,6 +220,16 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+
+  const deleteQueuedTurnStart = (eventSequence: number) =>
+    queuedProviderTurnStartRepository.delete({ eventSequence }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor could not clear a queued turn start", {
+          eventSequence,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -773,11 +790,15 @@ const make = Effect.gen(function* () {
   ) {
     const key = turnStartKeyForEvent(event);
     if (yield* hasHandledTurnStartRecently(key)) {
+      if (!inFlightTurnStartKeys.has(key)) {
+        yield* deleteQueuedTurnStart(event.sequence);
+      }
       return;
     }
 
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {
+      yield* deleteQueuedTurnStart(event.sequence);
       return;
     }
 
@@ -791,6 +812,7 @@ const make = Effect.gen(function* () {
         turnId: null,
         createdAt: event.payload.createdAt,
       });
+      yield* deleteQueuedTurnStart(event.sequence);
       return;
     }
 
@@ -876,12 +898,29 @@ const make = Effect.gen(function* () {
     );
 
     if (Option.isNone(sendTurnRequest)) {
+      yield* deleteQueuedTurnStart(event.sequence);
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    inFlightTurnStartKeys.add(key);
+    yield* TxRef.update(inFlightTurnStarts, (count) => count + 1).pipe(Effect.tx);
+    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.matchCauseEffect({
+        onFailure: (cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Cache.invalidate(handledTurnStartKeys, key)
+            : recoverTurnStartFailure(cause).pipe(
+                Effect.andThen(deleteQueuedTurnStart(event.sequence)),
+              ),
+        onSuccess: () => deleteQueuedTurnStart(event.sequence),
+      }),
+      Effect.ensuring(
+        Effect.sync(() => inFlightTurnStartKeys.delete(key)).pipe(
+          Effect.andThen(TxRef.update(inFlightTurnStarts, (count) => count - 1).pipe(Effect.tx)),
+        ),
+      ),
+      Effect.forkScoped({ startImmediately: true }),
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
@@ -1052,6 +1091,13 @@ const make = Effect.gen(function* () {
         return;
       }
       case "thread.turn-start-requested":
+        if (yield* serviceUpdateCoordinator.isDraining) {
+          yield* Effect.logInfo("Queued turn start until the service update completes.", {
+            threadId: event.payload.threadId,
+            eventSequence: event.sequence,
+          });
+          return;
+        }
         yield* processTurnStartRequested(event);
         return;
       case "thread.turn-interrupt-requested":
@@ -1083,6 +1129,59 @@ const make = Effect.gen(function* () {
     );
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  const drainInFlightTurnStarts = TxRef.get(inFlightTurnStarts).pipe(
+    Effect.tap((count) => (count > 0 ? Effect.txRetry : Effect.void)),
+    Effect.tx,
+  );
+
+  const replayPendingStarts: ProviderCommandReactorShape["replayPendingStarts"] = Effect.gen(
+    function* () {
+      if (yield* serviceUpdateCoordinator.isDraining) {
+        return;
+      }
+
+      const pendingStarts = yield* queuedProviderTurnStartRepository.list().pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider command reactor could not list pending turn starts", {
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as([])),
+        ),
+      );
+      yield* Effect.forEach(
+        pendingStarts,
+        (pending) =>
+          orchestrationEngine.readEvents(Math.max(0, pending.eventSequence - 1), 1).pipe(
+            Stream.runHead,
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.void,
+                onSome: (event) =>
+                  event.type === "thread.turn-start-requested" &&
+                  event.sequence === pending.eventSequence &&
+                  event.payload.threadId === pending.threadId &&
+                  event.payload.messageId === pending.messageId
+                    ? worker.enqueue(event)
+                    : Effect.logWarning(
+                        "provider command reactor skipped a mismatched pending turn start",
+                        {
+                          threadId: pending.threadId,
+                          eventSequence: pending.eventSequence,
+                        },
+                      ),
+              }),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider command reactor could not replay pending turn start", {
+                threadId: pending.threadId,
+                eventSequence: pending.eventSequence,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          ),
+        { discard: true },
+      );
+    },
+  );
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
@@ -1101,12 +1200,16 @@ const make = Effect.gen(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
     );
+    yield* replayPendingStarts;
   });
 
   return {
     start,
-    drain: worker.drain,
+    drain: worker.drain.pipe(Effect.andThen(drainInFlightTurnStarts)),
+    replayPendingStarts,
   } satisfies ProviderCommandReactorShape;
 });
 
-export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make);
+export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(
+  Layer.provide(QueuedProviderTurnStartRepositoryLive),
+);

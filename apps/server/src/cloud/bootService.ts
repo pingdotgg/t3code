@@ -29,6 +29,10 @@ const BOOT_SERVICE_NAME = "t3code";
 
 export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
+export const SERVICE_SUPERVISOR_ENV = "T3_SERVICE_SUPERVISOR";
+export const S6_SERVICE_DIR_ENV = "T3_S6_SERVICE_DIR";
+
+export type ServiceSupervisor = "systemd" | "s6";
 
 const EPHEMERAL_CACHE_SEGMENTS = [
   "/_npx/", // npx
@@ -46,6 +50,10 @@ const EPHEMERAL_CACHE_SEGMENTS = [
  */
 export function isEphemeralCacheEntry(entryPath: string): boolean {
   return EPHEMERAL_CACHE_SEGMENTS.some((segment) => entryPath.includes(segment));
+}
+
+export function isBunEmbeddedEntryPath(entryPath: string): boolean {
+  return entryPath.replaceAll("\\", "/").startsWith("/$bunfs/");
 }
 
 /**
@@ -69,13 +77,24 @@ export function quoteSystemdValue(value: string): string {
 }
 
 export interface BootServicePlan {
-  /** Absolute path of the node binary running this CLI. */
+  readonly supervisor?: ServiceSupervisor;
+  /** Absolute executable used to launch the CLI. */
   readonly nodePath: string;
-  /** Absolute path of the pinned t3 entry point the unit will run. */
+  /** Optional JavaScript entry point. Empty for a standalone executable. */
   readonly t3EntryPath: string;
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
+}
+
+function serviceExecArgs(plan: BootServicePlan): ReadonlyArray<string> {
+  return plan.t3EntryPath === ""
+    ? [plan.nodePath, "serve"]
+    : [plan.nodePath, plan.t3EntryPath, "serve"];
+}
+
+export function quoteShellValue(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 /**
@@ -102,7 +121,8 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
-    `ExecStart=${quoteSystemdValue(plan.nodePath)} ${quoteSystemdValue(plan.t3EntryPath)} serve`,
+    `Environment=${SERVICE_SUPERVISOR_ENV}=systemd`,
+    `ExecStart=${serviceExecArgs(plan).map(quoteSystemdValue).join(" ")}`,
     "Restart=always",
     "RestartSec=5",
     `StandardOutput=append:${escapeSystemdSpecifiers(plan.logPath)}`,
@@ -114,12 +134,31 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
   ].join("\n");
 }
 
+/** Classic s6/scan-directory service script. The service directory is
+ * explicit because s6-overlay and hand-managed scan directories do not share
+ * a portable default location. */
+export function renderS6RunScript(plan: BootServicePlan): string {
+  return [
+    "#!/bin/sh",
+    "set -eu",
+    `export T3CODE_HOME=${quoteShellValue(plan.baseDir)}`,
+    `export ${SERVICE_SUPERVISOR_ENV}=s6`,
+    `export ${S6_SERVICE_DIR_ENV}=${quoteShellValue(pathForS6ServiceDir(plan.unitPath))}`,
+    `exec ${serviceExecArgs(plan).map(quoteShellValue).join(" ")} >>${quoteShellValue(plan.logPath)} 2>&1`,
+    "",
+  ].join("\n");
+}
+
+function pathForS6ServiceDir(runPath: string): string {
+  return runPath.endsWith("/run") ? runPath.slice(0, -4) : runPath;
+}
+
 export class BootServiceUnsupportedError extends Schema.TaggedErrorClass<BootServiceUnsupportedError>()(
   "BootServiceUnsupportedError",
   { platform: Schema.String },
 ) {
   override get message(): string {
-    return `Background setup currently supports Linux with systemd; this machine reports '${this.platform}'.`;
+    return `Background setup supports Linux with systemd or an explicit s6 service directory; this machine reports '${this.platform}'.`;
   }
 }
 
@@ -180,6 +219,7 @@ export class BootService extends Context.Service<
 export interface BootServiceHost {
   readonly execPath: string;
   readonly cliEntryPath: string;
+  readonly standalone?: boolean;
 }
 
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
@@ -187,28 +227,45 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
+  readonly supervisor?: ServiceSupervisor;
+  readonly s6ServiceDir?: string;
 }) {
   const hostExecPath = yield* HostProcessExecutablePath;
   const hostArguments = yield* HostProcessArguments;
-  const host = input.host ?? {
-    execPath: hostExecPath,
-    // When running the packed CLI this is dist/bin.mjs; when stable (global
-    // install, repo checkout) the boot service runs this same artifact.
-    cliEntryPath: hostArguments[1] ?? "",
-  };
   const platform = yield* HostProcessPlatform;
   const homeDir = yield* Config.string("HOME").pipe(Config.withDefault(""));
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
+  const argumentEntryPath = hostArguments[1] ?? "";
+  const standalone =
+    !path.isAbsolute(argumentEntryPath) || isBunEmbeddedEntryPath(argumentEntryPath);
+  const host = input.host ?? {
+    execPath: hostExecPath,
+    // A compiled Bun executable exposes its embedded entry at the absolute
+    // virtual /$bunfs path. That path cannot be passed back to a new process.
+    cliEntryPath: standalone ? "" : argumentEntryPath,
+    standalone,
+  };
 
-  const unitDir = path.join(homeDir, ".config", "systemd", "user");
+  const supervisor = input.supervisor ?? "systemd";
+  const unitDir =
+    supervisor === "systemd"
+      ? path.join(homeDir, ".config", "systemd", "user")
+      : (input.s6ServiceDir ?? "");
   const unitPath = path.join(unitDir, BOOT_SERVICE_UNIT_FILE);
+  const definitionPath =
+    supervisor === "systemd" ? unitPath : path.join(input.s6ServiceDir ?? "", "run");
   const logPath = path.join(input.logsDir, "boot-service.log");
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion);
 
-  const requireSystemdLinux = Effect.gen(function* () {
-    if (platform !== "linux" || homeDir === "") {
+  const requireSupportedLinux = Effect.gen(function* () {
+    if (
+      platform !== "linux" ||
+      (supervisor === "systemd" && homeDir === "") ||
+      (supervisor === "s6" &&
+        (input.s6ServiceDir === undefined || !path.isAbsolute(input.s6ServiceDir)))
+    ) {
       return yield* new BootServiceUnsupportedError({ platform });
     }
   });
@@ -244,6 +301,30 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     );
   });
 
+  const waitForS6Supervision = Effect.fn("cloud.boot_service.wait_for_s6_supervision")(function* (
+    serviceDir: string,
+  ) {
+    const attempts = 100;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const result = yield* runner.run({ command: "s6-svok", args: [serviceDir] }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new BootServiceCommandError({
+              step: "waiting for s6 supervision",
+              cause,
+            }),
+        ),
+      );
+      if (result.code === 0) return;
+      if (attempt < attempts) {
+        yield* Effect.sleep(Duration.millis(50));
+      }
+    }
+    return yield* new BootServiceCommandError({
+      step: "waiting for s6 supervision",
+    });
+  });
+
   /**
    * Ensures plannedEntryPath exists before the unit points at it. A stable
    * install (global bin, repo checkout) is used as-is; an ephemeral cache
@@ -252,7 +333,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
    * of bin.mjs) because t3 ships native deps like node-pty.
    */
   const ensurePinnedRuntime = Effect.gen(function* () {
-    if (!isEphemeralCacheEntry(host.cliEntryPath)) {
+    if (host.standalone === true || !isEphemeralCacheEntry(host.cliEntryPath)) {
       return;
     }
     yield* ensurePinnedRuntimeInstalled({
@@ -288,36 +369,43 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   // Where the unit will point: derivable without touching the network, so
   // status can compare units purely; install materializes it first.
-  const plannedEntryPath = isEphemeralCacheEntry(host.cliEntryPath)
-    ? runtimePaths.entryPath
-    : host.cliEntryPath;
+  const plannedEntryPath =
+    host.standalone === true
+      ? ""
+      : isEphemeralCacheEntry(host.cliEntryPath)
+        ? runtimePaths.entryPath
+        : host.cliEntryPath;
   const plan: BootServicePlan = {
+    supervisor,
     nodePath: host.execPath,
     t3EntryPath: plannedEntryPath,
     baseDir: input.baseDir,
     logPath,
-    unitPath,
+    unitPath: definitionPath,
   };
 
   const install: BootService["Service"]["install"] = Effect.gen(function* () {
-    yield* requireSystemdLinux;
+    yield* requireSupportedLinux;
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
 
     yield* ensurePinnedRuntime;
 
-    const previousUnit = yield* fs.exists(unitPath).pipe(
+    const previousUnit = yield* fs.exists(definitionPath).pipe(
       Effect.flatMap((exists) =>
         exists
-          ? fs.readFileString(unitPath).pipe(Effect.map(Option.some))
+          ? fs.readFileString(definitionPath).pipe(Effect.map(Option.some))
           : Effect.succeed(Option.none<string>()),
       ),
       Effect.mapError((cause) => new BootServiceInstallError({ cause })),
     );
 
+    const definition =
+      supervisor === "systemd" ? renderBootServiceUnit(plan) : renderS6RunScript(plan);
     yield* fs.makeDirectory(unitDir, { recursive: true }).pipe(
-      Effect.andThen(fs.writeFileString(unitPath, renderBootServiceUnit(plan))),
+      Effect.andThen(fs.writeFileString(definitionPath, definition)),
+      Effect.andThen(supervisor === "s6" ? fs.chmod(definitionPath, 0o755) : Effect.void),
       Effect.mapError((cause) => new BootServiceInstallError({ cause })),
     );
 
@@ -325,25 +413,31 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // would make service status report it as installed even though it was
     // never enabled or lingered.
     yield* Effect.gen(function* () {
-      yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]);
-      yield* runStep("enabling the service", "systemctl", [
-        "--user",
-        "enable",
-        BOOT_SERVICE_UNIT_FILE,
-      ]);
-      // restart rather than enable --now: --now does not replace an already
-      // running process, so repairing a stale unit would leave the old
-      // server running until reboot. restart also starts a stopped service.
-      yield* runStep("starting the service", "systemctl", [
-        "--user",
-        "restart",
-        BOOT_SERVICE_UNIT_FILE,
-      ]);
-      // Linger keeps the user manager (and this service) running without an
-      // open session — the whole point on a box reached over SSH. No
-      // username argument: loginctl defaults to the calling user, which is
-      // always right, while $USER can be stale (su without -l) or unset.
-      yield* runStep("enabling lingering for this user", "loginctl", ["enable-linger"]);
+      if (supervisor === "systemd") {
+        yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]);
+        yield* runStep("enabling the service", "systemctl", [
+          "--user",
+          "enable",
+          BOOT_SERVICE_UNIT_FILE,
+        ]);
+        yield* runStep("starting the service", "systemctl", [
+          "--user",
+          "restart",
+          BOOT_SERVICE_UNIT_FILE,
+        ]);
+        yield* runStep("enabling lingering for this user", "loginctl", ["enable-linger"]);
+      } else {
+        yield* runStep("rescanning the s6 service directory", "s6-svscanctl", [
+          "-a",
+          path.dirname(unitDir),
+        ]);
+        yield* waitForS6Supervision(unitDir);
+        yield* runStep(
+          Option.isSome(previousUnit) ? "restarting the s6 service" : "starting the s6 service",
+          "s6-svc",
+          [Option.isSome(previousUnit) ? "-r" : "-u", unitDir],
+        );
+      }
     }).pipe(Effect.tapError(() => rollbackFailedInstall(previousUnit)));
 
     return plan;
@@ -358,65 +452,102 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     previousUnit: Option.Option<string>,
   ) {
     if (Option.isSome(previousUnit)) {
-      yield* fs.writeFileString(unitPath, previousUnit.value).pipe(Effect.ignore);
+      yield* fs.writeFileString(definitionPath, previousUnit.value).pipe(Effect.ignore);
     } else {
-      yield* runStep("cleaning up the service", "systemctl", [
-        "--user",
-        "disable",
-        "--now",
-        BOOT_SERVICE_UNIT_FILE,
-      ]).pipe(Effect.ignore);
-      yield* fs.remove(unitPath).pipe(Effect.ignore);
+      if (supervisor === "systemd") {
+        yield* runStep("cleaning up the service", "systemctl", [
+          "--user",
+          "disable",
+          "--now",
+          BOOT_SERVICE_UNIT_FILE,
+        ]).pipe(Effect.ignore);
+      } else {
+        yield* runStep("cleaning up the s6 service", "s6-svc", ["-d", unitDir]).pipe(Effect.ignore);
+      }
+      yield* fs.remove(definitionPath).pipe(Effect.ignore);
     }
-    yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]).pipe(
-      Effect.ignore,
-    );
+    if (supervisor === "systemd") {
+      yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]).pipe(
+        Effect.ignore,
+      );
+    }
     if (Option.isSome(previousUnit)) {
-      yield* runStep("restoring the previous service", "systemctl", [
-        "--user",
-        "restart",
-        BOOT_SERVICE_UNIT_FILE,
-      ]).pipe(Effect.ignore);
+      yield* (
+        supervisor === "systemd"
+          ? runStep("restoring the previous service", "systemctl", [
+              "--user",
+              "restart",
+              BOOT_SERVICE_UNIT_FILE,
+            ])
+          : runStep("restoring the previous s6 service", "s6-svc", ["-r", unitDir])
+      ).pipe(Effect.ignore);
     }
   });
 
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
-    yield* requireSystemdLinux;
+    yield* requireSupportedLinux;
     const exists = yield* fs
-      .exists(unitPath)
+      .exists(definitionPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
     if (!exists) {
       return false;
     }
-    yield* runStep("stopping the service", "systemctl", [
-      "--user",
-      "disable",
-      "--now",
-      BOOT_SERVICE_UNIT_FILE,
-    ]);
+    if (supervisor === "systemd") {
+      yield* runStep("stopping the service", "systemctl", [
+        "--user",
+        "disable",
+        "--now",
+        BOOT_SERVICE_UNIT_FILE,
+      ]);
+    } else {
+      yield* runStep("stopping the s6 service", "s6-svc", ["-d", unitDir]);
+    }
     yield* fs
-      .remove(unitPath)
+      .remove(definitionPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]);
+    if (supervisor === "systemd") {
+      yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]);
+    }
     return true;
   }).pipe(Effect.withSpan("cloud.boot_service.uninstall"));
 
   const status: BootService["Service"]["status"] = Effect.gen(function* () {
-    if (platform !== "linux" || homeDir === "") {
-      return { supported: false, installed: false, current: false, unitPath, logPath };
+    if (
+      platform !== "linux" ||
+      (supervisor === "systemd" && homeDir === "") ||
+      (supervisor === "s6" &&
+        (input.s6ServiceDir === undefined || !path.isAbsolute(input.s6ServiceDir)))
+    ) {
+      return {
+        supported: false,
+        installed: false,
+        current: false,
+        unitPath: definitionPath,
+        logPath,
+      };
     }
-    const unitExists = yield* fs.exists(unitPath);
+    const unitExists = yield* fs.exists(definitionPath);
     if (!unitExists) {
-      return { supported: true, installed: false, current: false, unitPath, logPath };
+      return {
+        supported: true,
+        installed: false,
+        current: false,
+        unitPath: definitionPath,
+        logPath,
+      };
     }
-    const unit = yield* fs.readFileString(unitPath);
+    const unit = yield* fs.readFileString(definitionPath);
     // A unit is current only if it matches what install would write now (an
     // older CLI wrote a different runtime/node path) AND the entry point it
     // references still exists (a pinned runtime under ~/.t3 can be deleted to
     // reclaim space). Either mismatch makes connect offer a repair.
-    const entryExists = yield* fs.exists(plannedEntryPath);
-    const current = unit === renderBootServiceUnit(plan) && entryExists;
-    return { supported: true, installed: true, current, unitPath, logPath };
+    const entryExists = yield* fs.exists(
+      plannedEntryPath === "" ? host.execPath : plannedEntryPath,
+    );
+    const expected =
+      supervisor === "systemd" ? renderBootServiceUnit(plan) : renderS6RunScript(plan);
+    const current = unit === expected && entryExists;
+    return { supported: true, installed: true, current, unitPath: definitionPath, logPath };
   }).pipe(
     Effect.mapError((cause) => new BootServiceInstallError({ cause })),
     Effect.withSpan("cloud.boot_service.status"),
@@ -430,4 +561,6 @@ export const layer = (input: {
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
+  readonly supervisor?: ServiceSupervisor;
+  readonly s6ServiceDir?: string;
 }) => Layer.effect(BootService, make(input));

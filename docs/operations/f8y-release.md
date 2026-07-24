@@ -105,12 +105,11 @@ requires an Apple-issued provisioning profile.
 Automatic macOS updates additionally require publishing the Electron ZIP and channel metadata
 alongside the DMG. The f8y workflow currently publishes only the manually installable DMG.
 
-## Standalone remote CLI
+## Standalone CLI
 
 The macOS arm64 and Linux x86_64 CLIs embed their JavaScript runtime and dependencies, so Node.js,
-Bun, and a package manager are not required on the target machine. They intentionally contain only
-the `t3 remote` command tree; local server, provider, and desktop commands remain available from the
-npm package and desktop app.
+Bun, and a package manager are not required on the target machine. They contain the complete `t3`
+command tree, including the server, service lifecycle, provider, and remote commands.
 
 Download the binary for your platform and its adjacent `.sha256` file from the same f8y release,
 then verify and install it.

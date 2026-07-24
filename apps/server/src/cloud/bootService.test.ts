@@ -110,6 +110,7 @@ it("renders a systemd unit with absolute paths and append-mode logging", () => {
       "WorkingDirectory=%h",
       "Environment=T3CODE_HOME=/home/theo/.t3",
       "Environment=T3_BOOT_SERVICE_UNIT=t3code.service",
+      "Environment=T3_SERVICE_SUPERVISOR=systemd",
       "ExecStart=/usr/local/bin/node /home/theo/.t3/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs serve",
       "Restart=always",
       "RestartSec=5",
@@ -143,6 +144,25 @@ it("quotes systemd values containing spaces and escapes percent specifiers", () 
   assert.include(unit, "StandardError=append:/home/me/100%%logs/boot.log");
 });
 
+it("renders a classic s6 run script with supervisor markers and shell-safe paths", () => {
+  const script = BootService.renderS6RunScript({
+    supervisor: "s6",
+    nodePath: "/home/me/T3's bin/t3",
+    t3EntryPath: "",
+    baseDir: "/home/me/T3 Data",
+    logPath: "/home/me/T3 Data/logs/service.log",
+    unitPath: "/etc/s6-overlay/s6-rc.d/user/contents.d/t3code/run",
+  });
+
+  assert.include(script, "export T3_SERVICE_SUPERVISOR=s6");
+  assert.include(
+    script,
+    "export T3_S6_SERVICE_DIR='/etc/s6-overlay/s6-rc.d/user/contents.d/t3code'",
+  );
+  assert.include(script, "exec '/home/me/T3'\\''s bin/t3' 'serve'");
+  assert.include(script, ">>'/home/me/T3 Data/logs/service.log' 2>&1");
+});
+
 it("flags package-manager cache entry points as ephemeral", () => {
   assert.isTrue(
     BootService.isEphemeralCacheEntry("/home/theo/.npm/_npx/abc123/node_modules/t3/dist/bin.mjs"),
@@ -169,6 +189,11 @@ it("flags package-manager cache entry points as ephemeral", () => {
       "/home/theo/.t3/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs",
     ),
   );
+});
+
+it("recognizes Bun's virtual compiled entry path", () => {
+  assert.isTrue(BootService.isBunEmbeddedEntryPath("/$bunfs/root/app"));
+  assert.isFalse(BootService.isBunEmbeddedEntryPath("/opt/t3/dist/bin.mjs"));
 });
 
 it.layer(NodeServices.layer)("BootService", (it) => {
@@ -246,6 +271,52 @@ it.layer(NodeServices.layer)("BootService", (it) => {
     }),
   );
 
+  it.effect("installs and controls an s6 scan-directory service", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const serviceDir = path.join(dirs.home, "service", "t3code");
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+        host: {
+          execPath: dirs.stableEntry,
+          cliEntryPath: "",
+          standalone: true,
+        },
+      }).pipe(Effect.provide(makeRecordingRunnerLayer(commands)), provideHostRefs(""));
+
+      const plan = yield* service.install;
+      assert.equal(plan.supervisor, "s6");
+      assert.equal(plan.unitPath, path.join(serviceDir, "run"));
+      assert.deepEqual(commands, [
+        {
+          command: "s6-svscanctl",
+          args: ["-a", path.dirname(serviceDir)],
+        },
+        { command: "s6-svok", args: [serviceDir] },
+        { command: "s6-svc", args: ["-u", serviceDir] },
+      ]);
+      const script = yield* fs.readFileString(plan.unitPath);
+      assert.include(script, `exec '${dirs.stableEntry}' 'serve'`);
+      assert.isTrue((yield* fs.stat(plan.unitPath)).mode % 2 === 1);
+      assert.isTrue((yield* service.status).current);
+
+      yield* service.install;
+      assert.deepEqual(commands.at(-1), {
+        command: "s6-svc",
+        args: ["-r", serviceDir],
+      });
+
+      assert.isTrue(yield* service.uninstall);
+      assert.deepEqual(commands.at(-1), { command: "s6-svc", args: ["-d", serviceDir] });
+      assert.isFalse(yield* fs.exists(plan.unitPath));
+    }),
+  );
+
   it.effect("pins a runtime via npm install when running from the npx cache", () =>
     Effect.gen(function* () {
       const { dirs, fs, path } = yield* makeTestContext();
@@ -314,6 +385,27 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       const plan = yield* service.install;
       assert.equal(plan.nodePath, "/opt/node/bin/node");
       assert.equal(plan.t3EntryPath, dirs.stableEntry);
+    }),
+  );
+
+  it.effect("invokes a Bun-compiled executable without its virtual entry path", () =>
+    Effect.gen(function* () {
+      const { dirs } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(commands)),
+        provideHostRefs(dirs.home),
+        Effect.provideService(HostProcessExecutablePath, "/opt/bin/t3"),
+        Effect.provideService(HostProcessArguments, ["bun", "/$bunfs/root/app", "service"]),
+      );
+
+      const plan = yield* service.install;
+      assert.equal(plan.nodePath, "/opt/bin/t3");
+      assert.equal(plan.t3EntryPath, "");
     }),
   );
 

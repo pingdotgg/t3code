@@ -1,28 +1,42 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as BunServices from "@effect/platform-bun/BunServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
-import { ThreadId, TurnId } from "@t3tools/contracts";
+import * as NetService from "@t3tools/shared/Net";
+import { RemoteCliError } from "./cli/remote.ts";
+import { makeCli } from "./cli/root.ts";
+import { reportRemoteCliFailure } from "./standalone-bin.ts";
+import { resolveEmbeddedClientAsset, type EmbeddedClientFile } from "./standaloneClientAssets.ts";
 
-import { formatRemoteCliDiagnostic, RemoteCliError } from "./cli/remote.ts";
-import { RemoteWatchInteractionRequiredError } from "./cli/remoteWatch.ts";
-import { cli, reportRemoteCliFailure } from "./remote-bin.ts";
+const cli = makeCli({ cloudEnabled: true });
+const CliTestLayer = Layer.mergeAll(BunServices.layer, NetService.layer, TestConsole.layer);
 
-it.effect("exposes the remote orchestration commands without the local server commands", () =>
+it("resolves exact standalone web assets and falls back to the SPA entry", () => {
+  const index = Object.assign(new Blob(["index"]), {
+    name: "standalone-client/apps/web/dist/index.html",
+  }) satisfies EmbeddedClientFile;
+  const script = Object.assign(new Blob(["script"]), {
+    name: "standalone-client/apps/web/dist/assets/index.js",
+  }) satisfies EmbeddedClientFile;
+
+  assert.equal(resolveEmbeddedClientAsset("assets/index.js", [index, script]), script);
+  assert.equal(resolveEmbeddedClientAsset("threads/one", [index, script]), index);
+});
+
+it.effect("exposes the complete CLI command tree", () =>
   Effect.scoped(
     Effect.gen(function* () {
       yield* Command.runWith(cli, { version: "1.2.3" })(["--help"]);
       const output = (yield* TestConsole.logLines).join("\n");
 
-      assert.include(output, "Interact with remote T3 Code agents.");
-      assert.include(output, "remote");
-      assert.notInclude(output, "serve");
-      assert.notInclude(output, "connect");
+      for (const command of ["serve", "connect", "service", "project", "auth", "remote"]) {
+        assert.include(output, command);
+      }
     }),
-  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, TestConsole.layer))),
+  ).pipe(Effect.provide(CliTestLayer)),
 );
 
 it.effect("exposes additive pending commands without changing watch availability", () =>
@@ -35,7 +49,7 @@ it.effect("exposes additive pending commands without changing watch availability
         assert.include(output, command);
       }
     }),
-  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, TestConsole.layer))),
+  ).pipe(Effect.provide(CliTestLayer)),
 );
 
 it.effect(
@@ -56,7 +70,7 @@ it.effect(
         assert.include(output, "--decision");
         assert.include(output, "--idempotency-key");
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, TestConsole.layer))),
+    ).pipe(Effect.provide(CliTestLayer)),
 );
 
 it.effect(
@@ -87,7 +101,7 @@ it.effect(
           assert.equal(failure.reason, "confirmation-required");
         }
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, TestConsole.layer))),
+    ).pipe(Effect.provide(CliTestLayer)),
 );
 
 it.effect("rejects non-strict answer JSON before making a remote request", () =>
@@ -111,37 +125,19 @@ it.effect("rejects non-strict answer JSON before making a remote request", () =>
       assert.instanceOf(failure, RemoteCliError);
       assert.equal(failure.reason, "invalid-input");
     }),
-  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, TestConsole.layer))),
+  ).pipe(Effect.provide(CliTestLayer)),
 );
 
-it("never formats unknown remote failures with raw diagnostic content", () => {
-  const diagnostic = formatRemoteCliDiagnostic(
-    new Error("token=top-secret /home/alice/private stack trace"),
-  );
-  assert.equal(diagnostic, "Remote request failed.");
-  assert.notInclude(diagnostic, "top-secret");
-  assert.notInclude(diagnostic, "/home/alice");
-});
-
-it.effect("exits cleanly after watch has emitted its machine-readable interaction result", () =>
+it.effect("sanitizes standalone remote failures and preserves their exit code", () =>
   Effect.gen(function* () {
     let exitCode: number | undefined;
-    yield* reportRemoteCliFailure(
-      new RemoteWatchInteractionRequiredError({
-        threadId: ThreadId.make("thread-1"),
-        turnId: TurnId.make("turn-1"),
-        interaction: {
-          kind: "approval",
-          requestId: "request-1",
-          prompt: { requestKind: "command" },
-        },
-      }),
-      (code) => {
-        exitCode = code;
-      },
-    );
+    yield* reportRemoteCliFailure(new RemoteCliError({ reason: "request-failed" }), (code) => {
+      exitCode = code;
+    });
 
-    assert.equal(exitCode, 26);
-    assert.deepEqual(yield* TestConsole.errorLines, []);
+    assert.equal(exitCode, 1);
+    assert.deepEqual(yield* TestConsole.errorLines, [
+      "Remote request failed: The remote environment request failed.",
+    ]);
   }).pipe(Effect.provide(TestConsole.layer)),
 );

@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import * as ServiceUpdateCoordinator from "../../cloud/serviceUpdateCoordinator.ts";
 import * as ProjectSetupScriptRunner from "../../project/ProjectSetupScriptRunner.ts";
 import * as ServerRuntimeStartup from "../../serverRuntimeStartup.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
@@ -516,13 +517,16 @@ function makeDispatcher(
               ),
             );
 
-    return yield* startup
+    const enqueue = startup
       .enqueueCommand(dispatchEffect)
       .pipe(
         Effect.mapError((cause) =>
           toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
         ),
       );
+    return yield* command.type === "thread.turn.start"
+      ? ServiceUpdateCoordinator.serviceUpdateCoordinator.withTurnAdmission(enqueue)
+      : enqueue;
   });
 
   return { dispatch };

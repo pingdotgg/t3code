@@ -25,6 +25,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
+import { resolveEmbeddedClientAsset } from "./standaloneClientAssets.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -222,17 +223,7 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       });
     }
 
-    const staticDir =
-      config.staticDir ?? (config.devUrl ? yield* ServerConfig.resolveStaticDir() : undefined);
-    if (!staticDir) {
-      return HttpServerResponse.text("No static directory configured and no dev URL set.", {
-        status: 503,
-      });
-    }
-
-    const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const staticRoot = path.resolve(staticDir);
     const staticRequestPath = url.value.pathname === "/" ? "/index.html" : url.value.pathname;
     const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
     const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
@@ -247,6 +238,24 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Invalid static file path", { status: 400 });
     }
 
+    const staticDir =
+      config.staticDir ?? (config.devUrl ? yield* ServerConfig.resolveStaticDir() : undefined);
+    if (!staticDir) {
+      const embedded = resolveEmbeddedClientAsset(staticRelativePath);
+      if (!embedded) {
+        return HttpServerResponse.text("No static directory configured and no dev URL set.", {
+          status: 503,
+        });
+      }
+      const data = new Uint8Array(yield* Effect.promise(() => embedded.arrayBuffer()));
+      return HttpServerResponse.uint8Array(data, {
+        status: 200,
+        contentType: embedded.type || Mime.getType(embedded.name) || "application/octet-stream",
+      });
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const staticRoot = path.resolve(staticDir);
     const isWithinStaticRoot = (candidate: string) =>
       candidate === staticRoot ||
       candidate.startsWith(staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`);

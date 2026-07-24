@@ -30,6 +30,12 @@ export interface ProviderCommandReactorShape {
    * Intended for test use to replace timing-sensitive sleeps.
    */
   readonly drain: Effect.Effect<void>;
+
+  /**
+   * Re-enqueues durable turn-start intents that are still pending.
+   * Used at startup and when an update activation is rolled back.
+   */
+  readonly replayPendingStarts: Effect.Effect<void>;
 }
 
 /**

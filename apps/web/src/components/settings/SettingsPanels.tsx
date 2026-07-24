@@ -409,6 +409,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
         ? ["Provider update checks"]
         : []),
+      ...(settings.serviceUpdateRepository !== DEFAULT_UNIFIED_SETTINGS.serviceUpdateRepository
+        ? ["Service update repository"]
+        : []),
       ...(Duration.toMillis(settings.automaticGitFetchInterval) !==
       Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval)
         ? ["Automatic Git fetch interval"]
@@ -443,6 +446,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
       settings.enableProviderUpdateChecks,
+      settings.serviceUpdateRepository,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       settings.wordWrap,
@@ -469,6 +473,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      serviceUpdateRepository: DEFAULT_UNIFIED_SETTINGS.serviceUpdateRepository,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
@@ -701,6 +706,34 @@ export function GeneralSettingsPanel() {
                 updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
               }
               aria-label="Check provider versions"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Service update repository"
+          description="GitHub repository whose releases should update a managed systemd or s6 service. Leave empty to disable automatic service updates."
+          resetAction={
+            settings.serviceUpdateRepository !==
+            DEFAULT_UNIFIED_SETTINGS.serviceUpdateRepository ? (
+              <SettingResetButton
+                label="service update repository"
+                onClick={() =>
+                  updateSettings({
+                    serviceUpdateRepository: DEFAULT_UNIFIED_SETTINGS.serviceUpdateRepository,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-full sm:w-80"
+              type="url"
+              value={settings.serviceUpdateRepository}
+              placeholder="https://github.com/owner/repository"
+              aria-label="Service update GitHub repository"
+              onCommit={(serviceUpdateRepository) => updateSettings({ serviceUpdateRepository })}
             />
           }
         />

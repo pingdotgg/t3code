@@ -17,8 +17,8 @@
   "scripts": {
     "dev": "node --watch src/bin.ts",
     "build:bundle": "vp pack",
-    "build:remote-binary:darwin-arm64": "bun build src/remote-bin.ts --compile --target=bun-darwin-arm64 --minify --sourcemap --outfile dist/t3-darwin-arm64",
-    "build:remote-binary:linux-x64": "bun build src/remote-bin.ts --compile --target=bun-linux-x64-baseline --minify --sourcemap --outfile dist/t3-linux-x64",
+    "build:binary:darwin-arm64": "vp run --filter @t3tools/web build && bun scripts/buildStandaloneBinary.ts bun-darwin-arm64 dist/t3-darwin-arm64",
+    "build:binary:linux-x64": "vp run --filter @t3tools/web build && bun scripts/buildStandaloneBinary.ts bun-linux-x64-baseline dist/t3-linux-x64",
     "start": "node dist/bin.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vp test run"

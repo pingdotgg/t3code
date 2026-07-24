@@ -64,7 +64,7 @@ jobs:
             scripts/resolve-f8y-release.test.ts \
             scripts/build-desktop-artifact.test.ts \
             scripts/f8y-release-workflow.test.ts \
-            apps/server/src/remote-bin.test.ts \
+            apps/server/src/standalone-bin.test.ts \
             apps/mobile/f8yBuildConfig.test.ts \
             apps/mobile/plugins/withAndroidF8yReleaseSigning.test.ts
 
@@ -125,8 +125,8 @@ jobs:
             --build-version "${{ needs.metadata_and_checks.outputs.version }}" \
             --verbose
 
-      - name: Build standalone remote CLI
-        run: vp run --filter t3 build:remote-binary:darwin-arm64
+      - name: Build standalone CLI
+        run: vp run --filter t3 build:binary:darwin-arm64
 
       - name: Verify and collect DMG and CLI
         run: |
@@ -183,6 +183,8 @@ jobs:
             exit 1
           fi
           "$cli" remote --help | grep -F "Use the supported remote orchestration API."
+          "$cli" serve --help | grep -F "Run the T3 Code server without opening a browser."
+          "$cli" service --help | grep -F "Manage the T3 Code background service."
           codesign --force --sign - "$cli"
           codesign --verify --strict --verbose=2 "$cli"
 
@@ -237,8 +239,8 @@ jobs:
       - name: Align package versions
         run: node scripts/update-release-package-versions.ts "${{ needs.metadata_and_checks.outputs.version }}"
 
-      - name: Build standalone remote CLI
-        run: vp run --filter t3 build:remote-binary:linux-x64
+      - name: Build standalone CLI
+        run: vp run --filter t3 build:binary:linux-x64
 
       - name: Verify and collect Linux CLI
         run: |
@@ -260,6 +262,8 @@ jobs:
             exit 1
           fi
           "$cli" remote --help | grep -F "Use the supported remote orchestration API."
+          "$cli" serve --help | grep -F "Run the T3 Code server without opening a browser."
+          "$cli" service --help | grep -F "Manage the T3 Code background service."
 
           mkdir -p release-publish
           cli_asset="release-publish/t3-${{ needs.metadata_and_checks.outputs.version }}-linux-x64"
@@ -442,7 +446,7 @@ jobs:
 
             - macOS: ad-hoc-signed arm64 DMG with a SHA-256 checksum. It is not Apple-notarized. After copying the app to Applications and trying to open it once, use System Settings → Privacy & Security → Open Anyway.
             - Android: signed APK for installation on your devices and guided updates through Obtainium.
-            - CLI: self-contained macOS arm64 and Linux x86_64 binaries for `t3 remote` commands, each with a SHA-256 checksum. The macOS binary is ad-hoc signed.
+            - CLI: self-contained macOS arm64 and Linux x86_64 binaries with the complete `t3` command set, each with a SHA-256 checksum. The macOS binary is ad-hoc signed.
 
             Obtainium source: `https://github.com/totalolage/t3code`
             APK filter: `^T3-Code-.*-android\.apk$`
