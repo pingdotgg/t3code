@@ -10,10 +10,14 @@ import { describe, expect } from "vite-plus/test";
 
 import {
   extractXAiAskUserQuestions,
+  extractXAiExitPlanModePlan,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
+  makeXAiExitPlanModeApprovedResponse,
+  makeXAiExitPlanModeCapturedResponse,
   makeXAiPromptCompletionRuntime,
   XAiAskUserQuestionRequest,
+  XAiExitPlanModeRequest,
 } from "./XAiAcpExtension.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
@@ -36,8 +40,55 @@ const makePromptCompletionRuntime = (env: NodeJS.ProcessEnv) =>
   });
 
 const decodeXAiAskUserQuestionRequest = Schema.decodeUnknownSync(XAiAskUserQuestionRequest);
+const decodeXAiExitPlanModeRequest = Schema.decodeUnknownSync(XAiExitPlanModeRequest);
 
 describe("XAiAcpExtension", () => {
+  it("extracts the plan from the real xAI exit_plan_mode payload shape", () => {
+    const decoded = decodeXAiExitPlanModeRequest({
+      sessionId: "session-1",
+      toolCallId: "tool-call-1",
+      planContent: "# Plan\n\n- Step one\n",
+    });
+
+    expect(extractXAiExitPlanModePlan(decoded)).toEqual("# Plan\n\n- Step one");
+  });
+
+  it("extracts the plan from wrapped _x.ai exit_plan_mode payloads", () => {
+    const decoded = decodeXAiExitPlanModeRequest({
+      method: "_x.ai/exit_plan_mode",
+      params: {
+        sessionId: "session-1",
+        toolCallId: "tool-call-1",
+        planContent: "# Wrapped plan",
+      },
+    });
+
+    expect(extractXAiExitPlanModePlan(decoded)).toEqual("# Wrapped plan");
+  });
+
+  it("treats missing or blank exit_plan_mode plan content as absent", () => {
+    expect(
+      extractXAiExitPlanModePlan(decodeXAiExitPlanModeRequest({ sessionId: "session-1" })),
+    ).toBeUndefined();
+    expect(
+      extractXAiExitPlanModePlan(
+        decodeXAiExitPlanModeRequest({ sessionId: "session-1", planContent: "   " }),
+      ),
+    ).toBeUndefined();
+    expect(
+      extractXAiExitPlanModePlan(
+        decodeXAiExitPlanModeRequest({ sessionId: "session-1", planContent: null }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("builds exit_plan_mode responses Grok understands", () => {
+    expect(makeXAiExitPlanModeApprovedResponse()).toEqual({ outcome: "approved" });
+
+    const captured = makeXAiExitPlanModeCapturedResponse();
+    expect(captured.outcome).toEqual("rejected");
+    expect(captured.feedback).toContain("End your turn");
+  });
   it("extracts questions from the real xAI ask_user_question payload shape", () => {
     const questions = extractXAiAskUserQuestions({
       sessionId: "session-1",

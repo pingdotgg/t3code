@@ -19,6 +19,9 @@ const emitInterleavedAssistantToolCalls =
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const emitXAiExitPlanMode = process.env.T3_ACP_EMIT_XAI_EXIT_PLAN_MODE === "1";
+const xAiExitPlanFile = process.env.T3_ACP_XAI_EXIT_PLAN_FILE;
+const xAiExitPlanRepeat = process.env.T3_ACP_XAI_EXIT_PLAN_REPEAT === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
@@ -770,6 +773,44 @@ const program = Effect.gen(function* () {
           ],
         });
 
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitXAiExitPlanMode) {
+        if (xAiExitPlanFile) {
+          // Mimic Grok reporting the plan-file path on plan-mode entry, then
+          // racing its own plan write: exit_plan_mode carries no planContent.
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "enter-plan-mode-tool-call-1",
+              status: "completed",
+              rawOutput: {
+                type: "EnterPlanMode",
+                Entered: {
+                  message: "You have entered plan mode.",
+                  plan_file_path: xAiExitPlanFile,
+                },
+              },
+            },
+          });
+        }
+        // Optionally re-present within the same prompt, mimicking the model
+        // revising the plan right after receiving the revise feedback.
+        const presentations = xAiExitPlanRepeat ? 2 : 1;
+        for (let index = 0; index < presentations; index += 1) {
+          const result = yield* agent.client.extRequest("_x.ai/exit_plan_mode", {
+            sessionId: requestedSessionId,
+            toolCallId: `exit-plan-mode-tool-call-${index + 1}`,
+            ...(xAiExitPlanFile
+              ? { planContent: null }
+              : { planContent: `# Plan v${index + 1}\n\n- Add the endpoint\n- Add the test` }),
+          });
+          if (typeof result !== "object" || result === null || !("outcome" in result)) {
+            throw new Error("Expected _x.ai/exit_plan_mode response outcome.");
+          }
+        }
         return { stopReason: "end_turn" };
       }
 

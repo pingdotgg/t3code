@@ -196,6 +196,70 @@ export function makeXAiAskUserQuestionCancelledResponse(): XAiAskUserQuestionCan
   return { outcome: "cancelled" };
 }
 
+const XAiExitPlanModeParams = Schema.Struct({
+  sessionId: Schema.String,
+  toolCallId: Schema.optional(Schema.String),
+  planContent: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const XAiWrappedExitPlanModeParams = Schema.Struct({
+  method: Schema.Literals(["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]),
+  params: XAiExitPlanModeParams,
+});
+
+/**
+ * Grok's plan-approval reverse request. When the agent finishes planning it
+ * calls its `exit_plan_mode` tool, which the CLI intercepts and forwards to
+ * the ACP client as `_x.ai/exit_plan_mode` with the plan-file contents. If the
+ * client cannot answer, the tool fails with "client disconnected mid-approval"
+ * and plan mode stays active.
+ */
+export const XAiExitPlanModeRequest = Schema.Union([
+  XAiExitPlanModeParams,
+  XAiWrappedExitPlanModeParams,
+]);
+
+type XAiExitPlanModeRequestParams = typeof XAiExitPlanModeParams.Type;
+export type XAiExitPlanModeRequest = typeof XAiExitPlanModeRequest.Type;
+
+function unwrapExitPlanModeParams(params: XAiExitPlanModeRequest): XAiExitPlanModeRequestParams {
+  return "params" in params ? params.params : params;
+}
+
+export function extractXAiExitPlanModePlan(params: XAiExitPlanModeRequest): string | undefined {
+  return trimmed(unwrapExitPlanModeParams(params).planContent ?? undefined);
+}
+
+/**
+ * Grok interprets the response outcome as: `approved` exits plan mode and
+ * tells the agent to implement the plan; any other outcome is treated as
+ * "revise" — the tool completes with "The user wants to revise the plan."
+ * plus the feedback text, and plan mode stays active. (Grok's protocol also
+ * accepts `abandoned` to quit the plan entirely; T3 Code never sends it, so
+ * this type only models the outcomes T3 Code produces.)
+ */
+export interface XAiExitPlanModeResponse {
+  readonly outcome: "approved" | "rejected";
+  readonly feedback?: string;
+}
+
+export function makeXAiExitPlanModeApprovedResponse(): XAiExitPlanModeResponse {
+  return { outcome: "approved" };
+}
+
+/**
+ * Response sent after T3 Code captures the plan as a proposed plan. The
+ * feedback is surfaced to the agent as a user message, so it is phrased to
+ * end the turn until the user acts on the plan card.
+ */
+export function makeXAiExitPlanModeCapturedResponse(): XAiExitPlanModeResponse {
+  return {
+    outcome: "rejected",
+    feedback:
+      "The plan is now displayed for review. Do not present it again and do not ask follow-up questions. End your turn; I will reply with feedback or ask you to implement the plan.",
+  };
+}
+
 /**
  * Adds Grok's private prompt-completion fallback around a standards-only ACP runtime.
  * The underlying runtime remains unaware of xAI methods and metadata.
