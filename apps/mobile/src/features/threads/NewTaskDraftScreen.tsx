@@ -2,7 +2,11 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, usePreventRemove } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
-import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
+import {
+  KeyboardAvoidingView,
+  KeyboardStickyView,
+  useKeyboardState,
+} from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -50,6 +54,14 @@ import { useRemoteConnectionStatus } from "../../state/use-remote-environment-re
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
+
+const ANDROID_DRAFT_COMPOSER_STICKY_STYLE = {
+  position: "absolute",
+  bottom: 0,
+  left: 0,
+  right: 0,
+} as const;
+const ANDROID_DRAFT_COMPOSER_KEYBOARD_OFFSET = { closed: 0, opened: 0 } as const;
 
 function formatWorkspaceLabel(input: {
   readonly workspaceMode: string;
@@ -1048,78 +1060,84 @@ export function NewTaskDraftScreen(props: {
     // The draft is a thread that doesn't exist yet, so it mirrors the thread
     // page: in-screen header, empty feed canvas above, and the same floating
     // composer chrome as ThreadComposer (collapsed pill → expanded card).
+    // Keep the composer bottom-anchored to the IME so its focus-driven height
+    // expansion grows upward instead of racing a padding-based relayout and
+    // leaving the toolbar underneath the keyboard.
     return (
       <View className="flex-1 bg-screen">
         <NativeStackScreenOptions options={{ headerShown: false }} />
         <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
 
-        <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
-          <View className="flex-1" />
-
-          <View
-            className="px-4 pt-2"
-            style={{
-              paddingBottom: controlsBottomPadding,
-              experimental_backgroundImage: isDarkMode
-                ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
-                : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
-            }}
+        <View className="relative min-h-0 flex-1">
+          <KeyboardStickyView
+            style={ANDROID_DRAFT_COMPOSER_STICKY_STYLE}
+            offset={ANDROID_DRAFT_COMPOSER_KEYBOARD_OFFSET}
           >
-            <ComposerSurface
-              isDarkMode={isDarkMode}
-              style={
-                isExpanded
-                  ? {
-                      borderRadius: 20,
-                      overflow: "hidden",
-                      paddingHorizontal: 14,
-                      paddingVertical: 12,
-                    }
-                  : {
-                      borderRadius: 999,
-                      overflow: "hidden",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      paddingLeft: 18,
-                      paddingRight: 5,
-                      paddingVertical: 5,
-                    }
-              }
+            <View
+              className="px-4 pt-2"
+              style={{
+                paddingBottom: controlsBottomPadding,
+                experimental_backgroundImage: isDarkMode
+                  ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
+                  : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
+              }}
             >
-              {isExpanded && flow.attachments.length > 0 ? (
-                <View className="pb-2.5">
-                  <ComposerAttachmentStrip
-                    attachments={flow.attachments}
-                    onRemove={
-                      isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
-                    }
+              <ComposerSurface
+                isDarkMode={isDarkMode}
+                style={
+                  isExpanded
+                    ? {
+                        borderRadius: 20,
+                        overflow: "hidden",
+                        paddingHorizontal: 14,
+                        paddingVertical: 12,
+                      }
+                    : {
+                        borderRadius: 999,
+                        overflow: "hidden",
+                        flexDirection: "row",
+                        alignItems: "center",
+                        paddingLeft: 18,
+                        paddingRight: 5,
+                        paddingVertical: 5,
+                      }
+                }
+              >
+                {isExpanded && flow.attachments.length > 0 ? (
+                  <View className="pb-2.5">
+                    <ComposerAttachmentStrip
+                      attachments={flow.attachments}
+                      onRemove={
+                        isIncomingShareTransferPending ? () => undefined : flow.removeAttachment
+                      }
+                    />
+                  </View>
+                ) : null}
+                <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
+                {!isExpanded ? (
+                  <ControlPill
+                    icon="arrow.up"
+                    variant="primary"
+                    disabled={!canStart}
+                    onPress={() => void handleStart()}
                   />
-                </View>
-              ) : null}
-              <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
-              {!isExpanded ? (
-                <ControlPill
-                  icon="arrow.up"
-                  variant="primary"
-                  disabled={!canStart}
-                  onPress={() => void handleStart()}
-                />
-              ) : null}
-            </ComposerSurface>
+                ) : null}
+              </ComposerSurface>
 
-            {isExpanded ? (
-              <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
-                <ComposerToolbarScroller
-                  fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
-                  fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
-                >
-                  {toolbarPills}
-                </ComposerToolbarScroller>
-                {startButton}
-              </ComposerToolbarRow>
-            ) : null}
-          </View>
-        </KeyboardAvoidingView>
+              {isExpanded ? (
+                <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
+                  <ComposerToolbarScroller
+                    fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
+                    fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
+                  >
+                    {toolbarPills}
+                  </ComposerToolbarScroller>
+                  {startButton}
+                </ComposerToolbarRow>
+              ) : null}
+            </View>
+          </KeyboardStickyView>
+        </View>
       </View>
     );
   }
