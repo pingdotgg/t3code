@@ -15,6 +15,7 @@ import {
   type ThreadId,
   type TurnId,
   type KeybindingCommand,
+  T3_PROJECT_FILE_NAME,
   OrchestrationThreadActivity,
   ProviderInteractionMode,
   ProviderDriverKind,
@@ -144,6 +145,8 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import { getProjectFileQueryData, setProjectFileQueryData } from "./files/projectFilesQueryState";
+import { upsertT3ProjectFileScript } from "~/t3ProjectFileScripts";
 import {
   buildProjectScript,
   commandForProjectScript,
@@ -1106,6 +1109,9 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
+  const writeProjectFile = useAtomCommand(projectEnvironment.writeFile, {
+    reportFailure: false,
+  });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
   });
@@ -2800,6 +2806,36 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [environmentId, updateProject, upsertKeybinding],
   );
+  const shareProjectScript = useCallback(
+    async (input: {
+      readonly script: ProjectScript;
+      readonly previousScript?: ProjectScript;
+    }): Promise<void> => {
+      if (!activeProject) return;
+      const cwd = activeProject.workspaceRoot;
+      const existingContents =
+        getProjectFileQueryData(activeProject.environmentId, cwd, T3_PROJECT_FILE_NAME)?.contents ??
+        null;
+      const contents = upsertT3ProjectFileScript({
+        contents: existingContents,
+        script: input.script,
+        ...(input.previousScript ? { previousScript: input.previousScript } : {}),
+      });
+      const result = await writeProjectFile({
+        environmentId: activeProject.environmentId,
+        input: {
+          cwd,
+          relativePath: T3_PROJECT_FILE_NAME,
+          contents,
+        },
+      });
+      if (result._tag === "Failure") {
+        throw squashAtomCommandFailure(result);
+      }
+      setProjectFileQueryData(activeProject.environmentId, cwd, T3_PROJECT_FILE_NAME, contents);
+    },
+    [activeProject, writeProjectFile],
+  );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput): Promise<AtomCommandResult<void, unknown>> => {
       if (!activeProject) {
@@ -2819,7 +2855,7 @@ function ChatViewContent(props: ChatViewProps) {
           ]
         : [...activeProject.scripts, nextScript];
 
-      return persistProjectScripts({
+      const result = await persistProjectScripts({
         projectId: activeProject.id,
         projectCwd: activeProject.workspaceRoot,
         previousScripts: activeProject.scripts,
@@ -2827,8 +2863,22 @@ function ChatViewContent(props: ChatViewProps) {
         keybinding: input.keybinding,
         keybindingCommand: commandForProjectScript(nextId),
       });
+      if (result._tag === "Success" && input.shareWithProject) {
+        try {
+          await shareProjectScript({ script: nextScript });
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Action saved, but could not be shared",
+              description: error instanceof Error ? error.message : "Could not update t3.json.",
+            }),
+          );
+        }
+      }
+      return result;
     },
-    [activeProject, persistProjectScripts],
+    [activeProject, persistProjectScripts, shareProjectScript],
   );
   const updateProjectScript = useCallback(
     async (
@@ -2852,7 +2902,7 @@ function ChatViewContent(props: ChatViewProps) {
             : script,
       );
 
-      return persistProjectScripts({
+      const result = await persistProjectScripts({
         projectId: activeProject.id,
         projectCwd: activeProject.workspaceRoot,
         previousScripts: activeProject.scripts,
@@ -2860,8 +2910,25 @@ function ChatViewContent(props: ChatViewProps) {
         keybinding: input.keybinding,
         keybindingCommand: commandForProjectScript(scriptId),
       });
+      if (result._tag === "Success" && input.shareWithProject) {
+        try {
+          await shareProjectScript({
+            script: updatedScript,
+            previousScript: existingScript,
+          });
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Action saved, but could not be shared",
+              description: error instanceof Error ? error.message : "Could not update t3.json.",
+            }),
+          );
+        }
+      }
+      return result;
     },
-    [activeProject, persistProjectScripts],
+    [activeProject, persistProjectScripts, shareProjectScript],
   );
   const deleteProjectScript = useCallback(
     async (scriptId: string): Promise<AtomCommandResult<void, unknown>> => {

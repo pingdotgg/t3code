@@ -100,6 +100,8 @@ export interface NewProjectScriptInput {
   command: string;
   icon: ProjectScriptIcon;
   runOnWorktreeCreate: boolean;
+  /** When true, also add this action to the repository's checked-in t3.json. */
+  shareWithProject: boolean;
   keybinding: string | null;
   /** Optional URL to open in the in-app preview when this script runs. */
   previewUrl: string | null;
@@ -144,6 +146,7 @@ export default function ProjectScriptsControl({
   const [icon, setIcon] = useState<ProjectScriptIcon>("play");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
+  const [shareWithProject, setShareWithProject] = useState(false);
   const [keybinding, setKeybinding] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [autoOpenPreview, setAutoOpenPreview] = useState(false);
@@ -217,6 +220,7 @@ export default function ProjectScriptsControl({
         command: trimmedCommand,
         icon,
         runOnWorktreeCreate,
+        shareWithProject,
         keybinding: keybindingRule?.key ?? null,
         previewUrl: trimmedPreviewUrl.length > 0 ? trimmedPreviewUrl : null,
         autoOpenPreview: trimmedPreviewUrl.length > 0 ? autoOpenPreview : false,
@@ -247,6 +251,7 @@ export default function ProjectScriptsControl({
     setIcon("play");
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(false);
+    setShareWithProject(false);
     setKeybinding("");
     setPreviewUrl("");
     setAutoOpenPreview(false);
@@ -261,6 +266,7 @@ export default function ProjectScriptsControl({
     setIcon(script.icon);
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(script.runOnWorktreeCreate);
+    setShareWithProject(false);
     setKeybinding(keybindingValueForCommand(keybindings, commandForProjectScript(script.id)) ?? "");
     setPreviewUrl(script.previewUrl ?? "");
     setAutoOpenPreview(script.autoOpenPreview ?? false);
@@ -281,6 +287,7 @@ export default function ProjectScriptsControl({
       command: fileScript.command,
       icon: fileScript.icon ?? "play",
       runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
+      shareWithProject: false,
       keybinding: null,
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
@@ -296,6 +303,7 @@ export default function ProjectScriptsControl({
       setIcon(payload.icon);
       setIconPickerOpen(false);
       setRunOnWorktreeCreate(payload.runOnWorktreeCreate);
+      setShareWithProject(false);
       setKeybinding("");
       setPreviewUrl(payload.previewUrl ?? "");
       setAutoOpenPreview(payload.autoOpenPreview);
@@ -454,6 +462,7 @@ export default function ProjectScriptsControl({
           setCommand("");
           setIcon("play");
           setRunOnWorktreeCreate(false);
+          setShareWithProject(false);
           setKeybinding("");
           setPreviewUrl("");
           setAutoOpenPreview(false);
@@ -560,6 +569,18 @@ export default function ProjectScriptsControl({
                 <Switch
                   checked={runOnWorktreeCreate}
                   onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+                <span className="flex flex-col gap-0.5">
+                  <span>Share with everyone on this project</span>
+                  <span className="text-xs font-normal text-muted-foreground">
+                    Adds this action to the repository&apos;s t3.json file.
+                  </span>
+                </span>
+                <Switch
+                  checked={shareWithProject}
+                  onCheckedChange={(checked) => setShareWithProject(Boolean(checked))}
                 />
               </label>
               <label

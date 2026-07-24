@@ -68,6 +68,17 @@ export function getOptimisticProjectFileQueryData(
   return appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath))?.data ?? null;
 }
 
+export function getProjectFileQueryData(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+): ProjectReadFileResult | null {
+  const optimistic = getOptimisticProjectFileQueryData(environmentId, cwd, relativePath);
+  if (optimistic !== null) return optimistic;
+  const result = appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath));
+  return Option.getOrNull(AsyncResult.value(result));
+}
+
 export function confirmProjectFileQueryData(
   environmentId: EnvironmentId,
   cwd: string,
