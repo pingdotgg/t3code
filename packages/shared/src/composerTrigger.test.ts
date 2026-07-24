@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { serializeComposerFileLink, serializeComposerMentionPath } from "./composerTrigger.ts";
+import {
+  detectComposerTrigger,
+  serializeComposerFileLink,
+  serializeComposerMentionPath,
+} from "./composerTrigger.ts";
 
 describe("serializeComposerMentionPath", () => {
   it("keeps simple mention paths unquoted", () => {
@@ -13,6 +17,87 @@ describe("serializeComposerMentionPath", () => {
 
   it("escapes quoted mention path content", () => {
     expect(serializeComposerMentionPath('docs/My "File".md')).toBe('"docs/My \\"File\\".md"');
+  });
+});
+
+describe("detectComposerTrigger", () => {
+  it("keeps slash command detection active for provider commands", () => {
+    const text = "/rev";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps /model as its own trigger kind", () => {
+    const text = "/model";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-model",
+      query: "",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps matching /model arguments across spaces (line-scoped)", () => {
+    const text = "/model spark";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-model",
+      query: "spark",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps mid-line /model as a slash-command so the menu stays open", () => {
+    const text = "please run /model";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "model",
+      rangeStart: 11,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects slash-command trigger mid-line, not just at line start", () => {
+    const text = "fix this /rev";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: "fix this ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects slash-command trigger mid-message after a newline", () => {
+    const text = "first line\nfix this /rev";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: "first line\nfix this ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("does not trigger on a slash inside an existing token", () => {
+    const text = "path/to/file";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toBeNull();
   });
 });
 
