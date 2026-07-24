@@ -10,7 +10,7 @@ function localDate(year: number, month: number, day: number, hour: number, minut
 describe("resolveSnoozePresets", () => {
   it("offers hour, evening, tomorrow, next week in the morning", () => {
     // Wednesday 2026-04-08 10:00 local.
-    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10));
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), "locale");
     expect(presets.map((preset) => preset.id)).toEqual([
       "hour",
       "evening",
@@ -30,7 +30,7 @@ describe("resolveSnoozePresets", () => {
   });
 
   it("whenLabel complements the label instead of repeating it", () => {
-    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10));
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), "locale");
     for (const preset of presets) {
       // Day words live in the label column; the time column is time-only
       // (plus a weekday for next week, which names a different day).
@@ -43,24 +43,27 @@ describe("resolveSnoozePresets", () => {
   });
 
   it("drops the evening preset once evening is near or past", () => {
-    expect(resolveSnoozePresets(localDate(2026, 4, 8, 17, 30)).map((preset) => preset.id)).toEqual([
-      "hour",
-      "tomorrow",
-      "next-week",
-    ]);
-    expect(resolveSnoozePresets(localDate(2026, 4, 8, 21)).map((preset) => preset.id)).toEqual([
-      "hour",
-      "tomorrow",
-      "next-week",
-    ]);
+    expect(
+      resolveSnoozePresets(localDate(2026, 4, 8, 17, 30), "locale").map((preset) => preset.id),
+    ).toEqual(["hour", "tomorrow", "next-week"]);
+    expect(
+      resolveSnoozePresets(localDate(2026, 4, 8, 21), "locale").map((preset) => preset.id),
+    ).toEqual(["hour", "tomorrow", "next-week"]);
   });
 
   it("puts next week a full week out when today is Monday", () => {
     // Monday 2026-04-06.
-    const presets = resolveSnoozePresets(localDate(2026, 4, 6, 10));
+    const presets = resolveSnoozePresets(localDate(2026, 4, 6, 10), "locale");
     const nextWeek = new Date(presets.find((preset) => preset.id === "next-week")!.snoozedUntil);
     expect(nextWeek.getDay()).toBe(1);
     expect(nextWeek.getDate()).toBe(13);
+  });
+  it("formats preset times with the selected clock preference", () => {
+    const twelveHour = resolveSnoozePresets(localDate(2026, 4, 8, 10), "12-hour");
+    const twentyFourHour = resolveSnoozePresets(localDate(2026, 4, 8, 10), "24-hour");
+
+    expect(twelveHour.find((preset) => preset.id === "evening")!.whenLabel).toMatch(/PM/i);
+    expect(twentyFourHour.find((preset) => preset.id === "evening")!.whenLabel).toBe("18:00");
   });
 });
 
@@ -83,12 +86,23 @@ describe("snoozeWakeDescription", () => {
   const now = localDate(2026, 4, 8, 10);
 
   it("uses bare time today, 'tomorrow' next day, weekday within the week", () => {
-    expect(snoozeWakeDescription(localDate(2026, 4, 8, 18).toISOString(), now)).not.toContain(
+    expect(
+      snoozeWakeDescription(localDate(2026, 4, 8, 18).toISOString(), now, "locale"),
+    ).not.toContain("tomorrow");
+    expect(snoozeWakeDescription(localDate(2026, 4, 9, 9).toISOString(), now, "locale")).toContain(
       "tomorrow",
     );
-    expect(snoozeWakeDescription(localDate(2026, 4, 9, 9).toISOString(), now)).toContain(
-      "tomorrow",
+    expect(snoozeWakeDescription(localDate(2026, 4, 13, 9).toISOString(), now, "locale")).toMatch(
+      /Mon/,
     );
-    expect(snoozeWakeDescription(localDate(2026, 4, 13, 9).toISOString(), now)).toMatch(/Mon/);
+  });
+
+  it("formats wake descriptions with the selected clock preference", () => {
+    expect(snoozeWakeDescription(localDate(2026, 4, 8, 18).toISOString(), now, "12-hour")).toMatch(
+      /PM/i,
+    );
+    expect(snoozeWakeDescription(localDate(2026, 4, 8, 18).toISOString(), now, "24-hour")).toBe(
+      "18:00",
+    );
   });
 });
