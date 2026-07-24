@@ -1,6 +1,7 @@
 import * as React from "react";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -30,8 +31,9 @@ type ScopedSidebarProject = SidebarProject & {
 };
 
 type ScopedSidebarThread = ThreadSortInput & {
-  environmentId: string;
-  projectId: string;
+  id: ThreadId;
+  environmentId: EnvironmentId;
+  projectId: ProjectId;
   archivedAt: string | null;
 };
 
@@ -671,6 +673,66 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   };
 }
 
+export function filterVisibleSidebarThreads<
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id">,
+>(threads: readonly T[], optimisticallyArchivedThreadKeys: ReadonlySet<string>): T[] {
+  return threads.filter(
+    (thread) =>
+      thread.archivedAt === null &&
+      !optimisticallyArchivedThreadKeys.has(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+  );
+}
+
+export function getArchivedProjectRemovalWarning(input: {
+  memberCount: number;
+  hasLiveThreads: boolean;
+}): string {
+  const projectLabel = input.memberCount === 1 ? "this project" : "these projects";
+  if (input.hasLiveThreads) {
+    return `This permanently clears conversation history for those threads and any archived conversations in ${projectLabel}.`;
+  }
+  const verb = input.memberCount === 1 ? "has" : "have";
+  return `If ${projectLabel} ${verb} archived conversations, their history will also be permanently deleted.`;
+}
+
+export function resolveArchivedProjectRemovalCommandOptions(
+  hasLiveThreads: boolean,
+): { readonly force: true } | { readonly deleteArchivedThreads: true } {
+  if (hasLiveThreads) {
+    return { force: true };
+  }
+
+  // Archived shells are intentionally absent from the client's live thread
+  // list. Preserve the server's live-thread precondition while opting this
+  // project member's cold bundles into removal.
+  return { deleteArchivedThreads: true };
+}
+
+export function buildArchivedProjectRemovalPlans<
+  TMember extends { readonly environmentId: string; readonly id: string },
+  TThread extends { readonly environmentId: string; readonly projectId: string },
+>(
+  members: readonly TMember[],
+  projectThreads: readonly TThread[],
+): {
+  readonly member: TMember;
+  readonly memberThreads: TThread[];
+  readonly commandOptions: { readonly force: true } | { readonly deleteArchivedThreads: true };
+}[] {
+  return members.map((member) => {
+    const memberThreads = projectThreads.filter(
+      (thread) => thread.environmentId === member.environmentId && thread.projectId === member.id,
+    );
+    return {
+      member,
+      memberThreads,
+      commandOptions: resolveArchivedProjectRemovalCommandOptions(memberThreads.length > 0),
+    };
+  });
+}
+
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
 >(input: {
@@ -764,6 +826,7 @@ export function sortLogicalProjectsForSidebar<
   projects: readonly TProject[],
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,
+  optimisticallyArchivedThreadKeys: ReadonlySet<string> = new Set(),
 ): TProject[] {
   const groupKeyByProjectRef = new Map(
     projects.flatMap((project) =>
@@ -775,7 +838,14 @@ export function sortLogicalProjectsForSidebar<
   );
   const threadsByProjectKey = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) continue;
+    if (
+      thread.archivedAt !== null ||
+      optimisticallyArchivedThreadKeys.has(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      )
+    ) {
+      continue;
+    }
     const projectKey = groupKeyByProjectRef.get(`${thread.environmentId}\0${thread.projectId}`);
     if (!projectKey) continue;
     const existing = threadsByProjectKey.get(projectKey);
@@ -807,12 +877,18 @@ export function sortScopedProjectsForSidebar<
   projects: readonly TProject[],
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,
+  optimisticallyArchivedThreadKeys: ReadonlySet<string> = new Set(),
 ): TProject[] {
   const scopedKey = (environmentId: string, projectId: string) =>
     `${environmentId}\u0000${projectId}`;
   const threadsByProject = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) {
+    if (
+      thread.archivedAt !== null ||
+      optimisticallyArchivedThreadKeys.has(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      )
+    ) {
       continue;
     }
     const key = scopedKey(thread.environmentId, thread.projectId);

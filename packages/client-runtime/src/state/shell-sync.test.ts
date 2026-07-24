@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   ORCHESTRATION_WS_METHODS,
+  ThreadId,
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamItem,
 } from "@t3tools/contracts";
@@ -23,6 +24,12 @@ import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { makeEnvironmentShellState, ShellSnapshotLoader } from "./shell.ts";
+import {
+  cachedThreadGeneration,
+  evictCachedThread,
+  persistCachedThread,
+  retainCachedThread,
+} from "./threadCache.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -148,7 +155,7 @@ describe("environment shell synchronization", () => {
     }),
   );
 
-  it.effect("replaces a warm shell cache with an authoritative HTTP snapshot", () =>
+  it.effect("revalidates an HTTP shell snapshot with the authoritative socket snapshot", () =>
     Effect.gen(function* () {
       const cachedSnapshot: OrchestrationShellSnapshot = {
         snapshotSequence: 5,
@@ -159,23 +166,25 @@ describe("environment shell synchronization", () => {
       const httpSnapshot: OrchestrationShellSnapshot = {
         ...cachedSnapshot,
         snapshotSequence: 9,
-        threads: [],
+        threads: [{ id: "archived-after-http-snapshot" } as never],
         updatedAt: "2026-06-07T00:00:00.000Z",
       };
       const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
-      const capturedAfterSequence = yield* SubscriptionRef.make<number | undefined>(undefined);
-      const capturedCompletionMarker = yield* Ref.make<boolean | undefined>(undefined);
+      const capturedInput = yield* SubscriptionRef.make<{
+        readonly afterSequence?: number;
+        readonly requestCompletionMarker?: boolean;
+      } | null>(null);
       const loaderCalls = yield* SubscriptionRef.make(0);
+      const removedThreads = yield* Ref.make<string[]>([]);
+      const savedThreads = yield* Ref.make<string[]>([]);
+      const addedThreadId = ThreadId.make("archived-after-http-snapshot");
       const client = {
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: {
           readonly afterSequence?: number;
           readonly requestCompletionMarker?: boolean;
         }) =>
           Stream.unwrap(
-            Ref.set(capturedCompletionMarker, input.requestCompletionMarker).pipe(
-              Effect.andThen(SubscriptionRef.set(capturedAfterSequence, input.afterSequence)),
-              Effect.as(Stream.fromQueue(events)),
-            ),
+            SubscriptionRef.set(capturedInput, input).pipe(Effect.as(Stream.fromQueue(events))),
           ),
       } as unknown as WsRpcProtocolClient;
       const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
@@ -195,14 +204,20 @@ describe("environment shell synchronization", () => {
         loadShell: () => Effect.succeed(Option.some(cachedSnapshot)),
         saveShell: () => Effect.void,
         loadThread: () => Effect.succeed(Option.none()),
-        saveThread: () => Effect.void,
-        removeThread: () => Effect.void,
+        saveThread: (_environmentId, snapshot) =>
+          Ref.update(savedThreads, (threadIds) => [...threadIds, snapshot.thread.id]),
+        removeThread: (_environmentId, threadId) =>
+          Ref.update(removedThreads, (threadIds) => [...threadIds, threadId]),
         loadServerConfig: () => Effect.succeed(Option.none()),
         saveServerConfig: () => Effect.void,
         loadVcsRefs: () => Effect.succeed(Option.none()),
         saveVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
+      yield* retainCachedThread(cache, TARGET.environmentId, addedThreadId);
+      const staleGeneration = cachedThreadGeneration(cache, TARGET.environmentId, addedThreadId);
+      yield* evictCachedThread(cache, TARGET.environmentId, addedThreadId);
+      yield* Ref.set(removedThreads, []);
       const snapshotLoader = ShellSnapshotLoader.of({
         load: () =>
           SubscriptionRef.update(loaderCalls, (count) => count + 1).pipe(
@@ -215,24 +230,149 @@ describe("environment shell synchronization", () => {
         Effect.provideService(ShellSnapshotLoader, snapshotLoader),
       );
 
-      // Wait until the subscription is established from the warm cache.
-      yield* SubscriptionRef.changes(capturedAfterSequence).pipe(
-        Stream.filter((value) => value !== undefined),
+      // Wait until the authoritative socket snapshot subscription is established.
+      yield* SubscriptionRef.changes(capturedInput).pipe(
+        Stream.filter((value) => value !== null),
         Stream.runHead,
       );
 
-      expect(yield* SubscriptionRef.get(capturedAfterSequence)).toBe(9);
-      expect(yield* Ref.get(capturedCompletionMarker)).toBe(true);
+      expect(yield* SubscriptionRef.get(capturedInput)).toEqual({
+        requestCompletionMarker: true,
+      });
       expect(yield* SubscriptionRef.get(loaderCalls)).toBe(1);
       const synchronizing = yield* SubscriptionRef.get(shellState);
       expect(synchronizing.status).toBe("synchronizing");
       expect(Option.getOrThrow(synchronizing.snapshot)).toEqual(httpSnapshot);
+      expect(yield* Ref.get(removedThreads)).toEqual(["stale-thread"]);
+      yield* persistCachedThread(
+        cache,
+        TARGET.environmentId,
+        { snapshotSequence: 9, thread: { id: addedThreadId } as never },
+        staleGeneration,
+      );
+      expect(yield* Ref.get(savedThreads)).toEqual([]);
+      yield* persistCachedThread(
+        cache,
+        TARGET.environmentId,
+        { snapshotSequence: 9, thread: { id: addedThreadId } as never },
+        cachedThreadGeneration(cache, TARGET.environmentId, addedThreadId),
+      );
+      expect(yield* Ref.get(savedThreads)).toEqual([addedThreadId]);
 
+      yield* Queue.offer(events, {
+        kind: "snapshot",
+        snapshot: {
+          ...httpSnapshot,
+          snapshotSequence: 10,
+          threads: [],
+          updatedAt: "2026-06-07T00:00:01.000Z",
+        },
+      });
       yield* Queue.offer(events, { kind: "synchronized" });
       yield* SubscriptionRef.changes(shellState).pipe(
         Stream.filter((value) => value.status === "live"),
         Stream.runHead,
       );
+      expect(Option.getOrThrow((yield* SubscriptionRef.get(shellState)).snapshot).threads).toEqual(
+        [],
+      );
+      expect(yield* Ref.get(removedThreads)).toEqual([
+        "stale-thread",
+        "archived-after-http-snapshot",
+      ]);
+    }),
+  );
+
+  it.effect("retries failed detail eviction while the thread remains absent", () =>
+    Effect.gen(function* () {
+      const staleThreadId = ThreadId.make("stale-thread");
+      const cachedSnapshot: OrchestrationShellSnapshot = {
+        snapshotSequence: 1,
+        projects: [],
+        threads: [{ id: staleThreadId } as never],
+        updatedAt: "2026-06-06T00:00:00.000Z",
+      };
+      const httpSnapshot: OrchestrationShellSnapshot = {
+        ...cachedSnapshot,
+        snapshotSequence: 2,
+        threads: [],
+        updatedAt: "2026-06-06T00:00:01.000Z",
+      };
+      const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+      const capturedInput = yield* SubscriptionRef.make(false);
+      const evictionAttempts = yield* Ref.make(0);
+      const client = {
+        [ORCHESTRATION_WS_METHODS.subscribeShell]: () =>
+          Stream.unwrap(
+            SubscriptionRef.set(capturedInput, true).pipe(Effect.as(Stream.fromQueue(events))),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const cache = Persistence.EnvironmentCacheStore.of({
+        loadShell: () => Effect.succeed(Option.some(cachedSnapshot)),
+        saveShell: () => Effect.void,
+        loadThread: () => Effect.succeed(Option.none()),
+        saveThread: () => Effect.void,
+        removeThread: () =>
+          Ref.updateAndGet(evictionAttempts, (attempts) => attempts + 1).pipe(
+            Effect.flatMap((attempts) =>
+              attempts === 1
+                ? Effect.fail(
+                    new Persistence.ConnectionPersistenceError({
+                      operation: "remove-thread",
+                      message: "temporary failure",
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
+        loadServerConfig: () => Effect.succeed(Option.none()),
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeed(Option.none()),
+        saveVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      });
+      const shellState = yield* makeEnvironmentShellState().pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+        Effect.provideService(
+          ShellSnapshotLoader,
+          ShellSnapshotLoader.of({
+            load: () => Effect.succeed(Option.some(httpSnapshot)),
+          }),
+        ),
+      );
+
+      yield* SubscriptionRef.changes(capturedInput).pipe(
+        Stream.filter((subscribed) => subscribed),
+        Stream.runHead,
+      );
+      expect(yield* Ref.get(evictionAttempts)).toBe(1);
+
+      yield* Queue.offer(events, {
+        kind: "snapshot",
+        snapshot: {
+          ...httpSnapshot,
+          snapshotSequence: 3,
+          updatedAt: "2026-06-06T00:00:02.000Z",
+        },
+      });
+      yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter(
+          (value) => Option.isSome(value.snapshot) && value.snapshot.value.snapshotSequence === 3,
+        ),
+        Stream.runHead,
+      );
+
+      expect(yield* Ref.get(evictionAttempts)).toBe(2);
     }),
   );
 

@@ -16,6 +16,8 @@ import {
   refreshArchivedThreadsForEnvironment,
   useArchivedThreadSnapshots,
 } from "./useArchivedThreadSnapshots";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 
 export function ArchivedThreadsRouteScreen() {
   const { expand } = useClerkSettingsSheetDetent();
@@ -23,6 +25,9 @@ export function ArchivedThreadsRouteScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
   const [sortOrder, setSortOrder] = useState<ArchivedThreadSortOrder>("newest");
+  const [unarchivingThreadKeys, setUnarchivingThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const environments = useMemo<ReadonlyArray<ArchivedThreadsHeaderEnvironment>>(
     () =>
       Arr.sort(
@@ -67,6 +72,22 @@ export function ArchivedThreadsRouteScreen() {
   );
   const { unarchiveThread, confirmDeleteThread } =
     useArchivedThreadListActions(refreshChangedEnvironment);
+  const handleUnarchiveThread = useCallback(
+    async (thread: EnvironmentThreadShell) => {
+      const threadKey = scopedThreadKey(thread.environmentId, thread.id);
+      setUnarchivingThreadKeys((current) => new Set(current).add(threadKey));
+      try {
+        await unarchiveThread(thread);
+      } finally {
+        setUnarchivingThreadKeys((current) => {
+          const next = new Set(current);
+          next.delete(threadKey);
+          return next;
+        });
+      }
+    },
+    [unarchiveThread],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -86,10 +107,11 @@ export function ArchivedThreadsRouteScreen() {
       onRefresh={refresh}
       onSearchQueryChange={setSearchQuery}
       onSortOrderChange={setSortOrder}
-      onUnarchiveThread={unarchiveThread}
+      onUnarchiveThread={(thread) => void handleUnarchiveThread(thread)}
       searchQuery={searchQuery}
       selectedEnvironmentId={selectedEnvironmentId}
       sortOrder={sortOrder}
+      unarchivingThreadKeys={unarchivingThreadKeys}
     />
   );
 }

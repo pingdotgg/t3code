@@ -103,7 +103,11 @@ import {
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
 } from "./CommandPalette.logic";
-import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
+import {
+  filterVisibleSidebarThreads,
+  orderItemsByPreferredIds,
+  sortLogicalProjectsForSidebar,
+} from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
@@ -111,6 +115,7 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
 import { resolveDefaultProviderModelSelection } from "../providerInstances";
+import { useOptimisticThreadArchiveStore } from "../optimisticThreadArchiveStore";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import {
   Command,
@@ -497,6 +502,13 @@ function OpenCommandPaletteDialog(props: {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const optimisticallyArchivedThreadKeys = useOptimisticThreadArchiveStore(
+    (state) => state.threadKeys,
+  );
+  const visibleThreads = useMemo(
+    () => filterVisibleSidebarThreads(threads, optimisticallyArchivedThreadKeys),
+    [optimisticallyArchivedThreadKeys, threads],
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providers = useAtomValue(primaryServerProvidersAtom);
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
@@ -555,10 +567,10 @@ function OpenCommandPaletteDialog(props: {
     () =>
       sortLogicalProjectsForSidebar(
         unsortedProjectGroups,
-        threads,
+        visibleThreads,
         clientSettings.sidebarProjectSortOrder,
       ),
-    [clientSettings.sidebarProjectSortOrder, threads, unsortedProjectGroups],
+    [clientSettings.sidebarProjectSortOrder, unsortedProjectGroups, visibleThreads],
   );
   const contextualProjectRef = useMemo(
     () =>
@@ -749,15 +761,13 @@ function OpenCommandPaletteDialog(props: {
         : null;
       const latestThread = groupedProjectKeys
         ? (sortThreads(
-            threads.filter(
-              (thread) =>
-                thread.archivedAt === null &&
-                groupedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
+            visibleThreads.filter((thread) =>
+              groupedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
             ),
             clientSettings.sidebarThreadSortOrder,
           )[0] ?? null)
         : getLatestThreadForProject(
-            threads.filter((thread) => thread.environmentId === project.environmentId),
+            visibleThreads.filter((thread) => thread.environmentId === project.environmentId),
             project.id,
             clientSettings.sidebarThreadSortOrder,
           );
@@ -778,7 +788,7 @@ function OpenCommandPaletteDialog(props: {
       handleNewThread,
       navigate,
       projectGroupByTargetKey,
-      threads,
+      visibleThreads,
     ],
   );
 
@@ -847,7 +857,7 @@ function OpenCommandPaletteDialog(props: {
   const allThreadItems = useMemo(
     () =>
       buildThreadActionItems({
-        threads,
+        threads: visibleThreads,
         ...(activeThreadId ? { activeThreadId } : {}),
         projectTitleById,
         sortOrder: clientSettings.sidebarThreadSortOrder,
@@ -861,7 +871,13 @@ function OpenCommandPaletteDialog(props: {
           });
         },
       }),
-    [activeThreadId, clientSettings.sidebarThreadSortOrder, navigate, projectTitleById, threads],
+    [
+      activeThreadId,
+      clientSettings.sidebarThreadSortOrder,
+      navigate,
+      projectTitleById,
+      visibleThreads,
+    ],
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);
 
@@ -1302,7 +1318,7 @@ function OpenCommandPaletteDialog(props: {
       );
       if (existing) {
         const latestThread = getLatestThreadForProject(
-          threads.filter((thread) => thread.environmentId === existing.environmentId),
+          visibleThreads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
           clientSettings.sidebarThreadSortOrder,
         );
@@ -1391,7 +1407,7 @@ function OpenCommandPaletteDialog(props: {
       providers,
       setOpen,
       clientSettings.sidebarThreadSortOrder,
-      threads,
+      visibleThreads,
     ],
   );
 

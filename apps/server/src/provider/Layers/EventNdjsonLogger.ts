@@ -33,6 +33,7 @@ export type EventNdjsonStream = "native" | "canonical" | "orchestration";
 export interface EventNdjsonLogger {
   readonly filePath: string;
   write: (event: unknown, threadId: ThreadId | null) => Effect.Effect<void, never, never>;
+  closeThread?: (threadId: ThreadId) => Effect.Effect<void, never, never>;
   close: () => Effect.Effect<void, never, never>;
 }
 
@@ -278,9 +279,27 @@ export const makeEventNdjsonLogger = Effect.fn("makeEventNdjsonLogger")(function
     );
   });
 
+  const closeThread = Effect.fn("closeThread")(function* (threadId: ThreadId) {
+    const threadSegment = resolveThreadSegment(threadId);
+    yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+      const writer = state.threadWriters.get(threadSegment);
+      if (!writer) {
+        return Effect.succeed([undefined, state] as const);
+      }
+      return writer.close().pipe(
+        Effect.map(() => {
+          const nextThreadWriters = new Map(state.threadWriters);
+          nextThreadWriters.delete(threadSegment);
+          return [undefined, { ...state, threadWriters: nextThreadWriters }] as const;
+        }),
+      );
+    });
+  });
+
   return {
     filePath,
     write,
+    closeThread,
     close,
   } satisfies EventNdjsonLogger;
 });

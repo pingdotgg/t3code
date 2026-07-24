@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   archiveSelectedThreadEntries,
+  buildArchivedProjectRemovalPlans,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
+  filterVisibleSidebarThreads,
+  getArchivedProjectRemovalWarning,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -36,7 +39,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -1092,6 +1095,97 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
   };
 }
 
+describe("filterVisibleSidebarThreads", () => {
+  it("excludes archived shells and optimistically archived threads", () => {
+    const visibleThread = makeThread({ id: ThreadId.make("thread-visible") });
+    const optimisticThread = makeThread({ id: ThreadId.make("thread-optimistic") });
+    const archivedThread = makeThread({
+      id: ThreadId.make("thread-archived"),
+      archivedAt: "2026-03-09T10:05:00.000Z",
+    });
+    const optimisticThreadKey = scopedThreadKey(
+      scopeThreadRef(optimisticThread.environmentId, optimisticThread.id),
+    );
+
+    expect(
+      filterVisibleSidebarThreads(
+        [visibleThread, optimisticThread, archivedThread],
+        new Set([optimisticThreadKey]),
+      ).map((thread) => thread.id),
+    ).toEqual([visibleThread.id]);
+  });
+});
+
+describe("archived project removal with grouped project actions", () => {
+  it("derives archived-bundle command scope from each project member's threads", () => {
+    const members = [
+      { environmentId: "environment-live", id: "grouped-project" },
+      { environmentId: "environment-archived", id: "grouped-project" },
+    ];
+    const projectThreads = [
+      {
+        environmentId: "environment-live",
+        projectId: "grouped-project",
+        id: "thread-live",
+      },
+    ];
+
+    expect(
+      buildArchivedProjectRemovalPlans(members, projectThreads).map((plan) => ({
+        environmentId: plan.member.environmentId,
+        threadIds: plan.memberThreads.map((thread) => thread.id),
+        options: plan.commandOptions,
+      })),
+    ).toEqual([
+      {
+        environmentId: "environment-live",
+        threadIds: ["thread-live"],
+        options: { force: true },
+      },
+      {
+        environmentId: "environment-archived",
+        threadIds: [],
+        options: { deleteArchivedThreads: true },
+      },
+    ]);
+  });
+
+  it("describes archived deletion for standalone and grouped removals", () => {
+    expect(
+      getArchivedProjectRemovalWarning({
+        memberCount: 1,
+        hasLiveThreads: true,
+      }),
+    ).toBe(
+      "This permanently clears conversation history for those threads and any archived conversations in this project.",
+    );
+    expect(
+      getArchivedProjectRemovalWarning({
+        memberCount: 1,
+        hasLiveThreads: false,
+      }),
+    ).toBe(
+      "If this project has archived conversations, their history will also be permanently deleted.",
+    );
+    expect(
+      getArchivedProjectRemovalWarning({
+        memberCount: 2,
+        hasLiveThreads: true,
+      }),
+    ).toBe(
+      "This permanently clears conversation history for those threads and any archived conversations in these projects.",
+    );
+    expect(
+      getArchivedProjectRemovalWarning({
+        memberCount: 2,
+        hasLiveThreads: false,
+      }),
+    ).toBe(
+      "If these projects have archived conversations, their history will also be permanently deleted.",
+    );
+  });
+});
+
 describe("getFallbackThreadIdAfterDelete", () => {
   it("returns the top remaining thread in the deleted thread's project sidebar order", () => {
     const fallbackThreadId = getFallbackThreadIdAfterDelete({
@@ -1386,6 +1480,47 @@ describe("sortScopedProjectsForSidebar", () => {
       "Archived-only project",
     ]);
   });
+
+  it("does not use optimistically archived threads as project activity", () => {
+    const visibleProjectId = ProjectId.make("project-visible");
+    const optimisticProjectId = ProjectId.make("project-optimistic");
+    const optimisticThread = makeThread({
+      id: ThreadId.make("thread-optimistic"),
+      projectId: optimisticProjectId,
+      updatedAt: "2026-03-09T10:10:00.000Z",
+    });
+    const sorted = sortScopedProjectsForSidebar(
+      [
+        makeProject({
+          id: visibleProjectId,
+          title: "Visible project",
+          updatedAt: "2026-03-09T10:01:00.000Z",
+        }),
+        makeProject({
+          id: optimisticProjectId,
+          title: "Optimistic-only project",
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        }),
+      ],
+      [
+        makeThread({
+          id: ThreadId.make("thread-visible"),
+          projectId: visibleProjectId,
+          updatedAt: "2026-03-09T10:02:00.000Z",
+        }),
+        optimisticThread,
+      ],
+      "updated_at",
+      new Set([
+        scopedThreadKey(scopeThreadRef(optimisticThread.environmentId, optimisticThread.id)),
+      ]),
+    );
+
+    expect(sorted.map((project) => project.title)).toEqual([
+      "Visible project",
+      "Optimistic-only project",
+    ]);
+  });
 });
 
 describe("sortLogicalProjectsForSidebar", () => {
@@ -1422,5 +1557,53 @@ describe("sortLogicalProjectsForSidebar", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+
+  it("does not use optimistically archived threads as logical project activity", () => {
+    const visibleProjectId = ProjectId.make("project-visible");
+    const optimisticProjectId = ProjectId.make("project-optimistic");
+    const projects = [
+      {
+        ...makeProject({
+          id: visibleProjectId,
+          title: "Visible project",
+          updatedAt: "2026-03-09T10:01:00.000Z",
+        }),
+        projectKey: "logical-visible",
+        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: visibleProjectId }],
+      },
+      {
+        ...makeProject({
+          id: optimisticProjectId,
+          title: "Optimistic-only project",
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        }),
+        projectKey: "logical-optimistic",
+        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: optimisticProjectId }],
+      },
+    ];
+    const optimisticThread = makeThread({
+      id: ThreadId.make("thread-optimistic"),
+      projectId: optimisticProjectId,
+      updatedAt: "2026-03-09T10:10:00.000Z",
+    });
+
+    expect(
+      sortLogicalProjectsForSidebar(
+        projects,
+        [
+          makeThread({
+            id: ThreadId.make("thread-visible"),
+            projectId: visibleProjectId,
+            updatedAt: "2026-03-09T10:02:00.000Z",
+          }),
+          optimisticThread,
+        ],
+        "updated_at",
+        new Set([
+          scopedThreadKey(scopeThreadRef(optimisticThread.environmentId, optimisticThread.id)),
+        ]),
+      ).map((project) => project.projectKey),
+    ).toEqual(["logical-visible", "logical-optimistic"]);
   });
 });

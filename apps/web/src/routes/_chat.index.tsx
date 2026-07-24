@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { openCommandPalette } from "../commandPaletteBus";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
+import { useOptimisticThreadArchiveStore } from "../optimisticThreadArchiveStore";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
@@ -39,6 +40,9 @@ function ChatIndexRouteView() {
 function IndexDraftLanding() {
   const projects = useProjects();
   const threads = useThreadShells();
+  const optimisticallyArchivedThreadKeys = useOptimisticThreadArchiveStore(
+    (state) => state.threadKeys,
+  );
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const handleNewThread = useNewThreadHandler();
   const startingRef = useRef(false);
@@ -47,9 +51,14 @@ function IndexDraftLanding() {
   const mostRecentProject = useMemo(
     () =>
       bootstrapped
-        ? (sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null)
+        ? (sortScopedProjectsForSidebar(
+            projects,
+            threads,
+            "updated_at",
+            optimisticallyArchivedThreadKeys,
+          )[0] ?? null)
         : null,
-    [bootstrapped, projects, threads],
+    [bootstrapped, optimisticallyArchivedThreadKeys, projects, threads],
   );
 
   useEffect(() => {

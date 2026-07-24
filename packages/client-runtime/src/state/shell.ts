@@ -4,6 +4,7 @@ import {
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamItem,
   type ServerConfig,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -23,6 +24,7 @@ import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
+import { evictCachedThread, reviveCachedThread } from "./threadCache.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
@@ -71,6 +73,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     error: Option.none(),
   });
   const awaitingCompletion = yield* Ref.make(false);
+  const pendingThreadEvictions = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
   const persistence = yield* Queue.sliding<OrchestrationShellSnapshot>(1);
 
   const persist = Effect.fn("EnvironmentShellState.persist")(function* (
@@ -160,6 +163,52 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       return;
     }
 
+    const nextThreadIds = new Set(nextSnapshot.threads.map((thread) => thread.id));
+    const currentThreadIds = Option.match(current.snapshot, {
+      onNone: () => new Set<ThreadId>(),
+      onSome: (snapshot) => new Set(snapshot.threads.map((thread) => thread.id)),
+    });
+    const removedThreadIds = Option.match(current.snapshot, {
+      onNone: () => [] as ReadonlyArray<ThreadId>,
+      onSome: (snapshot) =>
+        snapshot.threads
+          .filter((thread) => !nextThreadIds.has(thread.id))
+          .map((thread) => thread.id),
+    });
+    const addedThreadIds = Option.match(current.snapshot, {
+      onNone: () => [] as ReadonlyArray<ThreadId>,
+      onSome: () =>
+        nextSnapshot.threads
+          .filter((thread) => !currentThreadIds.has(thread.id))
+          .map((thread) => thread.id),
+    });
+
+    const evictionCandidates = new Set([
+      ...(yield* Ref.get(pendingThreadEvictions)),
+      ...removedThreadIds,
+    ]);
+    for (const threadId of nextThreadIds) {
+      evictionCandidates.delete(threadId);
+    }
+    // Advance cache tombstones before publishing the new shell so detail
+    // observers cannot enqueue an obsolete write in the transition window.
+    // Keep failed disk removals pending while the shell still omits the thread;
+    // a later snapshot or event can then retry instead of stranding stale data.
+    const evictionResults = yield* Effect.forEach(evictionCandidates, (threadId) =>
+      evictCachedThread(cache, environmentId, threadId).pipe(
+        Effect.map((removed) => [threadId, removed] as const),
+      ),
+    );
+    yield* Ref.set(
+      pendingThreadEvictions,
+      new Set(evictionResults.filter(([, removed]) => !removed).map(([threadId]) => threadId)),
+    );
+    yield* Effect.forEach(
+      addedThreadIds,
+      (threadId) => reviveCachedThread(cache, environmentId, threadId),
+      { discard: true },
+    );
+
     const waiting = yield* Ref.get(awaitingCompletion);
     yield* SubscriptionRef.set(state, {
       snapshot: Option.some(nextSnapshot),
@@ -204,9 +253,17 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         const httpSnapshot = yield* snapshotLoader.load(prepared);
         if (Option.isSome(httpSnapshot)) {
           yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
+          // A cold archive can compact the event that removed a thread after
+          // this HTTP snapshot was read but before the socket subscribes. Newer
+          // servers therefore revalidate with a socket-owned snapshot, whose
+          // live buffer is attached before the projection is read. Keep the
+          // cursor resume path only for older servers that do not advertise the
+          // synchronized snapshot handoff.
+          if (supportsCompletionMarker) {
+            return { requestCompletionMarker: true as const };
+          }
           return {
             afterSequence: httpSnapshot.value.snapshotSequence,
-            ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
           };
         }
 

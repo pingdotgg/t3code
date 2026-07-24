@@ -70,6 +70,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
+import { useOptimisticThreadArchiveStore } from "../optimisticThreadArchiveStore";
 import {
   deriveProjectGroupingOverrideKey,
   getProjectOrderKey,
@@ -102,6 +103,9 @@ import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat"
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
+  buildArchivedProjectRemovalPlans,
+  filterVisibleSidebarThreads,
+  getArchivedProjectRemovalWarning,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
@@ -992,6 +996,9 @@ export default function SidebarV2() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const optimisticallyArchivedThreadKeys = useOptimisticThreadArchiveStore(
+    (state) => state.threadKeys,
+  );
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -1097,8 +1104,14 @@ export default function SidebarV2() {
     ],
   );
   const projectGroups = useMemo(
-    () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
-    [sidebarProjectSortOrder, threads, unsortedProjectGroups],
+    () =>
+      sortLogicalProjectsForSidebar(
+        unsortedProjectGroups,
+        threads,
+        sidebarProjectSortOrder,
+        optimisticallyArchivedThreadKeys,
+      ),
+    [optimisticallyArchivedThreadKeys, sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByInstanceId = useMemo(
@@ -1204,6 +1217,7 @@ export default function SidebarV2() {
       const projectThreads = threads.filter((thread) =>
         memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
       );
+      const memberRemovalPlans = buildArchivedProjectRemovalPlans(members, projectThreads);
       const isWholeGroup = members.length === projectGroup.memberProjects.length;
       const singleMember = members.length === 1 ? members[0]! : null;
       const targetLabel = singleMember?.title ?? projectGroup.displayName;
@@ -1220,7 +1234,10 @@ export default function SidebarV2() {
                         : []),
                     ]
                   : [`This removes ${members.length} grouped project entries.`]),
-                "This permanently clears conversation history for those threads.",
+                getArchivedProjectRemovalWarning({
+                  memberCount: members.length,
+                  hasLiveThreads: true,
+                }),
                 isWholeGroup
                   ? "This removes only the project entries, not the files on disk."
                   : "Other entries in this grouped project are unaffected.",
@@ -1236,9 +1253,14 @@ export default function SidebarV2() {
                         : []),
                     ]
                   : [`This removes ${members.length} grouped project entries.`]),
+                getArchivedProjectRemovalWarning({
+                  memberCount: members.length,
+                  hasLiveThreads: false,
+                }),
                 isWholeGroup
                   ? "This removes only the project entries, not the files on disk."
                   : "Other entries in this grouped project are unaffected.",
+                "This action cannot be undone.",
               ].join("\n"),
         ),
       );
@@ -1246,11 +1268,7 @@ export default function SidebarV2() {
 
       const draftStore = useComposerDraftStore.getState();
       let shouldNavigate = false;
-      for (const project of members) {
-        const memberThreads = projectThreads.filter(
-          (thread) =>
-            thread.environmentId === project.environmentId && thread.projectId === project.id,
-        );
+      for (const { member: project, memberThreads, commandOptions } of memberRemovalPlans) {
         const projectRef = scopeProjectRef(project.environmentId, project.id);
         const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
         const memberRemovalNeedsNavigation = shouldNavigateAfterProjectRemoval({
@@ -1263,7 +1281,7 @@ export default function SidebarV2() {
           environmentId: project.environmentId,
           input: {
             projectId: project.id,
-            ...(memberThreads.length > 0 ? { force: true } : {}),
+            ...commandOptions,
           },
         });
         if (result._tag === "Failure") {
@@ -1349,8 +1367,9 @@ export default function SidebarV2() {
 
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells: no archived-snapshot
-  // merging, no optimistic holds. Archived threads remain hidden here —
-  // archive keeps its original "remove from sidebar" meaning.
+  // merging. Archived threads remain hidden here — including while a local
+  // archive command is still in flight — because archive keeps its original
+  // "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const { activeThreads, snoozedThreads, settledThreads, snoozeNow } = useMemo(() => {
     const now = `${nowMinute}:00.000Z`;
@@ -1360,11 +1379,10 @@ export default function SidebarV2() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    const visible = threads.filter(
+    const visible = filterVisibleSidebarThreads(threads, optimisticallyArchivedThreadKeys).filter(
       (thread) =>
-        thread.archivedAt === null &&
-        (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+        scopedProjectKeys === null ||
+        scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
     );
     const active: EnvironmentThreadShell[] = [];
     const snoozed: EnvironmentThreadShell[] = [];
@@ -1409,6 +1427,7 @@ export default function SidebarV2() {
     autoSettleAfterDays,
     changeRequestStateByKey,
     nowMinute,
+    optimisticallyArchivedThreadKeys,
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,

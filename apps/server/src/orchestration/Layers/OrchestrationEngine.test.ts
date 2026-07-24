@@ -9,6 +9,7 @@ import {
   type OrchestrationEvent,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import { it as effectIt } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -38,6 +39,7 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
+import { ThreadColdStorage } from "../Services/ThreadColdStorage.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -866,6 +868,158 @@ describe("OrchestrationEngine", () => {
       "thread.created",
     ]);
     await runtime.dispose();
+  });
+
+  effectIt.effect("rolls restored cold storage back when unarchive dispatch fails", () => {
+    type StoredEvent =
+      ReturnType<OrchestrationEventStoreShape["append"]> extends Effect.Effect<infer A, any, any>
+        ? A
+        : never;
+    const events: StoredEvent[] = [];
+    const rolledBackThreadIds: ThreadId[] = [];
+    const finishedThreadIds: ThreadId[] = [];
+    let nextSequence = 1;
+    let restoreOnUnarchive = false;
+    let failNextFinish = false;
+
+    const flakyStore: OrchestrationEventStoreShape = {
+      append(event) {
+        if (event.commandId === CommandId.make("cmd-cold-unarchive-fail")) {
+          return Effect.fail(
+            new PersistenceSqlError({
+              operation: "test.append",
+              detail: "unarchive append failed",
+            }),
+          );
+        }
+        const savedEvent = { ...event, sequence: nextSequence } as StoredEvent;
+        nextSequence += 1;
+        events.push(savedEvent);
+        return Effect.succeed(savedEvent);
+      },
+      readFromSequence(sequenceExclusive) {
+        return Stream.fromIterable(events.filter((event) => event.sequence > sequenceExclusive));
+      },
+      readAll() {
+        return Stream.fromIterable(events);
+      },
+    };
+    const coldStorage: ThreadColdStorage["Service"] = {
+      archiveThread: () => Effect.void,
+      restoreTree: () => Effect.succeed(restoreOnUnarchive),
+      rollbackRestoreTree: (threadId) =>
+        Effect.sync(() => {
+          rolledBackThreadIds.push(threadId);
+        }),
+      finishRestoreTree: (threadId) =>
+        Effect.gen(function* () {
+          yield* Effect.sync(() => {
+            finishedThreadIds.push(threadId);
+          });
+          if (failNextFinish) {
+            failNextFinish = false;
+            return yield* Effect.die("finish restore failed");
+          }
+        }),
+      deleteThread: () => Effect.void,
+      removeProviderLogs: () => Effect.void,
+      compactLegacyStorage: Effect.void,
+      listPendingArchiveThreadIds: Effect.succeed([]),
+      listPendingDeleteThreadIds: Effect.succeed([]),
+    };
+    const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
+      prefix: "t3-orchestration-engine-test-",
+    });
+    const testLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+      Layer.provide(OrchestrationProjectionPipelineLive),
+      Layer.provide(Layer.succeed(OrchestrationEventStore, flakyStore)),
+      Layer.provide(Layer.succeed(ThreadColdStorage, coldStorage)),
+      Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+      Layer.provide(RepositoryIdentityResolver.layer),
+      Layer.provide(SqlitePersistenceMemory),
+      Layer.provideMerge(ServerConfigLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    return Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const createdAt = now();
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-cold-project-create"),
+        projectId: asProjectId("project-cold-rollback"),
+        title: "Cold rollback project",
+        workspaceRoot: "/tmp/project-cold-rollback",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-cold-thread-create"),
+        threadId: ThreadId.make("thread-cold-rollback"),
+        projectId: asProjectId("project-cold-rollback"),
+        title: "Cold rollback thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("cmd-cold-thread-archive"),
+        threadId: ThreadId.make("thread-cold-rollback"),
+      });
+
+      const missingArchiveFailure = yield* Effect.flip(
+        engine.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make("cmd-cold-unarchive-missing"),
+          threadId: ThreadId.make("thread-cold-rollback"),
+        }),
+      );
+      expect(missingArchiveFailure.message).toContain(
+        "Failed to restore the archived conversation",
+      );
+      expect(events.at(-1)?.type).toBe("thread.archived");
+
+      restoreOnUnarchive = true;
+
+      const unarchiveFailure = yield* Effect.flip(
+        engine.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make("cmd-cold-unarchive-fail"),
+          threadId: ThreadId.make("thread-cold-rollback"),
+        }),
+      );
+      expect(unarchiveFailure.message).toContain("unarchive append failed");
+      expect(rolledBackThreadIds).toEqual([ThreadId.make("thread-cold-rollback")]);
+      expect(finishedThreadIds).toEqual([]);
+
+      failNextFinish = true;
+      const acceptedCommand = {
+        type: "thread.unarchive",
+        commandId: CommandId.make("cmd-cold-unarchive-accepted"),
+        threadId: ThreadId.make("thread-cold-rollback"),
+      } as const;
+      const acceptedResult = yield* engine.dispatch(acceptedCommand);
+      const retriedResult = yield* engine.dispatch(acceptedCommand);
+
+      expect(retriedResult).toEqual(acceptedResult);
+      expect(finishedThreadIds).toEqual([
+        ThreadId.make("thread-cold-rollback"),
+        ThreadId.make("thread-cold-rollback"),
+      ]);
+      expect(events.filter((event) => event.type === "thread.unarchived")).toHaveLength(1);
+    }).pipe(Effect.provide(testLayer));
   });
 
   it("rolls back all events for a multi-event command when projection fails mid-dispatch", async () => {

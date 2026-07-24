@@ -299,20 +299,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
-      const activeThreads = listThreadsByProjectId(readModel, command.projectId).filter(
+      const undeletedThreads = listThreadsByProjectId(readModel, command.projectId).filter(
         (thread) => thread.deletedAt === null,
       );
-      if (activeThreads.length > 0 && command.force !== true) {
+      const hasLiveThreads = undeletedThreads.some((thread) => thread.archivedAt === null);
+      const canDeleteNonEmptyProject =
+        command.force === true || (command.deleteArchivedThreads === true && !hasLiveThreads);
+      if (undeletedThreads.length > 0 && !canDeleteNonEmptyProject) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Project '${command.projectId}' is not empty and cannot be deleted without force=true.`,
         });
       }
-      if (activeThreads.length > 0) {
+      if (undeletedThreads.length > 0) {
         return yield* decideCommandSequence({
           readModel,
           commands: [
-            ...activeThreads.map(
+            ...undeletedThreads.map(
               (thread): Extract<OrchestrationCommand, { type: "thread.delete" }> => ({
                 type: "thread.delete",
                 commandId: command.commandId,
