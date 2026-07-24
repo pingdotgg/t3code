@@ -480,7 +480,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .chat-composer-glass-host {
     position: relative;
-    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
   }
 
   .chat-composer-glass-host::after {
@@ -519,7 +518,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     border-radius: 0 0 16px 16px;
     -webkit-mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
     mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
-    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
     content: "";
   }
 
@@ -551,7 +549,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
         transparent calc(1rem + 10px)
       ),
       rgb(255 255 255 / 2%);
-    box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
   }
 
   @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
