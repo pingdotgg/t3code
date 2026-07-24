@@ -178,6 +178,7 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
+  resolveSelectedThreadEntries,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -1773,12 +1774,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (!api) return;
       const threadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
       if (threadKeys.length === 0) return;
-      const count = threadKeys.length;
-      const selectedThreadEntries = threadKeys.flatMap((threadKey) => {
+      const selectedThreadEntries = resolveSelectedThreadEntries(threadKeys, (threadKey) => {
         const threadRef = parseScopedThreadKey(threadKey);
         const thread = threadRef ? readThreadShell(threadRef) : null;
-        return threadRef && thread ? [{ threadKey, threadRef, thread }] : [];
+        return threadRef && thread ? { threadKey, threadRef, thread } : null;
       });
+      if (selectedThreadEntries.length === 0) return;
+      const count = selectedThreadEntries.length;
       const hasRunningThread = selectedThreadEntries.some(
         ({ thread }) => thread.session?.status === "running" && thread.session.activeTurnId != null,
       );

@@ -15,6 +15,7 @@ import { useShallow } from "zustand/react/shallow";
 
 import {
   normalizeThreadLabelName,
+  resolveAssignedThreadLabels,
   THREAD_LABEL_COLORS,
   THREAD_LABEL_NAME_MAX_LENGTH,
   type ThreadLabel,
@@ -78,9 +79,7 @@ export function ThreadLabelBadgesForThread(props: {
   const labels = useUiStateStore(
     useShallow((state) => {
       const assignedIds = state.threadLabelIdsByThreadKey[threadKey] ?? [];
-      if (assignedIds.length === 0) return [];
-      const assignedSet = new Set(assignedIds);
-      return state.threadLabels.filter((label) => assignedSet.has(label.id));
+      return resolveAssignedThreadLabels(state.threadLabels, assignedIds);
     }),
   );
   if (labels.length === 0) {

@@ -17,6 +17,30 @@ export interface ThreadLabel {
   readonly color: string;
 }
 
+export function resolveAssignedThreadLabels(
+  labels: readonly ThreadLabel[],
+  assignedIds: readonly string[],
+): ThreadLabel[] {
+  if (assignedIds.length === 0) {
+    return [];
+  }
+
+  const labelsById = new Map(labels.map((label) => [label.id, label]));
+  const resolved: ThreadLabel[] = [];
+  const seenIds = new Set<string>();
+  for (const labelId of assignedIds) {
+    if (seenIds.has(labelId)) {
+      continue;
+    }
+    seenIds.add(labelId);
+    const label = labelsById.get(labelId);
+    if (label) {
+      resolved.push(label);
+    }
+  }
+  return resolved;
+}
+
 let nextThreadLabelId = 0;
 
 export function normalizeThreadLabelName(value: string): string {

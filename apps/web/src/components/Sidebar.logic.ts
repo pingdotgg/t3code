@@ -46,6 +46,20 @@ type LogicalSidebarProject = SidebarProject & {
 
 export type ThreadTraversalDirection = "previous" | "next";
 
+export function resolveSelectedThreadEntries<TEntry>(
+  threadKeys: Iterable<string>,
+  resolveEntry: (threadKey: string) => TEntry | null | undefined,
+): TEntry[] {
+  const entries: TEntry[] = [];
+  for (const threadKey of threadKeys) {
+    const entry = resolveEntry(threadKey);
+    if (entry != null) {
+      entries.push(entry);
+    }
+  }
+  return entries;
+}
+
 export async function archiveSelectedThreadEntries<
   TEntry extends { readonly threadKey: string },
   TResult extends { readonly _tag: "Success" | "Failure" },
