@@ -81,6 +81,8 @@ export interface ThreadReviewGenerationInput {
 
 export interface ThreadReviewGenerationResult {
   summary: string;
+  /** One imperative sentence: the user's single next action. */
+  nextStep: string;
   /** Null when the current title is still accurate. */
   suggestedTitle: string | null;
   recommendSettle: boolean;

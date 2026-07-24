@@ -264,6 +264,7 @@ export const make = Effect.gen(function* () {
     return {
       threadId: input.threadId,
       summary: generated.summary,
+      nextStep: generated.nextStep,
       suggestedTitle: generated.suggestedTitle,
       recommendSettle,
       settleReason: recommendSettle ? generated.settleReason : null,

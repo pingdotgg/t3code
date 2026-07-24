@@ -249,9 +249,10 @@ export function buildThreadReviewPrompt(input: ThreadReviewPromptInput) {
 
   const prompt = [
     "You review a coding-agent conversation thread and report its state.",
-    "Return a JSON object with keys: summary, suggestedTitle, recommendSettle, settleReason.",
+    "Return a JSON object with keys: summary, nextStep, suggestedTitle, recommendSettle, settleReason.",
     "Rules:",
-    "- summary: 1-2 sentences covering what was asked and where the work landed",
+    "- summary: ONE sentence, max ~25 words: what was asked and where it landed",
+    "- nextStep: ONE short imperative sentence with the user's single next action (e.g. 'Review and merge PR #123.', 'Answer the agent's question about auth scopes.', 'Nothing left — settle this thread.')",
     "- suggestedTitle: a corrected 3-8 word title ONLY if the current title is misleading or a placeholder like 'New thread'; otherwise null",
     "- recommendSettle: true ONLY when the work clearly concluded (done, abandoned, or superseded) and nothing awaits the user",
     "- settleReason: one short sentence justifying recommendSettle, or null when recommendSettle is false",
@@ -273,6 +274,7 @@ export function buildThreadReviewPrompt(input: ThreadReviewPromptInput) {
 
   const outputSchema = Schema.Struct({
     summary: Schema.String,
+    nextStep: Schema.String,
     suggestedTitle: Schema.NullOr(Schema.String),
     recommendSettle: Schema.Boolean,
     settleReason: Schema.NullOr(Schema.String),

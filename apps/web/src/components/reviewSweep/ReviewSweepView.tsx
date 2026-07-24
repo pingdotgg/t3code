@@ -8,6 +8,7 @@ import {
   ArchiveIcon,
   ArrowRightIcon,
   CircleAlertIcon,
+  InfoIcon,
   ListChecksIcon,
   LoaderIcon,
   PencilLineIcon,
@@ -47,6 +48,7 @@ import { Card } from "../ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
 import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 
 // ---------------------------------------------------------------------------
 // Triage buckets: ordered by "how fast can you clear this" — one-click
@@ -219,12 +221,17 @@ function SweepItemCard({
       </Button>
     ) : null;
 
+  // The one-line "what should I do" is the card body; the full summary
+  // lives behind the info icon so the grid stays scannable.
+  const nextStep =
+    item.status === "error"
+      ? null
+      : (result?.nextStep ??
+        (bucket === "settle" && result?.settleReason ? result.settleReason : null));
+
   return (
-    <Card className={cn("gap-1.5 border-s-2 p-3", meta.accent)}>
-      <div className="flex items-center gap-2">
-        {item.status === "pending" || item.status === "running" ? (
-          <Spinner className="size-3.5 shrink-0 text-muted-foreground" />
-        ) : null}
+    <Card className={cn("min-w-0 gap-1.5 border-s-2 p-3", meta.accent)}>
+      <div className="flex items-center gap-1.5">
         <Link
           to="/$environmentId/$threadId"
           params={buildThreadRouteParams(item.ref)}
@@ -235,8 +242,26 @@ function SweepItemCard({
         {bucket === "settle" && item.settleApplied ? (
           <Badge variant="outline">Settled</Badge>
         ) : null}
-        <div className="ms-auto flex shrink-0 items-center gap-1.5">
-          {primaryAction}
+        <div className="ms-auto flex shrink-0 items-center gap-1">
+          {result?.summary ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="text-muted-foreground/70"
+                    aria-label="Show thread summary"
+                  />
+                }
+              >
+                <InfoIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="bottom" className="max-w-80">
+                {result.summary}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
           <Button
             size="icon-xs"
             variant="ghost"
@@ -252,29 +277,29 @@ function SweepItemCard({
       <SweepItemMetaRow item={item} projectTitle={projectTitle} workspaceRoot={workspaceRoot} />
 
       {item.status === "error" ? (
-        <p className="text-sm text-red-400/90">{item.errorMessage}</p>
-      ) : result !== null ? (
-        <p className="text-sm text-muted-foreground">{result.summary}</p>
-      ) : (
-        <p className="text-sm text-muted-foreground/60">Reviewing…</p>
-      )}
-
-      {bucket === "settle" && result?.settleReason ? (
-        <p className="text-xs italic text-muted-foreground/80">{result.settleReason}</p>
+        <p className="line-clamp-2 text-sm text-red-400/90">{item.errorMessage}</p>
+      ) : nextStep ? (
+        <p className="line-clamp-2 text-sm text-foreground/90">{nextStep}</p>
       ) : null}
 
       {bucket === "title" && result?.suggestedTitle ? (
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-muted-foreground/70 line-through">{item.threadTitle}</span>
-          <ArrowRightIcon className="size-3.5 text-muted-foreground/70" />
-          <span className="font-medium text-foreground">{result.suggestedTitle}</span>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs">
+          <span className="max-w-full truncate text-muted-foreground/70 line-through">
+            {item.threadTitle}
+          </span>
+          <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground/70" />
+          <span className="max-w-full truncate font-medium text-foreground">
+            {result.suggestedTitle}
+          </span>
         </div>
       ) : null}
       {result?.suggestedTitle && item.titleApplied ? (
-        <p className="text-xs text-muted-foreground">
+        <p className="truncate text-xs text-muted-foreground">
           Renamed to <span className="font-medium text-foreground">{result.suggestedTitle}</span>.
         </p>
       ) : null}
+
+      {primaryAction ? <div className="flex justify-end pt-0.5">{primaryAction}</div> : null}
     </Card>
   );
 }
@@ -503,6 +528,19 @@ export function ReviewSweepView() {
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
           {phase === "idle" ? (
             <SweepPreRunSummary />
+          ) : running ? (
+            <Empty>
+              <EmptyHeader>
+                <Spinner className="mx-auto size-6 text-muted-foreground" />
+                <EmptyTitle>
+                  Reviewing your work — {reviewedCount} of {visibleItems.length}
+                </EmptyTitle>
+                <EmptyDescription>
+                  Results appear all at once when every thread is reviewed, so you can triage in one
+                  pass. Feel free to navigate away; the sweep keeps running.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           ) : visibleItems.length === 0 ? (
             <Empty>
               <EmptyHeader>
@@ -511,53 +549,55 @@ export function ReviewSweepView() {
               </EmptyHeader>
             </Empty>
           ) : (
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-              {truncatedCount > 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  Reviewing the {visibleItems.length} most recent threads; {truncatedCount} more
-                  were skipped this run.
-                </p>
-              ) : null}
-              {buckets.map(([bucket, bucketItems]) => {
-                const meta = BUCKET_META[bucket];
-                const BucketIcon = meta.icon;
-                return (
-                  <section key={bucket} className="flex flex-col gap-2">
-                    <div className="flex items-baseline gap-2">
-                      <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground/80">
-                        <BucketIcon className="size-3.5" />
-                        {meta.title}
-                        <span className="font-normal text-muted-foreground">
-                          · {bucketItems.length}
-                        </span>
-                      </h2>
-                      {meta.hint ? (
-                        <span className="truncate text-xs text-muted-foreground/70">
-                          {meta.hint}
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      {bucketItems.map((item) => {
-                        const projectKey = scopedProjectKey(
-                          scopeProjectRef(item.ref.environmentId, item.projectId),
-                        );
-                        const project = projectsByKey.get(projectKey);
-                        return (
-                          <SweepItemCard
-                            key={scopedThreadKey(item.ref)}
-                            item={item}
-                            bucket={bucket}
-                            projectTitle={project?.title ?? "Unknown project"}
-                            workspaceRoot={project?.workspaceRoot ?? null}
-                          />
-                        );
-                      })}
-                    </div>
-                  </section>
-                );
-              })}
-            </div>
+            <TooltipProvider>
+              <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+                {truncatedCount > 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Reviewed the {visibleItems.length} most recent threads; {truncatedCount} more
+                    were skipped this run.
+                  </p>
+                ) : null}
+                {buckets.map(([bucket, bucketItems]) => {
+                  const meta = BUCKET_META[bucket];
+                  const BucketIcon = meta.icon;
+                  return (
+                    <section key={bucket} className="flex flex-col gap-2">
+                      <div className="flex items-baseline gap-2">
+                        <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground/80">
+                          <BucketIcon className="size-3.5" />
+                          {meta.title}
+                          <span className="font-normal text-muted-foreground">
+                            · {bucketItems.length}
+                          </span>
+                        </h2>
+                        {meta.hint ? (
+                          <span className="truncate text-xs text-muted-foreground/70">
+                            {meta.hint}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+                        {bucketItems.map((item) => {
+                          const projectKey = scopedProjectKey(
+                            scopeProjectRef(item.ref.environmentId, item.projectId),
+                          );
+                          const project = projectsByKey.get(projectKey);
+                          return (
+                            <SweepItemCard
+                              key={scopedThreadKey(item.ref)}
+                              item={item}
+                              bucket={bucket}
+                              projectTitle={project?.title ?? "Unknown project"}
+                              workspaceRoot={project?.workspaceRoot ?? null}
+                            />
+                          );
+                        })}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            </TooltipProvider>
           )}
         </div>
       </div>

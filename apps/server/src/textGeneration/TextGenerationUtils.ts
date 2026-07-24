@@ -71,6 +71,7 @@ export function sanitizeThreadTitle(raw: string): string {
 export function normalizeThreadReview(
   raw: {
     summary: string;
+    nextStep: string;
     suggestedTitle: string | null;
     recommendSettle: boolean;
     settleReason: string | null;
@@ -78,11 +79,13 @@ export function normalizeThreadReview(
   isActive: boolean,
 ): {
   summary: string;
+  nextStep: string;
   suggestedTitle: string | null;
   recommendSettle: boolean;
   settleReason: string | null;
 } {
   const summary = raw.summary.trim().replace(/\s+/g, " ");
+  const nextStep = raw.nextStep.trim().replace(/\s+/g, " ");
   const suggestedTitle =
     raw.suggestedTitle && raw.suggestedTitle.trim().length > 0
       ? sanitizeThreadTitle(raw.suggestedTitle)
@@ -94,6 +97,7 @@ export function normalizeThreadReview(
       : null;
   return {
     summary: summary.length > 0 ? summary : "No summary available.",
+    nextStep: nextStep.length > 0 ? nextStep : "Review this thread.",
     suggestedTitle: suggestedTitle === "New thread" ? null : suggestedTitle,
     recommendSettle,
     settleReason,

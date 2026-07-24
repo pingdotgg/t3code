@@ -56,6 +56,9 @@ export type ReviewThreadDiffStats = typeof ReviewThreadDiffStats.Type;
 export const ReviewThreadSummaryResult = Schema.Struct({
   threadId: ThreadId,
   summary: TrimmedNonEmptyString,
+  /** One imperative sentence: the user's single next action. Optional for
+      pre-nextStep servers. */
+  nextStep: Schema.optionalKey(TrimmedNonEmptyString),
   /** Null when the current title is still accurate. */
   suggestedTitle: Schema.NullOr(TrimmedNonEmptyString),
   recommendSettle: Schema.Boolean,

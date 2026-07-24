@@ -191,6 +191,7 @@ describe("buildThreadReviewPrompt", () => {
 describe("normalizeThreadReview", () => {
   const raw = {
     summary: "  Work   finished.  ",
+    nextStep: "  Settle   it.  ",
     suggestedTitle: '"Ship settle default"',
     recommendSettle: true,
     settleReason: "  PR merged.  ",
@@ -199,6 +200,7 @@ describe("normalizeThreadReview", () => {
   it("sanitizes fields and keeps settle recommendation for inactive threads", () => {
     expect(normalizeThreadReview(raw, false)).toEqual({
       summary: "Work finished.",
+      nextStep: "Settle it.",
       suggestedTitle: "Ship settle default",
       recommendSettle: true,
       settleReason: "PR merged.",

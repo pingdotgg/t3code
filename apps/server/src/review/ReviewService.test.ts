@@ -95,6 +95,7 @@ function makeLayer(input: {
             input.generateThreadReview?.(reviewInput) ??
             Effect.succeed({
               summary: "Did the thing.",
+              nextStep: "Settle this thread.",
               suggestedTitle: null,
               recommendSettle: true,
               settleReason: "Work concluded.",
@@ -267,6 +268,7 @@ describe("ReviewService", () => {
             generateThreadReview: () =>
               Effect.succeed({
                 summary: "Bumped the settle default; PR merged.",
+                nextStep: "Nothing left — settle this thread.",
                 suggestedTitle: "Bump settle default",
                 recommendSettle: true,
                 settleReason: "PR merged, nothing pending.",
@@ -316,6 +318,7 @@ describe("ReviewService", () => {
             generateThreadReview: () =>
               Effect.succeed({
                 summary: "Still working.",
+                nextStep: "Wait for the agent.",
                 suggestedTitle: null,
                 recommendSettle: true,
                 settleReason: "Looks done to me.",
@@ -358,6 +361,7 @@ describe("ReviewService", () => {
               generateThreadReview: () =>
                 Effect.succeed({
                   summary: "Looks finished.",
+                  nextStep: "Settle this thread.",
                   suggestedTitle: null,
                   recommendSettle: true,
                   settleReason: "Done.",
@@ -423,6 +427,7 @@ describe("ReviewService", () => {
             generateThreadReview: () =>
               Effect.succeed({
                 summary: "Looks finished.",
+                nextStep: "Settle this thread.",
                 suggestedTitle: null,
                 recommendSettle: true,
                 settleReason: "Done.",
