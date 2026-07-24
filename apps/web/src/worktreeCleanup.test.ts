@@ -1,8 +1,14 @@
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
+import {
+  formatWorktreePathForDisplay,
+  getOrphanedWorktreePathForThread,
+  scheduleWorktreeRemoval,
+} from "./worktreeCleanup";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
@@ -108,5 +114,65 @@ describe("formatWorktreePathForDisplay", () => {
   it("ignores trailing slashes", () => {
     const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree/");
     expect(result).toBe("my-worktree");
+  });
+});
+
+describe("scheduleWorktreeRemoval", () => {
+  it("starts multiple removals without waiting for earlier cleanup", () => {
+    const removeWorktree = vi.fn(
+      () => new Promise<ReturnType<typeof AsyncResult.success<void>>>(() => undefined),
+    );
+    const onFailure = vi.fn();
+
+    scheduleWorktreeRemoval({
+      environmentId: localEnvironmentId,
+      cwd: "/tmp/repo",
+      path: "/tmp/repo/worktrees/feature-a",
+      removeWorktree,
+      onFailure,
+    });
+    scheduleWorktreeRemoval({
+      environmentId: localEnvironmentId,
+      cwd: "/tmp/repo",
+      path: "/tmp/repo/worktrees/feature-b",
+      removeWorktree,
+      onFailure,
+    });
+
+    expect(removeWorktree).toHaveBeenCalledTimes(2);
+    expect(removeWorktree).toHaveBeenNthCalledWith(1, {
+      environmentId: localEnvironmentId,
+      input: {
+        cwd: "/tmp/repo",
+        path: "/tmp/repo/worktrees/feature-a",
+        force: true,
+      },
+    });
+    expect(removeWorktree).toHaveBeenNthCalledWith(2, {
+      environmentId: localEnvironmentId,
+      input: {
+        cwd: "/tmp/repo",
+        path: "/tmp/repo/worktrees/feature-b",
+        force: true,
+      },
+    });
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("reports a background removal failure", async () => {
+    const failure = AsyncResult.failure<void, Error>(Cause.fail(new Error("remove failed")));
+    const onFailure = vi.fn();
+
+    scheduleWorktreeRemoval({
+      environmentId: localEnvironmentId,
+      cwd: "/tmp/repo",
+      path: "/tmp/repo/worktrees/feature-a",
+      removeWorktree: async () => failure,
+      onFailure,
+    });
+    await Promise.resolve();
+
+    expect(onFailure).toHaveBeenCalledOnce();
+    expect(onFailure).toHaveBeenCalledWith(failure);
   });
 });

@@ -1,4 +1,20 @@
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentId, VcsRemoveWorktreeInput } from "@t3tools/contracts";
+
 import type { ThreadShell } from "./types";
+
+interface ScheduleWorktreeRemovalInput<E> {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly path: string;
+  readonly removeWorktree: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly input: VcsRemoveWorktreeInput;
+  }) => Promise<AtomCommandResult<void, E>>;
+  readonly onFailure: (
+    failure: Extract<AtomCommandResult<void, E>, { readonly _tag: "Failure" }>,
+  ) => void;
+}
 
 function normalizeWorktreePath(path: string | null): string | null {
   const trimmed = path?.trim();
@@ -42,4 +58,21 @@ export function formatWorktreePathForDisplay(worktreePath: string): string {
   const parts = normalized.split("/");
   const lastPart = parts[parts.length - 1]?.trim() ?? "";
   return lastPart.length > 0 ? lastPart : trimmed;
+}
+
+export function scheduleWorktreeRemoval<E>(input: ScheduleWorktreeRemovalInput<E>): void {
+  void input
+    .removeWorktree({
+      environmentId: input.environmentId,
+      input: {
+        cwd: input.cwd,
+        path: input.path,
+        force: true,
+      },
+    })
+    .then((result) => {
+      if (result._tag === "Failure") {
+        input.onFailure(result);
+      }
+    });
 }
