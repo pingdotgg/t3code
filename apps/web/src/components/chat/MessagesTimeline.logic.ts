@@ -53,24 +53,10 @@ export function resolveTimelineMinimapIndexFromPointer(input: {
   return Math.max(0, Math.min(input.itemCount - 1, Math.round(progress * (input.itemCount - 1))));
 }
 
-function resolveTimelineContentSideGutter(viewportWidth: number, contentWidth: number): number {
-  if (
-    !Number.isFinite(viewportWidth) ||
-    viewportWidth <= 0 ||
-    !Number.isFinite(contentWidth) ||
-    contentWidth <= 0
-  ) {
-    return 0;
+export function resolveTimelineMinimapHasPersistentGutter(sideGutter: number): boolean {
+  if (!Number.isFinite(sideGutter) || sideGutter <= 0) {
+    return false;
   }
-
-  return Math.max(0, (viewportWidth - Math.min(viewportWidth, contentWidth)) / 2);
-}
-
-export function resolveTimelineMinimapHasPersistentGutter(
-  viewportWidth: number,
-  contentWidth: number,
-): boolean {
-  const sideGutter = resolveTimelineContentSideGutter(viewportWidth, contentWidth);
   return sideGutter >= TIMELINE_MINIMAP_PERSISTENT_GUTTER;
 }
 
@@ -85,11 +71,10 @@ export const TIMELINE_MINIMAP_EXPANDED_HIT_STRIP_WIDTH = "22rem";
  * text and swallow its pointer events. Cap the strip's width so it never
  * extends past the gutter into the content column; 0 disables the strip.
  */
-export function resolveTimelineMinimapHitStripWidth(
-  viewportWidth: number,
-  contentWidth: number,
-): number {
-  const sideGutter = resolveTimelineContentSideGutter(viewportWidth, contentWidth);
+export function resolveTimelineMinimapHitStripWidth(sideGutter: number): number {
+  if (!Number.isFinite(sideGutter) || sideGutter <= 0) {
+    return 0;
+  }
   return Math.max(
     0,
     Math.min(

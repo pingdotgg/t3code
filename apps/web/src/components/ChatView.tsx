@@ -5606,11 +5606,7 @@ function ChatViewContent(props: ChatViewProps) {
   ) : null;
 
   return (
-    <div
-      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
-      data-transcript-text-size={settings.transcriptTextSize}
-      data-transcript-width={settings.transcriptWidth}
-    >
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
       {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
@@ -5618,6 +5614,8 @@ function ChatViewContent(props: ChatViewProps) {
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        data-transcript-text-size={settings.transcriptTextSize}
+        data-transcript-width={settings.transcriptWidth}
       >
         {/* Top bar */}
         <header
@@ -5711,6 +5709,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 hideEmptyPlaceholder={isDraftHeroState}
                 topFadeEnabled={!hasTimelineTopBanner}
+                transcriptWidth={settings.transcriptWidth}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}

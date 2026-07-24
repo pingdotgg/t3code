@@ -97,7 +97,7 @@ import {
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
-import { type TimestampFormat } from "@t3tools/contracts/settings";
+import { type TimestampFormat, type TranscriptWidth } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
 
 import {
@@ -184,6 +184,7 @@ interface MessagesTimelineProps {
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
+  transcriptWidth: TranscriptWidth;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +220,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onManualNavigation,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
+  transcriptWidth,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
@@ -396,37 +398,30 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
 
     const measure = () => {
-      const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
+      const viewportLeft = timelineViewportElement.getBoundingClientRect().left;
       const contentElement = timelineViewportElement.querySelector<HTMLElement>(
         '[data-timeline-root="true"]',
       );
-      const contentWidth = contentElement?.getBoundingClientRect().width ?? viewportWidth;
-      const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(
-        viewportWidth,
-        contentWidth,
-      );
+      const sideGutter = contentElement
+        ? Math.max(0, contentElement.getBoundingClientRect().left - viewportLeft)
+        : 0;
+      const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(sideGutter);
       setMinimapHasPersistentGutter((current) =>
         current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
       );
-      setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
+      setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(sideGutter));
     };
 
     const frame = requestAnimationFrame(measure);
 
     const observer = new ResizeObserver(measure);
     observer.observe(timelineViewportElement);
-    const contentElement = timelineViewportElement.querySelector<HTMLElement>(
-      '[data-timeline-root="true"]',
-    );
-    if (contentElement) {
-      observer.observe(contentElement);
-    }
 
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement, rows.length]);
+  }, [timelineViewportElement, rows.length, transcriptWidth]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
