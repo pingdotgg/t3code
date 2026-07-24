@@ -208,7 +208,7 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly thread: Option.Option<OrchestrationThreadShell>;
-  readonly project: Option.Option<OrchestrationProjectShell>;
+  readonly project: Option.Option<Pick<OrchestrationProjectShell, "title">>;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
@@ -370,10 +370,12 @@ export const make = Effect.gen(function* () {
         });
       });
 
-    const thread = yield* snapshotQuery.getThreadShellById(threadId);
-    const project = Option.isSome(thread)
-      ? yield* snapshotQuery.getProjectShellById(thread.value.projectId)
-      : Option.none<OrchestrationProjectShell>();
+    const context = yield* snapshotQuery.getThreadShellProjectContextById(threadId);
+    const thread = Option.map(context, (value) => value.thread);
+    const project =
+      Option.isSome(context) && context.value.project !== null
+        ? Option.some(context.value.project)
+        : Option.none<Pick<OrchestrationProjectShell, "title">>();
     const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       threadId,

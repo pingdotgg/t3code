@@ -55,6 +55,7 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotCounts,
   type ProjectionThreadCheckpointContext,
+  type ProjectionThreadShellProjectContext,
   type ProjectionSnapshotQueryShape,
 } from "../Services/ProjectionSnapshotQuery.ts";
 
@@ -85,6 +86,14 @@ const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
     modelSelection: Schema.fromJsonString(ModelSelection),
     reviewSnapshot: Schema.fromJsonString(Schema.NullOr(ReviewSnapshot)),
     reviewResult: Schema.fromJsonString(Schema.NullOr(ReviewResult)),
+  }),
+);
+const ProjectionThreadWithProjectTitleDbRowSchema = ProjectionThread.mapFields(
+  Struct.assign({
+    modelSelection: Schema.fromJsonString(ModelSelection),
+    reviewSnapshot: Schema.fromJsonString(Schema.NullOr(ReviewSnapshot)),
+    reviewResult: Schema.fromJsonString(Schema.NullOr(ReviewResult)),
+    projectTitle: Schema.NullOr(TrimmedNonEmptyString),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -713,34 +722,38 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const getActiveThreadRowById = SqlSchema.findOneOption({
     Request: ThreadIdLookupInput,
-    Result: ProjectionThreadDbRowSchema,
+    Result: ProjectionThreadWithProjectTitleDbRowSchema,
     execute: ({ threadId }) =>
       sql`
         SELECT
-          thread_id AS "threadId",
-          project_id AS "projectId",
-          parent_thread_id AS "parentThreadId",
-          title,
-          model_selection_json AS "modelSelection",
-          runtime_mode AS "runtimeMode",
-          pending_runtime_mode AS "pendingRuntimeMode",
-          interaction_mode AS "interactionMode",
-          branch,
-          worktree_path AS "worktreePath",
-          review_snapshot_json AS "reviewSnapshot",
-          review_result_json AS "reviewResult",
-          latest_turn_id AS "latestTurnId",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt",
-          archived_at AS "archivedAt",
-          latest_user_message_at AS "latestUserMessageAt",
-          pending_approval_count AS "pendingApprovalCount",
-          pending_user_input_count AS "pendingUserInputCount",
-          has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
-        FROM projection_threads
-        WHERE thread_id = ${threadId}
-          AND deleted_at IS NULL
+          threads.thread_id AS "threadId",
+          threads.project_id AS "projectId",
+          threads.parent_thread_id AS "parentThreadId",
+          threads.title,
+          threads.model_selection_json AS "modelSelection",
+          threads.runtime_mode AS "runtimeMode",
+          threads.pending_runtime_mode AS "pendingRuntimeMode",
+          threads.interaction_mode AS "interactionMode",
+          threads.branch,
+          threads.worktree_path AS "worktreePath",
+          threads.review_snapshot_json AS "reviewSnapshot",
+          threads.review_result_json AS "reviewResult",
+          threads.latest_turn_id AS "latestTurnId",
+          threads.created_at AS "createdAt",
+          threads.updated_at AS "updatedAt",
+          threads.archived_at AS "archivedAt",
+          threads.latest_user_message_at AS "latestUserMessageAt",
+          threads.pending_approval_count AS "pendingApprovalCount",
+          threads.pending_user_input_count AS "pendingUserInputCount",
+          threads.has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          threads.deleted_at AS "deletedAt",
+          projects.title AS "projectTitle"
+        FROM projection_threads AS threads
+        LEFT JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+          AND projects.deleted_at IS NULL
+        WHERE threads.thread_id = ${threadId}
+          AND threads.deleted_at IS NULL
         LIMIT 1
       `,
   });
@@ -1597,79 +1610,88 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       });
     });
 
+  const getThreadShellProjectContextById: ProjectionSnapshotQueryShape["getThreadShellProjectContextById"] =
+    (threadId) =>
+      Effect.gen(function* () {
+        const [threadRow, latestTurnRow, sessionRow, backgroundAgentActivityRows] =
+          yield* Effect.all([
+            getActiveThreadRowById({ threadId }).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadShellById:getThread:query",
+                  "ProjectionSnapshotQuery.getThreadShellById:getThread:decodeRow",
+                ),
+              ),
+            ),
+            getLatestTurnRowByThread({ threadId }).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:query",
+                  "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:decodeRow",
+                ),
+              ),
+            ),
+            getThreadSessionRowByThread({ threadId }).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadShellById:getSession:query",
+                  "ProjectionSnapshotQuery.getThreadShellById:getSession:decodeRow",
+                ),
+              ),
+            ),
+            listBackgroundAgentActivityRowsByThread({ threadId }).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadShellById:listBackgroundAgentActivities:query",
+                  "ProjectionSnapshotQuery.getThreadShellById:listBackgroundAgentActivities:decodeRows",
+                ),
+              ),
+            ),
+          ]);
+
+        if (Option.isNone(threadRow)) {
+          return Option.none<ProjectionThreadShellProjectContext>();
+        }
+
+        const session = Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null;
+        const backgroundAgentRuns =
+          deriveBackgroundAgentRunsByThread(backgroundAgentActivityRows).get(threadId) ?? [];
+
+        return Option.some({
+          thread: {
+            id: threadRow.value.threadId,
+            projectId: threadRow.value.projectId,
+            parentThreadId: threadRow.value.parentThreadId ?? null,
+            title: threadRow.value.title,
+            modelSelection: threadRow.value.modelSelection,
+            runtimeMode: threadRow.value.runtimeMode,
+            pendingRuntimeMode: threadRow.value.pendingRuntimeMode,
+            interactionMode: threadRow.value.interactionMode,
+            branch: threadRow.value.branch,
+            worktreePath: threadRow.value.worktreePath,
+            latestTurn: reconcileLatestTurnWithSession(
+              Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+              session,
+            ),
+            createdAt: threadRow.value.createdAt,
+            updatedAt: threadRow.value.updatedAt,
+            archivedAt: threadRow.value.archivedAt,
+            session,
+            latestUserMessageAt: threadRow.value.latestUserMessageAt,
+            hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
+            hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
+            hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
+            ...(backgroundAgentRuns.length > 0 ? { backgroundAgentRuns } : {}),
+          },
+          project:
+            threadRow.value.projectTitle === null ? null : { title: threadRow.value.projectTitle },
+        } satisfies ProjectionThreadShellProjectContext);
+      });
+
   const getThreadShellById: ProjectionSnapshotQueryShape["getThreadShellById"] = (threadId) =>
-    Effect.gen(function* () {
-      const [threadRow, latestTurnRow, sessionRow, backgroundAgentActivityRows] = yield* Effect.all(
-        [
-          getActiveThreadRowById({ threadId }).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getThreadShellById:getThread:query",
-                "ProjectionSnapshotQuery.getThreadShellById:getThread:decodeRow",
-              ),
-            ),
-          ),
-          getLatestTurnRowByThread({ threadId }).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:query",
-                "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:decodeRow",
-              ),
-            ),
-          ),
-          getThreadSessionRowByThread({ threadId }).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getThreadShellById:getSession:query",
-                "ProjectionSnapshotQuery.getThreadShellById:getSession:decodeRow",
-              ),
-            ),
-          ),
-          listBackgroundAgentActivityRowsByThread({ threadId }).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getThreadShellById:listBackgroundAgentActivities:query",
-                "ProjectionSnapshotQuery.getThreadShellById:listBackgroundAgentActivities:decodeRows",
-              ),
-            ),
-          ),
-        ],
-      );
-
-      if (Option.isNone(threadRow)) {
-        return Option.none<OrchestrationThreadShell>();
-      }
-
-      const session = Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null;
-      const backgroundAgentRuns =
-        deriveBackgroundAgentRunsByThread(backgroundAgentActivityRows).get(threadId) ?? [];
-
-      return Option.some({
-        id: threadRow.value.threadId,
-        projectId: threadRow.value.projectId,
-        parentThreadId: threadRow.value.parentThreadId ?? null,
-        title: threadRow.value.title,
-        modelSelection: threadRow.value.modelSelection,
-        runtimeMode: threadRow.value.runtimeMode,
-        pendingRuntimeMode: threadRow.value.pendingRuntimeMode,
-        interactionMode: threadRow.value.interactionMode,
-        branch: threadRow.value.branch,
-        worktreePath: threadRow.value.worktreePath,
-        latestTurn: reconcileLatestTurnWithSession(
-          Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
-          session,
-        ),
-        createdAt: threadRow.value.createdAt,
-        updatedAt: threadRow.value.updatedAt,
-        archivedAt: threadRow.value.archivedAt,
-        session,
-        latestUserMessageAt: threadRow.value.latestUserMessageAt,
-        hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
-        hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
-        hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
-        ...(backgroundAgentRuns.length > 0 ? { backgroundAgentRuns } : {}),
-      } satisfies OrchestrationThreadShell);
-    });
+    getThreadShellProjectContextById(threadId).pipe(
+      Effect.map(Option.map((context) => context.thread)),
+    );
 
   const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
     Effect.gen(function* () {
@@ -1851,6 +1873,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,
     getThreadShellById,
+    getThreadShellProjectContextById,
     getThreadDetailById,
   } satisfies ProjectionSnapshotQueryShape;
 });
