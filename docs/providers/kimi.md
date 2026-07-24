@@ -73,5 +73,7 @@ is applied through the ACP `thinking` session config option when the selected mo
 ## Subagents
 
 Kimi sessions receive the `t3-code` MCP server automatically when subagent orchestration is
-available, so Kimi can spawn subagents on other configured providers and other providers can spawn
-Kimi subagents when Kimi is ready.
+available, so Kimi can use `delegate_task` to delegate a self-contained task to a background agent.
+The delegated agent runs on the same provider instance and model as the calling session, inside the
+same project and worktree, and the tool call blocks until the agent finishes and returns its result.
+Delegation is capped at depth 1 and at a few concurrent agents per session.

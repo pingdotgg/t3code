@@ -30,13 +30,13 @@ struct SubagentTaskPresentationTests {
         #expect(!SubagentTaskPresentation.isRunningSilently(task: task, at: now))
     }
 
-    @Test("agent roster requires the exact tool title prefix or parentThreadId")
-    func agentRosterUsesExactTitlePrefix() {
-        #expect(AgentsPanel.isSiblingAgentThread(thread(title: "Agent: reviewer")))
-        #expect(!AgentsPanel.isSiblingAgentThread(thread(title: "agent: reviewer")))
-        #expect(!AgentsPanel.isSiblingAgentThread(thread(title: "Agent:\treviewer")))
+    @Test("delegated threads require the exact tool title prefix or parentThreadId")
+    func delegatedThreadsUseExactTitlePrefix() {
+        #expect(SidebarProjection.isDelegatedAgentThread(thread(title: "Agent: reviewer")))
+        #expect(!SidebarProjection.isDelegatedAgentThread(thread(title: "agent: reviewer")))
+        #expect(!SidebarProjection.isDelegatedAgentThread(thread(title: "Agent:\treviewer")))
         #expect(
-            AgentsPanel.isSiblingAgentThread(
+            SidebarProjection.isDelegatedAgentThread(
                 thread(title: "Custom title", parentThreadId: "parent-1")))
     }
 

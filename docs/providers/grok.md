@@ -76,5 +76,7 @@ thread.
 
 Grok sessions receive the `t3-code` MCP server automatically.
 
-That means Grok can use `agent_spawn` to start subagents on other configured providers, and agents
-running on other providers can start Grok subagents when Grok is available.
+That means Grok can use `delegate_task` to delegate a self-contained task to a background agent.
+The delegated agent runs on the same provider instance and model as the calling session, inside the
+same project and worktree, and the tool call blocks until the agent finishes and returns its result.
+Delegation is capped at depth 1 and at a few concurrent agents per session.

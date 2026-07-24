@@ -6,6 +6,7 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
+import { isDelegatedAgentThread } from "../../lib/delegatedAgents";
 
 export interface ThreadNavigationGroup {
   readonly key: string;
@@ -30,7 +31,11 @@ export function buildThreadNavigationGroups(input: {
   readonly searchQuery?: string;
 }): ReadonlyArray<ThreadNavigationGroup> {
   const query = input.searchQuery?.trim().toLocaleLowerCase() ?? "";
-  const activeThreads = input.threads.filter((thread) => thread.archivedAt === null);
+  // Delegated sub-agent threads render as inline task cards inside their
+  // parent thread, never as rows in the thread list.
+  const activeThreads = input.threads.filter(
+    (thread) => thread.archivedAt === null && !isDelegatedAgentThread(thread),
+  );
 
   return groupProjectsByRepository({ ...input, threads: activeThreads }).flatMap((group) => {
     const threads = Arr.sort(

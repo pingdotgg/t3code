@@ -2207,7 +2207,7 @@ const make = Effect.gen(function* () {
 
           // Grok (and other providers) can complete with only tool activity or
           // late-arriving content that never projected. Surface a synthetic
-          // assistant summary so agent_wait and the UI are not empty.
+          // assistant summary so delegate_task results and the UI are not empty.
           // Drop the per-event detail cache so we observe messages written by
           // the finalizers above.
           loadedThreadDetail = undefined;

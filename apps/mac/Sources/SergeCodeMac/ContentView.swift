@@ -7,7 +7,6 @@ struct RootView: View {
     let scenery: SceneryStore
 
     @UIState private var showInspector = true
-    @UIState private var showAgentsPanel = false
     @UIState private var showNewSessionSheet = false
     @UIState private var columnVisibility: NavigationSplitViewVisibility = .all
 
@@ -68,33 +67,6 @@ struct RootView: View {
                 ConnectionStatusPill(phase: model.connection)
             }
             .sharedBackgroundVisibility(.hidden)
-            if model.subagentTaskAggregator.runningCount > 0 {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        // Keep toolbar re-vending out of the current AppKit
-                        // layout pass, matching the inspector toggle above.
-                        DispatchQueue.main.async { showAgentsPanel.toggle() }
-                    } label: {
-                        AgentsToolbarPill(
-                            count: model.subagentTaskAggregator.runningCount)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Show running agents")
-                    .popover(isPresented: $showAgentsPanel, arrowEdge: .top) {
-                        AgentsPanel(
-                            model: model,
-                            onSelectThread: { threadID in
-                                model.selectedThreadID = threadID
-                                showAgentsPanel = false
-                            },
-                            onOpenTask: { threadID, taskId in
-                                model.openSubagent(taskId: taskId, threadID: threadID)
-                                showAgentsPanel = false
-                            })
-                    }
-                }
-                .sharedBackgroundVisibility(.hidden)
-            }
             ToolbarItem(placement: .primaryAction) {
                 newSessionMenu
             }
@@ -116,12 +88,6 @@ struct RootView: View {
             }
             .sharedBackgroundVisibility(.hidden)
         }
-        #if DEBUG
-            .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
-                guard note.object as? String == "agents" else { return }
-                DispatchQueue.main.async { showAgentsPanel.toggle() }
-            }
-        #endif
         .sheet(isPresented: $showNewSessionSheet) {
             NewSessionSheet(
                 multi: multi,

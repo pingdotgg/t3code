@@ -67,15 +67,6 @@ public final class MockBackend: BackendService, @unchecked Sendable {
             await state.setThreadHealth(threadID: threadID, stalled: stalled)
         }
 
-        /// Probe hook: spawn a sibling-agent thread (optionally stalled).
-        @discardableResult
-        public func probeCreateSiblingAgent(
-            name: String, provider: ProviderKind, projectID: String, stalled: Bool
-        ) async -> ChatThread {
-            await state.createSiblingAgent(
-                name: name, provider: provider, projectID: projectID, stalled: stalled)
-        }
-
         /// Probe hook: append a `session.exited` stderr disclosure row.
         public func probeAppendSessionExit(
             threadID: String, summary: String, stderrTail: String
@@ -859,25 +850,6 @@ private actor MockState {
         emit(.threadUpserted(thread))
     }
 
-    /// Spawns a running sibling-agent thread (`Agent: <name>`), optionally
-    /// already stalled, mirroring an MCP `agent_spawn`.
-    func createSiblingAgent(
-        name: String, provider: ProviderKind, projectID: String, stalled: Bool
-    ) -> ChatThread {
-        let id = nextID("agent-thread")
-        let lastActivityAt = Date().addingTimeInterval(stalled ? -240 : -5)
-        let thread = ChatThread(
-            id: id, projectID: projectID, title: "Agent: \(name)", provider: provider,
-            status: .running, updatedAt: Date(),
-            health: ThreadHealth(
-                stalled: stalled, lastActivityAt: lastActivityAt,
-                stalledSince: stalled ? lastActivityAt : nil))
-        threadsByID[id] = thread
-        timelinesByThread[id] = []
-        emit(.threadUpserted(thread))
-        return thread
-    }
-
     /// Appends a `session.exited` transcript row carrying stderr, as if a
     /// provider CLI process had died.
     func appendSessionExit(threadID: String, summary: String, stderrTail: String) {
@@ -1610,7 +1582,7 @@ private actor MockState {
                     taskId: "mock-subagent-1", taskType: "reviewer",
                     description: "Audit subagent timeline and status handling",
                     subagentType: "Explore", model: "claude-sonnet-5",
-                    state: .running, latestProgress: "Reading SubagentTaskAggregator...",
+                    state: .running, latestProgress: "Reading DelegatedTaskCard...",
                     lastToolName: "read_file",
                     startedAt: now.addingTimeInterval(-460),
                     lastActivityAt: now.addingTimeInterval(-20), duration: nil,
@@ -1623,7 +1595,7 @@ private actor MockState {
                             text: "Collecting subagent task call sites"),
                         SubagentTaskProgressEntry(
                             at: now.addingTimeInterval(-20), toolName: "read_file",
-                            text: "Reading SubagentTaskAggregator..."),
+                            text: "Reading DelegatedTaskCard..."),
                     ])),
             .subagentTask(
                 SubagentTaskItem(

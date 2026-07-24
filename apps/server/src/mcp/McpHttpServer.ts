@@ -7,10 +7,8 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import packageJson from "../../package.json" with { type: "json" };
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
-import { SubAgentToolkitHandlersLive } from "./toolkits/agents/handlers.ts";
-import { SubAgentToolkit } from "./toolkits/agents/tools.ts";
-import { UnifiedSubAgentToolkit } from "../subagent/UnifiedSubAgentTool.ts";
-import { UnifiedSubAgentToolHandlerLive } from "../subagent/UnifiedSubAgentToolHandler.ts";
+import { DelegateToolkitHandlersLive } from "./toolkits/agents/handlers.ts";
+import { DelegateToolkit } from "./toolkits/agents/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -77,12 +75,8 @@ const McpAuthMiddlewareLive = HttpRouter.middleware<{
   provides: McpInvocationContext.McpInvocationContext;
 }>()(makeMcpAuthMiddleware).layer;
 
-export const SubAgentToolkitRegistrationLive = McpServer.toolkit(SubAgentToolkit).pipe(
-  Layer.provide(SubAgentToolkitHandlersLive),
-);
-
-export const UnifiedSubAgentToolRegistrationLive = McpServer.toolkit(UnifiedSubAgentToolkit).pipe(
-  Layer.provide(UnifiedSubAgentToolHandlerLive),
+export const DelegateToolkitRegistrationLive = McpServer.toolkit(DelegateToolkit).pipe(
+  Layer.provide(DelegateToolkitHandlersLive),
 );
 
 const McpTransportLive = McpServer.layerHttp({
@@ -91,7 +85,6 @@ const McpTransportLive = McpServer.layerHttp({
   path: "/mcp",
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = Layer.mergeAll(
-  SubAgentToolkitRegistrationLive,
-  UnifiedSubAgentToolRegistrationLive,
-).pipe(Layer.provideMerge(McpTransportLive));
+export const layer = Layer.mergeAll(DelegateToolkitRegistrationLive).pipe(
+  Layer.provideMerge(McpTransportLive),
+);
