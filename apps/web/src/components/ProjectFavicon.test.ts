@@ -56,7 +56,7 @@ describe("projectFaviconSettingsRevision", () => {
     expect(changed).not.toBe(first);
   });
 
-  it("uses only the higher-precedence workspace icon when configured", () => {
+  it("changes when remote settings change even with a workspace override", () => {
     const first = projectFaviconSettingsRevision(
       {
         projectIcons: { "/workspace/project": "/icons/local.svg" },
@@ -72,6 +72,24 @@ describe("projectFaviconSettingsRevision", () => {
       "/workspace/project",
     );
 
-    expect(remoteChanged).toBe(first);
+    expect(remoteChanged).not.toBe(first);
+  });
+
+  it("changes when repository identity becomes available", () => {
+    const settings = {
+      projectIcons: {},
+      projectIconsByGitRemote: {
+        "github.com/example/one": "/icons/one.svg",
+      },
+    };
+
+    const unresolved = projectFaviconSettingsRevision(settings, "/workspace/project");
+    const resolved = projectFaviconSettingsRevision(
+      settings,
+      "/workspace/project",
+      "github.com/example/one",
+    );
+
+    expect(resolved).not.toBe(unresolved);
   });
 });

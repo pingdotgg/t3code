@@ -2347,6 +2347,7 @@ export default function SidebarV2() {
                     <ProjectFavicon
                       environmentId={scopedProjectGroup.environmentId}
                       cwd={scopedProjectGroup.workspaceRoot}
+                      repositoryKey={scopedProjectGroup.repositoryIdentity?.canonicalKey}
                       className="size-4 shrink-0"
                     />
                   ) : (
@@ -2384,6 +2385,7 @@ export default function SidebarV2() {
                           <ProjectFavicon
                             environmentId={project.environmentId}
                             cwd={project.workspaceRoot}
+                            repositoryKey={project.repositoryIdentity?.canonicalKey}
                             className="size-4 shrink-0"
                           />
                           <span className="min-w-0 truncate text-sm">{project.displayName}</span>
@@ -2657,6 +2659,7 @@ export default function SidebarV2() {
                     <ProjectFavicon
                       environmentId={member.environmentId}
                       cwd={member.workspaceRoot}
+                      repositoryKey={member.repositoryIdentity?.canonicalKey}
                       className="size-5 shrink-0 sm:size-4"
                     />
                     <div className="min-w-0 flex-1">

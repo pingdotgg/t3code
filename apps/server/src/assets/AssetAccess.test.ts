@@ -286,6 +286,60 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("finds workspace icon settings keyed by the unnormalized request root", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-raw-root-",
+      });
+      const requestedRoot = `${root}/.`;
+      const iconDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-raw-custom-",
+      });
+      const iconPath = path.join(iconDirectory, "custom.svg");
+      yield* fileSystem.writeFileString(iconPath, "<svg />");
+      const settings = ServerSettings.ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.succeed({
+          ...DEFAULT_SERVER_SETTINGS,
+          projectIcons: { [requestedRoot]: iconPath },
+        }),
+        updateSettings: () => Effect.die("not implemented"),
+        streamChanges: Stream.empty,
+      });
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: requestedRoot, revision: iconPath },
+      }).pipe(Effect.provideService(ServerSettings.ServerSettingsService, settings));
+
+      expect(result.relativeUrl.endsWith("/custom.svg")).toBe(true);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects automatically discovered icon symlinks outside the workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-auto-symlink-root-",
+      });
+      const outsideDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-auto-symlink-outside-",
+      });
+      const outsidePath = path.join(outsideDirectory, "secret.svg");
+      yield* fileSystem.writeFileString(outsidePath, "<svg>secret</svg>");
+      yield* fileSystem.symlink(outsidePath, path.join(root, "favicon.svg"));
+
+      const error = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("AssetProjectFaviconNotFoundError");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("rejects a configured project icon replaced by a symlink after signing", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -399,6 +453,7 @@ describe("AssetAccess", () => {
         cause: platformCause,
       });
       const resolver = ProjectFaviconResolver.ProjectFaviconResolver.of({
+        resolve: () => Effect.fail(resolutionCause),
         resolvePath: () => Effect.fail(resolutionCause),
       });
 

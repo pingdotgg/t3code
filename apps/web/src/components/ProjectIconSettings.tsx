@@ -5,7 +5,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { applyProjectIconUpdate } from "@t3tools/shared/serverSettings";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { environmentServerConfigsAtom, serverEnvironment } from "../state/server";
@@ -145,6 +145,25 @@ export function ProjectIconPathField({ target }: { readonly target: ProjectIconT
   const { iconPath, initialScope, saveIconPath, settingsPath } = useProjectIconSetting(target);
   const [draftPath, setDraftPath] = useState(iconPath);
   const [scope, setScope] = useState<ProjectIconScope>(initialScope);
+  const saveQueueRef = useRef(Promise.resolve());
+  const queueSave = useCallback(
+    (nextPath: string, nextScope: ProjectIconScope) => {
+      const save = saveQueueRef.current.then(() => saveIconPath(nextPath, nextScope));
+      saveQueueRef.current = save.then(
+        () => undefined,
+        () => undefined,
+      );
+      return save;
+    },
+    [saveIconPath],
+  );
+
+  useEffect(() => {
+    setDraftPath(iconPath);
+  }, [iconPath]);
+  useEffect(() => {
+    setScope(initialScope);
+  }, [initialScope]);
 
   return (
     <label className="grid min-w-0 gap-1.5 sm:col-span-2">
@@ -156,7 +175,7 @@ export function ProjectIconPathField({ target }: { readonly target: ProjectIconT
         placeholder="~/icons/project.svg"
         onChange={(event) => setDraftPath(event.currentTarget.value)}
         onBlur={(event) => {
-          void saveIconPath(event.currentTarget.value, scope);
+          void queueSave(event.currentTarget.value, scope);
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter") event.currentTarget.blur();
@@ -170,7 +189,7 @@ export function ProjectIconPathField({ target }: { readonly target: ProjectIconT
             onCheckedChange={(checked) => {
               const nextScope = checked ? "git-remote" : "workspace";
               setScope(nextScope);
-              void saveIconPath(draftPath, nextScope);
+              void queueSave(draftPath, nextScope);
             }}
           />
           <span className="min-w-0">
@@ -220,6 +239,7 @@ function ProjectIconDialogContent({
           <ProjectFavicon
             environmentId={target.environmentId}
             cwd={target.workspaceRoot}
+            repositoryKey={target.repositoryKey}
             className="size-8"
           />
           <div className="min-w-0">

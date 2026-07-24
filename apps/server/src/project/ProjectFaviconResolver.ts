@@ -87,6 +87,22 @@ export class ProjectFaviconResolver extends Context.Service<
   ProjectFaviconResolver,
   {
     /**
+     * Resolve a favicon together with the trust boundary that selected it.
+     *
+     * Explicit user settings may intentionally point outside the workspace,
+     * while project metadata and automatic discovery must remain contained.
+     */
+    readonly resolve: (
+      cwd: string,
+      options?: { readonly customIconPaths?: ReadonlyArray<string> },
+    ) => Effect.Effect<
+      {
+        readonly path: string;
+        readonly source: "custom-setting" | "workspace";
+      } | null,
+      ProjectFaviconResolutionError
+    >;
+    /**
      * Resolve a favicon or icon file path for the provided workspace root.
      *
      * Returns `null` when no candidate icon file can be found.
@@ -179,8 +195,8 @@ export const make = Effect.gen(function* () {
     return null;
   });
 
-  const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
-    "ProjectFaviconResolver.resolvePath",
+  const resolve: ProjectFaviconResolver["Service"]["resolve"] = Effect.fn(
+    "ProjectFaviconResolver.resolve",
   )(function* (cwd, options) {
     const projectCwd = yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
       Effect.mapError(
@@ -212,7 +228,7 @@ export const make = Effect.gen(function* () {
         ),
       );
       if (Option.isSome(customIconStats) && customIconStats.value.type === "File") {
-        return customIconPath;
+        return { path: customIconPath, source: "custom-setting" as const };
       }
     }
 
@@ -221,14 +237,14 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(projectFile) && projectFile.value.iconPath !== undefined) {
       const existing = yield* findExistingFile(projectCwd, [projectFile.value.iconPath]);
       if (existing) {
-        return existing;
+        return { path: existing, source: "workspace" as const };
       }
     }
 
     for (const candidate of FAVICON_CANDIDATES) {
       const existing = yield* findExistingFile(projectCwd, [candidate]);
       if (existing) {
-        return existing;
+        return { path: existing, source: "workspace" as const };
       }
     }
 
@@ -272,14 +288,17 @@ export const make = Effect.gen(function* () {
       }
       const existing = yield* findExistingFile(projectCwd, resolveIconHref(href));
       if (existing) {
-        return existing;
+        return { path: existing, source: "workspace" as const };
       }
     }
 
     return null;
   });
 
-  return ProjectFaviconResolver.of({ resolvePath });
+  const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = (cwd, options) =>
+    resolve(cwd, options).pipe(Effect.map((resolved) => resolved?.path ?? null));
+
+  return ProjectFaviconResolver.of({ resolve, resolvePath });
 });
 
 export const layer = Layer.effect(ProjectFaviconResolver, make);

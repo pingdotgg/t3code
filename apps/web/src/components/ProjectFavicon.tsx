@@ -23,26 +23,31 @@ export function projectFaviconSettingsRevision(
     readonly projectIconsByGitRemote: Readonly<Record<string, string>>;
   },
   cwd: string,
+  repositoryKey?: string | null,
 ): string | undefined {
   const pathIcon = settings.projectIcons[cwd];
   const remoteEntries = Object.entries(settings.projectIconsByGitRemote);
-  if (!pathIcon && remoteEntries.length === 0) return undefined;
-  const revisionSource = JSON.stringify(
-    pathIcon
-      ? ["path", pathIcon]
-      : ["remotes", remoteEntries.sort(([left], [right]) => left.localeCompare(right))],
-  );
+  if (!pathIcon && remoteEntries.length === 0 && !repositoryKey) return undefined;
+  const revisionSource = JSON.stringify([
+    "path",
+    pathIcon ?? null,
+    "repository",
+    repositoryKey ?? null,
+    "remotes",
+    remoteEntries.sort(([left], [right]) => left.localeCompare(right)),
+  ]);
   return `icons:${revisionSource.length}:${hashProjectFaviconRevision(revisionSource)}`;
 }
 
 export function ProjectFavicon(input: {
   environmentId: EnvironmentId;
   cwd: string;
+  repositoryKey?: string | null | undefined;
   className?: string | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
   const configuredIconRevision = useEnvironmentSettings(input.environmentId, (settings) =>
-    projectFaviconSettingsRevision(settings, input.cwd),
+    projectFaviconSettingsRevision(settings, input.cwd, input.repositoryKey),
   );
   const src = useAssetUrl(input.environmentId, {
     _tag: "project-favicon",
