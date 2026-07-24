@@ -107,4 +107,36 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.message).toContain("ACP startup failed");
     }),
   );
+
+  it.effect("accepts an explicit workspace cwd for ACP discovery without hanging probes", () =>
+    Effect.gen(function* () {
+      // Regression: probe must accept ServerConfig.cwd (not only process.cwd()).
+      // Discovery still fails with a version-only binary; the important part is
+      // the third argument is plumbed and check completes.
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-workspace-cwd-" });
+          const workspaceCwd = path.join(dir, "workspace");
+          yield* fs.makeDirectory(workspaceCwd, { recursive: true });
+          const grokPath = path.join(dir, "grok");
+          yield* fs.writeFileString(
+            grokPath,
+            ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            process.env,
+            workspaceCwd,
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.message).toContain("ACP startup failed");
+    }),
+  );
 });

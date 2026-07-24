@@ -3,6 +3,7 @@ import * as AcpError from "./errors.ts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -246,6 +247,67 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         },
       });
       assert.notInclude(encodeUnknownJsonString(event), secret);
+    }),
+  );
+
+  it.effect("drops non-numeric response ids so Effect RpcClient does not BigInt-crash", () =>
+    Effect.gen(function* () {
+      // Grok emits internal JSON-RPC ids like "skills-reload". Effect's RpcClient
+      // does BigInt(requestId); without dropping, that throws and tears the stream.
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      const notifications =
+        yield* Deferred.make<ReadonlyArray<AcpProtocol.AcpIncomingNotification>>();
+      yield* transport.incoming.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.flatMap((chunk) => Deferred.succeed(notifications, chunk)),
+        Effect.forkScoped,
+      );
+
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            id: "skills-reload",
+            result: {},
+          })}\n`,
+        ),
+      );
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: {
+              sessionUpdate: "plan",
+              entries: [
+                {
+                  content: "Still healthy after skills-reload id",
+                  priority: "medium",
+                  status: "completed",
+                },
+              ],
+            },
+          },
+        }),
+      );
+
+      const [update] = yield* Deferred.await(notifications);
+      assert.equal(update?._tag, "SessionUpdate");
+
+      const terminatedEarly = yield* Deferred.poll(termination);
+      assert.isTrue(Option.isNone(terminatedEarly));
     }),
   );
 

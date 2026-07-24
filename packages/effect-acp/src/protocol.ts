@@ -337,12 +337,33 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     return Queue.offer(serverQueue, message).pipe(Effect.asVoid);
   };
 
+  /**
+   * Effect RPC brands request ids as bigint. Agents may emit non-numeric JSON-RPC
+   * ids (e.g. Grok's internal "skills-reload"). Forwarding those to RpcClient
+   * throws `Cannot convert … to a BigInt` and tears down the stream.
+   */
+  const isEffectRpcRequestId = (requestId: string): boolean => {
+    try {
+      BigInt(requestId);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const offerClientMessageIfNumericRequestId = (
+    message: RpcMessage.ResponseExitEncoded | RpcMessage.ResponseChunkEncoded,
+  ) =>
+    isEffectRpcRequestId(message.requestId)
+      ? Queue.offer(clientQueue, message).pipe(Effect.asVoid)
+      : Effect.void;
+
   const handleExitEncoded = (message: RpcMessage.ResponseExitEncoded) =>
     Ref.get(extPending).pipe(
       Effect.flatMap((pending) => {
         const pendingRequest = pending.get(message.requestId);
         if (!pendingRequest) {
-          return Queue.offer(clientQueue, message).pipe(Effect.asVoid);
+          return offerClientMessageIfNumericRequestId(message);
         }
         if (message.exit._tag === "Success") {
           return completeExtPendingSuccess(message.requestId, message.exit.value);
@@ -389,7 +410,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
                     message.requestId,
                   ),
                 )
-              : Queue.offer(clientQueue, message).pipe(Effect.asVoid);
+              : offerClientMessageIfNumericRequestId(message);
           }),
         );
       case "Defect":
