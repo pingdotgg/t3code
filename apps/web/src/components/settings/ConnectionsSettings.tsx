@@ -1426,19 +1426,11 @@ function SavedBackendListRow({
             <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
           ) : null}
           {versionMismatch ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="flex items-center gap-1 text-warning text-xs">
-                <TriangleAlertIcon className="size-3.5 shrink-0" />
-                Version drift: client {versionMismatch.clientVersion}, server{" "}
-                {versionMismatch.serverVersion}.
-              </p>
-              <ServerUpdateAction
-                environmentId={environmentId}
-                serverLabel={`${environment.label} server`}
-                selfUpdate={resolveServerSelfUpdateCapability(environment.serverConfig)}
-                targetVersion={versionMismatch.clientVersion}
-              />
-            </div>
+            <p className="flex items-center gap-1 text-warning text-xs">
+              <TriangleAlertIcon className="size-3.5 shrink-0" />
+              Version drift: client {versionMismatch.clientVersion}, server{" "}
+              {versionMismatch.serverVersion}.
+            </p>
           ) : null}
           {environment.connection.error ? (
             <p className="flex min-w-0 items-center gap-2 text-destructive text-xs">
@@ -1456,6 +1448,14 @@ function SavedBackendListRow({
           ) : null}
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          {versionMismatch ? (
+            <ServerUpdateAction
+              environmentId={environmentId}
+              serverLabel={`${environment.label} server`}
+              selfUpdate={resolveServerSelfUpdateCapability(environment.serverConfig)}
+              targetVersion={versionMismatch.clientVersion}
+            />
+          ) : null}
           {isWslEnvironment ? (
             <Tooltip>
               <TooltipTrigger
