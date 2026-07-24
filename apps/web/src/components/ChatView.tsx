@@ -25,7 +25,7 @@ import {
   connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
-import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -140,6 +140,7 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
+  AlarmClockIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
@@ -3844,7 +3845,24 @@ function ChatViewContent(props: ChatViewProps) {
     hasDedicatedWorktree: (activeThread?.worktreePath ?? null) !== null,
   });
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
+  const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
   const nowMinute = useNowMinute();
+  const activeThreadSnoozed =
+    activeThreadShell !== null &&
+    supportsSnooze &&
+    effectiveSnoozed(activeThreadShell, { now: new Date().toISOString() });
+  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
+  useEffect(() => {
+    void snoozeWakeTick;
+    if (!activeThreadSnoozed) return;
+    const wakeAtMs = Date.parse(activeThreadShell?.snoozedUntil ?? "");
+    if (!Number.isFinite(wakeAtMs)) return;
+    const id = window.setTimeout(
+      () => bumpSnoozeWakeTick((tick) => tick + 1),
+      Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647),
+    );
+    return () => window.clearTimeout(id);
+  }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeWakeTick]);
   const activeThreadSettled = useMemo(() => {
     if (activeThreadShell === null || !supportsSettlement) return false;
     return effectiveSettled(activeThreadShell, {
@@ -3890,6 +3908,34 @@ function ChatViewContent(props: ChatViewProps) {
       setUnsettlingThreadKey((current) => (current === threadKey ? null : current));
     }
   }, [activeThreadRef, unsettleThreadMutation]);
+  const unsnoozeThreadMutation = useAtomCommand(threadEnvironment.unsnooze, {
+    reportFailure: false,
+  });
+  const [unsnoozingThreadKey, setUnsnoozingThreadKey] = useState<string | null>(null);
+  const isUnsnoozing = unsnoozingThreadKey !== null && unsnoozingThreadKey === activeThreadKey;
+  const handleUnsnoozeActiveThread = useCallback(async () => {
+    if (!activeThreadRef) return;
+    const threadKey = scopedThreadKey(activeThreadRef);
+    setUnsnoozingThreadKey(threadKey);
+    try {
+      const result = await unsnoozeThreadMutation({
+        environmentId: activeThreadRef.environmentId,
+        input: { threadId: activeThreadRef.threadId, reason: "user" },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to wake thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    } finally {
+      setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
+    }
+  }, [activeThreadRef, unsnoozeThreadMutation]);
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
   // Once revealed for a given mismatch, the banner stays mounted until the
@@ -3999,29 +4045,48 @@ function ChatViewContent(props: ChatViewProps) {
   ]);
   // The stack renders items[0] front-most and tucks the rest behind hover, so
   // ordering is priority: system banners, then the branch-mismatch notice,
-  // and the informational settled banner last — it must never cover another.
-  const settledComposerBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
-    if (!activeThreadSettled) {
+  // and the informational parked-thread banner last — it must never cover another.
+  const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!activeThreadSnoozed && !activeThreadSettled) {
       return null;
     }
+    const isSnoozed = activeThreadSnoozed;
     return {
-      id: `thread-settled:${activeThread?.id ?? "unknown"}`,
+      id: `thread-${isSnoozed ? "snoozed" : "settled"}:${activeThread?.id ?? "unknown"}`,
       variant: "info",
-      icon: <CheckCircle2Icon />,
-      title: "This thread is settled",
-      description: "Sending a message moves it back to Active in the sidebar.",
+      icon: isSnoozed ? <AlarmClockIcon /> : <CheckCircle2Icon />,
+      title: `This thread is ${isSnoozed ? "snoozed" : "settled"}`,
+      description: isSnoozed
+        ? "Sending a message wakes it and moves it back to Active in the sidebar."
+        : "Sending a message moves it back to Active in the sidebar.",
       actions: (
         <Button
           size="xs"
           variant="outline"
-          disabled={isUnsettling}
-          onClick={() => void handleUnsettleActiveThread()}
+          disabled={isSnoozed ? isUnsnoozing : isUnsettling}
+          onClick={() =>
+            void (isSnoozed ? handleUnsnoozeActiveThread() : handleUnsettleActiveThread())
+          }
         >
-          {isUnsettling ? "Un-settling..." : "Un-settle"}
+          {isSnoozed
+            ? isUnsnoozing
+              ? "Waking..."
+              : "Wake now"
+            : isUnsettling
+              ? "Un-settling..."
+              : "Un-settle"}
         </Button>
       ),
     };
-  }, [activeThread?.id, activeThreadSettled, handleUnsettleActiveThread, isUnsettling]);
+  }, [
+    activeThread?.id,
+    activeThreadSettled,
+    activeThreadSnoozed,
+    handleUnsnoozeActiveThread,
+    handleUnsettleActiveThread,
+    isUnsnoozing,
+    isUnsettling,
+  ]);
   const handleRestoreThreadBranch = useCallback(() => {
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
       setBranchRestoreConfirmOpen(true);
@@ -4030,9 +4095,9 @@ function ChatViewContent(props: ChatViewProps) {
     void handleSwitchCheckoutToThread();
   }, [gitStatusQuery.data?.hasWorkingTreeChanges, handleSwitchCheckoutToThread]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
-    const settledItems = settledComposerBannerItem === null ? [] : [settledComposerBannerItem];
+    const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
-      return [...systemComposerBannerItems, ...settledItems];
+      return [...systemComposerBannerItems, ...parkedThreadItems];
     }
     return [
       ...systemComposerBannerItems,
@@ -4075,14 +4140,14 @@ function ChatViewContent(props: ChatViewProps) {
           setBranchMismatchDismissTick((tick) => tick + 1);
         },
       },
-      ...settledItems,
+      ...parkedThreadItems,
     ];
   }, [
     activeBranchMismatchKey,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
-    settledComposerBannerItem,
+    parkedThreadBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
   ]);

@@ -40,7 +40,7 @@ function getTimestampFormatter(
   return formatter;
 }
 
-function parseTimestampDate(isoDate: string): Date | null {
+export function parseTimestampDate(isoDate: string): Date | null {
   const date = new Date(isoDate);
   return Number.isNaN(date.getTime()) ? null : date;
 }
