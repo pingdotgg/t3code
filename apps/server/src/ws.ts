@@ -1458,10 +1458,17 @@ const makeWsRpcLayer = (
                     });
                   }
 
-                  return Stream.concat(
-                    Stream.make({ kind: "snapshot" as const, snapshot: snapshot.value }),
-                    bufferedLiveStream,
-                  );
+                  const replacementSnapshot =
+                    input.requestCompletionMarker === true
+                      ? Stream.make(
+                          { kind: "snapshot" as const, snapshot: snapshot.value },
+                          { kind: "synchronized" as const },
+                        )
+                      : Stream.make({
+                          kind: "snapshot" as const,
+                          snapshot: snapshot.value,
+                        });
+                  return Stream.concat(replacementSnapshot, bufferedLiveStream);
                 }
 
                 const catchUpStream = orchestrationEngine
