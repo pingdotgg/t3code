@@ -460,7 +460,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-1"),
@@ -502,7 +502,7 @@ describe("ProviderCommandReactor", () => {
     const sourceTurnId = asTurnId("source-turn-1");
     const forkThreadId = ThreadId.make("thread-fork");
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.message.assistant.complete",
         commandId: CommandId.make("cmd-source-assistant-complete"),
@@ -512,7 +512,7 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.fork",
         commandId: CommandId.make("cmd-thread-fork"),
@@ -523,7 +523,7 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-fork-turn-start"),
@@ -558,7 +558,7 @@ describe("ProviderCommandReactor", () => {
     const parentForkThreadId = ThreadId.make("thread-parent-fork");
     const nestedForkThreadId = ThreadId.make("thread-nested-fork");
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.message.assistant.complete",
         commandId: CommandId.make("cmd-nested-source-complete"),
@@ -568,7 +568,7 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.fork",
         commandId: CommandId.make("cmd-parent-fork"),
@@ -579,7 +579,7 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.fork",
         commandId: CommandId.make("cmd-nested-fork"),
@@ -590,7 +590,7 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-nested-fork-turn-start"),
@@ -623,7 +623,7 @@ describe("ProviderCommandReactor", () => {
     const sourceTurnId = asTurnId("source-turn-1");
     const forkThreadId = ThreadId.make("thread-fork-missing-source");
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.message.assistant.complete",
         commandId: CommandId.make("cmd-missing-source-assistant-complete"),
@@ -633,7 +633,7 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.fork",
         commandId: CommandId.make("cmd-missing-source-fork"),
@@ -644,14 +644,14 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.delete",
         commandId: CommandId.make("cmd-delete-fork-source"),
         threadId: ThreadId.make("thread-1"),
       }),
     );
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-missing-source-turn-start"),
