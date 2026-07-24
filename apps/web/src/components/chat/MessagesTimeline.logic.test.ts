@@ -5,7 +5,67 @@ import {
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  resolveOlderHistoryAutoLoad,
 } from "./MessagesTimeline.logic";
+
+describe("resolveOlderHistoryAutoLoad", () => {
+  it("dispatches only once while a failed or successful load leaves the viewport at the top", () => {
+    const first = resolveOlderHistoryAutoLoad({
+      isAtStart: true,
+      hasMoreOlder: true,
+      loadingOlder: false,
+      requestedAtStart: false,
+    });
+    expect(first).toEqual({ requestedAtStart: true, shouldLoad: true });
+
+    expect(
+      resolveOlderHistoryAutoLoad({
+        isAtStart: true,
+        hasMoreOlder: true,
+        loadingOlder: false,
+        requestedAtStart: first.requestedAtStart,
+      }),
+    ).toEqual({ requestedAtStart: true, shouldLoad: false });
+    expect(
+      resolveOlderHistoryAutoLoad({
+        isAtStart: true,
+        hasMoreOlder: true,
+        loadingOlder: true,
+        requestedAtStart: first.requestedAtStart,
+      }),
+    ).toEqual({ requestedAtStart: true, shouldLoad: false });
+  });
+
+  it("rearms automatic loading only after leaving the top", () => {
+    const away = resolveOlderHistoryAutoLoad({
+      isAtStart: false,
+      hasMoreOlder: true,
+      loadingOlder: false,
+      requestedAtStart: true,
+    });
+    expect(away).toEqual({ requestedAtStart: false, shouldLoad: false });
+
+    expect(
+      resolveOlderHistoryAutoLoad({
+        isAtStart: true,
+        hasMoreOlder: true,
+        loadingOlder: false,
+        requestedAtStart: away.requestedAtStart,
+      }),
+    ).toEqual({ requestedAtStart: true, shouldLoad: true });
+  });
+
+  it("does not reset the latch before list state is available", () => {
+    expect(
+      resolveOlderHistoryAutoLoad({
+        isAtStart: undefined,
+        hasMoreOlder: true,
+        loadingOlder: false,
+        requestedAtStart: true,
+      }),
+    ).toEqual({ requestedAtStart: true, shouldLoad: false });
+  });
+});
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {

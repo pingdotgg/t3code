@@ -21,6 +21,42 @@ export interface TimelineEndState {
   readonly isNearEnd?: boolean;
 }
 
+export interface OlderHistoryAutoLoadInput {
+  readonly isAtStart: boolean | undefined;
+  readonly hasMoreOlder: boolean;
+  readonly loadingOlder: boolean;
+  readonly requestedAtStart: boolean;
+}
+
+export interface OlderHistoryAutoLoadResult {
+  readonly requestedAtStart: boolean;
+  readonly shouldLoad: boolean;
+}
+
+/**
+ * Permit at most one automatic older-history request per visit to the top.
+ * Loading completion and prepended rows both retrigger timeline measurements;
+ * neither should recursively request another page while the viewport remains
+ * pinned at the start. Leaving the top rearms automatic loading, while the
+ * explicit header control remains available for an immediate retry.
+ */
+export function resolveOlderHistoryAutoLoad(
+  input: OlderHistoryAutoLoadInput,
+): OlderHistoryAutoLoadResult {
+  if (input.isAtStart === false) {
+    return { requestedAtStart: false, shouldLoad: false };
+  }
+  if (
+    input.isAtStart !== true ||
+    input.requestedAtStart ||
+    !input.hasMoreOlder ||
+    input.loadingOlder
+  ) {
+    return { requestedAtStart: input.requestedAtStart, shouldLoad: false };
+  }
+  return { requestedAtStart: true, shouldLoad: true };
+}
+
 export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
   return state?.isNearEnd ?? state?.isAtEnd;
 }

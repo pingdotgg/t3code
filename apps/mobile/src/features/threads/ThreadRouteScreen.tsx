@@ -194,7 +194,9 @@ function ThreadRouteContent(
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-  const requests = useSelectedThreadRequests();
+  // Derive pending requests from the FULL loaded set (older pages + live
+  // window) so a prompt the user scrolled back to load still surfaces.
+  const requests = useSelectedThreadRequests(composer.mergedActivities);
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const navigation = useNavigation();
   const params = props.route.params;
@@ -767,6 +769,9 @@ function ThreadRouteContent(
           connectionStateLabel={routeConnectionState}
           threadSyncStatus={selectedThreadDetailState.status}
           activeThreadBusy={composer.activeThreadBusy}
+          hasMoreOlderActivities={composer.hasMoreOlderActivities}
+          loadingOlderActivities={composer.loadingOlderActivities}
+          onLoadOlderActivities={composer.onLoadOlderActivities}
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
           threadCwd={selectedThreadCwd}

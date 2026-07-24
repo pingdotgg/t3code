@@ -457,11 +457,17 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
+const EnvironmentOrchestrationCommandReadModel = OrchestrationReadModel.annotate({
+  identifier: "EnvironmentOrchestrationCommandReadModel",
+  description:
+    "Lightweight command snapshot. Thread messages, activities, and checkpoints are intentionally empty; use the shell and per-thread snapshot endpoints for conversation history.",
+});
+
 export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("snapshot", "/api/orchestration/snapshot", {
       headers: OptionalBearerHeaders,
-      success: OrchestrationReadModel,
+      success: EnvironmentOrchestrationCommandReadModel,
       error: EnvironmentOrchestrationSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )

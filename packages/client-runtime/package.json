@@ -123,6 +123,14 @@
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
     },
+    "./state/thread-reducer": {
+      "types": "./src/state/threadReducer.ts",
+      "default": "./src/state/threadReducer.ts"
+    },
+    "./state/older-thread-activities": {
+      "types": "./src/state/olderThreadActivities.ts",
+      "default": "./src/state/olderThreadActivities.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
@@ -147,6 +155,16 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@types/react": "~19.2.14",
+    "react": "19.2.6",
     "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
   }
 }

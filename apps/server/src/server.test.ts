@@ -5890,6 +5890,84 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("subscribeThread replaces a stale cursor with a fresh snapshot", () =>
+    Effect.gen(function* () {
+      const snapshotSequence = 5_000;
+      const thread = makeDefaultOrchestrationReadModel().threads[0]!;
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      let replayCalls = 0;
+      const messageEvent = {
+        sequence: snapshotSequence + 1,
+        eventId: EventId.make("event-stale-cursor-message"),
+        aggregateKind: "thread",
+        aggregateId: defaultThreadId,
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.message-sent",
+        payload: {
+          threadId: defaultThreadId,
+          messageId: MessageId.make("message-stale-cursor"),
+          role: "user",
+          text: "Published while loading the replacement snapshot",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getSnapshotSequence: () => Effect.succeed({ snapshotSequence }),
+            getThreadDetailSnapshot: () =>
+              Effect.gen(function* () {
+                yield* Effect.sleep("25 millis");
+                yield* PubSub.publish(liveEvents, messageEvent);
+                return Option.some({
+                  snapshotSequence,
+                  thread,
+                });
+              }),
+          },
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromPubSub(liveEvents),
+            readEvents: () => {
+              replayCalls += 1;
+              return Stream.empty;
+            },
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 1,
+            requestCompletionMarker: true,
+          }).pipe(Stream.take(3), Stream.runCollect),
+        ),
+      ).pipe(Effect.timeout("2 seconds"));
+
+      assert.equal(replayCalls, 0);
+      assert.equal(result[0]?.kind, "snapshot");
+      if (result[0]?.kind === "snapshot") {
+        assert.equal(result[0].snapshot.snapshotSequence, snapshotSequence);
+        assert.equal(result[0].snapshot.thread.id, defaultThreadId);
+      }
+      assert.deepEqual(result[1], { kind: "synchronized" });
+      assert.equal(result[2]?.kind, "event");
+      if (result[2]?.kind === "event") {
+        assert.equal(result[2].event.sequence, snapshotSequence + 1);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("subscribeShell coalesces a per-thread burst without stalling other threads", () =>
     Effect.gen(function* () {
       const busyThreadId = ThreadId.make("thread-busy");

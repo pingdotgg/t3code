@@ -31,8 +31,12 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.snapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          // The only consumer (the `t3` CLI project resolver) reads just
+          // `.projects`, so use the command read model — it returns the same
+          // OrchestrationReadModel shape but never materialises the per-thread
+          // activity/message/checkpoint tables (490MB+ on a busy DB → heap OOM).
           return yield* projectionSnapshotQuery
-            .getSnapshot()
+            .getCommandReadModel()
             .pipe(
               Effect.catch((cause) =>
                 failEnvironmentInternal("orchestration_snapshot_failed", cause),

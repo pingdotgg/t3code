@@ -6,11 +6,17 @@ import {
   MessageId,
   type EnvironmentId,
   type ModelSelection,
+  type OrchestrationThreadActivity,
   type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import {
+  useOlderThreadActivities,
+  type OlderActivitiesCursor,
+} from "@t3tools/client-runtime/state/older-thread-activities";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
@@ -36,10 +42,14 @@ import {
   useComposerDraft,
 } from "./use-composer-drafts";
 import { setPendingConnectionError } from "../state/use-remote-environment-registry";
+import { orchestrationEnvironment } from "../state/orchestration";
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
+import { useAtomCommand } from "./use-atom-command";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
+
+const EMPTY_ACTIVITIES: ReadonlyArray<OrchestrationThreadActivity> = [];
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -89,9 +99,56 @@ export function useThreadComposerState() {
     () => (selectedThreadKey ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []) : []),
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
+
+  // ── Older-history lazy-load (shared engine; see useOlderThreadActivities) ──
+  // The detail snapshot windows activities to the most recent page (the server
+  // sets `hasMoreActivities`); older pages are fetched on demand and prepended.
+  const loadThreadActivities = useAtomCommand(orchestrationEnvironment.loadThreadActivities, {
+    reportFailure: false,
+  });
+  const selectedEnvironmentIdForActivities = selectedThreadShell?.environmentId ?? null;
+  const selectedThreadIdForActivities = selectedThreadShell?.id ?? null;
+  const loadOlderActivitiesPage = useCallback(
+    async (cursor: OlderActivitiesCursor) => {
+      if (selectedEnvironmentIdForActivities === null || selectedThreadIdForActivities === null) {
+        return null;
+      }
+      const result = await loadThreadActivities({
+        environmentId: selectedEnvironmentIdForActivities,
+        input: { threadId: selectedThreadIdForActivities, ...cursor },
+      });
+      if (result._tag !== "Success") {
+        // Surface real failures (a spinner that quietly gives up reads as
+        // missing history); keep `hasMore` so scrolling back retries.
+        if (!isAtomCommandInterrupted(result)) {
+          setPendingConnectionError("Could not load older thread history.");
+        }
+        return null;
+      }
+      return result.value;
+    },
+    [selectedEnvironmentIdForActivities, selectedThreadIdForActivities, loadThreadActivities],
+  );
+  const {
+    mergedActivities,
+    hasMoreOlder: hasMoreOlderActivities,
+    loadingOlder: loadingOlderActivities,
+    loadOlder: onLoadOlderActivities,
+  } = useOlderThreadActivities({
+    threadKey: selectedThreadShell
+      ? `${selectedThreadShell.environmentId}\u0000${selectedThreadShell.id}`
+      : null,
+    liveActivities: selectedThreadDetail?.activities ?? EMPTY_ACTIVITIES,
+    hasMoreLiveActivities: selectedThreadDetail?.hasMoreActivities ?? false,
+    loadPage: loadOlderActivitiesPage,
+  });
+
   const selectedThreadFeed = useMemo(
-    () => (selectedThreadDetail ? buildThreadFeed(selectedThreadDetail) : []),
-    [selectedThreadDetail],
+    () =>
+      selectedThreadDetail
+        ? buildThreadFeed({ ...selectedThreadDetail, activities: mergedActivities })
+        : [],
+    [selectedThreadDetail, mergedActivities],
   );
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
@@ -299,6 +356,13 @@ export function useThreadComposerState() {
     runtimeMode,
     interactionMode,
     activeThreadBusy,
+    // Lazy-loaded older pages + the live window — the full loaded activity set.
+    // Request derivations must run over this (not the windowed live set alone)
+    // so prompts pulled in by scroll-up still surface, matching web.
+    mergedActivities,
+    hasMoreOlderActivities,
+    loadingOlderActivities,
+    onLoadOlderActivities,
     onChangeDraftMessage,
     onPickDraftImages,
     onPasteIntoDraft,
