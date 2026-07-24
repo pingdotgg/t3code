@@ -4,6 +4,8 @@ import {
   CorrelationId,
   EventId,
   MessageId,
+  type OrchestrationEvent,
+  type OrchestrationSessionStatus,
   ProjectId,
   ThreadId,
   TurnId,
@@ -33,6 +35,7 @@ import {
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
+import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
@@ -42,6 +45,89 @@ const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
   );
+
+const makeProjectionPipelineSnapshotTestLayer = (prefix: string) =>
+  Layer.merge(OrchestrationProjectionPipelineLive, OrchestrationProjectionSnapshotQueryLive).pipe(
+    Layer.provideMerge(OrchestrationEventStoreLive),
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
+    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+type ThreadCreatedEvent = Omit<
+  Extract<OrchestrationEvent, { readonly type: "thread.created" }>,
+  "sequence"
+>;
+
+const makeThreadCreatedEvent = (options: {
+  readonly eventId: string;
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly createdAt: string;
+}): ThreadCreatedEvent => ({
+  type: "thread.created",
+  eventId: EventId.make(options.eventId),
+  aggregateKind: "thread",
+  aggregateId: options.threadId,
+  occurredAt: options.createdAt,
+  commandId: CommandId.make(`cmd-${options.eventId}`),
+  causationEventId: null,
+  correlationId: CorrelationId.make(`cmd-${options.eventId}`),
+  metadata: {},
+  payload: {
+    threadId: options.threadId,
+    projectId: options.projectId,
+    title: options.title,
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5-codex",
+    },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdAt: options.createdAt,
+    updatedAt: options.createdAt,
+  },
+});
+
+type ThreadSessionSetEvent = Omit<
+  Extract<OrchestrationEvent, { readonly type: "thread.session-set" }>,
+  "sequence"
+>;
+
+const makeThreadSessionSetEvent = (options: {
+  readonly eventId: string;
+  readonly threadId: ThreadId;
+  readonly status: OrchestrationSessionStatus;
+  readonly activeTurnId: TurnId | null;
+  readonly updatedAt: string;
+  readonly lastError?: string | null;
+}): ThreadSessionSetEvent => ({
+  type: "thread.session-set",
+  eventId: EventId.make(options.eventId),
+  aggregateKind: "thread",
+  aggregateId: options.threadId,
+  occurredAt: options.updatedAt,
+  commandId: CommandId.make(`cmd-${options.eventId}`),
+  causationEventId: null,
+  correlationId: CorrelationId.make(`cmd-${options.eventId}`),
+  metadata: {},
+  payload: {
+    threadId: options.threadId,
+    session: {
+      threadId: options.threadId,
+      status: options.status,
+      providerName: "codex",
+      runtimeMode: "full-access",
+      activeTurnId: options.activeTurnId,
+      lastError: options.lastError ?? null,
+      updatedAt: options.updatedAt,
+    },
+  },
+});
 
 const exists = (filePath: string) =>
   Effect.gen(function* () {
@@ -381,6 +467,208 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
             mimeType: "image/png",
             sizeBytes: 5,
           },
+        ]);
+      }),
+    );
+  },
+);
+
+it.layer(Layer.fresh(makeProjectionPipelineSnapshotTestLayer("t3-latest-turn-session-set-")))(
+  "OrchestrationProjectionPipeline latest turn",
+  (it) => {
+    it.effect("preserves the completed latest turn when the session becomes ready", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-latest-turn-ready");
+        const turnId = TurnId.make("turn-latest-turn-ready");
+        const createdAt = "2026-07-24T00:00:00.000Z";
+        const startedAt = "2026-07-24T00:00:01.000Z";
+        const completedAt = "2026-07-24T00:01:00.000Z";
+
+        yield* eventStore.append(
+          makeThreadCreatedEvent({
+            eventId: "evt-latest-turn-created",
+            threadId,
+            projectId: ProjectId.make("project-latest-turn"),
+            title: "Latest turn",
+            createdAt,
+          }),
+        );
+        yield* eventStore.append(
+          makeThreadSessionSetEvent({
+            eventId: "evt-latest-turn-running",
+            threadId,
+            status: "running",
+            activeTurnId: turnId,
+            updatedAt: startedAt,
+          }),
+        );
+        yield* eventStore.append(
+          makeThreadSessionSetEvent({
+            eventId: "evt-latest-turn-ready",
+            threadId,
+            status: "ready",
+            activeTurnId: null,
+            updatedAt: completedAt,
+          }),
+        );
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly activeTurnId: string | null;
+          readonly latestTurnId: string | null;
+        }>`
+        SELECT
+          sessions.active_turn_id AS "activeTurnId",
+          threads.latest_turn_id AS "latestTurnId"
+        FROM projection_threads threads
+        JOIN projection_thread_sessions sessions
+          ON sessions.thread_id = threads.thread_id
+        WHERE threads.thread_id = ${threadId}
+      `;
+        assert.deepEqual(rows, [{ activeTurnId: null, latestTurnId: turnId }]);
+
+        const shell = yield* snapshotQuery.getThreadShellById(threadId);
+        assert.equal(shell._tag, "Some");
+        if (shell._tag === "Some") {
+          assert.equal(shell.value.session?.activeTurnId, null);
+          assert.equal(shell.value.latestTurn?.turnId, turnId);
+          assert.equal(shell.value.latestTurn?.state, "completed");
+          assert.equal(shell.value.latestTurn?.completedAt, completedAt);
+        }
+      }),
+    );
+
+    it.effect("preserves the latest turn when session statuses have no active turn", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-latest-turn-statuses");
+        const turnId = TurnId.make("turn-latest-turn-statuses");
+        const statuses = ["idle", "stopped", "interrupted", "error", "starting"] as const;
+
+        yield* eventStore.append(
+          makeThreadCreatedEvent({
+            eventId: "evt-latest-turn-statuses-created",
+            threadId,
+            projectId: ProjectId.make("project-latest-turn-statuses"),
+            title: "Latest turn statuses",
+            createdAt: "2026-07-24T01:00:00.000Z",
+          }),
+        );
+        yield* eventStore.append(
+          makeThreadSessionSetEvent({
+            eventId: "evt-latest-turn-statuses-running",
+            threadId,
+            status: "running",
+            activeTurnId: turnId,
+            updatedAt: "2026-07-24T01:01:00.000Z",
+          }),
+        );
+        yield* projectionPipeline.bootstrap;
+
+        for (const [index, status] of statuses.entries()) {
+          yield* eventStore.append(
+            makeThreadSessionSetEvent({
+              eventId: `evt-latest-turn-statuses-${status}`,
+              threadId,
+              status,
+              activeTurnId: null,
+              updatedAt: `2026-07-24T01:02:0${index}.000Z`,
+              lastError: status === "error" ? "turn failed" : null,
+            }),
+          );
+          yield* projectionPipeline.bootstrap;
+
+          const rows = yield* sql<{
+            readonly activeTurnId: string | null;
+            readonly latestTurnId: string | null;
+            readonly status: string;
+          }>`
+            SELECT
+              sessions.active_turn_id AS "activeTurnId",
+              threads.latest_turn_id AS "latestTurnId",
+              sessions.status
+            FROM projection_threads threads
+            JOIN projection_thread_sessions sessions
+              ON sessions.thread_id = threads.thread_id
+            WHERE threads.thread_id = ${threadId}
+          `;
+          assert.deepEqual(rows, [{ activeTurnId: null, latestTurnId: turnId, status }]);
+        }
+      }),
+    );
+
+    it.effect("keeps no prior turn null and replaces the pointer for new active turns", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-latest-turn-replacement");
+        const firstTurnId = TurnId.make("turn-latest-turn-first");
+        const secondTurnId = TurnId.make("turn-latest-turn-second");
+        const createdAt = "2026-07-24T02:00:00.000Z";
+
+        yield* eventStore.append(
+          makeThreadCreatedEvent({
+            eventId: "evt-latest-turn-replacement-created",
+            threadId,
+            projectId: ProjectId.make("project-latest-turn-replacement"),
+            title: "Latest turn replacement",
+            createdAt,
+          }),
+        );
+        yield* eventStore.append(
+          makeThreadSessionSetEvent({
+            eventId: "evt-latest-turn-replacement-starting",
+            threadId,
+            status: "starting",
+            activeTurnId: null,
+            updatedAt: "2026-07-24T02:00:01.000Z",
+          }),
+        );
+        yield* projectionPipeline.bootstrap;
+
+        const noTurnRows = yield* sql<{ readonly latestTurnId: string | null }>`
+        SELECT latest_turn_id AS "latestTurnId"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+        assert.deepEqual(noTurnRows, [{ latestTurnId: null }]);
+
+        for (const [index, turnId] of [firstTurnId, secondTurnId].entries()) {
+          const updatedAt = `2026-07-24T02:00:0${index + 2}.000Z`;
+          yield* eventStore.append(
+            makeThreadSessionSetEvent({
+              eventId: `evt-latest-turn-replacement-running-${index}`,
+              threadId,
+              status: "running",
+              activeTurnId: turnId,
+              updatedAt,
+            }),
+          );
+        }
+        yield* projectionPipeline.bootstrap;
+
+        const replacementRows = yield* sql<{
+          readonly activeTurnId: string | null;
+          readonly latestTurnId: string | null;
+        }>`
+        SELECT
+          sessions.active_turn_id AS "activeTurnId",
+          threads.latest_turn_id AS "latestTurnId"
+        FROM projection_threads threads
+        JOIN projection_thread_sessions sessions
+          ON sessions.thread_id = threads.thread_id
+        WHERE threads.thread_id = ${threadId}
+      `;
+        assert.deepEqual(replacementRows, [
+          { activeTurnId: secondTurnId, latestTurnId: secondTurnId },
         ]);
       }),
     );
