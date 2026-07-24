@@ -1,5 +1,6 @@
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -61,7 +62,7 @@ import {
 } from "../git/remoteRefs.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
-import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
+import { GitVcsDriver, type ExecuteGitProgress } from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import { SourceControlProviderRegistry } from "./SourceControlProviderRegistry.ts";
 const isGitCommandError = Schema.is(GitCommandError);
@@ -95,6 +96,37 @@ interface PanelSnapshotCacheState {
 }
 
 const PANEL_SNAPSHOT_CACHE_CAPACITY = 64;
+const COMMIT_HOOK_NATIVE_DEPENDENCY_FAILURE_DETAIL =
+  "The Git pre-commit hook could not load a required native dependency. Reinstall the repository dependencies and try again.";
+const COMMIT_HOOK_FAILURE_DETAIL =
+  "The Git pre-commit hook failed. Run the repository pre-commit hook in a terminal for details.";
+
+type CommitFailureHint = "hook-failed" | "native-dependency";
+
+function commitFailureHintFromOutputLine(line: string): CommitFailureHint | null {
+  if (
+    line.includes("Cannot find native binding") ||
+    line.includes("Cannot find module 'vite-plus/binding'") ||
+    line.includes('Cannot find module "vite-plus/binding"')
+  ) {
+    return "native-dependency";
+  }
+  if (line.includes("VITE+ - pre-commit script failed")) {
+    return "hook-failed";
+  }
+  return null;
+}
+
+function commitFailureDetail(hint: CommitFailureHint | null): string | null {
+  switch (hint) {
+    case "native-dependency":
+      return COMMIT_HOOK_NATIVE_DEPENDENCY_FAILURE_DETAIL;
+    case "hook-failed":
+      return COMMIT_HOOK_FAILURE_DETAIL;
+    case null:
+      return null;
+  }
+}
 
 function setBoundedMapEntry<K, V>(
   source: ReadonlyMap<K, V>,
@@ -924,7 +956,11 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     operation: string,
     cwd: string,
     args: readonly string[],
-    options?: { readonly allowNonZeroExit?: boolean; readonly env?: NodeJS.ProcessEnv },
+    options?: {
+      readonly allowNonZeroExit?: boolean;
+      readonly env?: NodeJS.ProcessEnv;
+      readonly progress?: ExecuteGitProgress;
+    },
   ) =>
     git
       .execute({
@@ -932,6 +968,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         cwd,
         args,
         ...(options?.env !== undefined ? { env: options.env } : {}),
+        ...(options?.progress !== undefined ? { progress: options.progress } : {}),
         allowNonZeroExit: options?.allowNonZeroExit ?? false,
         timeoutMs: 30_000,
         maxOutputBytes: 8 * 1024 * 1024,
@@ -943,7 +980,11 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     operation: string,
     cwd: string,
     args: readonly string[],
-    options?: { readonly allowNonZeroExit?: boolean; readonly env?: NodeJS.ProcessEnv },
+    options?: {
+      readonly allowNonZeroExit?: boolean;
+      readonly env?: NodeJS.ProcessEnv;
+      readonly progress?: ExecuteGitProgress;
+    },
   ) =>
     runResult(operation, cwd, args, options).pipe(
       Effect.flatMap((result) => {
@@ -2471,6 +2512,53 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     ]).pipe(Effect.asVoid);
   });
 
+  const runCommit = Effect.fn("runCommit")(function* (
+    cwd: string,
+    message: string,
+    env?: NodeJS.ProcessEnv,
+  ) {
+    const args = ["commit", "-m", message] as const;
+    const failureDetected = yield* Deferred.make<CommitFailureHint>();
+    let failureHint: CommitFailureHint | null = null;
+    const recordFailureHint = (line: string) =>
+      Effect.gen(function* () {
+        const nextHint = commitFailureHintFromOutputLine(line);
+        if (nextHint !== null && (nextHint === "native-dependency" || failureHint === null)) {
+          failureHint = nextHint;
+          yield* Deferred.succeed(failureDetected, nextHint).pipe(Effect.ignore);
+        }
+      });
+
+    const commit = run("vcs.panel.commitStaged", cwd, args, {
+      ...(env === undefined ? {} : { env }),
+      progress: {
+        onStdoutLine: recordFailureHint,
+        onStderrLine: recordFailureHint,
+      },
+    }).pipe(
+      Effect.mapError((error) => {
+        const detail = commitFailureDetail(failureHint);
+        return detail === null
+          ? error
+          : gitError("vcs.panel.commitStaged", cwd, args, detail, error);
+      }),
+      Effect.asVoid,
+    );
+
+    const detectedFailure = Deferred.await(failureDetected).pipe(
+      Effect.flatMap((hint) =>
+        gitError(
+          "vcs.panel.commitStaged",
+          cwd,
+          args,
+          commitFailureDetail(hint) ?? COMMIT_HOOK_FAILURE_DETAIL,
+        ),
+      ),
+    );
+
+    yield* Effect.raceFirst(commit, detectedFailure);
+  });
+
   const commitStaged: SourceControlPanelService["Service"]["commitStaged"] = Effect.fn(
     "commitStaged",
   )(function* (input) {
@@ -2480,9 +2568,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         Effect.gen(function* () {
           const message =
             input.message?.trim() || (yield* generatedCommitMessage(input.cwd, paths, env));
-          yield* run("vcs.panel.commitStaged", input.cwd, ["commit", "-m", message], {
-            env,
-          }).pipe(Effect.asVoid);
+          yield* runCommit(input.cwd, message, env);
         }),
       );
       yield* stageFiles({ cwd: input.cwd, paths }).pipe(
@@ -2496,9 +2582,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       );
     } else {
       const message = input.message?.trim() || (yield* generatedCommitMessage(input.cwd));
-      yield* run("vcs.panel.commitStaged", input.cwd, ["commit", "-m", message]).pipe(
-        Effect.asVoid,
-      );
+      yield* runCommit(input.cwd, message);
     }
     if (input.push) {
       const status = yield* workflow

@@ -105,7 +105,7 @@ const emptyProvider = SourceControlProvider.SourceControlProvider.of({
 });
 
 function makeTestLayer(
-  execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, never>,
+  execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>,
   workflow: Partial<GitWorkflowService["Service"]> = {},
   providers: Partial<
     Record<SourceControlProviderKind, SourceControlProvider.SourceControlProvider["Service"]>
@@ -689,6 +689,45 @@ describe("SourceControlPanelService", () => {
           Effect.sync(() => {
             calls.push(input);
             return success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("surfaces a native dependency failure without waiting for Git to time out", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const error = yield* service
+        .commitStaged({
+          cwd: "/repo",
+          message: "Commit selected file",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(
+        error.detail,
+        "The Git pre-commit hook could not load a required native dependency. Reinstall the repository dependencies and try again.",
+      );
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [["commit", "-m", "Commit selected file"]],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.gen(function* () {
+            calls.push(input);
+            yield* (
+              input.progress?.onStderrLine?.("Error: Cannot find native binding") ?? Effect.void
+            );
+            yield* (
+              input.progress?.onStderrLine?.("VITE+ - pre-commit script failed (code 1)") ??
+                Effect.void
+            );
+            return yield* Effect.never;
           }),
         ),
       ),
