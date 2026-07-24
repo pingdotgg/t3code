@@ -75,6 +75,20 @@ export const GitPullRequestReviewLifecycle = Schema.Literals([
   "review-complete",
 ]);
 export type GitPullRequestReviewLifecycle = typeof GitPullRequestReviewLifecycle.Type;
+/**
+ * Provider-reported merge state of a pull request, normalized across providers
+ * (GitHub mergeStateStatus: CONFLICTING/DIRTY → "dirty"). "dirty" means the PR
+ * has merge conflicts with its base branch. Absent/null means unknown — never
+ * treat unknown as "no conflicts".
+ */
+export const GitPullRequestMergeStateStatus = Schema.Literals([
+  "clean",
+  "dirty",
+  "unstable",
+  "blocked",
+  "behind",
+]);
+export type GitPullRequestMergeStateStatus = typeof GitPullRequestMergeStateStatus.Type;
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
@@ -249,6 +263,13 @@ const VcsStatusChangeRequest = Schema.Struct({
    * must fall back to the thread count and review decision.
    */
   reviewLifecycle: Schema.optional(GitPullRequestReviewLifecycle),
+  /**
+   * Normalized provider merge state, absent/null when unknown (non-GitHub
+   * provider, failed fetch, or the provider has not computed it yet). "dirty"
+   * means the PR has merge conflicts with its base branch. Unknown must never
+   * be treated as "no conflicts".
+   */
+  mergeStateStatus: Schema.optional(Schema.NullOr(GitPullRequestMergeStateStatus)),
 });
 
 const VcsStatusLocalShape = {

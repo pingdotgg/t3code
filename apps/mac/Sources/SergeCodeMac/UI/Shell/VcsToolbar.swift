@@ -62,6 +62,13 @@ struct VcsToolbar: View {
                             : isDraft ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                     .help(status.prTitle ?? "Open pull request")
                 }
+                if status.prState == .open, status.hasPrConflicts {
+                    Label("Conflicts", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .transition(Motion.materialize)
+                        .help("This pull request has merge conflicts with its base branch.")
+                }
                 if let prNumber = status.prNumber {
                     Button {
                         pullRequestReviewReference = String(prNumber)

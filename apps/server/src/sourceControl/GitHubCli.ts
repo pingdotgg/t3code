@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 
 import {
   TrimmedNonEmptyString,
+  type GitPullRequestMergeStateStatus,
   type PullRequestReviewResult,
   type SourceControlRepositoryVisibility,
   type VcsError,
@@ -333,6 +334,15 @@ export class GitHubCli extends Context.Service<
       readonly reference: string;
     }) => Effect.Effect<GitHubPullRequestReviewStatus, GitHubCliError>;
 
+    /**
+     * Best-effort merge-state lookup. Never fails: errors and transient
+     * GitHub states (UNKNOWN) surface as null, never as "no conflicts".
+     */
+    readonly getPullRequestMergeState: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+    }) => Effect.Effect<GitPullRequestMergeStateStatus | null, GitHubCliError>;
+
     readonly getPullRequestReview: (input: {
       readonly cwd: string;
       readonly reference: string;
@@ -381,6 +391,38 @@ function normalizeReviewDecision(
   if (normalized === "CHANGES_REQUESTED") return "CHANGES_REQUESTED";
   if (normalized === "REVIEW_REQUIRED") return "REVIEW_REQUIRED";
   return null;
+}
+
+const RawGitHubMergeStateStatusSchema = Schema.Struct({
+  mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
+});
+const decodeRawGitHubMergeStateStatus = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubMergeStateStatusSchema),
+);
+
+/**
+ * GitHub computes mergeability asynchronously, so `UNKNOWN` (and transient
+ * states like `DRAFT`/`HAS_HOOKS`) normalize to null — "no data", never
+ * "no conflicts". `CONFLICTING`/`DIRTY` both mean merge conflicts.
+ */
+function normalizeMergeStateStatus(
+  value: string | null | undefined,
+): GitPullRequestMergeStateStatus | null {
+  switch (value?.trim().toUpperCase()) {
+    case "CLEAN":
+      return "clean";
+    case "CONFLICTING":
+    case "DIRTY":
+      return "dirty";
+    case "UNSTABLE":
+      return "unstable";
+    case "BLOCKED":
+      return "blocked";
+    case "BEHIND":
+      return "behind";
+    default:
+      return null;
+  }
 }
 
 function parsePullRequestNumber(reference: string): number | null {
@@ -594,7 +636,8 @@ export const make = Effect.gen(function* () {
               comment.line > 0
                 ? comment.line
                 : undefined;
-            const side = comment.side === "LEFT" || comment.side === "RIGHT" ? comment.side : undefined;
+            const side =
+              comment.side === "LEFT" || comment.side === "RIGHT" ? comment.side : undefined;
             return {
               path: comment.path,
               body: comment.body,
@@ -658,13 +701,7 @@ export const make = Effect.gen(function* () {
     getPullRequest: (input) =>
       execute({
         cwd: input.cwd,
-        args: [
-          "pr",
-          "view",
-          input.reference,
-          "--json",
-          prListJsonFields,
-        ],
+        args: ["pr", "view", input.reference, "--json", prListJsonFields],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -829,6 +866,19 @@ export const make = Effect.gen(function* () {
 
         return { reviewDecision, ...reviewStatus };
       }),
+    getPullRequestMergeState: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["pr", "view", input.reference, "--json", "mergeStateStatus"],
+      }).pipe(
+        Effect.flatMap((result) =>
+          decodeRawGitHubMergeStateStatus(result.stdout.trim() || "{}").pipe(
+            Effect.map((raw) => normalizeMergeStateStatus(raw.mergeStateStatus)),
+          ),
+        ),
+        // Best-effort: a failed lookup must not break status or block merges.
+        Effect.orElseSucceed(() => null),
+      ),
     getPullRequestReview: (input) =>
       Effect.gen(function* () {
         const prNumber = parsePullRequestNumber(input.reference);

@@ -5,14 +5,20 @@
 /// - the PR is not a draft
 /// - every review thread is resolved (count known and zero)
 /// - the review decision is nil or `APPROVED`
+/// - the PR has no merge conflicts with its base branch
 ///
 /// A nil review decision is normal for repositories without required reviewers.
 /// The known-zero unresolved-thread count is the real signal that review feedback
 /// has all been fixed; an unknown thread count remains not-ready.
+///
+/// Merge state is opt-in from the provider: only an explicit "dirty" blocks
+/// merging. A nil/unknown merge state never affects readiness — older servers
+/// and non-GitHub providers simply don't report it.
 enum MergeReadiness {
     static func isReady(for status: VcsStatus) -> Bool {
         guard status.prState == .open else { return false }
         guard status.isDraftPR != true else { return false }
+        guard !status.hasPrConflicts else { return false }
         guard let unresolved = status.unresolvedReviewThreadCount, unresolved == 0 else {
             return false
         }

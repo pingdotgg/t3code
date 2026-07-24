@@ -166,6 +166,40 @@ describe("VcsStatusResult pull request review fields", () => {
     expect(parsed.pr?.reviewDecision).toBeNull();
     expect(parsed.pr?.unresolvedReviewThreadCount).toBeNull();
   });
+
+  it("decodes mergeStateStatus and tolerates its absence", () => {
+    const base = {
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/conflicted",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+    };
+    const pr = {
+      number: 9,
+      title: "Conflicted PR",
+      url: "https://github.com/SergeSerb2/SergeCode/pull/9",
+      baseRef: "main",
+      headRef: "feature/conflicted",
+      state: "open",
+      reviewDecision: null,
+      unresolvedReviewThreadCount: null,
+    };
+
+    const dirty = decodeVcsStatusResult({
+      ...base,
+      pr: { ...pr, mergeStateStatus: "dirty" },
+    });
+    expect(dirty.pr?.mergeStateStatus).toBe("dirty");
+
+    // Older servers / non-GitHub providers omit the field entirely.
+    const absent = decodeVcsStatusResult({ ...base, pr });
+    expect(absent.pr?.mergeStateStatus).toBeUndefined();
+  });
 });
 
 describe("GitRunStackedActionResult", () => {

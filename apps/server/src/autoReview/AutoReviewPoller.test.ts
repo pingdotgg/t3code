@@ -53,6 +53,7 @@ function makeGithub(listCount: { value: number }) {
     getDefaultBranch: () => Effect.succeed("main"),
     checkoutPullRequest: () => Effect.void,
     getPullRequestReviewStatus: () => Effect.die("unused"),
+    getPullRequestMergeState: () => Effect.die("unused"),
     getPullRequestReview: () => Effect.die("unused"),
     mergePullRequest: () => Effect.void,
     markPullRequestReady: () => Effect.void,
@@ -75,10 +76,7 @@ function makeText() {
   });
 }
 
-function makeLayer(input: {
-  enabled: boolean;
-  listCount: { value: number };
-}) {
+function makeLayer(input: { enabled: boolean; listCount: { value: number } }) {
   return Layer.mergeAll(
     AutoReviewJobStore.layerInMemory,
     AutoReviewPoller.layer({
