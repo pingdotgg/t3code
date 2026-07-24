@@ -1577,6 +1577,14 @@ export default function SidebarV2() {
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             [
+              ...(thread.branch
+                ? [
+                    {
+                      id: "new-thread-on-branch",
+                      label: `New thread on ${thread.branch}`,
+                    },
+                  ]
+                : []),
               ...(supportsSettlement
                 ? [
                     isSettled
@@ -1593,6 +1601,29 @@ export default function SidebarV2() {
         );
         if (clicked._tag === "Failure") return;
         switch (clicked.value) {
+          case "new-thread-on-branch": {
+            // Explicit branch carry-over: reuse the thread's worktree when it
+            // has one, otherwise its branch on the local checkout.
+            const result = await settlePromise(() =>
+              handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId), {
+                branch: thread.branch,
+                worktreePath: thread.worktreePath,
+                envMode: thread.worktreePath ? "worktree" : "local",
+                startFromOrigin: false,
+              }),
+            );
+            if (result._tag === "Failure") {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Could not create thread",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
+            return;
+          }
           case "settle":
             attemptSettle(threadRef);
             return;

@@ -18,7 +18,6 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
-export type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
   title: string;
@@ -244,62 +243,6 @@ export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null
 // still count as a normal single activation.
 export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
-}
-
-export function resolveSidebarNewThreadEnvMode(input: {
-  requestedEnvMode?: SidebarNewThreadEnvMode;
-  defaultEnvMode: SidebarNewThreadEnvMode;
-}): SidebarNewThreadEnvMode {
-  return input.requestedEnvMode ?? input.defaultEnvMode;
-}
-
-export function resolveSidebarNewThreadSeedContext(input: {
-  projectId: string;
-  defaultEnvMode: SidebarNewThreadEnvMode;
-  activeThread?: {
-    projectId: string;
-    branch: string | null;
-    worktreePath: string | null;
-  } | null;
-  activeDraftThread?: {
-    projectId: string;
-    branch: string | null;
-    worktreePath: string | null;
-    envMode: SidebarNewThreadEnvMode;
-    startFromOrigin: boolean;
-  } | null;
-}): {
-  branch?: string | null;
-  worktreePath?: string | null;
-  envMode: SidebarNewThreadEnvMode;
-  startFromOrigin?: boolean;
-} {
-  if (input.defaultEnvMode === "worktree") {
-    return {
-      envMode: "worktree",
-    };
-  }
-
-  if (input.activeDraftThread?.projectId === input.projectId) {
-    return {
-      branch: input.activeDraftThread.branch,
-      worktreePath: input.activeDraftThread.worktreePath,
-      envMode: input.activeDraftThread.envMode,
-      startFromOrigin: input.activeDraftThread.startFromOrigin,
-    };
-  }
-
-  if (input.activeThread?.projectId === input.projectId) {
-    return {
-      branch: input.activeThread.branch,
-      worktreePath: input.activeThread.worktreePath,
-      envMode: input.activeThread.worktreePath ? "worktree" : "local",
-    };
-  }
-
-  return {
-    envMode: input.defaultEnvMode,
-  };
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {

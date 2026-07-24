@@ -14,8 +14,6 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
-  resolveSidebarNewThreadSeedContext,
-  resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarV2Status,
@@ -368,112 +366,6 @@ describe("isTrailingDoubleClick", () => {
 
   it("ignores further clicks of a triple-click", () => {
     expect(isTrailingDoubleClick(3)).toBe(true);
-  });
-});
-
-describe("resolveSidebarNewThreadEnvMode", () => {
-  it("uses the app default when the caller does not request a specific mode", () => {
-    expect(
-      resolveSidebarNewThreadEnvMode({
-        defaultEnvMode: "worktree",
-      }),
-    ).toBe("worktree");
-  });
-
-  it("preserves an explicit requested mode over the app default", () => {
-    expect(
-      resolveSidebarNewThreadEnvMode({
-        requestedEnvMode: "local",
-        defaultEnvMode: "worktree",
-      }),
-    ).toBe("local");
-  });
-});
-
-describe("resolveSidebarNewThreadSeedContext", () => {
-  it("prefers the default worktree mode over active thread context", () => {
-    expect(
-      resolveSidebarNewThreadSeedContext({
-        projectId: "project-1",
-        defaultEnvMode: "worktree",
-        activeThread: {
-          projectId: "project-1",
-          branch: "feature/existing",
-          worktreePath: "/repo/.t3/worktrees/existing",
-        },
-        activeDraftThread: {
-          projectId: "project-1",
-          branch: "feature/draft",
-          worktreePath: "/repo/.t3/worktrees/draft",
-          envMode: "worktree",
-          startFromOrigin: true,
-        },
-      }),
-    ).toEqual({
-      envMode: "worktree",
-    });
-  });
-
-  it("inherits the active server thread context when creating a new thread in the same project", () => {
-    expect(
-      resolveSidebarNewThreadSeedContext({
-        projectId: "project-1",
-        defaultEnvMode: "local",
-        activeThread: {
-          projectId: "project-1",
-          branch: "effect-atom",
-          worktreePath: null,
-        },
-        activeDraftThread: null,
-      }),
-    ).toEqual({
-      branch: "effect-atom",
-      worktreePath: null,
-      envMode: "local",
-    });
-  });
-
-  it("prefers the active draft thread context when it matches the target project", () => {
-    expect(
-      resolveSidebarNewThreadSeedContext({
-        projectId: "project-1",
-        defaultEnvMode: "local",
-        activeThread: {
-          projectId: "project-1",
-          branch: "effect-atom",
-          worktreePath: null,
-        },
-        activeDraftThread: {
-          projectId: "project-1",
-          branch: "feature/new-draft",
-          worktreePath: "/repo/worktree",
-          envMode: "worktree",
-          startFromOrigin: true,
-        },
-      }),
-    ).toEqual({
-      branch: "feature/new-draft",
-      worktreePath: "/repo/worktree",
-      envMode: "worktree",
-      startFromOrigin: true,
-    });
-  });
-
-  it("falls back to the default env mode when there is no matching active thread context", () => {
-    expect(
-      resolveSidebarNewThreadSeedContext({
-        projectId: "project-2",
-        defaultEnvMode: "worktree",
-        activeThread: {
-          projectId: "project-1",
-          branch: "effect-atom",
-          worktreePath: null,
-        },
-        activeDraftThread: null,
-      }),
-    ).toEqual({
-      envMode: "worktree",
-    });
   });
 });
 

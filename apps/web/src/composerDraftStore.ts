@@ -406,6 +406,15 @@ interface ComposerDraftStoreState {
   setModelSelection: (
     threadRef: ComposerThreadTarget,
     modelSelection: ModelSelection | null | undefined,
+    opts?: {
+      /**
+       * Replace the stored entry outright instead of preserving its
+       * existing options when the incoming selection has none. Used when
+       * the selection is a complete snapshot (e.g. carried from another
+       * thread) rather than a model-only change.
+       */
+      replaceOptions?: boolean;
+    },
   ) => void;
   /** Replace the model options for one or more providers in the draft. */
   setModelOptions: (
@@ -2594,7 +2603,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
-        setModelSelection: (threadRef, modelSelection) => {
+        setModelSelection: (threadRef, modelSelection, opts) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
             return;
@@ -2609,8 +2618,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextMap = { ...base.modelSelectionByProvider };
             if (normalized) {
               const current = nextMap[normalized.instanceId];
-              if (normalized.options !== undefined) {
-                // Explicit options provided → use them
+              if (normalized.options !== undefined || opts?.replaceOptions) {
+                // Explicit options provided (or the caller passed a complete
+                // snapshot whose absent options mean "no options") → use the
+                // selection as-is.
                 nextMap[normalized.instanceId] = normalized as ModelSelection;
               } else {
                 // No options in selection → preserve existing options, update provider+model
