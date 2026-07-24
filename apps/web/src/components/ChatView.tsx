@@ -3823,14 +3823,31 @@ function ChatViewContent(props: ChatViewProps) {
     hasDedicatedWorktree: (activeThread?.worktreePath ?? null) !== null,
   });
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
+  // Minute-quantized clock, same as the sidebar partition's: keeps this memo
+  // recomputing as time passes (inactivity auto-settle) without a per-render
+  // time source, and keeps banner and sidebar on the same tick.
+  const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
+  useEffect(() => {
+    const id = window.setInterval(
+      () => setNowMinute(new Date().toISOString().slice(0, 16)),
+      60_000,
+    );
+    return () => window.clearInterval(id);
+  }, []);
   const activeThreadSettled = useMemo(() => {
     if (activeThreadShell === null || !supportsSettlement) return false;
     return effectiveSettled(activeThreadShell, {
-      now: new Date().toISOString(),
+      now: `${nowMinute}:00.000Z`,
       autoSettleAfterDays,
       changeRequestState: activeThreadPr?.state ?? null,
     });
-  }, [activeThreadPr?.state, activeThreadShell, autoSettleAfterDays, supportsSettlement]);
+  }, [
+    activeThreadPr?.state,
+    activeThreadShell,
+    autoSettleAfterDays,
+    nowMinute,
+    supportsSettlement,
+  ]);
   const unsettleThreadMutation = useAtomCommand(threadEnvironment.unsettle, {
     reportFailure: false,
   });
@@ -3959,33 +3976,39 @@ function ChatViewContent(props: ChatViewProps) {
     switchGitRef,
     updateThreadMetadata,
   ]);
-  const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
-    const items = [...systemComposerBannerItems];
-    if (activeThreadSettled) {
-      items.push({
-        id: `thread-settled:${activeThread?.id ?? "unknown"}`,
-        variant: "info",
-        icon: <CheckCircle2Icon />,
-        title: "This thread is settled",
-        description: "Sending a message moves it back to Active in the sidebar.",
-        actions: (
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={isUnsettling}
-            onClick={() => void handleUnsettleActiveThread()}
-          >
-            {isUnsettling ? "Un-settling..." : "Un-settle"}
-          </Button>
-        ),
-      });
+  // The stack renders items[0] front-most and tucks the rest behind hover, so
+  // ordering is priority: system banners, then the branch-mismatch warning,
+  // and the informational settled banner last — it must never cover a warning.
+  const settledComposerBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!activeThreadSettled) {
+      return null;
     }
+    return {
+      id: `thread-settled:${activeThread?.id ?? "unknown"}`,
+      variant: "info",
+      icon: <CheckCircle2Icon />,
+      title: "This thread is settled",
+      description: "Sending a message moves it back to Active in the sidebar.",
+      actions: (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={isUnsettling}
+          onClick={() => void handleUnsettleActiveThread()}
+        >
+          {isUnsettling ? "Un-settling..." : "Un-settle"}
+        </Button>
+      ),
+    };
+  }, [activeThread?.id, activeThreadSettled, handleUnsettleActiveThread, isUnsettling]);
+  const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const settledItems = settledComposerBannerItem === null ? [] : [settledComposerBannerItem];
     if (!localCheckoutBranchMismatch) {
-      return items;
+      return [...systemComposerBannerItems, ...settledItems];
     }
     const isRepairingBranch = branchRepairAction !== null;
     return [
-      ...items,
+      ...systemComposerBannerItems,
       {
         id: `branch-mismatch:${activeThread?.id ?? "unknown"}:${localCheckoutBranchMismatch.threadBranch}:${localCheckoutBranchMismatch.currentBranch}`,
         variant: "warning",
@@ -4029,16 +4052,15 @@ function ChatViewContent(props: ChatViewProps) {
           </>
         ),
       },
+      ...settledItems,
     ];
   }, [
     activeThread?.id,
-    activeThreadSettled,
     branchRepairAction,
     handleSwitchCheckoutToThread,
-    handleUnsettleActiveThread,
     handleUpdateThreadToCheckout,
-    isUnsettling,
     localCheckoutBranchMismatch,
+    settledComposerBannerItem,
     systemComposerBannerItems,
   ]);
 
