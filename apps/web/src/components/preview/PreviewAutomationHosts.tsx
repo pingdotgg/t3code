@@ -510,7 +510,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "recordingStart": {
             const ready = await requireReadyTab();
-            const startedAt = await startBrowserRecording(ready.tabId);
+            const startedAt = await startBrowserRecording(ready.tabId, threadRef);
             return {
               tabId: ready.tabId,
               recording: true,
@@ -518,12 +518,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             };
           }
           case "recordingStop": {
-            const threadTabIds = new Set(Object.keys(state.sessions));
-            const activeTabIds = new Set(
-              Array.from(readActiveBrowserRecordingTabIds()).filter((activeTabId) =>
-                threadTabIds.has(activeTabId),
-              ),
-            );
+            const activeTabIds = readActiveBrowserRecordingTabIds(threadRef);
             const stopTabId = resolveBrowserRecordingStopTarget(
               activeTabIds,
               tabId,

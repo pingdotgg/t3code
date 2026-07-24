@@ -471,6 +471,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const pictureInPictureAspectRatiosRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const pictureInPictureMutationSemaphore = yield* Semaphore.make(1);
   const closingTabIdsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
+  const tabLifecycleLocks = new Map<
+    string,
+    { readonly semaphore: Semaphore.Semaphore; users: number }
+  >();
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -501,6 +505,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     update(copy);
     return copy;
   };
+  const withTabLifecycleLock = <A, E, R>(
+    tabId: string,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.suspend(() => {
+      const lifecycle = tabLifecycleLocks.get(tabId) ?? {
+        semaphore: Semaphore.makeUnsafe(1),
+        users: 0,
+      };
+      lifecycle.users += 1;
+      tabLifecycleLocks.set(tabId, lifecycle);
+      return lifecycle.semaphore.withPermit(effect).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            lifecycle.users -= 1;
+            if (lifecycle.users === 0 && tabLifecycleLocks.get(tabId) === lifecycle) {
+              tabLifecycleLocks.delete(tabId);
+            }
+          }),
+        ),
+      );
+    });
   const stopFrameCapture = Effect.fn("PreviewManager.stopFrameCapture")(function* (
     tabId: string,
     consumer: FrameCaptureConsumer,
@@ -1349,7 +1375,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return state;
   });
 
-  const closeTab = Effect.fn("PreviewManager.closeTab")(function* (tabId: string) {
+  const closeTabUnlocked = Effect.fn("PreviewManager.closeTabUnlocked")(function* (tabId: string) {
     const claimed = yield* Ref.modify(closingTabIdsRef, (closingTabIds) => {
       if (closingTabIds.has(tabId)) return [false, closingTabIds] as const;
       return [true, new Set([...closingTabIds, tabId])] as const;
@@ -1412,7 +1438,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
-  const registerWebview = Effect.fn("PreviewManager.registerWebview")(function* (
+  const closeTab = Effect.fn("PreviewManager.closeTab")(function* (tabId: string) {
+    return yield* withTabLifecycleLock(tabId, closeTabUnlocked(tabId));
+  });
+
+  const registerWebviewUnlocked = Effect.fn("PreviewManager.registerWebviewUnlocked")(function* (
     tabId: string,
     webContentsId: number,
   ) {
@@ -1468,34 +1498,36 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           );
     yield* attachListeners(tabId, wc);
     const registeredAt = yield* currentIso;
-    const registration = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
-      const current = tabs.get(tabId);
-      if (!current) {
+    const registration = yield* SynchronizedRef.modifyEffect(tabsRef, (tabs) =>
+      Effect.gen(function* () {
+        const current = tabs.get(tabId);
+        if (!current || (yield* Ref.get(closingTabIdsRef)).has(tabId)) {
+          return [
+            Option.none<{ readonly state: PreviewTabState; readonly pendingUrl: string | null }>(),
+            tabs,
+          ] as const;
+        }
+        const pendingUrl = current.navStatus.kind === "Loading" ? current.navStatus.url : null;
+        const next: PreviewTabState = {
+          ...current,
+          webContentsId,
+          navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
+          canGoBack: wc.navigationHistory.canGoBack(),
+          canGoForward: wc.navigationHistory.canGoForward(),
+          zoomFactor,
+          updatedAt: registeredAt,
+        };
         return [
-          Option.none<{ readonly state: PreviewTabState; readonly pendingUrl: string | null }>(),
-          tabs,
+          Option.some({
+            state: next,
+            pendingUrl,
+          }),
+          replaceMap(tabs, (copy) => {
+            copy.set(tabId, next);
+          }),
         ] as const;
-      }
-      const pendingUrl = current.navStatus.kind === "Loading" ? current.navStatus.url : null;
-      const next: PreviewTabState = {
-        ...current,
-        webContentsId,
-        navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
-        canGoBack: wc.navigationHistory.canGoBack(),
-        canGoForward: wc.navigationHistory.canGoForward(),
-        zoomFactor,
-        updatedAt: registeredAt,
-      };
-      return [
-        Option.some({
-          state: next,
-          pendingUrl,
-        }),
-        replaceMap(tabs, (copy) => {
-          copy.set(tabId, next);
-        }),
-      ] as const;
-    });
+      }),
+    );
     if (Option.isNone(registration)) {
       yield* Effect.all([detachControlSession(webContentsId), detachListeners(webContentsId)], {
         concurrency: 2,
@@ -1522,6 +1554,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ).pipe(Effect.ignore),
       );
     }
+  });
+
+  const registerWebview = Effect.fn("PreviewManager.registerWebview")(function* (
+    tabId: string,
+    webContentsId: number,
+  ) {
+    return yield* withTabLifecycleLock(tabId, registerWebviewUnlocked(tabId, webContentsId));
   });
 
   const navigate = Effect.fn("PreviewManager.navigate")(function* (tabId: string, rawUrl: string) {

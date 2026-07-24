@@ -354,7 +354,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         return;
       }
       if (record) {
-        void startBrowserRecording(tabId).catch((error) => {
+        void startBrowserRecording(tabId, threadRef).catch((error) => {
           toastManager.add({
             type: "error",
             title: "Unable to start recording",
@@ -493,7 +493,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         },
       );
     },
-    [activeRecordingTabIds, tabId],
+    [activeRecordingTabIds, tabId, threadRef],
   );
 
   const handlePickElement = useCallback(() => {

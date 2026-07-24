@@ -1,3 +1,4 @@
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const {
@@ -315,6 +316,14 @@ describe("browser recording", () => {
   });
 
   it("records separate tabs concurrently", async () => {
+    const firstThreadRef = {
+      environmentId: EnvironmentId.make("environment-recording"),
+      threadId: ThreadId.make("thread-recording-first"),
+    };
+    const secondThreadRef = {
+      environmentId: EnvironmentId.make("environment-recording"),
+      threadId: ThreadId.make("thread-recording-second"),
+    };
     surfaceState.byTabId = {
       ...surfaceState.byTabId,
       "recording-tab-2": {
@@ -325,8 +334,8 @@ describe("browser recording", () => {
     };
 
     await Promise.all([
-      startBrowserRecording("recording-tab"),
-      startBrowserRecording("recording-tab-2"),
+      startBrowserRecording("recording-tab", firstThreadRef),
+      startBrowserRecording("recording-tab-2", secondThreadRef),
     ]);
 
     expect(startScreencast).toHaveBeenCalledTimes(2);
@@ -335,6 +344,8 @@ describe("browser recording", () => {
     expect(readActiveBrowserRecordingTabIds()).toEqual(
       new Set(["recording-tab", "recording-tab-2"]),
     );
+    expect(readActiveBrowserRecordingTabIds(firstThreadRef)).toEqual(new Set(["recording-tab"]));
+    expect(readActiveBrowserRecordingTabIds(secondThreadRef)).toEqual(new Set(["recording-tab-2"]));
 
     await stopBrowserRecording("recording-tab");
     expect(readActiveBrowserRecordingTabIds()).toEqual(new Set(["recording-tab-2"]));

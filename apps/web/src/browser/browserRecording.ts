@@ -1,6 +1,7 @@
 import type {
   DesktopPreviewRecordingArtifact,
   DesktopPreviewRecordingFrame,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
@@ -82,6 +83,7 @@ type BrowserRecordingLifecycle =
 
 interface ActiveRecording {
   readonly tabId: string;
+  readonly threadRef: ScopedThreadRef | null;
   readonly canvas: HTMLCanvasElement;
   readonly context: CanvasRenderingContext2D;
   readonly chunks: Blob[];
@@ -115,8 +117,18 @@ let unsubscribeFrames: (() => void) | null = null;
 export const BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS = 5_000;
 export const BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS = 5_000;
 
-export function readActiveBrowserRecordingTabIds(): ReadonlySet<string> {
-  return new Set(activeRecordings.keys());
+export function readActiveBrowserRecordingTabIds(threadRef?: ScopedThreadRef): ReadonlySet<string> {
+  const tabIds = new Set<string>();
+  for (const recording of activeRecordings.values()) {
+    if (
+      threadRef === undefined ||
+      (recording.threadRef?.environmentId === threadRef.environmentId &&
+        recording.threadRef.threadId === threadRef.threadId)
+    ) {
+      tabIds.add(recording.tabId);
+    }
+  }
+  return tabIds;
 }
 
 const preferredMimeType = (): string => {
@@ -268,7 +280,10 @@ const waitForRecordingStartupToSettle = async (recording: ActiveRecording): Prom
 const isStartupWaitTimeout = (error: unknown): error is BrowserRecordingOperationError =>
   isBrowserRecordingOperationError(error) && error.operation === "wait-startup";
 
-export async function startBrowserRecording(tabId: string): Promise<string> {
+export async function startBrowserRecording(
+  tabId: string,
+  threadRef: ScopedThreadRef | null = null,
+): Promise<string> {
   const bridge = previewBridge;
   if (!bridge) throw new BrowserRecordingUnavailableError({ tabId });
   const activeRecording = activeRecordings.get(tabId);
@@ -306,6 +321,7 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
   });
   const recording: ActiveRecording = {
     tabId,
+    threadRef,
     canvas,
     context,
     chunks,

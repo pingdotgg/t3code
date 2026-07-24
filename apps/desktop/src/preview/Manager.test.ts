@@ -552,12 +552,15 @@ describe("PreviewManager", () => {
           .closeTab("tab_close_register_race")
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(closeCleanupPaused);
-        const registrationExit = yield* Effect.exit(
-          manager.registerWebview("tab_close_register_race", 43),
-        );
+        const registrationFiber = yield* manager
+          .registerWebview("tab_close_register_race", 43)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        expect(replacementListenerSpies.on).not.toHaveBeenCalled();
         const recordingExit = yield* Effect.exit(manager.startRecording("tab_close_register_race"));
         yield* Deferred.succeed(continueCloseCleanup, undefined);
         yield* Fiber.join(closeFiber);
+        const registrationExit = yield* Fiber.await(registrationFiber);
 
         for (const exit of [registrationExit, recordingExit]) {
           expect(Exit.isFailure(exit)).toBe(true);
