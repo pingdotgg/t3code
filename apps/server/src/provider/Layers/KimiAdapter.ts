@@ -64,6 +64,12 @@ import {
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
+  extractKimiAskUserQuestions,
+  isKimiAskUserQuestionRequest,
+  kimiAskUserQuestionSkipOptionId,
+  selectKimiAskUserQuestionOptionId,
+} from "../acp/KimiAcpExtension.ts";
+import {
   detectKimiSubagentToolCall,
   extractSubagentSummary,
   type KimiSubagentTaskInfo,
@@ -836,6 +842,60 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
               mapAcpCallbackFailure(
                 Effect.gen(function* () {
                   yield* logNative(input.threadId, "session/request_permission", params);
+                  if (isKimiAskUserQuestionRequest(params)) {
+                    // The CLI bridges AskUserQuestion through request_permission.
+                    // Route it through the structured user-input channel in every
+                    // runtime mode so full-access never silently picks option 0.
+                    const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+                    const runtimeRequestId = RuntimeRequestId.make(requestId);
+                    const resolution = yield* Deferred.make<PendingUserInputResolution>();
+                    const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
+                    pendingUserInputs.set(requestId, { resolution });
+                    yield* offerRuntimeEvent({
+                      type: "user-input.requested",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: input.threadId,
+                      turnId,
+                      requestId: runtimeRequestId,
+                      payload: { questions: extractKimiAskUserQuestions(params) },
+                      raw: {
+                        source: "acp.jsonrpc",
+                        method: "session/request_permission",
+                        payload: params,
+                      },
+                    });
+                    const resolved = yield* Deferred.await(resolution);
+                    pendingUserInputs.delete(requestId);
+                    const resolvedAnswers = resolved._tag === "answered" ? resolved.answers : {};
+                    yield* offerRuntimeEvent({
+                      type: "user-input.resolved",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: input.threadId,
+                      turnId,
+                      requestId: runtimeRequestId,
+                      payload: { answers: resolvedAnswers },
+                      raw: {
+                        source: "acp.jsonrpc",
+                        method: "session/request_permission",
+                        payload: params,
+                      },
+                    });
+                    const selectedOptionId =
+                      resolved._tag === "answered"
+                        ? (selectKimiAskUserQuestionOptionId(params, resolved.answers) ??
+                          kimiAskUserQuestionSkipOptionId(params))
+                        : kimiAskUserQuestionSkipOptionId(params);
+                    return {
+                      outcome: selectedOptionId
+                        ? {
+                            outcome: "selected" as const,
+                            optionId: selectedOptionId,
+                          }
+                        : ({ outcome: "cancelled" } as const),
+                    };
+                  }
                   if (input.runtimeMode === "full-access") {
                     const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
                     if (autoApprovedOptionId !== undefined) {

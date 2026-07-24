@@ -21,6 +21,10 @@ struct VcsToolbar: View {
     @UIState private var commitMessage = ""
     @UIState private var runningAction: GitAction?
     @UIState private var pullRequestReviewReference: String?
+    @UIState private var showBranchMenu = false
+    @UIState private var showGitActions = false
+    @UIState private var branchMenuHovering = false
+    @UIState private var gitActionsHovering = false
 
     private var isRunningAction: Bool { runningAction != nil }
 
@@ -158,34 +162,96 @@ struct VcsToolbar: View {
 
     // MARK: - Branch menu
 
-    private func branchMenu(_ status: VcsStatus) -> some View {
-        Menu {
-            ForEach(branches) { branch in
-                Button {
-                    Task { await model.switchBranch(branch.name) }
-                } label: {
-                    if branch.isCurrent {
-                        Label(branch.name, systemImage: "checkmark")
-                    } else {
-                        Text(branch.name)
-                    }
-                }
-                .disabled(branch.isCurrent)
-            }
-            Divider()
-            Button("New Branch…") { showNewBranchPrompt = true }
-            Button("Pull") { Task { await model.pull() } }
-        } label: {
-            Label(status.branch ?? "no branch", systemImage: "arrow.triangle.branch")
-                .font(.caption)
+    /// Shared chrome for the strip's dropdown triggers: caption label with a
+    /// disclosure chevron and a hover wash, opening an Alpine popover.
+    private func dropdownTrigger<LabelContent: View>(
+        isPresented: Bool,
+        isHovering: Bool,
+        @ViewBuilder label: () -> LabelContent
+    ) -> some View {
+        HStack(spacing: 5) {
+            label()
+            Image(systemName: "chevron.down")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(.tertiary)
         }
-        .menuStyle(.borderlessButton)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .contentShape(
+            RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
+        .background {
+            if isHovering || isPresented {
+                RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
+                    .fill(Color.primary.opacity(isPresented ? 0.1 : 0.07))
+            }
+        }
+    }
+
+    private func branchMenu(_ status: VcsStatus) -> some View {
+        Button {
+            showBranchMenu.toggle()
+        } label: {
+            dropdownTrigger(isPresented: showBranchMenu, isHovering: branchMenuHovering) {
+                Label(status.branch ?? "no branch", systemImage: "arrow.triangle.branch")
+                    .font(.caption)
+            }
+        }
+        .buttonStyle(.plain)
         .fixedSize()
+        .onHover { branchMenuHovering = $0 }
+        .animation(Motion.feedback, value: branchMenuHovering)
+        .animation(Motion.feedback, value: showBranchMenu)
+        .popover(isPresented: $showBranchMenu, arrowEdge: .bottom) {
+            branchPopover(status)
+        }
         // Keyed to the thread (not a one-shot `.onAppear`) so the branch
         // list refreshes for the repo this toolbar instance now belongs to,
         // and cancels cleanly if the thread changes mid-fetch.
         .task(id: threadID) {
             branches = await model.listBranches(query: nil)
+        }
+    }
+
+    private func branchPopover(_ status: VcsStatus) -> some View {
+        ComposerPickerSurface(width: 300) {
+            VStack(spacing: 0) {
+                ComposerPickerHeader(
+                    icon: "arrow.triangle.branch",
+                    title: "Branches",
+                    subtitle: "Current: \(status.branch ?? "none")")
+                Divider().opacity(0.55)
+                ScrollView {
+                    LazyVStack(spacing: 3) {
+                        ForEach(branches) { branch in
+                            AlpineMenuRow(
+                                icon: "arrow.triangle.branch",
+                                title: branch.name,
+                                isSelected: branch.isCurrent
+                            ) {
+                                showBranchMenu = false
+                                Task { await model.switchBranch(branch.name) }
+                            }
+                            .disabled(branch.isCurrent)
+                        }
+                    }
+                    .padding(8)
+                }
+                .frame(maxHeight: 260)
+                Divider().opacity(0.55)
+                VStack(spacing: 3) {
+                    AlpineMenuRow(icon: "plus", title: "New Branch…") {
+                        showBranchMenu = false
+                        // Defer one runloop turn so the alert never races the
+                        // popover dismissal.
+                        DispatchQueue.main.async { showNewBranchPrompt = true }
+                    }
+                    AlpineMenuRow(icon: "arrow.triangle.pull", title: "Pull") {
+                        showBranchMenu = false
+                        Task { await model.pull() }
+                    }
+                }
+                .padding(8)
+            }
         }
     }
 
@@ -222,33 +288,60 @@ struct VcsToolbar: View {
     // MARK: - Actions
 
     private func actionMenu(_ status: VcsStatus) -> some View {
-        Menu {
-            ForEach(GitAction.menuActions) { action in
-                Button(action.displayName) {
-                    if action.needsCommitMessage {
-                        commitMessage = ""
-                        pendingAction = action
-                    } else {
-                        run(action, message: nil)
-                    }
+        Button {
+            showGitActions.toggle()
+        } label: {
+            dropdownTrigger(isPresented: showGitActions, isHovering: gitActionsHovering) {
+                // Merge owns its own in-button spinner; only show the menu
+                // spinner for other actions.
+                if let runningAction, runningAction != .mergePR, runningAction != .readyPR {
+                    ProgressView()
+                        .controlSize(.small)
+                        .transition(.opacity)
+                } else {
+                    Label("Git", systemImage: "arrow.up.circle")
+                        .font(.caption)
+                        .transition(.opacity)
                 }
             }
-        } label: {
-            // Merge owns its own in-button spinner; only show menu spinner for other actions.
-            if let runningAction, runningAction != .mergePR, runningAction != .readyPR {
-                ProgressView()
-                    .controlSize(.small)
-                    .transition(.opacity)
-            } else {
-                Label("Git", systemImage: "arrow.up.circle")
-                    .font(.caption)
-                    .transition(.opacity)
-            }
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
         .fixedSize()
         .disabled(isRunningAction)
+        .onHover { gitActionsHovering = $0 }
+        .animation(Motion.feedback, value: gitActionsHovering)
         .animation(Motion.reveal, value: runningAction)
+        .popover(isPresented: $showGitActions, arrowEdge: .bottom) {
+            gitActionsPopover(status)
+        }
+    }
+
+    private func gitActionsPopover(_ status: VcsStatus) -> some View {
+        ComposerPickerSurface(width: 280) {
+            VStack(spacing: 0) {
+                ComposerPickerHeader(
+                    icon: "arrow.up.circle",
+                    title: "Git actions",
+                    subtitle: status.branch ?? "No branch")
+                Divider().opacity(0.55)
+                VStack(spacing: 3) {
+                    ForEach(GitAction.menuActions) { action in
+                        AlpineMenuRow(icon: action.menuSymbol, title: action.displayName) {
+                            showGitActions = false
+                            if action.needsCommitMessage {
+                                commitMessage = ""
+                                // Defer one runloop turn so the commit sheet
+                                // never races the popover dismissal.
+                                DispatchQueue.main.async { pendingAction = action }
+                            } else {
+                                run(action, message: nil)
+                            }
+                        }
+                    }
+                }
+                .padding(8)
+            }
+        }
     }
 
     private var commitSheetBinding: Binding<Bool> {
@@ -355,5 +448,19 @@ private struct VcsMergePillButtonStyle: ButtonStyle {
             .foregroundStyle(.black)
             .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
             .animation(Motion.feedback, value: configuration.isPressed)
+    }
+}
+
+private extension GitAction {
+    /// SF Symbol for the action's row in the Git actions popover.
+    var menuSymbol: String {
+        switch self {
+        case .commit: "checkmark.circle"
+        case .push: "arrow.up.circle"
+        case .commitPush: "arrow.up.doc"
+        case .commitPushPR: "arrow.triangle.pull"
+        case .readyPR: "checkmark.seal"
+        case .mergePR: "arrow.triangle.merge"
+        }
     }
 }

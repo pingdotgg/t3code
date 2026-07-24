@@ -20,6 +20,8 @@ public struct UsageLimitCard: View {
     private static let waitShortcut = KeyboardShortcut(.return, modifiers: [.command, .shift])
     private static let dismissShortcut = KeyboardShortcut(.delete, modifiers: .command)
 
+    @UIState private var showModelSwitcher = false
+
     public init(
         notice: UsageLimitNotice,
         state: UsageLimitActionState,
@@ -78,20 +80,27 @@ public struct UsageLimitCard: View {
                 .keyboardShortcut(isActive ? Self.waitShortcut : nil)
                 .help(isActive ? "Wait (⌘⇧⏎)" : "Wait")
 
-                Menu {
-                    ForEach(switchModels) { option in
-                        Button {
-                            onSwitch(option)
-                        } label: {
-                            Text(option.displayName)
-                        }
-                    }
+                Button {
+                    showModelSwitcher.toggle()
                 } label: {
                     Label("Switch model", systemImage: "arrow.left.arrow.right")
                 }
                 .buttonStyle(.glass)
                 .tint(AlpineTheme.accent)
                 .disabled(switchModels.isEmpty || isBusy)
+                .popover(isPresented: $showModelSwitcher, arrowEdge: .top) {
+                    ModelPickerPopoverContent(
+                        models: switchModels,
+                        selectedInstanceID: nil,
+                        selectedModelID: nil,
+                        onSelect: { option in
+                            showModelSwitcher = false
+                            onSwitch(option)
+                        },
+                        title: "Switch model",
+                        subtitle: "Continue this session on another model"
+                    )
+                }
             }
         }
         .padding(14)

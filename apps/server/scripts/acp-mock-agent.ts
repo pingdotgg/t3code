@@ -24,6 +24,7 @@ const subagentToolCallFails = process.env.T3_ACP_SUBAGENT_TOOL_CALL_FAILS === "1
 const emitSubagentThenHang = process.env.T3_ACP_EMIT_SUBAGENT_THEN_HANG === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const emitKimiAskUserQuestion = process.env.T3_ACP_EMIT_KIMI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const emitThoughtChunks = process.env.T3_ACP_EMIT_THOUGHT_CHUNKS === "1";
@@ -1057,6 +1058,40 @@ const program = Effect.gen(function* () {
         });
 
         return { stopReason: "end_turn" };
+      }
+
+      if (emitKimiAskUserQuestion) {
+        // Mirrors how the Kimi CLI bridges AskUserQuestion through
+        // session/request_permission (q{index}_opt_{n} options plus a skip).
+        const permission = yield* agent.client.requestPermission({
+          sessionId: requestedSessionId,
+          toolCall: {
+            toolCallId: "kimi-ask-user-question-tool-call-1",
+            title: "AskUserQuestion",
+            kind: "other",
+            status: "pending",
+            content: [
+              {
+                type: "content",
+                content: {
+                  type: "text",
+                  text: "Which scope should Kimi use?",
+                },
+              },
+            ],
+          },
+          options: [
+            { optionId: "q0_opt_0", name: "Workspace", kind: "allow_once" },
+            { optionId: "q0_opt_1", name: "Session", kind: "allow_once" },
+            { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+          ],
+        });
+
+        const cancelled =
+          cancelledSessions.delete(requestedSessionId) ||
+          permission.outcome.outcome === "cancelled";
+
+        return { stopReason: cancelled ? "cancelled" : "end_turn" };
       }
 
       if (emitXAiAskUserQuestion) {
