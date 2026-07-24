@@ -8,12 +8,12 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("033_034_OrchestrationV2", (it) => {
+layer("034_035_OrchestrationV2", (it) => {
   it.effect("installs the orchestration v2 and subagent schemas", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 34 });
+      yield* runMigrations({ toMigrationInclusive: 35 });
 
       const migrations = yield* sql<{
         readonly migration_id: number;
@@ -21,16 +21,20 @@ layer("033_034_OrchestrationV2", (it) => {
       }>`
         SELECT migration_id, name
         FROM effect_sql_migrations
-        WHERE migration_id IN (33, 34)
+        WHERE migration_id IN (33, 34, 35)
         ORDER BY migration_id
       `;
       assert.deepStrictEqual(migrations, [
         {
           migration_id: 33,
-          name: "OrchestrationV2",
+          name: "ProjectionThreadsSettled",
         },
         {
           migration_id: 34,
+          name: "OrchestrationV2",
+        },
+        {
+          migration_id: 35,
           name: "OrchestrationV2Subagents",
         },
       ]);
@@ -50,7 +54,7 @@ layer("033_034_OrchestrationV2", (it) => {
   it.effect("backfills provider-session thread bindings in migration 036", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 35 });
+      yield* runMigrations({ toMigrationInclusive: 36 });
       yield* sql`
         INSERT INTO orchestration_v2_projection_provider_sessions (
           provider_session_id,
@@ -75,7 +79,7 @@ layer("033_034_OrchestrationV2", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 36 });
+      yield* runMigrations({ toMigrationInclusive: 37 });
 
       const bindings = yield* sql<{
         readonly provider_session_id: string;
