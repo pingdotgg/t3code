@@ -85,7 +85,18 @@ export function normalizeThreadReview(
   settleReason: string | null;
 } {
   const summary = raw.summary.trim().replace(/\s+/g, " ");
-  const nextStep = raw.nextStep.trim().replace(/\s+/g, " ");
+  // Backstop against rambling: first sentence only, hard-capped. The prompt
+  // asks for a <=10-word command, but models drift — never render a recap.
+  const nextStepFirstSentence =
+    raw.nextStep
+      .trim()
+      .replace(/\s+/g, " ")
+      .match(/^[^.!?]*[.!?]?/)?.[0]
+      ?.trim() ?? "";
+  const nextStep =
+    nextStepFirstSentence.length > 80
+      ? `${nextStepFirstSentence.slice(0, 77).trimEnd()}...`
+      : nextStepFirstSentence;
   const suggestedTitle =
     raw.suggestedTitle && raw.suggestedTitle.trim().length > 0
       ? sanitizeThreadTitle(raw.suggestedTitle)

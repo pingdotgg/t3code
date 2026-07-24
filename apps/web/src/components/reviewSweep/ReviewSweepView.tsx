@@ -222,12 +222,16 @@ function SweepItemCard({
     ) : null;
 
   // The one-line "what should I do" is the card body; the full summary
-  // lives behind the info icon so the grid stays scannable.
-  const nextStep =
-    item.status === "error"
-      ? null
-      : (result?.nextStep ??
-        (bucket === "settle" && result?.settleReason ? result.settleReason : null));
+  // lives behind the info icon so the grid stays scannable. Results from
+  // pre-nextStep servers fall back to settleReason (settle bucket) or the
+  // summary (attention bucket) so action cards never render bodyless.
+  const nextStepFallback =
+    bucket === "settle"
+      ? (result?.settleReason ?? null)
+      : bucket === "attention"
+        ? (result?.summary ?? null)
+        : null;
+  const nextStep = item.status === "error" ? null : (result?.nextStep ?? nextStepFallback);
 
   return (
     <Card className={cn("min-w-0 gap-1.5 border-s-2 p-3", meta.accent)}>
