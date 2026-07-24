@@ -1,7 +1,7 @@
 import type { ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { FolderPlusIcon } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { FolderPlusIcon, SearchIcon } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
@@ -15,14 +15,15 @@ import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
-  Menu,
-  MenuItem,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuSeparator,
-  MenuTrigger,
-} from "../ui/menu";
+  Combobox,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxPopup,
+  ComboboxTrigger,
+} from "../ui/combobox";
+import { filterDraftHeroProjects, isImeCommitKey } from "./draftHeroProjectSearch";
 
 interface DraftHeroHeadlineProps {
   readonly activeProjectRef: ScopedProjectRef | null;
@@ -41,6 +42,8 @@ export function DraftHeroHeadline({
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const handleNewThread = useNewThreadHandler();
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
+  const [isProjectPickerOpen, setIsProjectPickerOpen] = useState(false);
+  const [projectQuery, setProjectQuery] = useState("");
 
   const environmentLabelById = useMemo(
     () =>
@@ -83,6 +86,22 @@ export function DraftHeroHeadline({
     () => new Map(projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const)),
     [projectPickerEntries],
   );
+  const filteredProjectEntries = useMemo(
+    () =>
+      filterDraftHeroProjects(
+        projectPickerEntries.map((entry) => ({
+          entry,
+          title: entry.group.displayName,
+          workspaceRoot: entry.targetProject.workspaceRoot,
+          searchTerms: entry.group.memberProjects.flatMap((project) => [
+            project.title,
+            project.workspaceRoot,
+          ]),
+        })),
+        projectQuery,
+      ).map(({ entry }) => entry),
+    [projectPickerEntries, projectQuery],
+  );
   const activeProjectGroup =
     activeProjectRef === null
       ? null
@@ -98,42 +117,98 @@ export function DraftHeroHeadline({
   const shouldShowProjectMenu = canChooseProject;
 
   const projectSelector = shouldShowProjectMenu ? (
-    <Menu>
-      <MenuTrigger
+    <Combobox
+      autoHighlight
+      items={projectPickerEntries.map(({ group }) => group.projectKey)}
+      filteredItems={filteredProjectEntries.map(({ group }) => group.projectKey)}
+      open={isProjectPickerOpen}
+      value={activeProjectKey}
+      onOpenChange={(open) => {
+        setIsProjectPickerOpen(open);
+        if (!open) {
+          setProjectQuery("");
+        }
+      }}
+      onValueChange={(value) => {
+        if (!value || value === activeProjectKey) {
+          setIsProjectPickerOpen(false);
+          return;
+        }
+        const entry = projectEntryByKey.get(value);
+        if (!entry) {
+          return;
+        }
+        setIsProjectPickerOpen(false);
+        const project = entry.targetProject;
+        void handleNewThread(scopeProjectRef(project.environmentId, project.id), {
+          replace: true,
+        });
+      }}
+    >
+      <ComboboxTrigger
         aria-label={hasResolvedProject ? "Change project" : "Choose a project"}
         className="pointer-events-auto inline cursor-pointer border-current border-b border-dotted text-foreground underline-offset-8 transition-opacity hover:opacity-75 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       >
         {activeProjectDisplayName ?? "Choose a project"}
-      </MenuTrigger>
-      <MenuPopup align="center" className="max-h-80 w-64 overflow-y-auto">
-        <MenuRadioGroup
-          value={activeProjectKey}
-          onValueChange={(value) => {
-            const entry = projectEntryByKey.get(value as string);
-            if (!entry || value === activeProjectKey) {
-              return;
-            }
-            const project = entry.targetProject;
-            void handleNewThread(scopeProjectRef(project.environmentId, project.id), {
-              replace: true,
-            });
-          }}
-        >
-          {projectPickerEntries.map(({ group }) => {
+      </ComboboxTrigger>
+      <ComboboxPopup align="center" className="w-72 max-w-[calc(100vw-1rem)]">
+        <div className="shrink-0 px-3 pt-2.5">
+          <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
+            <SearchIcon
+              aria-hidden="true"
+              className="pointer-events-none absolute top-1.5 left-0 size-4 text-muted-foreground/55"
+            />
+            <ComboboxInput
+              autoFocus
+              className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
+              inputClassName="rounded-none bg-transparent text-sm"
+              placeholder="Search projects..."
+              showTrigger={false}
+              size="sm"
+              unstyled
+              value={projectQuery}
+              onChange={(event) => setProjectQuery(event.target.value)}
+              onKeyDownCapture={(event) => {
+                if (
+                  isImeCommitKey({
+                    key: event.key,
+                    isComposing: event.nativeEvent.isComposing,
+                    keyCode: event.nativeEvent.keyCode,
+                  })
+                ) {
+                  // Keep the browser's default so Enter can commit the IME
+                  // text; stopping propagation only blocks Combobox selection.
+                  event.stopPropagation();
+                }
+              }}
+            />
+          </div>
+        </div>
+        <ComboboxEmpty>No matching projects.</ComboboxEmpty>
+        <ComboboxList className="max-h-64">
+          {filteredProjectEntries.map(({ group }) => {
             return (
-              <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
+              <ComboboxItem key={group.projectKey} value={group.projectKey}>
                 <span className="min-w-0 truncate">{group.displayName}</span>
-              </MenuRadioItem>
+              </ComboboxItem>
             );
           })}
-        </MenuRadioGroup>
-        <MenuSeparator />
-        <MenuItem onClick={openAddProject}>
-          <FolderPlusIcon />
-          New project
-        </MenuItem>
-      </MenuPopup>
-    </Menu>
+        </ComboboxList>
+        <div className="border-t border-border/70 p-1">
+          <button
+            type="button"
+            className="flex min-h-8 w-full cursor-default items-center gap-2 rounded-sm px-2 py-1 text-left text-base text-foreground outline-none hover:bg-accent focus-visible:bg-accent sm:min-h-7 sm:text-sm"
+            onClick={() => {
+              setIsProjectPickerOpen(false);
+              openAddProject();
+            }}
+          >
+            <FolderPlusIcon />
+            New project
+          </button>
+        </div>
+      </ComboboxPopup>
+    </Combobox>
   ) : (
     <button
       type="button"
