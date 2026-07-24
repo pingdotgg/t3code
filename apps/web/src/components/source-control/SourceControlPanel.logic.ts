@@ -1,4 +1,5 @@
 import type {
+  EnvironmentId,
   VcsPanelChangeGroup,
   VcsPanelStash,
   VcsPanelSnapshotResult,
@@ -28,6 +29,44 @@ export type { BranchSyncState, PanelChangedFile };
 export type AttentionKind = BranchAttentionKind;
 
 export type PanelRefreshMode = "full" | "working-tree";
+
+export interface SourceControlEnvironmentCandidate {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly isPrimary: boolean;
+  readonly cwd: string;
+  readonly connected: boolean;
+}
+
+export interface FederatedSourceControlTarget extends SourceControlEnvironmentCandidate {
+  readonly active: boolean;
+  readonly worktreePath: string | null;
+}
+
+export function resolveFederatedSourceControlTargets(input: {
+  readonly activeEnvironmentId: EnvironmentId;
+  readonly activeCwd: string;
+  readonly activeWorktreePath: string | null;
+  readonly candidates: readonly SourceControlEnvironmentCandidate[];
+}): FederatedSourceControlTarget[] {
+  const targetByEnvironmentId = new Map<EnvironmentId, FederatedSourceControlTarget>();
+  for (const candidate of input.candidates) {
+    if (!candidate.connected || targetByEnvironmentId.has(candidate.environmentId)) continue;
+    const active = candidate.environmentId === input.activeEnvironmentId;
+    targetByEnvironmentId.set(candidate.environmentId, {
+      ...candidate,
+      active,
+      cwd: active ? input.activeCwd : candidate.cwd,
+      worktreePath: active ? input.activeWorktreePath : null,
+    });
+  }
+
+  return [...targetByEnvironmentId.values()].toSorted((left, right) => {
+    if (left.active !== right.active) return left.active ? -1 : 1;
+    if (left.isPrimary !== right.isPrimary) return left.isPrimary ? -1 : 1;
+    return left.label.localeCompare(right.label);
+  });
+}
 
 export async function drainPanelRefreshQueue(options: {
   readonly initialMode: PanelRefreshMode;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { VcsPanelSnapshotResult, VcsRef } from "@t3tools/contracts";
+import { EnvironmentId, type VcsPanelSnapshotResult, type VcsRef } from "@t3tools/contracts";
 
 import {
   beginPanelFileDiffLoad,
@@ -14,9 +14,14 @@ import {
   formatRelativeDate,
   mergeChangeGroups,
   namedBranchOperationCwd,
+  resolveFederatedSourceControlTargets,
   stashIdentityKey,
   vcsPanelSnapshotFingerprint,
 } from "./SourceControlPanel.logic";
+
+const PRIMARY_ENVIRONMENT_ID = EnvironmentId.make("environment-primary");
+const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
+const DISCONNECTED_ENVIRONMENT_ID = EnvironmentId.make("environment-disconnected");
 
 const baseSnapshot: VcsPanelSnapshotResult = {
   status: {
@@ -322,5 +327,92 @@ describe("SourceControlPanel refresh stability logic", () => {
       status: "error",
       message: "failed",
     });
+  });
+});
+
+describe("SourceControlPanel environment federation", () => {
+  it("omits disconnected environments and keeps the active checkout first", () => {
+    expect(
+      resolveFederatedSourceControlTargets({
+        activeEnvironmentId: REMOTE_ENVIRONMENT_ID,
+        activeCwd: "/remote/repo.worktrees/active",
+        activeWorktreePath: "/remote/repo.worktrees/active",
+        candidates: [
+          {
+            environmentId: PRIMARY_ENVIRONMENT_ID,
+            label: "This device",
+            isPrimary: true,
+            cwd: "/local/repo",
+            connected: true,
+          },
+          {
+            environmentId: DISCONNECTED_ENVIRONMENT_ID,
+            label: "Offline server",
+            isPrimary: false,
+            cwd: "/offline/repo",
+            connected: false,
+          },
+          {
+            environmentId: REMOTE_ENVIRONMENT_ID,
+            label: "Build server",
+            isPrimary: false,
+            cwd: "/remote/repo",
+            connected: true,
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        environmentId: REMOTE_ENVIRONMENT_ID,
+        label: "Build server",
+        isPrimary: false,
+        cwd: "/remote/repo.worktrees/active",
+        connected: true,
+        active: true,
+        worktreePath: "/remote/repo.worktrees/active",
+      },
+      {
+        environmentId: PRIMARY_ENVIRONMENT_ID,
+        label: "This device",
+        isPrimary: true,
+        cwd: "/local/repo",
+        connected: true,
+        active: false,
+        worktreePath: null,
+      },
+    ]);
+  });
+
+  it("deduplicates multiple physical projects in the same connected environment", () => {
+    expect(
+      resolveFederatedSourceControlTargets({
+        activeEnvironmentId: PRIMARY_ENVIRONMENT_ID,
+        activeCwd: "/local/repo",
+        activeWorktreePath: null,
+        candidates: [
+          {
+            environmentId: PRIMARY_ENVIRONMENT_ID,
+            label: "This device",
+            isPrimary: true,
+            cwd: "/local/repo",
+            connected: true,
+          },
+          {
+            environmentId: REMOTE_ENVIRONMENT_ID,
+            label: "Build server",
+            isPrimary: false,
+            cwd: "/remote/repo",
+            connected: true,
+          },
+          {
+            environmentId: REMOTE_ENVIRONMENT_ID,
+            label: "Build server",
+            isPrimary: false,
+            cwd: "/remote/repo/packages/web",
+            connected: true,
+          },
+        ],
+      }).map((target) => target.cwd),
+    ).toEqual(["/local/repo", "/remote/repo"]);
   });
 });

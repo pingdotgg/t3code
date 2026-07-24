@@ -1684,17 +1684,22 @@ function ChatViewContent(props: ChatViewProps) {
       projectId: ProjectId;
       label: string;
       isPrimary: boolean;
+      cwd: string;
+      connected: boolean;
     }> = [];
     for (const p of memberProjects) {
       if (seen.has(p.environmentId)) continue;
       seen.add(p.environmentId);
       const isPrimary = p.environmentId === primaryEnvironmentId;
-      const label = environmentById.get(p.environmentId)?.label ?? p.environmentId;
+      const environment = environmentById.get(p.environmentId);
+      const label = environment?.label ?? p.environmentId;
       envs.push({
         environmentId: p.environmentId,
         projectId: p.id,
         label,
         isPrimary,
+        cwd: p.workspaceRoot,
+        connected: environment?.connection.phase === "connected",
       });
     }
     // Sort: primary first, then alphabetical
@@ -5653,6 +5658,7 @@ function ChatViewContent(props: ChatViewProps) {
           threadId={sourceControlPanelTarget.threadId}
           cwd={sourceControlPanelTarget.cwd}
           worktreePath={activeThreadWorktreePath}
+          environments={logicalProjectEnvironments}
           onThreadRefChange={handleSourceControlThreadRefChange}
         />
       </Suspense>

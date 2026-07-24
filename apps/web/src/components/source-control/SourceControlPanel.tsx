@@ -1,8 +1,9 @@
 import type {
   ContextMenuItem,
   EnvironmentId,
-  VcsPanelBranchCommitsInput,
+  ScopedThreadRef,
   ThreadId,
+  VcsPanelBranchCommitsInput,
   VcsPanelBranchDetails,
   VcsPanelChangeGroup,
   VcsPanelCommitSummary,
@@ -38,9 +39,11 @@ import {
   GitMerge,
   GitPullRequestArrow,
   LoaderCircle,
+  MonitorIcon,
   Plus,
   RefreshCw,
   RotateCcw,
+  ServerIcon,
   Tag,
   Target,
   Trash2,
@@ -57,6 +60,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -128,6 +132,8 @@ import {
   formatRelativeDate,
   mergeChangeGroups,
   namedBranchOperationCwd,
+  resolveFederatedSourceControlTargets,
+  type SourceControlEnvironmentCandidate,
   type PanelChangedFile,
   type PanelFileDiffLoadState,
   stashIdentityKey,
@@ -139,10 +145,20 @@ interface SourceControlPanelProps {
   readonly threadId: ThreadId;
   readonly cwd: string;
   readonly worktreePath: string | null;
+  readonly environments: readonly SourceControlEnvironmentCandidate[];
   readonly onThreadRefChange?: (input: {
     readonly branch: string | null;
     readonly worktreePath: string | null;
   }) => Promise<void> | void;
+}
+
+interface SourceControlEnvironmentPanelProps {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly cwd: string;
+  readonly worktreePath: string | null;
+  readonly filePanelThreadRef: ScopedThreadRef | null;
+  readonly onThreadRefChange?: SourceControlPanelProps["onThreadRefChange"];
 }
 
 type FileDiffSource = NonNullable<VcsPanelFileDiffInput["source"]>;
@@ -1346,16 +1362,18 @@ function WorkerRefreshedFileDiff(props: ComponentProps<typeof FileDiff>) {
   return <FileDiff {...props} key={renderKey} />;
 }
 
-export function SourceControlPanel({
+function SourceControlEnvironmentPanel({
   cwd,
   environmentId,
+  filePanelThreadRef,
   onThreadRefChange,
   threadId,
   worktreePath,
-}: SourceControlPanelProps) {
+}: SourceControlEnvironmentPanelProps) {
   const { resolvedTheme } = useTheme();
+  const commitMessageId = useId();
+  const stashMessageId = useId();
   const gitActionScope = useMemo(() => ({ environmentId, cwd }), [cwd, environmentId]);
-  const threadRef = useMemo(() => ({ environmentId, threadId }), [environmentId, threadId]);
   const gitAction = useGitStackedAction(gitActionScope);
   const api = useSourceControlPanelApi(environmentId);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
@@ -2162,11 +2180,12 @@ export function SourceControlPanel({
 
   const openFilePanel = useCallback(
     (path: string, targetCwd = cwd) => {
+      if (!filePanelThreadRef) return;
       useRightPanelStore
         .getState()
-        .openFile(threadRef, path, undefined, targetCwd === cwd ? undefined : targetCwd);
+        .openFile(filePanelThreadRef, path, undefined, targetCwd === cwd ? undefined : targetCwd);
     },
-    [cwd, threadRef],
+    [cwd, filePanelThreadRef],
   );
 
   const openInVsCode = useCallback(
@@ -2227,21 +2246,21 @@ export function SourceControlPanel({
       openContextMenu(
         event,
         [
-          { id: "open-file", label: "Open file" },
+          ...(filePanelThreadRef ? ([{ id: "open-file", label: "Open file" }] as const) : []),
           { id: "open-vscode", label: "Open in VS Code" },
           contextMenuSeparator("copy-separator"),
           { id: "copy-filename", label: "Copy filename", icon: "copy" },
           { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
         ],
         {
-          "open-file": () => openFilePanel(file.path),
+          ...(filePanelThreadRef ? { "open-file": () => openFilePanel(file.path) } : {}),
           "open-vscode": () => openInVsCode(file.path),
           "copy-filename": () => copyText(fileBasename(file.path)),
           "copy-full-path": () => copyText(resolvePathLinkTarget(file.path, cwd)),
         },
       );
     },
-    [copyText, cwd, openContextMenu, openFilePanel, openInVsCode],
+    [copyText, cwd, filePanelThreadRef, openContextMenu, openFilePanel, openInVsCode],
   );
 
   const toggleFileDiff = useCallback(
@@ -2288,12 +2307,15 @@ export function SourceControlPanel({
         toggleFileDiff(file, sourceForFile(file), targetCwd),
       renderExpandedFile: (file: VcsPanelFileChange) =>
         renderFileDiff(file, sourceForFile(file), targetCwd),
-      onOpenFile: (file: VcsPanelFileChange) => openFilePanel(file.path, targetCwd),
+      ...(filePanelThreadRef
+        ? { onOpenFile: (file: VcsPanelFileChange) => openFilePanel(file.path, targetCwd) }
+        : {}),
       onOpenInVsCode: (file: VcsPanelFileChange) => void openInVsCode(file.path, targetCwd),
     }),
     [
       cwd,
       expandedFileDiffs,
+      filePanelThreadRef,
       fileDiffKey,
       openFilePanel,
       openInVsCode,
@@ -3152,7 +3174,9 @@ export function SourceControlPanel({
                   openContextMenu(
                     event,
                     [
-                      { id: "open-file", label: "Open file" },
+                      ...(filePanelThreadRef
+                        ? ([{ id: "open-file", label: "Open file" }] as const)
+                        : []),
                       { id: "open-vscode", label: "Open in VS Code" },
                       contextMenuSeparator("discard-separator"),
                       {
@@ -3168,7 +3192,9 @@ export function SourceControlPanel({
                     ],
                     {
                       discard: discardFile,
-                      "open-file": () => openFilePanel(file.path, changeSet.cwd),
+                      ...(filePanelThreadRef
+                        ? { "open-file": () => openFilePanel(file.path, changeSet.cwd) }
+                        : {}),
                       "open-vscode": () => openInVsCode(file.path, changeSet.cwd),
                       "copy-filename": () => copyText(fileBasename(file.path)),
                       "copy-full-path": () =>
@@ -3214,9 +3240,14 @@ export function SourceControlPanel({
               >
                 <Trash2 className="size-3.5" />
               </IconButton>
-              <IconButton label="Open file" onClick={() => openFilePanel(file.path, changeSet.cwd)}>
-                <FileText className="size-3.5" />
-              </IconButton>
+              {filePanelThreadRef ? (
+                <IconButton
+                  label="Open file"
+                  onClick={() => openFilePanel(file.path, changeSet.cwd)}
+                >
+                  <FileText className="size-3.5" />
+                </IconButton>
+              ) : null}
               <IconButton
                 label="Open in VS Code"
                 onClick={() => void openInVsCode(file.path, changeSet.cwd)}
@@ -5074,11 +5105,11 @@ export function SourceControlPanel({
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-3">
-            <label className="block text-sm font-medium" htmlFor="source-control-commit-message">
+            <label className="block text-sm font-medium" htmlFor={commitMessageId}>
               Commit message (optional)
             </label>
             <Textarea
-              id="source-control-commit-message"
+              id={commitMessageId}
               size="sm"
               value={dialogCommitMessage}
               placeholder="Leave empty to auto-generate"
@@ -5131,11 +5162,11 @@ export function SourceControlPanel({
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-3">
-            <label className="block text-sm font-medium" htmlFor="source-control-stash-message">
+            <label className="block text-sm font-medium" htmlFor={stashMessageId}>
               Stash message (optional)
             </label>
             <Textarea
-              id="source-control-stash-message"
+              id={stashMessageId}
               size="sm"
               value={dialogStashMessage}
               placeholder="Leave empty to auto-generate"
@@ -5169,5 +5200,95 @@ export function SourceControlPanel({
         </DialogPopup>
       </Dialog>
     </>
+  );
+}
+
+export function SourceControlPanel({
+  cwd,
+  environmentId,
+  environments,
+  onThreadRefChange,
+  threadId,
+  worktreePath,
+}: SourceControlPanelProps) {
+  const targets = useMemo(
+    () =>
+      resolveFederatedSourceControlTargets({
+        activeEnvironmentId: environmentId,
+        activeCwd: cwd,
+        activeWorktreePath: worktreePath,
+        candidates: environments,
+      }),
+    [cwd, environmentId, environments, worktreePath],
+  );
+  const activeThreadRef = useMemo<ScopedThreadRef>(
+    () => ({ environmentId, threadId }),
+    [environmentId, threadId],
+  );
+
+  if (targets.length === 0) return null;
+
+  const showEnvironmentHeaders = targets.length > 1 || targets.some((target) => !target.isPrimary);
+  if (!showEnvironmentHeaders) {
+    const target = targets[0]!;
+    return (
+      <SourceControlEnvironmentPanel
+        environmentId={target.environmentId}
+        threadId={threadId}
+        cwd={target.cwd}
+        worktreePath={target.worktreePath}
+        filePanelThreadRef={activeThreadRef}
+        onThreadRefChange={onThreadRefChange}
+      />
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
+      {targets.map((target) => {
+        const EnvironmentIcon = target.isPrimary ? MonitorIcon : ServerIcon;
+        return (
+          <section
+            key={`${target.environmentId}:${target.cwd}`}
+            data-source-control-environment={target.environmentId}
+            className={cn(
+              "flex min-h-[32rem] flex-none flex-col border-b border-border/70 last:border-b-0",
+              targets.length === 1 && "min-h-full flex-1",
+            )}
+          >
+            <div className="surface-subheader min-h-8 shrink-0 gap-2 border-b border-border/70 px-3">
+              <EnvironmentIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 truncate text-xs font-medium text-foreground">
+                {target.label}
+              </span>
+              {!target.isPrimary ? (
+                <Badge variant="outline" className="h-4 px-1 text-[9px] text-muted-foreground">
+                  Remote
+                </Badge>
+              ) : null}
+              {target.active ? (
+                <Badge variant="secondary" className="h-4 px-1 text-[9px]">
+                  Current
+                </Badge>
+              ) : null}
+              <span
+                className="ml-auto min-w-0 truncate font-mono text-[10px] text-muted-foreground/70"
+                title={target.cwd}
+              >
+                {target.cwd}
+              </span>
+            </div>
+            <SourceControlEnvironmentPanel
+              environmentId={target.environmentId}
+              threadId={threadId}
+              cwd={target.cwd}
+              worktreePath={target.worktreePath}
+              filePanelThreadRef={target.active ? activeThreadRef : null}
+              {...(target.active ? { onThreadRefChange } : {})}
+            />
+          </section>
+        );
+      })}
+    </div>
   );
 }
