@@ -1767,6 +1767,19 @@ function isClaudeActiveSteeringAbortResult(message: SDKResultMessage): boolean {
   return message.terminal_reason === "aborted_streaming";
 }
 
+function isClaudeProviderContinuationTurn(input: ProviderAdapterV2TurnInput): boolean {
+  return input.message.createdBy === "agent" && input.message.creationSource === "provider";
+}
+
+function isClaudeTaskNotificationOriginResult(message: SDKMessage): message is SDKResultMessage & {
+  readonly origin: Extract<
+    NonNullable<SDKResultMessage["origin"]>,
+    { readonly kind: "task-notification" }
+  >;
+} {
+  return message.type === "result" && message.origin?.kind === "task-notification";
+}
+
 function providerFailureFromResult(
   message: SDKResultMessage,
 ): OrchestrationV2ProviderFailure | null {
@@ -3268,6 +3281,18 @@ export function makeClaudeAdapterV2(
             return;
           }
 
+          // Task-notification-origin results can interleave during a normal
+          // user turn (for example a stale background stop after interrupt
+          // recovery). They must not finalize that turn or supply fallback
+          // assistant text. Provider continuation turns still consume them
+          // when draining buffered wake messages.
+          if (
+            isClaudeTaskNotificationOriginResult(message) &&
+            !isClaudeProviderContinuationTurn(context.input)
+          ) {
+            return;
+          }
+
           // An is_error result's text is the error message; it belongs on the
           // terminal-failure item, not on a synthetic assistant message.
           const resultText =
@@ -3551,9 +3576,7 @@ export function makeClaudeAdapterV2(
             // produced instead of prompting it again: drain the buffered wake
             // messages into this turn and let any still-streaming messages
             // follow live. The continuation prompt text never reaches the CLI.
-            const isContinuationTurn =
-              turnInput.message.createdBy === "agent" &&
-              turnInput.message.creationSource === "provider";
+            const isContinuationTurn = isClaudeProviderContinuationTurn(turnInput);
             const userMessage = isContinuationTurn
               ? null
               : yield* makeClaudeUserMessageWithAttachments({
