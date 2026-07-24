@@ -1709,29 +1709,31 @@ const makeWsRpcLayer = (
             Effect.gen(function* () {
               if (input.resource._tag === "generated-image") {
                 const resource = input.resource;
-                const thread = yield* projectionSnapshotQuery
-                  .getThreadDetailById(resource.threadId)
-                  .pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new AssetGeneratedImageInspectionError({
-                          resource,
-                          cause,
-                        }),
-                    ),
-                  );
-                const generatedImagePath = Option.isSome(thread)
-                  ? findGeneratedImagePath(thread.value.activities, resource.activityId)
-                  : null;
-                if (!generatedImagePath) {
-                  return yield* new AssetGeneratedImageNotFoundError({
-                    resource,
-                  });
-                }
                 return yield* retryGeneratedImageFileLookup(
-                  issueAssetUrl({
-                    resource,
-                    generatedImagePath,
+                  Effect.gen(function* () {
+                    const thread = yield* projectionSnapshotQuery
+                      .getThreadDetailById(resource.threadId)
+                      .pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new AssetGeneratedImageInspectionError({
+                              resource,
+                              cause,
+                            }),
+                        ),
+                      );
+                    const generatedImagePath = Option.isSome(thread)
+                      ? findGeneratedImagePath(thread.value.activities, resource.activityId)
+                      : null;
+                    if (!generatedImagePath) {
+                      return yield* new AssetGeneratedImageNotFoundError({
+                        resource,
+                      });
+                    }
+                    return yield* issueAssetUrl({
+                      resource,
+                      generatedImagePath,
+                    });
                   }),
                 );
               }

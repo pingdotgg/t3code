@@ -92,19 +92,31 @@ describe("generated image resolution", () => {
     ).toBeNull();
   });
 
-  effectIt.live("retries transient not-found failures and preserves other failures", () =>
+  effectIt.live("retries the projection lookup until the generated image appears", () =>
     Effect.gen(function* () {
       let attempts = 0;
       const result = yield* retryGeneratedImageFileLookup(
         Effect.suspend(() => {
           attempts += 1;
-          return attempts < 3
-            ? Effect.fail({ _tag: "AssetGeneratedImageNotFoundError" as const })
-            : Effect.succeed("ready");
+          const generatedImagePath = findGeneratedImagePath(
+            attempts < 3
+              ? []
+              : [
+                  activity({
+                    type: "imageGeneration",
+                    status: "completed",
+                    savedPath: "/tmp/generated.png",
+                  }),
+                ],
+            ACTIVITY_ID,
+          );
+          return generatedImagePath
+            ? Effect.succeed(generatedImagePath)
+            : Effect.fail({ _tag: "AssetGeneratedImageNotFoundError" as const });
         }),
       );
 
-      expect(result).toBe("ready");
+      expect(result).toBe("/tmp/generated.png");
       expect(attempts).toBe(3);
       expect(
         isGeneratedImageFileLookupRetryable({ _tag: "AssetGeneratedImageNotFoundError" }),
