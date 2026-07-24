@@ -14,11 +14,12 @@ import {
   ProjectionThreadRepository,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
-import { ModelSelection } from "@t3tools/contracts";
+import { ModelSelection, OrchestrationThreadMonitor } from "@t3tools/contracts";
 
 const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    monitor: Schema.NullOr(Schema.fromJsonString(OrchestrationThreadMonitor)),
   }),
 );
 type ProjectionThreadDbRow = typeof ProjectionThreadDbRow.Type;
@@ -47,6 +48,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           settled_at,
           snoozed_until,
           snoozed_at,
+          monitor_json,
           latest_user_message_at,
           pending_approval_count,
           pending_user_input_count,
@@ -70,6 +72,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.settledAt},
           ${row.snoozedUntil},
           ${row.snoozedAt},
+          ${row.monitor === null ? null : JSON.stringify(row.monitor)},
           ${row.latestUserMessageAt},
           ${row.pendingApprovalCount},
           ${row.pendingUserInputCount},
@@ -93,6 +96,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           settled_at = excluded.settled_at,
           snoozed_until = excluded.snoozed_until,
           snoozed_at = excluded.snoozed_at,
+          monitor_json = excluded.monitor_json,
           latest_user_message_at = excluded.latest_user_message_at,
           pending_approval_count = excluded.pending_approval_count,
           pending_user_input_count = excluded.pending_user_input_count,
@@ -123,6 +127,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           settled_at AS "settledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          monitor_json AS "monitor",
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
@@ -155,6 +160,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           settled_at AS "settledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          monitor_json AS "monitor",
           latest_user_message_at AS "latestUserMessageAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",

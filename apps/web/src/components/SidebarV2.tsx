@@ -108,6 +108,8 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
+  resolveMonitorReadyLabel,
+  resolveMonitorSidebarState,
   resolveSettledTimestamp,
   resolveSidebarV2Status,
   resolveWorkingStartedAt,
@@ -411,9 +413,25 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
 
+  // The PR monitor ("babysit") mode wraps the normal statuses: a monitoring
+  // row recedes like any in-flight row, a ready row demands attention like an
+  // unread completion, and a dead-session monitor gets a subtle floor marker.
+  const monitorState = resolveMonitorSidebarState(thread.monitor);
+  const isMonitoring = monitorState === "monitoring";
+  const isMonitorReady = monitorState === "ready";
+  const isMonitorStopped = monitorState === "stopped";
+  // What the PR is waiting on, in place of the branch on the sub-line — the
+  // legibility that answers "Are you still going?" (mock 4a). No counter.
+  const monitorBlockers = thread.monitor?.blockersSummary?.trim() ?? "";
+  const monitorSubLine =
+    (isMonitoring || isMonitorReady) && monitorBlockers !== "" ? monitorBlockers : null;
   // Same semantics as v1 (never-visited counts as read): flipping the beta
-  // flag must not light up every historical thread as unread.
-  const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
+  // flag must not light up every historical thread as unread. A ready PR is
+  // the payoff moment — treat it as unread-prominent — while an actively
+  // monitoring thread suppresses the success-shaped unread from its quiet
+  // wake-turn completions (never a blocked state — that surfaces via status).
+  const isUnread =
+    isMonitorReady || (!isMonitoring && hasUnseenCompletion({ ...thread, lastVisitedAt }));
   const status = resolveSidebarV2Status(thread);
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
@@ -430,14 +448,16 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // freshly woken. The status label keeps its hue, so waiting rows stay
   // findable. In-flight rows recede the same as read-ready ones (inbox-zero:
   // working threads aren't your problem yet) — only the colored status label
-  // stands out.
-  const isInFlight = status === "working" || status === "approval" || status === "input";
+  // stands out. Monitoring rows are the ultimate "in-flight, don't look at
+  // me" row.
+  const isInFlight =
+    status === "working" || status === "approval" || status === "input" || isMonitoring;
   const shouldRecede =
     (status === "ready" || isInFlight) && !isUnread && !isWoke && !props.isActive && !isSelected;
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
-  const topStatus =
+  const baseTopStatus =
     status === "working"
       ? {
           label: "Working",
@@ -476,6 +496,34 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     className: "text-emerald-700 dark:text-emerald-300",
                   }
                 : null;
+  // Monitoring wraps the base status: a ready PR is the emerald payoff, an
+  // active monitor is one steady cyan pill through fixes (D6), a dead-session
+  // monitor gets the subtle zinc floor marker (D2). A genuinely blocked wake
+  // turn (approval/input/failed) is never swallowed — those keep the base
+  // pill (invariant I4). A freshly woken snoozed thread also keeps its explicit
+  // user-action pill instead of being swallowed by monitor state.
+  const isBlockedOrFailed = status === "approval" || status === "input" || status === "failed";
+  const topStatus = isWoke
+    ? baseTopStatus
+    : isMonitorReady && !isBlockedOrFailed
+      ? {
+          label: resolveMonitorReadyLabel(thread.monitor?.blockersSummary ?? ""),
+          icon: "done" as const,
+          className: "text-emerald-700 dark:text-emerald-300",
+        }
+      : isMonitoring && !isBlockedOrFailed
+        ? {
+            label: "Monitoring",
+            icon: null,
+            className: "text-cyan-700 dark:text-cyan-300",
+          }
+        : isMonitorStopped && !isBlockedOrFailed
+          ? {
+              label: "Monitoring stopped",
+              icon: null,
+              className: "text-muted-foreground/80",
+            }
+          : baseTopStatus;
 
   const gitCwd = thread.worktreePath ?? props.projectCwd;
   const gitStatus = useEnvironmentQuery(
@@ -897,7 +945,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                           wrapper around the ticking duration would make
                           screen readers announce every second. */}
                       <span role="status">{topStatus.label}</span>
-                      {status === "working" ? (
+                      {/* No elapsed counter while monitoring — "Working 2h"
+                          reads as stuck; the sub-line shows the wait state. */}
+                      {status === "working" && !isMonitoring ? (
                         <span aria-hidden>
                           <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
                         </span>
@@ -938,7 +988,16 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             </div>
             <div className="mt-1 flex min-w-0">{title}</div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
-              {thread.branch ? (
+              {monitorSubLine !== null ? (
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 truncate whitespace-nowrap",
+                    isMonitorReady && "text-emerald-700/90 dark:text-emerald-300/80",
+                  )}
+                >
+                  {monitorSubLine}
+                </span>
+              ) : thread.branch ? (
                 <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
               ) : (
                 <span className="flex-1" />

@@ -13,6 +13,9 @@ import {
   ThreadUnsettledPayload as ContractsThreadUnsettledPayloadSchema,
   ThreadSnoozedPayload as ContractsThreadSnoozedPayloadSchema,
   ThreadUnsnoozedPayload as ContractsThreadUnsnoozedPayloadSchema,
+  ThreadMonitorStartedPayload as ContractsThreadMonitorStartedPayloadSchema,
+  ThreadMonitorSnapshotUpdatedPayload as ContractsThreadMonitorSnapshotUpdatedPayloadSchema,
+  ThreadMonitorEndedPayload as ContractsThreadMonitorEndedPayloadSchema,
   ThreadMessageSentPayload as ContractsThreadMessageSentPayloadSchema,
   ThreadProposedPlanUpsertedPayload as ContractsThreadProposedPlanUpsertedPayloadSchema,
   ThreadSessionSetPayload as ContractsThreadSessionSetPayloadSchema,
@@ -42,6 +45,10 @@ export const ThreadUnarchivedPayload = ContractsThreadUnarchivedPayloadSchema;
 export const ThreadUnsettledPayload = ContractsThreadUnsettledPayloadSchema;
 export const ThreadSnoozedPayload = ContractsThreadSnoozedPayloadSchema;
 export const ThreadUnsnoozedPayload = ContractsThreadUnsnoozedPayloadSchema;
+export const ThreadMonitorStartedPayload = ContractsThreadMonitorStartedPayloadSchema;
+export const ThreadMonitorSnapshotUpdatedPayload =
+  ContractsThreadMonitorSnapshotUpdatedPayloadSchema;
+export const ThreadMonitorEndedPayload = ContractsThreadMonitorEndedPayloadSchema;
 
 export const MessageSentPayloadSchema = ContractsThreadMessageSentPayloadSchema;
 export const ThreadProposedPlanUpsertedPayload = ContractsThreadProposedPlanUpsertedPayloadSchema;

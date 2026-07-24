@@ -342,6 +342,20 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+export const OrchestrationThreadMonitor = Schema.Struct({
+  prNumber: NonNegativeInt,
+  status: Schema.Literals(["monitoring", "ready", "stopped", "needs-attention"]),
+  blockersSummary: Schema.String,
+  headSha: Schema.String,
+  wakeCount: NonNegativeInt,
+  startedAt: IsoDateTime,
+  endedAt: Schema.NullOr(IsoDateTime),
+  endedReason: Schema.NullOr(
+    Schema.Literals(["ready", "stopped", "terminal", "session-ended", "needs-attention"]),
+  ),
+});
+export type OrchestrationThreadMonitor = typeof OrchestrationThreadMonitor.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -367,6 +381,9 @@ export const OrchestrationThread = Schema.Struct({
   // Optional so payloads from pre-snooze servers still decode.
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  monitor: Schema.optionalKey(Schema.NullOr(OrchestrationThreadMonitor)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -419,6 +436,9 @@ export const OrchestrationThreadShell = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  monitor: Schema.optionalKey(Schema.NullOr(OrchestrationThreadMonitor)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -612,6 +632,44 @@ const ThreadUnsnoozeCommand = Schema.Struct({
   reason: Schema.Literal("user"),
 });
 
+const ThreadMonitorStartCommand = Schema.Struct({
+  type: Schema.Literal("thread.monitor.start"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  prNumber: NonNegativeInt,
+  blockersSummary: Schema.String,
+  headSha: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+const ThreadMonitorUpdateCommand = Schema.Struct({
+  type: Schema.Literal("thread.monitor.update"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  blockersSummary: Schema.String,
+  headSha: Schema.String,
+  wakeCount: NonNegativeInt,
+  updatedAt: IsoDateTime,
+});
+
+const ThreadMonitorEndCommand = Schema.Struct({
+  type: Schema.Literal("thread.monitor.end"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  reason: Schema.Literals(["ready", "stopped", "terminal", "session-ended", "needs-attention"]),
+  blockersSummary: Schema.String,
+  endedAt: IsoDateTime,
+});
+
+// Clients may only end a monitor as an explicit user stop. The other reasons
+// (ready/terminal/session-ended/needs-attention) are server verdicts computed
+// from GitHub state or lifecycle teardown — a client must not be able to
+// forge them, mirroring how ThreadUnsettleCommand only carries "user".
+const ClientThreadMonitorEndCommand = Schema.Struct({
+  ...ThreadMonitorEndCommand.fields,
+  reason: Schema.Literal("stopped"),
+});
+
 const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
   commandId: CommandId,
@@ -767,6 +825,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ClientThreadMonitorEndCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -792,6 +851,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ClientThreadMonitorEndCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -861,6 +921,9 @@ const ThreadRevertCompleteCommand = Schema.Struct({
 });
 
 const InternalOrchestrationCommand = Schema.Union([
+  ThreadMonitorStartCommand,
+  ThreadMonitorUpdateCommand,
+  ThreadMonitorEndCommand,
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
@@ -889,6 +952,9 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.unsettled",
   "thread.snoozed",
   "thread.unsnoozed",
+  "thread.monitor-started",
+  "thread.monitor-snapshot-updated",
+  "thread.monitor-ended",
   "thread.meta-updated",
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
@@ -995,6 +1061,30 @@ export const ThreadUnsnoozedPayload = Schema.Struct({
   // derive them from snoozedUntil passing.
   reason: Schema.Literals(["user", "activity"]),
   updatedAt: IsoDateTime,
+});
+
+export const ThreadMonitorStartedPayload = Schema.Struct({
+  threadId: ThreadId,
+  prNumber: NonNegativeInt,
+  blockersSummary: Schema.String,
+  headSha: Schema.String,
+  wakeCount: NonNegativeInt,
+  startedAt: IsoDateTime,
+});
+
+export const ThreadMonitorSnapshotUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  blockersSummary: Schema.String,
+  headSha: Schema.String,
+  wakeCount: NonNegativeInt,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadMonitorEndedPayload = Schema.Struct({
+  threadId: ThreadId,
+  reason: Schema.Literals(["ready", "stopped", "terminal", "session-ended", "needs-attention"]),
+  blockersSummary: Schema.String,
+  endedAt: IsoDateTime,
 });
 
 export const ThreadMetaUpdatedPayload = Schema.Struct({
@@ -1183,6 +1273,21 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.unsnoozed"),
     payload: ThreadUnsnoozedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.monitor-started"),
+    payload: ThreadMonitorStartedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.monitor-snapshot-updated"),
+    payload: ThreadMonitorSnapshotUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.monitor-ended"),
+    payload: ThreadMonitorEndedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

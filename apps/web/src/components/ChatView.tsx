@@ -166,6 +166,7 @@ import { useNowMinute } from "../hooks/useNowMinute";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import { useOpenPrLink } from "../lib/openPullRequestLink";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -223,6 +224,7 @@ import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
+import { MonitorStrip } from "./MonitorStrip";
 import { resolveEffectiveEnvMode, resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   getProviderStatusBannerKey,
@@ -1142,6 +1144,7 @@ function ChatViewContent(props: ChatViewProps) {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const endThreadMonitor = useAtomCommand(threadEnvironment.endMonitor, { reportFailure: false });
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
@@ -2330,6 +2333,26 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitStatusCwd },
         }),
   );
+  // PR monitoring ("babysit") strip: resolve the thread's PR URL for the
+  // ready-state "View PR"/"Merge…" affordances, and a stop handler that ends
+  // the monitor via the same command path the server drives.
+  const openPrLink = useOpenPrLink();
+  const monitorPrUrl =
+    resolveThreadPr({
+      threadBranch: activeThread?.branch ?? null,
+      gitStatus: gitStatusQuery.data ?? null,
+      hasDedicatedWorktree: activeThread?.worktreePath != null,
+    })?.url ?? null;
+  const handleStopMonitoring = useCallback(() => {
+    if (activeThread == null || activeThread.monitor == null) return;
+    void endThreadMonitor({
+      environmentId: activeThread.environmentId,
+      input: {
+        threadId: activeThread.id,
+        blockersSummary: activeThread.monitor.blockersSummary,
+      },
+    });
+  }, [activeThread, endThreadMonitor]);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   // Prefer an instance-id match so a custom Codex instance (e.g.
@@ -5654,6 +5677,15 @@ function ChatViewContent(props: ChatViewProps) {
             onDeleteProjectScript={deleteProjectScript}
           />
         </header>
+
+        {activeThread.monitor != null ? (
+          <MonitorStrip
+            monitor={activeThread.monitor}
+            prUrl={monitorPrUrl}
+            onStopMonitoring={handleStopMonitoring}
+            onOpenPr={openPrLink}
+          />
+        ) : null}
 
         <ThreadErrorBanner
           error={threadError}

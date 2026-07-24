@@ -99,6 +99,7 @@ export interface ThreadStatusPill {
     | "Working"
     | "Connecting"
     | "Completed"
+    | "Monitoring"
     | "Pending Approval"
     | "Awaiting Input"
     | "Plan Ready";
@@ -108,8 +109,12 @@ export interface ThreadStatusPill {
 }
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
-  "Pending Approval": 5,
-  "Awaiting Input": 4,
+  "Pending Approval": 6,
+  "Awaiting Input": 5,
+  // Monitoring outranks Working/Completed so the pill stays steady through
+  // wake-turn fixes (decision D6), but sits below approval/input so a
+  // blocked state is never swallowed (invariant I4).
+  Monitoring: 4,
   Working: 3,
   Connecting: 3,
   "Plan Ready": 2,
@@ -123,10 +128,40 @@ type ThreadStatusInput = Pick<
   | "hasPendingUserInput"
   | "interactionMode"
   | "latestTurn"
+  | "monitor"
   | "session"
 > & {
   lastVisitedAt?: string | undefined;
 };
+
+// ── PR monitoring ("babysit") sidebar/strip model ───────────────────
+// The steady sidebar-facing distillation of a thread's PR monitor. Cyan
+// while monitoring, emerald at the payoff, a subtle zinc marker for a dead
+// babysitter — everything else hands back to the normal status treatment.
+export type MonitorSidebarState = "monitoring" | "ready" | "stopped";
+
+export function resolveMonitorSidebarState(
+  monitor: SidebarThreadSummary["monitor"],
+): MonitorSidebarState | null {
+  if (monitor == null) return null;
+  if (monitor.status === "monitoring") return "monitoring";
+  if (monitor.status === "ready") return "ready";
+  // D2 floor: a session-scoped monitor whose session died gets a visible
+  // "Monitoring stopped" marker so a dead babysitter is distinguishable from
+  // a quiet, live one. Other terminal reasons (terminal/stopped-by-user/
+  // needs-attention) defer to the normal settled/status treatment.
+  if (monitor.status === "stopped" && monitor.endedReason === "session-ended") return "stopped";
+  return null;
+}
+
+// "No known blockers" is the honest fallback the server labels a ready PR
+// with when required-status data isn't reliably obtainable; otherwise the
+// payoff reads "Ready to merge". The distinction rides in blockersSummary.
+export function resolveMonitorReadyLabel(
+  blockersSummary: string,
+): "Ready to merge" | "No known blockers" {
+  return /no known blockers/i.test(blockersSummary) ? "No known blockers" : "Ready to merge";
+}
 
 export interface ThreadJumpHintVisibilityController {
   sync: (shouldShow: boolean) => void;
@@ -557,6 +592,19 @@ export function resolveThreadStatusPill(input: {
       label: "Awaiting Input",
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
       dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
+      pulse: false,
+    };
+  }
+
+  // An active PR monitor keeps a steady "Monitoring" pill for the whole mode,
+  // including through wake-turn fixes — it outranks Working/Completed but,
+  // being placed after approval/input above, never swallows a blocked state
+  // (D6, invariant I4). The PR number and blockers ride in the sub-line.
+  if (thread.monitor != null && thread.monitor.status === "monitoring") {
+    return {
+      label: "Monitoring",
+      colorClass: "text-cyan-600 dark:text-cyan-300/90",
+      dotClass: "bg-cyan-500 dark:bg-cyan-300/90",
       pulse: false,
     };
   }

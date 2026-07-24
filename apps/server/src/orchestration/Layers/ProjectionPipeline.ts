@@ -611,6 +611,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             settledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            monitor: null,
             latestUserMessageAt: null,
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
@@ -709,6 +710,70 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             snoozedUntil: null,
             snoozedAt: null,
             updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.monitor-started": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) return;
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            monitor: {
+              prNumber: event.payload.prNumber,
+              status: "monitoring",
+              blockersSummary: event.payload.blockersSummary,
+              headSha: event.payload.headSha,
+              wakeCount: event.payload.wakeCount,
+              startedAt: event.payload.startedAt,
+              endedAt: null,
+              endedReason: null,
+            },
+            updatedAt: event.payload.startedAt,
+          });
+          return;
+        }
+
+        case "thread.monitor-snapshot-updated": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow) || existingRow.value.monitor === null) return;
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            monitor: {
+              ...existingRow.value.monitor,
+              blockersSummary: event.payload.blockersSummary,
+              headSha: event.payload.headSha,
+              wakeCount: event.payload.wakeCount,
+            },
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.monitor-ended": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow) || existingRow.value.monitor === null) return;
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            monitor: {
+              ...existingRow.value.monitor,
+              status:
+                event.payload.reason === "ready"
+                  ? "ready"
+                  : event.payload.reason === "needs-attention"
+                    ? "needs-attention"
+                    : "stopped",
+              blockersSummary: event.payload.blockersSummary,
+              endedAt: event.payload.endedAt,
+              endedReason: event.payload.reason,
+            },
+            updatedAt: event.payload.endedAt,
           });
           return;
         }
