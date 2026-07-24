@@ -32,21 +32,11 @@ public enum BrandMarkGeometry {
         }
     }
 
-    /// Alpine moss, #4C7559.
-    public static let moss = RGB(
-        red: CGFloat(0x4C) / 255,
-        green: CGFloat(0x75) / 255,
-        blue: CGFloat(0x59) / 255)
     /// Snow, #F2F7FB.
     public static let snow = RGB(
         red: CGFloat(0xF2) / 255,
         green: CGFloat(0xF7) / 255,
         blue: CGFloat(0xFB) / 255)
-    /// Deep spruce, #163325.
-    public static let deepSpruce = RGB(
-        red: CGFloat(0x16) / 255,
-        green: CGFloat(0x33) / 255,
-        blue: CGFloat(0x25) / 255)
     /// Sky stops, #2F6BB0 → #8ABCE2 → #F4E7C6.
     public static let skyStops: [RGB] = [
         RGB(red: CGFloat(0x2F) / 255, green: CGFloat(0x6B) / 255, blue: CGFloat(0xB0) / 255),
