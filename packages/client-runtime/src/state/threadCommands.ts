@@ -17,10 +17,12 @@ import {
   type SetThreadInteractionModeInput,
   type SetThreadRuntimeModeInput,
   type SettleThreadInput,
+  type SnoozeThreadInput,
   type StartThreadTurnInput,
   type StopThreadSessionInput,
   type UnarchiveThreadInput,
   type UnsettleThreadInput,
+  type UnsnoozeThreadInput,
   type UpdateThreadMetadataInput,
   archiveThread,
   createThread,
@@ -32,10 +34,12 @@ import {
   setThreadInteractionMode,
   setThreadRuntimeMode,
   settleThread,
+  snoozeThread,
   startThreadTurn,
   stopThreadSession,
   unarchiveThread,
   unsettleThread,
+  unsnoozeThread,
   updateThreadMetadata,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -51,10 +55,12 @@ export type {
   SetThreadInteractionModeInput,
   SetThreadRuntimeModeInput,
   SettleThreadInput,
+  SnoozeThreadInput,
   StartThreadTurnInput,
   StopThreadSessionInput,
   UnarchiveThreadInput,
   UnsettleThreadInput,
+  UnsnoozeThreadInput,
   UpdateThreadMetadataInput,
 } from "../operations/commands.ts";
 
@@ -117,6 +123,18 @@ export function createThreadEnvironmentAtoms<R, E>(
     unsettle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unsettle",
       execute: (input: UnsettleThreadInput) => unsettleThread(input),
+      scheduler,
+      concurrency,
+    }),
+    snooze: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:snooze",
+      execute: (input: SnoozeThreadInput) => snoozeThread(input),
+      scheduler,
+      concurrency,
+    }),
+    unsnooze: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:unsnooze",
+      execute: (input: UnsnoozeThreadInput) => unsnoozeThread(input),
       scheduler,
       concurrency,
     }),
