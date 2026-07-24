@@ -21,8 +21,20 @@ export function RemoteEnvironmentIndicator({
       className={cn("inline-flex min-w-0 items-center gap-1", className)}
       {...props}
     >
-      <Icon aria-hidden className={cn("shrink-0", iconClassName)} />
       <span className="thread-remote-environment-label min-w-0 max-w-20 truncate">{label}</span>
+      <Icon aria-hidden className={cn("shrink-0", iconClassName)} />
     </span>
+  );
+}
+
+export function shouldShowRemoteEnvironmentIndicator(input: {
+  readonly currentEnvironmentId: string | null;
+  readonly threadEnvironmentId: string;
+  readonly isDesktopLocal: boolean;
+}) {
+  return (
+    input.currentEnvironmentId !== null &&
+    input.threadEnvironmentId !== input.currentEnvironmentId &&
+    !input.isDesktopLocal
   );
 }

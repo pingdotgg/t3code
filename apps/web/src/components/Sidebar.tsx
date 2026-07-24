@@ -834,8 +834,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                         <RemoteEnvironmentIndicator
                           icon={CloudIcon}
                           label={threadEnvironmentLabel ?? "Remote"}
-                          className="max-w-24"
-                          iconClassName="size-3 text-muted-foreground/40"
+                          className="max-w-24 text-muted-foreground/40"
+                          iconClassName="size-3"
                         />
                       }
                     />
