@@ -49,6 +49,8 @@ import {
   OrchestrationReplayEventsError,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  AssetGeneratedImageInspectionError,
+  AssetGeneratedImageNotFoundError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   EnvironmentAuthorizationError,
@@ -86,6 +88,10 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import {
+  findGeneratedImagePath,
+  retryGeneratedImageFileLookup,
+} from "./assets/GeneratedImageResolver.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -1701,6 +1707,34 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
+              if (input.resource._tag === "generated-image") {
+                const resource = input.resource;
+                const thread = yield* projectionSnapshotQuery
+                  .getThreadDetailById(resource.threadId)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new AssetGeneratedImageInspectionError({
+                          resource,
+                          cause,
+                        }),
+                    ),
+                  );
+                const generatedImagePath = Option.isSome(thread)
+                  ? findGeneratedImagePath(thread.value.activities, resource.activityId)
+                  : null;
+                if (!generatedImagePath) {
+                  return yield* new AssetGeneratedImageNotFoundError({
+                    resource,
+                  });
+                }
+                return yield* retryGeneratedImageFileLookup(
+                  issueAssetUrl({
+                    resource,
+                    generatedImagePath,
+                  }),
+                );
+              }
               if (input.resource._tag !== "workspace-file") {
                 return yield* issueAssetUrl({ resource: input.resource });
               }

@@ -1,4 +1,4 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { CheckpointRef, EnvironmentId, EventId, MessageId, TurnId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -223,6 +223,37 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders completed image generation work as a compact image link", () => {
+    const timelineEntries = [
+      {
+        id: "work-generated-image",
+        kind: "work" as const,
+        createdAt: MESSAGE_CREATED_AT,
+        entry: {
+          id: "activity-generated-image",
+          createdAt: MESSAGE_CREATED_AT,
+          label: "Image view",
+          tone: "tool" as const,
+          itemType: "image_view" as const,
+          toolLifecycleStatus: "completed" as const,
+          sourceActivityKind: "tool.completed",
+          generatedImage: {
+            activityId: EventId.make("activity-generated-image"),
+            name: "generated.png",
+          },
+        },
+      },
+    ];
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+    );
+
+    expect(markup).toContain('aria-label="Open generated image generated.png"');
+    expect(markup).toContain(">generated.png</span>");
+    expect(markup).not.toContain("<img");
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 

@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ThreadId } from "@t3tools/contracts";
+import { EventId, ThreadId } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -203,6 +203,59 @@ describe("AssetAccess", () => {
         kind: "file",
         path: attachmentPath,
       });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues exact capabilities for provider-generated images", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-generated-image-",
+      });
+      const imagePath = path.join(root, "generated.png");
+      const siblingPath = path.join(root, "other.png");
+      yield* fileSystem.writeFile(imagePath, new Uint8Array([137, 80, 78, 71]));
+      yield* fileSystem.writeFile(siblingPath, new Uint8Array([137, 80, 78, 71]));
+      const canonicalImagePath = yield* fileSystem.realPath(imagePath);
+      const resource = {
+        _tag: "generated-image" as const,
+        threadId: ThreadId.make("thread-1"),
+        activityId: EventId.make("activity-1"),
+      };
+
+      const result = yield* issueAssetUrl({
+        resource,
+        generatedImagePath: imagePath,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "generated.png")).toEqual({
+        kind: "file",
+        path: canonicalImagePath,
+      });
+      expect(yield* resolveAsset(token, "other.png")).toBeNull();
+      expect(yield* resolveAsset(token, "../generated.png")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects generated-image resources without matching image paths", () =>
+    Effect.gen(function* () {
+      const resource = {
+        _tag: "generated-image" as const,
+        threadId: ThreadId.make("thread-1"),
+        activityId: EventId.make("activity-1"),
+      };
+      const missingPathError = yield* issueAssetUrl({ resource }).pipe(Effect.flip);
+      expect(missingPathError._tag).toBe("AssetGeneratedImageNotFoundError");
+
+      const invalidTypeError = yield* issueAssetUrl({
+        resource,
+        generatedImagePath: "/tmp/generated.txt",
+      }).pipe(Effect.flip);
+      expect(invalidTypeError._tag).toBe("AssetPreviewTypeValidationError");
     }).pipe(Effect.provide(testLayer)),
   );
 

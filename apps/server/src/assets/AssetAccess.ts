@@ -1,6 +1,8 @@
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
+  AssetGeneratedImageInspectionError,
+  AssetGeneratedImageNotFoundError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
@@ -75,6 +77,12 @@ const AssetClaimsSchema = Schema.Union([
     version: Schema.Literal(1),
     kind: Schema.Literal("attachment"),
     attachmentId: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("generated-image"),
+    absolutePath: Schema.String,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -162,9 +170,37 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
     Effect.orElseSucceed(() => null),
   );
 
+const resolveCanonicalGeneratedImage = Effect.fn("AssetAccess.resolveCanonicalGeneratedImage")(
+  function* (absolutePath: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    if (!path.isAbsolute(absolutePath) || !isWorkspaceImagePreviewPath(absolutePath)) {
+      return null;
+    }
+    const canonicalPath = yield* optionOnNotFound(fileSystem.realPath(absolutePath));
+    if (Option.isNone(canonicalPath) || !isWorkspaceImagePreviewPath(canonicalPath.value)) {
+      return null;
+    }
+    const info = yield* optionOnNotFound(fileSystem.stat(canonicalPath.value));
+    return Option.isSome(info) && info.value.type === "File" ? canonicalPath.value : null;
+  },
+);
+
+const resolveCanonicalGeneratedImageForRequest = (absolutePath: string) =>
+  resolveCanonicalGeneratedImage(absolutePath).pipe(
+    Effect.tapError((cause) =>
+      Effect.logError("Failed to resolve generated image asset.", {
+        absolutePath,
+        cause,
+      }),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
+  readonly generatedImagePath?: string;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -270,6 +306,43 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         expiresAt,
       };
       fileName = path.basename(attachmentPath);
+      break;
+    }
+    case "generated-image": {
+      if (!input.generatedImagePath) {
+        return yield* new AssetGeneratedImageNotFoundError({
+          resource: input.resource,
+        });
+      }
+      if (
+        !path.isAbsolute(input.generatedImagePath) ||
+        !isWorkspaceImagePreviewPath(input.generatedImagePath)
+      ) {
+        return yield* new AssetPreviewTypeValidationError({
+          resource: input.resource,
+        });
+      }
+      const canonicalPath = yield* resolveCanonicalGeneratedImage(input.generatedImagePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AssetGeneratedImageInspectionError({
+              resource: input.resource,
+              cause,
+            }),
+        ),
+      );
+      if (!canonicalPath) {
+        return yield* new AssetGeneratedImageNotFoundError({
+          resource: input.resource,
+        });
+      }
+      claims = {
+        version: 1,
+        kind: "generated-image",
+        absolutePath: canonicalPath,
+        expiresAt,
+      };
+      fileName = path.basename(canonicalPath);
       break;
     }
     case "project-favicon": {
@@ -400,6 +473,13 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const decodedPath = decodeRelativePath(relativePath);
   if (decodedPath === null) return null;
   const path = yield* Path.Path;
+  if (claims.kind === "generated-image") {
+    if (decodedPath !== path.basename(claims.absolutePath)) return null;
+    const generatedImagePath = yield* resolveCanonicalGeneratedImageForRequest(claims.absolutePath);
+    return generatedImagePath
+      ? ({ kind: "file", path: generatedImagePath } satisfies ResolvedAsset)
+      : null;
+  }
   if (claims.kind === "workspace-file-exact") {
     if (decodedPath !== path.basename(claims.relativePath)) return null;
     const exactWorkspaceFile = yield* resolveCanonicalWorkspaceFileForRequest({
