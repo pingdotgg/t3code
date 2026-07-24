@@ -13,24 +13,32 @@ The system consists of four main components:
 
 ## Quick Start
 
-### Release through a PR
+### Automatic releases (default)
 
-Release preparation is merged into `main` through a pull request. Do not push
-release commits directly to `main`.
+Every push to `main` triggers the `Release macOS App` workflow, which:
 
-```bash
-git switch -c codex/release-0.1.0-alpha.3
-# Edit apps/mac/version.json: version + monotonically increasing buildNumber
-git add apps/mac/version.json
-git commit -m "chore: prepare SurgeCode 0.1.0-alpha.3"
-git push -u origin codex/release-0.1.0-alpha.3
-gh pr create --repo SergeSerb2/SergeCode --base main
-```
+1. Bumps the prerelease version (e.g. `0.1.0-alpha.2` → `0.1.0-alpha.3`) and
+   `buildNumber` in `apps/mac/version.json`, commits it as
+   `chore: bump version to X [skip release]`, and tags `vX`.
+2. Runs the repository checks, builds the app, signs the Sparkle appcast, and
+   publishes a GitHub Release.
+3. Commits the updated `appcast.xml` directly to `main` as
+   `chore: publish appcast for X [skip release]`.
 
-After that PR is merged, run the `Release macOS App` workflow manually from
-`main` with the matching version. The workflow creates the GitHub Release and
-opens a second PR containing the signed `appcast.xml`. Merge that appcast PR
-to make the update visible to installed apps.
+Because the app's `SUFeedURL` reads the appcast from `main`, installed apps
+see the update as soon as that commit lands — no manual steps.
+
+The `[skip release]` marker in bot commit messages prevents the workflow from
+re-triggering itself. Keep that marker on any automation or cherry-picked
+release commit you create by hand.
+
+### Manual release (override)
+
+To release the exact version currently in `apps/mac/version.json` without an
+auto-bump (e.g. after merging a manual semver bump PR), run the
+`Release macOS App` workflow manually from `main` with the matching version
+input. The dispatch path validates the input against `version.json` and skips
+the auto-bump.
 
 ## Architecture
 
@@ -70,20 +78,24 @@ Reads version from Bundle.main.infoDictionary at runtime.
 
 **Workflow**: `.github/workflows/release-mac.yml`
 
-Triggered manually from merged `main` with a version matching `version.json`.
+Triggered automatically on every push to `main` (commits containing
+`[skip release]` are ignored to prevent release loops), or manually via
+`workflow_dispatch` with a version matching `version.json`.
 
 Steps:
 
-1. **Checkout & Setup**: Clone repo, install dependencies
-2. **Test**: Run Swift tests (`swift test`)
-3. **Build**: Run `make-app.sh` to create release build
-4. **Package DMG**: Create DMG installer using `hdiutil`
-5. **Package ZIP**: Create ZIP for Sparkle updates
-6. **Sign**: Generate Sparkle EdDSA signature (if key configured)
-7. **Update Appcast**: Add release entry to `appcast.xml`
+1. **Version bump** (push events only): compute the next prerelease version
+   via `scripts/compute-version.sh`, commit `version.json`, tag `vX`, push.
+2. **Checkout & Setup**: Clone repo, install dependencies
+3. **Test**: Run checks (`vp check`, `vp run typecheck`, `swift test`)
+4. **Build**: Run `make-app.sh` to create release build
+5. **Package DMG**: Create DMG installer using `hdiutil`
+6. **Package ZIP**: Create ZIP for Sparkle updates
+7. **Sign**: Generate Sparkle EdDSA signature (if key configured)
 8. **Publish**: Create GitHub Release with DMG and ZIP
-9. **Open PR**: Push the updated appcast to an automation branch and open a PR
-   against `main`
+9. **Appcast**: Commit the signed `appcast.xml` directly to `main` with a
+   `[skip release]` marker, making the update visible to installed apps
+   immediately
 
 ### Auto-Update with Sparkle
 
@@ -93,6 +105,8 @@ Steps:
 2. **Info.plist**:
    - `SUFeedURL`: Points to appcast.xml on GitHub
    - `SUPublicEDKey`: Public key for signature verification
+   - `SUEnableAutomaticChecks`: Scheduled update checks without a one-time
+     permission prompt; users still confirm each install
 3. **App.swift**:
    - `SPUStandardUpdaterController` initialized in init
    - "Check for Updates" menu item in app menu
@@ -124,30 +138,37 @@ The version from `version.json` is automatically synced to Info.plist before bui
 
 ### Creating a Release
 
+Releases are automatic — merging a PR to `main` is all it takes. Each merge
+produces a new prerelease (e.g. `0.1.0-alpha.3`) with its own GitHub Release
+and appcast entry.
+
+To move the semver line (e.g. from alpha to a stable `0.1.0`, or a minor
+bump), prepare a release branch:
+
 1. **Prepare a release branch**:
 
    ```bash
-   git switch -c codex/release-0.1.0-alpha.3
-   # Edit apps/mac/version.json and commit it through a PR to main
+   git switch -c codex/release-0.1.0
+   # Edit apps/mac/version.json manually (version + monotonically increasing
+   # buildNumber), commit, and open a PR against main
    ```
 
 2. **Review changes**:
 
    ```bash
    git log -1 --stat
-   git show v0.1.1  # Check tag
    ```
 
-3. **Run the release workflow after merge**:
-   - Go to GitHub Actions tab
-   - Run "Release macOS App" from `main`
-   - Enter the exact version from `apps/mac/version.json`
-   - Check for errors in test/build/publish steps
+3. **Merge the PR**: the push to `main` triggers the release workflow, which
+   auto-bumps the prerelease number on top (e.g. `0.1.0` → `0.1.1-alpha.1`
+   per the prerelease rules). If you need to release the exact version in
+   `version.json` instead, run the `Release macOS App` workflow manually
+   from `main` with that version as the input.
 
 4. **Verify release**:
    - Check GitHub Releases page for new release
    - Download and test DMG/ZIP artifacts
-   - Verify appcast.xml was updated
+   - Verify `apps/mac/Support/appcast.xml` on `main` gained the new item
 
 ### Configuring Sparkle Signing (First Time)
 
@@ -205,6 +226,10 @@ completed before distributing its artifacts to end users.
 ## Version Bump Tool
 
 **Script**: `apps/mac/scripts/version-bump.sh`
+
+The semver bump rules live in `apps/mac/scripts/compute-version.sh`, a
+compute-only script (prints the next `version`/`buildNumber`/`tag`, no git
+side effects) shared by `version-bump.sh` and the release workflow.
 
 ### Usage
 
@@ -348,6 +373,7 @@ apps/mac/
 │   └── appcast.xml                 # Sparkle release feed
 ├── scripts/
 │   ├── sync-version.sh             # Sync version.json → Info.plist
+│   ├── compute-version.sh          # Compute next version (no git side effects)
 │   ├── version-bump.sh             # Increment version + git tag
 │   ├── update-appcast.sh           # Update appcast.xml
 │   └── make-app.sh                 # Build script (calls sync-version.sh)

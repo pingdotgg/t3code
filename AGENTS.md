@@ -17,23 +17,33 @@ SergeCode (github.com/SergeSerb2/SergeCode) is a **permanent hard fork** of `pin
 
 ## macOS App Versioning and Release Policy
 
-Before changing `apps/mac/version.json`, tagging a release, generating an
-appcast entry, or running the macOS release workflow, every agent MUST ask the
-user this question and wait for the answer:
+Releases are automated: **every push to `main` triggers the
+`Release macOS App` workflow**, which bumps the prerelease version and
+`buildNumber` in `apps/mac/version.json`, builds and signs the app, publishes
+a GitHub Release, and commits the updated Sparkle appcast back to `main`.
+Installed apps then see the update via Sparkle. Bot commits pushed by the
+workflow carry `[skip release]` in their message so they do not re-trigger
+the workflow — never remove that marker from automation commits, and never
+cherry-pick a bot commit without keeping the marker.
+
+Before _manually_ changing `apps/mac/version.json`, tagging a release,
+generating an appcast entry, or running the macOS release workflow by hand,
+every agent MUST ask the user this question and wait for the answer:
 
 > Should this work create a new app version/release, or should it be added to
 > the current rolling/pending version number?
 
 Do not infer the answer from the size of the change, the PR title, or the
-current branch.
+current branch. Note that merging anything to `main` already produces an
+automatic prerelease — this question is about _manual_ version-line changes
+(major/minor/patch) and manual release actions.
 
 - **Rolling/pending version:** keep both `version` and `buildNumber` in
-  `apps/mac/version.json` unchanged. Add the code/docs changes to the current
-  PR or branch, but do not create a release tag, GitHub Release, or appcast
-  entry.
-- **New version/release:** get the user's desired semver bump (major, minor,
-  patch, or prerelease), increment `buildNumber` monotonically, and update
-  `apps/mac/version.json` in a PR targeting `main`.
+  `apps/mac/version.json` unchanged in the PR. The automation bumps the
+  prerelease number on merge.
+- **New version/release (manual semver bump):** get the user's desired semver
+  bump (major, minor, patch, or prerelease), increment `buildNumber`
+  monotonically, and update `apps/mac/version.json` in a PR targeting `main`.
 - `apps/mac/version.json` is the source of truth. Run
   `apps/mac/scripts/sync-version.sh` when the bundle metadata needs syncing:
   `version` maps to `CFBundleShortVersionString` and `buildNumber` maps to
@@ -42,13 +52,14 @@ current branch.
   (`CFBundleVersion`/`sparkle:version`) and the semver string for display
   (`CFBundleShortVersionString`/`sparkle:shortVersionString`).
 - Never create or push a release tag, publish a GitHub Release, or run
-  `Release macOS App` until the version decision is explicit and the version
-  change is merged into `main`. The release workflow then opens the appcast
-  update as a PR; merge that PR before expecting installed apps to see the
-  update.
+  `Release macOS App` manually until the version decision is explicit and the
+  version change is merged into `main`. Manual `workflow_dispatch` runs
+  require the version input to match `version.json` exactly.
 - `apps/mac/scripts/version-bump.sh` currently commits and tags immediately.
   Do not run it in normal PR work unless the user explicitly requests that
-  local commit/tag behavior; edit `version.json` on the release branch instead.
+  local commit/tag behavior; edit `version.json` on the release branch
+  instead. `apps/mac/scripts/compute-version.sh` is the shared compute-only
+  bump logic used by both `version-bump.sh` and the release workflow.
 - Every version/release PR must target `SergeSerb2/SergeCode` with base
   `main`, and must satisfy the repository validation requirements above.
 

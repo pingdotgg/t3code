@@ -37,6 +37,8 @@
 	<string>SurgeCode uses the microphone for local, on-device dictation. Audio never leaves your Mac.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/SergeSerb2/SergeCode/main/apps/mac/Support/appcast.xml</string>
 	<key>SUPublicEDKey</key>

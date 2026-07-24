@@ -1,6 +1,9 @@
 name: Release macOS App
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       version:
@@ -10,7 +13,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: release-macos
@@ -18,9 +20,14 @@ concurrency:
 
 jobs:
   build-and-release:
-    name: Build, publish, and open appcast PR
+    name: Build, publish, and update appcast
     runs-on: macos-latest
     timeout-minutes: 45
+    # Bot commits pushed by this workflow carry "[skip release]" so they
+    # don't trigger another release. Everything else on main releases.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !contains(github.event.head_commit.message, '[skip release]')
 
     steps:
       - name: Checkout merged main
@@ -36,19 +43,63 @@ jobs:
             exit 1
           fi
 
-      - name: Set up Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: true
+      - name: Bump prerelease version
+        if: github.event_name == 'push'
+        id: bump
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3; do
+            BUMP_OUTPUT="$(apps/mac/scripts/compute-version.sh prerelease)"
+            VERSION=$(sed -n 's/^version=//p' <<< "$BUMP_OUTPUT")
+            BUILD=$(sed -n 's/^buildNumber=//p' <<< "$BUMP_OUTPUT")
+            TAG=$(sed -n 's/^tag=//p' <<< "$BUMP_OUTPUT")
+            printf '{\n  "version": "%s",\n  "buildNumber": "%s"\n}\n' \
+              "$VERSION" "$BUILD" > apps/mac/version.json
+            git add apps/mac/version.json
+            git commit -m "chore: bump version to $VERSION [skip release]"
+            git tag -f "$TAG"
+            if git push origin main "refs/tags/$TAG"; then
+              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+              echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+              echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git fetch origin
+            if git merge-base --is-ancestor HEAD origin/main; then
+              # The bump commit actually landed; make sure the tag is there too.
+              git push origin "refs/tags/$TAG"
+              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+              echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+              echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # Another push raced in; undo the local bump and rebase onto it.
+            git tag -d "$TAG"
+            git reset --hard HEAD~1
+            git pull --rebase origin main
+          done
+          echo "Failed to push version bump after 3 attempts" >&2
+          exit 1
 
       - name: Read and verify version
         id: version
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          BUMP_VERSION: ${{ steps.bump.outputs.version }}
+          BUMP_BUILD: ${{ steps.bump.outputs.build }}
+          BUMP_TAG: ${{ steps.bump.outputs.tag }}
         run: |
           set -euo pipefail
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            # Version was just bumped and pushed by the previous step.
+            echo "version=$BUMP_VERSION" >> "$GITHUB_OUTPUT"
+            echo "build=$BUMP_BUILD" >> "$GITHUB_OUTPUT"
+            echo "tag=$BUMP_TAG" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           VERSION=$(python3 -c 'import json; print(json.load(open("apps/mac/version.json"))["version"])')
           BUILD=$(python3 -c 'import json; print(json.load(open("apps/mac/version.json"))["buildNumber"])')
           if [[ "$VERSION" != "$REQUESTED_VERSION" ]]; then
@@ -58,6 +109,13 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
 
       - name: Run repository checks
         run: |
@@ -158,24 +216,26 @@ jobs:
             --generate-notes \
             $(case "$VERSION" in *-alpha.*|*-beta.*|*-rc.*) echo --prerelease;; esac)
 
-      - name: Open appcast pull request
+      - name: Commit appcast to main
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          BRANCH="automation/appcast-$VERSION"
-          git fetch origin main
-          git switch -c "$BRANCH" origin/main
-          cp sparkle-updates/appcast.xml apps/mac/Support/appcast.xml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/mac/Support/appcast.xml
-          git commit -m "chore: publish appcast for $VERSION"
-          git push --set-upstream origin "$BRANCH"
-          gh pr create \
-            --repo SergeSerb2/SergeCode \
-            --base main \
-            --head "$BRANCH" \
-            --title "chore: publish SurgeCode $VERSION appcast" \
-            --body "Automated Sparkle appcast update for the GitHub Release $VERSION. Merge this PR to make the update visible to installed apps."
+          if git diff --cached --quiet; then
+            echo "Appcast unchanged; skipping commit."
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            git commit -m "chore: publish appcast for $VERSION [skip release]"
+            if git push origin main; then
+              exit 0
+            fi
+            git reset --soft HEAD~1
+            git pull --rebase --autostash origin main
+            git add apps/mac/Support/appcast.xml
+          done
+          echo "Failed to push appcast commit after 3 attempts" >&2
+          exit 1
