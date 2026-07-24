@@ -6,7 +6,9 @@
  * Presets deliberately skew short: agent-thread rhythms are hours (a CI
  * run, a teammate review, the next work session), not days.
  */
-import { parseTimestampDate } from "../timestampFormat";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
+
+import { formatShortTimestamp, parseTimestampDate } from "../timestampFormat";
 
 type SnoozePresetId = "hour" | "evening" | "tomorrow" | "next-week";
 
@@ -20,8 +22,8 @@ export interface SnoozePreset {
   readonly snoozedUntil: string;
 }
 
-function timeOfDayLabel(date: Date): string {
-  return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+function timeOfDayLabel(date: Date, timestampFormat: TimestampFormat): string {
+  return formatShortTimestamp(date.toISOString(), timestampFormat);
 }
 
 const EVENING_HOUR = 18;
@@ -49,13 +51,16 @@ function addDays(base: Date, days: number): Date {
  * only appears while it is still meaningfully before evening; after that
  * the list starts at "Tomorrow".
  */
-export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
+export function resolveSnoozePresets(
+  now: Date,
+  timestampFormat: TimestampFormat,
+): ReadonlyArray<SnoozePreset> {
   const inAnHour = new Date(now.getTime() + HOUR_MS);
   const presets: SnoozePreset[] = [
     {
       id: "hour",
       label: "In 1 hour",
-      whenLabel: timeOfDayLabel(inAnHour),
+      whenLabel: timeOfDayLabel(inAnHour, timestampFormat),
       snoozedUntil: inAnHour.toISOString(),
     },
   ];
@@ -67,7 +72,7 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
     presets.push({
       id: "evening",
       label: "This evening",
-      whenLabel: timeOfDayLabel(evening),
+      whenLabel: timeOfDayLabel(evening, timestampFormat),
       snoozedUntil: evening.toISOString(),
     });
   }
@@ -76,7 +81,7 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
   presets.push({
     id: "tomorrow",
     label: "Tomorrow",
-    whenLabel: timeOfDayLabel(tomorrow),
+    whenLabel: timeOfDayLabel(tomorrow, timestampFormat),
     snoozedUntil: tomorrow.toISOString(),
   });
 
@@ -86,7 +91,7 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
   presets.push({
     id: "next-week",
     label: "Next week",
-    whenLabel: `${nextWeek.toLocaleDateString(undefined, { weekday: "short" })} ${timeOfDayLabel(nextWeek)}`,
+    whenLabel: `${nextWeek.toLocaleDateString(undefined, { weekday: "short" })} ${timeOfDayLabel(nextWeek, timestampFormat)}`,
     snoozedUntil: nextWeek.toISOString(),
   });
 
@@ -111,10 +116,14 @@ export function snoozeWakeLabel(snoozedUntil: string, now: Date): string {
  * Human wake time for menus and toasts: "tomorrow 9:00", "Mon 9:00",
  * "17:30" (today).
  */
-export function snoozeWakeDescription(snoozedUntil: string, now: Date): string {
+export function snoozeWakeDescription(
+  snoozedUntil: string,
+  now: Date,
+  timestampFormat: TimestampFormat,
+): string {
   const wake = parseTimestampDate(snoozedUntil);
   if (wake === null) return "";
-  const time = wake.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const time = timeOfDayLabel(wake, timestampFormat);
   const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
   const dayDelta = Math.floor((wake.getTime() - startOfToday.getTime()) / DAY_MS);
