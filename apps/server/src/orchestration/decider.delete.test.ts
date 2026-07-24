@@ -154,6 +154,66 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
     }),
   );
 
+  it.effect("rejects deleting a project whose only threads are archived without force", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModel;
+      const archivedAt = "2026-01-02T00:00:00.000Z";
+      const withFirstThreadArchived = yield* projectEvent(readModel, {
+        sequence: 4,
+        eventId: asEventId("evt-thread-archive-1"),
+        aggregateKind: "thread",
+        aggregateId: asThreadId("thread-delete-1"),
+        type: "thread.archived",
+        occurredAt: archivedAt,
+        commandId: asCommandId("cmd-thread-archive-1"),
+        causationEventId: null,
+        correlationId: asCommandId("cmd-thread-archive-1"),
+        metadata: {},
+        payload: {
+          threadId: asThreadId("thread-delete-1"),
+          archivedAt,
+          updatedAt: archivedAt,
+        },
+      });
+      const withOnlyArchivedThreads = yield* projectEvent(withFirstThreadArchived, {
+        sequence: 5,
+        eventId: asEventId("evt-thread-archive-2"),
+        aggregateKind: "thread",
+        aggregateId: asThreadId("thread-delete-2"),
+        type: "thread.archived",
+        occurredAt: archivedAt,
+        commandId: asCommandId("cmd-thread-archive-2"),
+        causationEventId: null,
+        correlationId: asCommandId("cmd-thread-archive-2"),
+        metadata: {},
+        payload: {
+          threadId: asThreadId("thread-delete-2"),
+          archivedAt,
+          updatedAt: archivedAt,
+        },
+      });
+
+      expect(withOnlyArchivedThreads.threads).toHaveLength(2);
+      expect(withOnlyArchivedThreads.threads.every((thread) => thread.archivedAt !== null)).toBe(
+        true,
+      );
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "project.delete",
+            commandId: asCommandId("cmd-project-delete-archived-no-force"),
+            projectId: asProjectId("project-delete"),
+          },
+          readModel: withOnlyArchivedThreads,
+        }),
+      );
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      expect(error.message).toContain("cannot be deleted without force=true");
+    }),
+  );
+
   it.effect("reuses thread.delete semantics when force-deleting a non-empty project", () =>
     Effect.gen(function* () {
       const readModel = yield* seedReadModel;
