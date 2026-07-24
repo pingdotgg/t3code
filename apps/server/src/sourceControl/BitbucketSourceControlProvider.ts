@@ -125,6 +125,25 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    getCommitAvatarUrl: (input) =>
+      bitbucket
+        .getCommitAvatarUrl({
+          cwd: input.cwd,
+          ...(input.context ? { context: input.context } : {}),
+          sha: input.sha,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "bitbucket",
+              operation: "getCommitAvatarUrl",
+              cwd: input.cwd,
+              reference: input.sha,
+              detail: "Failed to get commit author avatar.",
+              error,
+            }),
+          ),
+        ),
     createRepository: (input) =>
       bitbucket.createRepository(input).pipe(
         Effect.mapError(

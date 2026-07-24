@@ -41,6 +41,7 @@ const BitbucketApiOperation = Schema.Literals([
   "resolveRepository",
   "getRepository",
   "getBranchingModel",
+  "getCommitAvatarUrl",
   "getPullRequest",
   "listPullRequests",
   "createRepository",
@@ -231,6 +232,28 @@ const RawBitbucketBranchingModelSchema = Schema.Struct({
   ),
 });
 
+const RawBitbucketCommitSchema = Schema.Struct({
+  author: Schema.optional(
+    Schema.Struct({
+      user: Schema.optional(
+        Schema.NullOr(
+          Schema.Struct({
+            links: Schema.optional(
+              Schema.Struct({
+                avatar: Schema.optional(
+                  Schema.Struct({
+                    href: TrimmedNonEmptyString,
+                  }),
+                ),
+              }),
+            ),
+          }),
+        ),
+      ),
+    }),
+  ),
+});
+
 const BitbucketUserSchema = Schema.Struct({
   username: Schema.optional(TrimmedNonEmptyString),
   display_name: Schema.optional(TrimmedNonEmptyString),
@@ -264,6 +287,11 @@ export class BitbucketApi extends Context.Service<
       readonly context?: SourceControlProvider.SourceControlProviderContext;
       readonly repository: string;
     }) => Effect.Effect<SourceControlRepositoryCloneUrls, BitbucketApiError>;
+    readonly getCommitAvatarUrl: (input: {
+      readonly cwd: string;
+      readonly context?: SourceControlProvider.SourceControlProviderContext;
+      readonly sha: string;
+    }) => Effect.Effect<string | null, BitbucketApiError>;
     readonly createRepository: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -734,6 +762,21 @@ export const make = Effect.gen(function* () {
       getRawPullRequest(input).pipe(Effect.map(normalizeBitbucketPullRequestRecord)),
     getRepositoryCloneUrls: (input) =>
       getRepository(input).pipe(Effect.map(normalizeRepositoryCloneUrls)),
+    getCommitAvatarUrl: (input) =>
+      resolveRepository(input).pipe(
+        Effect.flatMap((repository) =>
+          executeJson(
+            "getCommitAvatarUrl",
+            HttpClientRequest.get(
+              apiUrl(
+                `/repositories/${encodeURIComponent(repository.workspace)}/${encodeURIComponent(repository.repoSlug)}/commit/${encodeURIComponent(input.sha)}`,
+              ),
+            ),
+            RawBitbucketCommitSchema,
+          ),
+        ),
+        Effect.map((commit) => commit.author?.user?.links?.avatar?.href ?? null),
+      ),
     createRepository: (input) =>
       requireRepositoryLocator(input.repository).pipe(
         Effect.flatMap((repository) =>

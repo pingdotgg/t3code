@@ -194,4 +194,19 @@ describe("serverSettings helpers", () => {
       config: { homePath: "~/.codex" },
     });
   });
+
+  it("deep merges source control provider option patches", () => {
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        sourceControl: {
+          providers: {
+            github: { showCommitAuthorAvatar: true },
+          },
+        },
+      }).sourceControl.providers,
+    ).toEqual({
+      ...DEFAULT_SERVER_SETTINGS.sourceControl.providers,
+      github: { showCommitAuthorAvatar: true },
+    });
+  });
 });

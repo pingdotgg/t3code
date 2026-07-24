@@ -208,6 +208,7 @@ export class GitHubCli extends Context.Service<
     readonly listOpenPullRequests: (input: {
       readonly cwd: string;
       readonly headSelector: string;
+      readonly repository?: string;
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
@@ -220,6 +221,13 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
     }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+
+    readonly getCommitAvatarUrl: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly sha: string;
+      readonly hostname?: string;
+    }) => Effect.Effect<string | null, GitHubCliError>;
 
     readonly createRepository: (input: {
       readonly cwd: string;
@@ -325,6 +333,7 @@ export const make = Effect.gen(function* () {
         args: [
           "pr",
           "list",
+          ...(input.repository ? ["--repo", input.repository] : []),
           "--head",
           input.headSelector,
           "--state",
@@ -409,6 +418,22 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
+      ),
+    getCommitAvatarUrl: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "api",
+          ...(input.hostname !== undefined ? ["--hostname", input.hostname] : []),
+          `repos/${input.repository}/commits/${input.sha}`,
+          "--jq",
+          ".author.avatar_url // empty",
+        ],
+      }).pipe(
+        Effect.map((result) => {
+          const trimmed = result.stdout.trim();
+          return trimmed.length > 0 ? trimmed : null;
+        }),
       ),
     createRepository: (input) =>
       execute({

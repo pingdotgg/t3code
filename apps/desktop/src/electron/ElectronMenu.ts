@@ -61,9 +61,23 @@ export class ElectronMenu extends Context.Service<
 
 function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextMenuItem[] {
   const normalizedItems: ContextMenuItem[] = [];
+  let lastWasSeparator = false;
 
   for (const sourceItem of source) {
     if (typeof sourceItem.id !== "string" || typeof sourceItem.label !== "string") {
+      continue;
+    }
+
+    if (sourceItem.separator === true) {
+      if (normalizedItems.length === 0 || lastWasSeparator) {
+        continue;
+      }
+      normalizedItems.push({
+        id: sourceItem.id,
+        label: "",
+        separator: true,
+      });
+      lastWasSeparator = true;
       continue;
     }
 
@@ -78,6 +92,7 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
       label: sourceItem.label,
       destructive: sourceItem.destructive === true,
       disabled: sourceItem.disabled === true,
+      separator: false,
     };
 
     if (sourceItem.children) {
@@ -89,6 +104,11 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
     }
 
     normalizedItems.push(normalizedItem);
+    lastWasSeparator = false;
+  }
+
+  if (normalizedItems.at(-1)?.separator === true) {
+    normalizedItems.pop();
   }
 
   return normalizedItems;
@@ -141,11 +161,25 @@ export const make = Effect.gen(function* () {
   ): Electron.MenuItemConstructorOptions[] => {
     const template: Electron.MenuItemConstructorOptions[] = [];
     let hasInsertedDestructiveSeparator = false;
+    let lastWasSeparator = false;
 
     for (const item of entries) {
-      if (item.destructive && !hasInsertedDestructiveSeparator && template.length > 0) {
-        template.push({ type: "separator" });
-        hasInsertedDestructiveSeparator = true;
+      if (item.separator === true) {
+        if (template.length > 0 && !lastWasSeparator) {
+          template.push({ type: "separator" });
+          lastWasSeparator = true;
+        }
+        continue;
+      }
+
+      if (item.destructive && !hasInsertedDestructiveSeparator) {
+        if (template.length > 0) {
+          if (!lastWasSeparator) {
+            template.push({ type: "separator" });
+            lastWasSeparator = true;
+          }
+          hasInsertedDestructiveSeparator = true;
+        }
       }
 
       const itemOption: Electron.MenuItemConstructorOptions = {
@@ -165,6 +199,7 @@ export const make = Effect.gen(function* () {
       }
 
       template.push(itemOption);
+      lastWasSeparator = false;
     }
 
     return template;

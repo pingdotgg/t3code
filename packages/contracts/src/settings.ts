@@ -395,7 +395,24 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
-export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
+export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.minutes(5);
+
+export const SourceControlProviderSettings = Schema.Struct({
+  showCommitAuthorAvatar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type SourceControlProviderSettings = typeof SourceControlProviderSettings.Type;
+
+export const SourceControlSettings = Schema.Struct({
+  providers: Schema.Struct({
+    github: SourceControlProviderSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    gitlab: SourceControlProviderSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    "azure-devops": SourceControlProviderSettings.pipe(
+      Schema.withDecodingDefault(Effect.succeed({})),
+    ),
+    bitbucket: SourceControlProviderSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+});
+export type SourceControlSettings = typeof SourceControlSettings.Type;
 
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -442,6 +459,7 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  sourceControl: SourceControlSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
@@ -536,6 +554,10 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const SourceControlProviderSettingsPatch = Schema.Struct({
+  showCommitAuthorAvatar: Schema.optionalKey(Schema.Boolean),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -549,6 +571,18 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  sourceControl: Schema.optionalKey(
+    Schema.Struct({
+      providers: Schema.optionalKey(
+        Schema.Struct({
+          github: Schema.optionalKey(SourceControlProviderSettingsPatch),
+          gitlab: Schema.optionalKey(SourceControlProviderSettingsPatch),
+          "azure-devops": Schema.optionalKey(SourceControlProviderSettingsPatch),
+          bitbucket: Schema.optionalKey(SourceControlProviderSettingsPatch),
+        }),
+      ),
     }),
   ),
   providers: Schema.optionalKey(

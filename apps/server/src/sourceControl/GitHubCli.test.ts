@@ -157,6 +157,35 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("fetches commit author avatar URLs from the GitHub commit API", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(processOutput("https://avatars.githubusercontent.com/u/101?v=4\n")),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.getCommitAvatarUrl({
+        cwd: "/repo",
+        repository: "pingdotgg/t3code",
+        sha: "a".repeat(40),
+      });
+
+      assert.equal(result, "https://avatars.githubusercontent.com/u/101?v=4");
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "api",
+          "repos/pingdotgg/t3code/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "--jq",
+          ".author.avatar_url // empty",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("skips invalid entries when parsing pr lists", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

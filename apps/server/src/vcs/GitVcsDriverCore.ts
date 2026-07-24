@@ -308,7 +308,18 @@ function parseTrackingBranchByUpstreamRef(stdout: string, upstreamRef: string): 
   return null;
 }
 
-function deriveLocalBranchNameFromRemoteRef(branchName: string): string | null {
+function deriveLocalBranchNameFromRemoteRef(
+  branchName: string,
+  remoteNames: ReadonlyArray<string>,
+): string | null {
+  const parsedRemoteRef = parseRemoteRefWithRemoteNames(
+    branchName,
+    remoteNames.toSorted((left, right) => right.length - left.length),
+  );
+  if (parsedRemoteRef) {
+    return parsedRemoteRef.branchName;
+  }
+
   const separatorIndex = branchName.indexOf("/");
   if (separatorIndex <= 0 || separatorIndex === branchName.length - 1) {
     return null;
@@ -2469,7 +2480,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           )
         : null;
 
-      const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(input.refName);
+      const remoteNames = remoteExists
+        ? yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []))
+        : [];
+      const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(
+        input.refName,
+        remoteNames,
+      );
       const localTrackedBranchTargetExists =
         remoteExists && localTrackedBranchCandidate
           ? yield* executeGit(
@@ -2482,16 +2499,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               },
             ).pipe(Effect.map((result) => result.exitCode === 0))
           : false;
+      const availableLocalTrackingBranch =
+        remoteExists && !localTrackingBranch && localTrackedBranchCandidate
+          ? localTrackedBranchTargetExists
+            ? yield* resolveAvailableBranchName(input.cwd, localTrackedBranchCandidate)
+            : localTrackedBranchCandidate
+          : null;
 
       const checkoutArgs = localInputExists
         ? ["checkout", input.refName]
-        : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
-          ? ["checkout", input.refName]
-          : remoteExists && !localTrackingBranch
-            ? ["checkout", "--track", input.refName]
-            : remoteExists && localTrackingBranch
-              ? ["checkout", localTrackingBranch]
-              : ["checkout", input.refName];
+        : remoteExists && !localTrackingBranch && availableLocalTrackingBranch
+          ? ["checkout", "--track", "-b", availableLocalTrackingBranch, input.refName]
+          : remoteExists && localTrackingBranch
+            ? ["checkout", localTrackingBranch]
+            : ["checkout", input.refName];
 
       yield* executeGit("GitVcsDriver.switchRef.checkout", input.cwd, checkoutArgs, {
         timeoutMs: 10_000,

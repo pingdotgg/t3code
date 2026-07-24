@@ -642,6 +642,63 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("creates a suffixed tracking branch for colliding remote refs", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const origin = yield* makeTmpDir("git-vcs-driver-origin-");
+        const upstream = yield* makeTmpDir("git-vcs-driver-upstream-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(origin, ["init", "--bare"]);
+        yield* git(upstream, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", origin]);
+        yield* git(cwd, ["remote", "add", "upstream", upstream]);
+        yield* git(cwd, ["push", "origin", `${initialBranch}:refs/heads/release`]);
+        yield* git(cwd, ["push", "upstream", `${initialBranch}:refs/heads/release`]);
+        yield* git(cwd, ["fetch", "origin"]);
+        yield* git(cwd, ["fetch", "upstream"]);
+        yield* git(cwd, ["checkout", "-b", "release", "--track", "upstream/release"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+
+        const result = yield* (yield* GitVcsDriver.GitVcsDriver).switchRef({
+          cwd,
+          refName: "origin/release",
+        });
+
+        assert.equal(result.refName, "release-1");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "release-1");
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          "origin/release",
+        );
+      }),
+    );
+
+    it.effect("derives tracking branches from slashful remote names", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const slashfulRemote = yield* makeTmpDir("git-vcs-driver-slashful-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(slashfulRemote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "my-org/upstream", slashfulRemote]);
+        yield* git(cwd, ["push", "my-org/upstream", `${initialBranch}:refs/heads/effect-atom`]);
+        yield* git(cwd, ["fetch", "my-org/upstream"]);
+        yield* git(cwd, ["checkout", "-b", "effect-atom"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+
+        const result = yield* (yield* GitVcsDriver.GitVcsDriver).switchRef({
+          cwd,
+          refName: "my-org/upstream/effect-atom",
+        });
+
+        assert.equal(result.refName, "effect-atom-1");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "effect-atom-1");
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          "my-org/upstream/effect-atom",
+        );
+      }),
+    );
+
     it.effect("returns the existing refName when rename source and target match", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

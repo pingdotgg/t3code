@@ -68,7 +68,43 @@ it.effect("maps GitHub PR summaries into provider-neutral change requests", () =
   }),
 );
 
-it.effect("adds safe request context while retaining GitHub CLI causes", () =>
+it.effect("lists GitHub PRs against the requested remote repository context", () =>
+  Effect.gen(function* () {
+    let listInput: Parameters<GitHubCli.GitHubCli["Service"]["listOpenPullRequests"]>[0] | null =
+      null;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "github",
+          name: "GitHub Enterprise",
+          baseUrl: "https://github.example.test",
+        },
+        remoteName: "upstream",
+        remoteUrl: "git@github.example.test:acme/repo.git",
+      },
+      headSelector: "feature/provider",
+      state: "open",
+      limit: 10,
+    });
+
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      headSelector: "feature/provider",
+      repository: "github.example.test/acme/repo",
+      limit: 10,
+    });
+  }),
+);
+
+it.effect("adds safe request context while bounding GitHub CLI causes", () =>
   Effect.gen(function* () {
     const cause = new GitHubCli.GitHubPullRequestNotFoundError({
       command: "gh",
@@ -104,7 +140,14 @@ it.effect("adds safe request context while retaining GitHub CLI causes", () =>
         detail: "Pull request not found. Check the PR number or URL and try again.",
       },
     );
-    assert.strictEqual(error.cause, cause);
+    assert.deepStrictEqual(error.cause, {
+      _tag: "GitHubPullRequestNotFoundError",
+      name: "GitHubPullRequestNotFoundError",
+      command: "gh",
+      detail: "Pull request not found. Check the PR number or URL and try again.",
+      message:
+        "GitHub CLI failed in execute: Pull request not found. Check the PR number or URL and try again.",
+    });
     assert.equal(error.message.includes("raw upstream detail"), false);
   }),
 );

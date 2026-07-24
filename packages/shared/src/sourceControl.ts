@@ -1,4 +1,153 @@
-import type { SourceControlProviderInfo, SourceControlProviderKind } from "@t3tools/contracts";
+import type {
+  SourceControlProviderInfo,
+  SourceControlProviderKind,
+  VcsPanelChangeGroup,
+  VcsPanelFileChange,
+  VcsPanelSnapshotResult,
+  VcsRef,
+} from "@t3tools/contracts";
+
+export type BranchSyncState = "fetch" | "pull" | "push" | "publish" | "diverged";
+
+export type BranchAttentionKind =
+  | "conflicts"
+  | "diverged"
+  | "behind"
+  | "unpushed"
+  | "dirty"
+  | "stale";
+
+export interface PanelChangedFile extends VcsPanelFileChange {
+  readonly hasStagedChanges: boolean;
+  readonly hasUnstagedChanges: boolean;
+  readonly hasConflicts: boolean;
+}
+
+function mergedPanelFileStatus(
+  statuses: ReadonlySet<VcsPanelFileChange["status"]>,
+): VcsPanelFileChange["status"] {
+  if (statuses.has("conflicted")) return "conflicted";
+  if (statuses.has("deleted")) return "deleted";
+  if (statuses.has("renamed")) return "renamed";
+  if (statuses.has("copied")) return "copied";
+  if (statuses.has("added")) return "added";
+  if (statuses.has("untracked")) return "untracked";
+  return "modified";
+}
+
+/** Shared presentation model for the web and native Version Control surfaces. */
+export function mergePanelChangeGroups(groups: readonly VcsPanelChangeGroup[]): PanelChangedFile[] {
+  const files = new Map<
+    string,
+    {
+      originalPath: string | null;
+      statuses: Set<VcsPanelFileChange["status"]>;
+      insertions: number;
+      deletions: number;
+      hasStagedChanges: boolean;
+      hasUnstagedChanges: boolean;
+      hasConflicts: boolean;
+    }
+  >();
+
+  for (const group of groups) {
+    for (const file of group.files) {
+      const existing = files.get(file.path) ?? {
+        originalPath: file.originalPath,
+        statuses: new Set<VcsPanelFileChange["status"]>(),
+        insertions: 0,
+        deletions: 0,
+        hasStagedChanges: false,
+        hasUnstagedChanges: false,
+        hasConflicts: false,
+      };
+      existing.originalPath ??= file.originalPath;
+      existing.statuses.add(file.status);
+      existing.insertions += file.insertions;
+      existing.deletions += file.deletions;
+      existing.hasStagedChanges ||= group.kind === "staged";
+      existing.hasUnstagedChanges ||= group.kind === "unstaged";
+      existing.hasConflicts ||= group.kind === "conflicts";
+      files.set(file.path, existing);
+    }
+  }
+
+  return [...files.entries()]
+    .map(([path, file]) => ({
+      path,
+      originalPath: file.originalPath,
+      status: mergedPanelFileStatus(file.statuses),
+      insertions: file.insertions,
+      deletions: file.deletions,
+      hasStagedChanges: file.hasStagedChanges,
+      hasUnstagedChanges: file.hasUnstagedChanges,
+      hasConflicts: file.hasConflicts,
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function remoteBranchName(remoteRef: string, snapshot: VcsPanelSnapshotResult): string {
+  const normalized = remoteRef.trim();
+  const remote = [...snapshot.remotes]
+    .sort((left, right) => right.name.length - left.name.length)
+    .find((candidate) => normalized.startsWith(`${candidate.name}/`));
+  if (remote) return normalized.slice(remote.name.length + 1);
+
+  const separatorIndex = normalized.indexOf("/");
+  return separatorIndex >= 0 ? normalized.slice(separatorIndex + 1) : normalized;
+}
+
+export function panelBranchSyncCounts(
+  branch: VcsRef,
+  snapshot: VcsPanelSnapshotResult,
+): { readonly aheadCount: number; readonly behindCount: number } {
+  if (branch.current) {
+    return {
+      aheadCount: snapshot.status.aheadCount,
+      behindCount: snapshot.status.behindCount,
+    };
+  }
+  return {
+    aheadCount: branch.aheadCount ?? 0,
+    behindCount: branch.behindCount ?? 0,
+  };
+}
+
+export function panelBranchHasUpstream(branch: VcsRef, snapshot: VcsPanelSnapshotResult): boolean {
+  const upstreamName = branch.upstreamName?.trim();
+  if (!upstreamName) return branch.current && snapshot.status.hasUpstream;
+  return remoteBranchName(upstreamName, snapshot) === branch.name;
+}
+
+export function panelBranchSyncState(
+  branch: VcsRef,
+  snapshot: VcsPanelSnapshotResult,
+): BranchSyncState {
+  const hasUpstream = panelBranchHasUpstream(branch, snapshot);
+  const { aheadCount, behindCount } = panelBranchSyncCounts(branch, snapshot);
+  if (!hasUpstream) return "publish";
+  if (aheadCount > 0 && behindCount > 0) return "diverged";
+  if (behindCount > 0) return "pull";
+  if (aheadCount > 0) return "push";
+  return "fetch";
+}
+
+export function panelBranchOperationCwd(branch: VcsRef, fallbackCwd: string): string {
+  return branch.worktreePath ?? fallbackCwd;
+}
+
+export function panelBranchAttention(
+  branch: VcsRef,
+  snapshot: VcsPanelSnapshotResult,
+): BranchAttentionKind {
+  const hasUpstream = panelBranchHasUpstream(branch, snapshot);
+  const { aheadCount, behindCount } = panelBranchSyncCounts(branch, snapshot);
+  if (!hasUpstream) return "unpushed";
+  if (aheadCount > 0 && behindCount > 0) return "diverged";
+  if (behindCount > 0) return "behind";
+  if (aheadCount > 0) return "unpushed";
+  return "stale";
+}
 
 export interface ChangeRequestPresentation {
   readonly icon: "github" | "gitlab" | "azure-devops" | "bitbucket" | "change-request";
