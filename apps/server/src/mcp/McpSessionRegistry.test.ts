@@ -88,3 +88,45 @@ it.effect("expires credentials after inactivity", () =>
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );
+
+it.effect("expires a never-used credential once it hits the maximum lifetime", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-3"),
+      providerInstanceId: ProviderInstanceId.make("claude"),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    // Stay within the idle window but past the maximum lifetime.
+    timestamp += 1_001;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect(
+  "transparently renews a credential's expiry on every use, so an actively-used session outlives the maximum lifetime",
+  () =>
+    Effect.gen(function* () {
+      let timestamp = 1_000;
+      const registry = yield* makeRegistry(() => timestamp);
+      const threadId = ThreadId.make("thread-4");
+      const issued = yield* registry.issue({
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("claude"),
+      });
+      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+      // Repeatedly use the credential at an interval shorter than both the
+      // idle timeout and the maximum lifetime, well past the point where the
+      // original mint-time expiry (issuedAt + maximumLifetimeMs = 2_000)
+      // would have killed it without renewal.
+      for (let i = 0; i < 20; i++) {
+        timestamp += 90;
+        const resolved = yield* registry.resolve(token);
+        expect(resolved?.threadId).toBe(threadId);
+      }
+
+      expect(timestamp).toBeGreaterThan(issued.expiresAt);
+    }),
+);

@@ -53,7 +53,23 @@ export interface McpSessionRegistryOptions {
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1_000;
-const DEFAULT_MAXIMUM_LIFETIME_MS = 8 * 60 * 60 * 1_000;
+// This bounds how long an MCP bearer credential stays valid *without any use*
+// past its mint time before `resolve` refreshes it (see below) — it is not a
+// hard cap on session length. Agent sessions routinely run far longer than a
+// single workday (multi-hour coding sessions, overnight/scheduled runs), and
+// the credential is minted once at provider-session start and handed to the
+// agent process as a static header, so there is no way for the agent to pick
+// up a rotated token later. A short absolute cap therefore silently kills the
+// MCP connection out from under an otherwise-healthy session (observed
+// 2026-07-03: "t3-code requires re-authorization (token expired)" mid-session).
+// The credential is already tightly scoped (random 256-bit token, single
+// thread + provider instance, held only in memory, and explicitly revoked on
+// session stop/error/environment shutdown — see `revokeThread`/`revokeAll`),
+// so a long backstop here doesn't meaningfully widen exposure; it's paired
+// with `resolve` sliding the expiry forward on every authenticated use so
+// active sessions never approach the cap, and the existing idle timeout still
+// reclaims credentials for threads that truly go quiet.
+const DEFAULT_MAXIMUM_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
 
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -147,8 +163,17 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         const record = current.get(tokenHash);
         if (!record) return [undefined, { records: current }] as const;
         const next = new Map(current);
-        next.set(tokenHash, { ...record, lastUsedAt: timestamp });
-        return [record.scope, { records: next }] as const;
+        // Transparently re-issue: every authenticated use of a still-valid
+        // credential pushes its absolute expiry forward, so a session that
+        // keeps calling MCP tools never runs into the maximum-lifetime cap
+        // above. Only sessions that stop using MCP entirely fall back to
+        // that cap (or the idle timeout, whichever is hit first).
+        const renewedScope: McpInvocationContext.McpInvocationScope = {
+          ...record.scope,
+          expiresAt: Math.max(record.scope.expiresAt, timestamp + maximumLifetimeMs),
+        };
+        next.set(tokenHash, { ...record, scope: renewedScope, lastUsedAt: timestamp });
+        return [renewedScope, { records: next }] as const;
       });
     },
   );
