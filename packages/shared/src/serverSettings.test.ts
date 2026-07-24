@@ -194,4 +194,120 @@ describe("serverSettings helpers", () => {
       config: { homePath: "~/.codex" },
     });
   });
+
+  it("replaces project icon maps so clearing an override removes it", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectIcons: {
+        "/workspace/one": "/icons/one.svg",
+        "/workspace/two": "/icons/two.svg",
+      },
+      projectIconsByGitRemote: {
+        "github.com/example/one": "/icons/one.svg",
+        "github.com/example/two": "/icons/two.svg",
+      },
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      projectIcons: {
+        "/workspace/two": "/icons/two-next.svg",
+      },
+      projectIconsByGitRemote: {
+        "github.com/example/two": "/icons/two-next.svg",
+      },
+    });
+
+    expect(next.projectIcons).toEqual({
+      "/workspace/two": "/icons/two-next.svg",
+    });
+    expect(next.projectIconsByGitRemote).toEqual({
+      "github.com/example/two": "/icons/two-next.svg",
+    });
+  });
+
+  it("applies project icon updates without replacing unrelated concurrent entries", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectIcons: {
+        "/workspace/one": "/icons/one.svg",
+        "/workspace/concurrent": "/icons/concurrent.svg",
+      },
+      projectIconsByGitRemote: {
+        "github.com/example/one": "/icons/one-remote.svg",
+        "github.com/example/concurrent": "/icons/concurrent-remote.svg",
+      },
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      projectIconUpdate: {
+        scope: "workspace",
+        workspaceRoot: "/workspace/one",
+        repositoryKey: "github.com/example/one",
+        iconPath: "/icons/one-next.svg",
+      },
+    });
+
+    expect(next.projectIcons).toEqual({
+      "/workspace/one": "/icons/one-next.svg",
+      "/workspace/concurrent": "/icons/concurrent.svg",
+    });
+    expect(next.projectIconsByGitRemote).toEqual({
+      "github.com/example/concurrent": "/icons/concurrent-remote.svg",
+    });
+    expect("projectIconUpdate" in next).toBe(false);
+  });
+
+  it("removes the workspace override when switching to git-remote scope", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectIcons: {
+        "/workspace/one": "/icons/one.svg",
+      },
+      projectIconsByGitRemote: {
+        "github.com/example/other": "/icons/other.svg",
+      },
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      projectIconUpdate: {
+        scope: "git-remote",
+        workspaceRoot: "/workspace/one",
+        repositoryKey: "github.com/example/one",
+        iconPath: "/icons/one-remote.svg",
+      },
+    });
+
+    expect(next.projectIcons).toEqual({});
+    expect(next.projectIconsByGitRemote).toEqual({
+      "github.com/example/one": "/icons/one-remote.svg",
+      "github.com/example/other": "/icons/other.svg",
+    });
+  });
+
+  it("clears both scopes when resetting a workspace icon", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectIcons: {
+        "/workspace/one": "/icons/one.svg",
+      },
+      projectIconsByGitRemote: {
+        "github.com/example/one": "/icons/one-remote.svg",
+        "github.com/example/other": "/icons/other.svg",
+      },
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      projectIconUpdate: {
+        scope: "workspace",
+        workspaceRoot: "/workspace/one",
+        repositoryKey: "github.com/example/one",
+        iconPath: "",
+      },
+    });
+
+    expect(next.projectIcons).toEqual({});
+    expect(next.projectIconsByGitRemote).toEqual({
+      "github.com/example/other": "/icons/other.svg",
+    });
+  });
 });

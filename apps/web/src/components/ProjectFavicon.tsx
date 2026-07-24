@@ -4,18 +4,55 @@ import { FolderIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import { useState } from "react";
 import { useAssetUrl } from "../assets/assetUrls";
+import { useEnvironmentSettings } from "../hooks/useSettings";
 
 const loadedProjectFaviconSrcs = new Set<string>();
+
+function hashProjectFaviconRevision(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+export function projectFaviconSettingsRevision(
+  settings: {
+    readonly projectIcons: Readonly<Record<string, string>>;
+    readonly projectIconsByGitRemote: Readonly<Record<string, string>>;
+  },
+  cwd: string,
+  repositoryKey?: string | null,
+): string | undefined {
+  const pathIcon = settings.projectIcons[cwd];
+  const remoteEntries = Object.entries(settings.projectIconsByGitRemote);
+  if (!pathIcon && remoteEntries.length === 0 && !repositoryKey) return undefined;
+  const revisionSource = JSON.stringify([
+    "path",
+    pathIcon ?? null,
+    "repository",
+    repositoryKey ?? null,
+    "remotes",
+    remoteEntries.sort(([left], [right]) => left.localeCompare(right)),
+  ]);
+  return `icons:${revisionSource.length}:${hashProjectFaviconRevision(revisionSource)}`;
+}
 
 export function ProjectFavicon(input: {
   environmentId: EnvironmentId;
   cwd: string;
+  repositoryKey?: string | null | undefined;
   className?: string | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
+  const configuredIconRevision = useEnvironmentSettings(input.environmentId, (settings) =>
+    projectFaviconSettingsRevision(settings, input.cwd, input.repositoryKey),
+  );
   const src = useAssetUrl(input.environmentId, {
     _tag: "project-favicon",
     cwd: input.cwd,
+    ...(configuredIconRevision ? { revision: configuredIconRevision } : {}),
   });
   const FallbackIcon = input.fallbackIcon ?? FolderIcon;
 

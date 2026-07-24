@@ -14,6 +14,9 @@ export const AssetResource = Schema.Union([
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    revision: Schema.optional(
+      TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    ),
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
