@@ -68,6 +68,14 @@ export function assertSubagentOutput(
     assert.isNotNull(subagent.providerThreadId);
     assert.isNotNull(subagent.nativeTaskRef);
     assert.isNotNull(subagent.completedAt);
+    const parentItem = projection.turnItems.find(
+      (item) => item.type === "subagent" && item.subagentId === subagent.id,
+    );
+    assert.isDefined(parentItem);
+    if (parentItem?.type !== "subagent") {
+      throw new Error(`Missing parent lifecycle item for subagent ${subagent.id}`);
+    }
+    assert.equal(parentItem.result, subagent.result);
     if (subagent.childThreadId === null) {
       throw new Error(`Subagent ${subagent.id} is missing its child thread`);
     }
