@@ -171,7 +171,10 @@ function SweepPreRunSummary() {
     // here, in the same most-recently-active order startReviewSweep uses,
     // so the environment/model rows never overstate the calls.
     const reviewed = candidates.slice(0, SWEEP_MAX_THREADS);
-    const models = new Map<string, { label: string; model: string; threads: number }>();
+    const models = new Map<
+      string,
+      { environmentId: string; label: string; model: string; threads: number }
+    >();
     for (const shell of reviewed) {
       const config = serverConfigs.get(shell.environmentId);
       const entry = models.get(shell.environmentId);
@@ -180,6 +183,7 @@ function SweepPreRunSummary() {
       } else {
         const selection = config?.settings.textGenerationModelSelection;
         models.set(shell.environmentId, {
+          environmentId: shell.environmentId,
           label: config?.environment.label ?? shell.environmentId,
           model: selection ? `${selection.model}` : "server default",
           threads: 1,
@@ -222,7 +226,7 @@ function SweepPreRunSummary() {
             : ""}
         </div>
         {modelsByEnvironment.map((entry) => (
-          <div key={entry.label} className="truncate">
+          <div key={entry.environmentId} className="truncate">
             {entry.label}: <span className="text-foreground">{entry.model}</span> · {entry.threads}{" "}
             {entry.threads === 1 ? "thread" : "threads"}
           </div>
