@@ -42,6 +42,13 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { isNoteworthyAcpStderrLine, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import {
+  type AcpAutonomousTurnDeps,
+  clearAutonomousTurnIfMatches,
+  closeAutonomousTurnBeforePrompt,
+  rearmAutonomousTurnClose,
+  resolveAutonomousNotificationTurnId,
+} from "../acp/AcpAutonomousTurns.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -157,6 +164,10 @@ interface GrokSessionContext {
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
+  /** Set iff `activeTurnId` was synthesized for out-of-prompt (autonomous) agent activity. */
+  autonomousTurnId: TurnId | undefined;
+  /** Wall-clock millis of the latest interruptTurn; suppresses autonomous turn synthesis briefly. */
+  lastTurnInterruptedAtMs: number | undefined;
   currentModelId: string | undefined;
   stopped: boolean;
   /**
@@ -205,8 +216,6 @@ function appendPromptResultToTurn(
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-const resolveNotificationTurnId = (ctx: GrokSessionContext): TurnId | undefined => ctx.activeTurnId;
 
 const resolveCallbackTurnId = (ctx: GrokSessionContext): TurnId | undefined => ctx.activeTurnId;
 
@@ -339,6 +348,17 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     const withThreadLock = <A, E, R>(threadId: string, effect: Effect.Effect<A, E, R>) =>
       Effect.flatMap(getThreadSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
+
+    const nowMillis = Effect.map(DateTime.now, DateTime.toEpochMillis);
+    const autonomousTurnDeps: AcpAutonomousTurnDeps<ProviderAdapterRequestError> = {
+      provider: PROVIDER,
+      mintTurnId: Effect.map(randomUUIDv4, (id) => TurnId.make(id)),
+      makeEventStamp,
+      publish: offerRuntimeEvent,
+      withThreadLock,
+      nowMillis,
+      nowIso,
+    };
 
     const settlePromptInFlight = (
       threadId: ThreadId,
@@ -836,6 +856,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
+            autonomousTurnId: undefined,
+            lastTurnInterruptedAtMs: undefined,
             currentModelId: boundModelId,
             eventSequence: 0,
             stopped: false,
@@ -924,13 +946,23 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   return;
                 }
 
-                const notificationTurnId = resolveNotificationTurnId(ctx);
+                const notificationTurnId = yield* resolveAutonomousNotificationTurnId(
+                  autonomousTurnDeps,
+                  ctx,
+                  // A bare item.completed is segment cleanup (also emitted when
+                  // an interrupted prompt fiber settles), never turn-opening
+                  // content — it must not synthesize a turn on its own.
+                  { allowSynthesis: event._tag !== "AssistantItemCompleted" },
+                );
                 if (
                   notificationTurnId === undefined ||
                   ctx.interruptedTurnIds.has(notificationTurnId)
                 ) {
                   return;
                 }
+                // Keep the synthesized (autonomous) turn alive while events flow;
+                // it closes once the stream has been quiet for the idle window.
+                yield* rearmAutonomousTurnClose(autonomousTurnDeps, ctx);
                 const stamp = yield* makeEventStamp();
 
                 switch (event._tag) {
@@ -1060,6 +1092,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           input.threadId,
           Effect.gen(function* () {
             const ctx = yield* requireSession(input.threadId);
+            // A prompt supersedes an open synthesized (autonomous) turn: close
+            // it first so this sendTurn starts cleanly with its own turn id.
+            yield* closeAutonomousTurnBeforePrompt(autonomousTurnDeps, ctx);
             // A sendTurn while a prompt is in flight is a steer: the agent
             // folds the new prompt into the ongoing work, so the active turn
             // id is reused instead of opening a new turn.
@@ -1480,6 +1515,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             }
             const interruptedTurnId =
               observed.interruptedTurnId ?? turnId ?? activeTurnId ?? ctx.session.activeTurnId;
+            // Suppress autonomous turn synthesis briefly: events arriving
+            // out-of-prompt right after an interrupt are cancel-tail flush,
+            // not new autonomous work.
+            ctx.lastTurnInterruptedAtMs = yield* nowMillis;
             yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
             yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
             yield* Effect.ignore(
@@ -1495,6 +1534,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 completedStopReason: "cancelled",
                 settleAllPrompts: true,
               });
+              clearAutonomousTurnIfMatches(ctx, interruptedTurnId);
             } else if (
               ctx.promptsInFlight > 0 ||
               ctx.session.status === "running" ||
