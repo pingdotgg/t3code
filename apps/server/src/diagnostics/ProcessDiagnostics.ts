@@ -443,9 +443,10 @@ function readWindowsProcessRows(): Effect.Effect<
   ChildProcessSpawner.ChildProcessSpawner
 > {
   const command = [
+    "$perfByPid = @{};",
+    "Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue | ForEach-Object { $perfByPid[[uint32]$_.IDProcess] = $_.PercentProcessorTime };",
     "$processes = Get-CimInstance Win32_Process | ForEach-Object {",
-    '$perf = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -Filter "IDProcess = $($_.ProcessId)" -ErrorAction SilentlyContinue;',
-    "[pscustomobject]@{ ProcessId = $_.ProcessId; ParentProcessId = $_.ParentProcessId; Name = $_.Name; CommandLine = $_.CommandLine; Status = $_.Status; WorkingSetSize = $_.WorkingSetSize; PercentProcessorTime = if ($perf) { $perf.PercentProcessorTime } else { 0 } }",
+    "[pscustomobject]@{ ProcessId = $_.ProcessId; ParentProcessId = $_.ParentProcessId; Name = $_.Name; CommandLine = $_.CommandLine; Status = $_.Status; WorkingSetSize = $_.WorkingSetSize; PercentProcessorTime = if ($perfByPid.ContainsKey([uint32]$_.ProcessId)) { $perfByPid[[uint32]$_.ProcessId] } else { 0 } }",
     "};",
     "$processes | ConvertTo-Json -Compress -Depth 3",
   ].join(" ");
