@@ -32,7 +32,7 @@ import {
 import { useRightPanelStore } from "~/rightPanelStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import {
-  readActiveBrowserRecordingTabId,
+  readActiveBrowserRecordingTabIds,
   startBrowserRecording,
   stopBrowserRecording,
 } from "~/browser/browserRecording";
@@ -319,7 +319,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           if (result._tag === "Failure") {
             return raiseAtomCommandFailure(result);
           }
-          reconcilePreviewServerSessions(threadRef, result.value.sessions);
+          reconcilePreviewServerSessions(threadRef, result.value);
           state = readThreadPreviewState(threadRef);
         }
         tabId = request.tabId ?? state.snapshot?.tabId ?? null;
@@ -510,7 +510,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "recordingStart": {
             const ready = await requireReadyTab();
-            const startedAt = await startBrowserRecording(ready.tabId);
+            const startedAt = await startBrowserRecording(ready.tabId, threadRef);
             return {
               tabId: ready.tabId,
               recording: true,
@@ -518,11 +518,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             };
           }
           case "recordingStop": {
-            const recordingTabId = readActiveBrowserRecordingTabId();
+            const activeTabIds = readActiveBrowserRecordingTabIds(threadRef);
             const stopTabId = resolveBrowserRecordingStopTarget(
-              recordingTabId,
+              activeTabIds,
+              tabId,
               request.tabIdExplicit ? request.tabId : undefined,
             );
+            tabId = stopTabId ?? tabId;
             const artifact = stopTabId ? await stopBrowserRecording(stopTabId) : null;
             if (!artifact) {
               return raisePreviewAutomationHostError(

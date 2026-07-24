@@ -3,14 +3,41 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveBrowserRecordingStopTarget } from "./browserRecordingScope";
 
 describe("resolveBrowserRecordingStopTarget", () => {
-  it("stops the active recording when no explicit tab was requested", () => {
-    expect(resolveBrowserRecordingStopTarget("tab-a")).toBe("tab-a");
-    expect(resolveBrowserRecordingStopTarget("tab-b")).toBe("tab-b");
-    expect(resolveBrowserRecordingStopTarget(null)).toBeNull();
+  it("stops the only active recording when the implicit browser target changed", () => {
+    expect(resolveBrowserRecordingStopTarget(new Set(["tab-recording"]), "tab-browsing")).toBe(
+      "tab-recording",
+    );
   });
 
-  it("only stops an explicitly requested tab when it owns the recording", () => {
-    expect(resolveBrowserRecordingStopTarget("tab-a", "tab-a")).toBe("tab-a");
-    expect(resolveBrowserRecordingStopTarget("tab-a", "tab-b")).toBeNull();
+  it("prefers an implicit target that is actively recording", () => {
+    expect(
+      resolveBrowserRecordingStopTarget(
+        new Set(["tab-recording-a", "tab-recording-b"]),
+        "tab-recording-b",
+      ),
+    ).toBe("tab-recording-b");
+  });
+
+  it("does not guess when multiple recordings are active and the implicit target is not one", () => {
+    expect(
+      resolveBrowserRecordingStopTarget(
+        new Set(["tab-recording-a", "tab-recording-b"]),
+        "tab-browsing",
+      ),
+    ).toBeNull();
+  });
+
+  it("only stops an explicitly requested tab when that tab is recording", () => {
+    const activeTabIds = new Set(["tab-recording"]);
+    expect(resolveBrowserRecordingStopTarget(activeTabIds, "tab-browsing", "tab-recording")).toBe(
+      "tab-recording",
+    );
+    expect(resolveBrowserRecordingStopTarget(activeTabIds, "tab-recording", "tab-browsing")).toBe(
+      null,
+    );
+  });
+
+  it("returns null when no matching recording is active", () => {
+    expect(resolveBrowserRecordingStopTarget(new Set(), "tab-browsing")).toBeNull();
   });
 });

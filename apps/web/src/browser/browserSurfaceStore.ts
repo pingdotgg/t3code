@@ -11,6 +11,8 @@ export interface BrowserSurfacePresentation {
   readonly rect: BrowserSurfaceRect | null;
   readonly visible: boolean;
   readonly content: BrowserSurfaceContentPresentation | null;
+  readonly fittedSourceContent: BrowserSurfaceContentPresentation | null;
+  readonly cornerRadius: number;
   readonly updatedAt: number;
   readonly owner: symbol | null;
 }
@@ -27,19 +29,20 @@ export interface BrowserSurfaceContentPresentation {
 
 interface BrowserSurfaceStoreState {
   readonly byTabId: Record<string, BrowserSurfacePresentation>;
-  readonly claim: (tabId: string, owner: symbol) => void;
+  readonly claim: (tabId: string, owner: symbol, fitSourceContent: boolean) => void;
   readonly present: (
     tabId: string,
     owner: symbol,
     rect: BrowserSurfaceRect,
     visible: boolean,
+    cornerRadius: number,
   ) => void;
   readonly presentContent: (tabId: string, content: BrowserSurfaceContentPresentation) => void;
   readonly release: (tabId: string, owner: symbol) => void;
 }
 
 export interface BrowserSurfaceLease {
-  readonly present: (rect: BrowserSurfaceRect, visible: boolean) => void;
+  readonly present: (rect: BrowserSurfaceRect, visible: boolean, cornerRadius?: number) => void;
   readonly release: () => void;
 }
 
@@ -72,7 +75,7 @@ const rectEquals = (left: BrowserSurfaceRect | null, right: BrowserSurfaceRect):
 
 export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) => ({
   byTabId: {},
-  claim: (tabId, owner) =>
+  claim: (tabId, owner, fitSourceContent) =>
     set((state) => {
       const current = state.byTabId[tabId];
       if (current?.owner === owner) return state;
@@ -83,21 +86,30 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
             rect: current?.rect ?? null,
             visible: false,
             content: current?.content ?? null,
+            fittedSourceContent: fitSourceContent ? (current?.content ?? null) : null,
+            cornerRadius: current?.cornerRadius ?? 0,
             updatedAt: Date.now(),
             owner,
           },
         },
       };
     }),
-  present: (tabId, owner, rect, visible) =>
+  present: (tabId, owner, rect, visible, cornerRadius) =>
     set((state) => {
       const current = state.byTabId[tabId];
       if (current?.owner !== owner) return state;
-      if (current && current.visible === visible && rectEquals(current.rect, rect)) return state;
+      if (
+        current &&
+        current.visible === visible &&
+        current.cornerRadius === cornerRadius &&
+        rectEquals(current.rect, rect)
+      ) {
+        return state;
+      }
       return {
         byTabId: {
           ...state.byTabId,
-          [tabId]: { ...current, rect, visible, updatedAt: Date.now() },
+          [tabId]: { ...current, rect, visible, cornerRadius, updatedAt: Date.now() },
         },
       };
     }),
@@ -112,6 +124,8 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
               rect: null,
               visible: false,
               content,
+              fittedSourceContent: null,
+              cornerRadius: 0,
               updatedAt: Date.now(),
               owner: null,
             },
@@ -151,15 +165,18 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
     }),
 }));
 
-export function acquireBrowserSurface(tabId: string): BrowserSurfaceLease {
+export function acquireBrowserSurface(
+  tabId: string,
+  fitSourceContent = false,
+): BrowserSurfaceLease {
   const owner = Symbol(`browser-surface:${tabId}`);
   let released = false;
-  useBrowserSurfaceStore.getState().claim(tabId, owner);
+  useBrowserSurfaceStore.getState().claim(tabId, owner, fitSourceContent);
 
   return {
-    present: (rect, visible) => {
+    present: (rect, visible, cornerRadius = 0) => {
       if (released) return;
-      useBrowserSurfaceStore.getState().present(tabId, owner, rect, visible);
+      useBrowserSurfaceStore.getState().present(tabId, owner, rect, visible, cornerRadius);
     },
     release: () => {
       if (released) return;
