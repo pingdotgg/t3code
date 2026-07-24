@@ -688,6 +688,38 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* fileSystem.exists(worktreePath), false);
       }),
     );
+
+    it.effect("fails with an actionable error when the base ref has no commit yet", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // Initialize a repository but never commit: HEAD is unborn, so there
+        // is no commit to branch a worktree from.
+        yield* driver.initRepo({ cwd });
+        const baseBranch = yield* git(cwd, ["branch", "--show-current"]);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "feature-worktree",
+        );
+
+        const error = yield* driver
+          .createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: baseBranch,
+            newRefName: "feature/worktree",
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(error._tag, "GitCommandError");
+        assert.include(error.detail, "does not point at any commit");
+        assert.include(error.detail, baseBranch);
+        // The worktree must not have been created.
+        const fileSystem = yield* FileSystem.FileSystem;
+        assert.equal(yield* fileSystem.exists(worktreePath), false);
+      }),
+    );
   });
 
   describe("remote operations", () => {

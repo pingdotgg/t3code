@@ -2272,6 +2272,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];
 
+    // A worktree can only be created from a ref that already points at a commit.
+    // A freshly-initialized repository (e.g. `git init` with nothing committed
+    // yet) has an unborn HEAD, so `git worktree add` fails with a cryptic
+    // "fatal: invalid reference: <ref>". Detect that up front and surface an
+    // actionable error instead of leaking the raw git failure to the caller.
+    const baseCommitStdout = yield* runGitStdout(
+      "GitVcsDriver.createWorktree.resolveBase",
+      input.cwd,
+      ["rev-parse", "--verify", "--quiet", `${input.refName}^{commit}`],
+      true,
+    );
+    if (baseCommitStdout.trim().length === 0) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({ operation: "GitVcsDriver.createWorktree", cwd: input.cwd, args }),
+        detail: `Cannot create a worktree from '${input.refName}' because it does not point at any commit yet. Make an initial commit in this repository, or start the thread in the current checkout instead.`,
+      });
+    }
+
     yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
       fallbackErrorDetail: "git worktree add failed",
     });
