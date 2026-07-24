@@ -1012,6 +1012,9 @@ private struct SubagentTaskRow: View {
             onClearStopError()
         }
         .onHover { isHovering = $0 }
+        // The hover-revealed stop/pause controls above are conditional, so
+        // without this they blink into the card instead of fading.
+        .animation(Motion.feedback, value: isHovering)
         .contextMenu {
             Button("Open agent thread") {
                 onOpenInnerThread()

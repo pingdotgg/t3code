@@ -228,5 +228,6 @@ private struct NatureActionButtonStyle: ButtonStyle {
             }
             .foregroundStyle(AlpineTheme.forest)
             .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+            .animation(Motion.feedback, value: configuration.isPressed)
     }
 }

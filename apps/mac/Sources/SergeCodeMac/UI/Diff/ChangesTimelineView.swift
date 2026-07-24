@@ -377,6 +377,8 @@ public struct ChangesTimelineView: View {
                 hoveredCheckpointID == checkpoint.id ? nil : hoveredCheckpointID
             )
         }
+        // Fades the restore button in rather than flicking it to full opacity.
+        .animation(Motion.feedback, value: hoveredCheckpointID == checkpoint.id)
         .contextMenu {
             Button("Restore…") {
                 pendingRestore = checkpoint

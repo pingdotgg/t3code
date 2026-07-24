@@ -354,5 +354,6 @@ private struct VcsMergePillButtonStyle: ButtonStyle {
             }
             .foregroundStyle(.black)
             .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+            .animation(Motion.feedback, value: configuration.isPressed)
     }
 }

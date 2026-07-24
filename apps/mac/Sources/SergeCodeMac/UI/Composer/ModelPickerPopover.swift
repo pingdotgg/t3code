@@ -43,6 +43,7 @@ struct ModelPickerMenu: View {
         .help("Choose model")
         .onHover { isHovering = $0 }
         .animation(Motion.feedback, value: isPresented)
+        .animation(Motion.feedback, value: isHovering)
         // UIProbe (DEBUG runs) opens the popover through the section-toggle
         // hook — same-process AX can't press SwiftUI buttons.
         .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
@@ -441,6 +442,7 @@ private struct ProviderFilterRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .animation(Motion.feedback, value: isHovering)
     }
 }
 
