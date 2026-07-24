@@ -959,6 +959,48 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("retries a cold hidden-tab capture without dropping recording", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const jpeg = Buffer.from("recovered-preview-frame");
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => jpeg,
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        capturePage.mockRejectedValueOnce(new Error("UnknownVizError"));
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        const frames: DesktopPreviewRecordingFrame[] = [];
+
+        yield* manager.subscribeRecordingFrames((frame) =>
+          Effect.sync(() => {
+            frames.push(frame);
+          }),
+        );
+        yield* manager.createTab("tab_cold_capture");
+        yield* manager.registerWebview("tab_cold_capture", 42);
+
+        yield* manager.startRecording("tab_cold_capture");
+
+        expect(capturePage).toHaveBeenCalledOnce();
+        expect(frames).toHaveLength(0);
+
+        yield* TestClock.adjust(100);
+
+        expect(capturePage).toHaveBeenCalledTimes(2);
+        expect(frames).toEqual([
+          expect.objectContaining({
+            tabId: "tab_cold_capture",
+            data: jpeg.toString("base64"),
+            width: 1280,
+            height: 720,
+          }),
+        ]);
+
+        yield* manager.stopRecording("tab_cold_capture");
+      }),
+    ),
+  );
+
   effectIt.effect("drops empty frames before picture-in-picture delivery", () =>
     withManager((manager) =>
       Effect.gen(function* () {

@@ -50,6 +50,7 @@ export function HostedBrowserWebview(props: {
     useShallow((state) => {
       const current = state.byTabId[tabId];
       return {
+        cornerRadius: current?.cornerRadius ?? 0,
         rect: resolveBrowserSurfacePanelRect(state.byTabId, tabId),
         visible: current?.visible ?? false,
       };
@@ -65,6 +66,8 @@ export function HostedBrowserWebview(props: {
       lease.release();
     };
   }, [tabId]);
+
+  const [webviewGeneration, setWebviewGeneration] = useState(0);
 
   const setWebviewRef = useCallback((node: HTMLElement | null) => {
     webviewRef.current = node as ElectronWebview | null;
@@ -95,15 +98,21 @@ export function HostedBrowserWebview(props: {
         }
       })();
     };
+    const recoverGuest = () => {
+      if (disposed) return;
+      setWebviewGeneration((generation) => generation + 1);
+    };
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
+    webview.addEventListener("render-process-gone", recoverGuest);
     register();
     return () => {
       disposed = true;
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
+      webview.removeEventListener("render-process-gone", recoverGuest);
     };
-  }, [config, tabId]);
+  }, [config, tabId, webviewGeneration]);
 
   const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;
@@ -171,6 +180,7 @@ export function HostedBrowserWebview(props: {
 
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,
+    cornerRadius: presentation.cornerRadius,
     rect: lastRect,
     hiddenSize,
   });
@@ -194,8 +204,9 @@ export function HostedBrowserWebview(props: {
           />
         ) : null}
         <webview
+          key={webviewGeneration}
           ref={setWebviewRef}
-          src={initialSrc}
+          src={webviewGeneration === 0 ? initialSrc : (initialUrl ?? initialSrc)}
           partition={config.partition}
           webpreferences={config.webPreferences}
           {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}

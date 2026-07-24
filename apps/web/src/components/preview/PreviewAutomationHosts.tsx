@@ -314,7 +314,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           if (result._tag === "Failure") {
             return raiseAtomCommandFailure(result);
           }
-          reconcilePreviewServerSessions(threadRef, result.value.sessions);
+          reconcilePreviewServerSessions(threadRef, result.value);
           state = readThreadPreviewState(threadRef);
         }
         tabId = request.tabId ?? state.snapshot?.tabId ?? null;

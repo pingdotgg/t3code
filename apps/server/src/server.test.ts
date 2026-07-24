@@ -666,7 +666,7 @@ const buildAppUnderTest = (options?: {
             reportStatus: () => Effect.void,
             refresh: () => Effect.void,
             close: () => Effect.void,
-            list: () => Effect.succeed({ sessions: [] }),
+            list: () => Effect.succeed({ sessions: [], serverEpoch: "test-server", revision: 0 }),
             events: Stream.empty,
             subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>
               PubSub.subscribe(pubsub),

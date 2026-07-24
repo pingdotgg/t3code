@@ -1994,6 +1994,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     consumer: FrameCaptureConsumer,
   ) {
+    // Validate the tab synchronously, but treat capturePage failures as
+    // transient. Chromium can return UnknownVizError while a hidden guest is
+    // warming its first compositor frame; the scheduled loop should keep the
+    // consumer alive and recover instead of tearing recording/PiP back down.
+    yield* requireWebContents(tabId);
     const captureNextFrame = Effect.sleep(RECORDING_FRAME_INTERVAL_MS).pipe(
       Effect.andThen(capturePreviewFrame(tabId)),
       Effect.catch((error) =>
@@ -2034,7 +2039,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
     });
     if (!created) return;
-    yield* capturePreviewFrame(tabId).pipe(Effect.onError(() => stopFrameCapture(tabId, consumer)));
+    yield* capturePreviewFrame(tabId).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Initial background preview frame was not ready; capture will retry.", {
+          tabId,
+          consumer,
+          error,
+        }),
+      ),
+    );
   });
 
   const releasePictureInPicture = Effect.fn("PreviewManager.releasePictureInPicture")(function* (

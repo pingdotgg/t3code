@@ -36,8 +36,22 @@ describe("browserSurfaceStore", () => {
     expect(
       resolveBrowserSurfacePanelRect(
         {
-          hidden: { rect: staleRect, visible: false, content: null, updatedAt: 1, owner: null },
-          active: { rect: liveRect, visible: true, content: null, updatedAt: 2, owner: null },
+          hidden: {
+            rect: staleRect,
+            visible: false,
+            content: null,
+            cornerRadius: 0,
+            updatedAt: 1,
+            owner: null,
+          },
+          active: {
+            rect: liveRect,
+            visible: true,
+            content: null,
+            cornerRadius: 0,
+            updatedAt: 2,
+            owner: null,
+          },
         },
         "hidden",
       ),

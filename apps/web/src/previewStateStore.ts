@@ -10,6 +10,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   type DesktopPreviewColorScheme,
   type PreviewEvent,
+  type PreviewListResult,
   type PreviewSessionSnapshot,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -38,6 +39,10 @@ export interface ThreadPreviewState {
   desktopOverlay: DesktopPreviewOverlay | null;
   desktopByTabId: Record<string, DesktopPreviewOverlay>;
   recentlySeenUrls: string[];
+  /** Server process currently authoritative for revision ordering. */
+  serverEpoch: string | null;
+  /** Latest ordered server revision applied from a list response or event. */
+  serverRevision: number;
 }
 
 const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
@@ -48,6 +53,8 @@ const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
   desktopOverlay: null,
   desktopByTabId: {},
   recentlySeenUrls: [] as string[],
+  serverEpoch: null,
+  serverRevision: 0,
 });
 
 const emptyPreviewStateAtom = Atom.make<ThreadPreviewState>(EMPTY_THREAD_PREVIEW_STATE).pipe(
@@ -177,52 +184,68 @@ export function subscribeThreadPreviewState(
 
 export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEvent): void {
   updateThreadPreviewState(ref, (current) => {
-    switch (event.type) {
-      case "opened":
-      case "navigated":
-      case "resized": {
-        const snapshot = event.snapshot;
-        if (current.suppressedTabIds.has(snapshot.tabId)) return current;
-        const recentlySeenUrls =
-          snapshot.navStatus._tag === "Idle"
-            ? current.recentlySeenUrls
-            : dedupeRecentUrls(current.recentlySeenUrls, snapshot.navStatus.url);
-        const sessions = { ...current.sessions, [snapshot.tabId]: snapshot };
-        const activeTabId = event.type === "opened" ? snapshot.tabId : current.activeTabId;
-        const activeSnapshot = sessions[activeTabId ?? snapshot.tabId] ?? snapshot;
-        return {
-          ...current,
-          sessions,
-          activeTabId: activeTabId ?? snapshot.tabId,
-          snapshot: activeSnapshot,
-          desktopOverlay: current.desktopByTabId[activeSnapshot.tabId] ?? null,
-          recentlySeenUrls,
-        };
+    if (current.serverEpoch !== null && event.serverEpoch !== current.serverEpoch) return current;
+    if (event.revision < current.serverRevision) return current;
+    const next = (() => {
+      switch (event.type) {
+        case "opened":
+        case "navigated":
+        case "resized": {
+          const snapshot = event.snapshot;
+          if (current.suppressedTabIds.has(snapshot.tabId)) return current;
+          const recentlySeenUrls =
+            snapshot.navStatus._tag === "Idle"
+              ? current.recentlySeenUrls
+              : dedupeRecentUrls(current.recentlySeenUrls, snapshot.navStatus.url);
+          const sessions = { ...current.sessions, [snapshot.tabId]: snapshot };
+          const activeTabId = event.type === "opened" ? snapshot.tabId : current.activeTabId;
+          const activeSnapshot = sessions[activeTabId ?? snapshot.tabId] ?? snapshot;
+          return {
+            ...current,
+            sessions,
+            activeTabId: activeTabId ?? snapshot.tabId,
+            snapshot: activeSnapshot,
+            desktopOverlay: current.desktopByTabId[activeSnapshot.tabId] ?? null,
+            recentlySeenUrls,
+          };
+        }
+        case "failed": {
+          const existing = current.sessions[event.tabId];
+          if (!existing) return current;
+          const failedSnapshot = {
+            ...existing,
+            navStatus: {
+              _tag: "LoadFailed" as const,
+              url: event.url,
+              title: event.title,
+              code: event.code,
+              description: event.description,
+            },
+            updatedAt: event.createdAt,
+          };
+          const sessions = { ...current.sessions, [event.tabId]: failedSnapshot };
+          return {
+            ...current,
+            sessions,
+            snapshot: current.activeTabId === event.tabId ? failedSnapshot : current.snapshot,
+          };
+        }
+        case "closed": {
+          const closed = removeSession(current, event.tabId);
+          if (!closed.suppressedTabIds.has(event.tabId)) return closed;
+          const suppressedTabIds = new Set(closed.suppressedTabIds);
+          suppressedTabIds.delete(event.tabId);
+          return { ...closed, suppressedTabIds };
+        }
       }
-      case "failed": {
-        const existing = current.sessions[event.tabId];
-        if (!existing) return current;
-        const failedSnapshot = {
-          ...existing,
-          navStatus: {
-            _tag: "LoadFailed" as const,
-            url: event.url,
-            title: event.title,
-            code: event.code,
-            description: event.description,
-          },
-          updatedAt: event.createdAt,
+    })();
+    return next.serverRevision === event.revision && next.serverEpoch === event.serverEpoch
+      ? next
+      : {
+          ...next,
+          serverEpoch: event.serverEpoch,
+          serverRevision: event.revision,
         };
-        const sessions = { ...current.sessions, [event.tabId]: failedSnapshot };
-        return {
-          ...current,
-          sessions,
-          snapshot: current.activeTabId === event.tabId ? failedSnapshot : current.snapshot,
-        };
-      }
-      case "closed":
-        return removeSession(current, event.tabId);
-    }
   });
 }
 
@@ -293,9 +316,12 @@ export function updatePreviewServerSnapshot(
  */
 export function reconcilePreviewServerSessions(
   ref: ScopedThreadRef,
-  snapshots: ReadonlyArray<PreviewSessionSnapshot>,
+  result: PreviewListResult,
 ): void {
   updateThreadPreviewState(ref, (current) => {
+    const sameServer = current.serverEpoch === result.serverEpoch;
+    if (sameServer && result.revision < current.serverRevision) return current;
+    const snapshots = result.sessions;
     const sessions: Record<string, PreviewSessionSnapshot> = {};
     let recentlySeenUrls = current.recentlySeenUrls;
     for (const snapshot of snapshots) {
@@ -315,14 +341,22 @@ export function reconcilePreviewServerSessions(
     const desktopByTabId = Object.fromEntries(
       Object.entries(current.desktopByTabId).filter(([tabId]) => sessions[tabId] !== undefined),
     );
+    const suppressedTabIds = new Set(
+      [...current.suppressedTabIds].filter((tabId) =>
+        snapshots.some((snapshot) => snapshot.tabId === tabId),
+      ),
+    );
     return {
       ...current,
       sessions,
+      suppressedTabIds,
       activeTabId,
       snapshot,
       desktopByTabId,
       desktopOverlay: activeTabId ? (desktopByTabId[activeTabId] ?? null) : null,
       recentlySeenUrls,
+      serverEpoch: result.serverEpoch,
+      serverRevision: result.revision,
     };
   });
 }

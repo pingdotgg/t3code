@@ -1,11 +1,16 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, type PreviewSessionSnapshot, ThreadId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type PreviewEvent,
+  type PreviewSessionSnapshot,
+  ThreadId,
+} from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   __testing,
   applyPreviewDesktopState,
-  applyPreviewServerEvent,
+  applyPreviewServerEvent as applyPreviewServerEventImpl,
   applyPreviewServerSnapshot,
   beginPreviewSessionClose,
   cancelPreviewSessionClose,
@@ -33,7 +38,25 @@ const makeSnapshot = (overrides: Partial<PreviewSessionSnapshot> = {}): PreviewS
   ...overrides,
 });
 
+type PreviewEventDraft = PreviewEvent extends infer Event
+  ? Event extends { readonly revision: number }
+    ? Omit<Event, "revision" | "serverEpoch">
+    : never
+  : never;
+
+const serverEpoch = "server-a";
+let nextServerRevision = 0;
+const applyPreviewServerEvent = (eventRef: typeof ref, event: PreviewEventDraft): void => {
+  nextServerRevision += 1;
+  applyPreviewServerEventImpl(eventRef, {
+    ...event,
+    serverEpoch,
+    revision: nextServerRevision,
+  } as PreviewEvent);
+};
+
 beforeEach(() => {
+  nextServerRevision = 0;
   resetPreviewStateForTests();
 });
 
@@ -369,7 +392,7 @@ describe("previewStateStore (single-tab)", () => {
       controller: "none",
     });
 
-    reconcilePreviewServerSessions(ref, [active]);
+    reconcilePreviewServerSessions(ref, { sessions: [active], serverEpoch, revision: 1 });
 
     const state = readThreadPreviewState(ref);
     expect(Object.keys(state.sessions)).toEqual([active.tabId]);
@@ -381,12 +404,80 @@ describe("previewStateStore (single-tab)", () => {
   it("clears stale sessions when an authoritative list is empty", () => {
     applyPreviewServerSnapshot(ref, makeSnapshot());
 
-    reconcilePreviewServerSessions(ref, []);
+    reconcilePreviewServerSessions(ref, { sessions: [], serverEpoch, revision: 1 });
 
     const state = readThreadPreviewState(ref);
     expect(state.sessions).toEqual({});
     expect(state.activeTabId).toBeNull();
     expect(state.snapshot).toBeNull();
+  });
+
+  it("ignores a list response older than the latest server event", () => {
+    const snapshot = makeSnapshot();
+    applyPreviewServerEvent(ref, {
+      type: "opened",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: snapshot.updatedAt,
+      snapshot,
+    });
+
+    reconcilePreviewServerSessions(ref, { sessions: [], serverEpoch, revision: 0 });
+
+    expect(readThreadPreviewState(ref).sessions).toEqual({ [snapshot.tabId]: snapshot });
+  });
+
+  it("does not resurrect a tab from an event older than its close", () => {
+    const snapshot = makeSnapshot();
+    applyPreviewServerEvent(ref, {
+      type: "opened",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: snapshot.updatedAt,
+      snapshot,
+    });
+    applyPreviewServerEvent(ref, {
+      type: "closed",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+
+    applyPreviewServerEventImpl(ref, {
+      type: "opened",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: snapshot.updatedAt,
+      serverEpoch,
+      revision: 1,
+      snapshot,
+    });
+
+    expect(readThreadPreviewState(ref).sessions).toEqual({});
+  });
+
+  it("accepts a lower revision from a newly restarted server", () => {
+    const snapshot = makeSnapshot();
+    applyPreviewServerEventImpl(ref, {
+      type: "opened",
+      threadId: "thread-1",
+      tabId: snapshot.tabId,
+      createdAt: snapshot.updatedAt,
+      serverEpoch,
+      revision: 12,
+      snapshot,
+    });
+
+    reconcilePreviewServerSessions(ref, {
+      sessions: [],
+      serverEpoch: "server-b",
+      revision: 0,
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions).toEqual({});
+    expect(state.serverEpoch).toBe("server-b");
+    expect(state.serverRevision).toBe(0);
   });
 
   it("applyServerSnapshot null clears snapshot for a thread that had one", () => {

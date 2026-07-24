@@ -22,6 +22,8 @@ import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
@@ -71,6 +73,9 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
   const previewState = useThreadPreviewState(threadRef);
+  const miniPlayer = usePreviewMiniPlayerStore((state) =>
+    selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef),
+  );
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
   const environment = useEnvironment(threadRef.environmentId);
@@ -228,6 +233,16 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   }, [url]);
 
   const handlePictureInPicture = useCallback(() => {
+    if (!tabId) return;
+    if (miniPlayer?.tabId === tabId) {
+      usePreviewMiniPlayerStore.getState().close(threadRef);
+      return;
+    }
+    usePreviewMiniPlayerStore.getState().open(threadRef, tabId);
+    useRightPanelStore.getState().close(threadRef);
+  }, [miniPlayer?.tabId, tabId, threadRef]);
+
+  const handleNativePictureInPicture = useCallback(() => {
     if (!previewBridge || !tabId) return;
     const operation = desktopOverlay?.pictureInPicture
       ? previewBridge.pictureInPicture.close
@@ -235,7 +250,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     void operation(tabId).catch((error) => {
       toastManager.add({
         type: "error",
-        title: "Unable to update picture-in-picture",
+        title: "Unable to update popped-out preview",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
     });
@@ -602,7 +617,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={tabId !== null && activeRecordingTabIds.has(tabId)}
         onPictureInPicture={previewBridge && tabId ? handlePictureInPicture : undefined}
-        pictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+        pictureInPicture={miniPlayer?.tabId === tabId}
         pictureInPictureDisabled={!desktopOverlay?.hasWebContents || isUnreachable}
         onPickElement={previewBridge && tabId ? handlePickElement : undefined}
         pickActive={pickActive}
@@ -622,6 +637,8 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
               colorScheme={desktopOverlay?.colorScheme ?? "system"}
               deviceToolbarVisible={viewport._tag !== "fill"}
               onToggleDeviceToolbar={handleToggleDeviceToolbar}
+              nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+              onNativePictureInPicture={handleNativePictureInPicture}
             />
           ) : null
         }
