@@ -2718,11 +2718,22 @@ const make = Effect.gen(function* () {
           }
           const finalized = yield* finalizeAssistantMessage(input);
           if (finalized && input.turnId) {
-            yield* resetFinalizedAssistantMessageForTurn(
-              input.threadId,
-              input.turnId,
-              input.messageId,
-            );
+            if (
+              input.event.type === "request.opened" ||
+              input.event.type === "user-input.requested"
+            ) {
+              yield* releaseFinalizedAssistantMessageForTurn(
+                input.threadId,
+                input.turnId,
+                input.messageId,
+              );
+            } else {
+              yield* resetFinalizedAssistantMessageForTurn(
+                input.threadId,
+                input.turnId,
+                input.messageId,
+              );
+            }
           }
         }).pipe(
           Effect.catchCause((cause) =>
@@ -2769,11 +2780,22 @@ const make = Effect.gen(function* () {
               yield* clearAssistantMessageState(input.messageId);
               yield* forgetAssistantMessageIdForThread(input.threadId, input.messageId);
               if (input.turnId) {
-                yield* resetFinalizedAssistantMessageForTurn(
-                  input.threadId,
-                  input.turnId,
-                  input.messageId,
-                );
+                if (
+                  input.event.type === "request.opened" ||
+                  input.event.type === "user-input.requested"
+                ) {
+                  yield* releaseFinalizedAssistantMessageForTurn(
+                    input.threadId,
+                    input.turnId,
+                    input.messageId,
+                  );
+                } else {
+                  yield* resetFinalizedAssistantMessageForTurn(
+                    input.threadId,
+                    input.turnId,
+                    input.messageId,
+                  );
+                }
               }
             }),
           ),

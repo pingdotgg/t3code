@@ -3990,6 +3990,38 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(assistantCompletionIndex).toBeGreaterThanOrEqual(0);
     expect(requestActivityIndex).toBeGreaterThan(assistantCompletionIndex);
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-content-delta-after-deferred-request-finalization"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { streamKind: "assistant_text", delta: " after approval" },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-item-completed-after-deferred-request-finalization"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === "assistant:item-deferred-request-finalization:segment:1" &&
+            !message.streaming &&
+            message.text === " after approval",
+        ),
+      5000,
+    );
   });
 
   it("keeps a terminal session boundary behind fallback item finalization", async () => {
