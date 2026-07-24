@@ -1,0 +1,10 @@
+.git
+.github
+.repos
+node_modules
+**/node_modules
+**/.expo
+apps/mobile/android
+apps/mobile/ios
+**/build
+**/.gradle
