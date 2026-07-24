@@ -5,6 +5,7 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
+import { $getLexicalContent, $insertDataTransferForRichText } from "@lexical/clipboard";
 import { type ServerProviderSkill } from "@t3tools/contracts";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import {
@@ -27,6 +28,9 @@ import {
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
+  COPY_COMMAND,
+  CUT_COMMAND,
+  PASTE_COMMAND,
   COMMAND_PRIORITY_HIGH,
   COMMAND_PRIORITY_LOW,
   KEY_BACKSPACE_COMMAND,
@@ -78,6 +82,10 @@ import {
 } from "./composerInlineChip";
 import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
+import {
+  COMPOSER_EDITOR_NAMESPACE,
+  isComposerLexicalClipboardPayload,
+} from "./ComposerPromptEditor.clipboard";
 import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
@@ -1244,6 +1252,64 @@ function ComposerChipSelectionPlugin() {
   return null;
 }
 
+function ComposerClipboardPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    const addLexicalClipboardPayload = (event: ClipboardEvent | null): false => {
+      if (!event?.clipboardData) {
+        return false;
+      }
+      const lexicalContent = $getLexicalContent(editor);
+      if (lexicalContent) {
+        event.clipboardData.setData("application/x-lexical-editor", lexicalContent);
+      }
+      // Let the plain-text plugin populate the portable clipboard formats and perform cuts.
+      return false;
+    };
+
+    const unregisterCopy = editor.registerCommand(
+      COPY_COMMAND,
+      addLexicalClipboardPayload,
+      COMMAND_PRIORITY_HIGH,
+    );
+    const unregisterCut = editor.registerCommand(
+      CUT_COMMAND,
+      addLexicalClipboardPayload,
+      COMMAND_PRIORITY_HIGH,
+    );
+    const unregisterPaste = editor.registerCommand(
+      PASTE_COMMAND,
+      (event) => {
+        const clipboardData = "clipboardData" in event ? event.clipboardData : null;
+        if (!clipboardData) {
+          return false;
+        }
+        const lexicalPayload = clipboardData.getData("application/x-lexical-editor");
+        if (!isComposerLexicalClipboardPayload(lexicalPayload)) {
+          return false;
+        }
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) {
+          return false;
+        }
+        event.preventDefault();
+        $insertDataTransferForRichText(clipboardData, selection, editor);
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+
+    return () => {
+      unregisterCopy();
+      unregisterCut();
+      unregisterPaste();
+    };
+  }, [editor]);
+
+  return null;
+}
+
 function ComposerInlineTokenPastePlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -1779,6 +1845,7 @@ function ComposerPromptEditorInner({
         <ComposerInlineTokenBackspacePlugin />
         <ComposerInlineTokenPastePlugin />
         <ComposerChipSelectionPlugin />
+        <ComposerClipboardPlugin />
         <HistoryPlugin />
       </div>
     </ComposerTerminalContextActionsContext>
@@ -1804,7 +1871,7 @@ export function ComposerPromptEditor({
   const initialSkillMetadataRef = useRef(skillMetadataByName(skills));
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
-      namespace: "t3tools-composer-editor",
+      namespace: COMPOSER_EDITOR_NAMESPACE,
       editable: true,
       nodes: [ComposerMentionNode, ComposerSkillNode, ComposerTerminalContextNode],
       editorState: () => {

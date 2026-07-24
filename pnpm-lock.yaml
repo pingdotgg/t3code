@@ -544,6 +544,9 @@ importers:
       '@legendapp/list':
         specifier: 3.2.0
         version: 3.2.0(patch_hash=45e4cbcbeeca1b628b8480869374d7cbc77e3fbfa97ee0107a0d72c3c4a5d7f3)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@lexical/clipboard':
+        specifier: ^0.41.0
+        version: 0.41.0
       '@lexical/react':
         specifier: ^0.41.0
         version: 0.41.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(yjs@13.6.31)
