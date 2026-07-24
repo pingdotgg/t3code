@@ -18,7 +18,10 @@ struct EmptyStateView: View {
         let washBottom = GlassLayering.washAlpha(
             base: GlassLayering.heroWashBaseBottom, translucency: translucency)
         ZStack {
-            SceneryImageView(scenery: scenery, photo: featured, fallbackSeed: "empty-state")
+            SceneryImageView(
+                scenery: scenery, photo: featured, fallbackSeed: "empty-state",
+                // Keep sky/ridgeline when a wide window crops the scene.
+                focal: .skyline)
                 // Recreate the image subtree when the rotation seed changes so
                 // a cached hero for the previous bucket cannot stick.
                 .id(featured?.id ?? "empty-\(scenery.rotationDayKey)")

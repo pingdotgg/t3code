@@ -1,5 +1,31 @@
 import SwiftUI
 
+/// Where a cover-cropped scene anchors when the window's aspect ratio differs
+/// from the photo's. Deterministic at every window size.
+enum SceneryFocal {
+    /// Symmetric crop; default for chrome and blurred variants.
+    case center
+    /// Bias to the top: keeps sky/ridgeline when a wide window crops the
+    /// bottom of a landscape scene.
+    case skyline
+
+    /// Focal point in unit space; tested, so keep it the source of truth for
+    /// `alignment`.
+    var unitPoint: UnitPoint {
+        switch self {
+        case .center: UnitPoint(x: 0.5, y: 0.5)
+        case .skyline: UnitPoint(x: 0.5, y: 0)
+        }
+    }
+
+    var alignment: Alignment {
+        switch self {
+        case .center: .center
+        case .skyline: .top
+        }
+    }
+}
+
 /// A scenery photo (or its gradient fallback) as a fill. Always renders the
 /// deterministic alpine wash immediately; the photo cross-fades in when the
 /// store has it decoded.
@@ -11,6 +37,8 @@ struct SceneryImageView: View {
     /// Seed for the gradient fallback when there is no photo (keyless /
     /// offline); defaults to the photo id.
     var fallbackSeed: String = "sergecode"
+    /// Crop anchor for the cover fill; see `SceneryFocal`.
+    var focal: SceneryFocal = .center
 
     var body: some View {
         ZStack {
@@ -20,13 +48,21 @@ struct SceneryImageView: View {
             if let photo, let image = scenery.image(photo, variant: variant, setId: setId) {
                 Image(nsImage: image)
                     .resizable()
-                    .scaledToFill()
+                    // Cover policy, defined for every window size: scale
+                    // uniformly until both dimensions are covered, crop the
+                    // overflow at `focal`. Never stretches, never letterboxes.
+                    // Frame alignment (no GeometryReader) keeps live resize a
+                    // pure layout pass.
+                    .aspectRatio(contentMode: .fill)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: focal.alignment)
                     .transition(.opacity)
                     // Identity keyed to the photo so swapping scenes (thread
                     // switch) cross-fades old → new instead of hard-cutting.
                     .id(loadedPhotoID)
             }
         }
+        // Photo swaps only: size changes (window resize) must never animate,
+        // or live re-cropping would jump frame to frame.
         .animation(Motion.scenery, value: loadedPhotoID)
         .clipped()
         // Flatten the wash + photo before any caller applies `.opacity`:
@@ -178,6 +214,10 @@ struct SceneryAttributionTag: View {
             Link("Unsplash", destination: URL(string: "https://unsplash.com\(Self.utm)")!)
         }
         .font(.caption2)
+        // One line at the ideal size, always: the pill must not wrap,
+        // truncate, or change size while the window is being resized.
+        .lineLimit(1)
+        .fixedSize()
         .foregroundStyle(.white.opacity(0.86))
         .padding(.horizontal, 8)
         .padding(.vertical, 4)

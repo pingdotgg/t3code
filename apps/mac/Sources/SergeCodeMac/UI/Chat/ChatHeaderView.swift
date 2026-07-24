@@ -48,10 +48,6 @@ struct ChatHeaderView: View {
 
             ProviderBadge(provider: thread.provider, modelID: thread.modelID)
             StatusBadge(status: thread.status, stalled: thread.isStalled)
-
-            if let photo = scenery.photo(for: threadKey) {
-                SceneryAttributionTag(photo: photo)
-            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
