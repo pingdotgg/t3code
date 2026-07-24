@@ -27,6 +27,18 @@ Log in with Codex normally:
 codex login
 ```
 
+## Waiting Without Polling
+
+New Codex threads receive a T3-hosted `t3.wait` tool. An agent can use it to wait from one second to
+one hour while an external command, CI job, deployment, or other task is running. The timer runs in
+T3 Code and does not repeatedly wake the model, so the agent can perform one status check after the
+wait instead of spending inference on frequent polling.
+
+This is a live-session wait. It is cancelled if the current turn is interrupted, the provider
+session closes, or T3 Code stops. It does not wake a completed thread after an app restart and does
+not subscribe to external webhooks. Durable timers and event-triggered continuation are described in
+the [deferred thread resume design](../project/deferred-thread-resume.md).
+
 ## I Want Work And Personal Codex Accounts
 
 Use one real Codex home and one shadow home.
