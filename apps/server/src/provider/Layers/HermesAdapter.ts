@@ -411,6 +411,7 @@ export function makeHermesAdapter(
             runtime: acp,
             currentModelId: currentHermesModelIdFromSessionSetup(started.sessionSetupResult),
             selection: modelSelection,
+            forceModelSelection: modelSelection !== undefined,
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
           });

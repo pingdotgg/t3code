@@ -402,6 +402,9 @@ export const make = (
         ) {
           return;
         }
+        if (notification.update.sessionUpdate === "config_option_update") {
+          yield* Ref.set(configOptionsRef, notification.update.configOptions);
+        }
         yield* handleSessionUpdate({
           queue: eventQueue,
           modeStateRef,
@@ -819,10 +822,14 @@ export const make = (
               sessionId: started.sessionId,
               modelId,
             } satisfies EffectAcpSchema.SetSessionModelRequest;
-            return runLoggedRequest(
-              "session/set_model",
-              requestPayload,
-              acp.agent.setSessionModel(requestPayload),
+            return Ref.set(configOptionsRef, []).pipe(
+              Effect.andThen(
+                runLoggedRequest(
+                  "session/set_model",
+                  requestPayload,
+                  acp.agent.setSessionModel(requestPayload),
+                ),
+              ),
             );
           }),
         ),

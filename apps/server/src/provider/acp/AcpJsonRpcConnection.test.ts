@@ -455,6 +455,62 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
+  it.effect("refreshes model-scoped config options after session/set_model", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      yield* runtime.setSessionModel("grok-mock-alt");
+
+      const configOptions = yield* runtime.getConfigOptions;
+      const modelOption = configOptions.find((option) => option.id === "model");
+      expect(modelOption?.currentValue).toBe("grok-mock-alt");
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_EMIT_MODEL_CONFIG_UPDATE: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
+  it.effect("drops stale config options when a model switch advertises no replacement", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+      expect((yield* runtime.getConfigOptions).length).toBeGreaterThan(0);
+
+      yield* runtime.setSessionModel("grok-mock-alt");
+
+      expect(yield* runtime.getConfigOptions).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("emits low-level ACP protocol logs for raw and decoded messages", () => {
     const protocolEvents: Array<EffectAcpProtocol.AcpProtocolLogEvent> = [];
     return Effect.gen(function* () {

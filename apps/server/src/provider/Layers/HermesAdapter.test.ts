@@ -201,7 +201,7 @@ it.layer(testLayer)("HermesAdapter ACP", (it) => {
       );
       assert.deepEqual(
         switches.map((request) => request.modelId),
-        ["grok-mock-alt"],
+        ["grok-build", "grok-mock-alt"],
       );
       const modeChange = decodeRequestParams(
         requests.find((request) => request.method === "session/set_mode"),
