@@ -245,6 +245,12 @@ describe("MessagesTimeline", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
+        latestTurn={{
+          turnId,
+          state: "completed",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: MESSAGE_CREATED_AT,
+        }}
         timelineEntries={[
           {
             id: "entry-assistant-with-files",
@@ -280,13 +286,13 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('class="sticky top-2 z-10');
+    expect(markup).toContain("sticky top-2 z-10");
     expect(markup).not.toContain("self-start");
     expect(markup).toContain("whitespace-nowrap");
     expect(markup).toContain("!size-[22px]");
     expect(markup).toContain("size-3");
-    expect(markup).toContain('aria-label="Collapse all"');
-    expect(markup).toContain('aria-label="View diff"');
+    expect(markup).toContain('aria-label="Collapse all folders"');
+    expect(markup).toContain('aria-label="Open diff"');
     expect(markup).toContain("1 changed file");
   });
 
