@@ -1,4 +1,4 @@
-import { assert, describe, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
   type KeybindingCommand,
@@ -21,6 +21,7 @@ import {
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
   resolveShortcutCommand,
+  resolveThreadSidebarShortcutAction,
   shouldShowModelPickerJumpHints,
   shouldShowThreadJumpHints,
   shortcutLabelForCommand,
@@ -126,6 +127,11 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
+  {
+    shortcut: modShortcut("x", { shiftKey: true }),
+    command: "thread.settle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
   { shortcut: modShortcut("1"), command: "thread.jump.1" },
@@ -147,6 +153,88 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenIdentifier("modelPickerOpen"),
   },
 ]);
+
+describe("thread settle shortcut", () => {
+  it("resolves Mod+Shift+X outside the terminal", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "x", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+      "thread.settle",
+    );
+  });
+
+  it("does not resolve while the terminal owns focus", () => {
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "x", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("routes an eligible settle command to the shared confirmation flow", () => {
+    expect(
+      resolveThreadSidebarShortcutAction({
+        command: "thread.settle",
+        orderedThreadKeys: ["thread-1", "thread-2"],
+        routeThreadKey: "thread-1",
+        settleConfirmationThreadKey: null,
+        canSettleRouteThread: true,
+        isRouteThreadSettling: false,
+      }),
+    ).toEqual({ type: "confirm-settle", threadKey: "thread-1" });
+  });
+
+  it("consumes settle when live work makes the route thread ineligible", () => {
+    expect(
+      resolveThreadSidebarShortcutAction({
+        command: "thread.settle",
+        orderedThreadKeys: ["thread-1"],
+        routeThreadKey: "thread-1",
+        settleConfirmationThreadKey: null,
+        canSettleRouteThread: false,
+        isRouteThreadSettling: false,
+      }),
+    ).toEqual({ type: "consume" });
+  });
+
+  it("consumes thread navigation while settle confirmation is open", () => {
+    expect(
+      resolveThreadSidebarShortcutAction({
+        command: "thread.next",
+        orderedThreadKeys: ["thread-1", "thread-2"],
+        routeThreadKey: "thread-1",
+        settleConfirmationThreadKey: "thread-1",
+        canSettleRouteThread: true,
+        isRouteThreadSettling: false,
+      }),
+    ).toEqual({ type: "consume" });
+    expect(
+      resolveThreadSidebarShortcutAction({
+        command: "thread.jump.2",
+        orderedThreadKeys: ["thread-1", "thread-2"],
+        routeThreadKey: "thread-1",
+        settleConfirmationThreadKey: "thread-1",
+        canSettleRouteThread: true,
+        isRouteThreadSettling: false,
+      }),
+    ).toEqual({ type: "consume" });
+  });
+
+  it("consumes settle without reopening confirmation while the route thread is settling", () => {
+    expect(
+      resolveThreadSidebarShortcutAction({
+        command: "thread.settle",
+        orderedThreadKeys: ["thread-1"],
+        routeThreadKey: "thread-1",
+        settleConfirmationThreadKey: null,
+        canSettleRouteThread: true,
+        isRouteThreadSettling: true,
+      }),
+    ).toEqual({ type: "consume" });
+  });
+});
 
 describe("isTerminalToggleShortcut", () => {
   it("matches Cmd+J on macOS", () => {

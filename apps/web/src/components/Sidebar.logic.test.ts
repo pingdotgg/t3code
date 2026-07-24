@@ -2,18 +2,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  canSettleLegacySidebarRouteThread,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
+  resolveNextActiveThreadIdAfterSettle,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
+  getSidebarThreadKeysNeedingChangeRequestReporter,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isSidebarThreadEffectivelySnoozed,
+  isSidebarThreadEffectivelySettled,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  pruneSidebarChangeRequestStates,
+  resolveSidebarThreadGitCwd,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarV2Status,
@@ -24,6 +31,9 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
+  shouldDismissThreadSettleConfirmation,
+  shouldQuerySidebarThreadGitStatus,
+  shouldPublishSidebarChangeRequestState,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
@@ -41,10 +51,50 @@ import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
+  type SidebarThreadSummary,
   type Thread,
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("shouldQuerySidebarThreadGitStatus", () => {
+  it("queries worktree-only threads so their pull request state can be reported", () => {
+    expect(
+      shouldQuerySidebarThreadGitStatus({
+        branch: null,
+        worktreePath: "/repo/.t3/worktrees/feature",
+        gitCwd: "/repo/.t3/worktrees/feature",
+      }),
+    ).toBe(true);
+  });
+
+  it("requires a cwd and either a branch or worktree", () => {
+    expect(
+      shouldQuerySidebarThreadGitStatus({
+        branch: "feature",
+        worktreePath: null,
+        gitCwd: null,
+      }),
+    ).toBe(false);
+    expect(
+      shouldQuerySidebarThreadGitStatus({
+        branch: null,
+        worktreePath: null,
+        gitCwd: "/repo",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldPublishSidebarChangeRequestState", () => {
+  it("preserves the last known state while git status is pending", () => {
+    expect(shouldPublishSidebarChangeRequestState(true)).toBe(false);
+  });
+
+  it("publishes the resolved state after git status settles", () => {
+    expect(shouldPublishSidebarChangeRequestState(false)).toBe(true);
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
@@ -511,6 +561,467 @@ describe("resolveAdjacentThreadId", () => {
         direction: "previous",
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveNextActiveThreadIdAfterSettle", () => {
+  it("wraps to the next active thread while skipping settled threads", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["thread-1", "thread-2", "thread-3"],
+        settledThreadId: "thread-1",
+        isActive: (threadId) => threadId === "thread-3",
+      }),
+    ).toBe("thread-3");
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["thread-1", "thread-2", "thread-3"],
+        settledThreadId: "thread-3",
+        isActive: (threadId) => threadId === "thread-1",
+      }),
+    ).toBe("thread-1");
+  });
+
+  it("returns null when settling leaves no active thread", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["thread-1", "thread-2"],
+        settledThreadId: "thread-1",
+        isActive: () => false,
+      }),
+    ).toBeNull();
+  });
+
+  it("falls back to an active thread hidden outside the visible keyboard order", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["visible-current", "visible-settled"],
+        fallbackThreadIds: ["visible-current", "preview-hidden-active", "collapsed-project-active"],
+        settledThreadId: "visible-current",
+        isActive: (threadId) => threadId.endsWith("active"),
+      }),
+    ).toBe("preview-hidden-active");
+  });
+
+  it("prefers the next visible active thread before hidden fallbacks", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["visible-current", "visible-next"],
+        fallbackThreadIds: ["visible-current", "hidden-active"],
+        settledThreadId: "visible-current",
+        isActive: (threadId) => threadId !== "visible-current",
+      }),
+    ).toBe("visible-next");
+  });
+
+  it("rotates the full logical order when the settled thread is hidden", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["visible-earlier", "visible-later"],
+        fallbackThreadIds: [
+          "visible-earlier",
+          "hidden-current",
+          "logical-next-active",
+          "earlier-active",
+        ],
+        settledThreadId: "hidden-current",
+        isActive: (threadId) => threadId.endsWith("active"),
+      }),
+    ).toBe("logical-next-active");
+  });
+
+  it("finds an active full-list target when V2's scoped order excludes the current route", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["scoped-settled"],
+        fallbackThreadIds: [
+          "full-list-before",
+          "hidden-current",
+          "hidden-settled",
+          "hidden-active",
+        ],
+        settledThreadId: "hidden-current",
+        isActive: (threadId) => threadId === "hidden-active",
+      }),
+    ).toBe("hidden-active");
+  });
+
+  it("rotates hidden fallbacks after exhausting visible active threads", () => {
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["visible-current", "visible-settled"],
+        fallbackThreadIds: ["earlier-active", "visible-current", "hidden-next-active"],
+        settledThreadId: "visible-current",
+        isActive: (threadId) => threadId.endsWith("active"),
+      }),
+    ).toBe("hidden-next-active");
+  });
+});
+
+describe("isSidebarThreadEffectivelySettled", () => {
+  const now = "2026-03-15T12:00:00.000Z";
+
+  it("classifies inactivity and closed change requests as settled", () => {
+    const thread = makeThreadShell({
+      latestUserMessageAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+
+    expect(
+      isSidebarThreadEffectivelySettled({
+        thread,
+        settlementSupported: true,
+        now,
+        autoSettleAfterDays: 3,
+      }),
+    ).toBe(true);
+    expect(
+      isSidebarThreadEffectivelySettled({
+        thread: makeThreadShell(),
+        settlementSupported: true,
+        now,
+        autoSettleAfterDays: null,
+        changeRequestState: "closed",
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps auto-settlement disabled on servers without lifecycle support", () => {
+    expect(
+      isSidebarThreadEffectivelySettled({
+        thread: makeThreadShell(),
+        settlementSupported: false,
+        now,
+        autoSettleAfterDays: null,
+        changeRequestState: "merged",
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps auto-settled threads out of post-settle navigation targets", () => {
+    const threads = new Map([
+      ["current", makeThreadShell({ id: ThreadId.make("current") })],
+      [
+        "inactive",
+        makeThreadShell({
+          id: ThreadId.make("inactive"),
+          latestUserMessageAt: "2026-03-01T12:00:00.000Z",
+        }),
+      ],
+      ["active", makeThreadShell({ id: ThreadId.make("active") })],
+    ]);
+
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["current", "inactive", "active"],
+        settledThreadId: "current",
+        isActive: (threadId) => {
+          const thread = threads.get(threadId);
+          return (
+            thread !== undefined &&
+            !isSidebarThreadEffectivelySettled({
+              thread,
+              settlementSupported: true,
+              now,
+              autoSettleAfterDays: 3,
+            })
+          );
+        },
+      }),
+    ).toBe("active");
+  });
+});
+
+describe("isSidebarThreadEffectivelySnoozed", () => {
+  const now = "2026-04-10T12:00:00.000Z";
+
+  it("requires server snooze support and a future wake time", () => {
+    const snoozedThread = makeThreadShell({
+      snoozedAt: "2026-04-10T09:00:00.000Z",
+      snoozedUntil: "2026-04-11T09:00:00.000Z",
+    });
+
+    expect(
+      isSidebarThreadEffectivelySnoozed({
+        thread: snoozedThread,
+        snoozeSupported: true,
+        now,
+      }),
+    ).toBe(true);
+    expect(
+      isSidebarThreadEffectivelySnoozed({
+        thread: snoozedThread,
+        snoozeSupported: false,
+        now,
+      }),
+    ).toBe(false);
+    expect(
+      isSidebarThreadEffectivelySnoozed({
+        thread: makeThreadShell({
+          snoozedAt: "2026-04-09T09:00:00.000Z",
+          snoozedUntil: "2026-04-10T09:00:00.000Z",
+        }),
+        snoozeSupported: true,
+        now,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps snoozed threads out of post-settle navigation targets", () => {
+    const threads = new Map([
+      ["current", makeThreadShell({ id: ThreadId.make("current") })],
+      [
+        "snoozed",
+        makeThreadShell({
+          id: ThreadId.make("snoozed"),
+          snoozedAt: "2026-04-10T09:00:00.000Z",
+          snoozedUntil: "2026-04-11T09:00:00.000Z",
+        }),
+      ],
+      ["active", makeThreadShell({ id: ThreadId.make("active") })],
+    ]);
+
+    expect(
+      resolveNextActiveThreadIdAfterSettle({
+        threadIds: ["current", "snoozed", "active"],
+        settledThreadId: "current",
+        isActive: (threadId) => {
+          const thread = threads.get(threadId);
+          return (
+            thread !== undefined &&
+            !isSidebarThreadEffectivelySnoozed({
+              thread,
+              snoozeSupported: true,
+              now,
+            })
+          );
+        },
+      }),
+    ).toBe("active");
+  });
+});
+
+describe("canSettleLegacySidebarRouteThread", () => {
+  const now = "2026-03-15T12:00:00.000Z";
+
+  it("keeps inactive and pull-request-idle threads eligible for explicit settlement", () => {
+    const inactiveThread = makeThreadShell({
+      latestUserMessageAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+    const pullRequestIdleThread = makeThreadShell({
+      latestUserMessageAt: "2026-03-15T10:00:00.000Z",
+      updatedAt: "2026-03-15T10:00:00.000Z",
+    });
+
+    expect(
+      isSidebarThreadEffectivelySettled({
+        thread: inactiveThread,
+        settlementSupported: true,
+        now,
+        autoSettleAfterDays: 3,
+      }),
+    ).toBe(true);
+    expect(
+      isSidebarThreadEffectivelySettled({
+        thread: pullRequestIdleThread,
+        settlementSupported: true,
+        now,
+        autoSettleAfterDays: null,
+        changeRequestState: "closed",
+      }),
+    ).toBe(true);
+
+    for (const thread of [inactiveThread, pullRequestIdleThread]) {
+      expect(
+        canSettleLegacySidebarRouteThread({
+          thread,
+          settlementSupported: true,
+          now,
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("does not reopen settlement for an explicitly settled thread", () => {
+    expect(
+      canSettleLegacySidebarRouteThread({
+        thread: makeThreadShell({ settledOverride: "settled" }),
+        settlementSupported: true,
+        now,
+      }),
+    ).toBe(false);
+  });
+
+  it("uses the settle operation's capability and live-work guards", () => {
+    expect(
+      canSettleLegacySidebarRouteThread({
+        thread: makeThreadShell(),
+        settlementSupported: false,
+        now,
+      }),
+    ).toBe(false);
+    expect(
+      canSettleLegacySidebarRouteThread({
+        thread: makeThreadShell({
+          session: {
+            threadId: ThreadId.make("thread-running"),
+            status: "running",
+            providerName: "Codex",
+            runtimeMode: DEFAULT_RUNTIME_MODE,
+            activeTurnId: "turn-running" as never,
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+        settlementSupported: true,
+        now,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldDismissThreadSettleConfirmation", () => {
+  it("dismisses a confirmation when the route changes away from its target", () => {
+    expect(
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: "thread-1",
+        routeThreadKey: "thread-2",
+        targetExists: true,
+        targetExplicitlySettled: false,
+        targetCanSettle: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a confirmation open while its unsettled target remains the route", () => {
+    expect(
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: "thread-1",
+        routeThreadKey: "thread-1",
+        targetExists: true,
+        targetExplicitlySettled: false,
+        targetCanSettle: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps a confirmation open when inactivity only makes the target effectively settled", () => {
+    const target = makeThreadShell({
+      latestUserMessageAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+      settledOverride: null,
+    });
+
+    expect(
+      isSidebarThreadEffectivelySettled({
+        thread: target,
+        settlementSupported: true,
+        now: "2026-03-15T12:00:00.000Z",
+        autoSettleAfterDays: 3,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: "thread-1",
+        routeThreadKey: "thread-1",
+        targetExists: true,
+        targetExplicitlySettled: target.settledOverride === "settled",
+        targetCanSettle: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("dismisses a confirmation after the server explicitly settles its target", () => {
+    expect(
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: "thread-1",
+        routeThreadKey: "thread-1",
+        targetExists: true,
+        targetExplicitlySettled: true,
+        targetCanSettle: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("dismisses a confirmation when live work makes the target unsettleable", () => {
+    expect(
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: "thread-1",
+        routeThreadKey: "thread-1",
+        targetExists: true,
+        targetExplicitlySettled: false,
+        targetCanSettle: false,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("getSidebarThreadKeysNeedingChangeRequestReporter", () => {
+  it("keeps live PR-state reporters for collapsed and preview-hidden rows", () => {
+    expect(
+      getSidebarThreadKeysNeedingChangeRequestReporter(
+        ["visible", "preview-hidden", "collapsed"],
+        new Set(["visible"]),
+        true,
+      ),
+    ).toEqual(["preview-hidden", "collapsed"]);
+  });
+
+  it("reports every thread when settings replaces the sidebar thread rows", () => {
+    expect(
+      getSidebarThreadKeysNeedingChangeRequestReporter(
+        ["would-be-visible", "preview-hidden", "collapsed"],
+        new Set(["would-be-visible"]),
+        false,
+      ),
+    ).toEqual(["would-be-visible", "preview-hidden", "collapsed"]);
+  });
+});
+
+describe("resolveSidebarThreadGitCwd", () => {
+  it("uses the same fallback order for visible and hidden thread reporters", () => {
+    expect(
+      resolveSidebarThreadGitCwd({
+        worktreePath: "/worktree",
+        threadProjectCwd: "/thread-project",
+        sidebarProjectCwd: "/sidebar-project",
+      }),
+    ).toBe("/worktree");
+    expect(
+      resolveSidebarThreadGitCwd({
+        worktreePath: null,
+        threadProjectCwd: "/thread-project",
+        sidebarProjectCwd: "/sidebar-project",
+      }),
+    ).toBe("/thread-project");
+    expect(
+      resolveSidebarThreadGitCwd({
+        worktreePath: null,
+        threadProjectCwd: null,
+        sidebarProjectCwd: "/sidebar-project",
+      }),
+    ).toBe("/sidebar-project");
+  });
+});
+
+describe("pruneSidebarChangeRequestStates", () => {
+  it("drops state for removed and archived threads", () => {
+    expect(
+      pruneSidebarChangeRequestStates(
+        new Map([
+          ["active", "open"],
+          ["removed", "closed"],
+          ["archived", "merged"],
+        ]),
+        new Set(["active"]),
+      ),
+    ).toEqual(new Map([["active", "open"]]));
+  });
+
+  it("preserves map identity when every state still belongs to a live thread", () => {
+    const current = new Map([["active", "open"]]);
+    expect(pruneSidebarChangeRequestStates(current, new Set(["active"]))).toBe(current);
   });
 });
 
@@ -1088,6 +1599,17 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     worktreePath: null,
     checkpoints: [],
     activities: [],
+    ...overrides,
+  };
+}
+
+function makeThreadShell(overrides: Partial<SidebarThreadSummary> = {}): SidebarThreadSummary {
+  return {
+    ...makeThread(),
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
     ...overrides,
   };
 }

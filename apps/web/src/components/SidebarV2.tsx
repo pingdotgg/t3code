@@ -1,11 +1,6 @@
 import { autoAnimate } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  canSnooze,
-  effectiveSettled,
-  effectiveSnoozed,
-  threadWokeAt,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { canSettle, canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
@@ -57,11 +52,10 @@ import {
 import { isElectron } from "../env";
 import {
   resolveShortcutCommand,
+  resolveThreadSidebarShortcutAction,
   shortcutLabelForCommand,
   shouldShowThreadJumpHintsForModifiers,
   threadJumpCommandForIndex,
-  threadJumpIndexFromCommand,
-  threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -84,11 +78,20 @@ import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore"
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { openCommandPalette } from "../commandPaletteBus";
+import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
@@ -104,17 +107,25 @@ import { cn } from "~/lib/utils";
 import {
   formatWorkingDurationLabel,
   firstValidTimestampMs,
+  getSidebarThreadKeysNeedingChangeRequestReporter,
   hasUnseenCompletion,
+  isSidebarThreadEffectivelySnoozed,
+  isSidebarThreadEffectivelySettled,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
-  resolveAdjacentThreadId,
   resolveSettledTimestamp,
+  pruneSidebarChangeRequestStates,
+  resolveNextActiveThreadIdAfterSettle,
+  resolveSidebarThreadGitCwd,
   resolveSidebarV2Status,
   resolveWorkingStartedAt,
+  shouldPublishSidebarChangeRequestState,
+  shouldQuerySidebarThreadGitStatus,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
+  shouldDismissThreadSettleConfirmation,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
@@ -154,6 +165,46 @@ import { useComposerDraftStore } from "../composerDraftStore";
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
+
+function SidebarV2HiddenThreadChangeRequestStateReporter(props: {
+  thread: SidebarThreadSummary;
+  threadProjectCwd: string | null;
+  onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
+}) {
+  const { thread, threadProjectCwd, onChangeRequestState } = props;
+  const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+  const gitCwd = resolveSidebarThreadGitCwd({
+    worktreePath: thread.worktreePath,
+    threadProjectCwd,
+    sidebarProjectCwd: null,
+  });
+  const gitStatus = useEnvironmentQuery(
+    gitCwd !== null &&
+      shouldQuerySidebarThreadGitStatus({
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        gitCwd,
+      })
+      ? vcsEnvironment.status({
+          environmentId: thread.environmentId,
+          input: { cwd: gitCwd },
+        })
+      : null,
+  );
+  const prState =
+    resolveThreadPr({
+      threadBranch: thread.branch,
+      gitStatus: gitStatus.data,
+      hasDedicatedWorktree: thread.worktreePath !== null,
+    })?.state ?? null;
+
+  useEffect(() => {
+    if (!shouldPublishSidebarChangeRequestState(gitStatus.isPending)) return;
+    onChangeRequestState(threadKey, prState);
+  }, [gitStatus.isPending, onChangeRequestState, prState, threadKey]);
+
+  return null;
+}
 const SETTLED_TAIL_PAGE_COUNT = 25;
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -477,9 +528,18 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   }
                 : null;
 
-  const gitCwd = thread.worktreePath ?? props.projectCwd;
+  const gitCwd = resolveSidebarThreadGitCwd({
+    worktreePath: thread.worktreePath,
+    threadProjectCwd: props.projectCwd,
+    sidebarProjectCwd: null,
+  });
   const gitStatus = useEnvironmentQuery(
-    (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
+    gitCwd !== null &&
+      shouldQuerySidebarThreadGitStatus({
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        gitCwd,
+      })
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
           input: { cwd: gitCwd },
@@ -502,8 +562,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // and a merged/closed PR auto-settles a thread — data only rows have.
   const prState = pr?.state ?? null;
   useEffect(() => {
+    if (!shouldPublishSidebarChangeRequestState(gitStatus.isPending)) return;
     onChangeRequestState(threadKey, prState);
-  }, [onChangeRequestState, prState, threadKey]);
+  }, [gitStatus.isPending, onChangeRequestState, prState, threadKey]);
 
   const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
@@ -1352,8 +1413,36 @@ export default function SidebarV2() {
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const isThreadEffectivelySettled = useCallback(
+    (thread: SidebarThreadSummary) => {
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      return isSidebarThreadEffectivelySettled({
+        thread,
+        settlementSupported:
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
+          true,
+        now: `${nowMinute}:00.000Z`,
+        autoSettleAfterDays,
+        changeRequestState: changeRequestStateByKey.get(threadKey) ?? null,
+      });
+    },
+    [autoSettleAfterDays, changeRequestStateByKey, nowMinute, serverConfigs],
+  );
+  const isThreadEffectivelySettledRef = useRef(isThreadEffectivelySettled);
+  isThreadEffectivelySettledRef.current = isThreadEffectivelySettled;
+  const isThreadEffectivelySnoozed = useCallback(
+    (thread: SidebarThreadSummary, now: string) =>
+      isSidebarThreadEffectivelySnoozed({
+        thread,
+        snoozeSupported:
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true,
+        now,
+      }),
+    [serverConfigs],
+  );
+  const isThreadEffectivelySnoozedRef = useRef(isThreadEffectivelySnoozed);
+  isThreadEffectivelySnoozedRef.current = isThreadEffectivelySnoozed;
   const { activeThreads, snoozedThreads, settledThreads, snoozeNow } = useMemo(() => {
-    const now = `${nowMinute}:00.000Z`;
     // Snooze classification uses a REAL clock, not the quantized minute:
     // wake times are second-precise and a woken thread must not linger on
     // the shelf for the rest of the minute. snoozeWakeTick re-runs this
@@ -1370,25 +1459,12 @@ export default function SidebarV2() {
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
     for (const thread of visible) {
-      // Threads on servers without the settlement capability (old server,
-      // or descriptor not loaded yet) never classify as settled: the user
-      // could neither un-settle nor pin them, so auto-settling them would
-      // strand rows in a tail with no working affordances.
-      const supportsSettlement =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
-      const supportsSnooze =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
       // Snooze outranks settled classification: an explicitly snoozed thread
       // belongs to the shelf even if it would also auto-settle (the shelf's
       // wake time is a stronger statement about when it matters again).
-      if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
+      if (isThreadEffectivelySnoozed(thread, preciseNow)) {
         snoozed.push(thread);
-      } else if (
-        supportsSettlement &&
-        effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
-      ) {
+      } else if (isThreadEffectivelySettled(thread)) {
         settled.push(thread);
       } else {
         active.push(thread);
@@ -1406,11 +1482,9 @@ export default function SidebarV2() {
       snoozeNow: preciseNow,
     };
   }, [
-    autoSettleAfterDays,
-    changeRequestStateByKey,
-    nowMinute,
+    isThreadEffectivelySettled,
+    isThreadEffectivelySnoozed,
     scopedProjectKeys,
-    serverConfigs,
     snoozeWakeTick,
     threads,
   ]);
@@ -1514,6 +1588,43 @@ export default function SidebarV2() {
   // rendered at click time.
   const orderedThreadKeysRef = useRef(orderedThreadKeys);
   orderedThreadKeysRef.current = orderedThreadKeys;
+  // Route actions are independent of the selected project chip. Keep every
+  // live shell in stable creation order for eligibility, confirmation, and
+  // post-settle fallback; rendered keyboard traversal stays scoped below.
+  const allUnarchivedThreads = useMemo(
+    () => sortThreadsForSidebarV2(threads.filter((thread) => thread.archivedAt === null)),
+    [threads],
+  );
+  const allUnarchivedThreadKeys = useMemo(
+    () =>
+      allUnarchivedThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    [allUnarchivedThreads],
+  );
+  const allUnarchivedThreadKeySet = useMemo(
+    () => new Set(allUnarchivedThreadKeys),
+    [allUnarchivedThreadKeys],
+  );
+  useEffect(() => {
+    setChangeRequestStateByKey((current) =>
+      pruneSidebarChangeRequestStates(current, allUnarchivedThreadKeySet),
+    );
+  }, [allUnarchivedThreadKeySet]);
+  const allUnarchivedThreadKeysRef = useRef(allUnarchivedThreadKeys);
+  allUnarchivedThreadKeysRef.current = allUnarchivedThreadKeys;
+  const allThreadByKey = useMemo(
+    () =>
+      new Map(
+        allUnarchivedThreads.map(
+          (thread) =>
+            [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
+        ),
+      ),
+    [allUnarchivedThreads],
+  );
+  const allThreadByKeyRef = useRef(allThreadByKey);
+  allThreadByKeyRef.current = allThreadByKey;
   const threadByKey = useMemo(
     () =>
       new Map(
@@ -1523,6 +1634,16 @@ export default function SidebarV2() {
         ),
       ),
     [orderedThreads],
+  );
+  const visibleThreadKeySet = useMemo(() => new Set(orderedThreadKeys), [orderedThreadKeys]);
+  const hiddenChangeRequestReporterThreadKeys = useMemo(
+    () =>
+      getSidebarThreadKeysNeedingChangeRequestReporter(
+        allUnarchivedThreadKeys,
+        visibleThreadKeySet,
+        true,
+      ),
+    [allUnarchivedThreadKeys, visibleThreadKeySet],
   );
   // Handlers read these through refs: depending on per-update Map/Set
   // identities would give every row a fresh callback prop on each shell
@@ -1555,6 +1676,10 @@ export default function SidebarV2() {
   );
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
   snoozedThreadKeysRef.current = snoozedThreadKeys;
+  const [settleConfirmationThreadKey, setSettleConfirmationThreadKey] = useState<string | null>(
+    null,
+  );
+  const settleConfirmationButtonRef = useRef<HTMLButtonElement>(null);
 
   const jumpLabelByKey = useMemo(() => {
     const mapping = new Map<string, string>();
@@ -1658,7 +1783,7 @@ export default function SidebarV2() {
   const planForwardNavigation = useCallback(
     (threadKey: string, coParkingKeys?: ReadonlySet<string>): (() => void) | null => {
       if (routeThreadKeyRef.current !== threadKey) return null;
-      const shell = threadByKeyRef.current.get(threadKey);
+      const shell = allThreadByKeyRef.current.get(threadKey);
       const orderedKeys = orderedThreadKeysRef.current;
       const settledKeys = settledThreadKeysRef.current;
       const snoozedKeys = snoozedThreadKeysRef.current;
@@ -1686,8 +1811,41 @@ export default function SidebarV2() {
         const threadKey = scopedThreadKey(threadRef);
         if (settlingThreadKeysRef.current.has(threadKey)) return;
         settlingThreadKeysRef.current.add(threadKey);
+        setSettleConfirmationThreadKey((current) => (current === threadKey ? null : current));
         try {
-          const navigateAfterSettle = planForwardNavigation(threadKey, opts.coSettlingKeys);
+          // Settling the thread you're looking at moves you forward: the next
+          // remaining card (never a settled row, never one settling in the
+          // same batch), or a fresh draft in this project when it was the
+          // last active one. Snapshot the target before the settle mutates
+          // the partition. Background settles never navigate.
+          const shell = allThreadByKeyRef.current.get(threadKey);
+          let navigateAfterSettle: (() => void) | null = null;
+          if (routeThreadKeyRef.current === threadKey) {
+            const navigationNow = new Date().toISOString();
+            const nextThreadKey = resolveNextActiveThreadIdAfterSettle({
+              threadIds: orderedThreadKeysRef.current,
+              fallbackThreadIds: allUnarchivedThreadKeysRef.current,
+              settledThreadId: threadKey,
+              isActive: (candidateKey) => {
+                const candidate = allThreadByKeyRef.current.get(candidateKey);
+                return (
+                  candidate !== undefined &&
+                  !opts.coSettlingKeys?.has(candidateKey) &&
+                  !isThreadEffectivelySnoozedRef.current(candidate, navigationNow) &&
+                  !isThreadEffectivelySettledRef.current(candidate)
+                );
+              },
+            });
+            const nextThread = nextThreadKey ? allThreadByKeyRef.current.get(nextThreadKey) : null;
+            navigateAfterSettle = nextThread
+              ? () => navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id))
+              : shell
+                ? () =>
+                    void handleNewThreadRef.current(
+                      scopeProjectRef(shell.environmentId, shell.projectId),
+                    )
+                : () => void router.navigate({ to: "/" });
+          }
           const result = await settleThread(threadRef);
           if (result._tag === "Failure") {
             // Never navigate away from a thread that did not settle.
@@ -1713,7 +1871,7 @@ export default function SidebarV2() {
         }
       })();
     },
-    [planForwardNavigation, settleThread],
+    [navigateToThread, router, settleThread],
   );
   const attemptUnsettle = useCallback(
     (threadRef: ScopedThreadRef) => {
@@ -2117,6 +2275,7 @@ export default function SidebarV2() {
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return;
+      if (isCommandPaletteOpen() || isModelPickerOpen()) return;
       const command = resolveShortcutCommand(event, keybindings, {
         platform: navigator.platform,
         context: {
@@ -2125,39 +2284,94 @@ export default function SidebarV2() {
           modelPickerOpen: isModelPickerOpen(),
         },
       });
-      const navigateToThreadKey = (targetThreadKey: string | null) => {
-        if (!targetThreadKey) return false;
-        const targetThread = threadByKey.get(targetThreadKey);
-        if (!targetThread) return false;
+      const routeThread = routeThreadKey ? allThreadByKey.get(routeThreadKey) : null;
+      const action = resolveThreadSidebarShortcutAction({
+        command,
+        orderedThreadKeys,
+        routeThreadKey,
+        settleConfirmationThreadKey,
+        canSettleRouteThread:
+          routeThread != null &&
+          serverConfigs.get(routeThread.environmentId)?.environment.capabilities
+            .threadSettlement === true &&
+          canSettle(routeThread, { now: new Date().toISOString() }) &&
+          !isThreadEffectivelySettled(routeThread),
+        isRouteThreadSettling:
+          routeThreadKey !== null && settlingThreadKeysRef.current.has(routeThreadKey),
+      });
+      if (action.type === "none") return;
+      if (action.type === "navigate") {
+        const targetThread = threadByKey.get(action.threadKey);
+        if (!targetThread) return;
         event.preventDefault();
         event.stopPropagation();
         navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
-        return true;
-      };
-      const traversalDirection = threadTraversalDirectionFromCommand(command);
-      if (traversalDirection !== null) {
-        navigateToThreadKey(
-          resolveAdjacentThreadId({
-            threadIds: orderedThreadKeys,
-            currentThreadId: routeThreadKey,
-            direction: traversalDirection,
-          }),
-        );
         return;
       }
-      const jumpIndex = threadJumpIndexFromCommand(command ?? "");
-      if (jumpIndex === null) return;
-      navigateToThreadKey(orderedThreadKeys[jumpIndex] ?? null);
+      event.preventDefault();
+      event.stopPropagation();
+      if (action.type === "consume") return;
+      setSettleConfirmationThreadKey(action.threadKey);
     };
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
+    allThreadByKey,
+    isThreadEffectivelySettled,
     keybindings,
     navigateToThread,
     orderedThreadKeys,
     routeTerminalOpen,
     routeThreadKey,
+    serverConfigs,
+    settleConfirmationThreadKey,
     threadByKey,
+  ]);
+
+  const settleConfirmationThread = settleConfirmationThreadKey
+    ? (allThreadByKey.get(settleConfirmationThreadKey) ?? null)
+    : null;
+  const settleConfirmationCanSettle =
+    settleConfirmationThread !== null &&
+    serverConfigs.get(settleConfirmationThread.environmentId)?.environment.capabilities
+      .threadSettlement === true &&
+    canSettle(settleConfirmationThread, { now: new Date().toISOString() });
+  const confirmShortcutSettle = useCallback(() => {
+    if (
+      !settleConfirmationThread ||
+      settleConfirmationThreadKey !== routeThreadKeyRef.current ||
+      !settleConfirmationCanSettle
+    ) {
+      setSettleConfirmationThreadKey(null);
+      return;
+    }
+    attemptSettle(
+      scopeThreadRef(settleConfirmationThread.environmentId, settleConfirmationThread.id),
+    );
+  }, [
+    attemptSettle,
+    settleConfirmationCanSettle,
+    settleConfirmationThread,
+    settleConfirmationThreadKey,
+  ]);
+
+  useEffect(() => {
+    if (
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: settleConfirmationThreadKey,
+        routeThreadKey,
+        targetExists: settleConfirmationThread !== null,
+        targetExplicitlySettled: settleConfirmationThread?.settledOverride === "settled",
+        targetCanSettle: settleConfirmationCanSettle,
+      })
+    ) {
+      setSettleConfirmationThreadKey(null);
+    }
+  }, [
+    routeThreadKey,
+    settleConfirmationCanSettle,
+    settleConfirmationThread,
+    settleConfirmationThreadKey,
   ]);
 
   // Same predicate as v1: hints show only while the held modifiers exactly
@@ -2206,6 +2420,19 @@ export default function SidebarV2() {
     shortcutLabelForCommand(keybindings, "chat.new");
   return (
     <>
+      {hiddenChangeRequestReporterThreadKeys.map((threadKey) => {
+        const thread = allThreadByKey.get(threadKey);
+        return thread ? (
+          <SidebarV2HiddenThreadChangeRequestStateReporter
+            key={threadKey}
+            thread={thread}
+            threadProjectCwd={
+              projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+            }
+            onChangeRequestState={handleChangeRequestState}
+          />
+        ) : null;
+      })}
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent className="gap-0">
         <SidebarGroup className="px-2 pb-2 pt-3">
@@ -2720,6 +2947,34 @@ export default function SidebarV2() {
         </DialogPopup>
       </Dialog>
       <SidebarChromeFooter />
+      <AlertDialog
+        open={settleConfirmationThread !== null && settleConfirmationCanSettle}
+        onOpenChange={(open) => {
+          if (!open) setSettleConfirmationThreadKey(null);
+        }}
+      >
+        <AlertDialogPopup initialFocus={settleConfirmationButtonRef}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Settle this thread?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {settleConfirmationThread
+                ? `“${settleConfirmationThread.title}” will move out of active work. You can un-settle it later.`
+                : "This thread will move out of active work. You can un-settle it later."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              ref={settleConfirmationButtonRef}
+              disabled={!settleConfirmationCanSettle}
+              onClick={confirmShortcutSettle}
+            >
+              Settle thread
+              <Kbd className="ml-1 h-5 px-1.5">Enter</Kbd>
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </>
   );
 }

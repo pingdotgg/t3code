@@ -1,5 +1,11 @@
 import * as React from "react";
 import type { ContextMenuItem } from "@t3tools/contracts";
+import {
+  canSettle,
+  effectiveSnoozed,
+  effectiveSettled,
+  type ChangeRequestStateLike,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
@@ -44,6 +50,105 @@ type LogicalSidebarProject = SidebarProject & {
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
+
+export function shouldDismissThreadSettleConfirmation<T>(input: {
+  readonly confirmationThreadKey: T | null;
+  readonly routeThreadKey: T | null;
+  readonly targetExists: boolean;
+  readonly targetExplicitlySettled: boolean;
+  readonly targetCanSettle: boolean;
+}): boolean {
+  return (
+    input.confirmationThreadKey !== null &&
+    (input.confirmationThreadKey !== input.routeThreadKey ||
+      !input.targetExists ||
+      input.targetExplicitlySettled ||
+      !input.targetCanSettle)
+  );
+}
+
+export function getSidebarThreadKeysNeedingChangeRequestReporter<T>(
+  allThreadKeys: readonly T[],
+  visibleThreadKeys: ReadonlySet<T>,
+  sidebarThreadRowsMounted: boolean,
+): T[] {
+  return allThreadKeys.filter(
+    (threadKey) => !sidebarThreadRowsMounted || !visibleThreadKeys.has(threadKey),
+  );
+}
+
+export function resolveSidebarThreadGitCwd(input: {
+  readonly worktreePath: string | null;
+  readonly threadProjectCwd: string | null;
+  readonly sidebarProjectCwd: string | null;
+}): string | null {
+  return input.worktreePath ?? input.threadProjectCwd ?? input.sidebarProjectCwd;
+}
+
+export function shouldQuerySidebarThreadGitStatus(input: {
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+  readonly gitCwd: string | null;
+}): boolean {
+  return (input.branch !== null || input.worktreePath !== null) && input.gitCwd !== null;
+}
+
+export function shouldPublishSidebarChangeRequestState(isGitStatusPending: boolean): boolean {
+  return !isGitStatusPending;
+}
+
+export function pruneSidebarChangeRequestStates<T>(
+  current: ReadonlyMap<string, T>,
+  liveThreadKeys: ReadonlySet<string>,
+): ReadonlyMap<string, T> {
+  let next: Map<string, T> | null = null;
+  for (const threadKey of current.keys()) {
+    if (liveThreadKeys.has(threadKey)) continue;
+    next ??= new Map(current);
+    next.delete(threadKey);
+  }
+  return next ?? current;
+}
+
+export function isSidebarThreadEffectivelySettled(input: {
+  readonly thread: SidebarThreadSummary;
+  readonly settlementSupported: boolean;
+  readonly now: string;
+  readonly autoSettleAfterDays: number | null;
+  readonly changeRequestState?: ChangeRequestStateLike | null;
+}): boolean {
+  return (
+    input.settlementSupported &&
+    effectiveSettled(input.thread, {
+      now: input.now,
+      autoSettleAfterDays: input.autoSettleAfterDays,
+      ...(input.changeRequestState !== undefined
+        ? { changeRequestState: input.changeRequestState }
+        : {}),
+    })
+  );
+}
+
+export function isSidebarThreadEffectivelySnoozed(input: {
+  readonly thread: SidebarThreadSummary;
+  readonly snoozeSupported: boolean;
+  readonly now: string;
+}): boolean {
+  return input.snoozeSupported && effectiveSnoozed(input.thread, { now: input.now });
+}
+
+export function canSettleLegacySidebarRouteThread(input: {
+  readonly thread: SidebarThreadSummary | null;
+  readonly settlementSupported: boolean;
+  readonly now: string;
+}): boolean {
+  return (
+    input.thread !== null &&
+    input.settlementSupported &&
+    input.thread.settledOverride !== "settled" &&
+    canSettle(input.thread, { now: input.now })
+  );
+}
 
 export async function archiveSelectedThreadEntries<
   TEntry extends { readonly threadKey: string },
@@ -349,6 +454,33 @@ export function shouldNavigateAfterProjectRemoval(input: {
       thread.environmentId === routeTarget.threadRef.environmentId &&
       thread.id === routeTarget.threadRef.threadId,
   );
+}
+
+export function resolveNextActiveThreadIdAfterSettle<T>(input: {
+  threadIds: readonly T[];
+  fallbackThreadIds?: readonly T[];
+  settledThreadId: T;
+  isActive: (threadId: T) => boolean;
+}): T | null {
+  const rotateAfterSettledThread = (threadIds: readonly T[]): readonly T[] => {
+    const currentIndex = threadIds.indexOf(input.settledThreadId);
+    return currentIndex === -1
+      ? threadIds
+      : [...threadIds.slice(currentIndex + 1), ...threadIds.slice(0, currentIndex)];
+  };
+  const preferredThreadIds = input.threadIds.includes(input.settledThreadId)
+    ? rotateAfterSettledThread(input.threadIds)
+    : [];
+  const fallbackThreadIds = rotateAfterSettledThread(input.fallbackThreadIds ?? []);
+  const seen = new Set<T>([input.settledThreadId]);
+
+  for (const threadId of [...preferredThreadIds, ...fallbackThreadIds]) {
+    if (seen.has(threadId)) continue;
+    seen.add(threadId);
+    if (input.isActive(threadId)) return threadId;
+  }
+
+  return null;
 }
 
 export function isContextMenuPointerDown(input: {

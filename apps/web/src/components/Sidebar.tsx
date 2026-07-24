@@ -62,6 +62,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { type ChangeRequestStateLike } from "@t3tools/client-runtime/state/thread-settled";
 import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -80,6 +81,7 @@ import {
   readThreadShell,
   useProject,
   useProjects,
+  useServerConfigs,
   useThreadShells,
   useThreadShellsForProjectRefs,
 } from "../state/entities";
@@ -96,11 +98,10 @@ import {
 } from "../uiStateStore";
 import {
   resolveShortcutCommand,
+  resolveThreadSidebarShortcutAction,
   shortcutLabelForCommand,
   shouldShowThreadJumpHintsForModifiers,
   threadJumpCommandForIndex,
-  threadJumpIndexFromCommand,
-  threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
@@ -134,6 +135,15 @@ import {
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -168,19 +178,26 @@ import {
   useSidebar,
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
-import { openCommandPalette } from "../commandPaletteBus";
+import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  canSettleLegacySidebarRouteThread,
+  getSidebarThreadKeysNeedingChangeRequestReporter,
   getSidebarThreadIdsToPrewarm,
-  resolveAdjacentThreadId,
   isContextMenuPointerDown,
+  isSidebarThreadEffectivelySettled,
   isTrailingDoubleClick,
+  resolveNextActiveThreadIdAfterSettle,
   resolveProjectStatusIndicator,
+  resolveSidebarThreadGitCwd,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
+  shouldPublishSidebarChangeRequestState,
+  shouldQuerySidebarThreadGitStatus,
   shouldClearThreadSelectionOnMouseDown,
+  shouldDismissThreadSettleConfirmation,
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
   ThreadStatusPill,
@@ -189,6 +206,7 @@ import { sortThreads } from "../lib/threadSort";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
+import { useNowMinute } from "~/hooks/useNowMinute";
 import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -301,6 +319,52 @@ function buildThreadJumpLabelMap(input: {
   return mapping.size > 0 ? mapping : EMPTY_THREAD_JUMP_LABELS;
 }
 
+function SidebarHiddenThreadChangeRequestStateReporter(props: {
+  thread: SidebarThreadSummary;
+  projectCwd: string | null;
+  onChangeRequestState: (threadKey: string, state: ChangeRequestStateLike | null) => void;
+}) {
+  const { thread, projectCwd, onChangeRequestState } = props;
+  const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+  const threadProject = useProject(
+    useMemo(
+      () => scopeProjectRef(thread.environmentId, thread.projectId),
+      [thread.environmentId, thread.projectId],
+    ),
+  );
+  const gitCwd = resolveSidebarThreadGitCwd({
+    worktreePath: thread.worktreePath,
+    threadProjectCwd: threadProject?.workspaceRoot ?? null,
+    sidebarProjectCwd: projectCwd,
+  });
+  const gitStatus = useEnvironmentQuery(
+    gitCwd !== null &&
+      shouldQuerySidebarThreadGitStatus({
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        gitCwd,
+      })
+      ? vcsEnvironment.status({
+          environmentId: thread.environmentId,
+          input: { cwd: gitCwd },
+        })
+      : null,
+  );
+  const prState =
+    resolveThreadPr({
+      threadBranch: thread.branch,
+      gitStatus: gitStatus.data,
+      hasDedicatedWorktree: thread.worktreePath !== null,
+    })?.state ?? null;
+
+  useEffect(() => {
+    if (!shouldPublishSidebarChangeRequestState(gitStatus.isPending)) return;
+    onChangeRequestState(threadKey, prState);
+  }, [gitStatus.isPending, onChangeRequestState, prState, threadKey]);
+
+  return null;
+}
+
 interface SidebarThreadRowProps {
   thread: SidebarThreadSummary;
   projectCwd: string | null;
@@ -337,6 +401,7 @@ interface SidebarThreadRowProps {
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
+  onChangeRequestState: (threadKey: string, state: ChangeRequestStateLike | null) => void;
 }
 
 export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
@@ -363,6 +428,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     cancelRename,
     attemptArchiveThread,
     openPrLink,
+    onChangeRequestState,
     thread,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
@@ -406,9 +472,18 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     ),
   );
   const threadProjectCwd = threadProject?.workspaceRoot ?? null;
-  const gitCwd = thread.worktreePath ?? threadProjectCwd ?? props.projectCwd;
+  const gitCwd = resolveSidebarThreadGitCwd({
+    worktreePath: thread.worktreePath,
+    threadProjectCwd,
+    sidebarProjectCwd: props.projectCwd,
+  });
   const gitStatus = useEnvironmentQuery(
-    thread.branch != null && gitCwd !== null
+    gitCwd !== null &&
+      shouldQuerySidebarThreadGitStatus({
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        gitCwd,
+      })
       ? vcsEnvironment.status({
           environmentId: thread.environmentId,
           input: { cwd: gitCwd },
@@ -455,6 +530,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     hasDedicatedWorktree: thread.worktreePath !== null,
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const prState = pr?.state ?? null;
+  useEffect(() => {
+    if (!shouldPublishSidebarChangeRequestState(gitStatus.isPending)) return;
+    onChangeRequestState(threadKey, prState);
+  }, [gitStatus.isPending, onChangeRequestState, prState, threadKey]);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
@@ -921,6 +1001,7 @@ interface SidebarProjectThreadListProps {
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
+  onChangeRequestState: (threadKey: string, state: ChangeRequestStateLike | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
 }
@@ -961,6 +1042,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     cancelRename,
     attemptArchiveThread,
     openPrLink,
+    onChangeRequestState,
     expandThreadListForProject,
     collapseThreadListForProject,
   } = props;
@@ -1012,6 +1094,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               cancelRename={cancelRename}
               attemptArchiveThread={attemptArchiveThread}
               openPrLink={openPrLink}
+              onChangeRequestState={onChangeRequestState}
             />
           );
         })}
@@ -1062,6 +1145,7 @@ interface SidebarProjectItemProps {
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   threadJumpLabelByKey: ReadonlyMap<string, string>;
+  onChangeRequestState: (threadKey: string, state: ChangeRequestStateLike | null) => void;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
@@ -1082,6 +1166,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     archiveThread,
     deleteThread,
     threadJumpLabelByKey,
+    onChangeRequestState,
     attachThreadListAutoAnimateRef,
     expandThreadListForProject,
     collapseThreadListForProject,
@@ -2355,6 +2440,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         cancelRename={cancelRename}
         attemptArchiveThread={attemptArchiveThread}
         openPrLink={openPrLink}
+        onChangeRequestState={onChangeRequestState}
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
       />
@@ -2753,6 +2839,7 @@ interface SidebarProjectsContentProps {
   newThreadShortcutLabel: string | null;
   commandPaletteShortcutLabel: string | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
+  onChangeRequestState: (threadKey: string, state: ChangeRequestStateLike | null) => void;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
@@ -2793,6 +2880,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     newThreadShortcutLabel,
     commandPaletteShortcutLabel,
     threadJumpLabelByKey,
+    onChangeRequestState,
     attachThreadListAutoAnimateRef,
     expandThreadListForProject,
     collapseThreadListForProject,
@@ -2930,6 +3018,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         archiveThread={archiveThread}
                         deleteThread={deleteThread}
                         threadJumpLabelByKey={threadJumpLabelByKey}
+                        onChangeRequestState={onChangeRequestState}
                         attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                         expandThreadListForProject={expandThreadListForProject}
                         collapseThreadListForProject={collapseThreadListForProject}
@@ -2962,6 +3051,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 archiveThread={archiveThread}
                 deleteThread={deleteThread}
                 threadJumpLabelByKey={threadJumpLabelByKey}
+                onChangeRequestState={onChangeRequestState}
                 attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                 expandThreadListForProject={expandThreadListForProject}
                 collapseThreadListForProject={collapseThreadListForProject}
@@ -2998,9 +3088,11 @@ export default function Sidebar() {
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
+  const sidebarAutoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
-  const { archiveThread, deleteThread } = useThreadActions();
+  const { archiveThread, deleteThread, settleThread } = useThreadActions();
+  const serverConfigs = useServerConfigs();
   const { isMobile, setOpenMobile } = useSidebar();
   const routeTarget = useParams({
     strict: false,
@@ -3014,6 +3106,47 @@ export default function Sidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  const routeThreadKeyRef = useRef(routeThreadKey);
+  routeThreadKeyRef.current = routeThreadKey;
+  const [settleConfirmationThreadKey, setSettleConfirmationThreadKey] = useState<string | null>(
+    null,
+  );
+  const settleConfirmationButtonRef = useRef<HTMLButtonElement>(null);
+  const settlementNowMinute = useNowMinute();
+  const settlementNow = `${settlementNowMinute}:00.000Z`;
+  const [changeRequestStateByThreadKey, setChangeRequestStateByThreadKey] = useState<
+    ReadonlyMap<string, ChangeRequestStateLike>
+  >(() => new Map());
+  const handleChangeRequestState = useCallback(
+    (threadKey: string, state: ChangeRequestStateLike | null) => {
+      setChangeRequestStateByThreadKey((current) => {
+        if ((current.get(threadKey) ?? null) === state) return current;
+        const next = new Map(current);
+        if (state === null) {
+          next.delete(threadKey);
+        } else {
+          next.set(threadKey, state);
+        }
+        return next;
+      });
+    },
+    [],
+  );
+  const isThreadEffectivelySettled = useCallback(
+    (thread: SidebarThreadSummary) => {
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      return isSidebarThreadEffectivelySettled({
+        thread,
+        settlementSupported:
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
+          true,
+        now: settlementNow,
+        autoSettleAfterDays: sidebarAutoSettleAfterDays,
+        changeRequestState: changeRequestStateByThreadKey.get(threadKey) ?? null,
+      });
+    },
+    [changeRequestStateByThreadKey, serverConfigs, settlementNow, sidebarAutoSettleAfterDays],
+  );
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
@@ -3151,6 +3284,21 @@ export default function Sidebar() {
     }
     return next;
   }, [sidebarThreads, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
+  const sidebarProjectCwdByThreadKey = useMemo(
+    () =>
+      new Map(
+        sidebarThreads.map((thread) => {
+          const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+          const scopedProject = scopedProjectKey(
+            scopeProjectRef(thread.environmentId, thread.projectId),
+          );
+          const physicalKey = projectPhysicalKeyByScopedRef.get(scopedProject) ?? scopedProject;
+          const logicalKey = physicalToLogicalKey.get(physicalKey) ?? physicalKey;
+          return [threadKey, sidebarProjectByKey.get(logicalKey)?.workspaceRoot ?? null] as const;
+        }),
+      ),
+    [physicalToLogicalKey, projectPhysicalKeyByScopedRef, sidebarProjectByKey, sidebarThreads],
+  );
   const getCurrentSidebarShortcutContext = useCallback(
     () => ({
       terminalFocus: isTerminalFocused(),
@@ -3384,6 +3532,38 @@ export default function Sidebar() {
     ? threadJumpLabelByKey
     : EMPTY_THREAD_JUMP_LABELS;
   const orderedSidebarThreadKeys = visibleSidebarThreadKeys;
+  const allUnarchivedSidebarThreadKeys = useMemo(
+    () =>
+      sortedProjects.flatMap((project) =>
+        sortThreads(
+          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
+            (thread) => thread.archivedAt === null,
+          ),
+          sidebarThreadSortOrder,
+        ).map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+      ),
+    [sidebarThreadSortOrder, sortedProjects, threadsByProjectKey],
+  );
+  const visibleSidebarThreadKeySet = useMemo(
+    () => new Set(visibleSidebarThreadKeys),
+    [visibleSidebarThreadKeys],
+  );
+  const changeRequestReporterThreadKeys = useMemo(
+    () =>
+      getSidebarThreadKeysNeedingChangeRequestReporter(
+        allUnarchivedSidebarThreadKeys,
+        visibleSidebarThreadKeySet,
+        !isOnSettings,
+      ),
+    [allUnarchivedSidebarThreadKeys, isOnSettings, visibleSidebarThreadKeySet],
+  );
+  useEffect(() => {
+    const liveThreadKeys = new Set(allUnarchivedSidebarThreadKeys);
+    setChangeRequestStateByThreadKey((current) => {
+      if ([...current.keys()].every((threadKey) => liveThreadKeys.has(threadKey))) return current;
+      return new Map([...current].filter(([threadKey]) => liveThreadKeys.has(threadKey)));
+    });
+  }, [allUnarchivedSidebarThreadKeys]);
   const prewarmedSidebarThreadKeys = useMemo(
     () => getSidebarThreadIdsToPrewarm(visibleSidebarThreadKeys),
     [visibleSidebarThreadKeys],
@@ -3395,6 +3575,64 @@ export default function Sidebar() {
         return ref ? [ref] : [];
       }),
     [prewarmedSidebarThreadKeys],
+  );
+  const settlingThreadKeysRef = useRef(new Set<string>());
+
+  const attemptShortcutSettle = useCallback(
+    (threadKey: string) => {
+      const thread = sidebarThreadByKey.get(threadKey);
+      if (!thread || settlingThreadKeysRef.current.has(threadKey)) return;
+      settlingThreadKeysRef.current.add(threadKey);
+      setSettleConfirmationThreadKey((current) => (current === threadKey ? null : current));
+
+      const nextThreadKey = resolveNextActiveThreadIdAfterSettle({
+        threadIds: orderedSidebarThreadKeys,
+        fallbackThreadIds: allUnarchivedSidebarThreadKeys,
+        settledThreadId: threadKey,
+        isActive: (candidateKey) => {
+          const candidate = sidebarThreadByKey.get(candidateKey);
+          return candidate != null && !isThreadEffectivelySettled(candidate);
+        },
+      });
+      const nextThread = nextThreadKey ? sidebarThreadByKey.get(nextThreadKey) : null;
+
+      void (async () => {
+        try {
+          const result = await settleThread(scopeThreadRef(thread.environmentId, thread.id));
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to settle thread",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
+            return;
+          }
+          if (routeThreadKeyRef.current === threadKey) {
+            if (nextThread) {
+              navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id));
+            } else {
+              void handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId));
+            }
+          }
+        } finally {
+          settlingThreadKeysRef.current.delete(threadKey);
+        }
+      })();
+    },
+    [
+      allUnarchivedSidebarThreadKeys,
+      handleNewThread,
+      isThreadEffectivelySettled,
+      navigateToThread,
+      orderedSidebarThreadKeys,
+      settleThread,
+      sidebarThreadByKey,
+    ],
   );
 
   useEffect(() => {
@@ -3408,49 +3646,43 @@ export default function Sidebar() {
       if (event.defaultPrevented || event.repeat) {
         return;
       }
+      if (isCommandPaletteOpen() || isModelPickerOpen()) return;
 
       const command = resolveShortcutCommand(event, keybindings, {
         platform,
         context: shortcutContext,
       });
-      const traversalDirection = threadTraversalDirectionFromCommand(command);
-      if (traversalDirection !== null) {
-        const targetThreadKey = resolveAdjacentThreadId({
-          threadIds: orderedSidebarThreadKeys,
-          currentThreadId: routeThreadKey,
-          direction: traversalDirection,
-        });
-        if (!targetThreadKey) {
-          return;
-        }
-        const targetThread = sidebarThreadByKey.get(targetThreadKey);
-        if (!targetThread) {
-          return;
-        }
-
+      const routeThread = routeThreadKey ? sidebarThreadByKey.get(routeThreadKey) : null;
+      const action = resolveThreadSidebarShortcutAction({
+        command,
+        orderedThreadKeys: orderedSidebarThreadKeys,
+        jumpThreadKeys: threadJumpThreadKeys,
+        routeThreadKey,
+        settleConfirmationThreadKey,
+        canSettleRouteThread: canSettleLegacySidebarRouteThread({
+          thread: routeThread ?? null,
+          settlementSupported:
+            routeThread != null &&
+            serverConfigs.get(routeThread.environmentId)?.environment.capabilities
+              .threadSettlement === true,
+          now: new Date().toISOString(),
+        }),
+        isRouteThreadSettling:
+          routeThreadKey !== null && settlingThreadKeysRef.current.has(routeThreadKey),
+      });
+      if (action.type === "none") return;
+      if (action.type === "navigate") {
+        const targetThread = sidebarThreadByKey.get(action.threadKey);
+        if (!targetThread) return;
         event.preventDefault();
         event.stopPropagation();
         navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
         return;
       }
-
-      const jumpIndex = threadJumpIndexFromCommand(command ?? "");
-      if (jumpIndex === null) {
-        return;
-      }
-
-      const targetThreadKey = threadJumpThreadKeys[jumpIndex];
-      if (!targetThreadKey) {
-        return;
-      }
-      const targetThread = sidebarThreadByKey.get(targetThreadKey);
-      if (!targetThread) {
-        return;
-      }
-
       event.preventDefault();
       event.stopPropagation();
-      navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+      if (action.type === "consume") return;
+      setSettleConfirmationThreadKey(action.threadKey);
     };
 
     window.addEventListener("keydown", onWindowKeyDown);
@@ -3460,13 +3692,59 @@ export default function Sidebar() {
     };
   }, [
     getCurrentSidebarShortcutContext,
+    isThreadEffectivelySettled,
     keybindings,
     navigateToThread,
     orderedSidebarThreadKeys,
     platform,
     routeThreadKey,
+    serverConfigs,
+    settleConfirmationThreadKey,
     sidebarThreadByKey,
     threadJumpThreadKeys,
+  ]);
+
+  const settleConfirmationThread = settleConfirmationThreadKey
+    ? (sidebarThreadByKey.get(settleConfirmationThreadKey) ?? null)
+    : null;
+  const settleConfirmationCanSettle =
+    settleConfirmationThread !== null &&
+    serverConfigs.get(settleConfirmationThread.environmentId)?.environment.capabilities
+      .threadSettlement === true &&
+    canSettleLegacySidebarRouteThread({
+      thread: settleConfirmationThread,
+      settlementSupported: true,
+      now: new Date().toISOString(),
+    });
+  const confirmShortcutSettle = useCallback(() => {
+    if (
+      !settleConfirmationThreadKey ||
+      settleConfirmationThreadKey !== routeThreadKeyRef.current ||
+      !settleConfirmationCanSettle
+    ) {
+      setSettleConfirmationThreadKey(null);
+      return;
+    }
+    attemptShortcutSettle(settleConfirmationThreadKey);
+  }, [attemptShortcutSettle, settleConfirmationCanSettle, settleConfirmationThreadKey]);
+
+  useEffect(() => {
+    if (
+      shouldDismissThreadSettleConfirmation({
+        confirmationThreadKey: settleConfirmationThreadKey,
+        routeThreadKey,
+        targetExists: settleConfirmationThread !== null,
+        targetExplicitlySettled: settleConfirmationThread?.settledOverride === "settled",
+        targetCanSettle: settleConfirmationCanSettle,
+      })
+    ) {
+      setSettleConfirmationThreadKey(null);
+    }
+  }, [
+    routeThreadKey,
+    settleConfirmationCanSettle,
+    settleConfirmationThread,
+    settleConfirmationThreadKey,
   ]);
 
   useEffect(() => {
@@ -3588,6 +3866,17 @@ export default function Sidebar() {
 
   return (
     <>
+      {changeRequestReporterThreadKeys.map((threadKey) => {
+        const thread = sidebarThreadByKey.get(threadKey);
+        return thread ? (
+          <SidebarHiddenThreadChangeRequestStateReporter
+            key={threadKey}
+            thread={thread}
+            projectCwd={sidebarProjectCwdByThreadKey.get(threadKey) ?? null}
+            onChangeRequestState={handleChangeRequestState}
+          />
+        ) : null;
+      })}
       {prewarmedSidebarThreadRefs.map((threadRef) => (
         <SidebarThreadDetailPrewarmer key={scopedThreadKey(threadRef)} threadRef={threadRef} />
       ))}
@@ -3624,6 +3913,7 @@ export default function Sidebar() {
             newThreadShortcutLabel={newThreadShortcutLabel}
             commandPaletteShortcutLabel={commandPaletteShortcutLabel}
             threadJumpLabelByKey={visibleThreadJumpLabelByKey}
+            onChangeRequestState={handleChangeRequestState}
             attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
             expandThreadListForProject={expandThreadListForProject}
             collapseThreadListForProject={collapseThreadListForProject}
@@ -3638,6 +3928,34 @@ export default function Sidebar() {
           <SidebarChromeFooter />
         </>
       )}
+      <AlertDialog
+        open={settleConfirmationThread !== null && settleConfirmationCanSettle}
+        onOpenChange={(open) => {
+          if (!open) setSettleConfirmationThreadKey(null);
+        }}
+      >
+        <AlertDialogPopup initialFocus={settleConfirmationButtonRef}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Settle this thread?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {settleConfirmationThread
+                ? `“${settleConfirmationThread.title}” will move out of active work. You can un-settle it later.`
+                : "This thread will move out of active work. You can un-settle it later."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              ref={settleConfirmationButtonRef}
+              disabled={!settleConfirmationCanSettle}
+              onClick={confirmShortcutSettle}
+            >
+              Settle thread
+              <Kbd className="ml-1 h-5 px-1.5">Enter</Kbd>
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </>
   );
 }
