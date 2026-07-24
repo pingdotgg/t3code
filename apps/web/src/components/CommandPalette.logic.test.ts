@@ -5,8 +5,35 @@ import {
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
+  shouldHandleCommandPaletteShortcut,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+
+describe("shouldHandleCommandPaletteShortcut", () => {
+  it("does not capture the add-project shortcut from an editable target", () => {
+    expect(
+      shouldHandleCommandPaletteShortcut({
+        command: "project.add",
+        editableTarget: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("still handles add-project outside editors and the palette toggle everywhere", () => {
+    expect(
+      shouldHandleCommandPaletteShortcut({
+        command: "project.add",
+        editableTarget: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldHandleCommandPaletteShortcut({
+        command: "commandPalette.toggle",
+        editableTarget: true,
+      }),
+    ).toBe(true);
+  });
+});
 
 describe("enumerateCommandPaletteItems", () => {
   it("assigns positional jump shortcuts to the first nine displayed items", () => {

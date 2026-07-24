@@ -102,6 +102,7 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
+  shouldHandleCommandPaletteShortcut,
 } from "./CommandPalette.logic";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -408,16 +409,31 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           terminalOpen,
         },
       });
-      if (command !== "commandPalette.toggle") {
+      const target =
+        event.target instanceof Element
+          ? event.target.closest(
+              'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+            )
+          : null;
+      if (
+        !shouldHandleCommandPaletteShortcut({
+          command,
+          editableTarget: target !== null,
+        })
+      ) {
         return;
       }
       event.preventDefault();
       event.stopPropagation();
-      toggleOpen();
+      if (command === "project.add") {
+        openAddProject();
+      } else {
+        toggleOpen();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, terminalOpen, toggleOpen]);
+  }, [keybindings, openAddProject, terminalOpen, toggleOpen]);
 
   useEffect(
     () =>
@@ -1146,6 +1162,35 @@ function OpenCommandPaletteDialog(props: {
   ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+  const addProjectAction: CommandPaletteActionItem = {
+    kind: "action",
+    value: "action:add-project",
+    searchTerms: [
+      "add project",
+      "folder",
+      "directory",
+      "browse",
+      "clone",
+      "remote",
+      "repository",
+      "repo",
+      "git",
+      "github",
+      "gitlab",
+      "bitbucket",
+      "azure",
+      "devops",
+      "url",
+      "environment",
+    ],
+    title: "Add project",
+    icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "project.add",
+    keepOpen: true,
+    run: async () => {
+      openAddProjectFlow();
+    },
+  };
 
   if (projects.length > 0) {
     const activeProjectTitle =
@@ -1182,38 +1227,14 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread in...",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+      groups: [
+        { value: "projects", label: "Projects", items: projectThreadItems },
+        { value: "actions", label: "Actions", items: [addProjectAction] },
+      ],
     });
   }
 
-  actionItems.push({
-    kind: "action",
-    value: "action:add-project",
-    searchTerms: [
-      "add project",
-      "folder",
-      "directory",
-      "browse",
-      "clone",
-      "remote",
-      "repository",
-      "repo",
-      "git",
-      "github",
-      "gitlab",
-      "bitbucket",
-      "azure",
-      "devops",
-      "url",
-      "environment",
-    ],
-    title: "Add project",
-    icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
-    keepOpen: true,
-    run: async () => {
-      openAddProjectFlow();
-    },
-  });
+  actionItems.push(addProjectAction);
 
   if (wslAddProjectEnvironmentOption) {
     actionItems.push({
