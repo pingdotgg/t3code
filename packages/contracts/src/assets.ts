@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EventId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
@@ -15,6 +15,10 @@ export const AssetResource = Schema.Union([
   /** A file in the server's browser-artifacts directory (screenshots/recordings). */
   Schema.TaggedStruct("browser-artifact", {
     fileName: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  }),
+  Schema.TaggedStruct("thread-image", {
+    threadId: ThreadId,
+    activityId: EventId,
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
@@ -148,6 +152,29 @@ export class AssetBrowserArtifactNotFoundError extends Schema.TaggedErrorClass<A
   }
 }
 
+export class AssetThreadImageNotFoundError extends Schema.TaggedErrorClass<AssetThreadImageNotFoundError>()(
+  "AssetThreadImageNotFoundError",
+  {
+    resource: AssetResource,
+  },
+) {
+  override get message(): string {
+    return "Image view asset was not found.";
+  }
+}
+
+export class AssetThreadImageResolutionError extends Schema.TaggedErrorClass<AssetThreadImageResolutionError>()(
+  "AssetThreadImageResolutionError",
+  {
+    resource: AssetResource,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to resolve image view asset.";
+  }
+}
+
 export class AssetProjectFaviconResolutionError extends Schema.TaggedErrorClass<AssetProjectFaviconResolutionError>()(
   "AssetProjectFaviconResolutionError",
   {
@@ -206,6 +233,8 @@ export const AssetAccessError = Schema.Union([
   AssetWorkspaceResolutionError,
   AssetAttachmentNotFoundError,
   AssetBrowserArtifactNotFoundError,
+  AssetThreadImageNotFoundError,
+  AssetThreadImageResolutionError,
   AssetProjectFaviconResolutionError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,

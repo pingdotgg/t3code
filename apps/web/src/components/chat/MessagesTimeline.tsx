@@ -1,4 +1,5 @@
 import {
+  EventId,
   type EnvironmentId,
   type MessageId,
   type ScopedThreadRef,
@@ -81,6 +82,7 @@ import {
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
   type StableMessagesTimelineRowsState,
+  type TimelineImageOutput,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
   type TimelineLatestTurn,
@@ -100,6 +102,7 @@ import {
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
+import { useAssetUrlState } from "~/assets/assetUrls";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
@@ -852,6 +855,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+      {row.kind === "image-output" ? <ImageOutputTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
@@ -1025,6 +1029,13 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           isStreaming={Boolean(row.message.streaming)}
           skills={ctx.skills}
         />
+        {ctx.threadRef && row.assistantImageOutputs?.length ? (
+          <ImageOutputGallery
+            images={row.assistantImageOutputs}
+            threadRef={ctx.threadRef}
+            className="mt-3"
+          />
+        ) : null}
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}
@@ -1967,6 +1978,90 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 }
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
+
+function imageFileName(path: string): string {
+  return path.split(/[\\/]/).at(-1) || "Image";
+}
+
+function ImageOutputTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "image-output" }> }) {
+  const { threadRef } = use(TimelineRowCtx);
+  if (!threadRef) return null;
+  return <ImageOutputGallery images={row.images} threadRef={threadRef} />;
+}
+
+function ImageOutputGallery({
+  images,
+  threadRef,
+  className,
+}: {
+  images: TimelineImageOutput[];
+  threadRef: ScopedThreadRef;
+  className?: string;
+}) {
+  return (
+    <article
+      className={cn("flex max-w-full items-start gap-2 overflow-x-auto px-1 pb-1", className)}
+      aria-label={images.length === 1 ? "Image output" : "Image outputs"}
+    >
+      {images.map((image) => (
+        <ImageOutputThumbnail key={image.imagePath} image={image} threadRef={threadRef} />
+      ))}
+    </article>
+  );
+}
+
+function ImageOutputThumbnail({
+  image,
+  threadRef,
+}: {
+  image: TimelineImageOutput;
+  threadRef: ScopedThreadRef;
+}) {
+  const { activeThreadEnvironmentId, onImageExpand } = use(TimelineRowCtx);
+  const imageName = imageFileName(image.imagePath);
+  const assetUrl = useAssetUrlState(activeThreadEnvironmentId, {
+    _tag: "thread-image",
+    threadId: threadRef.threadId,
+    activityId: EventId.make(image.entry.id),
+  });
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const loadedUrl = assetUrl._tag === "Success" && assetUrl.url !== failedUrl ? assetUrl.url : null;
+  const failed = assetUrl._tag === "Failure" || failedUrl !== null;
+
+  return (
+    <div className="shrink-0" data-image-view-activity-id={image.entry.id}>
+      {loadedUrl ? (
+        <button
+          type="button"
+          className="block size-32 cursor-zoom-in overflow-hidden rounded-xl border border-border/70 bg-muted/20 p-1 transition-colors hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+          aria-label={`Preview ${imageName}`}
+          onClick={() =>
+            onImageExpand({
+              images: [{ src: loadedUrl, name: imageName }],
+              index: 0,
+            })
+          }
+        >
+          <img
+            src={loadedUrl}
+            alt={imageName}
+            className="block size-full rounded-md object-contain"
+            onError={() => setFailedUrl(loadedUrl)}
+          />
+        </button>
+      ) : failed ? (
+        <div className="flex size-32 items-center justify-center rounded-xl border border-dashed border-border/70 bg-muted/20 px-3 text-center text-xs text-muted-foreground">
+          Image no longer available
+        </div>
+      ) : (
+        <div
+          className="size-32 animate-pulse rounded-xl border border-border/50 bg-muted/35"
+          aria-label={`Loading ${imageName}`}
+        />
+      )}
+    </div>
+  );
+}
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;

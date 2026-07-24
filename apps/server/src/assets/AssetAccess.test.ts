@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ThreadId } from "@t3tools/contracts";
+import { EventId, ThreadId } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -267,6 +267,67 @@ describe("AssetAccess", () => {
         kind: "file",
         path: attachmentPath,
       });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues exact capabilities for image view activities outside the workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-image-view-",
+      });
+      const imagePath = path.join(directory, "tool-output.png");
+      yield* fileSystem.writeFile(imagePath, new Uint8Array([137, 80, 78, 71]));
+      const canonicalImagePath = yield* fileSystem.realPath(imagePath);
+      const resource = {
+        _tag: "thread-image" as const,
+        threadId: ThreadId.make("thread-1"),
+        activityId: EventId.make("activity-1"),
+      };
+
+      const result = yield* issueAssetUrl({
+        resource,
+        threadImagePath: imagePath,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "tool-output.png")).toEqual({
+        kind: "file",
+        path: canonicalImagePath,
+      });
+      expect(yield* resolveAsset(token, "other.png")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects missing and non-image paths for image view activities", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-image-view-invalid-",
+      });
+      const textPath = path.join(directory, "notes.txt");
+      yield* fileSystem.writeFileString(textPath, "not an image");
+      const resource = {
+        _tag: "thread-image" as const,
+        threadId: ThreadId.make("thread-1"),
+        activityId: EventId.make("activity-1"),
+      };
+
+      const unsupportedError = yield* issueAssetUrl({
+        resource,
+        threadImagePath: textPath,
+      }).pipe(Effect.flip);
+      expect(unsupportedError._tag).toBe("AssetThreadImageNotFoundError");
+
+      const missingError = yield* issueAssetUrl({
+        resource,
+        threadImagePath: path.join(directory, "missing.png"),
+      }).pipe(Effect.flip);
+      expect(missingError._tag).toBe("AssetThreadImageNotFoundError");
     }).pipe(Effect.provide(testLayer)),
   );
 

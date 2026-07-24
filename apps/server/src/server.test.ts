@@ -4678,6 +4678,83 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("issues image view asset URLs only for the exact thread activity", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const imageDirectory = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-image-view-",
+      });
+      const imagePath = path.join(imageDirectory, "tool-output.png");
+      yield* fs.writeFile(imagePath, new Uint8Array([137, 80, 78, 71]));
+      const activityId = EventId.make("image-view-activity");
+      const thread = {
+        ...makeDefaultOrchestrationReadModel().threads[0]!,
+        activities: [
+          {
+            id: activityId,
+            tone: "tool" as const,
+            kind: "tool.completed",
+            summary: "Image view",
+            payload: {
+              itemType: "image_view",
+              data: {
+                item: {
+                  type: "imageGeneration",
+                  savedPath: imagePath,
+                  status: "completed",
+                },
+              },
+            },
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadDetailById: (threadId) =>
+              Effect.succeed(threadId === defaultThreadId ? Option.some(thread) : Option.none()),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.assetsCreateUrl]({
+            resource: {
+              _tag: "thread-image",
+              threadId: defaultThreadId,
+              activityId,
+            },
+          }),
+        ),
+      );
+      assert.include(response.relativeUrl, "/tool-output.png");
+
+      const unrelatedActivityResult = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.assetsCreateUrl]({
+            resource: {
+              _tag: "thread-image",
+              threadId: defaultThreadId,
+              activityId: EventId.make("unrelated-activity"),
+            },
+          }).pipe(Effect.result),
+        ),
+      );
+      if (
+        unrelatedActivityResult._tag !== "Failure" ||
+        unrelatedActivityResult.failure._tag !== "AssetThreadImageNotFoundError"
+      ) {
+        assert.fail("Expected an AssetThreadImageNotFoundError");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("creates a missing workspace root during websocket project.create dispatch", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -7,6 +7,8 @@ import {
   AssetProjectFaviconNotFoundError,
   AssetProjectFaviconResolutionError,
   AssetSigningKeyLoadError,
+  AssetThreadImageNotFoundError,
+  AssetThreadImageResolutionError,
   AssetWorkspaceAssetInspectionError,
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceContextNotFoundError,
@@ -85,6 +87,12 @@ const AssetClaimsSchema = Schema.Union([
     version: Schema.Literal(1),
     kind: Schema.Literal("browser-artifact"),
     fileName: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("thread-image"),
+    path: Schema.String,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -199,6 +207,7 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
+  readonly threadImagePath?: string;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -328,6 +337,55 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = artifactFileName;
       break;
     }
+    case "thread-image": {
+      if (
+        !input.threadImagePath ||
+        !path.isAbsolute(input.threadImagePath) ||
+        !isWorkspaceImagePreviewPath(input.threadImagePath)
+      ) {
+        return yield* new AssetThreadImageNotFoundError({
+          resource: input.resource,
+        });
+      }
+      const canonicalPath = yield* optionOnNotFound(
+        fileSystem.realPath(input.threadImagePath),
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AssetThreadImageResolutionError({
+              resource: input.resource,
+              cause,
+            }),
+        ),
+      );
+      if (Option.isNone(canonicalPath)) {
+        return yield* new AssetThreadImageNotFoundError({
+          resource: input.resource,
+        });
+      }
+      const info = yield* optionOnNotFound(fileSystem.stat(canonicalPath.value)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AssetThreadImageResolutionError({
+              resource: input.resource,
+              cause,
+            }),
+        ),
+      );
+      if (Option.isNone(info) || info.value.type !== "File") {
+        return yield* new AssetThreadImageNotFoundError({
+          resource: input.resource,
+        });
+      }
+      claims = {
+        version: 1,
+        kind: "thread-image",
+        path: canonicalPath.value,
+        expiresAt,
+      };
+      fileName = path.basename(canonicalPath.value);
+      break;
+    }
     case "project-favicon": {
       const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(input.resource.cwd).pipe(
         Effect.mapError(
@@ -452,6 +510,25 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     const artifactPath = path.join(config.browserArtifactsDir, artifactFileName);
     return (yield* statIsFile(artifactPath))
       ? ({ kind: "file", path: artifactPath } satisfies ResolvedAsset)
+      : null;
+  }
+
+  if (claims.kind === "thread-image") {
+    const decodedPath = decodeRelativePath(relativePath);
+    const path = yield* Path.Path;
+    if (decodedPath !== path.basename(claims.path)) return null;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const info = yield* optionOnNotFound(fileSystem.stat(claims.path)).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to inspect image view asset.", {
+          path: claims.path,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    return Option.isSome(info) && info.value.type === "File"
+      ? ({ kind: "file", path: claims.path } satisfies ResolvedAsset)
       : null;
   }
 

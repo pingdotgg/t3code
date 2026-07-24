@@ -51,6 +51,8 @@ import {
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
+  AssetThreadImageNotFoundError,
+  AssetThreadImageResolutionError,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -116,6 +118,27 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+
+function asUnknownRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function extractImageViewPath(payload: unknown): string | null {
+  const payloadRecord = asUnknownRecord(payload);
+  if (payloadRecord?.itemType !== "image_view") return null;
+  const data = asUnknownRecord(payloadRecord.data);
+  const item = asUnknownRecord(data?.item);
+  const rawPath =
+    item?.type === "imageView"
+      ? item.path
+      : item?.type === "imageGeneration"
+        ? item.savedPath
+        : null;
+  if (typeof rawPath !== "string") return null;
+  const path = rawPath.trim();
+  return path.length > 0 ? path : null;
+}
+
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -1701,6 +1724,35 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
+              if (input.resource._tag === "thread-image") {
+                const resource = input.resource;
+                const thread = yield* projectionSnapshotQuery
+                  .getThreadDetailById(resource.threadId)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new AssetThreadImageResolutionError({
+                          resource,
+                          cause,
+                        }),
+                    ),
+                  );
+                const activity = Option.isSome(thread)
+                  ? thread.value.activities.find(
+                      (candidate) => candidate.id === resource.activityId,
+                    )
+                  : undefined;
+                const threadImagePath = activity ? extractImageViewPath(activity.payload) : null;
+                if (!threadImagePath) {
+                  return yield* new AssetThreadImageNotFoundError({
+                    resource,
+                  });
+                }
+                return yield* issueAssetUrl({
+                  resource,
+                  threadImagePath,
+                });
+              }
               if (input.resource._tag !== "workspace-file") {
                 return yield* issueAssetUrl({ resource: input.resource });
               }

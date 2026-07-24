@@ -122,6 +122,13 @@ vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
 });
 
+vi.mock("~/assets/assetUrls", () => ({
+  useAssetUrlState: () => ({
+    _tag: "Success",
+    url: "https://environment.example/api/assets/image-token/tool-output.png",
+  }),
+}));
+
 function matchMedia() {
   return {
     matches: false,
@@ -639,5 +646,110 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("lucide-x");
     expect(markup).toContain('aria-label="Tool call failed"');
+  });
+
+  it("renders deduplicated image view output as a compact gallery row", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const assistantMessageId = MessageId.make("assistant-final");
+    const turnId = TurnId.make("turn-image-view");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        workspaceRoot="/repo"
+        turnDiffSummaryByAssistantMessageId={
+          new Map([
+            [
+              assistantMessageId,
+              {
+                turnId,
+                checkpointTurnCount: 1,
+                checkpointRef: CheckpointRef.make("checkpoint-image-view"),
+                status: "ready",
+                files: [{ path: "image.ts", kind: "modified", additions: 2, deletions: 1 }],
+                assistantMessageId,
+                completedAt: "2026-03-17T19:12:30.000Z",
+              },
+            ],
+          ])
+        }
+        timelineEntries={[
+          {
+            id: "entry-image-view",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "image-view-complete",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              turnId,
+              label: "Image view",
+              tone: "tool",
+              itemType: "image_view",
+              imagePath: "/tmp/tool-output.png",
+              toolLifecycleStatus: "completed",
+            },
+          },
+          {
+            id: "entry-image-view-duplicate",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.100Z",
+            entry: {
+              id: "image-view-duplicate",
+              createdAt: "2026-03-17T19:12:28.100Z",
+              turnId,
+              label: "Image view",
+              tone: "tool",
+              itemType: "image_view",
+              imagePath: "/tmp/tool-output.png",
+              toolLifecycleStatus: "completed",
+            },
+          },
+          {
+            id: "entry-image-view-second",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.200Z",
+            entry: {
+              id: "image-view-second",
+              createdAt: "2026-03-17T19:12:28.200Z",
+              turnId,
+              label: "Image view",
+              tone: "tool",
+              itemType: "image_view",
+              imagePath: "/tmp/second-output.png",
+              toolLifecycleStatus: "completed",
+            },
+          },
+          {
+            id: "entry-assistant-final",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "Here is the generated image.",
+              turnId,
+              createdAt: "2026-03-17T19:12:29.000Z",
+              updatedAt: "2026-03-17T19:12:30.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-image-view-activity-id="image-view-complete"');
+    expect(markup).not.toContain('data-image-view-activity-id="image-view-duplicate"');
+    expect(markup).toContain('data-image-view-activity-id="image-view-second"');
+    expect(markup).toContain('aria-label="Image outputs"');
+    expect(markup).toContain("size-32");
+    expect(markup).toContain(
+      'src="https://environment.example/api/assets/image-token/tool-output.png"',
+    );
+    expect(markup).toContain('aria-label="Preview tool-output.png"');
+    expect(markup).toContain('aria-label="Preview second-output.png"');
+    const responseIndex = markup.indexOf("Here is the generated image.");
+    const imageIndex = markup.indexOf('data-image-view-activity-id="image-view-complete"');
+    const changedFilesIndex = markup.indexOf("1 changed file");
+    expect(responseIndex).toBeLessThan(imageIndex);
+    expect(imageIndex).toBeLessThan(changedFilesIndex);
   });
 });
