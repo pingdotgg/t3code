@@ -88,6 +88,7 @@ it.layer(testLayer)("HermesAdapter ACP", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeMockHermesWrapper({
           T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_EMIT_MODEL_CONFIG_UPDATE: "1",
         }),
       );
       const instanceId = ProviderInstanceId.make("hermes");
@@ -165,7 +166,10 @@ it.layer(testLayer)("HermesAdapter ACP", (it) => {
       );
       const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
       const wrapperPath = yield* Effect.promise(() =>
-        makeMockHermesWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+        makeMockHermesWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_EMIT_MODEL_CONFIG_UPDATE: "1",
+        }),
       );
       const instanceId = ProviderInstanceId.make("hermes_work");
       const adapter = yield* makeHermesAdapter(decodeSettings({ binaryPath: wrapperPath }), {
@@ -238,7 +242,10 @@ it.layer(testLayer)("HermesAdapter ACP", (it) => {
   it.effect("bridges ACP permission requests for approval-required sessions", () =>
     Effect.gen(function* () {
       const wrapperPath = yield* Effect.promise(() =>
-        makeMockHermesWrapper({ T3_ACP_EMIT_TOOL_CALLS: "1" }),
+        makeMockHermesWrapper({
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+          T3_ACP_EMIT_MODEL_CONFIG_UPDATE: "1",
+        }),
       );
       const instanceId = ProviderInstanceId.make("hermes");
       const adapter = yield* makeHermesAdapter(decodeSettings({ binaryPath: wrapperPath }), {

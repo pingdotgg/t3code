@@ -39,6 +39,9 @@ const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const emitModelConfigUpdate = process.env.T3_ACP_EMIT_MODEL_CONFIG_UPDATE === "1";
+const modelConfigUpdateDelayMs = Number(process.env.T3_ACP_MODEL_CONFIG_UPDATE_DELAY_MS ?? "0");
+const modelScopedConfigOptions = process.env.T3_ACP_MODEL_SCOPED_CONFIG_OPTIONS === "1";
+const omitSessionConfigOptions = process.env.T3_ACP_OMIT_SESSION_CONFIG_OPTIONS === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const permissionOptionIds = {
@@ -95,6 +98,44 @@ process.once("exit", (code) => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  if (modelScopedConfigOptions) {
+    const modelOption = {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select" as const,
+      currentValue: currentModelId,
+      options: grokAcpModels.map((model) => ({
+        value: model.modelId,
+        name: model.name,
+      })),
+    };
+    if (currentModelId === "grok-mock-alt") {
+      return [
+        modelOption,
+        {
+          id: "thinking/alt",
+          name: "Alt thinking",
+          type: "boolean",
+          currentValue: true,
+        },
+      ];
+    }
+    return [
+      modelOption,
+      {
+        id: "reasoning/build",
+        name: "Build reasoning",
+        type: "select",
+        currentValue: "future/max",
+        options: [
+          { value: "provider:auto", name: "Provider auto" },
+          { value: "future/max", name: "Future max" },
+        ],
+      },
+    ];
+  }
+
   if (parameterizedModelPicker) {
     const baseOptions: Array<AcpSchema.SessionConfigOption> = [
       {
@@ -315,7 +356,7 @@ const program = Effect.gen(function* () {
       sessionId,
       modes: modeState(),
       models: modelState(),
-      configOptions: configOptions(),
+      ...(omitSessionConfigOptions ? {} : { configOptions: configOptions() }),
     }),
   );
 
@@ -360,7 +401,7 @@ const program = Effect.gen(function* () {
         return {
           modes: modeState(),
           models: modelState(),
-          configOptions: configOptions(),
+          ...(omitSessionConfigOptions ? {} : { configOptions: configOptions() }),
         };
       }
       if (emitLoadReplay) {
@@ -376,7 +417,7 @@ const program = Effect.gen(function* () {
       return {
         modes: modeState(),
         models: modelState(),
-        configOptions: configOptions(),
+        ...(omitSessionConfigOptions ? {} : { configOptions: configOptions() }),
       };
     }),
   );
@@ -394,13 +435,18 @@ const program = Effect.gen(function* () {
       }
       currentModelId = request.modelId;
       if (emitModelConfigUpdate) {
-        yield* agent.client.sessionUpdate({
+        const update = agent.client.sessionUpdate({
           sessionId: request.sessionId,
           update: {
             sessionUpdate: "config_option_update",
             configOptions: configOptions(),
           },
         });
+        if (modelConfigUpdateDelayMs > 0) {
+          yield* update.pipe(Effect.delay(modelConfigUpdateDelayMs), Effect.forkDetach);
+        } else {
+          yield* update;
+        }
       }
       return {};
     }),

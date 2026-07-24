@@ -300,8 +300,13 @@ export const make = (
     );
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
+    const configOptionsSupportedRef = yield* Ref.make(false);
+    const pendingModelConfigRefreshRef = yield* Ref.make<
+      Option.Option<Deferred.Deferred<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>>
+    >(Option.none());
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
+    const modelSelectionSemaphore = yield* Semaphore.make(1);
     const activePromptFiberRef = yield* Ref.make<
       Option.Option<Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>>
     >(Option.none());
@@ -403,7 +408,19 @@ export const make = (
           return;
         }
         if (notification.update.sessionUpdate === "config_option_update") {
-          yield* Ref.set(configOptionsRef, notification.update.configOptions);
+          const configOptionsSupported = yield* Ref.get(configOptionsSupportedRef);
+          if (configOptionsSupported) {
+            yield* Ref.set(configOptionsRef, notification.update.configOptions);
+            const pendingRefresh = yield* Ref.getAndSet(
+              pendingModelConfigRefreshRef,
+              Option.none(),
+            );
+            if (Option.isSome(pendingRefresh)) {
+              yield* Deferred.succeed(pendingRefresh.value, notification.update.configOptions).pipe(
+                Effect.ignore,
+              );
+            }
+          }
         }
         yield* handleSessionUpdate({
           queue: eventQueue,
@@ -658,6 +675,7 @@ export const make = (
 
       yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
       yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+      yield* Ref.set(configOptionsSupportedRef, sessionSetupResult.configOptions != null);
 
       const nextState = {
         sessionId,
@@ -816,18 +834,34 @@ export const make = (
           Effect.asVoid,
         ),
       setSessionModel: (modelId) =>
-        getStartedState.pipe(
-          Effect.flatMap((started) => {
+        modelSelectionSemaphore.withPermit(
+          Effect.gen(function* () {
+            const started = yield* getStartedState;
             const requestPayload = {
               sessionId: started.sessionId,
               modelId,
             } satisfies EffectAcpSchema.SetSessionModelRequest;
-            return Ref.set(configOptionsRef, []).pipe(
-              Effect.andThen(
-                runLoggedRequest(
-                  "session/set_model",
-                  requestPayload,
-                  acp.agent.setSessionModel(requestPayload),
+            const request = runLoggedRequest(
+              "session/set_model",
+              requestPayload,
+              acp.agent.setSessionModel(requestPayload),
+            );
+
+            yield* Ref.set(configOptionsRef, []);
+            if (!(yield* Ref.get(configOptionsSupportedRef))) {
+              return yield* request;
+            }
+
+            const configRefresh =
+              yield* Deferred.make<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>();
+            yield* Ref.set(pendingModelConfigRefreshRef, Option.some(configRefresh));
+            return yield* request.pipe(
+              Effect.flatMap((response) => Deferred.await(configRefresh).pipe(Effect.as(response))),
+              Effect.ensuring(
+                Ref.update(pendingModelConfigRefreshRef, (pending) =>
+                  Option.isSome(pending) && pending.value === configRefresh
+                    ? Option.none()
+                    : pending,
                 ),
               ),
             );
