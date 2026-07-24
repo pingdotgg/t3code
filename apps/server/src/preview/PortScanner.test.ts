@@ -317,3 +317,68 @@ effectIt("removes listeners when initial snapshot replay fails", () => {
     expect(healthyDeliveries).toEqual([[3000], [3001]]);
   }).pipe(Effect.provide(layer));
 });
+
+effectIt("serializes concurrent scans before publishing snapshots", () =>
+  Effect.gen(function* () {
+    const secondProbeStarted = yield* Deferred.make<void>();
+    const releaseSecondProbe = yield* Deferred.make<void>();
+    const thirdProbeStarted = yield* Deferred.make<void>();
+    const deliveries: Array<ReadonlyArray<number>> = [];
+    let probeCount = 0;
+    const layer = makeProbeFailureLayer(() =>
+      Effect.gen(function* () {
+        probeCount += 1;
+        if (probeCount === 2) {
+          yield* Deferred.succeed(secondProbeStarted, undefined).pipe(Effect.ignore);
+          yield* Deferred.await(releaseSecondProbe);
+        }
+        if (probeCount === 3) {
+          yield* Deferred.succeed(thirdProbeStarted, undefined).pipe(Effect.ignore);
+        }
+        return {
+          stdout: `p${100 + probeCount}\ncnode\nn*:${2999 + probeCount}\n`,
+          stderr: "",
+          code: null,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      yield* scanner.retain;
+      yield* scanner.subscribe((servers) =>
+        Effect.sync(() => {
+          deliveries.push(servers.map((server) => server.port));
+        }),
+      );
+
+      const firstRegistration = yield* scanner
+        .registerTerminalProcesses({
+          threadId: "thread-1",
+          terminalId: "terminal-1",
+          processIds: [101],
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(secondProbeStarted);
+
+      const secondRegistration = yield* scanner
+        .registerTerminalProcesses({
+          threadId: "thread-1",
+          terminalId: "terminal-2",
+          processIds: [102],
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      expect(yield* Deferred.isDone(thirdProbeStarted)).toBe(false);
+
+      yield* Deferred.succeed(releaseSecondProbe, undefined);
+      yield* Fiber.join(firstRegistration);
+      yield* Fiber.join(secondRegistration);
+
+      expect(deliveries).toEqual([[3000], [3001], [3002]]);
+    }).pipe(Effect.provide(layer));
+  }),
+);

@@ -194,6 +194,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcessPlatform;
+  const scanLock = yield* Semaphore.make(1);
   const notificationLock = yield* Semaphore.make(1);
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
@@ -314,9 +315,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   const pollTick = Effect.fn("PortDiscovery.pollTick")(
     function* () {
-      if ((yield* Ref.get(stateRef)).retainCount <= 0) return;
-      const next = yield* scanOnce();
-      yield* publishSnapshot(next);
+      yield* scanLock.withPermit(
+        Effect.gen(function* () {
+          if ((yield* Ref.get(stateRef)).retainCount <= 0) return;
+          const next = yield* scanOnce();
+          yield* publishSnapshot(next);
+        }),
+      );
     },
     Effect.catchCause((cause: Cause.Cause<never>) =>
       Effect.logWarning("preview port scan failed", Cause.pretty(cause)),
