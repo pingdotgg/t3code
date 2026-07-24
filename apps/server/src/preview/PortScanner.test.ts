@@ -265,3 +265,55 @@ effectIt("serializes snapshot replay with concurrent broadcasts", () =>
     }).pipe(Effect.provide(layer));
   }),
 );
+
+effectIt("removes listeners when initial snapshot replay fails", () => {
+  const defect = new Error("snapshot replay failed");
+  const healthyDeliveries: Array<ReadonlyArray<number>> = [];
+  let failedListenerCalls = 0;
+  let probeCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: probeCount === 1 ? "p100\ncnode\nn*:3000\n" : "p101\ncnode\nn*:3001\n",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain;
+
+    const failedSubscription = yield* scanner
+      .subscribe(() =>
+        Effect.sync(() => {
+          failedListenerCalls += 1;
+          throw defect;
+        }),
+      )
+      .pipe(Effect.exit);
+    expect(Exit.isFailure(failedSubscription)).toBe(true);
+    if (Exit.isFailure(failedSubscription)) {
+      expect(Cause.squash(failedSubscription.cause)).toBe(defect);
+    }
+
+    yield* scanner.subscribe((servers) =>
+      Effect.sync(() => {
+        healthyDeliveries.push(servers.map((server) => server.port));
+      }),
+    );
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [101],
+    });
+
+    expect(failedListenerCalls).toBe(1);
+    expect(healthyDeliveries).toEqual([[3000], [3001]]);
+  }).pipe(Effect.provide(layer));
+});

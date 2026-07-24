@@ -9,6 +9,7 @@ Expected behavior:
 - Closing either menu resets its query state without triggering another ref refresh, so user interaction stays fresh without adding close-triggered work.
 - Preview port discovery performs one immediate scan when the first subscriber retains it. Subscriptions replay the latest snapshot instead of initiating a duplicate scan.
 - Subscription replay and concurrent snapshot broadcasts are serialized so a stale replay cannot arrive after a newer scan result.
+- A failed initial snapshot replay rolls back listener registration before releasing the notification lock, so the failed subscriber cannot block later broadcasts to healthy subscribers.
 - Managed terminal process-set changes trigger an immediate port scan; unchanged registrations and redundant removals do not.
 - The broad `lsof` safety-net scan runs every 20 seconds when no server is known and every 10 seconds while a listener is present. This preserves discovery for servers started outside T3-managed terminals without a permanent three-second system-wide process sweep.
 
@@ -25,7 +26,7 @@ Focused regression coverage:
 
 - `packages/client-runtime/src/state/vcs.test.ts` covers the 20-second first-page revalidation interval.
 - `apps/web/src/components/vcsRefMenuRefresh.test.ts` covers the shared helper's one-callback and multiple-callback open paths plus its no-refresh-on-close path; component wiring remains visible in the two primary component files above.
-- `apps/server/src/preview/PortScanner.test.ts` covers snapshot replay without rescanning, ordered replay during concurrent broadcasts, and unchanged terminal registrations avoiding redundant probes.
+- `apps/server/src/preview/PortScanner.test.ts` covers snapshot replay without rescanning, ordered replay during concurrent broadcasts, failed-replay listener cleanup, and unchanged terminal registrations avoiding redundant probes.
 
 ## Development Ports
 

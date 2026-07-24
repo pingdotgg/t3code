@@ -360,6 +360,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     })),
   );
 
+  const removeListener = (listener: Listener) =>
+    Ref.update(stateRef, (state) => {
+      const listeners = new Set(state.listeners);
+      listeners.delete(listener);
+      return { ...state, listeners };
+    });
+
   const subscribe: PortDiscovery["Service"]["subscribe"] = Effect.fn("PortDiscovery.subscribe")(
     (listener) =>
       Effect.acquireRelease(
@@ -370,16 +377,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
               ...state,
               listeners: new Set([...state.listeners, listener]),
             },
-          ]).pipe(Effect.tap(listener)),
-        ),
-        () =>
-          notificationLock.withPermit(
-            Ref.update(stateRef, (state) => {
-              const listeners = new Set(state.listeners);
-              listeners.delete(listener);
-              return { ...state, listeners };
-            }),
+          ]).pipe(
+            Effect.tap(listener),
+            Effect.onError(() => removeListener(listener)),
           ),
+        ),
+        () => notificationLock.withPermit(removeListener(listener)),
       ),
   );
 
