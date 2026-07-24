@@ -48,6 +48,7 @@ export type AcpSessionRuntimeEvent = AcpParsedSessionEvent | AcpSessionEventStre
 
 const defaultSessionLoadTimeout = Duration.seconds(90);
 const defaultSessionLoadReplayIdleGap = Duration.seconds(2);
+const defaultCancelPromptSettleTimeout = Duration.seconds(10);
 
 export interface AcpSpawnInput {
   readonly command: string;
@@ -199,7 +200,12 @@ export class AcpSessionRuntime extends Context.Service<
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
     /**
-     * Sends a real ACP `session/cancel` notification for the active session.
+     * Sends a real ACP `session/cancel` notification for the active session and
+     * waits for the in-flight `session/prompt` to resolve. Per ACP the agent
+     * answers the pending prompt with stopReason "cancelled" once the turn is
+     * torn down; that response is the barrier that makes the next prompt safe.
+     * The wait is bounded — a hung agent falls back to a local interrupt so
+     * cancellation can never block forever.
      * @see https://agentclientprotocol.com/protocol/schema#session/cancel
      */
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
@@ -796,12 +802,22 @@ export const make = (
         Effect.flatMap((started) =>
           Effect.gen(function* () {
             const activePromptFiber = yield* Ref.get(activePromptFiberRef);
-            if (Option.isSome(activePromptFiber)) {
+            // Write session/cancel first and await the write, so the
+            // notification is on the wire before any subsequent prompt.
+            yield* acp.agent.cancel({ sessionId: started.sessionId }).pipe(Effect.ignore);
+            if (Option.isNone(activePromptFiber)) {
+              return;
+            }
+            // Per ACP, the agent resolves the in-flight session/prompt with
+            // stopReason "cancelled" once the turn is fully torn down; that
+            // response is the barrier that makes the next prompt safe. Bound
+            // the wait so a hung agent cannot block cancellation forever.
+            const settled = yield* Fiber.await(activePromptFiber.value).pipe(
+              Effect.timeoutOption(defaultCancelPromptSettleTimeout),
+            );
+            if (Option.isNone(settled)) {
               yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
             }
-            yield* acp.agent
-              .cancel({ sessionId: started.sessionId })
-              .pipe(Effect.ignore, Effect.forkIn(runtimeScope));
           }),
         ),
       ),
