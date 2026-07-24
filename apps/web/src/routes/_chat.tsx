@@ -12,10 +12,7 @@ import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import {
-  startNewLocalThreadFromContext,
-  startNewThreadFromContext,
-} from "../lib/chatThreadActions";
+import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { sharedCloseFocusTracker } from "../lib/closeFocus";
 import { resolveShortcutCommand } from "../keybindings";
@@ -98,7 +95,7 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.newLocal") {
         event.preventDefault();
         event.stopPropagation();
-        void startNewLocalThreadFromContext({
+        void startNewThreadFromContext({
           activeDraftThread,
           activeThread: activeThread ?? undefined,
           defaultProjectRef,
