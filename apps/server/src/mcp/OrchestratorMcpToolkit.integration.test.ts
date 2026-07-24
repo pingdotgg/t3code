@@ -1023,6 +1023,41 @@ describe("orchestrator MCP toolkit", () => {
               `Claude completed: ${createdThreadPrompt}`,
             );
 
+            const forkedThreadId = ThreadId.make("thread:mcp-orchestrator-inherited-read");
+            yield* orchestrator.dispatch({
+              type: "thread.fork",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-orchestrator-inherited-read"),
+              sourceThreadId: promptedThread.threadId,
+              targetThreadId: forkedThreadId,
+              sourcePoint: { type: "latest_stable" },
+              title: "Inherited read thread",
+            });
+            const forkedProjection = yield* orchestrator.getThreadProjection(forkedThreadId);
+            expect(forkedProjection.messages).toEqual([]);
+            expect(
+              forkedProjection.visibleTurnItems.some(
+                (row) =>
+                  row.sourceThreadId === promptedThread.threadId &&
+                  row.item.type === "user_message",
+              ),
+            ).toBe(true);
+
+            const forkedReadCall = yield* invoke("t3_thread_read", {
+              threadId: forkedThreadId,
+            });
+            const forkedRead = yield* decodeThreadReadResult(forkedReadCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(
+              forkedRead.items.find((item) => item.text === createdThreadPrompt),
+            ).toMatchObject({
+              sourceThreadId: promptedThread.threadId,
+              createdBy: "agent",
+              creationSource: "mcp",
+            });
+
             const ordinaryLoopPrompt = "Run an ordinary thread loop iteration.";
             const sendCall = yield* invoke("t3_thread_send", {
               threadId: emptyThread.threadId,
