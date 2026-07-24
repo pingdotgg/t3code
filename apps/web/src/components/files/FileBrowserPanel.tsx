@@ -5,8 +5,8 @@ import type {
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { RefreshCw, Search } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { ChevronsDownUp, ChevronsUpDown, RefreshCw, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
 import { toastManager } from "~/components/ui/toast";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -17,6 +17,13 @@ import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
+import {
+  directoryTreePaths,
+  getFileTreeExpansionToggle,
+  getFileTreeExpansionSnapshot,
+  initiallyExpandedDirectoryPaths,
+  setAllDirectoriesExpanded,
+} from "./fileTreeExpansion";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
 interface FileBrowserPanelProps {
@@ -58,6 +65,7 @@ export default function FileBrowserPanel({
   );
   const entryKindsRef = useRef<ReadonlyMap<string, ProjectEntry["kind"]>>(entryKinds);
   const treePaths = useMemo(() => entries.map(treePath), [entries]);
+  const directoryPaths = useMemo(() => directoryTreePaths(entries), [entries]);
   const previousTreePathsRef = useRef<readonly string[]>([]);
 
   // The tree renders rows in shadow DOM and its anchor rect is unreliable, so
@@ -161,7 +169,7 @@ export default function FileBrowserPanel({
     density: "compact",
     fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: true,
-    initialExpansion: 1,
+    initialExpansion: "closed",
     icons: T3_PIERRE_ICONS,
     onSelectionChange: (selectedPaths) => {
       dragMention.handleSelectionChange(selectedPaths);
@@ -179,13 +187,30 @@ export default function FileBrowserPanel({
     search: true,
     unsafeCSS: TREE_UNSAFE_CSS,
   });
+  const subscribeToTree = useCallback((listener: () => void) => model.subscribe(listener), [model]);
+  const getExpansionSnapshot = useCallback(
+    () => getFileTreeExpansionSnapshot(model, directoryPaths),
+    [directoryPaths, model],
+  );
+  const expansionSnapshot = useSyncExternalStore(
+    subscribeToTree,
+    getExpansionSnapshot,
+    getExpansionSnapshot,
+  );
+  const expansionControlsDisabled =
+    expansionSnapshot === "empty" || expansionSnapshot === "searching";
+  const expansionToggle = getFileTreeExpansionToggle(expansionSnapshot);
 
   useEffect(() => {
     if (previousTreePathsRef.current === treePaths) return;
     entryKindsRef.current = entryKinds;
     previousTreePathsRef.current = treePaths;
-    model.resetPaths(treePaths);
-  }, [entryKinds, model, treePaths]);
+    // A closed default lets bulk operations replace expansion in one reset;
+    // explicitly retain the explorer's existing depth-one initial state.
+    model.resetPaths(treePaths, {
+      initialExpandedPaths: initiallyExpandedDirectoryPaths(directoryPaths),
+    });
+  }, [directoryPaths, entryKinds, model, treePaths]);
 
   const fileCount = useMemo(
     () => entries.reduce((count, entry) => count + (entry.kind === "file" ? 1 : 0), 0),
@@ -233,6 +258,21 @@ export default function FileBrowserPanel({
             {entriesQuery.data?.truncated ? " · partial" : ""}
           </div>
         </div>
+        <button
+          type="button"
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+          aria-label={expansionToggle.label}
+          disabled={expansionControlsDisabled}
+          onClick={() =>
+            setAllDirectoriesExpanded(model, treePaths, directoryPaths, expansionToggle.expanded)
+          }
+        >
+          {expansionToggle.expanded ? (
+            <ChevronsUpDown className="size-3.5" />
+          ) : (
+            <ChevronsDownUp className="size-3.5" />
+          )}
+        </button>
         <button
           type="button"
           className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
