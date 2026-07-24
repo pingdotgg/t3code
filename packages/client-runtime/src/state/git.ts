@@ -13,6 +13,10 @@ export function createGitEnvironmentAtoms<R, E>(
       label: "environment-data:git:resolve-pull-request",
       tag: WS_METHODS.gitResolvePullRequest,
     }),
+    issueResolution: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:git:resolve-issue",
+      tag: WS_METHODS.gitResolveIssue,
+    }),
     preparePullRequestThread: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:git:prepare-pull-request-thread",
       tag: WS_METHODS.gitPreparePullRequestThread,

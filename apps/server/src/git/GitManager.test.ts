@@ -49,6 +49,7 @@ interface FakeGhScenario {
     headRepositoryNameWithOwner?: string | null;
     headRepositoryOwnerLogin?: string | null;
   };
+  issue?: GitHubCli.GitHubIssueSummary;
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
   failWith?: GitHubCli.GitHubCliError;
   /** Let this many gh calls succeed before failWith kicks in (default 0 = fail immediately). */
@@ -479,6 +480,23 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       });
     }
 
+    if (args[0] === "issue" && args[1] === "view") {
+      return Effect.succeed(
+        fakeGhOutput(
+          JSON.stringify(
+            scenario.issue ?? {
+              number: 84,
+              title: "Issue",
+              url: "https://github.com/pingdotgg/codething-mvp/issues/84",
+              state: "open",
+              labels: [],
+              assignees: [],
+            },
+          ) + "\n",
+        ),
+      );
+    }
+
     if (args[0] === "repo" && args[1] === "view") {
       const repository = args[2];
       if (typeof repository === "string" && args.includes("nameWithOwner,url,sshUrl")) {
@@ -579,6 +597,17 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         }).pipe(
           Effect.map((result) => JSON.parse(result.stdout) as GitHubCli.GitHubPullRequestSummary),
         ),
+      getIssue: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "issue",
+            "view",
+            input.reference,
+            "--json",
+            "number,title,url,state,labels,assignees",
+          ],
+        }).pipe(Effect.map((result) => JSON.parse(result.stdout) as GitHubCli.GitHubIssueSummary)),
       getRepositoryCloneUrls: (input) =>
         execute({
           cwd: input.cwd,
@@ -628,6 +657,13 @@ function resolvePullRequest(
   input: { cwd: string; reference: string },
 ) {
   return manager.resolvePullRequest(input);
+}
+
+function resolveIssue(
+  manager: GitManager.GitManager["Service"],
+  input: { cwd: string; reference: string },
+) {
+  return manager.resolveIssue(input);
 }
 
 function preparePullRequestThread(
@@ -2888,6 +2924,38 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         state: "open",
       });
       expect(ghCalls.some((call) => call.startsWith("pr view 42 "))).toBe(true);
+    }),
+  );
+
+  it.effect("resolves GitHub issues from #number references", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          issue: {
+            number: 84,
+            title: "Draft page suggestions",
+            url: "https://github.com/pingdotgg/codething-mvp/issues/84",
+            state: "open",
+            labels: ["enhancement"],
+            assignees: ["octocat"],
+          },
+        },
+      });
+
+      const result = yield* resolveIssue(manager, { cwd: repoDir, reference: "#84" });
+
+      expect(result.issue).toEqual({
+        number: 84,
+        title: "Draft page suggestions",
+        url: "https://github.com/pingdotgg/codething-mvp/issues/84",
+        state: "open",
+        labels: ["enhancement"],
+        assignees: ["octocat"],
+      });
+      expect(ghCalls.some((call) => call.startsWith("issue view 84 "))).toBe(true);
     }),
   );
 

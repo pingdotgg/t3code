@@ -6,6 +6,7 @@ import {
   SourceControlProviderError,
   type ChangeRequest,
   type ChangeRequestState,
+  type SourceControlIssue,
 } from "@t3tools/contracts";
 
 import * as GitHubCli from "./GitHubCli.ts";
@@ -39,6 +40,18 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
     ...(summary.headRepositoryOwnerLogin !== undefined
       ? { headRepositoryOwnerLogin: summary.headRepositoryOwnerLogin }
       : {}),
+  };
+}
+
+function toIssue(summary: GitHubCli.GitHubIssueSummary): SourceControlIssue {
+  return {
+    provider: "github",
+    number: summary.number,
+    title: summary.title,
+    url: summary.url,
+    state: summary.state,
+    labels: [...summary.labels],
+    assignees: [...summary.assignees],
   };
 }
 
@@ -195,6 +208,24 @@ export const make = Effect.gen(function* () {
             new SourceControlProviderError({
               provider: "github",
               operation: "getChangeRequest",
+              command: error.command,
+              cwd: input.cwd,
+              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.reference,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
+    getIssue: (input) =>
+      github.getIssue(input).pipe(
+        Effect.map(toIssue),
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "getIssue",
               command: error.command,
               cwd: input.cwd,
               reference: SourceControlProvider.transportSafeSourceControlErrorValue(

@@ -3,6 +3,8 @@ import {
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
   type EnvironmentId,
+  type GitResolvedIssue,
+  type GitResolvedPullRequest,
   type MessageId,
   type ModelSelection,
   type ProjectScript,
@@ -158,7 +160,7 @@ import {
   nextProjectScriptId,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
-import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
+import { newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
@@ -170,7 +172,6 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -216,7 +217,9 @@ import {
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
+import { DraftSuggestedTasks } from "./chat/DraftSuggestedTasks";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
+import { IssueThreadDialog } from "./IssueThreadDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -295,6 +298,12 @@ import {
   serverUpdateGuidance,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
+import {
+  buildIssueTriageTask,
+  buildPullRequestTask,
+  FIX_FAILING_CHECKS_PROMPT,
+  REVIEW_CURRENT_CHANGES_PROMPT,
+} from "../suggestedTasks";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -1219,13 +1228,6 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
-  const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
-    (store) => store.getDraftSessionByLogicalProjectKey,
-  );
-  const getDraftSession = useComposerDraftStore((store) => store.getDraftSession);
-  const setLogicalProjectDraftThreadId = useComposerDraftStore(
-    (store) => store.setLogicalProjectDraftThreadId,
-  );
   const draftThread = useComposerDraftStore((store) =>
     routeKind === "server"
       ? store.getDraftSessionByRef(routeThreadRef)
@@ -1273,6 +1275,7 @@ function ChatViewContent(props: ChatViewProps) {
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [issueDialogOpen, setIssueDialogOpen] = useState(false);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
     useState<TerminalLaunchContext | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
@@ -1686,94 +1689,6 @@ function ChatViewContent(props: ChatViewProps) {
   const closePullRequestDialog = useCallback(() => {
     setPullRequestDialogState(null);
   }, []);
-
-  const openOrReuseProjectDraftThread = useCallback(
-    async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
-      if (!activeProject) {
-        throw new Error("No active project is available for this pull request.");
-      }
-      const activeProjectRef = scopeProjectRef(activeProject.environmentId, activeProject.id);
-      const logicalProjectKey = deriveLogicalProjectKeyFromSettings(
-        activeProject,
-        projectGroupingSettings,
-      );
-      const storedDraftSession = getDraftSessionByLogicalProjectKey(logicalProjectKey);
-      if (storedDraftSession) {
-        setDraftThreadContext(storedDraftSession.draftId, input);
-        setLogicalProjectDraftThreadId(
-          logicalProjectKey,
-          activeProjectRef,
-          storedDraftSession.draftId,
-          {
-            threadId: storedDraftSession.threadId,
-            ...input,
-          },
-        );
-        if (routeKind !== "draft" || draftId !== storedDraftSession.draftId) {
-          await navigate({
-            to: "/draft/$draftId",
-            params: buildDraftThreadRouteParams(storedDraftSession.draftId),
-          });
-        }
-        return storedDraftSession.threadId;
-      }
-
-      const activeDraftSession = routeKind === "draft" && draftId ? getDraftSession(draftId) : null;
-      if (
-        !isServerThread &&
-        activeDraftSession?.logicalProjectKey === logicalProjectKey &&
-        draftId
-      ) {
-        setDraftThreadContext(draftId, input);
-        setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, draftId, {
-          threadId: activeDraftSession.threadId,
-          createdAt: activeDraftSession.createdAt,
-          runtimeMode: activeDraftSession.runtimeMode,
-          interactionMode: activeDraftSession.interactionMode,
-          ...input,
-        });
-        return activeDraftSession.threadId;
-      }
-
-      const nextDraftId = newDraftId();
-      const nextThreadId = newThreadId();
-      setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
-        threadId: nextThreadId,
-        createdAt: new Date().toISOString(),
-        runtimeMode: DEFAULT_RUNTIME_MODE,
-        interactionMode: DEFAULT_INTERACTION_MODE,
-        ...input,
-      });
-      await navigate({
-        to: "/draft/$draftId",
-        params: buildDraftThreadRouteParams(nextDraftId),
-      });
-      return nextThreadId;
-    },
-    [
-      activeProject,
-      draftId,
-      getDraftSession,
-      getDraftSessionByLogicalProjectKey,
-      isServerThread,
-      navigate,
-      projectGroupingSettings,
-      routeKind,
-      setDraftThreadContext,
-      setLogicalProjectDraftThreadId,
-    ],
-  );
-
-  const handlePreparedPullRequestThread = useCallback(
-    async (input: { branch: string; worktreePath: string | null }) => {
-      await openOrReuseProjectDraftThread({
-        branch: input.branch,
-        worktreePath: input.worktreePath,
-        envMode: input.worktreePath ? "worktree" : "local",
-      });
-    },
-    [openOrReuseProjectDraftThread],
-  );
 
   useEffect(() => {
     if (!serverThread?.id) return;
@@ -2496,6 +2411,90 @@ function ChatViewContent(props: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
+
+  const materializeSuggestedThread = async (input: {
+    title: string;
+    prompt: string;
+    branch: string | null;
+    worktreePath: string | null;
+  }): Promise<boolean> => {
+    if (!activeProject || !activeThread || !draftId || !isLocalDraftThread) {
+      return false;
+    }
+    const sendContext = composerRef.current?.getSendContext();
+    if (!sendContext) {
+      return false;
+    }
+
+    const createResult = await createThread({
+      environmentId,
+      input: {
+        threadId: activeThread.id,
+        projectId: activeProject.id,
+        title: truncate(input.title),
+        modelSelection: sendContext.selectedModelSelection,
+        runtimeMode,
+        interactionMode,
+        branch: input.branch,
+        worktreePath: input.worktreePath,
+        createdAt: activeThread.createdAt,
+      },
+    });
+    if (createResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(createResult)) {
+        const error = squashAtomCommandFailure(createResult);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not create suggested task thread",
+            description:
+              error instanceof Error
+                ? error.message
+                : "An error occurred while creating the thread.",
+          }),
+        );
+      }
+      return false;
+    }
+
+    setDraftThreadContext(draftId, {
+      branch: input.branch,
+      worktreePath: input.worktreePath,
+      envMode: input.worktreePath ? "worktree" : "local",
+    });
+    setComposerDraftPrompt(draftId, input.prompt);
+    composerRef.current?.resetCursorState({ cursor: input.prompt.length, prompt: input.prompt });
+    scheduleComposerFocus();
+    return true;
+  };
+
+  const handlePreparedPullRequestThread = async (input: {
+    branch: string;
+    worktreePath: string | null;
+    pullRequest: GitResolvedPullRequest;
+  }) => {
+    const task = buildPullRequestTask(input.pullRequest);
+    return materializeSuggestedThread({
+      ...task,
+      branch: input.branch,
+      worktreePath: input.worktreePath,
+    });
+  };
+
+  const handleResolvedIssue = (issue: GitResolvedIssue) => {
+    const task = buildIssueTriageTask(issue);
+    return materializeSuggestedThread({
+      ...task,
+      branch: activeThread?.branch ?? null,
+      worktreePath: activeThread?.worktreePath ?? null,
+    });
+  };
+
+  const seedSuggestedPrompt = (prompt: string) => {
+    setComposerDraftPrompt(composerDraftTarget, prompt);
+    composerRef.current?.resetCursorState({ cursor: prompt.length, prompt });
+    scheduleComposerFocus();
+  };
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
       composerRef.current?.addTerminalContext(selection);
@@ -3694,6 +3693,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     setPullRequestDialogState(null);
+    setIssueDialogOpen(false);
     isAtEndRef.current = true;
     timelineScrollModeRef.current = "following-end";
     liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
@@ -5760,6 +5760,13 @@ function ChatViewContent(props: ChatViewProps) {
                           activeProjectRef={activeProjectRef}
                           activeProjectTitle={activeProject?.title ?? null}
                         />
+                        <DraftSuggestedTasks
+                          sourceControlAvailable={isGitRepo && activeProject !== null}
+                          onCheckoutPullRequest={() => openPullRequestDialog()}
+                          onTriageIssue={() => setIssueDialogOpen(true)}
+                          onReviewChanges={() => seedSuggestedPrompt(REVIEW_CURRENT_CHANGES_PROMPT)}
+                          onFixFailingChecks={() => seedSuggestedPrompt(FIX_FAILING_CHECKS_PROMPT)}
+                        />
                       </div>
                       <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                     </div>
@@ -5951,6 +5958,16 @@ function ChatViewContent(props: ChatViewProps) {
                   }
                 }}
                 onPrepared={handlePreparedPullRequestThread}
+              />
+            ) : null}
+
+            {issueDialogOpen && activeThread ? (
+              <IssueThreadDialog
+                open
+                environmentId={activeThread.environmentId}
+                cwd={activeProject?.workspaceRoot ?? null}
+                onOpenChange={setIssueDialogOpen}
+                onResolved={handleResolvedIssue}
               />
             ) : null}
           </div>

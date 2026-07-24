@@ -36,6 +36,20 @@ export const ChangeRequest = Schema.Struct({
 });
 export type ChangeRequest = typeof ChangeRequest.Type;
 
+export const SourceControlIssueState = Schema.Literals(["open", "closed"]);
+export type SourceControlIssueState = typeof SourceControlIssueState.Type;
+
+export const SourceControlIssue = Schema.Struct({
+  provider: SourceControlProviderKind,
+  number: PositiveInt,
+  title: TrimmedNonEmptyString,
+  url: Schema.String,
+  state: SourceControlIssueState,
+  labels: Schema.Array(TrimmedNonEmptyString),
+  assignees: Schema.Array(TrimmedNonEmptyString),
+});
+export type SourceControlIssue = typeof SourceControlIssue.Type;
+
 export const SourceControlRepositoryCloneUrls = Schema.Struct({
   nameWithOwner: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,

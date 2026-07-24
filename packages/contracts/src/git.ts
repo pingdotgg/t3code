@@ -44,6 +44,7 @@ const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]
 const GitPrStepStatus = Schema.Literals(["created", "opened_existing", "skipped_not_requested"]);
 const VcsStatusChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
+const GitIssueReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
 export const GitRunStackedActionToastRunAction = Schema.Struct({
@@ -97,6 +98,16 @@ const GitResolvedPullRequest = Schema.Struct({
 });
 export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
+export const GitResolvedIssue = Schema.Struct({
+  number: PositiveInt,
+  title: TrimmedNonEmptyStringSchema,
+  url: Schema.String,
+  state: Schema.Literals(["open", "closed"]),
+  labels: Schema.Array(TrimmedNonEmptyStringSchema),
+  assignees: Schema.Array(TrimmedNonEmptyStringSchema),
+});
+export type GitResolvedIssue = typeof GitResolvedIssue.Type;
+
 // RPC Inputs
 
 export const VcsStatusInput = Schema.Struct({
@@ -147,6 +158,12 @@ export const GitPullRequestRefInput = Schema.Struct({
   reference: GitPullRequestReference,
 });
 export type GitPullRequestRefInput = typeof GitPullRequestRefInput.Type;
+
+export const GitIssueRefInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  reference: GitIssueReference,
+});
+export type GitIssueRefInput = typeof GitIssueRefInput.Type;
 
 export const GitPreparePullRequestThreadInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -270,6 +287,11 @@ export const GitResolvePullRequestResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,
 });
 export type GitResolvePullRequestResult = typeof GitResolvePullRequestResult.Type;
+
+export const GitResolveIssueResult = Schema.Struct({
+  issue: GitResolvedIssue,
+});
+export type GitResolveIssueResult = typeof GitResolveIssueResult.Type;
 
 export const GitPreparePullRequestThreadResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,

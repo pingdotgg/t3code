@@ -1,7 +1,7 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, GitResolvedPullRequest, ThreadId } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useDebouncedValue } from "@tanstack/react-pacer";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   readCachedPullRequestResolution,
@@ -33,7 +33,11 @@ interface PullRequestThreadDialogProps {
   cwd: string | null;
   initialReference: string | null;
   onOpenChange: (open: boolean) => void;
-  onPrepared: (input: { branch: string; worktreePath: string | null }) => Promise<void> | void;
+  onPrepared: (input: {
+    branch: string;
+    worktreePath: string | null;
+    pullRequest: GitResolvedPullRequest;
+  }) => Promise<boolean> | boolean;
 }
 
 export function PullRequestThreadDialog({
@@ -129,44 +133,34 @@ export function PullRequestThreadDialog({
     }
   }, [resolvedPullRequest?.state]);
 
-  const handleConfirm = useCallback(
-    async (mode: "local" | "worktree") => {
-      if (!parsedReference) {
-        setReferenceDirty(true);
-        return;
+  const handleConfirm = async (mode: "local" | "worktree") => {
+    if (!parsedReference) {
+      setReferenceDirty(true);
+      return;
+    }
+    if (!parsedReference || !resolvedPullRequest || !cwd) {
+      return;
+    }
+    setPreparingMode(mode);
+    const result = await preparePullRequestThreadAction.run({
+      reference: parsedReference,
+      mode,
+      ...(mode === "worktree" ? { threadId } : {}),
+    });
+    setPreparingMode(null);
+    if (result._tag === "Failure") {
+      if (isAtomCommandInterrupted(result)) {
+        preparePullRequestThreadAction.resetError();
       }
-      if (!parsedReference || !resolvedPullRequest || !cwd) {
-        return;
-      }
-      setPreparingMode(mode);
-      const result = await preparePullRequestThreadAction.run({
-        reference: parsedReference,
-        mode,
-        ...(mode === "worktree" ? { threadId } : {}),
-      });
-      setPreparingMode(null);
-      if (result._tag === "Failure") {
-        if (isAtomCommandInterrupted(result)) {
-          preparePullRequestThreadAction.resetError();
-        }
-        return;
-      }
-      await onPrepared({
-        branch: result.value.branch,
-        worktreePath: result.value.worktreePath,
-      });
-      onOpenChange(false);
-    },
-    [
-      cwd,
-      onOpenChange,
-      onPrepared,
-      parsedReference,
-      preparePullRequestThreadAction,
-      resolvedPullRequest,
-      threadId,
-    ],
-  );
+      return;
+    }
+    const didCreateThread = await onPrepared({
+      branch: result.value.branch,
+      worktreePath: result.value.worktreePath,
+      pullRequest: result.value.pullRequest,
+    });
+    if (didCreateThread) onOpenChange(false);
+  };
 
   const validationMessage = !referenceDirty
     ? null
@@ -201,8 +195,8 @@ export function PullRequestThreadDialog({
             Checkout {terminology.singular}
           </DialogTitle>
           <DialogDescription>
-            Resolve a {sourceControlPresentation.providerName} {terminology.singular}, then create
-            the draft thread in the main repo or in a dedicated worktree.
+            Resolve a {sourceControlPresentation.providerName} {terminology.singular}, then open it
+            in the main repo or in a dedicated worktree.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-4">
@@ -280,7 +274,7 @@ export function PullRequestThreadDialog({
               preparePullRequestThreadAction.isPending
             }
           >
-            {preparingMode === "local" ? "Preparing local..." : "Local"}
+            {preparingMode === "local" ? "Checking out..." : "Check out here"}
           </Button>
           <Button
             type="button"
@@ -295,7 +289,7 @@ export function PullRequestThreadDialog({
               preparePullRequestThreadAction.isPending
             }
           >
-            {preparingMode === "worktree" ? "Preparing worktree..." : "Worktree"}
+            {preparingMode === "worktree" ? "Preparing worktree..." : "Open in new worktree"}
           </Button>
         </DialogFooter>
       </DialogPopup>

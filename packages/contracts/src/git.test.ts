@@ -7,6 +7,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  GitResolveIssueResult,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -16,6 +17,7 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeResolveIssueResult = Schema.decodeUnknownSync(GitResolveIssueResult);
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {
@@ -70,6 +72,24 @@ describe("GitResolvePullRequestResult", () => {
 
     expect(parsed.pullRequest.number).toBe(42);
     expect(parsed.pullRequest.headBranch).toBe("feature/pr-threads");
+  });
+});
+
+describe("GitResolveIssueResult", () => {
+  it("decodes resolved issue metadata", () => {
+    const parsed = decodeResolveIssueResult({
+      issue: {
+        number: 84,
+        title: "Draft page suggestions",
+        url: "https://github.com/pingdotgg/codething-mvp/issues/84",
+        state: "open",
+        labels: ["enhancement", "web"],
+        assignees: ["octocat"],
+      },
+    });
+
+    expect(parsed.issue.number).toBe(84);
+    expect(parsed.issue.labels).toEqual(["enhancement", "web"]);
   });
 });
 

@@ -16,6 +16,7 @@ import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
 } from "./gitHubPullRequests.ts";
+import { decodeGitHubIssueJson, type NormalizedGitHubIssueRecord } from "./gitHubIssues.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -57,6 +58,19 @@ export class GitHubPullRequestNotFoundError extends Schema.TaggedErrorClass<GitH
 ) {
   get detail(): string {
     return "Pull request not found. Check the PR number or URL and try again.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
+export class GitHubIssueNotFoundError extends Schema.TaggedErrorClass<GitHubIssueNotFoundError>()(
+  "GitHubIssueNotFoundError",
+  gitHubCliFailureFields,
+) {
+  get detail(): string {
+    return "Issue not found. Check the issue number or URL and try again.";
   }
 
   override get message(): string {
@@ -122,6 +136,19 @@ export class GitHubPullRequestDecodeError extends Schema.TaggedErrorClass<GitHub
   }
 }
 
+export class GitHubIssueDecodeError extends Schema.TaggedErrorClass<GitHubIssueDecodeError>()(
+  "GitHubIssueDecodeError",
+  gitHubCliDecodeFields,
+) {
+  get detail(): string {
+    return "GitHub CLI returned invalid issue JSON.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in getIssue: ${this.detail}`;
+  }
+}
+
 export class GitHubRepositoryDecodeError extends Schema.TaggedErrorClass<GitHubRepositoryDecodeError>()(
   "GitHubRepositoryDecodeError",
   gitHubCliDecodeFields,
@@ -139,10 +166,12 @@ export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
   GitHubPullRequestNotFoundError,
+  GitHubIssueNotFoundError,
   GitHubCliCommandError,
   GitHubPullRequestListDecodeError,
   GitHubChangeRequestListDecodeError,
   GitHubPullRequestDecodeError,
+  GitHubIssueDecodeError,
   GitHubRepositoryDecodeError,
 ]);
 export type GitHubCliError = typeof GitHubCliError.Type;
@@ -190,6 +219,8 @@ export interface GitHubPullRequestSummary {
   readonly headRepositoryOwnerLogin?: string | null;
 }
 
+export type GitHubIssueSummary = NormalizedGitHubIssueRecord;
+
 export interface GitHubRepositoryCloneUrls {
   readonly nameWithOwner: string;
   readonly url: string;
@@ -215,6 +246,11 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly reference: string;
     }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
+
+    readonly getIssue: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+    }) => Effect.Effect<GitHubIssueSummary, GitHubCliError>;
 
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
@@ -388,6 +424,44 @@ export const make = Effect.gen(function* () {
               );
             }),
           ),
+        ),
+      ),
+    getIssue: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "issue",
+          "view",
+          input.reference,
+          "--json",
+          "number,title,url,state,labels,assignees",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          Effect.sync(() => decodeGitHubIssueJson(raw)).pipe(
+            Effect.flatMap((decoded) => {
+              if (!Result.isSuccess(decoded)) {
+                return Effect.fail(
+                  new GitHubIssueDecodeError({
+                    command: "gh",
+                    cwd: input.cwd,
+                    cause: decoded.failure,
+                  }),
+                );
+              }
+              return Effect.succeed(decoded.success);
+            }),
+          ),
+        ),
+        Effect.mapError((error) =>
+          error._tag === "GitHubPullRequestNotFoundError"
+            ? new GitHubIssueNotFoundError({
+                command: "gh",
+                cwd: input.cwd,
+                cause: error.cause,
+              })
+            : error,
         ),
       ),
     getRepositoryCloneUrls: (input) =>

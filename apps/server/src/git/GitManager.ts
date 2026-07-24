@@ -18,6 +18,8 @@ import {
   GitCommandError,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
+  GitIssueRefInput,
+  GitResolveIssueResult,
   GitPullRequestRefInput,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
@@ -42,7 +44,11 @@ import {
   type ChangeRequestTerminology,
 } from "@t3tools/shared/sourceControl";
 
-import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
+import {
+  GitManagerError,
+  GitPullRequestMaterializationError,
+  SourceControlProviderError,
+} from "@t3tools/contracts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
@@ -80,6 +86,9 @@ export class GitManager extends Context.Service<
     readonly resolvePullRequest: (
       input: GitPullRequestRefInput,
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
+    readonly resolveIssue: (
+      input: GitIssueRefInput,
+    ) => Effect.Effect<GitResolveIssueResult, GitManagerServiceError>;
     readonly preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
@@ -519,6 +528,10 @@ function normalizePullRequestReference(reference: string): string {
   const trimmed = reference.trim();
   const hashNumber = /^#(\d+)$/.exec(trimmed);
   return hashNumber?.[1] ?? trimmed;
+}
+
+function normalizeIssueReference(reference: string): string {
+  return normalizePullRequestReference(reference);
 }
 
 function toResolvedPullRequest(pr: {
@@ -1648,6 +1661,35 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
+  const resolveIssue: GitManager["Service"]["resolveIssue"] = Effect.fn("resolveIssue")(
+    function* (input) {
+      const provider = yield* sourceControlProvider(input.cwd);
+      if (!provider.getIssue) {
+        return yield* new SourceControlProviderError({
+          provider: provider.kind,
+          operation: "getIssue",
+          cwd: input.cwd,
+          reference: normalizeIssueReference(input.reference),
+          detail: "Issue lookup is currently available for GitHub repositories only.",
+        });
+      }
+      const issue = yield* provider.getIssue({
+        cwd: input.cwd,
+        reference: normalizeIssueReference(input.reference),
+      });
+      return {
+        issue: {
+          number: issue.number,
+          title: issue.title,
+          url: issue.url,
+          state: issue.state,
+          labels: [...issue.labels],
+          assignees: [...issue.assignees],
+        },
+      };
+    },
+  );
+
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -2056,6 +2098,7 @@ export const make = Effect.gen(function* () {
     invalidateRemoteStatus,
     invalidateStatus,
     resolvePullRequest,
+    resolveIssue,
     preparePullRequestThread,
     runStackedAction,
   });

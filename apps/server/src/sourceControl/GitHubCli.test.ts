@@ -111,6 +111,45 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("parses issue view output", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              number: 84,
+              title: "Draft page suggestions",
+              url: "https://github.com/pingdotgg/codething-mvp/issues/84",
+              state: "OPEN",
+              labels: [{ name: "enhancement" }, { name: "web" }],
+              assignees: [{ login: "octocat" }],
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.getIssue({ cwd: "/repo", reference: "84" });
+
+      assert.deepStrictEqual(result, {
+        number: 84,
+        title: "Draft page suggestions",
+        url: "https://github.com/pingdotgg/codething-mvp/issues/84",
+        state: "open",
+        labels: ["enhancement", "web"],
+        assignees: ["octocat"],
+      });
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["issue", "view", "84", "--json", "number,title,url,state,labels,assignees"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("trims pull request fields decoded from gh json", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

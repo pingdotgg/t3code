@@ -12,6 +12,7 @@ import type {
   EnvironmentId,
   GitActionProgressEvent,
   GitResolvePullRequestResult,
+  GitResolveIssueResult,
   GitStackedAction,
   SourceControlCloneProtocol,
   SourceControlRepositoryVisibility,
@@ -379,6 +380,50 @@ export function usePullRequestResolutionState(target: PullRequestResolutionTarge
       : null,
   );
   const cached = readCachedPullRequestResolution(target);
+
+  return {
+    data: query.data ?? cached,
+    error: query.error,
+    isPending: query.isPending && cached === null,
+    isFetching: query.isPending,
+    refresh: query.refresh,
+  };
+}
+
+export interface IssueResolutionTarget {
+  readonly environmentId: EnvironmentId | null;
+  readonly cwd: string | null;
+  readonly reference: string | null;
+}
+
+export function readCachedIssueResolution(
+  target: IssueResolutionTarget,
+): GitResolveIssueResult | null {
+  if (target.environmentId === null || target.cwd === null || target.reference === null) {
+    return null;
+  }
+  return Option.getOrNull(
+    AsyncResult.value(
+      appAtomRegistry.get(
+        gitEnvironment.issueResolution({
+          environmentId: target.environmentId,
+          input: { cwd: target.cwd, reference: target.reference },
+        }),
+      ),
+    ),
+  );
+}
+
+export function useIssueResolutionState(target: IssueResolutionTarget) {
+  const query = useEnvironmentQuery(
+    target.environmentId !== null && target.cwd !== null && target.reference !== null
+      ? gitEnvironment.issueResolution({
+          environmentId: target.environmentId,
+          input: { cwd: target.cwd, reference: target.reference },
+        })
+      : null,
+  );
+  const cached = readCachedIssueResolution(target);
 
   return {
     data: query.data ?? cached,

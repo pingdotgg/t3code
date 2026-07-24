@@ -4908,6 +4908,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   state: "open",
                 },
               }),
+            resolveIssue: () =>
+              Effect.succeed({
+                issue: {
+                  number: 2,
+                  title: "Demo issue",
+                  url: "https://example.com/issues/2",
+                  state: "open",
+                  labels: [],
+                  assignees: [],
+                },
+              }),
             preparePullRequestThread: () =>
               Effect.succeed({
                 pullRequest: {

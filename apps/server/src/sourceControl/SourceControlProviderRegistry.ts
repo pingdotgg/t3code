@@ -169,6 +169,15 @@ function bindProviderContext(
         ...input,
         context: input.context ?? context,
       }),
+    ...(provider.getIssue
+      ? {
+          getIssue: (input: Parameters<NonNullable<typeof provider.getIssue>>[0]) =>
+            provider.getIssue!({
+              ...input,
+              context: input.context ?? context,
+            }),
+        }
+      : {}),
     createChangeRequest: (input) =>
       provider.createChangeRequest({
         ...input,

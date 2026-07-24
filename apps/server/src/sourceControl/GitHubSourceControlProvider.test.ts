@@ -68,6 +68,34 @@ it.effect("maps GitHub PR summaries into provider-neutral change requests", () =
   }),
 );
 
+it.effect("maps GitHub issues into provider-neutral issue metadata", () =>
+  Effect.gen(function* () {
+    const provider = yield* makeProvider({
+      getIssue: () =>
+        Effect.succeed({
+          number: 84,
+          title: "Draft page suggestions",
+          url: "https://github.com/pingdotgg/t3code/issues/84",
+          state: "open",
+          labels: ["enhancement"],
+          assignees: ["octocat"],
+        }),
+    });
+
+    const issue = yield* provider.getIssue!({ cwd: "/repo", reference: "84" });
+
+    assert.deepStrictEqual(issue, {
+      provider: "github",
+      number: 84,
+      title: "Draft page suggestions",
+      url: "https://github.com/pingdotgg/t3code/issues/84",
+      state: "open",
+      labels: ["enhancement"],
+      assignees: ["octocat"],
+    });
+  }),
+);
+
 it.effect("adds safe request context while retaining GitHub CLI causes", () =>
   Effect.gen(function* () {
     const cause = new GitHubCli.GitHubPullRequestNotFoundError({
