@@ -35,6 +35,13 @@ export interface ProjectIconTarget {
 
 export type ProjectIconScope = "workspace" | "git-remote";
 
+interface PendingProjectIconSave {
+  readonly id: number;
+  readonly path: string;
+  readonly scope: ProjectIconScope;
+  readonly status: "pending" | "awaiting-stream";
+}
+
 export function replaceProjectIconSetting(
   input: {
     readonly projectIcons: Readonly<Record<string, string>>;
@@ -147,37 +154,58 @@ export function ProjectIconPathField({ target }: { readonly target: ProjectIconT
   const [scope, setScope] = useState<ProjectIconScope>(initialScope);
   const [pathDirty, setPathDirty] = useState(false);
   const [scopeDirty, setScopeDirty] = useState(false);
+  const [pendingSave, setPendingSave] = useState<PendingProjectIconSave | null>(null);
   const saveQueueRef = useRef(Promise.resolve());
+  const latestSaveIdRef = useRef(0);
   const queueSave = useCallback(
     (nextPath: string, nextScope: ProjectIconScope) => {
+      const id = latestSaveIdRef.current + 1;
+      latestSaveIdRef.current = id;
+      const path = nextPath.trim();
+      const observableScope = path.length === 0 || !target.repositoryKey ? "workspace" : nextScope;
+      setPendingSave({ id, path, scope: observableScope, status: "pending" });
       const save = saveQueueRef.current.then(() => saveIconPath(nextPath, nextScope));
       saveQueueRef.current = save.then(
         () => undefined,
         () => undefined,
       );
+      void save.then((saved) => {
+        if (latestSaveIdRef.current !== id) return;
+        setPendingSave((current) =>
+          current?.id === id && saved
+            ? { ...current, status: "awaiting-stream" }
+            : current?.id === id
+              ? null
+              : current,
+        );
+      });
       return save;
     },
-    [saveIconPath],
+    [saveIconPath, target.repositoryKey],
   );
 
   useEffect(() => {
-    if (pathDirty) {
-      if (iconPath === draftPath.trim()) {
-        setPathDirty(false);
-      }
-      return;
-    }
+    if (pathDirty || pendingSave !== null) return;
     setDraftPath(iconPath);
-  }, [draftPath, iconPath, pathDirty]);
+  }, [iconPath, pathDirty, pendingSave]);
   useEffect(() => {
-    if (scopeDirty) {
-      if (initialScope === scope) {
-        setScopeDirty(false);
-      }
+    if (scopeDirty || pendingSave !== null) return;
+    setScope(initialScope);
+  }, [initialScope, pendingSave, scopeDirty]);
+  useEffect(() => {
+    if (
+      pendingSave?.status !== "awaiting-stream" ||
+      iconPath !== pendingSave.path ||
+      initialScope !== pendingSave.scope ||
+      draftPath.trim() !== pendingSave.path ||
+      scope !== pendingSave.scope
+    ) {
       return;
     }
-    setScope(initialScope);
-  }, [initialScope, scope, scopeDirty]);
+    setPendingSave(null);
+    setPathDirty(false);
+    setScopeDirty(false);
+  }, [draftPath, iconPath, initialScope, pendingSave, scope]);
 
   return (
     <label className="grid min-w-0 gap-1.5 sm:col-span-2">
