@@ -403,10 +403,18 @@ export function attachGitStderrExcerpt(
 ): GitCommandError {
   const redactionCandidates = args
     .flatMap((arg) => {
+      // The length floor only applies to whole arguments, where it prevents
+      // mangling ordinary words like subcommand names. Extracted option
+      // values are redacted regardless of length so a short secret in
+      // `--option=value` form cannot slip through.
+      const candidates = arg.length >= STDERR_REDACTION_MIN_LENGTH ? [arg] : [];
       const separatorIndex = arg.indexOf("=");
-      return separatorIndex >= 0 ? [arg, arg.slice(separatorIndex + 1)] : [arg];
+      const value = separatorIndex >= 0 ? arg.slice(separatorIndex + 1) : "";
+      if (value.length > 0) {
+        candidates.push(value);
+      }
+      return candidates;
     })
-    .filter((candidate) => candidate.length >= STDERR_REDACTION_MIN_LENGTH)
     .sort((left, right) => right.length - left.length);
 
   let excerpt = stderr;

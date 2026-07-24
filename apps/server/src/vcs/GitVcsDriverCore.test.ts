@@ -775,6 +775,21 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         );
         assert.notInclude(redacted.stderrExcerpt ?? "", "token-value");
         assert.include(redacted.stderrExcerpt ?? "", "could not read from");
+
+        // Option values below the whole-argument length floor are still
+        // redacted: a short secret must not survive the filter.
+        const shortValue = attachGitStderrExcerpt(
+          new GitCommandError({
+            operation: "GitVcsDriver.test.shortValue",
+            command: "git",
+            cwd: "/tmp/repo",
+            detail: "Git command exited with a non-zero status.",
+          }),
+          "fatal: authentication failed for abc",
+          ["fetch", "--token=abc"],
+        );
+        assert.notInclude(shortValue.stderrExcerpt ?? "", "abc");
+        assert.include(shortValue.stderrExcerpt ?? "", "authentication failed");
       }),
     );
 
