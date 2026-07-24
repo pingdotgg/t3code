@@ -64,6 +64,10 @@ const KIMI_K3_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const KIMI_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 
+function isKimiK3Slug(slug: string | null | undefined): boolean {
+  return !!slug && (slug.includes("/k3") || slug.endsWith("k3"));
+}
+
 const KIMI_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "kimi-code/k3",
@@ -191,19 +195,31 @@ export function buildKimiDiscoveredModelsFromConfigOptions(
     "value" in entry ? [entry] : entry.options,
   );
 
+  // The CLI's `thinking` option reflects the session's *current* model: K2.7
+  // models advertise on/off, while K3 advertises low/high/max. The discovery
+  // probe starts on whatever model the CLI defaults to, so only trust the
+  // advertised thinking values for K3 when K3 is the current model; otherwise
+  // fall back to the known K3 effort levels.
+  const currentModelSlug = resolveKimiAcpBaseModelId(
+    typeof modelOption.currentValue === "string" ? modelOption.currentValue : undefined,
+  );
+  const currentModelIsK3 = isKimiK3Slug(currentModelSlug);
+
   for (const option of selectEntries) {
     const slug = resolveKimiAcpBaseModelId(option.value);
     if (!slug || seen.has(slug)) continue;
     seen.add(slug);
     const builtIn = builtInBySlug.get(slug);
     // K3 is the only model that currently advertises thinking efforts.
-    const supportsThinking = slug.includes("/k3") || slug.endsWith("k3");
+    const supportsThinking = isKimiK3Slug(slug);
     models.push({
       slug,
       name: option.name.trim() || builtIn?.name || slug,
       isCustom: false,
       capabilities: supportsThinking
-        ? thinkingCapabilities
+        ? currentModelIsK3 && thinkingValues.length > 0
+          ? thinkingCapabilities
+          : KIMI_K3_CAPABILITIES
         : (builtIn?.capabilities ?? EMPTY_CAPABILITIES),
     });
   }

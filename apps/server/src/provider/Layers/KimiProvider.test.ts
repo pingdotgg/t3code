@@ -52,4 +52,43 @@ describe("buildKimiDiscoveredModelsFromConfigOptions", () => {
     const coding = models.find((model) => model.slug === "kimi-code/kimi-for-coding");
     expect(coding?.capabilities?.optionDescriptors ?? []).toEqual([]);
   });
+
+  it("falls back to K3 effort levels when the session's current model only advertises on/off thinking", () => {
+    // Mirrors the real kimi CLI (0.29.0): ACP sessions start on
+    // kimi-code/kimi-for-coding, whose thinking option only advertises "on".
+    // K3 must still expose low/high/max.
+    const configOptions = [
+      {
+        type: "select",
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "kimi-code/kimi-for-coding",
+        options: [
+          { value: "kimi-code/kimi-for-coding", name: "K2.7 Coding" },
+          { value: "kimi-code/kimi-for-coding-highspeed", name: "K2.7 Coding Highspeed" },
+          { value: "kimi-code/k3", name: "K3" },
+        ],
+      },
+      {
+        type: "select",
+        id: "thinking",
+        name: "Thinking",
+        category: "thought_level",
+        currentValue: "on",
+        options: [{ value: "on", name: "On" }],
+      },
+    ] as ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+
+    const models = buildKimiDiscoveredModelsFromConfigOptions(configOptions);
+
+    const k3 = models.find((model) => model.slug === "kimi-code/k3");
+    const reasoning = k3?.capabilities?.optionDescriptors?.find(
+      (descriptor) => descriptor.id === "reasoningEffort",
+    );
+    expect(reasoning?.type).toBe("select");
+    if (reasoning?.type === "select") {
+      expect(reasoning.options.map((option) => option.id)).toEqual(["low", "high", "max"]);
+    }
+  });
 });
