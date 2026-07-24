@@ -70,9 +70,12 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   if (homePath.length > 0) {
     return path.resolve(expandHomePath(homePath));
   }
+  // No tilde expansion here: the spawned CLI receives this env var verbatim
+  // (env vars are never shell-expanded), so a literal `~` must stay literal
+  // for discovery to scan the same directory the runtime would.
   const environmentConfigDir = environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
   if (environmentConfigDir.length > 0) {
-    return path.resolve(expandHomePath(environmentConfigDir));
+    return path.resolve(environmentConfigDir);
   }
   return path.join(NodeOS.homedir(), ".claude");
 });
