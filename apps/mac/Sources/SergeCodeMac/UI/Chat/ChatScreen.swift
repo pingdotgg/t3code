@@ -87,6 +87,20 @@ public struct ChatScreen: View {
                 Rectangle().fill(.background)
             }
         }
+        // Unsplash credit anchors to the corner (same policy as the empty
+        // state) instead of sitting inline in the header, where badge/status
+        // changes and narrow windows used to displace it.
+        .overlay(alignment: .bottomTrailing) {
+            if let thread = model.selectedThread,
+                model.threadState(thread.id)?.isReviewing != true
+            {
+                let threadKey = model.scopedThreadKey(thread.id)
+                if let photo = scenery.photo(for: threadKey) {
+                    SceneryAttributionTag(photo: photo)
+                        .padding(10)
+                }
+            }
+        }
         .environment(
             \.openSelectText,
             model.selectedThreadID == nil
