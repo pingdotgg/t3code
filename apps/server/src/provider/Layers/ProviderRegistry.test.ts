@@ -856,6 +856,162 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect(
+        "bounds slow and failed snapshots while preserving ready providers and stream ordering",
+        () =>
+          Effect.gen(function* () {
+            const codexDriver = ProviderDriverKind.make("codex");
+            const codexInstanceId = ProviderInstanceId.make("codex");
+            const cursorDriver = ProviderDriverKind.make("cursor");
+            const cursorInstanceId = ProviderInstanceId.make("cursor");
+            const claudeDriver = ProviderDriverKind.make("claudeAgent");
+            const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+            const slowProviderReady = {
+              instanceId: codexInstanceId,
+              driver: codexDriver,
+              status: "ready",
+              enabled: true,
+              installed: true,
+              auth: { status: "authenticated" },
+              checkedAt: "2026-07-20T10:00:00.000Z",
+              version: "1.0.0",
+              models: [],
+              slashCommands: [],
+              skills: [],
+            } as const satisfies ServerProvider;
+            const fastProvider = {
+              instanceId: claudeInstanceId,
+              driver: claudeDriver,
+              status: "ready",
+              enabled: true,
+              installed: true,
+              auth: { status: "authenticated" },
+              checkedAt: "2026-07-20T10:00:00.000Z",
+              version: "2.0.0",
+              models: [],
+              slashCommands: [],
+              skills: [],
+            } as const satisfies ServerProvider;
+            const slowChanges = yield* PubSub.unbounded<ServerProvider>();
+            const makeInstance = (input: {
+              readonly instanceId: ProviderInstanceId;
+              readonly driver: ProviderDriverKind;
+              readonly getSnapshot: Effect.Effect<ServerProvider, never, never>;
+              readonly streamChanges: Stream.Stream<ServerProvider>;
+            }): ProviderInstance => ({
+              instanceId: input.instanceId,
+              driverKind: input.driver,
+              continuationIdentity: {
+                driverKind: input.driver,
+                continuationKey: `${input.driver}:instance:${input.instanceId}`,
+              },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: input.driver,
+                  packageName: null,
+                }),
+                getSnapshot: input.getSnapshot,
+                refresh: input.getSnapshot,
+                streamChanges: input.streamChanges,
+              },
+              adapter: {} as ProviderInstance["adapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            });
+            const slowInstance = makeInstance({
+              instanceId: codexInstanceId,
+              driver: codexDriver,
+              getSnapshot: Effect.never,
+              streamChanges: Stream.fromPubSub(slowChanges),
+            });
+            const failedInstance = makeInstance({
+              instanceId: cursorInstanceId,
+              driver: cursorDriver,
+              getSnapshot: Effect.die(new Error("simulated snapshot failure")),
+              streamChanges: Stream.empty,
+            });
+            const fastInstance = makeInstance({
+              instanceId: claudeInstanceId,
+              driver: claudeDriver,
+              getSnapshot: Effect.succeed(fastProvider),
+              streamChanges: Stream.empty,
+            });
+            const instances: ReadonlyArray<ProviderInstance> = [
+              slowInstance,
+              failedInstance,
+              fastInstance,
+            ];
+            const instanceRegistryLayer = Layer.succeed(
+              ProviderInstanceRegistry.ProviderInstanceRegistry,
+              {
+                getInstance: (instanceId) =>
+                  Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+                listInstances: Effect.succeed(instances),
+                listUnavailable: Effect.succeed([]),
+                streamChanges: Stream.empty,
+                subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+              },
+            );
+            const scope = yield* Scope.make();
+            yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+            // Use the live clock for this build because the boot fallback
+            // and post-subscription pass each exercise a real timeout.
+            const runtimeServices = yield* TestClock.withLive(
+              Layer.build(
+                ProviderRegistryLive.pipe(
+                  Layer.provideMerge(instanceRegistryLayer),
+                  Layer.provideMerge(
+                    ServerConfig.layerTest(process.cwd(), {
+                      prefix: "t3-provider-registry-bounded-boot-",
+                    }),
+                  ),
+                  Layer.provideMerge(NodeServices.layer),
+                ),
+              ).pipe(Scope.provide(scope)),
+            );
+
+            yield* Effect.gen(function* () {
+              const registry = yield* ProviderRegistry.ProviderRegistry;
+              const providersAtReadiness = yield* registry.getProviders;
+              assert.strictEqual(
+                providersAtReadiness.find((provider) => provider.instanceId === claudeInstanceId)
+                  ?.status,
+                "ready",
+              );
+              assert.strictEqual(
+                providersAtReadiness.find((provider) => provider.instanceId === codexInstanceId)
+                  ?.status,
+                "pending",
+              );
+              assert.strictEqual(
+                providersAtReadiness.find((provider) => provider.instanceId === cursorInstanceId)
+                  ?.status,
+                "pending",
+              );
+
+              // The registry subscribes before declaring readiness, so a
+              // later background probe result replaces the pending state.
+              yield* PubSub.publish(slowChanges, slowProviderReady);
+              let providers = yield* registry.getProviders;
+              for (
+                let attempt = 0;
+                attempt < 50 &&
+                providers.find((provider) => provider.instanceId === codexInstanceId)?.status !==
+                  "ready";
+                attempt += 1
+              ) {
+                yield* Effect.yieldNow;
+                providers = yield* registry.getProviders;
+              }
+              assert.deepStrictEqual(
+                providers.find((provider) => provider.instanceId === codexInstanceId),
+                slowProviderReady,
+              );
+            }).pipe(Effect.provide(runtimeServices));
+          }),
+      );
+
       it("persists merged provider snapshots for the providers that were refreshed", () => {
         const previousProviders = [
           {
@@ -1578,10 +1734,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             // `SettingsWatcherLive` consumes this via `streamChanges`,
             // calls `reconcile`, which rebuilds the codex instance (the
             // envelope changed because `binaryPath` differs → `entryEqual`
-            // is false). The registry's `Stream.runForEach(
-            // instanceRegistry.streamChanges, () => syncLiveSources)`
-            // fires `syncLiveSources`, which subscribes and launches a fresh
-            // background refresh on the rebuilt instance.
+            // is false). The registry's pre-acquired subscription fires
+            // `syncLiveSources`, which subscribes to the rebuilt instance and
+            // snapshots its current state; the managed provider's background
+            // probe publishes the fresh result through that subscription.
             yield* serverSettings.updateSettings({
               providers: {
                 codex: { enabled: true, binaryPath: secondMissing },

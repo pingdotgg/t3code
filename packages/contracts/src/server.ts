@@ -40,7 +40,13 @@ export type ServerConfigIssue = typeof ServerConfigIssue.Type;
 
 const ServerConfigIssues = Schema.Array(ServerConfigIssue);
 
-export const ServerProviderState = Schema.Literals(["ready", "warning", "error", "disabled"]);
+export const ServerProviderState = Schema.Literals([
+  "ready",
+  "warning",
+  "error",
+  "disabled",
+  "pending",
+]);
 export type ServerProviderState = typeof ServerProviderState.Type;
 
 export const ServerProviderAuthStatus = Schema.Literals([
