@@ -22,6 +22,7 @@ export interface PullRequestMonitorReview {
 export interface PullRequestMonitorReviewThread {
   readonly id: string;
   readonly author: PullRequestMonitorActor;
+  readonly latestCommentByViewer: boolean;
   readonly body: string;
   readonly path: string | null;
   readonly line: number | null;
@@ -100,6 +101,7 @@ const ThreadSchema = Schema.Struct({
 });
 const PullRequestPageSchema = Schema.Struct({
   data: Schema.Struct({
+    viewer: Schema.Struct({ login: Schema.String }),
     repository: Schema.Struct({
       pullRequest: Schema.NullOr(
         Schema.Struct({
@@ -260,6 +262,7 @@ export const getPullRequestMonitorSnapshot = Effect.fn("getPullRequestMonitorSna
     let threadCursor: string | null = null;
     let reviewsComplete = false;
     let threadsComplete = false;
+    let viewerLogin: string | undefined;
     let metadata:
       | Pick<
           PullRequestMonitorSnapshot,
@@ -267,7 +270,7 @@ export const getPullRequestMonitorSnapshot = Effect.fn("getPullRequestMonitorSna
         >
       | undefined;
     do {
-      const query = `query($owner:String!,$name:String!,$number:Int!,$reviews:String,$threads:String){repository(owner:$owner,name:$name){pullRequest(number:$number){state isDraft merged mergeable headRefOid baseRefName reviews(first:100,after:$reviews){nodes{id author{login __typename} state submittedAt commit{oid}} pageInfo{hasNextPage endCursor}} reviewThreads(first:100,after:$threads){nodes{id isResolved comments(last:1){nodes{author{login __typename} body path line createdAt updatedAt}}} pageInfo{hasNextPage endCursor}}}}}`;
+      const query = `query($owner:String!,$name:String!,$number:Int!,$reviews:String,$threads:String){viewer{login} repository(owner:$owner,name:$name){pullRequest(number:$number){state isDraft merged mergeable headRefOid baseRefName reviews(first:100,after:$reviews){nodes{id author{login __typename} state submittedAt commit{oid}} pageInfo{hasNextPage endCursor}} reviewThreads(first:100,after:$threads){nodes{id isResolved comments(last:1){nodes{author{login __typename} body path line createdAt updatedAt}}} pageInfo{hasNextPage endCursor}}}}}`;
       const result: VcsProcess.VcsProcessOutput = yield* github.execute({
         cwd: input.cwd,
         args: [
@@ -294,6 +297,7 @@ export const getPullRequestMonitorSnapshot = Effect.fn("getPullRequestMonitorSna
       const pr: NonNullable<
         Schema.Schema.Type<typeof PullRequestPageSchema>["data"]["repository"]["pullRequest"]
       > | null = page.data.repository.pullRequest;
+      viewerLogin ??= page.data.viewer.login;
       if (!pr) {
         return yield* new GitHubPullRequestMonitorDecodeError({
           command: "gh",
@@ -334,6 +338,7 @@ export const getPullRequestMonitorSnapshot = Effect.fn("getPullRequestMonitorSna
             reviewThreads.set(thread.id, {
               id: thread.id,
               author: actor(comment.author),
+              latestCommentByViewer: comment.author?.login === viewerLogin,
               body: comment.body,
               path: comment.path,
               line: comment.line,

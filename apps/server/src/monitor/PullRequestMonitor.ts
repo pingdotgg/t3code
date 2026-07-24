@@ -85,6 +85,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const claims = yield* Ref.make<ReadonlyMap<ThreadId, WakeClaim>>(new Map());
   const lastPollFailed = yield* Ref.make(false);
+  const reconciled = yield* Ref.make(false);
 
   const mutateClaim = (
     threadId: ThreadId,
@@ -238,15 +239,17 @@ export const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.tap(() =>
-          DateTime.now.pipe(
-            Effect.map(DateTime.formatIso),
-            Effect.flatMap((dispatchedAt) =>
-              mutateClaim(registration.threadId, (claim) =>
-                claim?.commandId === commandId
-                  ? { ...claim, phase: "in-flight", dispatchedAt }
-                  : claim,
-              ),
-            ),
+          // Stamp the claim with the command's own createdAt: a provider
+          // turn-start failure activity echoes exactly this timestamp
+          // (ProviderCommandReactor appends it with the event payload's
+          // createdAt), so equality means "our wake failed" while an older
+          // turn's delayed failure compares strictly older. A post-dispatch
+          // DateTime.now here would always exceed the echoed timestamp and
+          // make the release condition unsatisfiable.
+          mutateClaim(registration.threadId, (claim) =>
+            claim?.commandId === commandId
+              ? { ...claim, phase: "in-flight", dispatchedAt: createdAt }
+              : claim,
           ),
         ),
         Effect.tap(() =>
@@ -317,7 +320,43 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const reconcile = Effect.fn("PullRequestMonitor.reconcile")(function* () {
+    if (yield* Ref.get(reconciled)) return;
+    const shell = yield* snapshots.getShellSnapshot();
+    yield* Effect.forEach(
+      shell.threads.filter((thread) => thread.monitor?.status === "monitoring"),
+      (thread) =>
+        registry.get(thread.id).pipe(
+          Effect.flatMap((registration) => {
+            if (Option.isSome(registration)) return Effect.void;
+            return Effect.gen(function* () {
+              const endedAt = DateTime.formatIso(yield* DateTime.now);
+              yield* engine.dispatch({
+                type: "thread.monitor.end",
+                commandId: CommandId.make(`monitor-boot-reconcile:${thread.id}:${endedAt}`),
+                threadId: thread.id,
+                reason: "session-ended",
+                blockersSummary: "",
+                endedAt,
+              });
+            });
+          }),
+        ),
+      { discard: true },
+    );
+    yield* Ref.set(reconciled, true);
+  });
+
   const pollOnce = Ref.set(lastPollFailed, false).pipe(
+    Effect.andThen(
+      reconcile().pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("pull request monitor boot reconcile failed", { error }).pipe(
+            Effect.andThen(Ref.set(lastPollFailed, true)),
+          ),
+        ),
+      ),
+    ),
     Effect.andThen(registry.listActive),
     Effect.flatMap((registrations) =>
       Effect.forEach(
@@ -344,13 +383,25 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((registration) =>
           Option.isNone(registration)
             ? Effect.void
-            : end(threadId, "stopped", "", registration.value.generation),
-        ),
-        Effect.catch((error) =>
-          Effect.logWarning("pull request monitor archive teardown failed", {
-            threadId,
-            error,
-          }),
+            : end(threadId, "stopped", "", registration.value.generation).pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning(
+                    "pull request monitor archive projection stuck; removing registration",
+                    {
+                      threadId,
+                      error,
+                    },
+                  ).pipe(
+                    Effect.andThen(registry.remove(threadId, registration.value.generation)),
+                    Effect.andThen(
+                      mutateClaim(threadId, (claim) =>
+                        claim?.generation === registration.value.generation ? undefined : claim,
+                      ),
+                    ),
+                    Effect.asVoid,
+                  ),
+                ),
+              ),
         ),
       );
     }
@@ -393,42 +444,6 @@ export const make = Effect.gen(function* () {
   };
 
   const start = Effect.fn("PullRequestMonitor.start")(function* () {
-    const shell = yield* snapshots
-      .getShellSnapshot()
-      .pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("pull request monitor boot reconcile query failed", { error }).pipe(
-            Effect.as({ threads: [] as const }),
-          ),
-        ),
-      );
-    yield* Effect.forEach(
-      shell.threads.filter((thread) => thread.monitor?.status === "monitoring"),
-      (thread) =>
-        registry.get(thread.id).pipe(
-          Effect.flatMap((registration) => {
-            if (Option.isSome(registration)) return Effect.void;
-            return Effect.gen(function* () {
-              const endedAt = DateTime.formatIso(yield* DateTime.now);
-              yield* engine.dispatch({
-                type: "thread.monitor.end",
-                commandId: CommandId.make(`monitor-boot-reconcile:${thread.id}:${endedAt}`),
-                threadId: thread.id,
-                reason: "session-ended",
-                blockersSummary: "",
-                endedAt,
-              });
-            });
-          }),
-          Effect.catch((error) =>
-            Effect.logWarning("pull request monitor boot reconcile failed", {
-              threadId: thread.id,
-              error,
-            }),
-          ),
-        ),
-      { discard: true },
-    );
     yield* Effect.forkDetach(Stream.runForEach(engine.streamDomainEvents, onEvent));
     yield* Effect.forkDetach(
       Effect.forever(

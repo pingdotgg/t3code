@@ -70,6 +70,7 @@ export function diffPullRequestMonitorSnapshot(
   for (const thread of snapshot.reviewThreads) {
     const previous = previousCursor.threadVersions[thread.id];
     if (
+      !thread.latestCommentByViewer &&
       !thread.resolved &&
       (!previous || previous.resolved || previous.updatedAt !== thread.updatedAt)
     ) {

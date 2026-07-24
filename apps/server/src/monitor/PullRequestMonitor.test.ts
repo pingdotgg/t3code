@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
 import {
   GitHubPullRequestMonitorDecodeError,
   type PullRequestMonitorSnapshot,
@@ -58,6 +59,7 @@ const snapshot = (
 const comment = (id: string) => ({
   id,
   author: { login: "bugbot", type: "app" as const },
+  latestCommentByViewer: false,
   body: `Finding ${id}`,
   path: "src/file.ts",
   line: 12,
@@ -104,7 +106,10 @@ const harness = Effect.fn("PullRequestMonitor.testHarness")(function* (input: {
   readonly current: { value: PullRequestMonitorSnapshot };
   readonly wakeCount?: number;
   readonly failWake?: boolean;
+  readonly failEnd?: boolean;
   readonly failFreshFetch?: boolean;
+  readonly reconcileFailures?: number;
+  readonly reconcileThreadId?: ThreadId;
   readonly busy?: { value: boolean };
   readonly afterUpdate?: () => void;
   readonly changeGenerationAfterUpdate?: boolean;
@@ -131,7 +136,10 @@ const harness = Effect.fn("PullRequestMonitor.testHarness")(function* (input: {
       Effect.sync(() => {
         if (registration?.generation === generation) registration = undefined;
       }),
-    get: () => Effect.sync(() => (registration ? Option.some(registration) : Option.none())),
+    get: (requestedThreadId) =>
+      Effect.sync(() =>
+        registration?.threadId === requestedThreadId ? Option.some(registration) : Option.none(),
+      ),
     updateCursor: (_, cursor, expectedGeneration) =>
       Effect.sync(() => {
         ordering.push("ack");
@@ -203,10 +211,19 @@ const harness = Effect.fn("PullRequestMonitor.testHarness")(function* (input: {
           );
         }
       }
+      if (command.type === "thread.monitor.end" && input.failEnd) {
+        return Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "rejected",
+          }),
+        );
+      }
       return Effect.succeed({ sequence: commands.length });
     },
   });
   let fetchCount = 0;
+  let reconcileCount = 0;
   const monitor = yield* make.pipe(
     Effect.provideService(MonitorRegistry.MonitorRegistry, registry),
     Effect.provideService(PullRequestSnapshotFetcher, {
@@ -228,6 +245,45 @@ const harness = Effect.fn("PullRequestMonitor.testHarness")(function* (input: {
     Effect.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionSnapshotQuery)({
+          getShellSnapshot: () => {
+            reconcileCount += 1;
+            if (reconcileCount <= (input.reconcileFailures ?? 0)) {
+              return Effect.fail(
+                new PersistenceSqlError({
+                  operation: "PullRequestMonitor.test:getShellSnapshot",
+                  detail: "reconcile failed",
+                }),
+              );
+            }
+            return Effect.succeed({
+              snapshotSequence: 0,
+              projects: [],
+              threads: input.reconcileThreadId
+                ? [
+                    {
+                      ...thread(),
+                      id: input.reconcileThreadId,
+                      monitor: {
+                        status: "monitoring" as const,
+                        prNumber: 42,
+                        startedAt: now,
+                        blockersSummary: "",
+                        headSha: "head-1",
+                        wakeCount: 0,
+                        updatedAt: now,
+                        endedAt: null,
+                        endedReason: null,
+                      },
+                      latestUserMessageAt: null,
+                      hasPendingApprovals: false,
+                      hasPendingUserInput: false,
+                      hasActionableProposedPlan: false,
+                    },
+                  ]
+                : [],
+              updatedAt: now,
+            });
+          },
           getThreadDetailById: () =>
             Effect.succeed(Option.some(thread(input.busy?.value ?? false))),
         }),
@@ -484,6 +540,58 @@ describe("PullRequestMonitor dispatch protocol", () => {
       const ended = endReason(h.commands);
       assert.strictEqual(ended?.type === "thread.monitor.end" && ended.reason, "stopped");
       assert.strictEqual(h.getRegistration(), undefined);
+    }),
+  );
+
+  it.effect("removes an archived registration when projecting monitor end fails", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({
+        initial: snapshot(),
+        current: { value: snapshot() },
+        failEnd: true,
+      });
+      yield* h.monitor.handleDomainEvent({
+        sequence: 1,
+        eventId: EventId.make("archived"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("archived"),
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.archived",
+        payload: { threadId, archivedAt: now, updatedAt: now },
+      });
+      assert.strictEqual(h.getRegistration(), undefined);
+    }),
+  );
+
+  it.effect("retries boot reconciliation on the first poll after a failed attempt", () =>
+    Effect.gen(function* () {
+      const orphanThreadId = ThreadId.make("orphan-monitor-thread");
+      const h = yield* harness({
+        initial: snapshot(),
+        current: { value: snapshot() },
+        reconcileFailures: 1,
+        reconcileThreadId: orphanThreadId,
+      });
+
+      yield* h.monitor.pollOnce;
+      assert.strictEqual(
+        h.commands.some(
+          (command) => command.type === "thread.monitor.end" && command.threadId === orphanThreadId,
+        ),
+        false,
+      );
+
+      yield* h.monitor.pollOnce;
+      assert.strictEqual(
+        h.commands.some(
+          (command) => command.type === "thread.monitor.end" && command.threadId === orphanThreadId,
+        ),
+        true,
+      );
     }),
   );
 });

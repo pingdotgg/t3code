@@ -23,6 +23,7 @@ const snapshot = (
 const thread = (updatedAt = "2026-01-01T00:00:00Z", resolved = false) => ({
   id: "thread-1",
   author: { login: "review-bot", type: "app" as const },
+  latestCommentByViewer: false,
   body: "Fix this",
   path: "src/a.ts",
   line: 3,
@@ -67,6 +68,29 @@ describe("pull request monitor diff", () => {
     assert.deepStrictEqual(edited.actionableEvents, [
       { kind: "new-review-comment", threadId: "thread-1", edited: true },
     ]);
+  });
+
+  it("does not wake for the viewer's reply, then wakes for a subsequent reviewer comment", () => {
+    const initial = snapshot({ reviewThreads: [thread()] });
+    const selfReply = snapshot({
+      reviewThreads: [
+        {
+          ...thread("2026-01-02T00:00:00Z"),
+          author: { login: "claude", type: "user" as const },
+          latestCommentByViewer: true,
+        },
+      ],
+    });
+    const ignored = diffPullRequestMonitorSnapshot(cursorFromSnapshot(initial), selfReply);
+    assert.deepStrictEqual(ignored.actionableEvents, []);
+
+    const reviewerReply = snapshot({
+      reviewThreads: [thread("2026-01-03T00:00:00Z")],
+    });
+    assert.deepStrictEqual(
+      diffPullRequestMonitorSnapshot(ignored.nextCursor, reviewerReply).actionableEvents,
+      [{ kind: "new-review-comment", threadId: "thread-1", edited: true }],
+    );
   });
 
   it("detects new and edited bot issue comments", () => {
