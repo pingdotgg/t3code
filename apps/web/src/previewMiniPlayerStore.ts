@@ -7,9 +7,15 @@ export interface PreviewMiniPlayerPosition {
   readonly y: number;
 }
 
+export interface PreviewMiniPlayerSize {
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface PreviewMiniPlayerState {
   readonly tabId: string;
   readonly position: PreviewMiniPlayerPosition | null;
+  readonly size: PreviewMiniPlayerSize | null;
 }
 
 interface PreviewMiniPlayerStoreState {
@@ -17,6 +23,7 @@ interface PreviewMiniPlayerStoreState {
   readonly open: (ref: ScopedThreadRef, tabId: string) => void;
   readonly close: (ref: ScopedThreadRef) => void;
   readonly move: (ref: ScopedThreadRef, tabId: string, position: PreviewMiniPlayerPosition) => void;
+  readonly resize: (ref: ScopedThreadRef, tabId: string, size: PreviewMiniPlayerSize) => void;
   readonly removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -33,6 +40,7 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
           [threadKey]: {
             tabId,
             position: current?.position ?? null,
+            size: current?.size ?? null,
           },
         },
       };
@@ -54,6 +62,19 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
         byThreadKey: {
           ...state.byThreadKey,
           [threadKey]: { ...current, position },
+        },
+      };
+    }),
+  resize: (ref, tabId, size) =>
+    set((state) => {
+      const threadKey = scopedThreadKey(ref);
+      const current = state.byThreadKey[threadKey];
+      if (!current || current.tabId !== tabId) return state;
+      if (current.size?.width === size.width && current.size.height === size.height) return state;
+      return {
+        byThreadKey: {
+          ...state.byThreadKey,
+          [threadKey]: { ...current, size },
         },
       };
     }),

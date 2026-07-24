@@ -34,6 +34,7 @@ describe("previewMiniPlayerStore", () => {
     ).toEqual({
       tabId: "tab-b",
       position: { x: 24, y: 48 },
+      size: null,
     });
   });
 
@@ -47,6 +48,17 @@ describe("previewMiniPlayerStore", () => {
     ).toEqual({
       tabId: "tab-b",
       position: null,
+      size: null,
     });
+  });
+
+  it("preserves a thread-bound size while switching tabs", () => {
+    usePreviewMiniPlayerStore.getState().open(refA, "tab-a");
+    usePreviewMiniPlayerStore.getState().resize(refA, "tab-a", { width: 480, height: 320 });
+    usePreviewMiniPlayerStore.getState().open(refA, "tab-b");
+
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refA),
+    ).toMatchObject({ tabId: "tab-b", size: { width: 480, height: 320 } });
   });
 });

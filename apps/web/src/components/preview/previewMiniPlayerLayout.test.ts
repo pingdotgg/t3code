@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   clampPreviewMiniPlayerPosition,
+  clampPreviewMiniPlayerSize,
   PREVIEW_MINI_PLAYER_EDGE_GAP,
 } from "./previewMiniPlayerLayout";
 
@@ -44,5 +45,23 @@ describe("clampPreviewMiniPlayerPosition", () => {
       x: 500,
       y: 288,
     });
+  });
+});
+
+describe("clampPreviewMiniPlayerSize", () => {
+  it("allows resizing within the available chat viewport", () => {
+    expect(
+      clampPreviewMiniPlayerSize({ width: 520, height: 360 }, { width: 1_000, height: 700 }, 120),
+    ).toEqual({ width: 520, height: 360 });
+  });
+
+  it("bounds oversized players above the composer", () => {
+    expect(
+      clampPreviewMiniPlayerSize(
+        { width: 2_000, height: 2_000 },
+        { width: 1_000, height: 700 },
+        120,
+      ),
+    ).toEqual({ width: 976, height: 556 });
   });
 });

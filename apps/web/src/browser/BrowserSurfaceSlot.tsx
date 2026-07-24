@@ -10,8 +10,16 @@ export function BrowserSurfaceSlot(props: {
   readonly cornerRadius?: number;
   readonly layoutVersion?: string | number;
   readonly className?: string;
+  readonly fitSourceContent?: boolean;
 }) {
-  const { tabId, visible, cornerRadius = 0, layoutVersion, className } = props;
+  const {
+    tabId,
+    visible,
+    cornerRadius = 0,
+    layoutVersion,
+    className,
+    fitSourceContent = false,
+  } = props;
   const elementRef = useRef<HTMLDivElement | null>(null);
   const presentationRef = useRef({ visible, cornerRadius });
   const updateRef = useRef<(() => void) | null>(null);
@@ -19,7 +27,7 @@ export function BrowserSurfaceSlot(props: {
   useLayoutEffect(() => {
     const element = elementRef.current;
     if (!element) return;
-    const lease = acquireBrowserSurface(tabId);
+    const lease = acquireBrowserSurface(tabId, fitSourceContent);
     const update = () => {
       const rect = element.getBoundingClientRect();
       const presentation = presentationRef.current;
@@ -47,7 +55,7 @@ export function BrowserSurfaceSlot(props: {
       if (updateRef.current === update) updateRef.current = null;
       lease.release();
     };
-  }, [tabId]);
+  }, [fitSourceContent, tabId]);
 
   useLayoutEffect(() => {
     presentationRef.current = { visible, cornerRadius };

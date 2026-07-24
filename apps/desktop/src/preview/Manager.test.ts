@@ -101,7 +101,7 @@ const layer = PreviewManager.layer.pipe(
   Layer.provideMerge(environmentLayer),
   Layer.provideMerge(fileSystemLayer),
   Layer.provideMerge(Path.layer),
-  Layer.provideMerge(Layer.succeed(HostProcessPlatform, "linux")),
+  Layer.provideMerge(Layer.succeed(HostProcessPlatform, "darwin")),
 );
 const encodePreviewManagerError = Schema.encodeSync(PreviewManager.PreviewManagerError);
 
@@ -993,6 +993,10 @@ describe("PreviewManager", () => {
           }),
         );
         expect(pictureInPictureWindow.showInactive).toHaveBeenCalledOnce();
+        expect(pictureInPictureWindow.setVisibleOnAllWorkspaces).toHaveBeenCalledWith(true, {
+          visibleOnFullScreen: true,
+          skipTransformProcessType: true,
+        });
         expect(pictureInPictureWindow.setAspectRatio).toHaveBeenCalledWith(1280 / 720);
         expect(pictureInPictureSend).toHaveBeenCalledWith(
           "desktop:preview-pip-frame",

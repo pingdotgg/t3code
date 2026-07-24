@@ -2299,6 +2299,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             if (hostPlatform === "darwin") {
               pictureInPictureWindow.setVisibleOnAllWorkspaces(true, {
                 visibleOnFullScreen: true,
+                // Electron otherwise temporarily transforms the entire app into
+                // a UIElement process, which removes the owning app from the Dock.
+                skipTransformProcessType: true,
               });
             }
           },

@@ -11,6 +11,35 @@ describe("browserSurfaceStore", () => {
     useBrowserSurfaceStore.setState({ byTabId: {} });
   });
 
+  it("freezes the source content dimensions for a fitted presentation", () => {
+    const tabId = "fitted-browser-surface";
+    const sourceOwner = Symbol("source");
+    const sourceContent = {
+      x: 10,
+      y: 20,
+      width: 1_280,
+      height: 720,
+      scale: 1,
+      scrollLeft: 0,
+      scrollTop: 0,
+    };
+    useBrowserSurfaceStore.getState().claim(tabId, sourceOwner, false);
+    useBrowserSurfaceStore.getState().presentContent(tabId, sourceContent);
+
+    const fittedLease = acquireBrowserSurface(tabId, true);
+    useBrowserSurfaceStore.getState().presentContent(tabId, {
+      ...sourceContent,
+      width: 360,
+      height: 203,
+      scale: 0.28125,
+    });
+
+    expect(useBrowserSurfaceStore.getState().byTabId[tabId]?.fittedSourceContent).toEqual(
+      sourceContent,
+    );
+    fittedLease.release();
+  });
+
   it("tracks content dimensions for a browser that has never been visible", () => {
     const tabId = "hidden-browser-surface-content-test";
     useBrowserSurfaceStore.getState().presentContent(tabId, {
@@ -40,6 +69,7 @@ describe("browserSurfaceStore", () => {
             rect: staleRect,
             visible: false,
             content: null,
+            fittedSourceContent: null,
             cornerRadius: 0,
             updatedAt: 1,
             owner: null,
@@ -48,6 +78,7 @@ describe("browserSurfaceStore", () => {
             rect: liveRect,
             visible: true,
             content: null,
+            fittedSourceContent: null,
             cornerRadius: 0,
             updatedAt: 2,
             owner: null,

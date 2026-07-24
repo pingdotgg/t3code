@@ -11,6 +11,7 @@ export interface BrowserSurfacePresentation {
   readonly rect: BrowserSurfaceRect | null;
   readonly visible: boolean;
   readonly content: BrowserSurfaceContentPresentation | null;
+  readonly fittedSourceContent: BrowserSurfaceContentPresentation | null;
   readonly cornerRadius: number;
   readonly updatedAt: number;
   readonly owner: symbol | null;
@@ -28,7 +29,7 @@ export interface BrowserSurfaceContentPresentation {
 
 interface BrowserSurfaceStoreState {
   readonly byTabId: Record<string, BrowserSurfacePresentation>;
-  readonly claim: (tabId: string, owner: symbol) => void;
+  readonly claim: (tabId: string, owner: symbol, fitSourceContent: boolean) => void;
   readonly present: (
     tabId: string,
     owner: symbol,
@@ -74,7 +75,7 @@ const rectEquals = (left: BrowserSurfaceRect | null, right: BrowserSurfaceRect):
 
 export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) => ({
   byTabId: {},
-  claim: (tabId, owner) =>
+  claim: (tabId, owner, fitSourceContent) =>
     set((state) => {
       const current = state.byTabId[tabId];
       if (current?.owner === owner) return state;
@@ -85,6 +86,7 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
             rect: current?.rect ?? null,
             visible: false,
             content: current?.content ?? null,
+            fittedSourceContent: fitSourceContent ? (current?.content ?? null) : null,
             cornerRadius: current?.cornerRadius ?? 0,
             updatedAt: Date.now(),
             owner,
@@ -122,6 +124,7 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
               rect: null,
               visible: false,
               content,
+              fittedSourceContent: null,
               cornerRadius: 0,
               updatedAt: Date.now(),
               owner: null,
@@ -162,10 +165,13 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
     }),
 }));
 
-export function acquireBrowserSurface(tabId: string): BrowserSurfaceLease {
+export function acquireBrowserSurface(
+  tabId: string,
+  fitSourceContent = false,
+): BrowserSurfaceLease {
   const owner = Symbol(`browser-surface:${tabId}`);
   let released = false;
-  useBrowserSurfaceStore.getState().claim(tabId, owner);
+  useBrowserSurfaceStore.getState().claim(tabId, owner, fitSourceContent);
 
   return {
     present: (rect, visible, cornerRadius = 0) => {
