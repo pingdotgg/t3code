@@ -7,6 +7,7 @@ import {
   type ErrorComponentProps,
   useLocation,
   useNavigate,
+  useRouterState,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
@@ -48,6 +49,7 @@ import {
   primaryServerWelcomeAtom,
 } from "../state/server";
 import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import { resolveThreadRouteTarget } from "../threadRoutes";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -134,6 +136,7 @@ function RootRouteView() {
         <SshPasswordPromptDialog />
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
+        <NonChatRouteVisitTracker />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
@@ -193,6 +196,24 @@ function HostedStaticEnvironmentBootstrap() {
 
     setActiveEnvironmentId(firstSavedEnvironment.environmentId);
   }, [activeEnvironmentId, environments]);
+
+  return null;
+}
+
+function NonChatRouteVisitTracker() {
+  const hasThreadRoute = useRouterState({
+    select: (state) => {
+      const params = state.matches[state.matches.length - 1]?.params ?? {};
+      return resolveThreadRouteTarget(params) !== null;
+    },
+  });
+  const markActiveThreadVisited = useUiStateStore((state) => state.markActiveThreadVisited);
+
+  useEffect(() => {
+    if (!hasThreadRoute) {
+      markActiveThreadVisited(null, null);
+    }
+  }, [hasThreadRoute, markActiveThreadVisited]);
 
   return null;
 }

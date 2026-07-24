@@ -24,6 +24,7 @@ import {
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
+  resolveThreadVisitCompletedAt,
   resolveSendEnvMode,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -83,6 +84,25 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("resolveThreadVisitCompletedAt", () => {
+  it("tracks the latest completion rather than metadata-only updates", () => {
+    const metadataUpdatedThread = makeThread({
+      updatedAt: "2026-03-29T00:05:00.000Z",
+      latestTurn: completedTurn,
+    });
+
+    expect(resolveThreadVisitCompletedAt(metadataUpdatedThread)).toBe(completedTurn.completedAt);
+    expect(resolveThreadVisitCompletedAt(makeThread({ latestTurn: null }))).toBeNull();
+    expect(
+      resolveThreadVisitCompletedAt(
+        makeThread({
+          latestTurn: { ...completedTurn, completedAt: "invalid" },
+        }),
+      ),
+    ).toBeNull();
+  });
+});
 
 describe("resolveThreadMetadataUpdateForNextTurn", () => {
   const modelSelection = {

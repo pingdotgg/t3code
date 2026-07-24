@@ -27,6 +27,13 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function resolveThreadVisitCompletedAt(
+  thread: Pick<Thread, "latestTurn"> | null | undefined,
+): string | null {
+  const completedAt = thread?.latestTurn?.completedAt;
+  return completedAt && !Number.isNaN(Date.parse(completedAt)) ? completedAt : null;
+}
+
 export function resolveThreadMetadataUpdateForNextTurn(input: {
   currentModelSelection: ModelSelection;
   nextModelSelection?: ModelSelection;
