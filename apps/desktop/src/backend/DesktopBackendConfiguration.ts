@@ -11,9 +11,11 @@ import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import serverPackageJson from "../../../server/package.json" with { type: "json" };
 
+import * as DesktopBackendAttach from "./DesktopBackendAttach.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
@@ -364,6 +366,9 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       httpBaseUrl: backendExposure.httpBaseUrl,
       captureOutput: true,
       preflightFailure: Option.none(),
+      // Default to spawn; buildWindowsPrimaryConfig flips this to attach when
+      // it finds a live external backend owning the same state dir.
+      attach: Option.none(),
     } satisfies DesktopBackendManager.DesktopBackendStartConfig;
   },
 );
@@ -499,6 +504,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     bootstrapDelivery: "stdin" as const,
     httpBaseUrl,
     captureOutput: true,
+    // Attach is a primary-only concern; the WSL secondary always spawns.
+    attach: Option.none(),
     ...(runningDistro !== null ? { runningDistro } : {}),
   };
 
@@ -562,6 +569,11 @@ export const make = Effect.gen(function* () {
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const settings = yield* DesktopAppSettings.DesktopAppSettings;
   const crypto = yield* Crypto.Crypto;
+  // Captured optionally so the configuration layer (and the runSync label
+  // path) don't hard-depend on HttpClient. It's present in the real desktop
+  // runtime; when absent the attach probe simply can't reach out and falls
+  // back to spawn.
+  const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
   // SynchronizedRef (not a plain Ref) so the read-generate-write is atomic.
   // crypto.randomBytes is a yield point, and resolvePrimary + resolveWsl can
   // resolve concurrently; with a plain Ref both could observe None, generate
@@ -619,12 +631,65 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // Probe the state dir the child would own for an already-running external
+  // backend and, when one is live and healthy, resolve an attach decision.
+  // environment.stateDir is derived the same way the server derives its state
+  // dir (baseDir + dev/userdata), so it points at the same server-runtime.json
+  // and local-attach-token the external `t3 serve` writes.
+  const resolvePrimaryAttachDecision = Effect.gen(function* () {
+    const stateDir = environment.stateDir;
+    const serverRuntimeStatePath = DesktopBackendAttach.serverRuntimeStatePathFor(
+      environment.path,
+      stateDir,
+    );
+    const localAttachTokenPath = DesktopBackendAttach.localAttachTokenPathFor(
+      environment.path,
+      stateDir,
+    );
+    return yield* DesktopBackendAttach.resolveAttachDecision({
+      noAttach: environment.noAttachExternalBackend,
+      appVersion: environment.appVersion,
+      readRuntimeState: DesktopBackendAttach.makeReadRuntimeState(serverRuntimeStatePath).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      ),
+      isPidAlive: DesktopBackendAttach.isProcessAlive,
+      probeEnvironment: (origin) =>
+        Option.match(httpClient, {
+          onNone: () => Effect.succeed(Option.none()),
+          onSome: (client) =>
+            DesktopBackendAttach.makeProbeEnvironment(origin).pipe(
+              Effect.provideService(HttpClient.HttpClient, client),
+            ),
+        }),
+      readAttachToken: DesktopBackendAttach.makeReadAttachToken(localAttachTokenPath).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      ),
+    });
+  });
+
   const buildWindowsPrimaryConfig = Effect.gen(function* () {
     const shared = yield* sharedInputs;
-    return yield* resolvePrimaryStartConfig(shared).pipe(
+    const spawnConfig = yield* resolvePrimaryStartConfig(shared).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
     );
+    const decision = yield* resolvePrimaryAttachDecision;
+    if (decision._tag === "spawn") {
+      return spawnConfig;
+    }
+    // Attach: point the renderer/readiness at the external origin and hand the
+    // renderer the attach token through the exact channel the desktop bootstrap
+    // token uses today (config.bootstrap.desktopBootstrapToken), so the whole
+    // renderer auth flow is unchanged.
+    return {
+      ...spawnConfig,
+      httpBaseUrl: new URL(decision.origin),
+      bootstrap: {
+        ...spawnConfig.bootstrap,
+        desktopBootstrapToken: decision.token,
+      },
+      attach: Option.some({ pid: decision.pid }),
+    } satisfies DesktopBackendManager.DesktopBackendStartConfig;
   });
 
   // Single source of truth for what the primary actually runs as. Both

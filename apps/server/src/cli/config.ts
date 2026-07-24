@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+
 import * as NetService from "@t3tools/shared/Net";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
@@ -294,6 +296,12 @@ export const resolveServerConfig = (
       () => mode === "desktop",
     );
     const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
+    // Every server boot mints a fresh local attach token. It is written to
+    // `<stateDir>/local-attach-token` (mode 0600) so any same-user process
+    // that can read the file can attach to this backend without interactive
+    // pairing (the desktop app uses this to reattach to a systemd `t3 serve`).
+    // Generated for all modes; the file's permissions are the trust boundary.
+    const localAttachToken = NodeCrypto.randomBytes(32).toString("hex");
     const autoBootstrapProjectFromCwd = Option.getOrElse(
       resolveOptionPrecedence(
         Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
@@ -366,6 +374,7 @@ export const resolveServerConfig = (
       noBrowser,
       startupPresentation,
       desktopBootstrapToken,
+      localAttachToken,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
       tailscaleServeEnabled,

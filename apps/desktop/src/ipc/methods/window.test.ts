@@ -30,6 +30,7 @@ const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   httpBaseUrl: new URL("http://127.0.0.1:3774"),
   captureOutput: true,
   preflightFailure: Option.none(),
+  attach: Option.none(),
   runningDistro: "Ubuntu",
 };
 

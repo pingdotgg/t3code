@@ -90,6 +90,7 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
+import { clearLocalAttachTokenFile, writeLocalAttachTokenFile } from "./localAttachToken.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -404,6 +405,26 @@ export const makeServerLayer = Layer.unwrap(
         () => clearPersistedServerRuntimeState(config.serverRuntimeStatePath),
       ),
     );
+    // Local attach token: written on boot (mode 0600) and removed on graceful
+    // shutdown, mirroring server-runtime.json. Same-user local clients read it
+    // to attach without interactive pairing. Skipped only when the token is
+    // absent (unit-test configs); real boots always mint one.
+    const localAttachTokenLayer =
+      config.localAttachToken === undefined
+        ? Layer.empty
+        : Layer.effectDiscard(
+            Effect.acquireRelease(
+              writeLocalAttachTokenFile({
+                path: config.localAttachTokenPath,
+                token: config.localAttachToken,
+              }).pipe(
+                Effect.catchTag("LocalAttachTokenFileError", (error) =>
+                  Effect.logWarning(error.message).pipe(Effect.annotateLogs({ cause: error })),
+                ),
+              ),
+              () => clearLocalAttachTokenFile(config.localAttachTokenPath),
+            ),
+          );
     const tailscaleServeLayer = config.tailscaleServeEnabled
       ? Layer.effectDiscard(
           Effect.acquireRelease(
@@ -483,6 +504,7 @@ export const makeServerLayer = Layer.unwrap(
       }),
       httpListeningLayer,
       runtimeStateLayer,
+      localAttachTokenLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
     );

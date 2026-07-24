@@ -383,6 +383,7 @@ const buildAppUnderTest = (options?: {
       noBrowser: true,
       startupPresentation: "browser",
       desktopBootstrapToken: defaultDesktopBootstrapToken,
+      localAttachToken: undefined,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
       tailscaleServeEnabled: false,

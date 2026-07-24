@@ -243,6 +243,12 @@ const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
 // window can still recover by re-bootstrapping rather than locking
 // the user out of the backend.
 const DESKTOP_BOOTSTRAP_TTL_HOURS = Duration.hours(24);
+// The local attach token is minted fresh every boot and its grant lives only
+// in memory, so it can never outlive the process that owns the token file.
+// Unlike the desktop child, a `t3 serve` backing an attach can run for weeks,
+// so the grant must not expire out from under a still-valid on-disk token —
+// give it an effectively process-lifetime TTL.
+const LOCAL_ATTACH_TTL = Duration.days(3650);
 const PAIRING_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_TOKEN_LENGTH = 12;
 const PAIRING_TOKEN_REJECTION_LIMIT =
@@ -311,6 +317,24 @@ export const make = Effect.gen(function* () {
       // bearer expires). The seed itself stays inside the desktop
       // process and the rendered page, both of which the user already
       // implicitly trusts.
+      remainingUses: "unbounded",
+    });
+  }
+
+  if (config.localAttachToken) {
+    const now = yield* DateTime.now;
+    // Same trust treatment as the desktop bootstrap token: administrative
+    // scopes, unbounded re-exchange so a page reload can re-bootstrap, and a
+    // distinct subject so diagnostics can tell an attach apart from a spawned
+    // desktop child. Trust rides on the 0600 file permissions rather than an
+    // IPC channel.
+    yield* seedGrant(config.localAttachToken, {
+      method: "desktop-bootstrap",
+      scopes: AuthAdministrativeScopes,
+      subject: "local-attach",
+      expiresAt: DateTime.add(now, {
+        milliseconds: Duration.toMillis(LOCAL_ATTACH_TTL),
+      }),
       remainingUses: "unbounded",
     });
   }

@@ -47,6 +47,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   httpBaseUrl: new URL("http://127.0.0.1:3773"),
   captureOutput: true,
   preflightFailure: Option.none(),
+  attach: Option.none(),
 };
 
 const configWithObservability: DesktopBackendBootstrapValue = {

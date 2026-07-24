@@ -42,6 +42,7 @@ export interface ServerDerivedPaths {
   readonly anonymousIdPath: string;
   readonly environmentIdPath: string;
   readonly serverRuntimeStatePath: string;
+  readonly localAttachTokenPath: string;
   readonly secretsDir: string;
 }
 
@@ -75,6 +76,11 @@ export class ServerConfig extends Context.Service<
     readonly noBrowser: boolean;
     readonly startupPresentation: StartupPresentation;
     readonly desktopBootstrapToken: string | undefined;
+    // Random per-boot credential written to `<stateDir>/local-attach-token`
+    // (mode 0600). A same-user local client that can read that file may
+    // exchange this for a bearer session exactly like the desktop bootstrap
+    // token. `undefined` only in unit-test configs that don't exercise attach.
+    readonly localAttachToken: string | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
@@ -124,6 +130,7 @@ export const deriveServerPaths = Effect.fn(function* (
     anonymousIdPath: join(stateDir, "anonymous-id"),
     environmentIdPath: join(stateDir, "environment-id"),
     serverRuntimeStatePath: join(stateDir, "server-runtime.json"),
+    localAttachTokenPath: join(stateDir, "local-attach-token"),
     secretsDir: join(stateDir, "secrets"),
   };
 });
@@ -185,6 +192,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,
+    localAttachToken: undefined,
     staticDir: undefined,
     devUrl,
     noBrowser: false,

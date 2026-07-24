@@ -39,7 +39,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -90,6 +90,18 @@ export interface DesktopBackendStartConfig {
   // Present for a WSL run after the configured/default distro has been
   // resolved to the concrete distro passed to wsl.exe.
   readonly runningDistro?: string;
+  // Some when this run should ATTACH to an already-running external backend
+  // that owns the same state dir instead of spawning a child. In attach mode
+  // nothing is spawned, no process is signaled on stop/quit, and the run's
+  // "exit" is the attached backend ceasing to answer its health probe (which
+  // re-enters attach-or-spawn via the normal restart path). None = spawn.
+  readonly attach: Option.Option<AttachTarget>;
+}
+
+export interface AttachTarget {
+  // Pid recorded in the external backend's server-runtime.json, used for
+  // logging and to detect that the attached backend has gone away.
+  readonly pid: number;
 }
 
 // A preflight failure records whether it is fatal. Transient failures (WSL
@@ -380,6 +392,81 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   return describeProcessExit(yield* Effect.result(handle.exitCode));
 });
 
+const ATTACHED_HEALTH_INTERVAL = Duration.seconds(2);
+// Tolerate a few consecutive missed probes before declaring an attached
+// backend gone, so a transient blip doesn't bounce a healthy attach through
+// the not-ready → re-resolve path unnecessarily.
+const ATTACHED_HEALTH_FAILURE_THRESHOLD = 3;
+
+const probeAttachedHealthy = (baseUrl: URL): Effect.Effect<boolean, never, HttpClient.HttpClient> =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const requestUrl = new URL(BACKEND_READINESS_PATH, baseUrl).toString();
+    const response = yield* client
+      .execute(HttpClientRequest.get(requestUrl))
+      .pipe(Effect.timeout(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT));
+    return response.status >= 200 && response.status < 300;
+  }).pipe(Effect.orElseSucceed(() => false));
+
+// Polls the attached backend until it misses ATTACHED_HEALTH_FAILURE_THRESHOLD
+// consecutive health probes, then resolves so the run finalizes and the
+// restart path re-enters attach-or-spawn (reattach if the external backend
+// came back, spawn our own child if it's gone for good).
+const monitorAttachedHealth = Effect.fn("desktop.backendInstance.monitorAttachedHealth")(function* (
+  baseUrl: URL,
+) {
+  const consecutiveFailures = yield* Ref.make(0);
+  yield* Effect.repeat(
+    Effect.gen(function* () {
+      const healthy = yield* probeAttachedHealthy(baseUrl);
+      if (healthy) {
+        yield* Ref.set(consecutiveFailures, 0);
+        return false;
+      }
+      const failures = yield* Ref.updateAndGet(consecutiveFailures, (n) => n + 1);
+      return failures >= ATTACHED_HEALTH_FAILURE_THRESHOLD;
+    }),
+    {
+      schedule: Schedule.spaced(ATTACHED_HEALTH_INTERVAL),
+      until: (dead) => dead,
+    },
+  );
+});
+
+// Attach-mode analogue of runBackendProcess: no child is spawned. It drives
+// the same readiness path (so handleBackendReady fires against the attached
+// origin) and then monitors health, "exiting" when the external backend stops
+// answering. Nothing is ever signaled on teardown — closing the run scope just
+// interrupts the monitor.
+const runAttachedBackend = Effect.fn("runAttachedBackend")(function* (
+  options: RunBackendProcessOptions & { readonly attachTarget: AttachTarget },
+): Effect.fn.Return<BackendProcessExit, never, HttpClient.HttpClient> {
+  const attachedExit = (reason: string): BackendProcessExit => ({
+    code: Option.none(),
+    reason,
+    result: Result.succeed(ChildProcessSpawner.ExitCode(0)),
+  });
+
+  yield* options.onStarted?.(options.attachTarget.pid) ?? Effect.void;
+
+  const ready = yield* waitForHttpReady(
+    options.httpBaseUrl,
+    options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
+  ).pipe(
+    Effect.matchEffect({
+      onFailure: (error) =>
+        (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.as(false)),
+      onSuccess: () => (options.onReady?.() ?? Effect.void).pipe(Effect.as(true)),
+    }),
+  );
+  if (!ready) {
+    return attachedExit(`attached backend at ${options.httpBaseUrl.href} did not become ready`);
+  }
+
+  yield* monitorAttachedHealth(options.httpBaseUrl);
+  return attachedExit("attached backend stopped responding");
+});
+
 // Factory for one pooled backend instance. The returned instance owns
 // its own state Ref, mutex, restart loop, and active child process;
 // nothing is shared between instances created from separate
@@ -546,7 +633,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           latest.preflightFailureAttempt === 0 ? latest : { ...latest, preflightFailureAttempt: 0 },
         );
 
-        if (!entryExists) {
+        const attachTarget = config.value.attach;
+        // Attaching to an external backend needs no local server entry — only a
+        // spawn does.
+        if (Option.isNone(attachTarget) && !entryExists) {
           yield* scheduleRestart(`missing server entry at ${config.value.entryPath}`);
           return;
         }
@@ -628,16 +718,17 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           );
         });
 
-        const program = runBackendProcess({
-          ...config.value,
-          onStarted: Effect.fn("desktop.backendInstance.onStarted")(function* (pid) {
+        const runCallbacks = {
+          onStarted: Effect.fn("desktop.backendInstance.onStarted")(function* (pid: number) {
             yield* updateActiveRun(runId, (run) => ({
               ...run,
               pid: Option.some(pid),
             }));
             yield* backendOutputLog.writeSessionBoundary({
               phase: "START",
-              details: `pid=${pid} port=${config.value.bootstrap.port} cwd=${config.value.cwd}`,
+              details: Option.isSome(attachTarget)
+                ? `attached pid=${pid} origin=${config.value.httpBaseUrl.href}`
+                : `pid=${pid} port=${config.value.bootstrap.port} cwd=${config.value.cwd}`,
             });
           }),
           onReady: Effect.fn("desktop.backendInstance.onReady")(function* () {
@@ -662,12 +753,21 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
             yield* spec.onReady?.(config.value.httpBaseUrl) ?? Effect.void;
           }),
-          onReadinessFailure: (error) =>
+          onReadinessFailure: (error: BackendTimeoutError) =>
             logInstanceWarning("backend readiness check failed during bootstrap", {
               error: error.message,
             }),
-          onOutput: (streamName, chunk) => backendOutputLog.writeOutputChunk(streamName, chunk),
-        }).pipe(
+          onOutput: (streamName: BackendProcessOutputStream, chunk: Uint8Array) =>
+            backendOutputLog.writeOutputChunk(streamName, chunk),
+        };
+
+        const runEffect = Option.match(attachTarget, {
+          onSome: (target) =>
+            runAttachedBackend({ ...config.value, ...runCallbacks, attachTarget: target }),
+          onNone: () => runBackendProcess({ ...config.value, ...runCallbacks }),
+        });
+
+        const program = runEffect.pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Scope.provide(runScope),

@@ -181,6 +181,48 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );
 
+  it.effect("accepts the local attach token like a desktop bootstrap token", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+
+      // The attach token is exchanged through the same bootstrap/bearer path
+      // the desktop child uses, and yields an administrative session.
+      const exchanged = yield* serverAuth.createBrowserSession(
+        "local-attach-token",
+        requestMetadata,
+      );
+      const verified = yield* serverAuth.authenticateHttpRequest(
+        makeCookieRequest(exchanged.sessionToken),
+      );
+
+      expect(verified.scopes).toEqual([
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "relay:read",
+        "access:read",
+        "access:write",
+        "relay:write",
+      ]);
+      expect(verified.subject).toBe("local-attach");
+
+      // Unbounded re-exchange: a page reload can bootstrap again.
+      const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        "local-attach-token",
+        undefined,
+        requestMetadata,
+      );
+      expect(token.access_token.length).toBeGreaterThan(0);
+    }).pipe(
+      Effect.provide(
+        makeEnvironmentAuthLayer({
+          localAttachToken: "local-attach-token",
+        }),
+      ),
+    ),
+  );
+
   it.effect(
     "lists pairing links and revokes other sessions while keeping the administrative session",
     () =>

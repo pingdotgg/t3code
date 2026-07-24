@@ -47,6 +47,9 @@ export const DesktopConfig = Config.all({
   otlpExportIntervalMs: Config.int("T3CODE_OTLP_EXPORT_INTERVAL_MS").pipe(
     Config.withDefault(10_000),
   ),
+  // Escape hatch: force the primary backend to always spawn its own child
+  // instead of attaching to an already-running local backend.
+  noAttachExternalBackend: optionalBoolean("T3CODE_DESKTOP_NO_ATTACH"),
   appImagePath: trimmedString("APPIMAGE"),
   disableAutoUpdate: optionalBoolean("T3CODE_DISABLE_AUTO_UPDATE"),
   mockUpdates: optionalBoolean("T3CODE_DESKTOP_MOCK_UPDATES"),
