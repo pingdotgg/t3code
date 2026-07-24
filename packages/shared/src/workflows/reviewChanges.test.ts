@@ -4,7 +4,11 @@ import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
 } from "@t3tools/contracts";
 
-import { buildReviewChangesPrompt, reviewChangesVariantIdForScope } from "./reviewChanges.ts";
+import {
+  buildReviewChangesPrompt,
+  parseReviewChangesScope,
+  reviewChangesVariantIdForScope,
+} from "./reviewChanges.ts";
 
 describe("buildReviewChangesPrompt", () => {
   it("builds the uncommitted review scope with untracked file instructions", () => {
@@ -77,5 +81,18 @@ describe("reviewChangesVariantIdForScope", () => {
     expect(reviewChangesVariantIdForScope("uncommitted")).toBe("uncommitted");
     expect(reviewChangesVariantIdForScope("against-base")).toBe("against-base");
     expect(reviewChangesVariantIdForScope("pull-request")).toBe("pull-request");
+  });
+});
+
+describe("parseReviewChangesScope", () => {
+  it("accepts every workflow review scope", () => {
+    expect(parseReviewChangesScope("uncommitted")).toBe("uncommitted");
+    expect(parseReviewChangesScope("against-base")).toBe("against-base");
+    expect(parseReviewChangesScope("pull-request")).toBe("pull-request");
+  });
+
+  it("rejects invalid review scopes", () => {
+    expect(parseReviewChangesScope("unknown")).toBeNull();
+    expect(parseReviewChangesScope(43)).toBeNull();
   });
 });
