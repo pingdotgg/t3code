@@ -25,6 +25,7 @@ import {
   connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
+import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -138,7 +139,14 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
+import {
+  AlarmClockIcon,
+  CheckCircle2Icon,
+  ChevronDownIcon,
+  GitBranchIcon,
+  TriangleAlertIcon,
+  WifiOffIcon,
+} from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -153,7 +161,8 @@ import {
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
-import { useEnvironmentSettings } from "../hooks/useSettings";
+import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
+import { useNowMinute } from "../hooks/useNowMinute";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
@@ -202,6 +211,7 @@ import {
   useThread,
   useThreadProposedPlans,
   useThreadRefs,
+  useThreadShell,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -220,6 +230,7 @@ import {
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import { resolveThreadPr } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
@@ -231,13 +242,17 @@ import {
 } from "./chat/draftHeroTransition";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
   buildThreadTurnInterruptInput,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  dismissBranchMismatchForSession,
   hasServerAcknowledgedLocalDispatch,
+  isBranchMismatchDismissedForSession,
+  shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
@@ -260,6 +275,16 @@ import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ServerUpdateAction } from "./ServerUpdateAction";
 import {
   buildVersionMismatchDismissalKey,
@@ -2350,6 +2375,7 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const showComposerContextStrip = isGitRepo && activeProject !== null;
   const initialDiffPanelGitScope =
     gitStatusQuery.data?.hasWorkingTreeChanges === true ? "unstaged" : "branch";
   const diffPanelGitStatusResolutionKey = gitStatusQuery.data ? "resolved" : "pending";
@@ -3806,52 +3832,159 @@ function ChatViewContent(props: ChatViewProps) {
         : null,
     [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
   );
-  const [branchRepairAction, setBranchRepairAction] = useState<
-    "update-thread" | "switch-checkout" | null
-  >(null);
-  const handleUpdateThreadToCheckout = useCallback(async () => {
-    if (!activeThread || !localCheckoutBranchMismatch || branchRepairAction !== null) {
-      return;
-    }
-    setBranchRepairAction("update-thread");
-    const updateResult = await updateThreadMetadata({
-      environmentId,
-      input: {
-        threadId: activeThread.id,
-        branch: localCheckoutBranchMismatch.currentBranch,
-        worktreePath: null,
-      },
+  // Settled state of the open thread, resolved exactly like the sidebar
+  // partition (same shell, same capability gate, same PR auto-settle input)
+  // so the banner and the sidebar row never disagree.
+  const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const activeThreadPr = resolveThreadPr({
+    threadBranch: activeThread?.branch ?? null,
+    gitStatus: gitStatusQuery.data ?? null,
+    hasDedicatedWorktree: (activeThread?.worktreePath ?? null) !== null,
+  });
+  const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
+  const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
+  const nowMinute = useNowMinute();
+  const activeThreadSnoozed =
+    activeThreadShell !== null &&
+    supportsSnooze &&
+    effectiveSnoozed(activeThreadShell, { now: new Date().toISOString() });
+  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
+  useEffect(() => {
+    void snoozeWakeTick;
+    if (!activeThreadSnoozed) return;
+    const wakeAtMs = Date.parse(activeThreadShell?.snoozedUntil ?? "");
+    if (!Number.isFinite(wakeAtMs)) return;
+    const id = window.setTimeout(
+      () => bumpSnoozeWakeTick((tick) => tick + 1),
+      Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647),
+    );
+    return () => window.clearTimeout(id);
+  }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeWakeTick]);
+  const activeThreadSettled = useMemo(() => {
+    if (activeThreadShell === null || !supportsSettlement) return false;
+    return effectiveSettled(activeThreadShell, {
+      now: `${nowMinute}:00.000Z`,
+      autoSettleAfterDays,
+      changeRequestState: activeThreadPr?.state ?? null,
     });
-    setBranchRepairAction(null);
-    if (updateResult._tag === "Failure" && !isAtomCommandInterrupted(updateResult)) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to update thread branch",
-          description: chatActionErrorMessage(squashAtomCommandFailure(updateResult)),
-        }),
-      );
-      return;
-    }
-    scheduleComposerFocus();
   }, [
-    activeThread,
-    branchRepairAction,
-    environmentId,
-    localCheckoutBranchMismatch,
-    scheduleComposerFocus,
-    updateThreadMetadata,
+    activeThreadPr?.state,
+    activeThreadShell,
+    autoSettleAfterDays,
+    nowMinute,
+    supportsSettlement,
   ]);
+  const unsettleThreadMutation = useAtomCommand(threadEnvironment.unsettle, {
+    reportFailure: false,
+  });
+  // Keyed by thread, not a boolean: the pending state must follow the thread
+  // it belongs to across navigation, and a request resolving for thread A
+  // must never clear (or re-enable) thread B's button.
+  const [unsettlingThreadKey, setUnsettlingThreadKey] = useState<string | null>(null);
+  const isUnsettling = unsettlingThreadKey !== null && unsettlingThreadKey === activeThreadKey;
+  const handleUnsettleActiveThread = useCallback(async () => {
+    if (!activeThreadRef) return;
+    const threadKey = scopedThreadKey(activeThreadRef);
+    setUnsettlingThreadKey(threadKey);
+    try {
+      const result = await unsettleThreadMutation({
+        environmentId: activeThreadRef.environmentId,
+        input: { threadId: activeThreadRef.threadId, reason: "user" },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to un-settle thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    } finally {
+      setUnsettlingThreadKey((current) => (current === threadKey ? null : current));
+    }
+  }, [activeThreadRef, unsettleThreadMutation]);
+  const unsnoozeThreadMutation = useAtomCommand(threadEnvironment.unsnooze, {
+    reportFailure: false,
+  });
+  const [unsnoozingThreadKey, setUnsnoozingThreadKey] = useState<string | null>(null);
+  const isUnsnoozing = unsnoozingThreadKey !== null && unsnoozingThreadKey === activeThreadKey;
+  const handleUnsnoozeActiveThread = useCallback(async () => {
+    if (!activeThreadRef) return;
+    const threadKey = scopedThreadKey(activeThreadRef);
+    setUnsnoozingThreadKey(threadKey);
+    try {
+      const result = await unsnoozeThreadMutation({
+        environmentId: activeThreadRef.environmentId,
+        input: { threadId: activeThreadRef.threadId, reason: "user" },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to wake thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    } finally {
+      setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
+    }
+  }, [activeThreadRef, unsnoozeThreadMutation]);
+  const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
+  const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
+  // Once revealed for a given mismatch, the banner stays mounted until the
+  // mismatch changes or resolves, so clearing the draft doesn't flicker it.
+  const [revealedBranchMismatchKey, setRevealedBranchMismatchKey] = useState<string | null>(null);
+  // Dismissal lives in a module-level set (survives remounts); this tick just
+  // forces a re-render so the banner leaves immediately.
+  const [, setBranchMismatchDismissTick] = useState(0);
+  const composerHasDraftContent = useComposerDraftStore((store) => {
+    const draft = store.getComposerDraft(composerDraftTarget);
+    return Boolean(
+      draft &&
+      (draft.prompt.trim().length > 0 ||
+        draft.images.length > 0 ||
+        draft.terminalContexts.length > 0 ||
+        draft.elementContexts.length > 0 ||
+        draft.previewAnnotations.length > 0 ||
+        draft.reviewComments.length > 0),
+    );
+  });
+  const activeBranchMismatchKey = branchMismatchKey(
+    activeThread?.id ?? null,
+    localCheckoutBranchMismatch,
+  );
+  const showBranchMismatchBanner = shouldShowBranchMismatchBanner({
+    hasMismatch: localCheckoutBranchMismatch !== null,
+    isDismissed: isBranchMismatchDismissedForSession(activeBranchMismatchKey),
+    composerHasContent: composerHasDraftContent,
+    wasShownForCurrentMismatch:
+      revealedBranchMismatchKey !== null && revealedBranchMismatchKey === activeBranchMismatchKey,
+  });
+  useEffect(() => {
+    setRevealedBranchMismatchKey((revealed) => {
+      if (showBranchMismatchBanner) {
+        return activeBranchMismatchKey;
+      }
+      // Hysteresis is scoped to an uninterrupted mismatch: reset when the
+      // mismatch resolves or changes so a recurrence re-gates on intent.
+      return revealed !== null && revealed !== activeBranchMismatchKey ? null : revealed;
+    });
+  }, [activeBranchMismatchKey, showBranchMismatchBanner]);
   const handleSwitchCheckoutToThread = useCallback(async () => {
     if (
       !activeProjectCwd ||
       !activeThread ||
       !localCheckoutBranchMismatch ||
-      branchRepairAction !== null
+      isRestoringThreadBranch
     ) {
       return;
     }
-    setBranchRepairAction("switch-checkout");
+    setIsRestoringThreadBranch(true);
     const checkoutResult = await switchGitRef({
       environmentId,
       input: {
@@ -3860,7 +3993,7 @@ function ChatViewContent(props: ChatViewProps) {
       },
     });
     if (checkoutResult._tag === "Failure") {
-      setBranchRepairAction(null);
+      setIsRestoringThreadBranch(false);
       if (!isAtomCommandInterrupted(checkoutResult)) {
         toastManager.add(
           stackedThreadToast({
@@ -3880,7 +4013,7 @@ function ChatViewContent(props: ChatViewProps) {
         input: { threadId: activeThread.id, branch: nextBranch, worktreePath: null },
       });
       if (updateResult._tag === "Failure") {
-        setBranchRepairAction(null);
+        setIsRestoringThreadBranch(false);
         if (!isAtomCommandInterrupted(updateResult)) {
           toastManager.add(
             stackedThreadToast({
@@ -3895,76 +4028,125 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
     gitStatusQuery.refresh();
-    setBranchRepairAction(null);
+    setIsRestoringThreadBranch(false);
     scheduleComposerFocus();
   }, [
     activeProjectCwd,
     activeThread,
-    branchRepairAction,
     environmentId,
     gitStatusQuery,
+    isRestoringThreadBranch,
     localCheckoutBranchMismatch,
     scheduleComposerFocus,
     switchGitRef,
     updateThreadMetadata,
   ]);
-  const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
-    if (!localCheckoutBranchMismatch) {
-      return systemComposerBannerItems;
+  // The stack renders items[0] front-most and tucks the rest behind hover, so
+  // ordering is priority: system banners, then the branch-mismatch notice,
+  // and the informational parked-thread banner last — it must never cover another.
+  const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!activeThreadSnoozed && !activeThreadSettled) {
+      return null;
     }
-    const isRepairingBranch = branchRepairAction !== null;
+    const isSnoozed = activeThreadSnoozed;
+    return {
+      id: `thread-${isSnoozed ? "snoozed" : "settled"}:${activeThread?.id ?? "unknown"}`,
+      variant: "info",
+      icon: isSnoozed ? <AlarmClockIcon /> : <CheckCircle2Icon />,
+      title: `This thread is ${isSnoozed ? "snoozed" : "settled"}`,
+      description: isSnoozed
+        ? "Sending a message wakes it and moves it back to Active in the sidebar."
+        : "Sending a message moves it back to Active in the sidebar.",
+      actions: (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={isSnoozed ? isUnsnoozing : isUnsettling}
+          onClick={() =>
+            void (isSnoozed ? handleUnsnoozeActiveThread() : handleUnsettleActiveThread())
+          }
+        >
+          {isSnoozed
+            ? isUnsnoozing
+              ? "Waking..."
+              : "Wake now"
+            : isUnsettling
+              ? "Un-settling..."
+              : "Un-settle"}
+        </Button>
+      ),
+    };
+  }, [
+    activeThread?.id,
+    activeThreadSettled,
+    activeThreadSnoozed,
+    handleUnsnoozeActiveThread,
+    handleUnsettleActiveThread,
+    isUnsnoozing,
+    isUnsettling,
+  ]);
+  const handleRestoreThreadBranch = useCallback(() => {
+    if (gitStatusQuery.data?.hasWorkingTreeChanges) {
+      setBranchRestoreConfirmOpen(true);
+      return;
+    }
+    void handleSwitchCheckoutToThread();
+  }, [gitStatusQuery.data?.hasWorkingTreeChanges, handleSwitchCheckoutToThread]);
+  const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
+    if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
+      return [...systemComposerBannerItems, ...parkedThreadItems];
+    }
     return [
       ...systemComposerBannerItems,
       {
-        id: `branch-mismatch:${activeThread?.id ?? "unknown"}:${localCheckoutBranchMismatch.threadBranch}:${localCheckoutBranchMismatch.currentBranch}`,
-        variant: "warning",
-        icon: <TriangleAlertIcon />,
-        title: "You're on a different branch",
-        className:
-          "text-base sm:text-sm [&>div]:items-start max-sm:[&>div]:flex-wrap max-sm:[&>div>div:last-child]:w-full max-sm:[&>div>div:last-child]:self-start dark:shadow-none",
-        actionClassName:
-          "max-sm:w-full max-sm:border-t max-sm:border-border/60 max-sm:pt-2 max-sm:pl-6 sm:border-l sm:border-border/60 sm:pl-3",
-        description: (
-          <p className="text-pretty">
-            This thread is on{" "}
-            <code className="font-medium text-foreground">
-              {localCheckoutBranchMismatch.threadBranch}
-            </code>
-            , but you're currently checked out at{" "}
-            <code className="font-medium text-foreground">
-              {localCheckoutBranchMismatch.currentBranch}
-            </code>
-            . Sending a message will update the thread.
-          </p>
+        id: `branch-mismatch:${activeBranchMismatchKey}`,
+        variant: "info",
+        icon: <GitBranchIcon />,
+        title: (
+          <span className="flex min-w-0 items-baseline gap-1.5">
+            <span className="shrink-0 font-normal text-muted-foreground">Branch changed — was</span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <code className="min-w-0 truncate font-medium text-foreground">
+                    {localCheckoutBranchMismatch.threadBranch}
+                  </code>
+                }
+              />
+              <TooltipPopup side="top" className="max-w-80">
+                This thread last ran on {localCheckoutBranchMismatch.threadBranch}. Sending will
+                continue on {localCheckoutBranchMismatch.currentBranch}.
+              </TooltipPopup>
+            </Tooltip>
+          </span>
         ),
+        className: "dark:shadow-none",
         actions: (
-          <>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={isRepairingBranch}
-              onClick={() => void handleUpdateThreadToCheckout()}
-            >
-              {branchRepairAction === "update-thread" ? "Moving..." : "Move thread here"}
-            </Button>
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={isRepairingBranch}
-              onClick={() => void handleSwitchCheckoutToThread()}
-            >
-              {branchRepairAction === "switch-checkout" ? "Switching..." : "Checkout thread branch"}
-            </Button>
-          </>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={isRestoringThreadBranch}
+            onClick={handleRestoreThreadBranch}
+          >
+            {isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
+          </Button>
         ),
+        dismissLabel: "Dismiss branch change notice",
+        onDismiss: () => {
+          dismissBranchMismatchForSession(activeBranchMismatchKey);
+          setBranchMismatchDismissTick((tick) => tick + 1);
+        },
       },
+      ...parkedThreadItems,
     ];
   }, [
-    activeThread?.id,
-    branchRepairAction,
-    handleSwitchCheckoutToThread,
-    handleUpdateThreadToCheckout,
+    activeBranchMismatchKey,
+    handleRestoreThreadBranch,
+    isRestoringThreadBranch,
     localCheckoutBranchMismatch,
+    parkedThreadBannerItem,
+    showBranchMismatchBanner,
     systemComposerBannerItems,
   ]);
 
@@ -5592,119 +5774,128 @@ function ChatViewContent(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    <div className="chat-composer-glass-host relative z-10 mx-auto w-full max-w-3xl rounded-[22px]">
-                      <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
-                        <ChatComposer
-                          composerRef={composerRef}
-                          composerDraftTarget={composerDraftTarget}
-                          environmentId={environmentId}
-                          routeKind={routeKind}
-                          routeThreadRef={routeThreadRef}
-                          draftId={draftId}
-                          activeThreadId={activeThreadId}
-                          activeThreadEnvironmentId={activeThread?.environmentId}
-                          activeThread={activeThread}
-                          isServerThread={isServerThread}
-                          isLocalDraftThread={isLocalDraftThread}
-                          forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
-                          projectSelectionRequired={isLocalDraftThread && activeProject === null}
-                          phase={phase}
-                          isConnecting={isConnecting}
-                          isSendBusy={isSendBusy}
-                          isPreparingWorktree={isPreparingWorktree}
-                          environmentUnavailable={activeEnvironmentUnavailableState}
-                          activePendingApproval={activePendingApproval}
-                          pendingApprovals={pendingApprovals}
-                          pendingUserInputs={pendingUserInputs}
-                          activePendingProgress={activePendingProgress}
-                          activePendingResolvedAnswers={activePendingResolvedAnswers}
-                          activePendingIsResponding={activePendingIsResponding}
-                          activePendingDraftAnswers={activePendingDraftAnswers}
-                          activePendingQuestionIndex={activePendingQuestionIndex}
-                          respondingRequestIds={respondingRequestIds}
-                          showPlanFollowUpPrompt={showPlanFollowUpPrompt}
-                          activeProposedPlan={activeProposedPlan}
-                          activePlan={activePlan as { turnId?: TurnId } | null}
-                          sidebarProposedPlan={sidebarProposedPlan as { turnId?: TurnId } | null}
-                          planSidebarLabel={planSidebarLabel}
-                          planSidebarOpen={planSidebarOpen}
-                          runtimeMode={runtimeMode}
-                          interactionMode={interactionMode}
-                          lockedProvider={lockedProvider}
-                          providerStatuses={providerStatuses as ServerProvider[]}
-                          activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
-                          activeThreadModelSelection={activeThread?.modelSelection}
-                          activeThreadActivities={activeThread?.activities}
-                          resolvedTheme={resolvedTheme}
-                          settings={settings}
-                          keybindings={keybindings}
-                          terminalOpen={Boolean(terminalUiState.terminalOpen)}
-                          gitCwd={gitCwd}
-                          promptRef={promptRef}
-                          composerImagesRef={composerImagesRef}
-                          composerTerminalContextsRef={composerTerminalContextsRef}
-                          composerElementContextsRef={composerElementContextsRef}
-                          onSend={onSend}
-                          onInterrupt={onInterrupt}
-                          onImplementPlanInNewThread={onImplementPlanInNewThread}
-                          onRespondToApproval={onRespondToApproval}
-                          onSelectActivePendingUserInputOption={
-                            onSelectActivePendingUserInputOption
-                          }
-                          onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
-                          onPreviousActivePendingUserInputQuestion={
-                            onPreviousActivePendingUserInputQuestion
-                          }
-                          onChangeActivePendingUserInputCustomAnswer={
-                            onChangeActivePendingUserInputCustomAnswer
-                          }
-                          onProviderModelSelect={onProviderModelSelect}
-                          getModelDisabledReason={getModelDisabledReason}
-                          toggleInteractionMode={toggleInteractionMode}
-                          handleRuntimeModeChange={handleRuntimeModeChange}
-                          handleInteractionModeChange={handleInteractionModeChange}
-                          togglePlanSidebar={togglePlanSidebar}
-                          focusComposer={focusComposer}
-                          scheduleComposerFocus={scheduleComposerFocus}
-                          setThreadError={setThreadError}
-                          onExpandImage={onExpandTimelineImage}
-                        />
+                    <div
+                      className={cn(
+                        "chat-composer-glass-shell relative mx-auto w-full max-w-3xl",
+                        showComposerContextStrip && "chat-composer-glass-shell-with-context",
+                      )}
+                    >
+                      <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
+                        <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
+                          <ChatComposer
+                            composerRef={composerRef}
+                            composerDraftTarget={composerDraftTarget}
+                            environmentId={environmentId}
+                            routeKind={routeKind}
+                            routeThreadRef={routeThreadRef}
+                            draftId={draftId}
+                            activeThreadId={activeThreadId}
+                            activeThreadEnvironmentId={activeThread?.environmentId}
+                            activeThread={activeThread}
+                            isServerThread={isServerThread}
+                            isLocalDraftThread={isLocalDraftThread}
+                            forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
+                            projectSelectionRequired={isLocalDraftThread && activeProject === null}
+                            phase={phase}
+                            isConnecting={isConnecting}
+                            isSendBusy={isSendBusy}
+                            isPreparingWorktree={isPreparingWorktree}
+                            environmentUnavailable={activeEnvironmentUnavailableState}
+                            activePendingApproval={activePendingApproval}
+                            pendingApprovals={pendingApprovals}
+                            pendingUserInputs={pendingUserInputs}
+                            activePendingProgress={activePendingProgress}
+                            activePendingResolvedAnswers={activePendingResolvedAnswers}
+                            activePendingIsResponding={activePendingIsResponding}
+                            activePendingDraftAnswers={activePendingDraftAnswers}
+                            activePendingQuestionIndex={activePendingQuestionIndex}
+                            respondingRequestIds={respondingRequestIds}
+                            showPlanFollowUpPrompt={showPlanFollowUpPrompt}
+                            activeProposedPlan={activeProposedPlan}
+                            activePlan={activePlan as { turnId?: TurnId } | null}
+                            sidebarProposedPlan={sidebarProposedPlan as { turnId?: TurnId } | null}
+                            planSidebarLabel={planSidebarLabel}
+                            planSidebarOpen={planSidebarOpen}
+                            runtimeMode={runtimeMode}
+                            interactionMode={interactionMode}
+                            lockedProvider={lockedProvider}
+                            providerStatuses={providerStatuses as ServerProvider[]}
+                            activeProjectDefaultModelSelection={
+                              activeProject?.defaultModelSelection
+                            }
+                            activeThreadModelSelection={activeThread?.modelSelection}
+                            activeThreadActivities={activeThread?.activities}
+                            resolvedTheme={resolvedTheme}
+                            settings={settings}
+                            keybindings={keybindings}
+                            terminalOpen={Boolean(terminalUiState.terminalOpen)}
+                            gitCwd={gitCwd}
+                            promptRef={promptRef}
+                            composerImagesRef={composerImagesRef}
+                            composerTerminalContextsRef={composerTerminalContextsRef}
+                            composerElementContextsRef={composerElementContextsRef}
+                            onSend={onSend}
+                            onInterrupt={onInterrupt}
+                            onImplementPlanInNewThread={onImplementPlanInNewThread}
+                            onRespondToApproval={onRespondToApproval}
+                            onSelectActivePendingUserInputOption={
+                              onSelectActivePendingUserInputOption
+                            }
+                            onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
+                            onPreviousActivePendingUserInputQuestion={
+                              onPreviousActivePendingUserInputQuestion
+                            }
+                            onChangeActivePendingUserInputCustomAnswer={
+                              onChangeActivePendingUserInputCustomAnswer
+                            }
+                            onProviderModelSelect={onProviderModelSelect}
+                            getModelDisabledReason={getModelDisabledReason}
+                            toggleInteractionMode={toggleInteractionMode}
+                            handleRuntimeModeChange={handleRuntimeModeChange}
+                            handleInteractionModeChange={handleInteractionModeChange}
+                            togglePlanSidebar={togglePlanSidebar}
+                            focusComposer={focusComposer}
+                            scheduleComposerFocus={scheduleComposerFocus}
+                            setThreadError={setThreadError}
+                            onExpandImage={onExpandTimelineImage}
+                          />
+                        </div>
                       </div>
-                    </div>
-                    <div className="min-h-0">
-                      <div
-                        data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
-                        className="relative z-0"
-                      >
-                        {isGitRepo && (
-                          <div className="pointer-events-auto">
-                            <BranchToolbar
-                              environmentId={activeThread.environmentId}
-                              threadId={activeThread.id}
-                              {...(routeKind === "draft" && draftId ? { draftId } : {})}
-                              onEnvModeChange={onEnvModeChange}
-                              startFromOrigin={startFromOrigin}
-                              onStartFromOriginChange={onStartFromOriginChange}
-                              {...(canOverrideServerThreadEnvMode
-                                ? { effectiveEnvModeOverride: envMode }
-                                : {})}
-                              {...(canOverrideServerThreadEnvMode
-                                ? {
-                                    activeThreadBranchOverride: activeThreadBranch,
-                                    onActiveThreadBranchOverrideChange:
-                                      setPendingServerThreadBranch,
-                                  }
-                                : {})}
-                              envLocked={envLocked}
-                              onComposerFocusRequest={scheduleComposerFocus}
-                              {...(canCheckoutPullRequestIntoThread
-                                ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                                : {})}
-                              {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
-                              availableEnvironments={logicalProjectEnvironments}
-                            />
-                          </div>
-                        )}
+                      <div className="min-h-0">
+                        <div
+                          data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
+                          className="relative z-0"
+                        >
+                          {showComposerContextStrip && (
+                            <div className="pointer-events-auto">
+                              <BranchToolbar
+                                environmentId={activeThread.environmentId}
+                                threadId={activeThread.id}
+                                {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                                onEnvModeChange={onEnvModeChange}
+                                startFromOrigin={startFromOrigin}
+                                onStartFromOriginChange={onStartFromOriginChange}
+                                {...(canOverrideServerThreadEnvMode
+                                  ? { effectiveEnvModeOverride: envMode }
+                                  : {})}
+                                {...(canOverrideServerThreadEnvMode
+                                  ? {
+                                      activeThreadBranchOverride: activeThreadBranch,
+                                      onActiveThreadBranchOverrideChange:
+                                        setPendingServerThreadBranch,
+                                    }
+                                  : {})}
+                                envLocked={envLocked}
+                                onComposerFocusRequest={scheduleComposerFocus}
+                                {...(canCheckoutPullRequestIntoThread
+                                  ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                                  : {})}
+                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                                availableEnvironments={logicalProjectEnvironments}
+                              />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div
@@ -5715,6 +5906,36 @@ function ChatViewContent(props: ChatViewProps) {
                 </div>
               </div>
             </div>
+
+            <AlertDialog open={branchRestoreConfirmOpen} onOpenChange={setBranchRestoreConfirmOpen}>
+              <AlertDialogPopup>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    Switch to{" "}
+                    <code className="font-medium">
+                      {localCheckoutBranchMismatch?.threadBranch ?? ""}
+                    </code>
+                    ?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    You have uncommitted changes. They'll carry over to the other branch, or block
+                    the switch if they conflict.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+                  <Button
+                    variant="default"
+                    onClick={() => {
+                      setBranchRestoreConfirmOpen(false);
+                      void handleSwitchCheckoutToThread();
+                    }}
+                  >
+                    Switch branch
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogPopup>
+            </AlertDialog>
 
             {pullRequestDialogState ? (
               <PullRequestThreadDialog

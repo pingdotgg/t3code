@@ -74,6 +74,8 @@ export function applyThreadDetailEvent(
           archivedAt: null,
           settledOverride: null,
           settledAt: null,
+          snoozedUntil: null,
+          snoozedAt: null,
           deletedAt: null,
           messages: [],
           proposedPlans: [],
@@ -120,6 +122,28 @@ export function applyThreadDetailEvent(
           ...thread,
           settledOverride: event.payload.reason === "user" ? "active" : null,
           settledAt: null,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.snoozed":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          snoozedUntil: event.payload.snoozedUntil,
+          snoozedAt: event.payload.snoozedAt,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.unsnoozed":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          snoozedUntil: null,
+          snoozedAt: null,
           updatedAt: event.payload.updatedAt,
         },
       };
