@@ -6,6 +6,20 @@ import {
   rewriteMarkdownFileUriHref,
 } from "./markdown-links";
 
+describe("normalizeMarkdownLinkDestination", () => {
+  it("unescapes markdown punctuation when normalizing destinations", () => {
+    expect(
+      resolveMarkdownFileLinkTarget("apps/web/src/routes/\\(chat\\)/\\[id\\].tsx", "/repo"),
+    ).toBe("/repo/apps/web/src/routes/(chat)/[id].tsx");
+  });
+
+  it("preserves windows path separators before punctuation", () => {
+    expect(resolveMarkdownFileLinkTarget(String.raw`C:\src\(group)\page.tsx`)).toBe(
+      String.raw`C:\src\(group)\page.tsx`,
+    );
+  });
+});
+
 describe("rewriteMarkdownFileUriHref", () => {
   it("rewrites file uri hrefs into direct path hrefs", () => {
     expect(rewriteMarkdownFileUriHref("file:///Users/julius/project/src/main.ts#L42")).toBe(
@@ -25,12 +39,6 @@ describe("rewriteMarkdownFileUriHref", () => {
         "file:///D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
       ),
     ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69");
-  });
-
-  it("unwraps angle-bracketed file uri hrefs", () => {
-    expect(
-      rewriteMarkdownFileUriHref(" <file:///D:/Programme/t3code/apps/web/src/markdown-links.ts> "),
-    ).toBe("D:/Programme/t3code/apps/web/src/markdown-links.ts");
   });
 });
 
@@ -57,6 +65,31 @@ describe("resolveMarkdownFileLinkTarget", () => {
     expect(resolveMarkdownFileLinkTarget("AGENTS.md", "/Users/julius/project")).toBe(
       "/Users/julius/project/AGENTS.md",
     );
+  });
+
+  it("resolves relative paths with route group and dynamic segment characters", () => {
+    expect(
+      resolveMarkdownFileLinkTarget("apps/web/src/routes/(chat)/[threadId].tsx", "/repo/project"),
+    ).toBe("/repo/project/apps/web/src/routes/(chat)/[threadId].tsx");
+  });
+
+  it("resolves encoded route group and dynamic segment characters", () => {
+    expect(
+      resolveMarkdownFileLinkTarget(
+        "apps/web/src/routes/%28chat%29/%5BthreadId%5D.tsx",
+        "/repo/project",
+      ),
+    ).toBe("/repo/project/apps/web/src/routes/(chat)/[threadId].tsx");
+  });
+
+  it("preserves support for conservative extensionless relative file paths", () => {
+    expect(resolveMarkdownFileLinkTarget("scripts/release", "/repo/project")).toBe(
+      "/repo/project/scripts/release",
+    );
+  });
+
+  it("does not treat ambiguous encoded relative web links as file paths", () => {
+    expect(resolveMarkdownFileLinkTarget("docs/user%20guide", "/repo/project")).toBeNull();
   });
 
   it("maps #L line anchors to editor line suffixes", () => {
@@ -113,14 +146,6 @@ describe("resolveMarkdownFileLinkTarget", () => {
         "/D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
       ),
     ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx:69");
-  });
-
-  it("resolves angle-bracketed windows drive paths", () => {
-    expect(
-      resolveMarkdownFileLinkTarget(
-        "</D:/Programme/t3code/apps/web/src/components/ChatMarkdown.tsx:1>",
-      ),
-    ).toBe("D:/Programme/t3code/apps/web/src/components/ChatMarkdown.tsx:1");
   });
 
   it("does not treat app routes as file links", () => {
