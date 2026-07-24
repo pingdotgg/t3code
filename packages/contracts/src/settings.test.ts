@@ -56,6 +56,10 @@ describe("ClientSettings sidebar v2", () => {
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
   });
 
+  it("defaults large thread-row icons off", () => {
+    expect(decodeClientSettings({}).sidebarV2LargeIcons).toBe(false);
+  });
+
   it("allows auto-settle by inactivity to be disabled", () => {
     expect(
       decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
