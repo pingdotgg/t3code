@@ -3479,6 +3479,59 @@ describe("ProviderRuntimeIngestion", () => {
     await waitForThread(harness.readModel, (entry) => entry.session?.status === "ready");
   });
 
+  it("re-opens a completed task on an explicit restart (resumed agent)", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-resumed-task-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        taskId: "resumed-task-1",
+      },
+    });
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-resumed-task-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        taskId: "resumed-task-1",
+        status: "completed",
+      },
+    });
+    // The agent is resumed: the same task id starts again. The tombstone
+    // must yield to the explicit start…
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-resumed-task-restarted"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        taskId: "resumed-task-1",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-resumed-task-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:03.000Z",
+      turnId: asTurnId("turn-resumed-task"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    // …so the turn parks on Waiting for the resumed agent.
+    await waitForThread(harness.readModel, (entry) => entry.session?.status === "idle");
+  });
+
   it("ignores task events from a stale provider instance", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

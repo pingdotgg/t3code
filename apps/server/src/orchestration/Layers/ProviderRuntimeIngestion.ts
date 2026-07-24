@@ -795,7 +795,13 @@ const make = Effect.gen(function* () {
       return true;
     }
     if (entry.closedTaskIds.has(taskId)) {
-      return false;
+      // task.progress for a finished task is a late duplicate and stays
+      // ignored. task.started is authoritative: providers reuse task ids
+      // when an agent is resumed, so an explicit start re-opens the task.
+      if (event.type !== "task.started") {
+        return false;
+      }
+      entry.closedTaskIds.delete(taskId);
     }
     const wasEmpty = entry.taskIds.size === 0;
     entry.taskIds.add(taskId);
