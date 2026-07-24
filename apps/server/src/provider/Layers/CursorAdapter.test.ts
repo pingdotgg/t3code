@@ -27,6 +27,7 @@ import {
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderAdapterRequestError } from "../Errors.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
@@ -250,6 +251,70 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("does not wedge the turn when an attachment fails to resolve", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-invalid-attachment-thread");
+
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 4).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const failure = yield* adapter
+        .sendTurn({
+          threadId: session.threadId,
+          input: "What's in this image?",
+          attachments: [
+            {
+              type: "image",
+              id: "../escape-attachments-dir",
+              name: "photo.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(failure, ProviderAdapterRequestError);
+      assert.match(failure.detail, /Invalid attachment id/u);
+
+      const sessionsAfterFailure = yield* adapter.listSessions();
+      const sessionAfterFailure = sessionsAfterFailure.find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      assert.isDefined(sessionAfterFailure);
+      assert.isUndefined(sessionAfterFailure?.activeTurnId);
+
+      // A subsequent, valid turn must still work and be the only source
+      // of a turn.started event.
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello mock",
+        attachments: [],
+      });
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      assert.equal(turnStartedEvents.length, 1);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
@@ -321,6 +386,306 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       assert.equal(String(turnStartedEvents[0]?.turnId), String(firstTurn.turnId));
       assert.equal(turnCompletedEvents.length, 1);
       assert.equal(String(turnCompletedEvents[0]?.turnId), String(firstTurn.turnId));
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("steers into the reserved turn when sendTurn overlaps preparation", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-steer-during-prep-thread");
+
+      // A model change forces a real session/set_config_option round-trip
+      // (same-value selections are skipped runtime-side), and the mock delays
+      // that request — holding the first prompt inside its preparation window
+      // (after the in-flight increment, before turn.started) long enough for
+      // the second sendTurn to land inside it.
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_SET_CONFIG_OPTION_DELAY_MS: "1000" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const firstTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "first prompt",
+          attachments: [],
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+        })
+        .pipe(Effect.forkChild);
+      // Forked with no intervening await: this sendTurn must observe the
+      // first one's reservation, not mint a second turn id.
+      const secondTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "second prompt",
+          attachments: [],
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+        })
+        .pipe(Effect.forkChild);
+
+      const firstTurn = yield* Fiber.join(firstTurnFiber);
+      const secondTurn = yield* Fiber.join(secondTurnFiber);
+      assert.equal(String(secondTurn.turnId), String(firstTurn.turnId));
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+
+      // One turn boundary for the merged run — a second turn.started would
+      // open a turn that can never settle.
+      assert.equal(turnStartedEvents.length, 1);
+      assert.equal(String(turnStartedEvents[0]?.turnId), String(firstTurn.turnId));
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(String(turnCompletedEvents[0]?.turnId), String(firstTurn.turnId));
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("starts and settles the steered turn when the reserving prompt fails preparation", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-reserver-fails-prep-thread");
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_SET_CONFIG_OPTION_DELAY_MS: "1000" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      // The reserving prompt survives the delayed model change, then dies in
+      // attachment validation — after a steer has already joined its turn.
+      const failingTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "What's in this image?",
+          attachments: [
+            {
+              type: "image",
+              id: "../escape-attachments-dir",
+              name: "photo.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+        })
+        .pipe(Effect.flip, Effect.forkChild);
+      const steeredTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "hello mock",
+          attachments: [],
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+        })
+        .pipe(Effect.forkChild);
+
+      const failure = yield* Fiber.join(failingTurnFiber);
+      assert.instanceOf(failure, ProviderAdapterRequestError);
+      assert.match(failure.detail, /Invalid attachment id/u);
+      const steeredTurn = yield* Fiber.join(steeredTurnFiber);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+
+      // The surviving prompt must still announce its turn: completing a turn
+      // that never emitted turn.started leaves the UI idle without a stop
+      // affordance while the agent is still working.
+      assert.equal(turnStartedEvents.length, 1);
+      assert.equal(String(turnStartedEvents[0]?.turnId), String(steeredTurn.turnId));
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(String(turnCompletedEvents[0]?.turnId), String(steeredTurn.turnId));
+
+      // The settled reservation must not wedge the session: a fresh sendTurn
+      // opens a fresh turn.
+      const nextTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "hello again",
+        attachments: [],
+      });
+      assert.notEqual(String(nextTurn.turnId), String(steeredTurn.turnId));
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("settles with the recorded result when the last holder is interrupted", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-interrupt-last-holder-thread");
+
+      // The reserving prompt gets stuck in its delayed model change while the
+      // steered prompt joins, announces the turn, and resolves — recording a
+      // stop reason without settling (two prompts still counted). The stuck
+      // reserver is then fiber-interrupted: the drain must settle with the
+      // recorded result, not skip on the interrupt and leave the announced
+      // turn open forever.
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_SET_CONFIG_OPTION_DELAY_MS: "30000" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const stuckReserverFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "first prompt",
+          attachments: [],
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+        })
+        .pipe(Effect.forkChild);
+      const steeredTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "second prompt",
+        attachments: [],
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      // The steered prompt has fully drained; the reserver still holds its
+      // in-flight count inside the delayed configuration step.
+      yield* Fiber.interrupt(stuckReserverFiber);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+
+      assert.equal(turnStartedEvents.length, 1);
+      assert.equal(String(turnStartedEvents[0]?.turnId), String(steeredTurn.turnId));
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(String(turnCompletedEvents[0]?.turnId), String(steeredTurn.turnId));
+      const completion = turnCompletedEvents[0];
+      if (completion?.type === "turn.completed") {
+        assert.equal(completion.payload.state, "completed");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("settles the announced turn as failed when its only prompt fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-prompt-fails-after-announce-thread");
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_FAIL_FIRST_PROMPT: "1" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      let completedCount = 0;
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => {
+          if (event.type === "turn.completed") {
+            completedCount += 1;
+          }
+          return completedCount === 2;
+        }),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      // The turn is announced, then its only prompt fails. The error must
+      // reach the caller AND the announced turn must settle as failed:
+      // reporting success would mask the error and flip the session to
+      // ready, while emitting nothing would leave the turn.started
+      // unanswered and wedge the thread in "working".
+      const failure = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "hello mock",
+          attachments: [],
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(failure, ProviderAdapterRequestError);
+
+      const nextTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "hello again",
+        attachments: [],
+      });
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+
+      assert.equal(turnStartedEvents.length, 2);
+      assert.equal(turnCompletedEvents.length, 2);
+
+      // The failed turn settles as failed — after its turn.started, so
+      // ingestion deterministically ends in the error state.
+      const failedCompletion = turnCompletedEvents[0];
+      assert.equal(String(failedCompletion?.turnId), String(turnStartedEvents[0]?.turnId));
+      assert.notEqual(String(failedCompletion?.turnId), String(nextTurn.turnId));
+      if (failedCompletion?.type === "turn.completed") {
+        assert.equal(failedCompletion.payload.state, "failed");
+        assert.isDefined(failedCompletion.payload.errorMessage);
+      }
+
+      // The follow-up turn is untainted by the failed one.
+      const successCompletion = turnCompletedEvents[1];
+      assert.equal(String(successCompletion?.turnId), String(nextTurn.turnId));
+      if (successCompletion?.type === "turn.completed") {
+        assert.equal(successCompletion.payload.state, "completed");
+      }
 
       yield* adapter.stopSession(threadId);
     }),

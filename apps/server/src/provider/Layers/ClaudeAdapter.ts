@@ -3767,6 +3767,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
+
+    // Validate/construct the user message BEFORE any turn-state mutation or
+    // event emission below. buildUserMessageEffect can fail (e.g. an
+    // unsupported attachment mime type) and must not leave the session
+    // marked "running" with a turn.started already emitted — that combo
+    // races the async recovery path and can wedge the turn forever. See
+    // ProviderCommandReactor's recoverTurnStartFailure.
+    const message = yield* buildUserMessageEffect(input, {
+      fileSystem,
+      attachmentsDir: serverConfig.attachmentsDir,
+      boundInstanceId,
+    });
+
     if (steeringTurnState === null) {
       const turnState: ClaudeTurnState = {
         turnId,
@@ -3799,12 +3812,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         providerRefs: {},
       });
     }
-
-    const message = yield* buildUserMessageEffect(input, {
-      fileSystem,
-      attachmentsDir: serverConfig.attachmentsDir,
-      boundInstanceId,
-    });
 
     yield* Queue.offer(context.promptQueue, {
       type: "message",

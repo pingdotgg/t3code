@@ -35,7 +35,11 @@ import * as TestClock from "effect/testing/TestClock";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
+import {
+  ProviderAdapterProcessError,
+  ProviderAdapterRequestError,
+  ProviderAdapterValidationError,
+} from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -767,6 +771,94 @@ describe("ClaudeAdapterLive", () => {
           },
         },
       ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not wedge the turn when an attachment has an unsupported mime type", () => {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-attachments-"));
+    const harness = makeHarness({
+      cwd: "/tmp/project-claude-unsupported-attachment",
+      baseDir,
+    });
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() =>
+          NodeFS.rmSync(baseDir, {
+            recursive: true,
+            force: true,
+          }),
+        ),
+      );
+
+      const adapter = yield* ClaudeAdapter;
+      const { attachmentsDir } = yield* ServerConfig;
+
+      const attachment = {
+        type: "image" as const,
+        id: "thread-claude-attachment-87654321-4321-4321-4321-cba987654321",
+        name: "photo.heic",
+        mimeType: "image/heic",
+        sizeBytes: 4,
+      };
+      const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+      NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+      NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      // Collect exactly the 3 session-startup events plus the single
+      // turn.started event expected from the *second* (valid) sendTurn
+      // below. If the unsupported-attachment turn also emitted
+      // turn.started, this fiber would collect that extra event instead
+      // and the later assertions on event identity/count would fail.
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 4).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const failure = yield* adapter
+        .sendTurn({
+          threadId: session.threadId,
+          input: "What's in this image?",
+          attachments: [attachment],
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(failure, ProviderAdapterRequestError);
+      assert.match(failure.detail, /Unsupported Claude image attachment type 'image\/heic'/u);
+
+      // The failed validation must leave the session exactly as it was
+      // before sendTurn was called: still "ready", no active turn.
+      const sessionsAfterFailure = yield* adapter.listSessions();
+      const sessionAfterFailure = sessionsAfterFailure.find(
+        (candidate) => candidate.threadId === session.threadId,
+      );
+      assert.isDefined(sessionAfterFailure);
+      assert.equal(sessionAfterFailure?.status, "ready");
+      assert.isUndefined(sessionAfterFailure?.activeTurnId);
+
+      // A subsequent, valid turn must still work normally and be the
+      // only source of a turn.started event.
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "Never mind, just say hi.",
+        attachments: [],
+      });
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      assert.equal(turnStartedEvents.length, 1);
+      const turnStarted = turnStartedEvents[0];
+      if (turnStarted?.type === "turn.started") {
+        assert.equal(String(turnStarted.turnId), String(turn.turnId));
+      }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

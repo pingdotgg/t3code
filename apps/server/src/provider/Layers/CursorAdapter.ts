@@ -21,6 +21,7 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -133,6 +134,15 @@ interface CursorSessionContext {
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
+  /** Whether the active turn has emitted turn.started. Whichever prompt
+   * survives preparation first announces the turn, so a steered prompt is
+   * not silenced when the reserving prompt fails before announcing. */
+  activeTurnStarted: boolean;
+  /** Whether the active turn has emitted turn.completed. */
+  activeTurnSettled: boolean;
+  /** Stop reason of the most recent prompt resolution for the active turn,
+   * kept so a drain-time settle can report it. */
+  activeTurnLastStopReason: string | null | undefined;
   /** Number of sendTurn prompts currently in flight or being prepared.
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
@@ -778,6 +788,9 @@ export function makeCursorAdapter(
             turns: [],
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
+            activeTurnStarted: false,
+            activeTurnSettled: false,
+            activeTurnLastStopReason: undefined,
             promptsInFlight: 0,
             stopped: false,
           };
@@ -917,8 +930,19 @@ export function makeCursorAdapter(
         const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
         // Count this prompt immediately so a superseded in-flight prompt
         // resolving from here on does not settle the turn; the matching
-        // decrement is the `ensuring` below.
+        // decrement is the `ensuring` below. The turn id is reserved in the
+        // same synchronous step: a concurrent sendTurn arriving while this
+        // one awaits session configuration or attachment I/O must observe
+        // this turn id and steer into it, not mint a second one. The
+        // reservation is adapter-internal; the session snapshot and the
+        // turn.started emission stay after validation.
         ctx.promptsInFlight += 1;
+        ctx.activeTurnId = turnId;
+        if (steeringTurnId === undefined) {
+          ctx.activeTurnStarted = false;
+          ctx.activeTurnSettled = false;
+          ctx.activeTurnLastStopReason = undefined;
+        }
 
         return yield* Effect.gen(function* () {
           const turnModelSelection =
@@ -939,27 +963,11 @@ export function makeCursorAdapter(
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
           });
-          ctx.activeTurnId = turnId;
-          if (steeringTurnId === undefined) {
-            ctx.lastPlanFingerprint = undefined;
-          }
-          ctx.session = {
-            ...ctx.session,
-            activeTurnId: turnId,
-            updatedAt: yield* nowIso,
-          };
-
-          if (steeringTurnId === undefined) {
-            yield* offerRuntimeEvent({
-              type: "turn.started",
-              ...(yield* makeEventStamp()),
-              provider: PROVIDER,
-              threadId: input.threadId,
-              turnId,
-              payload: { model: resolvedModel },
-            });
-          }
-
+          // Validate/build the prompt content BEFORE any turn-state
+          // mutation or turn.started emission below. Attachment validation
+          // can fail (e.g. an unresolvable attachment id) and must not
+          // leave the session with an active turn id and an already-emitted
+          // turn.started — that combination wedges the turn forever.
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           if (input.input?.trim()) {
             promptParts.push({ type: "text", text: input.input.trim() });
@@ -1004,6 +1012,31 @@ export function makeCursorAdapter(
             });
           }
 
+          if (steeringTurnId === undefined) {
+            ctx.lastPlanFingerprint = undefined;
+          }
+          ctx.session = {
+            ...ctx.session,
+            activeTurnId: turnId,
+            updatedAt: yield* nowIso,
+          };
+
+          // Whichever prompt survives preparation first announces the turn.
+          // Guarding on the steering check instead would silence a steered
+          // prompt whose reserving prompt failed validation before emitting
+          // turn.started — the turn would then complete without ever starting.
+          if (!ctx.activeTurnStarted) {
+            ctx.activeTurnStarted = true;
+            yield* offerRuntimeEvent({
+              type: "turn.started",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              turnId,
+              payload: { model: resolvedModel },
+            });
+          }
+
           const result = yield* ctx.acp
             .prompt({
               prompt: promptParts,
@@ -1030,7 +1063,9 @@ export function makeCursorAdapter(
           // Only the last remaining prompt settles the turn — a steer-
           // superseded prompt resolving (usually cancelled) while another is
           // in flight or pending must leave the merged turn running.
+          ctx.activeTurnLastStopReason = result.stopReason ?? null;
           if (ctx.promptsInFlight === 1) {
+            ctx.activeTurnSettled = true;
             yield* offerRuntimeEvent({
               type: "turn.completed",
               ...(yield* makeEventStamp()),
@@ -1050,10 +1085,79 @@ export function makeCursorAdapter(
             resumeCursor: ctx.session.resumeCursor,
           };
         }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
+          Effect.onExit((exit) =>
+            Effect.gen(function* () {
               ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
-            }),
+              if (ctx.promptsInFlight > 0 || ctx.activeTurnId !== turnId) {
+                return;
+              }
+              if (!ctx.activeTurnStarted) {
+                // The reservation never announced a turn (every prompt failed
+                // preparation); drop it so the next sendTurn opens a fresh
+                // turn instead of steering into a dead one.
+                ctx.activeTurnId = undefined;
+                return;
+              }
+              if (ctx.activeTurnSettled) {
+                return;
+              }
+              // The last prompt drained without the turn settling: either it
+              // exited after another prompt of the merged turn resolved while
+              // both were still counted, or every prompt failed after the
+              // turn was announced. Settle with the last known result, or as
+              // failed when no prompt ever resolved — reporting success there
+              // would mask the error and flip the session to ready, while
+              // emitting nothing would leave the turn.started unanswered and
+              // wedge the thread in "working". This emission trails the
+              // turn.started already in the queue, so ingestion ends in the
+              // error state regardless of how the caller's turn-start failure
+              // recovery is interleaved.
+              if (ctx.activeTurnLastStopReason === undefined) {
+                // An interrupted drain with no recorded result is session
+                // teardown, not a turn outcome; leave settling to the session
+                // lifecycle events. A recorded sibling result, by contrast,
+                // IS the turn's outcome and is settled below no matter how
+                // this last holder exited.
+                if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) {
+                  return;
+                }
+                ctx.activeTurnSettled = true;
+                const failureMessage = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+                const errorMessage =
+                  failureMessage instanceof Error && failureMessage.message.trim().length > 0
+                    ? failureMessage.message.trim()
+                    : "Cursor turn failed before any prompt resolved.";
+                yield* offerRuntimeEvent({
+                  type: "turn.completed",
+                  ...(yield* makeEventStamp()),
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  turnId,
+                  payload: {
+                    state: "failed",
+                    stopReason: null,
+                    errorMessage,
+                  },
+                });
+                return;
+              }
+              ctx.activeTurnSettled = true;
+              yield* offerRuntimeEvent({
+                type: "turn.completed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId,
+                payload: {
+                  state: ctx.activeTurnLastStopReason === "cancelled" ? "cancelled" : "completed",
+                  stopReason: ctx.activeTurnLastStopReason ?? null,
+                },
+              });
+              // The only failure above is event-stamp id generation
+              // (crypto.randomUUIDv4); a finalizer cannot surface it as a
+              // typed error, and swallowing it would silently drop the
+              // settling turn.completed.
+            }).pipe(Effect.orDie),
           ),
         );
       });
