@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveWizardNavigation } from "./AddProviderInstanceDialog.logic";
+import { ProviderDriverKind } from "@t3tools/contracts";
+
+import {
+  isOwnedHermesEnrollmentRetry,
+  resolveWizardNavigation,
+  validateProviderInstanceIdForWizard,
+} from "./AddProviderInstanceDialog.logic";
 
 describe("resolveWizardNavigation", () => {
   const invalidId = { instanceIdError: "Instance ID is required." };
@@ -40,5 +46,54 @@ describe("resolveWizardNavigation", () => {
   it("clamps requested steps to the wizard bounds", () => {
     expect(resolveWizardNavigation(2, 8, 3, validId)).toEqual({ kind: "navigate", step: 2 });
     expect(resolveWizardNavigation(0, -1, 3, invalidId)).toEqual({ kind: "navigate", step: 0 });
+  });
+});
+
+describe("Hermes enrollment retry ownership", () => {
+  const existingIds = new Set(["hermes-research", "hermes-existing"]);
+
+  it("allows retrying enrollment for the exact Hermes instance created by this wizard", () => {
+    expect(
+      isOwnedHermesEnrollmentRetry({
+        driver: ProviderDriverKind.make("hermes"),
+        instanceId: "hermes-research",
+        createdHermesInstanceId: "hermes-research",
+      }),
+    ).toBe(true);
+    expect(
+      validateProviderInstanceIdForWizard({
+        driver: ProviderDriverKind.make("hermes"),
+        instanceId: "hermes-research",
+        existingIds,
+        createdHermesInstanceId: "hermes-research",
+      }),
+    ).toBeNull();
+  });
+
+  it("still rejects arbitrary existing instances and non-Hermes reuse", () => {
+    expect(
+      validateProviderInstanceIdForWizard({
+        driver: ProviderDriverKind.make("hermes"),
+        instanceId: "hermes-existing",
+        existingIds,
+        createdHermesInstanceId: "hermes-research",
+      }),
+    ).toContain("already exists");
+    expect(
+      validateProviderInstanceIdForWizard({
+        driver: ProviderDriverKind.make("codex"),
+        instanceId: "hermes-research",
+        existingIds,
+        createdHermesInstanceId: "hermes-research",
+      }),
+    ).toContain("already exists");
+    expect(
+      validateProviderInstanceIdForWizard({
+        driver: ProviderDriverKind.make("hermes"),
+        instanceId: "hermes-research",
+        existingIds,
+        createdHermesInstanceId: null,
+      }),
+    ).toContain("already exists");
   });
 });

@@ -1,0 +1,24 @@
+name: hermes-t3-gateway
+label: T3 Code
+kind: platform
+version: 0.1.0
+description: >
+  Experimental outbound gateway that exposes one Hermes Agent process as a
+  named T3 Code provider instance over an authenticated WebSocket.
+author: T3 Tools
+provides_hooks:
+  - pre_tool_call
+  - post_tool_call
+optional_env:
+  - name: HERMES_T3_GATEWAY_URL
+    description: "T3 Code server URL used by the outbound gateway connection"
+    prompt: "T3 Code URL"
+    password: false
+  - name: HERMES_T3_GATEWAY_INSTANCE_ID
+    description: "Opaque T3 Code Hermes instance identifier issued at enrollment"
+    prompt: "T3 Code Hermes instance ID"
+    password: false
+  - name: HERMES_T3_GATEWAY_CREDENTIAL
+    description: "Long-lived per-instance credential issued at enrollment"
+    prompt: "T3 Code Hermes credential"
+    password: true

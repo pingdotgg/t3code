@@ -5,7 +5,10 @@ import {
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
+  isProviderInstanceComposerAvailable,
+  getProviderInstanceComposerUnavailableMessage,
   isProviderInstancePickerVisible,
+  resolveComposerProviderInstanceId,
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
@@ -65,6 +68,66 @@ describe("isProviderInstancePickerReady", () => {
     ]);
 
     expect(entry && isProviderInstancePickerReady(entry)).toBe(true);
+  });
+});
+
+describe("Hermes composer availability", () => {
+  it("keeps an offline Hermes instance selected but marks it unsendable", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("hermes"),
+        instanceId: "hermes-research",
+        displayName: "Research",
+        status: "error",
+      }),
+    ]);
+
+    expect(entry && isProviderInstanceComposerAvailable(entry)).toBe(false);
+    expect(getProviderInstanceComposerUnavailableMessage(entry)).toContain(
+      "Hermes · Research is offline",
+    );
+  });
+
+  it("does not tighten legacy composer availability for other providers", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "codex",
+        status: "error",
+      }),
+    ]);
+
+    expect(entry && isProviderInstanceComposerAvailable(entry)).toBe(true);
+  });
+
+  it("preserves a missing bound Hermes instance instead of rebinding to another gateway", () => {
+    const missing = ProviderInstanceId.make("hermes-research");
+    const connected = ProviderInstanceId.make("hermes-lab");
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("hermes"),
+        instanceId: connected,
+      }),
+    ]);
+
+    expect(
+      resolveComposerProviderInstanceId({
+        entries,
+        draftInstanceId: null,
+        threadInstanceId: missing,
+        threadModelInstanceId: missing,
+        projectInstanceId: connected,
+        requestedDriverKind: ProviderDriverKind.make("hermes"),
+        lockedProvider: ProviderDriverKind.make("hermes"),
+        lockedContinuationGroupKey: null,
+      }),
+    ).toBe(missing);
+    expect(
+      getProviderInstanceComposerUnavailableMessage(undefined, {
+        driverKind: ProviderDriverKind.make("hermes"),
+        instanceId: missing,
+      }),
+    ).toContain("hermes-research");
   });
 });
 
@@ -129,6 +192,32 @@ describe("deriveProviderInstanceEntries", () => {
     expect(entry?.instanceId).toBe("codex_personal");
     expect(entry?.driverKind).toBe("codex");
     expect(entry?.isDefault).toBe(false);
+  });
+
+  it("formats default and custom Hermes instance labels consistently", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("hermes"),
+        instanceId: "hermes",
+        displayName: "Hermes",
+      }),
+      provider({
+        provider: ProviderDriverKind.make("hermes"),
+        instanceId: "hermes-research",
+        displayName: "Research",
+      }),
+      provider({
+        provider: ProviderDriverKind.make("hermes"),
+        instanceId: "hermes-lab",
+        displayName: "Hermes · Lab",
+      }),
+    ]);
+
+    expect(entries.map((entry) => entry.displayName)).toEqual([
+      "Hermes",
+      "Hermes · Research",
+      "Hermes · Lab",
+    ]);
   });
 });
 

@@ -60,6 +60,16 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  HermesGatewayCreateEnrollmentInput,
+  HermesGatewayEnrollmentResult,
+  HermesGatewayGetInstanceStatusInput,
+  HermesGatewayInstanceStatus,
+  HermesGatewayListInstancesResult,
+  HermesGatewayManagementError,
+  HermesGatewayRevokeInstanceInput,
+  HermesGatewayRevokeInstanceResult,
+} from "./hermesGateway.ts";
+import {
   RelayClientInstallFailedError,
   RelayClientInstallProgressEventSchema,
   RelayClientStatusSchema,
@@ -219,6 +229,12 @@ export const WS_METHODS = {
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
 
+  // Hermes gateway instance management
+  hermesGatewayCreateEnrollment: "hermesGateway.createEnrollment",
+  hermesGatewayGetInstanceStatus: "hermesGateway.getInstanceStatus",
+  hermesGatewayListInstances: "hermesGateway.listInstances",
+  hermesGatewayRevokeInstance: "hermesGateway.revokeInstance",
+
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -332,6 +348,36 @@ export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess,
   payload: ServerSignalProcessInput,
   success: ServerSignalProcessResult,
   error: EnvironmentAuthorizationError,
+});
+
+export const WsHermesGatewayCreateEnrollmentRpc = Rpc.make(
+  WS_METHODS.hermesGatewayCreateEnrollment,
+  {
+    payload: HermesGatewayCreateEnrollmentInput,
+    success: HermesGatewayEnrollmentResult,
+    error: Schema.Union([HermesGatewayManagementError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsHermesGatewayGetInstanceStatusRpc = Rpc.make(
+  WS_METHODS.hermesGatewayGetInstanceStatus,
+  {
+    payload: HermesGatewayGetInstanceStatusInput,
+    success: HermesGatewayInstanceStatus,
+    error: Schema.Union([HermesGatewayManagementError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsHermesGatewayListInstancesRpc = Rpc.make(WS_METHODS.hermesGatewayListInstances, {
+  payload: Schema.Struct({}),
+  success: HermesGatewayListInstancesResult,
+  error: Schema.Union([HermesGatewayManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsHermesGatewayRevokeInstanceRpc = Rpc.make(WS_METHODS.hermesGatewayRevokeInstance, {
+  payload: HermesGatewayRevokeInstanceInput,
+  success: HermesGatewayRevokeInstanceResult,
+  error: Schema.Union([HermesGatewayManagementError, EnvironmentAuthorizationError]),
 });
 
 export const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
@@ -713,6 +759,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerSignalProcessRpc,
+  WsHermesGatewayCreateEnrollmentRpc,
+  WsHermesGatewayGetInstanceStatusRpc,
+  WsHermesGatewayListInstancesRpc,
+  WsHermesGatewayRevokeInstanceRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,

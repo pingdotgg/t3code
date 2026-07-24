@@ -13,6 +13,7 @@ import {
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { useState, type ReactNode } from "react";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   isProviderDriverKind,
   type ProviderInstanceConfig,
@@ -26,6 +27,9 @@ import {
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { normalizeProviderAccentColor } from "../../providerInstances";
+import { usePrimaryEnvironment } from "../../state/environments";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -43,6 +47,8 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { HermesGatewayInstanceSection } from "./HermesGatewayInstanceSection";
+import { messageFromUnknownError } from "./HermesGatewayInstanceSection.logic";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -129,6 +135,10 @@ export function deriveProviderModelsForDisplay(input: {
       },
   );
   return [...serverModels, ...customModels];
+}
+
+export function isProviderInstanceDisplayNameEditable(driver: string): boolean {
+  return driver !== "hermes";
 }
 
 function ProviderAuthEmail(props: {
@@ -394,6 +404,11 @@ export function ProviderInstanceCard({
   onRunUpdate,
   isUpdating = false,
 }: ProviderInstanceCardProps) {
+  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const revokeHermesInstance = useAtomCommand(serverEnvironment.hermesGatewayRevokeInstance, {
+    reportFailure: false,
+  });
+  const [isDeleting, setIsDeleting] = useState(false);
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
   // "disabled"/"warning" based on the local `enabled` flag so the dot
@@ -413,8 +428,21 @@ export function ProviderInstanceCard({
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const FallbackIconComponent = driverOption?.icon;
-  const displayName =
-    instance.displayName?.trim() || driverOption?.label || String(instance.driver);
+  const configuredDisplayName = instance.displayName?.trim();
+  const isHermes = instance.driver === "hermes";
+  const hermesNickname =
+    configuredDisplayName?.replace(/^Hermes\s*[·:–—-]?\s*/u, "").trim() ||
+    (instanceId === "hermes"
+      ? "Hermes"
+      : String(instanceId)
+          .replace(/^hermes[-_]?/u, "")
+          .replace(/[-_]+/g, " ")
+          .trim());
+  const displayName = isHermes
+    ? instanceId === "hermes" || hermesNickname === "Hermes"
+      ? "Hermes"
+      : `Hermes · ${hermesNickname}`
+    : configuredDisplayName || driverOption?.label || String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {
@@ -501,6 +529,49 @@ export function ProviderInstanceCard({
     );
   };
 
+  const handleDelete = async () => {
+    if (!onDelete || isDeleting) return;
+    if (!isHermes) {
+      onDelete();
+      return;
+    }
+    if (environmentId === null) {
+      toastManager.add({
+        type: "error",
+        title: "Could not delete Hermes instance",
+        description: "Reconnect this browser to the T3 server so its gateway can be revoked first.",
+      });
+      return;
+    }
+    setIsDeleting(true);
+    const result = await revokeHermesInstance({
+      environmentId,
+      input: { instanceId },
+    });
+    if (result._tag === "Success") {
+      onDelete();
+      setIsDeleting(false);
+      return;
+    }
+    const failure = squashAtomCommandFailure(result);
+    const wasNeverEnrolled =
+      typeof failure === "object" &&
+      failure !== null &&
+      "code" in failure &&
+      failure.code === "instance-not-found";
+    if (wasNeverEnrolled) {
+      onDelete();
+      setIsDeleting(false);
+      return;
+    }
+    toastManager.add({
+      type: "error",
+      title: "Could not delete Hermes instance",
+      description: `${messageFromUnknownError(failure)} The instance was kept so a live gateway credential is not orphaned.`,
+    });
+    setIsDeleting(false);
+  };
+
   const titleIconNode = driverKind ? (
     <ProviderInstanceIcon
       driverKind={driverKind}
@@ -563,10 +634,15 @@ export function ProviderInstanceCard({
                   size="icon-xs"
                   variant="ghost"
                   className="size-5 rounded-sm p-0 text-muted-foreground hover:text-destructive"
-                  onClick={onDelete}
+                  disabled={isDeleting}
+                  onClick={() => void handleDelete()}
                   aria-label={`Delete provider instance ${instanceId}`}
                 >
-                  <Trash2Icon className="size-3" />
+                  {isDeleting ? (
+                    <LoaderIcon className="size-3 animate-spin" />
+                  ) : (
+                    <Trash2Icon className="size-3" />
+                  )}
                 </Button>
               }
             />
@@ -730,22 +806,38 @@ export function ProviderInstanceCard({
       <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>
         <CollapsibleContent>
           <div className="space-y-5 px-3 pb-4 pt-2 sm:px-4">
-            <div>
-              <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
-                <span className="text-xs font-medium text-foreground">Display name</span>
-                <DraftInput
-                  id={`provider-instance-${instanceId}-display-name`}
-                  className="mt-1.5"
-                  value={instance.displayName ?? ""}
-                  onCommit={updateDisplayName}
-                  placeholder={driverOption?.label ?? "Instance label"}
-                  spellCheck={false}
-                />
+            {isProviderInstanceDisplayNameEditable(String(instance.driver)) ? (
+              <div>
+                <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
+                  <span className="text-xs font-medium text-foreground">Display name</span>
+                  <DraftInput
+                    id={`provider-instance-${instanceId}-display-name`}
+                    className="mt-1.5"
+                    value={instance.displayName ?? ""}
+                    onCommit={updateDisplayName}
+                    placeholder={driverOption?.label ?? "Instance label"}
+                    spellCheck={false}
+                  />
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    Optional label shown in the provider list.
+                  </span>
+                </label>
+              </div>
+            ) : (
+              <div>
+                <span className="text-xs font-medium text-foreground">Hermes nickname</span>
+                <div
+                  className="mt-1.5 rounded-md border border-border/70 bg-muted/35 px-3 py-2 text-sm text-foreground"
+                  data-hermes-nickname-readonly="true"
+                >
+                  {displayName}
+                </div>
                 <span className="mt-1 block text-xs text-muted-foreground">
-                  Optional label shown in the provider list.
+                  Fixed after creation because this nickname identifies the paired Hermes instance.
+                  Delete and re-add the instance to choose a different nickname.
                 </span>
-              </label>
-            </div>
+              </div>
+            )}
 
             <div>
               <ProviderAccentColorPicker
@@ -757,14 +849,18 @@ export function ProviderInstanceCard({
               />
             </div>
 
-            <div>
-              <ProviderEnvironmentSection
-                environment={instance.environment ?? []}
-                onChange={updateEnvironment}
-              />
-            </div>
+            {isHermes ? (
+              <HermesGatewayInstanceSection instanceId={instanceId} nickname={hermesNickname} />
+            ) : (
+              <div>
+                <ProviderEnvironmentSection
+                  environment={instance.environment ?? []}
+                  onChange={updateEnvironment}
+                />
+              </div>
+            )}
 
-            {driverOption ? (
+            {driverOption && !isHermes ? (
               <ProviderSettingsForm
                 definition={driverOption}
                 value={instance.config}
@@ -774,7 +870,7 @@ export function ProviderInstanceCard({
               />
             ) : null}
 
-            {driverOption !== undefined ? (
+            {driverOption !== undefined && !isHermes ? (
               <ProviderModelsSection
                 instanceId={instanceId}
                 driverKind={driverKind}
@@ -788,7 +884,7 @@ export function ProviderInstanceCard({
                 onFavoriteModelsChange={onFavoriteModelsChange}
                 onModelOrderChange={onModelOrderChange}
               />
-            ) : (
+            ) : driverOption === undefined ? (
               <div>
                 <p className="text-xs text-muted-foreground">
                   This instance uses a driver (
@@ -797,7 +893,7 @@ export function ProviderInstanceCard({
                   edited from this surface.
                 </p>
               </div>
-            )}
+            ) : null}
           </div>
         </CollapsibleContent>
       </Collapsible>

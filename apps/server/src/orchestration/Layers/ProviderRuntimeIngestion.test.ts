@@ -1873,6 +1873,97 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("treats turn.aborted as terminal and finalizes buffered assistant text", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-aborted-buffered");
+    const itemId = asItemId("item-aborted-buffered");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-before-abort"),
+      provider: ProviderDriverKind.make("hermes"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-content-before-abort"),
+      provider: ProviderDriverKind.make("hermes"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId,
+      payload: {
+        streamKind: "assistant_text",
+        delta: "partial response",
+      },
+    });
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-aborted"),
+      provider: ProviderDriverKind.make("hermes"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        reason: "Interrupted by user.",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session.activeTurnId === null &&
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === `assistant:${itemId}` &&
+            message.text === "partial response" &&
+            !message.streaming,
+        ),
+    );
+    expect(thread.session?.lastError).toBeNull();
+
+    const nextTurnId = asTurnId("turn-after-abort");
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-after-abort"),
+      provider: ProviderDriverKind.make("hermes"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: nextTurnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "running" && entry.session.activeTurnId === nextTurnId,
+    );
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-stale-turn-aborted"),
+      provider: ProviderDriverKind.make("hermes"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        reason: "Late abort for the previous turn.",
+      },
+    });
+    await harness.drain();
+    const afterStaleAbort = await harness.readModel();
+    const activeThread = afterStaleAbort.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(activeThread?.session?.status).toBe("running");
+    expect(activeThread?.session?.activeTurnId).toBe(nextTurnId);
+  });
+
   it("flushes and completes buffered assistant text when an approval request opens", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

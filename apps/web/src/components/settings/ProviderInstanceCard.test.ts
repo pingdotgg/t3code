@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ServerProviderModel } from "@t3tools/contracts";
 
-import { deriveProviderModelsForDisplay } from "./ProviderInstanceCard";
+import {
+  deriveProviderModelsForDisplay,
+  isProviderInstanceDisplayNameEditable,
+} from "./ProviderInstanceCard";
 
 describe("deriveProviderModelsForDisplay", () => {
   it("uses current config custom models instead of stale live custom rows", () => {
@@ -32,5 +35,13 @@ describe("deriveProviderModelsForDisplay", () => {
         customModels: ["kept-custom"],
       }).map((model) => model.slug),
     ).toEqual(["server-model", "kept-custom"]);
+  });
+});
+
+describe("isProviderInstanceDisplayNameEditable", () => {
+  it("keeps Hermes nicknames immutable without changing other providers", () => {
+    expect(isProviderInstanceDisplayNameEditable("hermes")).toBe(false);
+    expect(isProviderInstanceDisplayNameEditable("codex")).toBe(true);
+    expect(isProviderInstanceDisplayNameEditable("claudeAgent")).toBe(true);
   });
 });

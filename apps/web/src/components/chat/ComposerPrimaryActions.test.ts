@@ -1,6 +1,45 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+import {
+  formatPendingPrimaryActionLabel,
+  resolveRunningPrimaryActionMode,
+  shouldUseCollapsedHermesRunningActions,
+} from "./ComposerPrimaryActions";
+
+describe("resolveRunningPrimaryActionMode", () => {
+  it("keeps stop-only behavior for ordinary running providers", () => {
+    expect(resolveRunningPrimaryActionMode({ isRunning: true, allowSendWhileRunning: false })).toBe(
+      "stop",
+    );
+  });
+
+  it("shows steer and stop actions for a running Hermes provider", () => {
+    expect(resolveRunningPrimaryActionMode({ isRunning: true, allowSendWhileRunning: true })).toBe(
+      "steer",
+    );
+    expect(
+      shouldUseCollapsedHermesRunningActions({
+        isRunning: true,
+        allowSendWhileRunning: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not replace collapsed actions for idle or ordinary providers", () => {
+    expect(
+      shouldUseCollapsedHermesRunningActions({
+        isRunning: false,
+        allowSendWhileRunning: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseCollapsedHermesRunningActions({
+        isRunning: true,
+        allowSendWhileRunning: false,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("formatPendingPrimaryActionLabel", () => {
   it("returns 'Submitting...' while responding", () => {

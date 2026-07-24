@@ -74,6 +74,31 @@ export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boo
   return entry.enabled && entry.isAvailable && entry.status === "ready";
 }
 
+/**
+ * Existing providers retain their historical composer behavior while Hermes
+ * requires a live gateway connection. This keeps an offline Hermes thread
+ * selected and readable without allowing a turn to be routed elsewhere.
+ */
+export function isProviderInstanceComposerAvailable(entry: ProviderInstanceEntry): boolean {
+  return entry.driverKind !== "hermes" || isProviderInstancePickerReady(entry);
+}
+
+export function getProviderInstanceComposerUnavailableMessage(
+  entry: ProviderInstanceEntry | undefined,
+  missingSelection?: {
+    readonly driverKind: ProviderDriverKind;
+    readonly instanceId: ProviderInstanceId;
+  },
+): string {
+  if (entry?.driverKind === "hermes") {
+    return `${entry.displayName} is offline. Reconnect it in Settings to continue this thread.`;
+  }
+  if (missingSelection?.driverKind === "hermes") {
+    return `Hermes instance '${missingSelection.instanceId}' is unavailable. Restore it in Settings to continue this thread.`;
+  }
+  return "Enable a provider in Settings to send a message.";
+}
+
 /** Picker rails contain configured, enabled instances only. */
 export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
   return entry.enabled;
@@ -139,6 +164,15 @@ function resolveInstanceDisplayName(
 ): string {
   const trimmedSnapshotName = snapshot.displayName?.trim();
   const kindLabel = driverKindLabel(driverKind);
+  if (driverKind === "hermes") {
+    if (isDefault) return "Hermes";
+    const candidate =
+      trimmedSnapshotName && trimmedSnapshotName !== kindLabel
+        ? trimmedSnapshotName
+        : humanizeInstanceId(instanceId).replace(/^Hermes(?:\s+|$)/u, "");
+    const nickname = candidate.replace(/^Hermes\s*[·:–—-]\s*/u, "").trim();
+    return nickname ? `Hermes · ${nickname}` : "Hermes";
+  }
   if (trimmedSnapshotName && trimmedSnapshotName !== kindLabel) {
     return trimmedSnapshotName;
   }
@@ -309,6 +343,66 @@ export function resolveSelectableProviderInstanceEntry(
   return (
     entries.find(isProviderInstancePickerReady) ??
     entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status !== "error")
+  );
+}
+
+/**
+ * Resolve the instance used by the composer while preserving an existing
+ * Hermes thread's immutable gateway binding. Hermes sessions cannot be moved
+ * to another instance, so a missing or disabled bound instance remains the
+ * exact selection and lets the composer surface its unavailable state instead
+ * of silently routing the next message to another connected Hermes process.
+ */
+export function resolveComposerProviderInstanceId(input: {
+  readonly entries: ReadonlyArray<ProviderInstanceEntry>;
+  readonly draftInstanceId: ProviderInstanceId | null;
+  readonly threadInstanceId: ProviderInstanceId | undefined;
+  readonly threadModelInstanceId: ProviderInstanceId | undefined;
+  readonly projectInstanceId: ProviderInstanceId | undefined;
+  readonly requestedDriverKind: ProviderDriverKind;
+  readonly lockedProvider: ProviderDriverKind | null;
+  readonly lockedContinuationGroupKey: string | null;
+}): ProviderInstanceId {
+  const boundThreadInstanceId = input.threadInstanceId ?? input.threadModelInstanceId;
+  if (input.lockedProvider === "hermes" && boundThreadInstanceId) {
+    return boundThreadInstanceId;
+  }
+
+  const candidates = [
+    input.draftInstanceId,
+    input.threadInstanceId,
+    input.threadModelInstanceId,
+    input.projectInstanceId,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const match = input.entries.find(
+      (entry) => entry.instanceId === candidate && entry.enabled && entry.isAvailable,
+    );
+    if (!match) continue;
+    if (input.lockedProvider && match.driverKind !== input.lockedProvider) continue;
+    if (
+      input.lockedContinuationGroupKey &&
+      match.continuationGroupKey !== input.lockedContinuationGroupKey
+    ) {
+      continue;
+    }
+    return match.instanceId;
+  }
+
+  const compatibleEntries = input.entries.filter(
+    (entry) =>
+      (!input.lockedProvider || entry.driverKind === input.lockedProvider) &&
+      (!input.lockedContinuationGroupKey ||
+        entry.continuationGroupKey === input.lockedContinuationGroupKey),
+  );
+  const requestedDriverEntries = compatibleEntries.filter(
+    (entry) => entry.driverKind === input.requestedDriverKind,
+  );
+  return (
+    resolveSelectableProviderInstanceEntry(requestedDriverEntries, undefined)?.instanceId ??
+    resolveSelectableProviderInstanceEntry(compatibleEntries, undefined)?.instanceId ??
+    NO_PROVIDER_MODEL_SELECTION.instanceId
   );
 }
 
