@@ -578,11 +578,7 @@ export const make = Effect.gen(function* () {
     let closeAllowed = false;
     let closeFlushPending = false;
     window.on("close", (event) => {
-      if (
-        environment.platform === "darwin" ||
-        closeAllowed ||
-        Ref.getUnsafe(desktopState.quitting)
-      ) {
+      if (closeAllowed || Ref.getUnsafe(desktopState.quitting)) {
         runFork(flushBoundsPersist);
         return;
       }

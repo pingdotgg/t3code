@@ -372,7 +372,6 @@ function cleanUpLegacyPersistedStateKeys(): void {
   if (legacyKeysCleanedUp || typeof window === "undefined") {
     return;
   }
-  legacyKeysCleanedUp = true;
   for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
     try {
       window.localStorage.removeItem(legacyKey);
@@ -380,6 +379,7 @@ function cleanUpLegacyPersistedStateKeys(): void {
       return;
     }
   }
+  legacyKeysCleanedUp = true;
 }
 
 export function persistState(state: UiState): void {

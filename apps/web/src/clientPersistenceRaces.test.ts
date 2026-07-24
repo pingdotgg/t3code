@@ -431,16 +431,23 @@ describe("desktop client persistence races", () => {
     expect(setRendererState).not.toHaveBeenCalled();
   });
 
-  it("migrates sticky composer preferences out of the legacy draft document", async () => {
+  it("migrates pre-v3 sticky composer preferences out of the legacy draft document", async () => {
     testWindow().localStorage.setItem(
       "t3code:composer-drafts:v1",
       JSON.stringify({
-        version: 8,
+        version: 2,
         state: {
-          stickyModelSelectionByProvider: {
-            codex: { instanceId: "codex", model: "gpt-legacy" },
+          stickyProvider: "codex",
+          stickyModelSelection: {
+            provider: "codex",
+            model: "gpt-legacy",
           },
-          stickyActiveProvider: "codex",
+          stickyModelOptions: {
+            codex: {
+              reasoningEffort: "high",
+              fastMode: true,
+            },
+          },
         },
       }),
     );
@@ -455,7 +462,14 @@ describe("desktop client persistence races", () => {
 
     expect(composer.useComposerDraftStore.getState()).toMatchObject({
       stickyModelSelectionByProvider: {
-        codex: { instanceId: "codex", model: "gpt-legacy" },
+        codex: {
+          instanceId: "codex",
+          model: "gpt-legacy",
+          options: [
+            { id: "reasoningEffort", value: "high" },
+            { id: "fastMode", value: true },
+          ],
+        },
       },
       stickyActiveProvider: "codex",
     });
@@ -464,7 +478,14 @@ describe("desktop client persistence races", () => {
     expect(JSON.parse(setRendererState.mock.calls[0]?.[1] ?? "{}")).toEqual({
       version: 1,
       stickyModelSelectionByProvider: {
-        codex: { instanceId: "codex", model: "gpt-legacy" },
+        codex: {
+          instanceId: "codex",
+          model: "gpt-legacy",
+          options: [
+            { id: "reasoningEffort", value: "high" },
+            { id: "fastMode", value: true },
+          ],
+        },
       },
       stickyActiveProvider: "codex",
     });
@@ -544,6 +565,35 @@ describe("desktop client persistence races", () => {
     });
   });
 
+  it("keeps legacy UI state until a durable retry is confirmed", async () => {
+    vi.useFakeTimers();
+    const legacyKey = "t3code:renderer-state:v8";
+    const legacyState = '{"projectOrder":["project-legacy"]}';
+    testWindow().localStorage.setItem(legacyKey, legacyState);
+    const setRendererState = vi
+      .fn<DesktopBridge["setRendererState"]>()
+      .mockRejectedValueOnce(new Error("migration write failed"))
+      .mockRejectedValueOnce(new Error("retry write failed"))
+      .mockResolvedValue(undefined);
+    installDesktopPersistenceBridge({
+      getRendererState: vi.fn().mockResolvedValue(null),
+      setRendererState,
+    });
+    const uiState = await import("./uiStateStore");
+
+    await uiState.hydrateUiStateStore();
+    expect(testWindow().localStorage.getItem(legacyKey)).toBe(legacyState);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(setRendererState).toHaveBeenCalledTimes(2);
+    expect(testWindow().localStorage.getItem(legacyKey)).toBe(legacyState);
+
+    uiState.useUiStateStore.setState({ projectOrder: ["project-after-retry"] });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(setRendererState).toHaveBeenCalledTimes(3);
+    expect(testWindow().localStorage.getItem(legacyKey)).toBeNull();
+  });
+
   it("retries failed debounced composer preference writes", async () => {
     vi.useFakeTimers();
     const setRendererState = vi
@@ -565,6 +615,35 @@ describe("desktop client persistence races", () => {
     await vi.advanceTimersByTimeAsync(300);
     await vi.waitFor(() => {
       expect(setRendererState).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("retries the current composer snapshot during flush after an identical write fails", async () => {
+    vi.useFakeTimers();
+    const firstWrite = deferred<void>();
+    const setRendererState = vi
+      .fn<DesktopBridge["setRendererState"]>()
+      .mockImplementationOnce(() => firstWrite.promise)
+      .mockResolvedValue(undefined);
+    installDesktopPersistenceBridge({
+      getRendererState: vi.fn().mockResolvedValue(null),
+      setRendererState,
+    });
+    const composer = await import("./composerDraftStore");
+    await composer.hydrateComposerPreferences();
+    composer.useComposerDraftStore.setState({
+      stickyActiveProvider: ProviderInstanceId.make("codex"),
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(setRendererState).toHaveBeenCalledOnce();
+
+    const flush = composer.flushComposerPreferencesPersistence();
+    firstWrite.reject(new Error("in-flight write failed"));
+    await flush;
+
+    expect(setRendererState).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(setRendererState.mock.calls[1]?.[1] ?? "{}")).toMatchObject({
+      stickyActiveProvider: "codex",
     });
   });
 

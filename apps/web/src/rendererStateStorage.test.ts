@@ -81,4 +81,22 @@ describe("createHydrationGuardedRendererStateStorage", () => {
     expect(stateStorage.writesEnabled()).toBe(false);
     expect(setRendererState).not.toHaveBeenCalled();
   });
+
+  it("exposes enabled desktop write failures to persistence callers", async () => {
+    const writeError = new Error("write failed");
+    const stateStorage = createHydrationGuardedRendererStateStorage({
+      key: "ui-state",
+      browserStorage: createStorage().storage,
+      desktopPersistence: {
+        getRendererState: vi.fn().mockResolvedValue(null),
+        setRendererState: vi.fn().mockRejectedValue(writeError),
+      },
+    });
+    stateStorage.enableWrites();
+
+    await expect(
+      stateStorage.storage.setItem("t3code:ui-state:v1", '{"projectOrder":[]}'),
+    ).rejects.toBe(writeError);
+    await expect(stateStorage.storage.removeItem("t3code:ui-state:v1")).rejects.toBe(writeError);
+  });
 });

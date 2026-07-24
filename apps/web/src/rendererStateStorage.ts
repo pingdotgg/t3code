@@ -63,17 +63,13 @@ export function createHydrationGuardedRendererStateStorage(input: {
               if (!writesEnabled) {
                 return Promise.resolve();
               }
-              return writeHydratedValue(_name, value).catch((error) => {
-                console.error(`[RENDERER_STATE] ${input.key} persistence failed.`, error);
-              });
+              return writeHydratedValue(_name, value);
             },
             removeItem: () => {
               if (!writesEnabled) {
                 return Promise.resolve();
               }
-              return desktopPersistence.setRendererState(input.key, null).catch((error) => {
-                console.error(`[RENDERER_STATE] ${input.key} removal failed.`, error);
-              });
+              return desktopPersistence.setRendererState(input.key, null);
             },
           },
   };

@@ -600,7 +600,19 @@ describe("DesktopWindow", () => {
         if (!close) {
           return yield* Effect.die("window close listener was not registered");
         }
-        close();
+        close({ preventDefault: vi.fn() });
+        yield* Effect.promise(() =>
+          vi.waitFor(() => {
+            assert.equal(fakeWindow.send.mock.calls.length, 1);
+          }),
+        );
+        const [, requestId] = fakeWindow.send.mock.calls[0] ?? [];
+        Electron.ipcMain.emit(
+          RENDERER_STATE_FLUSH_COMPLETE_CHANNEL,
+          { sender: fakeWindow.webContents },
+          requestId,
+          true,
+        );
         yield* Effect.promise(() => Promise.resolve());
 
         assert.deepEqual(mainWindowBoundsUpdates, [{ x: 220, y: 140, width: 1380, height: 920 }]);
@@ -706,7 +718,19 @@ describe("DesktopWindow", () => {
           return yield* Effect.die("window lifecycle listeners were not registered");
         }
 
-        close();
+        close({ preventDefault: vi.fn() });
+        yield* Effect.promise(() =>
+          vi.waitFor(() => {
+            assert.equal(fakeWindow.send.mock.calls.length, 1);
+          }),
+        );
+        const [, requestId] = fakeWindow.send.mock.calls[0] ?? [];
+        Electron.ipcMain.emit(
+          RENDERER_STATE_FLUSH_COMPLETE_CHANNEL,
+          { sender: fakeWindow.webContents },
+          requestId,
+          true,
+        );
         yield* Effect.promise(() => Promise.resolve());
         assert.deepEqual(mainWindowBoundsUpdates, []);
 
@@ -839,7 +863,7 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("flushes renderer state before a Linux main window is destroyed", () =>
+  it.effect("flushes renderer state before a macOS main window is destroyed", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
@@ -848,7 +872,7 @@ describe("DesktopWindow", () => {
         window: fakeWindow.window,
         createCount,
         mainWindow,
-        platform: "linux",
+        platform: "darwin",
       });
 
       yield* Effect.gen(function* () {
@@ -887,7 +911,7 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("does not intercept Linux window destruction after shutdown has started", () =>
+  it.effect("does not intercept window destruction after shutdown has started", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
@@ -947,8 +971,20 @@ describe("DesktopWindow", () => {
         if (!close) {
           return yield* Effect.die("window close listener was not registered");
         }
-        close();
+        close({ preventDefault: vi.fn() });
         yield* Deferred.await(writeStarted);
+        yield* Effect.promise(() =>
+          vi.waitFor(() => {
+            assert.equal(fakeWindow.send.mock.calls.length, 1);
+          }),
+        );
+        const [, requestId] = fakeWindow.send.mock.calls[0] ?? [];
+        Electron.ipcMain.emit(
+          RENDERER_STATE_FLUSH_COMPLETE_CHANNEL,
+          { sender: fakeWindow.webContents },
+          requestId,
+          true,
+        );
         fakeWindow.isDestroyed.mockReturnValue(true);
 
         const flushFiber = yield* desktopWindow.flushMainWindowBounds.pipe(
