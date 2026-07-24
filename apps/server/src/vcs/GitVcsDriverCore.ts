@@ -386,6 +386,45 @@ function gitCommandContext(
   } as const;
 }
 
+const STDERR_EXCERPT_MAX_LENGTH = 400;
+const STDERR_REDACTION_MIN_LENGTH = 4;
+
+/**
+ * Attach a bounded stderr excerpt to a command failure for in-process
+ * consumers. Command arguments (and `--option=value` values) are redacted
+ * first so tokens embedded in URLs or options keep the same redaction
+ * guarantees as the structured error fields. The excerpt lives outside the
+ * error schema, so it never leaves the process.
+ */
+export function attachGitStderrExcerpt(
+  error: GitCommandError,
+  stderr: string,
+  args: readonly string[],
+): GitCommandError {
+  const redactionCandidates = args
+    .flatMap((arg) => {
+      const separatorIndex = arg.indexOf("=");
+      return separatorIndex >= 0 ? [arg, arg.slice(separatorIndex + 1)] : [arg];
+    })
+    .filter((candidate) => candidate.length >= STDERR_REDACTION_MIN_LENGTH)
+    .sort((left, right) => right.length - left.length);
+
+  let excerpt = stderr;
+  for (const candidate of redactionCandidates) {
+    excerpt = excerpt.split(candidate).join("<redacted>");
+  }
+  excerpt = excerpt.replace(/\s+/g, " ").trim();
+  if (excerpt.length === 0) {
+    return error;
+  }
+
+  error.stderrExcerpt =
+    excerpt.length > STDERR_EXCERPT_MAX_LENGTH
+      ? `${excerpt.slice(0, STDERR_EXCERPT_MAX_LENGTH)}...`
+      : excerpt;
+  return error;
+}
+
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
   const trimmed = value.trim();
   const prefix = `refs/remotes/${remoteName}/`;
@@ -795,13 +834,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* trace2Monitor.flush;
 
         if (!input.allowNonZeroExit && exitCode !== 0) {
-          return yield* new GitCommandError({
-            ...gitCommandContext(commandInput),
-            detail: "Git command exited with a non-zero status.",
-            exitCode,
-            stdoutLength: stdout.text.length,
-            stderrLength: stderr.text.length,
-          });
+          return yield* attachGitStderrExcerpt(
+            new GitCommandError({
+              ...gitCommandContext(commandInput),
+              detail: "Git command exited with a non-zero status.",
+              exitCode,
+              stdoutLength: stdout.text.length,
+              stderrLength: stderr.text.length,
+            }),
+            stderr.text,
+            commandInput.args,
+          );
         }
 
         return {
@@ -876,13 +919,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           return Effect.succeed(result);
         }
         return Effect.fail(
-          new GitCommandError({
-            ...gitCommandContext({ operation, cwd, args }),
-            detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
-            ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
-          }),
+          attachGitStderrExcerpt(
+            new GitCommandError({
+              ...gitCommandContext({ operation, cwd, args }),
+              detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
+              ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+              stdoutLength: result.stdout.length,
+              stderrLength: result.stderr.length,
+            }),
+            result.stderr,
+            args,
+          ),
         );
       }),
     );

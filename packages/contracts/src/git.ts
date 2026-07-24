@@ -339,6 +339,13 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {
+  /**
+   * Bounded, argument-redacted git stderr excerpt for in-process consumers.
+   * Deliberately not part of the schema and not part of `message`, so it
+   * never crosses RPC, client event, or telemetry serialization boundaries.
+   */
+  stderrExcerpt?: string;
+
   override get message(): string {
     return `Git command failed in ${this.operation} (${this.cwd}): ${this.detail}`;
   }

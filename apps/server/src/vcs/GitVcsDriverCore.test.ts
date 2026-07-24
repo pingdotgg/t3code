@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -16,8 +17,14 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, type ReviewDiffFileContentsInput } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
-import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
+import {
+  attachGitStderrExcerpt,
+  makeGitVcsDriverCore,
+  splitNullSeparatedGitStdoutPaths,
+} from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+
+const encodeGitCommandError = Schema.encodeSync(GitCommandError);
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-vcs-driver-test-",
@@ -710,8 +717,64 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.isAbove(error.stderrLength ?? 0, 0);
         assert.notInclude(error.detail, secret);
         assert.notInclude(error.message, secret);
+        assert.notInclude(error.stderrExcerpt ?? "", secret);
         assert.notProperty(error, "args");
         assert.notProperty(error, "stderr");
+
+        const encoded = encodeGitCommandError(error);
+        assert.notProperty(encoded, "stderrExcerpt");
+      }),
+    );
+
+    it.effect("carries a bounded stderr excerpt for in-process consumers", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .execute({
+            operation: "GitVcsDriver.test.stderrExcerpt",
+            cwd,
+            args: ["log", "-1"],
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(error._tag, "GitCommandError");
+        assert.include(error.stderrExcerpt ?? "", "not a git repository");
+        // Stderr must stay out of the message so client-facing events and
+        // telemetry keep their existing redaction guarantees.
+        assert.notInclude(error.message, "not a git repository");
+      }),
+    );
+
+    it.effect("redacts argument values and caps the stderr excerpt", () =>
+      Effect.sync(() => {
+        const longStderr = `fatal: ${"x".repeat(600)}`;
+        const capped = attachGitStderrExcerpt(
+          new GitCommandError({
+            operation: "GitVcsDriver.test.cap",
+            command: "git",
+            cwd: "/tmp/repo",
+            detail: "Git command exited with a non-zero status.",
+          }),
+          longStderr,
+          [],
+        );
+        assert.isAtMost(capped.stderrExcerpt?.length ?? 0, 403);
+        assert.equal(capped.stderrExcerpt?.endsWith("..."), true);
+
+        const redacted = attachGitStderrExcerpt(
+          new GitCommandError({
+            operation: "GitVcsDriver.test.redact",
+            command: "git",
+            cwd: "/tmp/repo",
+            detail: "Git command exited with a non-zero status.",
+          }),
+          "fatal: could not read from 'https://token-value@example.com/repo.git'",
+          ["fetch", "--depth=1", "https://token-value@example.com/repo.git"],
+        );
+        assert.notInclude(redacted.stderrExcerpt ?? "", "token-value");
+        assert.include(redacted.stderrExcerpt ?? "", "could not read from");
       }),
     );
 
