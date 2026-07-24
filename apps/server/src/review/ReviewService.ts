@@ -178,11 +178,21 @@ export const make = Effect.gen(function* () {
     const projectOption = yield* projectionSnapshotQuery
       .getProjectShellById(thread.projectId)
       .pipe(Effect.mapError(mapProjectionError));
-    const cwd =
-      resolveThreadWorkspaceCwd({
-        thread,
-        projects: Option.isSome(projectOption) ? [projectOption.value] : [],
-      }) ?? process.cwd();
+    // No silent process.cwd() fallback: the cwd is handed to the provider
+    // CLI spawn, which reads local context files (AGENTS.md, CLAUDE.md) from
+    // it — reviewing "the server's own directory" would leak unrelated
+    // content into an external LLM prompt. Fail the item instead; the client
+    // shows it as a retry-able error card.
+    const cwd = resolveThreadWorkspaceCwd({
+      thread,
+      projects: Option.isSome(projectOption) ? [projectOption.value] : [],
+    });
+    if (cwd === undefined) {
+      return yield* new TextGenerationError({
+        operation: "generateThreadReview",
+        detail: `Unable to resolve a workspace directory for thread '${input.threadId}'.`,
+      });
+    }
 
     const settled = thread.messages.filter((message) => !message.streaming);
     const firstUserMessage = settled.find((message) => message.role === "user")?.text ?? null;

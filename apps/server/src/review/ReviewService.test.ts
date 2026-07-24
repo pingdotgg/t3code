@@ -122,7 +122,9 @@ function makeThread(overrides: Partial<OrchestrationThread> = {}): Orchestration
     runtimeMode: "local",
     interactionMode: "chat",
     branch: null,
-    worktreePath: null,
+    // Tests mock getProjectShellById to None, so cwd resolution relies on
+    // the worktree path; a thread with neither now fails loudly by design.
+    worktreePath: "/tmp/t3-review-test-worktree",
     latestTurn: null,
     createdAt: "2026-07-20T00:00:00.000Z",
     updatedAt: "2026-07-20T00:00:00.000Z",
@@ -368,6 +370,28 @@ describe("ReviewService", () => {
         assert.strictEqual(result.recommendSettle, false);
         assert.strictEqual(result.settleReason, null);
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("summarizeThread fails loudly when no workspace cwd can be resolved", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      // No worktree and (per the mock) no project shell: cwd is unresolvable.
+      const thread = makeThread({ worktreePath: null });
+
+      const error = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review
+          .summarizeThread({ threadId: thread.id, canSettleNow: true })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(makeLayer({ workspaceRoot, baseDir, thread })));
+
+      assert.strictEqual(error._tag, "TextGenerationError");
+      if (error._tag === "TextGenerationError") {
+        assert.match(error.detail, /Unable to resolve a workspace directory/);
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("summarizeThread treats a queued turn start as active", () =>
