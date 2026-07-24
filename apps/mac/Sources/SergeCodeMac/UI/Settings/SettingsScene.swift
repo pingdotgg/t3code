@@ -94,6 +94,11 @@ public struct SettingsScene: View {
             settingsDetail
                 .navigationTitle(selectedTab.title)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Every tab body arrives the same way. Keying on the tab makes
+                // each switch a fresh identity, so this one call covers all of
+                // them rather than each tab hand-rolling its own arrival.
+                .entrance(.pane)
+                .id(selectedTab)
         }
         .frame(width: 760, height: 560)
         // Composer is owned by this scene only. Cancel in-flight create when

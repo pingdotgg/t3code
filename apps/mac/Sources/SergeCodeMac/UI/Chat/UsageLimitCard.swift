@@ -96,6 +96,7 @@ public struct UsageLimitCard: View {
         }
         .padding(14)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
+        .entrance(.card)
     }
 
     private var resetLine: String {

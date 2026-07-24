@@ -223,6 +223,9 @@ struct SubagentInnerThreadView: View {
                             startedAt: task.startedAt,
                             isLatest: index == task.progressLog.count - 1
                                 && task.state == .running)
+                            // Subagent progress lines are agent-driven output —
+                            // exactly the "agent logs" case SER-144 calls out.
+                            .entrance(.row, index: index)
                     }
                     if let result = SubagentInnerThread.resultText(for: task) {
                         resultCard(result)

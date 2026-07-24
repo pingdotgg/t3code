@@ -64,6 +64,10 @@ struct AboutView: View {
                     .font(.caption)
             }
             .padding(32)
+            // About is an occasional scene, so its card gets the same settled
+            // arrival as the empty-state hero rather than the window snapping
+            // straight to finished content.
+            .entrance(.hero)
         }
         .frame(width: 380, height: 460)
     }

@@ -93,6 +93,10 @@ private struct ComposerSegmentLabel: View {
                     .fill(.fill.secondary)
             }
         }
+        // Every composer menu routes its hover wash through this label, so
+        // animating here is what keeps the run-profile, runtime-mode, and
+        // interaction-mode segments from snapping on pointer enter.
+        .animation(Motion.feedback, value: isHovering)
     }
 }
 

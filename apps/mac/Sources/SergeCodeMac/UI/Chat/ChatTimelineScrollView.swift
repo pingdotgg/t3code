@@ -147,11 +147,22 @@ struct ChatTimelineScrollView: View {
                                 // identities at once; animating those removals
                                 // blanks the LazyVStack for a frame or two.
                                 .transition(rowTransition)
+                                // Arrival motion for every row, hydrated or
+                                // agent-produced (SER-144). Safe during a run
+                                // where `rowTransition` is not: entrance only
+                                // animates the row's own opacity and offset,
+                                // which are render-time transforms, so no
+                                // sibling is re-measured and the stack cannot
+                                // blank. Unstaggered on purpose — the index
+                                // needed for a cascade would mean rebuilding an
+                                // enumerated array on every streaming tick.
+                                .entrance(.row)
                         }
                         if showThinking {
                             ThinkingIndicator()
                                 .id("thinking-indicator")
                                 .transition(Motion.rise)
+                                .entrance(.row)
                         }
                         Color.clear
                             .frame(height: 1)
@@ -172,6 +183,11 @@ struct ChatTimelineScrollView: View {
                             transaction.disablesAnimations = true
                         }
                     }
+                    // A LazyVStack realizes rows as they scroll into view, so
+                    // without this every row would fade in under the pointer on
+                    // the way past. Entrance is for content arriving, not for
+                    // content being revealed by scrolling.
+                    .entranceSuppressed(isUserScrolling)
                 }
                 // Intentionally no `.defaultScrollAnchor(.bottom)`. That modifier
                 // re-applies on content-size changes independently of pin state

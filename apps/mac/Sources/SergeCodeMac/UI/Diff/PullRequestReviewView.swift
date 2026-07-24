@@ -107,29 +107,35 @@ struct PullRequestReviewView: View {
                     }
                     if !unresolvedThreads.isEmpty {
                         sectionHeader("Unresolved threads", count: unresolvedThreads.count)
-                        ForEach(unresolvedThreads) { thread in
+                        ForEach(Array(unresolvedThreads.enumerated()), id: \.element.id) {
+                            index, thread in
                             PullRequestThreadCard(
                                 thread: thread,
                                 model: model,
                                 threadID: threadID)
+                                .entrance(.row, index: index)
                         }
                     }
                     if !snapshot.conversation.isEmpty {
                         sectionHeader("Conversation & reviews", count: snapshot.conversation.count)
-                        ForEach(snapshot.conversation) { comment in
+                        ForEach(Array(snapshot.conversation.enumerated()), id: \.element.id) {
+                            index, comment in
                             PullRequestCommentCard(
                                 comment: comment,
                                 model: model,
                                 threadID: threadID)
+                                .entrance(.row, index: index)
                         }
                     }
                     if !otherThreads.isEmpty {
                         sectionHeader("Resolved & outdated", count: otherThreads.count)
-                        ForEach(otherThreads) { thread in
+                        ForEach(Array(otherThreads.enumerated()), id: \.element.id) {
+                            index, thread in
                             PullRequestThreadCard(
                                 thread: thread,
                                 model: model,
                                 threadID: threadID)
+                                .entrance(.row, index: index)
                         }
                     }
                 }
