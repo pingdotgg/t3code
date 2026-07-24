@@ -313,21 +313,19 @@ describe("shouldShowBranchMismatchBanner", () => {
   const base = {
     hasMismatch: true,
     isDismissed: false,
-    composerFocused: false,
     composerHasContent: false,
     wasShownForCurrentMismatch: false,
   };
 
-  it("stays hidden during passive browsing", () => {
+  it("stays hidden during passive browsing (even though the composer autofocuses)", () => {
     expect(shouldShowBranchMismatchBanner(base)).toBe(false);
   });
 
-  it("shows on composer focus or content", () => {
-    expect(shouldShowBranchMismatchBanner({ ...base, composerFocused: true })).toBe(true);
+  it("shows once the composer has draft content", () => {
     expect(shouldShowBranchMismatchBanner({ ...base, composerHasContent: true })).toBe(true);
   });
 
-  it("stays mounted after blur once shown for the current mismatch", () => {
+  it("stays mounted after the draft clears once shown for the current mismatch", () => {
     expect(shouldShowBranchMismatchBanner({ ...base, wasShownForCurrentMismatch: true })).toBe(
       true,
     );
@@ -335,10 +333,10 @@ describe("shouldShowBranchMismatchBanner", () => {
 
   it("never shows when dismissed or without a mismatch", () => {
     expect(
-      shouldShowBranchMismatchBanner({ ...base, composerFocused: true, isDismissed: true }),
+      shouldShowBranchMismatchBanner({ ...base, composerHasContent: true, isDismissed: true }),
     ).toBe(false);
     expect(
-      shouldShowBranchMismatchBanner({ ...base, composerFocused: true, hasMismatch: false }),
+      shouldShowBranchMismatchBanner({ ...base, composerHasContent: true, hasMismatch: false }),
     ).toBe(false);
   });
 });

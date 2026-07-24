@@ -3825,9 +3825,8 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
-  const [composerIntentFocused, setComposerIntentFocused] = useState(false);
-  // Once revealed for a given mismatch, the banner stays mounted through
-  // composer blur so it doesn't flicker in and out while the user works.
+  // Once revealed for a given mismatch, the banner stays mounted until the
+  // mismatch changes or resolves, so clearing the draft doesn't flicker it.
   const [revealedBranchMismatchKey, setRevealedBranchMismatchKey] = useState<string | null>(null);
   // Dismissal lives in a module-level set (survives remounts); this tick just
   // forces a re-render so the banner leaves immediately.
@@ -3851,15 +3850,19 @@ function ChatViewContent(props: ChatViewProps) {
   const showBranchMismatchBanner = shouldShowBranchMismatchBanner({
     hasMismatch: localCheckoutBranchMismatch !== null,
     isDismissed: isBranchMismatchDismissedForSession(activeBranchMismatchKey),
-    composerFocused: composerIntentFocused,
     composerHasContent: composerHasDraftContent,
     wasShownForCurrentMismatch:
       revealedBranchMismatchKey !== null && revealedBranchMismatchKey === activeBranchMismatchKey,
   });
   useEffect(() => {
-    if (showBranchMismatchBanner) {
-      setRevealedBranchMismatchKey(activeBranchMismatchKey);
-    }
+    setRevealedBranchMismatchKey((revealed) => {
+      if (showBranchMismatchBanner) {
+        return activeBranchMismatchKey;
+      }
+      // Hysteresis is scoped to an uninterrupted mismatch: reset when the
+      // mismatch resolves or changes so a recurrence re-gates on intent.
+      return revealed !== null && revealed !== activeBranchMismatchKey ? null : revealed;
+    });
   }, [activeBranchMismatchKey, showBranchMismatchBanner]);
   const handleSwitchCheckoutToThread = useCallback(async () => {
     if (
@@ -5618,20 +5621,7 @@ function ChatViewContent(props: ChatViewProps) {
                       )}
                     >
                       <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
-                        <div
-                          ref={attachDraftHeroComposerAnchorRef}
-                          className="relative z-10"
-                          onFocusCapture={() => setComposerIntentFocused(true)}
-                          onBlurCapture={(event) => {
-                            if (
-                              event.relatedTarget instanceof Node &&
-                              event.currentTarget.contains(event.relatedTarget)
-                            ) {
-                              return;
-                            }
-                            setComposerIntentFocused(false);
-                          }}
-                        >
+                        <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
                           <ChatComposer
                             composerRef={composerRef}
                             composerDraftTarget={composerDraftTarget}

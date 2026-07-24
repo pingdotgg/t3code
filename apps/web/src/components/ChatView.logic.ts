@@ -301,19 +301,20 @@ export function branchMismatchKey(
 
 // The mismatch banner only matters when the user is about to send: passive
 // reading of an old thread carries no risk (the branch picker tint already
-// covers ambient awareness). `wasShownForCurrentMismatch` keeps the banner
-// mounted once revealed so it doesn't flicker away when the composer blurs.
+// covers ambient awareness). Draft content is the intent signal — composer
+// focus is useless here because ChatView autofocuses the composer on every
+// thread open. `wasShownForCurrentMismatch` keeps the banner mounted once
+// revealed so it doesn't flicker away when the draft is cleared.
 export function shouldShowBranchMismatchBanner(input: {
   hasMismatch: boolean;
   isDismissed: boolean;
-  composerFocused: boolean;
   composerHasContent: boolean;
   wasShownForCurrentMismatch: boolean;
 }): boolean {
   if (!input.hasMismatch || input.isDismissed) {
     return false;
   }
-  return input.composerFocused || input.composerHasContent || input.wasShownForCurrentMismatch;
+  return input.composerHasContent || input.wasShownForCurrentMismatch;
 }
 
 // Session-scoped (module-level so it survives ChatView remounts, e.g. route
