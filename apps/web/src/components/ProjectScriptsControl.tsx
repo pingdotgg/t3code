@@ -461,7 +461,7 @@ export default function ProjectScriptsControl({
         }}
         open={dialogOpen}
       >
-        <DialogPopup className="before:hidden">
+        <DialogPopup>
           <DialogHeader>
             <DialogTitle>{isEditing ? "Edit Action" : "Add Action"}</DialogTitle>
             <DialogDescription>

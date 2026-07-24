@@ -54,7 +54,7 @@ const makeRecordingRunnerLayer = (
           return {
             stdout:
               options?.stdoutFor?.(input.command, input.args) ??
-              (versionFromPath === undefined ? "" : `${versionFromPath}\n`),
+              (versionFromPath === undefined ? "" : `t3 v${versionFromPath}\n`),
             stderr: failed ? `${input.command} exploded` : "",
             code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
             timedOut: false,
@@ -427,7 +427,7 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
     Effect.gen(function* () {
       const context = yield* makeContext({
         stdoutFor: (command, args) =>
-          command === NODE_PATH && args[1] === "--version" ? "0.0.28\n" : undefined,
+          command === NODE_PATH && args[1] === "--version" ? "t3 v0.0.28\n" : undefined,
       });
       const versionDir = context.path.join(context.baseDir, "runtime", "versions", "0.0.29");
 
