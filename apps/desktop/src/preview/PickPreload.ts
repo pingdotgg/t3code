@@ -1,5 +1,10 @@
 // @effect-diagnostics globalDate:off - This isolated Electron preload does not run inside an Effect runtime.
 import { ipcRenderer } from "electron";
+
+import {
+  dispatchNativeKeybindingCaptureInput,
+  NATIVE_KEYBINDING_CAPTURE_CHANNEL,
+} from "../keybindings/NativeKeybindingCapture.ts";
 import { getElementContext } from "react-grab/primitives";
 import type {
   DesktopPreviewAnnotationTheme,
@@ -22,6 +27,10 @@ import {
   HUMAN_INPUT_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
+
+ipcRenderer.on(NATIVE_KEYBINDING_CAPTURE_CHANNEL, (_event, input: unknown) => {
+  dispatchNativeKeybindingCaptureInput(input);
+});
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
 const Z_INDEX_OVERLAY = 2147483646;
 const PRIMARY = "var(--t3-primary)";

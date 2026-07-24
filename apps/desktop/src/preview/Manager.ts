@@ -53,6 +53,10 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import {
+  nativeKeybindingCaptureInput,
+  NATIVE_KEYBINDING_CAPTURE_CHANNEL,
+} from "../keybindings/NativeKeybindingCapture.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
@@ -1229,6 +1233,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
     });
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
+      const captureInput = nativeKeybindingCaptureInput(input);
+      if (captureInput) {
+        event.preventDefault();
+        wc.send(NATIVE_KEYBINDING_CAPTURE_CHANNEL, captureInput);
+      }
       runFork(forwardShortcut(event, input));
     };
     yield* Scope.addFinalizer(

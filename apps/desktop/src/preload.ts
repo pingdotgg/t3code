@@ -8,8 +8,16 @@ import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
+import {
+  dispatchNativeKeybindingCaptureInput,
+  NATIVE_KEYBINDING_CAPTURE_CHANNEL,
+} from "./keybindings/NativeKeybindingCapture.ts";
 
 exposeClerkBridge({ passkeys: true });
+
+ipcRenderer.on(NATIVE_KEYBINDING_CAPTURE_CHANNEL, (_event, input: unknown) => {
+  dispatchNativeKeybindingCaptureInput(input);
+});
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
