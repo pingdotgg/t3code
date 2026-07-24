@@ -270,7 +270,7 @@ describe("buildArchivedThreadGroups", () => {
     ]);
   });
 
-  it("ignores active threads returned in archive snapshots", () => {
+  it("ignores active and snoozed-active threads returned in archive snapshots", () => {
     const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
     const activeThread = makeThread({
       archivedAt: null,
@@ -278,10 +278,18 @@ describe("buildArchivedThreadGroups", () => {
       projectId: project.id,
       title: "Active thread",
     });
+    const snoozedActiveThread = makeThread({
+      archivedAt: null,
+      id: ThreadId.make("thread-snoozed-active"),
+      projectId: project.id,
+      snoozedAt: "2026-06-03T00:00:00.000Z",
+      snoozedUntil: "2026-06-05T00:00:00.000Z",
+      title: "Snoozed active thread",
+    });
     const search = parseArchivedThreadSearchInput("");
 
     const result = buildArchivedThreadGroups({
-      snapshots: [makeSnapshot([project], [activeThread])],
+      snapshots: [makeSnapshot([project], [activeThread, snoozedActiveThread])],
       normalizedSearchQuery: search.normalizedQuery,
       searchTokens: search.tokens,
       isSearching: search.isSearching,
@@ -443,7 +451,7 @@ describe("buildArchivedThreadGroups", () => {
 });
 
 describe("hasArchivedThreads", () => {
-  it("ignores active threads when determining whether the archive has content", () => {
+  it("ignores active and snoozed-active threads when determining archive content", () => {
     const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
     const activeThread = makeThread({
       archivedAt: null,
@@ -451,16 +459,28 @@ describe("hasArchivedThreads", () => {
       projectId: project.id,
       title: "Active thread",
     });
+    const snoozedActiveThread = makeThread({
+      archivedAt: null,
+      id: ThreadId.make("thread-snoozed-active"),
+      projectId: project.id,
+      snoozedAt: "2026-06-03T00:00:00.000Z",
+      snoozedUntil: "2026-06-05T00:00:00.000Z",
+      title: "Snoozed active thread",
+    });
     const archivedThread = makeThread({
       id: ThreadId.make("thread-archived"),
       projectId: project.id,
       title: "Archived thread",
     });
 
-    expect(hasArchivedThreads([makeSnapshot([project], [activeThread])])).toBe(false);
-    expect(hasArchivedThreads([makeSnapshot([project], [activeThread, archivedThread])])).toBe(
-      true,
+    expect(hasArchivedThreads([makeSnapshot([project], [activeThread, snoozedActiveThread])])).toBe(
+      false,
     );
+    expect(
+      hasArchivedThreads([
+        makeSnapshot([project], [activeThread, snoozedActiveThread, archivedThread]),
+      ]),
+    ).toBe(true);
   });
 });
 
