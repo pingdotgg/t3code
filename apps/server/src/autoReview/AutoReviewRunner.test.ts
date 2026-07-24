@@ -41,6 +41,7 @@ const makeGithub = (overrides: Partial<GitHubCli.GitHubCli["Service"]> = {}) =>
     getDefaultBranch: () => Effect.succeed("main"),
     checkoutPullRequest: () => Effect.void,
     getPullRequestReviewStatus: () => Effect.die("unused"),
+    getPullRequestMergeState: () => Effect.die("unused"),
     getPullRequestReview: () => Effect.die("unused"),
     mergePullRequest: () => Effect.void,
     markPullRequestReady: () => Effect.void,

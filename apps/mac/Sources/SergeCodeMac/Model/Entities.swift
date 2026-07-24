@@ -1217,6 +1217,14 @@ public struct VcsStatus: Hashable, Sendable {
     public var actionableReviewItemCount: Int?
     /// Review lifecycle phase; nil when unknown / non-GitHub / fetch failed.
     public var reviewLifecycle: PullRequestReviewLifecycle?
+    /// Provider-reported PR merge state ("clean" | "dirty" | "unstable" |
+    /// "blocked" | "behind"); nil when unknown / non-GitHub / fetch failed.
+    /// Unknown is never "no conflicts" and never blocks merging.
+    public var prMergeStateStatus: String?
+
+    /// True only when the provider reports the PR has merge conflicts with
+    /// its base branch ("dirty"). Unknown merge state is never conflicting.
+    public var hasPrConflicts: Bool { prMergeStateStatus == "dirty" }
 
     public init(
         isRepo: Bool, branch: String?, isDefaultBranch: Bool, changedFileCount: Int,
@@ -1228,7 +1236,8 @@ public struct VcsStatus: Hashable, Sendable {
         reviewDecision: PullRequestReviewDecision? = nil,
         unresolvedReviewThreadCount: Int? = nil,
         actionableReviewItemCount: Int? = nil,
-        reviewLifecycle: PullRequestReviewLifecycle? = nil
+        reviewLifecycle: PullRequestReviewLifecycle? = nil,
+        prMergeStateStatus: String? = nil
     ) {
         self.isRepo = isRepo
         self.branch = branch
@@ -1250,6 +1259,7 @@ public struct VcsStatus: Hashable, Sendable {
         self.unresolvedReviewThreadCount = unresolvedReviewThreadCount
         self.actionableReviewItemCount = actionableReviewItemCount
         self.reviewLifecycle = reviewLifecycle
+        self.prMergeStateStatus = prMergeStateStatus
     }
 }
 

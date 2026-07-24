@@ -8,7 +8,8 @@ struct MergeReadinessTests {
         prState: PullRequestState? = .open,
         isDraftPR: Bool? = false,
         reviewDecision: PullRequestReviewDecision? = .approved,
-        unresolvedReviewThreadCount: Int? = 0
+        unresolvedReviewThreadCount: Int? = 0,
+        prMergeStateStatus: String? = nil
     ) -> VcsStatus {
         VcsStatus(
             isRepo: true, branch: "feat/merge", isDefaultBranch: false,
@@ -19,7 +20,8 @@ struct MergeReadinessTests {
             prState: prState,
             isDraftPR: isDraftPR,
             reviewDecision: reviewDecision,
-            unresolvedReviewThreadCount: unresolvedReviewThreadCount)
+            unresolvedReviewThreadCount: unresolvedReviewThreadCount,
+            prMergeStateStatus: prMergeStateStatus)
     }
 
     @Test("ready when open, approved, and all threads resolved")
@@ -72,5 +74,20 @@ struct MergeReadinessTests {
         #expect(!MergeReadiness.isReady(for: status(prState: .merged)))
         #expect(!MergeReadiness.isReady(for: status(prState: .closed)))
         #expect(!MergeReadiness.isReady(for: status(prState: nil)))
+    }
+
+    @Test("not ready when the PR has merge conflicts")
+    func notReadyWithConflicts() {
+        #expect(!MergeReadiness.isReady(for: status(prMergeStateStatus: "dirty")))
+    }
+
+    @Test("readiness unchanged when merge state is unknown")
+    func readyWhenMergeStateUnknown() {
+        #expect(MergeReadiness.isReady(for: status(prMergeStateStatus: nil)))
+    }
+
+    @Test("readiness unchanged when merge state is clean")
+    func readyWhenMergeStateClean() {
+        #expect(MergeReadiness.isReady(for: status(prMergeStateStatus: "clean")))
     }
 }
