@@ -247,10 +247,21 @@ const ICON_VARIANTS = [
   },
 ] as const satisfies ReadonlyArray<IconVariant>;
 
+const MACOS_ICON_VARIANTS = [
+  {
+    source: BRAND_ASSET_PATHS.alphaIconComposerProject,
+    output: BRAND_ASSET_PATHS.alphaMacIconPng,
+  },
+  ...ICON_VARIANTS.map((variant) => ({
+    source: variant.source,
+    output: variant.outputs.macos,
+  })),
+] as const;
+
 const MACOS_EXPORT_CODEX_PROMPT = [
-  "Use [@Computer](plugin://computer-use@openai-bundled) and the Icon Composer app to export the three macOS app icons in this repository.",
+  "Use [@Computer](plugin://computer-use@openai-bundled) and the Icon Composer app to export the four macOS app icons in this repository.",
   "For each project below, use Platform: macOS pre-Tahoe, Appearance: Default, Size: 1024pt, and Scale: 1×, then save the PNG to the exact destination:",
-  ...ICON_VARIANTS.map((variant) => `- ${variant.source} -> ${variant.outputs.macos}`),
+  ...MACOS_ICON_VARIANTS.map((variant) => `- ${variant.source} -> ${variant.output}`),
   "Do not resize, composite, or otherwise post-process the exported PNGs.",
   "Verify every result is 1024×1024 and has the classic macOS safe area: an 824×824 opaque body inset 100px on every side, with only Icon Composer's native shadow extending beyond it.",
 ];
@@ -613,7 +624,7 @@ const logManualMacOsExportInstructions = Effect.fn("iconExport.logManualMacOsExp
       [
         "macOS icons require Icon Composer's GUI-only pre-Tahoe preset and were not changed.",
         "Export each source with Platform: macOS pre-Tahoe, Appearance: Default, Size: 1024pt, Scale: 1×:",
-        ...ICON_VARIANTS.map((variant) => `- ${variant.source} -> ${variant.outputs.macos}`),
+        ...MACOS_ICON_VARIANTS.map((variant) => `- ${variant.source} -> ${variant.output}`),
         "See assets/README.md for the complete workflow.",
         "",
         "Copy/paste this prompt into Codex to perform the native exports:",
