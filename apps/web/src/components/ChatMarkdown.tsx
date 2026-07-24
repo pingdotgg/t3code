@@ -78,6 +78,7 @@ import { serverEnvironment } from "../state/server";
 import { assetEnvironment } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
 import { previewEnvironment } from "../state/preview";
+import { shellEnvironment } from "../state/shell";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
@@ -748,6 +749,7 @@ interface MarkdownFileLinkProps {
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
   onOpen: (targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>;
+  onShowInFinder: (targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   className?: string | undefined;
 }
@@ -1016,6 +1018,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   theme,
   threadRef,
   onOpen,
+  onShowInFinder,
   onOpenInBrowser,
   className,
 }: MarkdownFileLinkProps) {
@@ -1061,6 +1064,38 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     }
     useRightPanelStore.getState().openFile(threadRef, workspaceRelativePath, line);
   }, [handleOpenInEditor, line, threadRef, workspaceRelativePath]);
+
+  const handleShowInFinder = useCallback(() => {
+    void (async () => {
+      try {
+        const result = await onShowInFinder(iconPath);
+        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+          return;
+        }
+        reportMarkdownActionFailure(
+          { operation: "show-file-in-finder", target: iconPath },
+          result.cause,
+        );
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to show file in Finder",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      } catch (cause) {
+        reportMarkdownActionFailure({ operation: "show-file-in-finder", target: iconPath }, cause);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to show file in Finder",
+            description: cause instanceof Error ? cause.message : "An error occurred.",
+          }),
+        );
+      }
+    })();
+  }, [iconPath, onShowInFinder]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!onOpenInBrowser) {
@@ -1148,6 +1183,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       if (!api) return;
 
       try {
+        const platform = navigator.platform.toLowerCase();
         const clicked = await api.contextMenu.show(
           [
             { id: "open", label: "Open in editor" },
@@ -1156,6 +1192,14 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               : []),
             { id: "copy-relative", label: "Copy relative path" },
             { id: "copy-full", label: "Copy full path" },
+            {
+              id: "show-in-finder",
+              label: platform.includes("mac")
+                ? "Show in Finder"
+                : platform.includes("win")
+                  ? "Show in File Explorer"
+                  : "Show in Files",
+            },
           ] as const,
           { x: event.clientX, y: event.clientY },
         );
@@ -1174,6 +1218,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         }
         if (clicked === "copy-full") {
           handleCopy(targetPath, "Full path");
+          return;
+        }
+        if (clicked === "show-in-finder") {
+          handleShowInFinder();
         }
       } catch (cause) {
         reportMarkdownActionFailure(
@@ -1182,7 +1230,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         );
       }
     },
-    [displayPath, handleCopy, handleOpenInBrowser, handleOpenInEditor, onOpenInBrowser, targetPath],
+    [
+      displayPath,
+      handleCopy,
+      handleOpenInBrowser,
+      handleOpenInEditor,
+      handleShowInFinder,
+      onOpenInBrowser,
+      targetPath,
+    ],
   );
 
   return (
@@ -1236,6 +1292,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.theme === next.theme &&
     previous.threadRef === next.threadRef &&
     previous.onOpen === next.onOpen &&
+    previous.onShowInFinder === next.onShowInFinder &&
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.className === next.className
   );
@@ -1258,12 +1315,31 @@ function ChatMarkdown({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
+  const revealInFileManager = useAtomCommand(shellEnvironment.revealInFileManager, {
+    reportFailure: false,
+  });
   const preparedConnection = usePreparedConnection(threadRef?.environmentId ?? null);
   const environmentId = useActiveEnvironmentId();
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig?.availableEditors ?? [],
+  );
+  const showFileInFinder = useCallback(
+    (targetPath: string) => {
+      if (environmentId === null) {
+        return Promise.resolve(
+          AsyncResult.failure<void, Error>(
+            Cause.fail(new Error("Cannot show the file because no environment is selected.")),
+          ),
+        );
+      }
+      return revealInFileManager({
+        environmentId,
+        input: { path: targetPath },
+      });
+    },
+    [environmentId, revealInFileManager],
   );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
@@ -1479,6 +1555,7 @@ function ChatMarkdown({
             theme={resolvedTheme}
             threadRef={threadRef}
             onOpen={openInPreferredEditor}
+            onShowInFinder={showFileInFinder}
             onOpenInBrowser={
               threadRef &&
               isPreviewSupportedInRuntime() &&
@@ -1535,6 +1612,7 @@ function ChatMarkdown({
       openExternalLinkInPreview,
       openMarkdownFileInPreview,
       resolvedTheme,
+      showFileInFinder,
       skills,
       text,
       threadRef,

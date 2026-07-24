@@ -4806,6 +4806,33 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc shell.revealInFileManager", () =>
+    Effect.gen(function* () {
+      let revealedPath: string | null = null;
+      yield* buildAppUnderTest({
+        layers: {
+          externalLauncher: {
+            revealInFileManager: (path) =>
+              Effect.sync(() => {
+                revealedPath = path;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.shellRevealInFileManager]({
+            path: "/tmp/project/src/index.ts",
+          }),
+        ),
+      );
+
+      assert.equal(revealedPath, "/tmp/project/src/index.ts");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc git methods", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({

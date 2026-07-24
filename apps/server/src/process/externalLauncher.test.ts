@@ -92,11 +92,67 @@ it.effect("launches the default browser through the platform command", () => {
   );
 });
 
+it.effect("reveals a file in Finder on macOS", () => {
+  let spawned: ChildProcess.StandardCommand | undefined;
+  let didUnref = false;
+  const target = "/tmp/project with spaces/src/odd '✨' file.ts";
+  return Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+
+    yield* launcher.revealInFileManager(target);
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "open");
+    assert.deepEqual(spawned.args, ["-R", target]);
+    assert.equal(spawned.options.detached, true);
+    assert.equal(didUnref, true);
+  }).pipe(
+    Effect.provide(
+      testLayer({
+        platform: "darwin",
+        onSpawn: (command) => {
+          spawned = command;
+        },
+        onUnref: () => {
+          didUnref = true;
+        },
+      }),
+    ),
+  );
+});
+
+it.effect("reveals a file in Explorer on Windows", () => {
+  let spawned: ChildProcess.StandardCommand | undefined;
+  const target = `C:/project with spaces/src/odd '✨' file.ts`;
+  const windowsTarget = String.raw`C:\project with spaces\src\odd '✨' file.ts`;
+  return Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+
+    yield* launcher.revealInFileManager(target);
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "explorer");
+    assert.deepEqual(spawned.args, ["/select,", windowsTarget]);
+    assert.equal(spawned.options.detached, true);
+  }).pipe(
+    Effect.provide(
+      testLayer({
+        platform: "win32",
+        onSpawn: (command) => {
+          spawned = command;
+        },
+      }),
+    ),
+  );
+});
+
 it.effect("launches an installed editor with platform-safe arguments", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-editors-",
+    });
     yield* fileSystem.writeFileString(path.join(binDir, "code.CMD"), "@echo off\r\n");
 
     let spawned: ChildProcess.StandardCommand | undefined;
@@ -134,7 +190,9 @@ it.effect("discovers editors through the service API", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-editors-",
+    });
     yield* fileSystem.writeFileString(path.join(binDir, "code.CMD"), "@echo off\r\n");
     yield* fileSystem.writeFileString(path.join(binDir, "explorer.CMD"), "@echo off\r\n");
 
@@ -159,7 +217,10 @@ it.effect("rejects unknown editors through the service API", () =>
   Effect.gen(function* () {
     const launcher = yield* ExternalLauncher.ExternalLauncher;
     const error = yield* launcher
-      .launchEditor({ editor: "missing-editor" as never, cwd: "/tmp/workspace" })
+      .launchEditor({
+        editor: "missing-editor" as never,
+        cwd: "/tmp/workspace",
+      })
       .pipe(Effect.flip);
     assert.instanceOf(error, ExternalLauncher.ExternalLauncherUnknownEditorError);
     assert.equal(error.editor, "missing-editor");
