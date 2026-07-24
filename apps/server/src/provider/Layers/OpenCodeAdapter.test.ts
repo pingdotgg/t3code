@@ -1374,4 +1374,64 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(closeCallsDuringRun, []);
     }),
   );
+
+  it.effect(
+    "resolves an orphaned pending permission as cancelled when the session errors out",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-opencode-orphaned-permission");
+        runtimeMock.state.subscribedEvents = [
+          {
+            type: "permission.asked",
+            properties: {
+              id: "perm-orphaned",
+              sessionID: "http://127.0.0.1:9999/session",
+              permission: "bash",
+              patterns: [],
+              metadata: {},
+              always: [],
+            },
+          },
+          {
+            type: "session.error",
+            properties: {
+              sessionID: "http://127.0.0.1:9999/session",
+              error: {
+                name: "MessageAbortedError",
+                data: { message: "Aborted" },
+              },
+            },
+          },
+        ];
+
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.threadId === threadId),
+          // session.started, thread.started, request.opened, request.resolved, runtime.error
+          Stream.take(5),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+
+        // Nothing ever answered the permission request — before this fix, no
+        // event ever resolved it and the request stayed pending forever.
+        const opened = events.find((event) => event.type === "request.opened");
+        const resolved = events.find((event) => event.type === "request.resolved");
+        NodeAssert.ok(opened, "expected a request.opened event for the pending permission");
+        NodeAssert.ok(resolved, "expected the orphaned permission to be resolved");
+        NodeAssert.equal(String(opened?.requestId), "perm-orphaned");
+        NodeAssert.equal(String(resolved?.requestId), "perm-orphaned");
+        if (resolved?.type === "request.resolved") {
+          NodeAssert.equal(resolved.payload.decision, "cancel");
+        }
+      }),
+  );
 });

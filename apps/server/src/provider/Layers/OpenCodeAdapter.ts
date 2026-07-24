@@ -1078,6 +1078,27 @@ export function makeOpenCodeAdapter(
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
           context.activeTurnId = undefined;
+          // A session error abandons any tool call awaiting approval — the
+          // opencode subprocess won't send a matching `permission.replied`
+          // for it, so without this the request stays "pending" forever and
+          // blocks the thread from ever settling.
+          const orphanedPermissions = Array.from(context.pendingPermissions.entries());
+          context.pendingPermissions.clear();
+          for (const [requestId, permission] of orphanedPermissions) {
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId: activeTurnId,
+                requestId,
+                raw: event,
+              })),
+              type: "request.resolved",
+              payload: {
+                requestType: mapPermissionToRequestType(permission.permission),
+                decision: "cancel",
+              },
+            });
+          }
           yield* updateProviderSession(
             context,
             {
