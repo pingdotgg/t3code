@@ -39,8 +39,6 @@ function startTimer(): void {
 
 function subscribe(listener: () => void): () => void {
   if (listeners.size === 0) {
-    // The stored minute may have gone stale while no one was subscribed.
-    nowMinute = currentMinute();
     startTimer();
   }
   listeners.add(listener);
@@ -55,6 +53,14 @@ function subscribe(listener: () => void): () => void {
 }
 
 function getSnapshot(): string {
+  // With no timer running (no subscribers yet — e.g. the first render after
+  // a full unmount), the stored minute may be stale; re-read it so a fresh
+  // mount renders the current minute instead of waiting for the first tick.
+  // While the timer runs the cached value is returned untouched, as
+  // useSyncExternalStore requires between change notifications.
+  if (timerId === null) {
+    nowMinute = currentMinute();
+  }
   return nowMinute;
 }
 
