@@ -44,13 +44,17 @@ private struct ThinkingDots: View {
             let phase = Motion.reduceMotion
                 ? 0
                 : Int(context.date.timeIntervalSinceReferenceDate / 0.35) % 3
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 ForEach(0..<3, id: \.self) { index in
                     Circle()
                         .fill(dotColor(index: index))
-                        .frame(width: 5, height: 5)
+                        .frame(width: 6, height: 6)
+                        .shadow(
+                            color: Motion.reduceMotion || index != phase
+                                ? .clear : dotColor(index: index).opacity(0.6),
+                            radius: 3)
                         .opacity(Motion.reduceMotion ? 0.85 : (index == phase ? 1 : 0.35))
-                        .scaleEffect(Motion.reduceMotion ? 1 : (index == phase ? 1.15 : 0.9))
+                        .scaleEffect(Motion.reduceMotion ? 1 : (index == phase ? 1.2 : 0.9))
                 }
             }
             .animation(Motion.reduceMotion ? nil : Motion.ambient, value: phase)

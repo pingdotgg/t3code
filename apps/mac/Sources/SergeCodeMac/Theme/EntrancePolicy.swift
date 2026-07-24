@@ -46,7 +46,7 @@ struct EntrancePolicy: Equatable, Sendable {
     func offset(for role: EntranceRole) -> Double {
         guard !reduceMotion else { return 0 }
         switch role {
-        case .row: return 6
+        case .row: return 8
         case .card: return 8
         case .pane: return 4
         // Chrome sliding into a toolbar reads as a layout glitch, not motion.
@@ -56,14 +56,18 @@ struct EntrancePolicy: Equatable, Sendable {
         }
     }
 
-    /// Scale a card starts at. Only cards scale — rows and panes that grow read
-    /// as reflowing text, which is exactly the churn this app avoids.
+    /// Scale the content starts at. Rows and cards get a gentle grow-in — it
+    /// reads as "arriving" rather than reflowing text, and because
+    /// `scaleEffect` is a render-time transform it never re-measures the
+    /// streaming timeline's siblings. Panes stay at 1: a whole region scaling
+    /// is the churn this app avoids.
     func initialScale(for role: EntranceRole) -> Double {
         guard !reduceMotion else { return 1 }
         switch role {
+        case .row: return 0.97
         case .card: return 0.98
         case .hero: return 0.96
-        case .row, .pane, .control: return 1
+        case .pane, .control: return 1
         }
     }
 
