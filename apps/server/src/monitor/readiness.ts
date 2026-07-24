@@ -42,7 +42,7 @@ export function computeReadiness(
     // Stale approvals must not count toward green, but a changes-requested
     // review blocks regardless of which commit it reviewed — GitHub keeps it
     // active until dismissed or superseded by a re-review.
-    if (review.author.type === "app" && review.state === "changes-requested") {
+    if (review.state === "changes-requested") {
       blockers.push({ kind: "changes-requested", reviewer: review.author.login });
     }
   }

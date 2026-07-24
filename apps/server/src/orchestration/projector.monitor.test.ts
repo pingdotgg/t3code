@@ -50,6 +50,7 @@ it.effect("projects the monitor lifecycle without changing settledOverride", () 
         prNumber: 42,
         blockersSummary: "draft",
         headSha: "abc",
+        wakeCount: 0,
         startedAt: NOW,
       }),
     );

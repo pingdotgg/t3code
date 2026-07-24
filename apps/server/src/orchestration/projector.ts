@@ -407,7 +407,7 @@ export function projectEvent(
               status: "monitoring",
               blockersSummary: payload.blockersSummary,
               headSha: payload.headSha,
-              wakeCount: 0,
+              wakeCount: payload.wakeCount,
               startedAt: payload.startedAt,
               endedAt: null,
               endedReason: null,

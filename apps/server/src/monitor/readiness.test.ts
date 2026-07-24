@@ -9,6 +9,7 @@ const snapshot = (
   state: "open",
   draft: false,
   headSha: "head-2",
+  baseRefName: "main",
   mergeability: "mergeable",
   behindBaseBy: null,
   requiredChecksKnown: true,
@@ -48,6 +49,25 @@ describe("pull request monitor readiness", () => {
     assert.strictEqual(result.ready, false);
     assert.deepStrictEqual(result.blockers, [
       { kind: "changes-requested", reviewer: "review-bot" },
+    ]);
+  });
+
+  it("blocks on a human changes-requested review", () => {
+    const result = computeReadiness(
+      snapshot({
+        reviews: [
+          {
+            id: "review-human",
+            author: { login: "human-reviewer", type: "user" },
+            state: "changes-requested",
+            submittedAt: "2026-01-01T00:00:00Z",
+            commitSha: "head-2",
+          },
+        ],
+      }),
+    );
+    assert.deepStrictEqual(result.blockers, [
+      { kind: "changes-requested", reviewer: "human-reviewer" },
     ]);
   });
 

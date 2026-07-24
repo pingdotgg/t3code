@@ -50,7 +50,7 @@ const activeMonitor: NonNullable<OrchestrationThread["monitor"]> = {
   status: "monitoring",
   blockersSummary: "waiting",
   headSha: "abc",
-  wakeCount: 0,
+  wakeCount: 4,
   startedAt: NOW,
   endedAt: null,
   endedReason: null,
@@ -83,9 +83,11 @@ it.layer(NodeServices.layer)("monitor decider", (it) => {
       if ("type" in repeated && repeated.type === "thread.monitor-started") {
         const payload = repeated.payload as {
           readonly headSha: string;
+          readonly wakeCount: number;
           readonly startedAt: string;
         };
         expect(payload.headSha).toBe("abc");
+        expect(payload.wakeCount).toBe(4);
         expect(payload.startedAt).toBe(NOW);
       }
     }),

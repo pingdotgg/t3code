@@ -9,6 +9,7 @@ const snapshot = (
   state: "open",
   draft: false,
   headSha: "head-1",
+  baseRefName: "main",
   mergeability: "mergeable",
   behindBaseBy: null,
   requiredChecksKnown: true,
@@ -104,13 +105,26 @@ describe("pull request monitor diff", () => {
     assert.strictEqual(result.nextCursor.threadVersions["thread-1"]?.resolved, true);
   });
 
-  it("does not wake for a rerun of an already-seen failure", () => {
+  it("wakes when a resolved thread is reopened without an updatedAt change", () => {
+    const initial = snapshot({ reviewThreads: [thread(undefined, true)] });
+    const result = diffPullRequestMonitorSnapshot(
+      cursorFromSnapshot(initial),
+      snapshot({ reviewThreads: [thread()] }),
+    );
+    assert.deepStrictEqual(result.actionableEvents, [
+      { kind: "new-review-comment", threadId: "thread-1", edited: true },
+    ]);
+  });
+
+  it("wakes for a failed rerun with a new run id", () => {
     const initial = snapshot({ checkRuns: [check("run-1", "failure")] });
     const result = diffPullRequestMonitorSnapshot(
       cursorFromSnapshot(initial),
       snapshot({ checkRuns: [check("run-2", "failure")] }),
     );
-    assert.deepStrictEqual(result.actionableEvents, []);
+    assert.deepStrictEqual(result.actionableEvents, [
+      { kind: "check-failed", checkRunId: "run-2", checkName: "CI" },
+    ]);
   });
 
   it("wakes for a new failure after a seen success", () => {
@@ -118,6 +132,29 @@ describe("pull request monitor diff", () => {
     const result = diffPullRequestMonitorSnapshot(
       cursorFromSnapshot(initial),
       snapshot({ checkRuns: [check("run-2", "failure")] }),
+    );
+    assert.deepStrictEqual(result.actionableEvents, [
+      { kind: "check-failed", checkRunId: "run-2", checkName: "CI" },
+    ]);
+  });
+
+  it("wakes for a same-name failure on a new head", () => {
+    const initial = snapshot({ checkRuns: [check("run-1", "failure")] });
+    const nextCheck = { ...check("run-2", "failure"), headSha: "head-2" };
+    const result = diffPullRequestMonitorSnapshot(
+      cursorFromSnapshot(initial),
+      snapshot({ headSha: "head-2", checkRuns: [nextCheck] }),
+    );
+    assert.deepStrictEqual(result.actionableEvents, [
+      { kind: "check-failed", checkRunId: "run-2", checkName: "CI" },
+    ]);
+  });
+
+  it("tracks concurrent same-name runs independently", () => {
+    const initial = snapshot({ checkRuns: [check("run-1", "success")] });
+    const result = diffPullRequestMonitorSnapshot(
+      cursorFromSnapshot(initial),
+      snapshot({ checkRuns: [check("run-1", "success"), check("run-2", "failure")] }),
     );
     assert.deepStrictEqual(result.actionableEvents, [
       { kind: "check-failed", checkRunId: "run-2", checkName: "CI" },

@@ -554,6 +554,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               : command.blockersSummary,
           headSha:
             thread.monitor?.status === "monitoring" ? thread.monitor.headSha : command.headSha,
+          wakeCount: thread.monitor?.status === "monitoring" ? thread.monitor.wakeCount : 0,
           startedAt:
             thread.monitor?.status === "monitoring" ? thread.monitor.startedAt : command.createdAt,
         },

@@ -726,7 +726,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               status: "monitoring",
               blockersSummary: event.payload.blockersSummary,
               headSha: event.payload.headSha,
-              wakeCount: 0,
+              wakeCount: event.payload.wakeCount,
               startedAt: event.payload.startedAt,
               endedAt: null,
               endedReason: null,

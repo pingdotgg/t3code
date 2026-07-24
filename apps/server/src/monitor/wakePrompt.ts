@@ -59,7 +59,7 @@ function formatEvent(
       return `- Check ${event.checkName}: ${check?.conclusion ?? "failure"}`;
     }
     case "behind-base":
-      return `- PR is behind main${snapshot.behindBaseBy === null ? "" : ` by ${snapshot.behindBaseBy} commit(s)`}`;
+      return `- PR is behind ${snapshot.baseRefName}${snapshot.behindBaseBy === null ? "" : ` by ${snapshot.behindBaseBy} commit(s)`}`;
   }
 }
 
@@ -81,7 +81,7 @@ Policy:
 - Verify bot claims against the source before acting.
 - Fix legitimate findings and push.
 - Dismiss false positives with a brief reply — never silently ignore or comply.
-- For CI failures: compare against main; re-run suspected flakes; if the same real failure repeats, ask the user via a question rather than guessing.
-- Rebase if the PR is behind main.
+- For CI failures: compare against ${input.snapshot.baseRefName}; re-run suspected flakes; if the same real failure repeats, ask the user via a question rather than guessing.
+- Rebase if the PR is behind ${input.snapshot.baseRefName}.
 - If the goal has become impossible, say so and ask the user.`;
 }

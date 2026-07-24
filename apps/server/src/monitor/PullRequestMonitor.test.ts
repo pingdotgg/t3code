@@ -18,7 +18,10 @@ import * as Stream from "effect/Stream";
 import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import type { PullRequestMonitorSnapshot } from "../sourceControl/gitHubPullRequestMonitor.ts";
+import {
+  GitHubPullRequestMonitorDecodeError,
+  type PullRequestMonitorSnapshot,
+} from "../sourceControl/gitHubPullRequestMonitor.ts";
 import * as MonitorRegistry from "./MonitorRegistry.ts";
 import { cursorFromSnapshot } from "./monitorDiff.ts";
 import { make, PullRequestSnapshotFetcher } from "./PullRequestMonitor.ts";
@@ -32,6 +35,7 @@ const snapshot = (
   state: "open",
   draft: false,
   headSha: "head-1",
+  baseRefName: "main",
   mergeability: "mergeable",
   behindBaseBy: null,
   requiredChecksKnown: true,
@@ -100,6 +104,7 @@ const harness = Effect.fn("PullRequestMonitor.testHarness")(function* (input: {
   readonly current: { value: PullRequestMonitorSnapshot };
   readonly wakeCount?: number;
   readonly failWake?: boolean;
+  readonly failFreshFetch?: boolean;
   readonly busy?: { value: boolean };
   readonly afterUpdate?: () => void;
   readonly changeGenerationAfterUpdate?: boolean;
@@ -108,6 +113,7 @@ const harness = Effect.fn("PullRequestMonitor.testHarness")(function* (input: {
     threadId,
     prNumber: 42,
     generation: 1,
+    startedAt: now,
     cursor: cursorFromSnapshot(input.initial),
     wakeCount: input.wakeCount ?? 0,
     repoCwd: "/repo",
@@ -126,24 +132,53 @@ const harness = Effect.fn("PullRequestMonitor.testHarness")(function* (input: {
         if (registration?.generation === generation) registration = undefined;
       }),
     get: () => Effect.sync(() => (registration ? Option.some(registration) : Option.none())),
-    updateCursor: (_, cursor) =>
+    updateCursor: (_, cursor, expectedGeneration) =>
       Effect.sync(() => {
         ordering.push("ack");
-        if (registration) registration = { ...registration, cursor };
+        if (
+          registration &&
+          (expectedGeneration === undefined || registration.generation === expectedGeneration)
+        ) {
+          registration = { ...registration, cursor };
+        }
       }),
-    incrementWake: () =>
+    incrementWake: (_, expectedGeneration) =>
       Effect.sync(() => {
+        if (
+          registration &&
+          expectedGeneration !== undefined &&
+          registration.generation !== expectedGeneration
+        ) {
+          return registration.wakeCount;
+        }
         const count = (registration?.wakeCount ?? 0) + 1;
         if (registration) registration = { ...registration, wakeCount: count };
         return count;
       }),
-    remove: () =>
+    setWakeCount: (_, wakeCount, expectedGeneration) =>
       Effect.sync(() => {
+        if (
+          registration &&
+          (expectedGeneration === undefined || registration.generation === expectedGeneration)
+        ) {
+          registration = { ...registration, wakeCount };
+        }
+      }),
+    remove: (_, expectedGeneration) =>
+      Effect.sync(() => {
+        if (
+          registration &&
+          expectedGeneration !== undefined &&
+          registration.generation !== expectedGeneration
+        ) {
+          return Option.none();
+        }
         const removed = registration ? Option.some(registration) : Option.none();
         registration = undefined;
         return removed;
       }),
     listActive: Effect.sync(() => (registration ? [registration] : [])),
+    nextGeneration: Effect.succeed(2),
   });
   const engine = OrchestrationEngineService.of({
     readEvents: () => Stream.empty,
@@ -171,10 +206,23 @@ const harness = Effect.fn("PullRequestMonitor.testHarness")(function* (input: {
       return Effect.succeed({ sequence: commands.length });
     },
   });
+  let fetchCount = 0;
   const monitor = yield* make.pipe(
     Effect.provideService(MonitorRegistry.MonitorRegistry, registry),
     Effect.provideService(PullRequestSnapshotFetcher, {
-      fetch: () => Effect.succeed(input.current.value),
+      fetch: () => {
+        fetchCount += 1;
+        return input.failFreshFetch && fetchCount === 2
+          ? Effect.fail(
+              new GitHubPullRequestMonitorDecodeError({
+                command: "gh",
+                cwd: "/repo",
+                detail: "fresh fetch failed",
+                cause: null,
+              }),
+            )
+          : Effect.succeed(input.current.value);
+      },
     }),
     Effect.provideService(OrchestrationEngineService, engine),
     Effect.provide(
@@ -224,6 +272,22 @@ describe("PullRequestMonitor dispatch protocol", () => {
     }),
   );
 
+  it.effect("ignores unresolved review threads that predate monitoring", () =>
+    Effect.gen(function* () {
+      const oldComment = {
+        ...comment("old"),
+        createdAt: "2026-07-22T00:00:00.000Z",
+      };
+      const ready = snapshot({
+        reviewThreads: [oldComment],
+        checkRuns: [{ ...snapshot().checkRuns[0]!, status: "completed", conclusion: "success" }],
+      });
+      const h = yield* harness({ initial: snapshot(), current: { value: ready } });
+      yield* h.monitor.pollOnce;
+      assert.strictEqual(endReason(h.commands)?.type, "thread.monitor.end");
+    }),
+  );
+
   it.effect("wake-then-ack ordering", () =>
     Effect.gen(function* () {
       const h = yield* harness({
@@ -247,6 +311,67 @@ describe("PullRequestMonitor dispatch protocol", () => {
       yield* h.monitor.pollOnce;
       assert.deepStrictEqual(h.getRegistration()?.cursor, cursorFromSnapshot(initial));
       assert.strictEqual(h.getRegistration()?.wakeCount, 0);
+    }),
+  );
+
+  it.effect("failed-send-boundary-fetch-discards-wake-without-acking", () =>
+    Effect.gen(function* () {
+      const initial = snapshot();
+      const h = yield* harness({
+        initial,
+        current: { value: snapshot({ reviewThreads: [comment("one")] }) },
+        failFreshFetch: true,
+      });
+      yield* h.monitor.pollOnce;
+      assert.strictEqual(
+        h.commands.some((command) => command.type === "thread.turn.start"),
+        false,
+      );
+      assert.deepStrictEqual(h.getRegistration()?.cursor, cursorFromSnapshot(initial));
+      assert.strictEqual(h.getRegistration()?.wakeCount, 0);
+    }),
+  );
+
+  it.effect("provider failure correlates by dispatch time and rewinds cursor plus wake count", () =>
+    Effect.gen(function* () {
+      const initial = snapshot();
+      const h = yield* harness({
+        initial,
+        current: { value: snapshot({ reviewThreads: [comment("one")] }) },
+      });
+      yield* h.monitor.pollOnce;
+      const wake = h.commands.find((command) => command.type === "thread.turn.start");
+      assert.ok(wake?.type === "thread.turn.start");
+      const failureEvent = (createdAt: string) =>
+        ({
+          sequence: 1,
+          eventId: EventId.make(`failure-${createdAt}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make(`failure-${createdAt}`),
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "thread.activity-appended",
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make(`activity-${createdAt}`),
+              tone: "error",
+              kind: "provider.turn.start.failed",
+              summary: "Provider turn start failed",
+              payload: {},
+              turnId: null,
+              createdAt,
+            },
+          },
+        }) as const;
+      yield* h.monitor.handleDomainEvent(failureEvent("0001-01-01T00:00:00.000Z"));
+      assert.strictEqual(h.getRegistration()?.wakeCount, 1);
+      yield* h.monitor.handleDomainEvent(failureEvent(wake.createdAt));
+      assert.strictEqual(h.getRegistration()?.wakeCount, 0);
+      assert.deepStrictEqual(h.getRegistration()?.cursor, cursorFromSnapshot(initial));
     }),
   );
 
@@ -337,6 +462,28 @@ describe("PullRequestMonitor dispatch protocol", () => {
       yield* h.monitor.pollOnce;
       const ended = endReason(h.commands);
       assert.strictEqual(ended?.type === "thread.monitor.end" && ended.reason, "needs-attention");
+    }),
+  );
+
+  it.effect("archives by projecting stopped before removing the registration", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({ initial: snapshot(), current: { value: snapshot() } });
+      yield* h.monitor.handleDomainEvent({
+        sequence: 1,
+        eventId: EventId.make("archived"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("archived"),
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.archived",
+        payload: { threadId, archivedAt: now, updatedAt: now },
+      });
+      const ended = endReason(h.commands);
+      assert.strictEqual(ended?.type === "thread.monitor.end" && ended.reason, "stopped");
+      assert.strictEqual(h.getRegistration(), undefined);
     }),
   );
 });

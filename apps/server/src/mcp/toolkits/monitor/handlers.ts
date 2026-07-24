@@ -1,6 +1,5 @@
 import { CommandId } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
-import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -64,11 +63,12 @@ const monitorStart = Effect.fn("MonitorToolkit.monitorStart")(function* ({
   const warning = snapshot.draft
     ? `PR #${prNumber} is a draft. Monitoring started, but review bots may not run until it is marked ready for review.`
     : null;
-  const generation = yield* Clock.currentTimeMillis;
+  const generation = yield* registry.nextGeneration;
   const won = yield* registry.registerIfAbsent({
     threadId: invocation.threadId,
     prNumber,
     generation,
+    startedAt: createdAt,
     cursor: cursorFromSnapshot(snapshot),
     wakeCount: 0,
     repoCwd,

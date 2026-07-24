@@ -50,7 +50,10 @@ export function cursorFromSnapshot(snapshot: PullRequestMonitorSnapshot): PullRe
     checkRuns: Object.fromEntries(
       snapshot.checkRuns
         .filter((check) => check.headSha === snapshot.headSha)
-        .map((check) => [check.name, { runId: check.id, outcome: checkOutcome(check) }]),
+        .map((check) => [
+          `${check.headSha}::${check.name}::${check.id}`,
+          { runId: check.id, outcome: checkOutcome(check) },
+        ]),
     ),
     behindBase: (snapshot.behindBaseBy ?? 0) > 0,
   };
@@ -66,7 +69,10 @@ export function diffPullRequestMonitorSnapshot(
   const actionableEvents: PullRequestMonitorActionableEvent[] = [];
   for (const thread of snapshot.reviewThreads) {
     const previous = previousCursor.threadVersions[thread.id];
-    if (!thread.resolved && (!previous || previous.updatedAt !== thread.updatedAt)) {
+    if (
+      !thread.resolved &&
+      (!previous || previous.resolved || previous.updatedAt !== thread.updatedAt)
+    ) {
       actionableEvents.push({
         kind: "new-review-comment",
         threadId: thread.id,
@@ -95,8 +101,9 @@ export function diffPullRequestMonitorSnapshot(
   }
   for (const check of snapshot.checkRuns.filter((item) => item.headSha === snapshot.headSha)) {
     const outcome = checkOutcome(check);
-    const previous = previousCursor.checkRuns[check.name];
-    // A rerun preserves the check-name outcome history; only success -> failure wakes again.
+    const previous = previousCursor.checkRuns[`${check.headSha}::${check.name}::${check.id}`];
+    // Each concrete run is acknowledged independently, including concurrent
+    // same-name runs on one head and reruns/new heads with new run ids.
     if (outcome === "failure" && previous?.outcome !== "failure") {
       actionableEvents.push({
         kind: "check-failed",

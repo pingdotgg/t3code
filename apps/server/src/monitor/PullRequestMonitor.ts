@@ -29,6 +29,8 @@ interface WakeClaim {
   readonly generation: number;
   readonly commandId: CommandId;
   readonly phase: "pending" | "in-flight";
+  readonly dispatchedAt?: string;
+  readonly previousWakeCount: number;
   // Cursor as it was before this wake acked, so a wake that dies after the
   // ack — provider start failure, superseded by a user turn — can rewind and
   // let the next poll re-diff the same events instead of losing them (I5).
@@ -82,9 +84,6 @@ export const make = Effect.gen(function* () {
   const snapshots = yield* ProjectionSnapshotQuery;
   const crypto = yield* Crypto.Crypto;
   const claims = yield* Ref.make<ReadonlyMap<ThreadId, WakeClaim>>(new Map());
-  const latestStates = yield* Ref.make<ReadonlyMap<ThreadId, PullRequestMonitorSnapshot["state"]>>(
-    new Map(),
-  );
   const lastPollFailed = yield* Ref.make(false);
 
   const mutateClaim = (
@@ -114,7 +113,10 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((released) =>
         released === undefined || released.phase !== "in-flight"
           ? Effect.void
-          : registry.updateCursor(threadId, released.previousCursor),
+          : Effect.all([
+              registry.updateCursor(threadId, released.previousCursor, released.generation),
+              registry.setWakeCount(threadId, released.previousWakeCount, released.generation),
+            ]).pipe(Effect.asVoid),
       ),
     );
 
@@ -138,9 +140,12 @@ export const make = Effect.gen(function* () {
 
   const end = Effect.fn("PullRequestMonitor.end")(function* (
     threadId: ThreadId,
-    reason: "ready" | "terminal" | "needs-attention",
+    reason: "ready" | "terminal" | "needs-attention" | "stopped",
     blockersSummary: string,
+    expectedGeneration: number,
   ) {
+    const current = yield* registry.get(threadId);
+    if (Option.isNone(current) || current.value.generation !== expectedGeneration) return;
     // Dispatch before removing: if the end event fails to persist, the
     // registration survives and the next poll retries the same terminal /
     // ready / breaker verdict, instead of leaving the projection stuck on
@@ -154,7 +159,7 @@ export const make = Effect.gen(function* () {
       blockersSummary,
       endedAt,
     });
-    yield* registry.remove(threadId);
+    yield* registry.remove(threadId, expectedGeneration);
     yield* mutateClaim(threadId, () => undefined);
   });
 
@@ -174,6 +179,7 @@ export const make = Effect.gen(function* () {
         commandId,
         phase: "pending",
         previousCursor: registration.cursor,
+        previousWakeCount: registration.wakeCount,
       });
     });
     if (!claimed) return;
@@ -182,16 +188,19 @@ export const make = Effect.gen(function* () {
     // Fresh terminal read at the send boundary (I1): the poll's snapshot is
     // seconds stale by now, and a merge in that window must veto the wake —
     // the cached `latestStates` alone cannot see it.
-    const freshState: PullRequestMonitorSnapshot["state"] | "unknown" = yield* fetcher
+    const freshState = yield* fetcher
       .fetch({ cwd: registration.repoCwd, pullRequestNumber: registration.prNumber })
       .pipe(
-        Effect.map((fresh) => fresh.state),
-        Effect.orElseSucceed(() => "unknown" as const),
+        Effect.map((fresh) => Option.some(fresh.state)),
+        Effect.orElseSucceed(() => Option.none<PullRequestMonitorSnapshot["state"]>()),
       );
-    const state =
-      freshState === "unknown"
-        ? (yield* Ref.get(latestStates)).get(registration.threadId)
-        : freshState;
+    if (Option.isNone(freshState)) {
+      yield* mutateClaim(registration.threadId, (claim) =>
+        claim?.commandId === commandId ? undefined : claim,
+      );
+      return;
+    }
+    const state = freshState.value;
     const thread = yield* snapshots.getThreadDetailById(registration.threadId);
     const validRegistration =
       Option.isSome(current) && current.value.generation === registration.generation;
@@ -229,18 +238,27 @@ export const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.tap(() =>
-          mutateClaim(registration.threadId, (claim) =>
-            claim?.commandId === commandId ? { ...claim, phase: "in-flight" } : claim,
+          DateTime.now.pipe(
+            Effect.map(DateTime.formatIso),
+            Effect.flatMap((dispatchedAt) =>
+              mutateClaim(registration.threadId, (claim) =>
+                claim?.commandId === commandId
+                  ? { ...claim, phase: "in-flight", dispatchedAt }
+                  : claim,
+              ),
+            ),
           ),
         ),
-        Effect.tap(() => registry.updateCursor(registration.threadId, nextCursor)),
+        Effect.tap(() =>
+          registry.updateCursor(registration.threadId, nextCursor, registration.generation),
+        ),
         Effect.tapError(() =>
           mutateClaim(registration.threadId, (claim) =>
             claim?.commandId === commandId ? undefined : claim,
           ),
         ),
       );
-    const wakeCount = yield* registry.incrementWake(registration.threadId);
+    const wakeCount = yield* registry.incrementWake(registration.threadId, registration.generation);
     yield* dispatchUpdate(
       registration.threadId,
       formatBlockersSummary(computeReadiness(snapshot)),
@@ -252,18 +270,19 @@ export const make = Effect.gen(function* () {
   const pollRegistration = Effect.fn("PullRequestMonitor.pollRegistration")(function* (
     registration: MonitorRegistry.MonitorRegistration,
   ) {
-    const snapshot = yield* fetcher.fetch({
+    const fetchedSnapshot = yield* fetcher.fetch({
       cwd: registration.repoCwd,
       pullRequestNumber: registration.prNumber,
     });
-    yield* Ref.update(latestStates, (states) =>
-      new Map(states).set(registration.threadId, snapshot.state),
-    );
+    const snapshot = {
+      ...fetchedSnapshot,
+      monitoringStartedAt: registration.startedAt,
+    };
     const readiness = computeReadiness(snapshot);
     const summary = formatBlockersSummary(readiness);
 
     if (snapshot.state !== "open") {
-      yield* end(registration.threadId, "terminal", summary);
+      yield* end(registration.threadId, "terminal", summary, registration.generation);
       return;
     }
     if (readiness.ready) {
@@ -273,7 +292,7 @@ export const make = Effect.gen(function* () {
         snapshot.headSha,
         registration.wakeCount,
       );
-      yield* end(registration.threadId, "ready", summary);
+      yield* end(registration.threadId, "ready", summary, registration.generation);
       return;
     }
 
@@ -281,7 +300,7 @@ export const make = Effect.gen(function* () {
     yield* dispatchUpdate(registration.threadId, summary, snapshot.headSha, registration.wakeCount);
     if (diff.actionableEvents.length === 0) return;
     if (registration.wakeCount >= 10) {
-      yield* end(registration.threadId, "needs-attention", summary);
+      yield* end(registration.threadId, "needs-attention", summary, registration.generation);
       return;
     }
     yield* dispatchWake(
@@ -320,9 +339,23 @@ export const make = Effect.gen(function* () {
   const onEvent = (event: OrchestrationEvent) => {
     const threadId = threadIdOf(event);
     if (threadId === undefined) return Effect.void;
+    if (event.type === "thread.archived") {
+      return registry.get(threadId).pipe(
+        Effect.flatMap((registration) =>
+          Option.isNone(registration)
+            ? Effect.void
+            : end(threadId, "stopped", "", registration.value.generation),
+        ),
+        Effect.catch((error) =>
+          Effect.logWarning("pull request monitor archive teardown failed", {
+            threadId,
+            error,
+          }),
+        ),
+      );
+    }
     if (
       event.type === "thread.deleted" ||
-      event.type === "thread.archived" ||
       event.type === "thread.settled" ||
       event.type === "thread.monitor-ended"
     ) {
@@ -342,7 +375,13 @@ export const make = Effect.gen(function* () {
     ) {
       // engine.dispatch succeeded but the provider reactor failed the turn
       // asynchronously — the acked events never reached an agent (I5).
-      return releaseClaim(threadId, () => true);
+      return releaseClaim(
+        threadId,
+        (claim) =>
+          claim.phase === "in-flight" &&
+          claim.dispatchedAt !== undefined &&
+          claim.dispatchedAt <= event.payload.activity.createdAt,
+      );
     }
     if (event.type === "thread.session-set") {
       const status = event.payload.session.status;
@@ -354,6 +393,42 @@ export const make = Effect.gen(function* () {
   };
 
   const start = Effect.fn("PullRequestMonitor.start")(function* () {
+    const shell = yield* snapshots
+      .getShellSnapshot()
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("pull request monitor boot reconcile query failed", { error }).pipe(
+            Effect.as({ threads: [] as const }),
+          ),
+        ),
+      );
+    yield* Effect.forEach(
+      shell.threads.filter((thread) => thread.monitor?.status === "monitoring"),
+      (thread) =>
+        registry.get(thread.id).pipe(
+          Effect.flatMap((registration) => {
+            if (Option.isSome(registration)) return Effect.void;
+            return Effect.gen(function* () {
+              const endedAt = DateTime.formatIso(yield* DateTime.now);
+              yield* engine.dispatch({
+                type: "thread.monitor.end",
+                commandId: CommandId.make(`monitor-boot-reconcile:${thread.id}:${endedAt}`),
+                threadId: thread.id,
+                reason: "session-ended",
+                blockersSummary: "",
+                endedAt,
+              });
+            });
+          }),
+          Effect.catch((error) =>
+            Effect.logWarning("pull request monitor boot reconcile failed", {
+              threadId: thread.id,
+              error,
+            }),
+          ),
+        ),
+      { discard: true },
+    );
     yield* Effect.forkDetach(Stream.runForEach(engine.streamDomainEvents, onEvent));
     yield* Effect.forkDetach(
       Effect.forever(

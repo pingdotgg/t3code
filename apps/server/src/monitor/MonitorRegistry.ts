@@ -12,6 +12,7 @@ export interface MonitorRegistration {
   readonly threadId: ThreadId;
   readonly prNumber: number;
   readonly generation: number;
+  readonly startedAt: string;
   readonly cursor: PullRequestMonitorCursor;
   readonly wakeCount: number;
   readonly repoCwd: string;
@@ -29,10 +30,23 @@ export interface MonitorRegistryShape {
   readonly updateCursor: (
     threadId: ThreadId,
     cursor: PullRequestMonitorCursor,
+    expectedGeneration?: number,
   ) => Effect.Effect<void>;
-  readonly incrementWake: (threadId: ThreadId) => Effect.Effect<number>;
-  readonly remove: (threadId: ThreadId) => Effect.Effect<Option.Option<MonitorRegistration>>;
+  readonly incrementWake: (
+    threadId: ThreadId,
+    expectedGeneration?: number,
+  ) => Effect.Effect<number>;
+  readonly setWakeCount: (
+    threadId: ThreadId,
+    wakeCount: number,
+    expectedGeneration?: number,
+  ) => Effect.Effect<void>;
+  readonly remove: (
+    threadId: ThreadId,
+    expectedGeneration?: number,
+  ) => Effect.Effect<Option.Option<MonitorRegistration>>;
   readonly listActive: Effect.Effect<ReadonlyArray<MonitorRegistration>>;
+  readonly nextGeneration: Effect.Effect<number>;
 }
 
 export class MonitorRegistry extends Context.Service<MonitorRegistry, MonitorRegistryShape>()(
@@ -45,6 +59,7 @@ export class MonitorRegistry extends Context.Service<MonitorRegistry, MonitorReg
 // the same registrations. All operations are synchronous, so plain-Map
 // mutation inside Effect.sync is atomic per call.
 const registrations = new Map<ThreadId, MonitorRegistration>();
+let generation = 0;
 
 const make: MonitorRegistryShape = {
   registerIfAbsent: (registration) =>
@@ -61,30 +76,59 @@ const make: MonitorRegistryShape = {
       }
     }),
   get: (threadId) => Effect.sync(() => Option.fromNullishOr(registrations.get(threadId))),
-  updateCursor: (threadId, cursor) =>
+  updateCursor: (threadId, cursor, expectedGeneration) =>
     Effect.sync(() => {
       const current = registrations.get(threadId);
-      if (current !== undefined) registrations.set(threadId, { ...current, cursor });
+      if (
+        current !== undefined &&
+        (expectedGeneration === undefined || current.generation === expectedGeneration)
+      ) {
+        registrations.set(threadId, { ...current, cursor });
+      }
     }),
-  incrementWake: (threadId) =>
+  incrementWake: (threadId, expectedGeneration) =>
     Effect.sync(() => {
       const current = registrations.get(threadId);
+      if (
+        current === undefined ||
+        (expectedGeneration !== undefined && current.generation !== expectedGeneration)
+      ) {
+        return current?.wakeCount ?? 0;
+      }
       const wakeCount = (current?.wakeCount ?? 0) + 1;
-      if (current !== undefined) registrations.set(threadId, { ...current, wakeCount });
+      registrations.set(threadId, { ...current, wakeCount });
       return wakeCount;
     }),
-  remove: (threadId) =>
+  setWakeCount: (threadId, wakeCount, expectedGeneration) =>
     Effect.sync(() => {
       const current = registrations.get(threadId);
+      if (
+        current !== undefined &&
+        (expectedGeneration === undefined || current.generation === expectedGeneration)
+      ) {
+        registrations.set(threadId, { ...current, wakeCount });
+      }
+    }),
+  remove: (threadId, expectedGeneration) =>
+    Effect.sync(() => {
+      const current = registrations.get(threadId);
+      if (
+        current === undefined ||
+        (expectedGeneration !== undefined && current.generation !== expectedGeneration)
+      ) {
+        return Option.none();
+      }
       registrations.delete(threadId);
       return Option.fromNullishOr(current);
     }),
   listActive: Effect.sync(() => [...registrations.values()]),
+  nextGeneration: Effect.sync(() => ++generation),
 };
 
 // The engine used for teardown dispatch is bound by PullRequestMonitor when
 // it starts (it is the only construction site that has the engine and runs in
-// the runtime core). Until then teardown just clears the store.
+// the runtime core). Until then teardown leaves registrations intact because
+// it cannot durably project the corresponding monitor end.
 let activeEngine: OrchestrationEngineService["Service"] | undefined;
 
 export const bindEngine = (engine: OrchestrationEngineService["Service"]): void => {
@@ -104,7 +148,7 @@ export const layer = Layer.effect(
 
 export const endActiveMonitorForSession = (threadId: ThreadId): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const registration = yield* make.remove(threadId);
+    const registration = yield* make.get(threadId);
     if (Option.isNone(registration) || activeEngine === undefined) return;
     const endedAt = DateTime.formatIso(yield* DateTime.now);
     const commandId = CommandId.make(`monitor-session-ended:${threadId}:${endedAt}`);
@@ -116,6 +160,7 @@ export const endActiveMonitorForSession = (threadId: ThreadId): Effect.Effect<vo
       blockersSummary: "",
       endedAt,
     });
+    yield* make.remove(threadId, registration.value.generation);
   }).pipe(
     Effect.catch((error) => Effect.logWarning("monitor teardown failed", { threadId, error })),
   );
@@ -124,6 +169,7 @@ export const __testing = {
   make,
   reset: (): void => {
     registrations.clear();
+    generation = 0;
     activeEngine = undefined;
   },
 };

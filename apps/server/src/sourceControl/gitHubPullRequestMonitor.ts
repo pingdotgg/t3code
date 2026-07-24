@@ -60,6 +60,7 @@ export interface PullRequestMonitorSnapshot {
   readonly state: "open" | "closed" | "merged";
   readonly draft: boolean;
   readonly headSha: string;
+  readonly baseRefName: string;
   readonly mergeability: "mergeable" | "conflicting" | "unknown";
   readonly behindBaseBy: number | null;
   readonly requiredChecksKnown: boolean;
@@ -107,6 +108,7 @@ const PullRequestPageSchema = Schema.Struct({
           merged: Schema.Boolean,
           mergeable: Schema.String,
           headRefOid: Schema.String,
+          baseRefName: Schema.String,
           reviews: Schema.Struct({
             nodes: Schema.Array(ReviewSchema),
             pageInfo: Schema.Struct({
@@ -259,10 +261,13 @@ export const getPullRequestMonitorSnapshot = Effect.fn("getPullRequestMonitorSna
     let reviewsComplete = false;
     let threadsComplete = false;
     let metadata:
-      | Pick<PullRequestMonitorSnapshot, "state" | "draft" | "headSha" | "mergeability">
+      | Pick<
+          PullRequestMonitorSnapshot,
+          "state" | "draft" | "headSha" | "baseRefName" | "mergeability"
+        >
       | undefined;
     do {
-      const query = `query($owner:String!,$name:String!,$number:Int!,$reviews:String,$threads:String){repository(owner:$owner,name:$name){pullRequest(number:$number){state isDraft merged mergeable headRefOid reviews(first:100,after:$reviews){nodes{id author{login __typename} state submittedAt commit{oid}} pageInfo{hasNextPage endCursor}} reviewThreads(first:100,after:$threads){nodes{id isResolved comments(last:1){nodes{author{login __typename} body path line createdAt updatedAt}}} pageInfo{hasNextPage endCursor}}}}}`;
+      const query = `query($owner:String!,$name:String!,$number:Int!,$reviews:String,$threads:String){repository(owner:$owner,name:$name){pullRequest(number:$number){state isDraft merged mergeable headRefOid baseRefName reviews(first:100,after:$reviews){nodes{id author{login __typename} state submittedAt commit{oid}} pageInfo{hasNextPage endCursor}} reviewThreads(first:100,after:$threads){nodes{id isResolved comments(last:1){nodes{author{login __typename} body path line createdAt updatedAt}}} pageInfo{hasNextPage endCursor}}}}}`;
       const result: VcsProcess.VcsProcessOutput = yield* github.execute({
         cwd: input.cwd,
         args: [
@@ -301,6 +306,7 @@ export const getPullRequestMonitorSnapshot = Effect.fn("getPullRequestMonitorSna
         state: pr.merged ? "merged" : pr.state === "CLOSED" ? "closed" : "open",
         draft: pr.isDraft,
         headSha: pr.headRefOid,
+        baseRefName: pr.baseRefName,
         mergeability:
           pr.mergeable === "MERGEABLE"
             ? "mergeable"

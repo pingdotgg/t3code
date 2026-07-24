@@ -1068,6 +1068,7 @@ export const ThreadMonitorStartedPayload = Schema.Struct({
   prNumber: NonNegativeInt,
   blockersSummary: Schema.String,
   headSha: Schema.String,
+  wakeCount: NonNegativeInt,
   startedAt: IsoDateTime,
 });
 
