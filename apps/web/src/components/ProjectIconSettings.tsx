@@ -163,8 +163,12 @@ export function ProjectIconPathField({ target }: { readonly target: ProjectIconT
       latestSaveIdRef.current = id;
       const path = nextPath.trim();
       const observableScope = path.length === 0 || !target.repositoryKey ? "workspace" : nextScope;
+      if (observableScope !== nextScope) {
+        setScope(observableScope);
+        setScopeDirty(true);
+      }
       setPendingSave({ id, path, scope: observableScope, status: "pending" });
-      const save = saveQueueRef.current.then(() => saveIconPath(nextPath, nextScope));
+      const save = saveQueueRef.current.then(() => saveIconPath(nextPath, observableScope));
       saveQueueRef.current = save.then(
         () => undefined,
         () => undefined,
