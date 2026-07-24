@@ -33,6 +33,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
 import {
   formatHeadlessServeOutput,
@@ -292,6 +293,7 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const keybindings = yield* Keybindings.Keybindings;
   const orchestrationReactor = yield* OrchestrationReactor.OrchestrationReactor;
+  const providerService = yield* ProviderService.ProviderService;
   const providerSessionReaper = yield* ProviderSessionReaper.ProviderSessionReaper;
   const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -336,6 +338,13 @@ export const make = Effect.gen(function* () {
         Effect.forkScoped,
       ),
     );
+
+    // Settle provider session rows an unclean shutdown left "running" before
+    // any reactor, the idle reaper, or a new user turn can act on them. This
+    // runs once, on a process whose adapter maps are empty, and only touches
+    // rows already present at boot — sessions started later get fresh rows.
+    yield* Effect.logDebug("startup phase: reconciling stale provider sessions");
+    yield* runStartupPhase("provider.reconcile", providerService.reconcileStaleSessionsOnBoot());
 
     yield* Effect.logDebug("startup phase: starting orchestration reactors");
     yield* runStartupPhase(

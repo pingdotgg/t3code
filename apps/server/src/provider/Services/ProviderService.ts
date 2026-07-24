@@ -80,6 +80,20 @@ export interface ProviderServiceShape {
   ) => Effect.Effect<void, ProviderServiceError>;
 
   /**
+   * Settle provider session runtime rows that an unclean shutdown left in a
+   * live status.
+   *
+   * A freshly started process owns no provider children and no in-memory
+   * sessions, so every runtime row not already marked `"stopped"` is stale: it
+   * survived a crash, SIGKILL, or power loss that skipped the graceful-shutdown
+   * finalizer. This rewrites those rows to `"stopped"` while preserving each
+   * `resumeCursor`, mirroring the finalizer's persistence mutation so the next
+   * user turn can still resume the provider conversation. Intended to run once
+   * at boot, before reactors and the idle reaper start handling new work.
+   */
+  readonly reconcileStaleSessionsOnBoot: () => Effect.Effect<void>;
+
+  /**
    * List active provider sessions.
    *
    * Aggregates runtime session lists from all registered adapters.

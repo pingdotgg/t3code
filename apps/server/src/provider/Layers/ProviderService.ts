@@ -1068,6 +1068,56 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
+  const reconcileStaleSessionsOnBoot = Effect.fn("reconcileStaleSessionsOnBoot")(function* () {
+    // This process just started with empty adapter maps, so every persisted
+    // session and provider child is definitionally gone. Any runtime row that
+    // is not already "stopped" outlived an unclean shutdown (SIGKILL, crash,
+    // power loss) that never ran `runStopAll`. Settle those rows exactly as the
+    // finalizer does — rewrite status to "stopped" without touching
+    // `resumeCursor`, so the idle reaper and session routing stop treating them
+    // as live while the next user turn can still resume the provider
+    // conversation from where it left off.
+    const bindings = yield* directory.listBindings().pipe(Effect.orElseSucceed(() => []));
+    const staleBindings = bindings.filter((binding) => binding.status !== "stopped");
+    if (staleBindings.length === 0) {
+      return;
+    }
+    yield* Effect.forEach(
+      staleBindings,
+      (binding) =>
+        Effect.flatMap(nowIso, (lastRuntimeEventAt) =>
+          directory.upsert({
+            threadId: binding.threadId,
+            provider: binding.provider,
+            ...(binding.providerInstanceId !== undefined
+              ? { providerInstanceId: binding.providerInstanceId }
+              : {}),
+            status: "stopped",
+            runtimePayload: {
+              activeTurnId: null,
+              lastRuntimeEvent: "provider.startupReconcile",
+              lastRuntimeEventAt,
+            },
+          }),
+        ).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("failed to reconcile stale provider session on boot", {
+              threadId: binding.threadId,
+              provider: binding.provider,
+              errorTag: causeErrorTag(cause),
+            }),
+          ),
+        ),
+      { discard: true },
+    );
+    yield* Effect.logInfo("provider.sessions.reconciled_on_boot", {
+      sessionCount: staleBindings.length,
+    });
+    yield* analytics.record("provider.sessions.reconciled_on_boot", {
+      sessionCount: staleBindings.length,
+    });
+  });
+
   return {
     startSession,
     sendTurn,
@@ -1075,6 +1125,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToRequest,
     respondToUserInput,
     stopSession,
+    reconcileStaleSessionsOnBoot,
     listSessions,
     getCapabilities,
     getInstanceInfo,

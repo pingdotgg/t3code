@@ -711,6 +711,80 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
 );
 
 it.effect(
+  "ProviderServiceLive reconciles stale running sessions on boot and preserves the resume cursor",
+  () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-service-"));
+      const dbPath = NodePath.join(tempDir, "orchestration.sqlite");
+
+      const threadId = asThreadId("thread-boot-reconcile");
+      const resumeCursor = { opaque: "resume-boot-reconcile" } as const;
+
+      const codex = makeFakeCodexAdapter();
+      const registry = makeAdapterRegistryMock({
+        [ProviderDriverKind.make("codex")]: codex.adapter,
+      });
+
+      const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(persistenceLayer),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+
+      // Seed the row an unclean shutdown leaves behind: still "running", with a
+      // resume cursor the next user turn must be able to resume from.
+      yield* Effect.gen(function* () {
+        const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        yield* repository.upsert({
+          threadId,
+          providerName: "codex",
+          providerInstanceId: codexInstanceId,
+          adapterKey: "codex",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt: "2026-04-14T00:00:00.000Z",
+          resumeCursor,
+          runtimePayload: null,
+        });
+      }).pipe(Effect.provide(runtimeRepositoryLayer));
+
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const providerService = yield* ProviderService.ProviderService;
+        yield* providerService.reconcileStaleSessionsOnBoot();
+      }).pipe(Effect.provide(providerLayer));
+
+      const reconciled = yield* Effect.gen(function* () {
+        const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        return yield* repository.getByThreadId({ threadId });
+      }).pipe(Effect.provide(runtimeRepositoryLayer));
+
+      assert.equal(Option.isSome(reconciled), true);
+      const row = Option.getOrThrow(reconciled);
+      // Status is settled, but the resume cursor survives so the next turn can
+      // resume the provider conversation.
+      assert.equal(row.status, "stopped");
+      assert.deepStrictEqual(row.resumeCursor, resumeCursor);
+
+      NodeFS.rmSync(tempDir, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
   "ProviderServiceLive restores rollback routing after restart using persisted thread mapping",
   () =>
     Effect.gen(function* () {

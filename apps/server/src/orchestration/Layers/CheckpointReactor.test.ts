@@ -109,6 +109,7 @@ function createProviderServiceHarness(
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
+    reconcileStaleSessionsOnBoot: () => Effect.void,
     listSessions,
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     getInstanceInfo: (instanceId) =>
