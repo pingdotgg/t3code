@@ -239,6 +239,138 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   );
 });
 
+it.layer(
+  Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-streaming-shell-summary-")),
+)("OrchestrationProjectionPipeline", (it) => {
+  it.effect("does not rescan thread shell history for streaming assistant messages", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-streaming-shell-summary");
+      const messageId = MessageId.make("message-streaming-shell-summary");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const deltaAt = "2026-01-01T00:00:01.000Z";
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+      yield* appendAndProject({
+        type: "project.created",
+        eventId: EventId.make("evt-streaming-shell-summary-1"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.make("project-streaming-shell-summary"),
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-streaming-shell-summary-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-streaming-shell-summary-1"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.make("project-streaming-shell-summary"),
+          title: "Streaming shell summary",
+          workspaceRoot: "/tmp/project-streaming-shell-summary",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.created",
+        eventId: EventId.make("evt-streaming-shell-summary-2"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-streaming-shell-summary-2"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-streaming-shell-summary-2"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-streaming-shell-summary"),
+          title: "Streaming shell summary",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      // A streaming assistant delta must not read activity history. This invalid
+      // sentinel makes any accidental list/decode deterministic and immediately red.
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        ) VALUES (
+          'activity-streaming-shell-summary',
+          ${threadId},
+          NULL,
+          'info',
+          'test.sentinel',
+          'must not be decoded',
+          '{',
+          NULL,
+          ${createdAt}
+        )
+      `;
+
+      yield* appendAndProject({
+        type: "thread.message-sent",
+        eventId: EventId.make("evt-streaming-shell-summary-3"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: deltaAt,
+        commandId: CommandId.make("cmd-streaming-shell-summary-3"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-streaming-shell-summary-3"),
+        metadata: {},
+        payload: {
+          threadId,
+          messageId,
+          role: "assistant",
+          text: "delta",
+          turnId: null,
+          streaming: true,
+          createdAt,
+          updatedAt: deltaAt,
+        },
+      });
+
+      const messageRows = yield* sql<{
+        readonly text: string;
+        readonly isStreaming: number;
+      }>`
+        SELECT text, is_streaming AS "isStreaming"
+        FROM projection_thread_messages
+        WHERE message_id = ${messageId}
+      `;
+      assert.deepEqual(messageRows, [{ text: "delta", isStreaming: 1 }]);
+
+      const threadRows = yield* sql<{ readonly updatedAt: string }>`
+        SELECT updated_at AS "updatedAt"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(threadRows, [{ updatedAt: deltaAt }]);
+    }),
+  );
+});
+
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
   "OrchestrationProjectionPipeline",
   (it) => {

@@ -796,7 +796,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             updatedAt: event.occurredAt,
           });
-          yield* refreshThreadShellSummary(event.payload.threadId);
+          if (
+            event.type !== "thread.message-sent" ||
+            event.payload.role !== "assistant" ||
+            !event.payload.streaming
+          ) {
+            yield* refreshThreadShellSummary(event.payload.threadId);
+          }
           return;
         }
 
