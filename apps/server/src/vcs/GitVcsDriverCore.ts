@@ -13,6 +13,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -38,6 +39,14 @@ import {
 import { ServerConfig } from "../config.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+// Worktrees routinely contain multi-GB install artifacts from setup scripts
+// (node_modules, .repos, etc). Deleting those via `git worktree remove` alone
+// routinely exceeds short command timeouts on developer machines.
+const REMOVE_WORKTREE_DIRECTORY_TIMEOUT_MS = 5 * 60_000;
+const REMOVE_WORKTREE_GIT_TIMEOUT_MS = 60_000;
+const REMOVE_WORKTREE_DIRECTORY_RETRY_SCHEDULE = Schedule.spaced("100 millis").pipe(
+  Schedule.take(50),
+);
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
@@ -225,6 +234,19 @@ export function splitNullSeparatedGitStdoutPaths(
   result: Pick<GitVcsDriver.ExecuteGitResult, "stdout" | "stdoutTruncated">,
 ): string[] {
   return splitNullSeparatedPaths(result.stdout, result.stdoutTruncated);
+}
+
+export function parsePorcelainWorktreePaths(stdout: string): string[] {
+  const paths: string[] = [];
+  for (const line of stdout.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      const worktreePath = line.slice("worktree ".length).trim();
+      if (worktreePath.length > 0) {
+        paths.push(worktreePath);
+      }
+    }
+  }
+  return paths;
 }
 
 function sanitizeRemoteName(value: string): string {
@@ -2398,8 +2420,86 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       args.push("--force");
     }
     args.push(input.path);
+    const commandContext = gitCommandContext({
+      operation: "GitVcsDriver.removeWorktree",
+      cwd: input.cwd,
+      args,
+    });
+
+    // When forcing, wipe the working tree via the filesystem first so git only
+    // has to clean up worktree registration metadata. That keeps the git step
+    // fast even for multi-GB trees and avoids interrupting `git worktree remove`
+    // mid-delete after a short timeout.
+    //
+    // Only do this after confirming the path is a registered *linked* worktree.
+    // Otherwise a mistyped/non-worktree path would be recursively deleted before
+    // `git worktree remove` could reject it.
+    //
+    // Listing is best-effort: timeout/failure here skips the filesystem
+    // pre-delete and still falls through to `git worktree remove`.
+    if (input.force) {
+      const worktreeList = yield* executeGit(
+        "GitVcsDriver.removeWorktree.list",
+        input.cwd,
+        ["worktree", "list", "--porcelain"],
+        {
+          timeoutMs: 5_000,
+          allowNonZeroExit: true,
+          fallbackErrorDetail: "git worktree list failed",
+        },
+      ).pipe(Effect.orElseSucceed(() => null));
+      if (worktreeList !== null && worktreeList.exitCode === 0) {
+        const registeredPaths = parsePorcelainWorktreePaths(worktreeList.stdout);
+        const canonicalize = (value: string) =>
+          fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => path.resolve(value)));
+        const [canonicalTarget, ...canonicalRegistered] = yield* Effect.all(
+          [canonicalize(input.path), ...registeredPaths.map(canonicalize)],
+          { concurrency: "unbounded" },
+        );
+        // Porcelain lists the main working tree first; never filesystem-delete it.
+        const linkedWorktreePaths = new Set(canonicalRegistered.slice(1));
+        if (linkedWorktreePaths.has(canonicalTarget)) {
+          const exists = yield* fileSystem
+            .exists(input.path)
+            .pipe(Effect.orElseSucceed(() => false));
+          if (exists) {
+            yield* fileSystem.remove(input.path, { recursive: true, force: true }).pipe(
+              Effect.retry({
+                schedule: REMOVE_WORKTREE_DIRECTORY_RETRY_SCHEDULE,
+                while: (cause) =>
+                  cause.reason._tag === "Busy" ||
+                  cause.reason._tag === "WouldBlock" ||
+                  cause.reason._tag === "Unknown",
+              }),
+              Effect.mapError(
+                (cause) =>
+                  new GitCommandError({
+                    ...commandContext,
+                    detail: "Failed to delete worktree directory.",
+                    cause,
+                  }),
+              ),
+              Effect.timeoutOption(REMOVE_WORKTREE_DIRECTORY_TIMEOUT_MS),
+              Effect.flatMap((result) =>
+                Option.match(result, {
+                  onNone: () =>
+                    Effect.fail(
+                      new GitCommandError({
+                        ...commandContext,
+                        detail: "Timed out deleting worktree directory.",
+                      }),
+                    ),
+                  onSome: () => Effect.void,
+                }),
+              ),
+            );
+          }
+        }
+      }
+    }
+
     yield* executeGit("GitVcsDriver.removeWorktree", input.cwd, args, {
-      timeoutMs: 15_000,
+      timeoutMs: REMOVE_WORKTREE_GIT_TIMEOUT_MS,
       fallbackErrorDetail: "git worktree remove failed",
     });
   });
