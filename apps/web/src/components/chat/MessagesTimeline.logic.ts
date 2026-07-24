@@ -352,7 +352,8 @@ function deriveTurnFolds(input: {
     }
     const hiddenEntryIds = new Set<string>();
     for (const entry of group.entries) {
-      if (entry.id !== group.terminalEntry?.id) {
+      const isGeneratedImage = entry.kind === "work" && entry.entry.generatedImage !== undefined;
+      if (entry.id !== group.terminalEntry?.id && !isGeneratedImage) {
         hiddenEntryIds.add(entry.id);
       }
     }
@@ -465,8 +466,10 @@ export function deriveMessagesTimelineRows(input: {
       while (cursor < input.timelineEntries.length) {
         const nextEntry = input.timelineEntries[cursor];
         if (
+          timelineEntry.entry.generatedImage !== undefined ||
           !nextEntry ||
           nextEntry.kind !== "work" ||
+          nextEntry.entry.generatedImage !== undefined ||
           collapsedEntryIds.has(nextEntry.id) ||
           foldsByAnchorEntryId.has(nextEntry.id)
         ) {

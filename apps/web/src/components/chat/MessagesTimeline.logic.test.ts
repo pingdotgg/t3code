@@ -541,6 +541,84 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
+  it("keeps generated images visible when their completed turn is folded", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user",
+            text: "Draw it",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-thought-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:01Z",
+          message: {
+            id: "assistant-thought" as never,
+            role: "assistant",
+            text: "Generating an image.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:01Z",
+            updatedAt: "2026-01-01T00:00:01Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "work-generated-image",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:02Z",
+          entry: {
+            id: "work-generated-image",
+            createdAt: "2026-01-01T00:00:02Z",
+            turnId: "turn-1" as never,
+            label: "Generated image",
+            tone: "tool",
+            itemType: "image_view",
+            toolLifecycleStatus: "completed",
+            generatedImage: {
+              activityId: "activity-generated-image" as never,
+              name: "generated.png",
+            },
+          },
+        },
+        {
+          id: "assistant-final-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:03Z",
+          message: {
+            id: "assistant-final" as never,
+            role: "assistant",
+            text: "Done",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:03Z",
+            updatedAt: "2026-01-01T00:00:03Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "work-generated-image",
+      "assistant-final-entry",
+    ]);
+  });
+
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
     // A steer ends the previous turn early: its only message completes the
     // instant it is created, and trailing work entries land after it. The
@@ -1010,6 +1088,73 @@ describe("deriveMessagesTimelineRows", () => {
     expect(expandedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
       expanded: true,
     });
+  });
+
+  it("keeps generated images outside collapsed work-log groups", () => {
+    const generatedImage = {
+      id: "work-generated-image",
+      kind: "work" as const,
+      createdAt: "2026-01-01T00:00:02Z",
+      entry: {
+        id: "work-generated-image",
+        createdAt: "2026-01-01T00:00:02Z",
+        label: "Generated image",
+        tone: "tool" as const,
+        generatedImage: {
+          activityId: "activity-generated-image" as never,
+          name: "generated.png",
+        },
+      },
+    };
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "work-before",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:01Z",
+          entry: {
+            id: "work-before",
+            createdAt: "2026-01-01T00:00:01Z",
+            label: "Before",
+            tone: "tool",
+          },
+        },
+        generatedImage,
+        {
+          id: "work-after-1",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:03Z",
+          entry: {
+            id: "work-after-1",
+            createdAt: "2026-01-01T00:00:03Z",
+            label: "After one",
+            tone: "tool",
+          },
+        },
+        {
+          id: "work-after-2",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:04Z",
+          entry: {
+            id: "work-after-2",
+            createdAt: "2026-01-01T00:00:04Z",
+            label: "After two",
+            tone: "tool",
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "work-before",
+      "work-generated-image",
+      "work-after-2",
+      "work-toggle:work-after-1",
+    ]);
   });
 });
 

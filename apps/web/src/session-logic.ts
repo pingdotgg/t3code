@@ -73,6 +73,10 @@ export interface WorkLogEntry {
   toolTitle?: string;
   toolData?: unknown;
   itemType?: ToolLifecycleItemType;
+  generatedImage?: {
+    activityId: OrchestrationThreadActivity["id"];
+    name: string;
+  };
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
@@ -718,6 +722,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     activityKind: activity.kind,
   };
   const itemType = extractWorkLogItemType(payload);
+  const generatedImage = extractGeneratedImage(payload, activity.kind, activity.id);
   const requestKind = extractWorkLogRequestKind(payload);
   if (detail) {
     entry.detail = detail;
@@ -742,6 +747,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (itemType) {
     entry.itemType = itemType;
+  }
+  if (generatedImage) {
+    entry.generatedImage = generatedImage;
   }
   if (requestKind) {
     entry.requestKind = requestKind;
@@ -818,6 +826,7 @@ function mergeDerivedWorkLogEntries(
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const generatedImage = next.generatedImage ?? previous.generatedImage;
   return {
     ...previous,
     ...next,
@@ -832,6 +841,7 @@ function mergeDerivedWorkLogEntries(
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(generatedImage !== undefined ? { generatedImage } : {}),
   };
 }
 
@@ -1084,6 +1094,28 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {
   const data = asRecord(payload?.data);
   return asTrimmedString(data?.toolCallId);
+}
+
+function extractGeneratedImage(
+  payload: Record<string, unknown> | null,
+  activityKind: OrchestrationThreadActivity["kind"],
+  activityId: OrchestrationThreadActivity["id"],
+): WorkLogEntry["generatedImage"] | null {
+  if (activityKind !== "tool.completed") {
+    return null;
+  }
+  const data = asRecord(payload?.data);
+  const item = asRecord(data?.item);
+  if (
+    item?.type !== "imageGeneration" ||
+    item.status !== "completed" ||
+    typeof item.savedPath !== "string"
+  ) {
+    return null;
+  }
+  const normalizedPath = item.savedPath.trim().replaceAll("\\", "/");
+  const name = normalizedPath.split("/").at(-1)?.trim();
+  return name ? { activityId, name } : null;
 }
 
 function normalizeInlinePreview(value: string): string {

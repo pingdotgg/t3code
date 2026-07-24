@@ -47,6 +47,7 @@ import {
   EyeIcon,
   GlobeIcon,
   HammerIcon,
+  ImageIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
@@ -99,6 +100,7 @@ import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 import {
   buildInlineTerminalContextText,
@@ -1921,11 +1923,37 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
+const GeneratedImageWorkEntryLink = memo(function GeneratedImageWorkEntryLink({
+  threadRef,
+  image,
+}: {
+  threadRef: ScopedThreadRef;
+  image: NonNullable<TimelineWorkEntry["generatedImage"]>;
+}) {
+  return (
+    <button
+      type="button"
+      className="mt-1 ms-7 flex max-w-[calc(100%-1.75rem)] items-center gap-1.5 text-left text-xs text-info-foreground underline-offset-2 hover:underline"
+      aria-label={`Open generated image ${image.name}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        useRightPanelStore.getState().openGeneratedImage(threadRef, image.activityId, image.name);
+      }}
+      onKeyDown={stopRowToggle}
+      onPointerDown={stopRowToggle}
+    >
+      <ImageIcon className="size-3.5 shrink-0" aria-hidden />
+      <span className="truncate">{image.name}</span>
+    </button>
+  );
+});
+
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
+  const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
@@ -2075,6 +2103,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             {expandedBody}
           </pre>
         </div>
+      ) : null}
+      {workEntry.generatedImage && ctx.threadRef ? (
+        <GeneratedImageWorkEntryLink threadRef={ctx.threadRef} image={workEntry.generatedImage} />
       ) : null}
     </div>
   );
