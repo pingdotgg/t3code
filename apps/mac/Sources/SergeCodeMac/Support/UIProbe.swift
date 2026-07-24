@@ -54,16 +54,6 @@
             }
             // Let the inspector timeline present and the diff refresh land.
             try? await Task.sleep(for: .seconds(2))
-            print(
-                "UIProbe: agents running=\(model.subagentTaskAggregator.runningCount) "
-                    + "entries=\(model.subagentTaskAggregator.entries.count)")
-            // The toolbar item owns the popover anchor. Toggle it through the
-            // same in-process harness used by the other popover probes.
-            toggleSection("agents")
-            try? await Task.sleep(for: .seconds(1))
-            snapshotAllWindows("2-agents-panel", dir: dir)
-            toggleSection("agents")
-            try? await Task.sleep(for: .seconds(1))
             snapshot("1-inspector-timeline", dir: dir)
 
             // Changes panel segmented control: Files (default) then Activity.
@@ -74,13 +64,9 @@
             try? await Task.sleep(for: .seconds(0.5))
 
             // Subagent stability: server-driven stall badge (appears on a
-            // synthetic session.health stall, clears on active), the delegated
-            // sibling-agent roster, and the session.exited stderr disclosure.
+            // synthetic session.health stall, clears on active) and the
+            // session.exited stderr disclosure.
             await probeSubagentStability(model: model, multi: multi, dir: dir)
-
-            // Subagent inner threads: drill into a running agent, then into a
-            // settled one and promote its result into the parent composer.
-            await probeSubagentInnerThread(model: model, dir: dir)
 
             if let remote = multi.remoteSessions.first {
                 await probeRemoteDevice(
@@ -430,9 +416,8 @@
         }
 
         /// Exercises the subagent-stability surfaces against the mock backend:
-        /// a server `session.health` stall that badges the thread + agents
-        /// panel and then clears on recovery, the delegated sibling-agent
-        /// roster, and the `session.exited` stderr disclosure row.
+        /// a server `session.health` stall that badges the thread and then
+        /// clears on recovery, plus the `session.exited` stderr disclosure row.
         private static func probeSubagentStability(
             model: AppModel, multi: MultiDeviceModel, dir: String
         ) async {
@@ -444,29 +429,15 @@
                 print("UIProbe: subagent-stability no selected thread")
                 return
             }
-            let projectID =
-                model.threads.first { $0.id == threadID }?.projectID
-                ?? model.projects.first?.id ?? "project-1"
 
-            // Spawn a stalled delegated sibling agent (different provider) so
-            // the roster and its stalled badge render.
-            let sibling = await mock.probeCreateSiblingAgent(
-                name: "codex worker", provider: .codex, projectID: projectID, stalled: true)
             // Stall the open thread's turn: subagent task rows + header +
             // sidebar dot flip to the server-driven warning state.
             await mock.probeSetThreadHealth(threadID: threadID, stalled: true)
             try? await Task.sleep(for: .seconds(1))
             let stalledThread = model.threads.first { $0.id == threadID }
-            let stalledSibling = model.threads.first { $0.id == sibling.id }
             print(
-                "UIProbe: stall injected threadStalled=\(stalledThread?.isStalled ?? false) "
-                    + "siblingStalled=\(stalledSibling?.isStalled ?? false) "
-                    + "siblingTitle=\(stalledSibling?.title ?? "nil")")
-            toggleSection("agents")
-            try? await Task.sleep(for: .seconds(1))
-            snapshotAllWindows("2b-agents-stalled", dir: dir)
-            toggleSection("agents")
-            try? await Task.sleep(for: .seconds(0.5))
+                "UIProbe: stall injected threadStalled=\(stalledThread?.isStalled ?? false)")
+            snapshot("2b-thread-stalled", dir: dir)
 
             // Recovery: server reports activity resumed — the badge clears.
             await mock.probeSetThreadHealth(threadID: threadID, stalled: false)
@@ -493,73 +464,6 @@
             }
             print("UIProbe: session-exit row present=\(hasSessionExit)")
             snapshot("2d-session-stderr", dir: dir)
-        }
-
-        /// Drives the nested subagent pane: open a running agent's inner
-        /// thread (its progress log must render as a transcript), then a
-        /// settled agent's, and promote its result into the parent composer.
-        private static func probeSubagentInnerThread(model: AppModel, dir: String) async {
-            guard let threadID = model.selectedThreadID else {
-                print("UIProbe: subagent inner thread no selected thread")
-                return
-            }
-            guard model.subagentTaskAggregator.task(taskId: "mock-subagent-1", threadID: threadID)
-                != nil
-            else {
-                print("UIProbe: subagent inner thread skipped (live backend run)")
-                return
-            }
-
-            // The mock's demo lifecycle folds new progress onto the seeded task
-            // and may settle it mid-probe, so assert on the transcript (which
-            // survives either way), not on the task still being `running`.
-            model.openSubagent(taskId: "mock-subagent-1", threadID: threadID)
-            try? await Task.sleep(for: .seconds(1))
-            let opened = model.focusedSubagentTask(threadID: threadID)
-            let progressVisible = mainWindowText().contains("Collecting subagent task call sites")
-            print(
-                "UIProbe: subagent inner thread task=\(opened?.taskId ?? "nil") "
-                    + "state=\(opened?.state.rawValue ?? "nil") "
-                    + "progressEntries=\(opened?.progressLog.count ?? 0) "
-                    + "progressVisible=\(progressVisible)")
-            snapshot("2e-subagent-inner-progress", dir: dir)
-
-            model.openSubagent(taskId: "mock-subagent-2", threadID: threadID)
-            try? await Task.sleep(for: .seconds(1))
-            guard let settled = model.focusedSubagentTask(threadID: threadID),
-                let result = SubagentInnerThread.resultText(for: settled),
-                let promotion = SubagentInnerThread.promotionText(
-                    for: settled, modelDisplayNames: model.modelDisplayNames)
-            else {
-                print("UIProbe: FAIL settled subagent has no promotable result")
-                model.closeSubagent(threadID: threadID)
-                return
-            }
-            let resultVisible = mainWindowText().contains("Three reports share one cause")
-            snapshot("2f-subagent-inner-result", dir: dir)
-
-            model.stageComposerTextAppending(promotion)
-            model.closeSubagent(threadID: threadID)
-            try? await Task.sleep(for: .seconds(1))
-            let draft = model.composerDraft(for: threadID).text
-            let promotedToComposer =
-                draft.contains("> \(result.prefix(24))")
-                && textView(containing: "Result from the") != nil
-            let backOnTranscript = model.focusedSubagentTask(threadID: threadID) == nil
-            print(
-                "UIProbe: subagent inner thread result task=\(settled.taskId) "
-                    + "resultVisible=\(resultVisible) promotedToComposer=\(promotedToComposer) "
-                    + "backOnTranscript=\(backOnTranscript)")
-            snapshot("2g-subagent-result-promoted", dir: dir)
-            if progressVisible, resultVisible, promotedToComposer, backOnTranscript {
-                print("UIProbe: PASS subagent inner thread navigate + progress + promote")
-            } else {
-                print("UIProbe: FAIL subagent inner thread surfaces incomplete")
-            }
-
-            // Leave the composer as the later prefill/queue probes expect it.
-            model.stageComposerText("")
-            try? await Task.sleep(for: .milliseconds(300))
         }
 
         /// Every string the main window currently renders (text views plus the

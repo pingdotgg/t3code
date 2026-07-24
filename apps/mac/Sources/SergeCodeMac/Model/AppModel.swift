@@ -33,9 +33,6 @@ public final class AppModel {
     /// Per-task stop failures for subagent rows (`taskId` → message). Transient;
     /// cleared on the next successful stop, a new stop attempt, or task state change.
     public private(set) var subagentStopErrors: [String: String] = [:]
-    /// Cross-thread task projection. The task rows survive timeline eviction;
-    /// only the live flag changes when a thread leaves the subscription LRU.
-    let subagentTaskAggregator = SubagentTaskAggregator()
     /// Outcome of the most recent git action per thread, shown as a transient
     /// banner. Per-thread so a push/PR result from thread A never bleeds into
     /// thread B after a switch.
@@ -661,9 +658,6 @@ public final class AppModel {
                 {
                     structuralThreads.insert(threadID)
                 }
-                if case .subagentTask(let task) = item {
-                    subagentTaskAggregator.upsert(task, for: threadID)
-                }
                 recordInteraction(item, threadID: threadID)
             case .timelineReset(let threadID, let items):
                 // A snapshot can truncate or replace an in-flight message;
@@ -703,8 +697,6 @@ public final class AppModel {
             }
             if resetThreads.contains(threadID) {
                 state.hasLoadedTimeline = true
-                subagentTaskAggregator.replaceTasks(
-                    subagentTasks(from: items), for: threadID)
             }
         }
     }
@@ -720,7 +712,6 @@ public final class AppModel {
             projects = list
             rebuildProjectPathIndex()
         case .threadUpserted(let thread):
-            subagentTaskAggregator.updateThread(thread)
             // Update in place: `updatedAt` bumps on every activity while a
             // thread runs, so resorting here made sidebar rows jump around
             // mid-conversation. Order is recomputed only on refreshAll.
@@ -762,7 +753,6 @@ public final class AppModel {
                 thread: thread)
             updateProjectPathIndex(for: thread)
         case .threadRemoved(let id):
-            subagentTaskAggregator.remove(threadID: id)
             threads.removeAll { $0.id == id }
             if pinnedThreadIDs.remove(id) != nil {
                 persistPinnedThreadIDs()
@@ -964,9 +954,6 @@ public final class AppModel {
                 pinnedThreadIDs.formIntersection(liveThreadIDs)
                 persistPinnedThreadIDs()
             }
-            for thread in refreshedThreads {
-                subagentTaskAggregator.updateThread(thread)
-            }
             self.providers = try await providers
             let refreshedModels = try await models
             self.models = refreshedModels
@@ -1027,10 +1014,7 @@ public final class AppModel {
 
     public func loadTimelineIfNeeded(threadID: String) async {
         let state = self.state(creating: threadID)
-        guard !state.hasLoadedTimeline else {
-            subagentTaskAggregator.setLive(true, for: threadID)
-            return
-        }
+        guard !state.hasLoadedTimeline else { return }
         state.isLoadingTimeline = true
         defer { state.isLoadingTimeline = false }
         do {
@@ -1040,9 +1024,6 @@ public final class AppModel {
             state.timelineVersion += 1
             state.structureVersion += 1
             state.hasLoadedTimeline = true
-            subagentTaskAggregator.setLive(true, for: threadID)
-            subagentTaskAggregator.replaceTasks(
-                subagentTasks(from: filtered), for: threadID)
             for item in filtered {
                 recordInteraction(item, threadID: threadID)
             }
@@ -1075,45 +1056,6 @@ public final class AppModel {
             guard refreshCheckpointsTokens[threadID] == token else { return }
             lastError = String(describing: error)
         }
-    }
-
-    // MARK: - Subagent inner threads
-
-    /// Opens a subagent's inner thread in the main area, switching threads
-    /// first when the task belongs to another thread (the agents panel can
-    /// open a task on a thread that is not selected).
-    public func openSubagent(taskId: String, threadID: String) {
-        if selectedThreadID != threadID {
-            selectedThreadID = threadID
-        }
-        // Review mode owns the same real estate; a subagent drill-down leaves it.
-        closeReview(threadID: threadID)
-        state(creating: threadID).focusedSubagentTaskID = taskId
-    }
-
-    public func closeSubagent(threadID: String) {
-        threadStates[threadID]?.focusedSubagentTaskID = nil
-    }
-
-    public func closeSubagent() {
-        guard let threadID = selectedThreadID else { return }
-        closeSubagent(threadID: threadID)
-    }
-
-    /// The task behind an open inner thread, or nil once it has been pruned
-    /// (thread eviction, timeline reset) — callers fall back to the transcript.
-    public func focusedSubagentTask(threadID: String) -> SubagentTaskItem? {
-        guard let taskId = threadStates[threadID]?.focusedSubagentTaskID else { return nil }
-        return subagentTaskAggregator.task(taskId: taskId, threadID: threadID)
-    }
-
-    /// Stages `text` into the selected thread's composer, appending to any
-    /// existing draft so promoting a result never clobbers what was typed.
-    public func stageComposerTextAppending(_ text: String) {
-        guard let threadID = selectedThreadID else { return }
-        let existing = composerDraft(for: threadID).text
-        let trimmed = existing.trimmingCharacters(in: .whitespacesAndNewlines)
-        stageComposerText(trimmed.isEmpty ? text : existing + "\n\n" + text)
     }
 
     // MARK: - Diff review mode
@@ -2109,7 +2051,6 @@ public final class AppModel {
     /// refresh it through `loadTimelineIfNeeded`.
     private func releaseTimeline(threadID: String) async {
         recentlySelected.removeAll { $0 == threadID }
-        subagentTaskAggregator.setLive(false, for: threadID)
         await backend.closeTimeline(threadID: threadID)
         if let state = threadStates[threadID] {
             trimRetainedTimelineIfNeeded(state)
@@ -2141,7 +2082,6 @@ public final class AppModel {
                     threadID != self.selectedThreadID,
                     !self.recentlySelected.contains(threadID)
                 {
-                    self.subagentTaskAggregator.setLive(false, for: threadID)
                     if let state = self.threadStates[threadID] {
                         self.trimRetainedTimelineIfNeeded(state)
                         state.hasLoadedTimeline = false
@@ -2166,12 +2106,5 @@ public final class AppModel {
         state.timeline = Array(state.timeline.suffix(Self.maxRetainedTimelineItems))
         state.timelineVersion += 1
         state.structureVersion += 1
-    }
-
-    private func subagentTasks(from items: [TimelineItem]) -> [SubagentTaskItem] {
-        items.compactMap { item in
-            guard case .subagentTask(let task) = item else { return nil }
-            return task
-        }
     }
 }
