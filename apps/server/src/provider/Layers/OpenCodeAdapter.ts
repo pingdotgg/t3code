@@ -23,7 +23,13 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
+import type {
+  Message,
+  OpencodeClient,
+  Part,
+  PermissionRequest,
+  QuestionRequest,
+} from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -54,6 +60,8 @@ import {
 import * as Option from "effect/Option";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
+const OPENCODE_THREAD_MESSAGE_PAGE_SIZE = 100;
+const OPENCODE_THREAD_MESSAGE_TIMEOUT_MS = 15_000;
 
 /**
  * Version tag stamped into the OpenCode resume cursor. Bump if the cursor
@@ -385,6 +393,66 @@ const ensureSessionContext = Effect.fn("ensureSessionContext")(function* (
     });
   }
   return session;
+});
+
+const readOpenCodeMessagePage = Effect.fn("readOpenCodeMessagePage")(function* (
+  context: OpenCodeSessionContext,
+  before?: string,
+) {
+  const result = yield* runOpenCodeSdk("session.messages", (signal) =>
+    context.client.session.messages(
+      {
+        sessionID: context.openCodeSessionId,
+        limit: OPENCODE_THREAD_MESSAGE_PAGE_SIZE,
+        ...(before ? { before } : {}),
+      },
+      { signal },
+    ),
+  ).pipe(Effect.timeoutOption(OPENCODE_THREAD_MESSAGE_TIMEOUT_MS));
+
+  return yield* Option.match(result, {
+    onNone: () =>
+      Effect.fail(
+        new OpenCodeRuntimeError({
+          operation: "session.messages",
+          detail: `OpenCode session history timed out after ${OPENCODE_THREAD_MESSAGE_TIMEOUT_MS}ms.`,
+        }),
+      ),
+    onSome: Effect.succeed,
+  });
+});
+
+const readOpenCodeMessagesForRollback = Effect.fn("readOpenCodeMessagesForRollback")(function* (
+  context: OpenCodeSessionContext,
+  numTurns: number,
+) {
+  let before: string | undefined;
+  const messages: Array<{ info: Message; parts: Array<Part> }> = [];
+  const seenMessageIds = new Set<string>();
+
+  while (true) {
+    const page = yield* readOpenCodeMessagePage(context, before);
+    const rawPageMessages = page.data ?? [];
+    const pageMessages = rawPageMessages.filter((entry) => {
+      if (seenMessageIds.has(entry.info.id)) {
+        return false;
+      }
+      seenMessageIds.add(entry.info.id);
+      return true;
+    });
+    messages.unshift(...pageMessages);
+
+    const assistantCount = messages.filter((entry) => entry.info.role === "assistant").length;
+    if (assistantCount > numTurns || rawPageMessages.length < OPENCODE_THREAD_MESSAGE_PAGE_SIZE) {
+      return messages;
+    }
+
+    const nextBefore = rawPageMessages[0]?.info.id;
+    if (!nextBefore || nextBefore === before) {
+      return messages;
+    }
+    before = nextBefore;
+  }
 });
 
 function normalizeQuestionRequest(request: QuestionRequest): ReadonlyArray<UserInputQuestion> {
@@ -1634,11 +1702,9 @@ export function makeOpenCodeAdapter(
     const readThread: OpenCodeAdapterShape["readThread"] = Effect.fn("readThread")(
       function* (threadId) {
         const context = yield* ensureSessionContext(sessions, threadId);
-        const messages = yield* runOpenCodeSdk("session.messages", () =>
-          context.client.session.messages({
-            sessionID: context.openCodeSessionId,
-          }),
-        ).pipe(Effect.mapError(toRequestError));
+        const messages = yield* readOpenCodeMessagePage(context).pipe(
+          Effect.mapError(toRequestError),
+        );
 
         const turns: Array<OpenCodeTurnSnapshot> = [];
         for (const entry of messages.data ?? []) {
@@ -1660,15 +1726,11 @@ export function makeOpenCodeAdapter(
     const rollbackThread: OpenCodeAdapterShape["rollbackThread"] = Effect.fn("rollbackThread")(
       function* (threadId, numTurns) {
         const context = yield* ensureSessionContext(sessions, threadId);
-        const messages = yield* runOpenCodeSdk("session.messages", () =>
-          context.client.session.messages({
-            sessionID: context.openCodeSessionId,
-          }),
-        ).pipe(Effect.mapError(toRequestError));
-
-        const assistantMessages = (messages.data ?? []).filter(
-          (entry) => entry.info.role === "assistant",
+        const messageEntries = yield* readOpenCodeMessagesForRollback(context, numTurns).pipe(
+          Effect.mapError(toRequestError),
         );
+
+        const assistantMessages = messageEntries.filter((entry) => entry.info.role === "assistant");
         const targetIndex = assistantMessages.length - numTurns - 1;
         const target = targetIndex >= 0 ? assistantMessages[targetIndex] : null;
         yield* runOpenCodeSdk("session.revert", () =>

@@ -2,6 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -63,6 +64,10 @@ const runtimeMock = {
     abortCalls: [] as string[],
     closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
+    messageCalls: [] as Array<{ sessionID: string; limit?: number; before?: string }>,
+    messageReadHangs: false,
+    messageReadAbortCount: 0,
+    overlapMessagePages: false,
     promptCalls: [] as Array<unknown>,
     promptAsyncError: null as Error | null,
     closeError: null as Error | null,
@@ -83,6 +88,10 @@ const runtimeMock = {
     this.state.abortCalls.length = 0;
     this.state.closeCalls.length = 0;
     this.state.revertCalls.length = 0;
+    this.state.messageCalls.length = 0;
+    this.state.messageReadHangs = false;
+    this.state.messageReadAbortCount = 0;
+    this.state.overlapMessagePages = false;
     this.state.promptCalls.length = 0;
     this.state.promptAsyncError = null;
     this.state.closeError = null;
@@ -183,7 +192,48 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             throw runtimeMock.state.promptAsyncError;
           }
         },
-        messages: async () => ({ data: runtimeMock.state.messages }),
+        messages: async (
+          input: { sessionID: string; limit?: number; before?: string },
+          options?: { signal?: AbortSignal },
+        ) => {
+          runtimeMock.state.messageCalls.push(input);
+          if (runtimeMock.state.messageReadHangs) {
+            return await new Promise<never>((_resolve, reject) => {
+              options?.signal?.addEventListener(
+                "abort",
+                () => {
+                  runtimeMock.state.messageReadAbortCount += 1;
+                  reject(options.signal?.reason);
+                },
+                { once: true },
+              );
+            });
+          }
+          const endIndex = input.before
+            ? runtimeMock.state.messages.findIndex((entry) => entry.info.id === input.before)
+            : runtimeMock.state.messages.length;
+          const resolvedEndIndex = endIndex < 0 ? runtimeMock.state.messages.length : endIndex;
+          const startIndex =
+            input.limit === undefined
+              ? 0
+              : Math.max(
+                  0,
+                  resolvedEndIndex -
+                    (runtimeMock.state.overlapMessagePages && input.before
+                      ? input.limit - 1
+                      : input.limit),
+                );
+          const page = runtimeMock.state.messages.slice(startIndex, resolvedEndIndex);
+          if (runtimeMock.state.overlapMessagePages && input.before) {
+            const overlappingBoundary = runtimeMock.state.messages[resolvedEndIndex];
+            if (overlappingBoundary) {
+              page.push(overlappingBoundary);
+            }
+          }
+          return {
+            data: page,
+          };
+        },
         revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
           runtimeMock.state.revertCalls.push({
             sessionID,
@@ -942,6 +992,152 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(runtimeMock.state.promptCalls, []);
     }).pipe(Effect.provide(adapterLayer));
   });
+
+  it.effect("bounds readThread to the latest OpenCode message page", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-read-page");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      runtimeMock.state.messages = Array.from({ length: 250 }, (_, index) => ({
+        info: { id: `assistant-${index + 1}`, role: "assistant" as const },
+        parts: [],
+      }));
+
+      const snapshot = yield* adapter.readThread(threadId);
+
+      NodeAssert.deepEqual(runtimeMock.state.messageCalls, [
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          limit: 100,
+        },
+      ]);
+      NodeAssert.equal(snapshot.turns.length, 100);
+      NodeAssert.equal(snapshot.turns[0]?.id, "assistant-151");
+    }),
+  );
+
+  it.effect("pages older OpenCode messages only when rollback needs them", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-rollback-pages");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      runtimeMock.state.messages = Array.from({ length: 105 }, (_, index) => [
+        {
+          info: { id: `user-${index + 1}`, role: "user" as const },
+          parts: [],
+        },
+        {
+          info: { id: `assistant-${index + 1}`, role: "assistant" as const },
+          parts: [],
+        },
+      ]).flat();
+
+      yield* adapter.rollbackThread(threadId, 100);
+
+      NodeAssert.deepEqual(runtimeMock.state.messageCalls.slice(0, 3), [
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          limit: 100,
+        },
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          limit: 100,
+          before: "user-56",
+        },
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          limit: 100,
+          before: "user-6",
+        },
+      ]);
+      NodeAssert.deepEqual(runtimeMock.state.revertCalls, [
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          messageID: "assistant-5",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("continues rollback pagination when a full page overlaps the previous page", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-rollback-overlap");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      runtimeMock.state.overlapMessagePages = true;
+      runtimeMock.state.messages = Array.from({ length: 105 }, (_, index) => [
+        {
+          info: { id: `user-${index + 1}`, role: "user" as const },
+          parts: [],
+        },
+        {
+          info: { id: `assistant-${index + 1}`, role: "assistant" as const },
+          parts: [],
+        },
+      ]).flat();
+
+      yield* adapter.rollbackThread(threadId, 100);
+
+      NodeAssert.deepEqual(runtimeMock.state.messageCalls.slice(0, 3), [
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          limit: 100,
+        },
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          limit: 100,
+          before: "user-56",
+        },
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          limit: 100,
+          before: "assistant-6",
+        },
+      ]);
+      NodeAssert.deepEqual(runtimeMock.state.revertCalls, [
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          messageID: "assistant-5",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("times out and aborts a stalled OpenCode history read", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-read-timeout");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      runtimeMock.state.messageReadHangs = true;
+
+      const readFiber = yield* Effect.forkChild(Effect.exit(adapter.readThread(threadId)));
+      yield* Effect.yieldNow;
+      yield* advanceTestClock(15_000);
+      const readExit = yield* Fiber.join(readFiber);
+
+      NodeAssert.equal(Exit.isFailure(readExit), true);
+      if (Exit.isFailure(readExit)) {
+        NodeAssert.match(Cause.pretty(readExit.cause), /timed out after 15000ms/u);
+      }
+      NodeAssert.equal(runtimeMock.state.messageReadAbortCount, 1);
+    }),
+  );
 
   it.effect("reverts the full thread when rollback removes every assistant turn", () =>
     Effect.gen(function* () {
