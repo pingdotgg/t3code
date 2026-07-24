@@ -49,6 +49,7 @@ import {
 } from "@t3tools/contracts";
 import {
   buildReviewChangesPrompt,
+  parseReviewChangesScope,
   REVIEW_CHANGES_WORKFLOW_ID,
 } from "@t3tools/shared/workflows/reviewChanges";
 import {
@@ -441,9 +442,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           } satisfies WorkflowRunResult;
         });
 
-      const parseReviewScope = (value: unknown) =>
-        value === "uncommitted" || value === "against-base" ? value : null;
-
       const runWorkflow = (input: WorkflowRunInput) =>
         Effect.gen(function* () {
           const runId = WorkflowRunId.make(input.idempotencyKey);
@@ -505,8 +503,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               const project = projectOption.value;
               const cwd = input.cwd ?? project.workspaceRoot;
               const requestedScope =
-                parseReviewScope(input.input?.scope) ??
-                parseReviewScope(override?.defaultInput?.scope) ??
+                parseReviewChangesScope(input.input?.scope) ??
+                parseReviewChangesScope(override?.defaultInput?.scope) ??
                 reviewSettings.defaultScope ??
                 DEFAULT_REVIEW_CHANGES_SCOPE;
               const reviewContext = yield* git.resolveReviewChangesContext({
@@ -659,8 +657,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           }
 
           const requestedScope =
-            parseReviewScope(input.input?.scope) ??
-            parseReviewScope(override?.defaultInput?.scope) ??
+            parseReviewChangesScope(input.input?.scope) ??
+            parseReviewChangesScope(override?.defaultInput?.scope) ??
             reviewSettings.defaultScope ??
             DEFAULT_REVIEW_CHANGES_SCOPE;
           const reviewContext = yield* git.resolveReviewChangesContext({

@@ -9,6 +9,17 @@ export const REVIEW_CHANGES_WORKFLOW_ID = "review-changes";
 export const REVIEW_CHANGES_VARIANT_IDS = ["uncommitted", "against-base", "pull-request"] as const;
 export type ReviewChangesVariantId = (typeof REVIEW_CHANGES_VARIANT_IDS)[number];
 
+export function parseReviewChangesScope(value: unknown): ReviewChangesScope | null {
+  switch (value) {
+    case "uncommitted":
+    case "against-base":
+    case "pull-request":
+      return value;
+    default:
+      return null;
+  }
+}
+
 export type ReviewChangesPromptContext =
   | {
       readonly scope: "uncommitted";
