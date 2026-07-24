@@ -1428,11 +1428,29 @@ private struct CheckpointRow: View {
     }
 }
 
-/// The agent's current thought: dimmed italic line whose text is replaced in
+/// The agent's current thought: dimmed italic block whose text is replaced in
 /// place as task progress streams (the row id is stable per task), so one
-/// row narrates the work instead of a stack of stale updates.
+/// row narrates the work instead of a stack of stale updates. Long thinking
+/// clamps to a four-line preview behind a Show More/Show Less toggle so a
+/// verbose chain never floods the transcript — and no part of the thought is
+/// ever hidden without a way to reveal it in full.
 private struct ReasoningRow: View {
+    /// Heuristic for "long" thinking; short thoughts always render in full,
+    /// with no toggle chrome.
+    private static let expandableCharThreshold = 420
+
     let text: String
+
+    @UIState private var isExpanded = false
+
+    private var isExpandable: Bool {
+        text.count > Self.expandableCharThreshold
+            || text.filter(\.isNewline).count > 4
+    }
+
+    private var showsPreview: Bool {
+        isExpandable && !isExpanded
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -1440,12 +1458,26 @@ private struct ReasoningRow: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .frame(width: TranscriptMetrics.iconColumn)
-            Text(text)
-                .font(.callout)
-                .italic()
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(text)
+                    .font(.callout)
+                    .italic()
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(showsPreview ? 4 : nil)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if isExpandable {
+                    Button(isExpanded ? "Show Less" : "Show More") {
+                        withDeferredAnimation(Motion.structure) {
+                            isExpanded.toggle()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.tint)
+                }
+            }
         }
         .padding(.leading, TranscriptMetrics.cardPadH)
     }
