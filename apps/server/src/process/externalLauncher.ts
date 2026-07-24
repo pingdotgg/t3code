@@ -18,7 +18,11 @@ import {
   type LaunchEditorInput,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
+import {
+  isCommandAvailable,
+  resolveSpawnCommand,
+  SpawnExecutableResolution,
+} from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -64,6 +68,7 @@ interface TargetPathAndPosition {
 }
 
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
+const EDITOR_DISCOVERY_CONCURRENCY = 4;
 const POWERSHELL_ARGUMENTS_PREFIX = [
   "-NoProfile",
   "-NonInteractive",
@@ -264,24 +269,30 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ReadonlyArray<EditorId>, never, FileSystem.FileSystem | Path.Path> {
-  const available: EditorId[] = [];
-
-  for (const editor of EDITORS) {
-    if (editor.commands === null) {
-      const command = fileManagerCommandForPlatform(platform);
-      if (yield* isCommandAvailable(command, { env })) {
-        available.push(editor.id);
-      }
-      continue;
-    }
-
-    const command = yield* resolveAvailableCommand(editor.commands, env);
-    if (Option.isSome(command)) {
-      available.push(editor.id);
-    }
+  if (platform === "win32") {
+    // Use the existing fast resolver: repeated asynchronous PATH scans exceeded five seconds on the reported machine.
+    const resolveExecutable = yield* SpawnExecutableResolution;
+    return EDITORS.flatMap((editor) => {
+      const commands = editor.commands ?? [fileManagerCommandForPlatform(platform)];
+      return commands.some((command) => resolveExecutable(command, platform, env) !== undefined)
+        ? [editor.id]
+        : [];
+    });
   }
 
-  return available;
+  const availability = yield* Effect.all(
+    EDITORS.map((editor) => {
+      const probe =
+        editor.commands === null
+          ? isCommandAvailable(fileManagerCommandForPlatform(platform), { env })
+          : resolveAvailableCommand(editor.commands, env).pipe(Effect.map(Option.isSome));
+
+      return probe;
+    }),
+    { concurrency: EDITOR_DISCOVERY_CONCURRENCY },
+  );
+
+  return EDITORS.flatMap((editor, index) => (availability[index] ? [editor.id] : []));
 });
 
 const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(function* (

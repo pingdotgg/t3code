@@ -220,6 +220,44 @@ describe("ProcessDiagnostics", () => {
     }),
   );
 
+  it.effect("queries each Windows CIM class once", () =>
+    Effect.gen(function* () {
+      const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
+        [];
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          const childProcess = command as unknown as {
+            readonly command: string;
+            readonly args: ReadonlyArray<string>;
+          };
+          commands.push({ command: childProcess.command, args: childProcess.args });
+          return Effect.succeed(mockHandle({ stdout: "[]" }));
+        }),
+      );
+
+      yield* ProcessDiagnostics.readProcessRows.pipe(
+        Effect.provide(spawnerLayer),
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+
+      expect(commands).toHaveLength(1);
+      const [command] = commands;
+      expect(command?.command).toBe("powershell.exe");
+      expect(command?.args.slice(0, 3)).toEqual(["-NoProfile", "-NonInteractive", "-Command"]);
+      const script = command?.args[3] ?? "";
+      expect(script.match(/Get-CimInstance Win32_Process/g)).toHaveLength(1);
+      expect(
+        script.match(/Get-CimInstance Win32_PerfFormattedData_PerfProc_Process/g),
+      ).toHaveLength(1);
+      expect(script).toMatch(
+        /Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue/,
+      );
+      expect(script).toContain("$perfById[[int]$_.ProcessId]");
+      expect(script).not.toContain("-Filter");
+    }),
+  );
+
   it.effect("keeps bounded command diagnostics when the process query exits unsuccessfully", () =>
     Effect.gen(function* () {
       const spawnerLayer = Layer.succeed(

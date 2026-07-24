@@ -56,10 +56,7 @@ const testLayer = (input: {
   return Layer.mergeAll(
     ExternalLauncher.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, spawnerLayer))),
     Layer.succeed(HostProcessPlatform, input.platform),
-    Layer.succeed(
-      SpawnExecutableResolution,
-      (command) => input.resolveExecutable?.(command) ?? command,
-    ),
+    Layer.succeed(SpawnExecutableResolution, (command) => input.resolveExecutable?.(command)),
     ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.env ?? {} })),
   );
 };
@@ -132,12 +129,6 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
 
 it.effect("discovers editors through the service API", () =>
   Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
-    yield* fileSystem.writeFileString(path.join(binDir, "code.CMD"), "@echo off\r\n");
-    yield* fileSystem.writeFileString(path.join(binDir, "explorer.CMD"), "@echo off\r\n");
-
     const editors = yield* Effect.gen(function* () {
       const launcher = yield* ExternalLauncher.ExternalLauncher;
       return yield* launcher.resolveAvailableEditors();
@@ -145,14 +136,14 @@ it.effect("discovers editors through the service API", () =>
       Effect.provide(
         testLayer({
           platform: "win32",
-          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          resolveExecutable: (command) =>
+            command === "code" || command === "explorer" ? command : undefined,
         }),
       ),
     );
 
-    assert.equal(editors.includes("vscode"), true);
-    assert.equal(editors.includes("file-manager"), true);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    assert.deepEqual(editors, ["vscode", "file-manager"]);
+  }),
 );
 
 it.effect("rejects unknown editors through the service API", () =>

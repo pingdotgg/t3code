@@ -28,7 +28,8 @@ export interface ProcessRow {
   readonly command: string;
 }
 
-const PROCESS_QUERY_TIMEOUT_MS = 1_000;
+const POSIX_PROCESS_QUERY_TIMEOUT_MS = 1_000;
+const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 5_000;
 const POSIX_PROCESS_QUERY_COMMAND = "pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command=";
 const PROCESS_QUERY_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 
@@ -340,6 +341,7 @@ interface ProcessOutput {
 const runProcess = Effect.fn("runProcess")(function* (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly timeoutMillis: number;
 }) {
   const cwd = process.cwd();
   return yield* Effect.gen(function* () {
@@ -381,7 +383,7 @@ const runProcess = Effect.fn("runProcess")(function* (input: {
     } satisfies ProcessOutput;
   }).pipe(
     Effect.scoped,
-    Effect.timeoutOption(Duration.millis(PROCESS_QUERY_TIMEOUT_MS)),
+    Effect.timeoutOption(Duration.millis(input.timeoutMillis)),
     Effect.flatMap((result) =>
       Option.match(result, {
         onNone: () =>
@@ -390,7 +392,7 @@ const runProcess = Effect.fn("runProcess")(function* (input: {
               command: input.command,
               argCount: input.args.length,
               cwd,
-              timeoutMillis: PROCESS_QUERY_TIMEOUT_MS,
+              timeoutMillis: input.timeoutMillis,
             }),
           ),
         onSome: Effect.succeed,
@@ -417,6 +419,7 @@ function readPosixProcessRows(): Effect.Effect<
   return runProcess({
     command: "ps",
     args: ["-axo", POSIX_PROCESS_QUERY_COMMAND],
+    timeoutMillis: POSIX_PROCESS_QUERY_TIMEOUT_MS,
   }).pipe(
     Effect.flatMap((result) =>
       result.exitCode !== 0
@@ -443,8 +446,10 @@ function readWindowsProcessRows(): Effect.Effect<
   ChildProcessSpawner.ChildProcessSpawner
 > {
   const command = [
+    "$perfById = @{};",
+    "Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue | ForEach-Object { $perfById[[int]$_.IDProcess] = $_ };",
     "$processes = Get-CimInstance Win32_Process | ForEach-Object {",
-    '$perf = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -Filter "IDProcess = $($_.ProcessId)" -ErrorAction SilentlyContinue;',
+    "$perf = $perfById[[int]$_.ProcessId];",
     "[pscustomobject]@{ ProcessId = $_.ProcessId; ParentProcessId = $_.ParentProcessId; Name = $_.Name; CommandLine = $_.CommandLine; Status = $_.Status; WorkingSetSize = $_.WorkingSetSize; PercentProcessorTime = if ($perf) { $perf.PercentProcessorTime } else { 0 } }",
     "};",
     "$processes | ConvertTo-Json -Compress -Depth 3",
@@ -453,6 +458,7 @@ function readWindowsProcessRows(): Effect.Effect<
   return runProcess({
     command: "powershell.exe",
     args: ["-NoProfile", "-NonInteractive", "-Command", command],
+    timeoutMillis: WINDOWS_PROCESS_QUERY_TIMEOUT_MS,
   }).pipe(
     Effect.flatMap((result) =>
       result.exitCode !== 0
