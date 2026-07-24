@@ -17,8 +17,18 @@ import {
 export const CLIENT_PERSISTENCE_HYDRATION_TIMEOUT_MS = 3_000;
 let disposeRendererStateFlushHandler: (() => void) | null = null;
 
-export async function flushClientRendererPersistence(): Promise<void> {
-  await Promise.all([
+export async function waitForClientPersistenceFlushes(
+  flushes: ReadonlyArray<Promise<unknown>>,
+): Promise<void> {
+  const results = await Promise.allSettled(flushes);
+  const errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "One or more client persistence flushes failed.");
+  }
+}
+
+export function flushClientRendererPersistence(): Promise<void> {
+  return waitForClientPersistenceFlushes([
     flushClientSettingsPersistence(),
     flushUiStatePersistence(),
     flushComposerPreferencesPersistence(),
@@ -66,7 +76,7 @@ export async function hydrateClientPersistence(): Promise<void> {
     continueUiStatePersistenceHydrationInBackground();
     continueComposerPreferencesHydrationInBackground();
     console.error(
-      `[CLIENT_PERSISTENCE] Initial hydration exceeded ${CLIENT_PERSISTENCE_HYDRATION_TIMEOUT_MS}ms; stale reads were cancelled and durable renderer writes remain guarded while hydration retries in the background.`,
+      `[CLIENT_PERSISTENCE] Initial hydration exceeded ${CLIENT_PERSISTENCE_HYDRATION_TIMEOUT_MS}ms; durable renderer writes remain guarded while the in-flight hydration completes in the background.`,
     );
   }
 }

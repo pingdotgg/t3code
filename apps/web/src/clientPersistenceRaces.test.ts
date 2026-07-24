@@ -75,43 +75,74 @@ describe("desktop client persistence races", () => {
 
   afterEach(() => {
     Reflect.deleteProperty(testWindow(), "desktopBridge");
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  it("cancels a late UI snapshot and durably flushes the post-timeout mutation", async () => {
+  it("keeps one UI hydration read in flight and reconciles repeated local mutations", async () => {
     const initialRead = deferred<string | null>();
-    const recoveryRead = deferred<string | null>();
-    const write = deferred<void>();
-    const setRendererState = vi.fn<DesktopBridge["setRendererState"]>(() => write.promise);
-    const getRendererState = vi
-      .fn()
-      .mockImplementationOnce(() => initialRead.promise)
-      .mockImplementation(() => recoveryRead.promise);
+    const setRendererState = vi.fn<DesktopBridge["setRendererState"]>().mockResolvedValue();
+    const getRendererState = vi.fn(() => initialRead.promise);
     installDesktopPersistenceBridge({
       getRendererState,
       setRendererState,
     });
     const uiState = await import("./uiStateStore");
+    uiState.useUiStateStore.setState({
+      threadChangedFilesExpandedById: {
+        "thread-1": {
+          "turn-baseline": false,
+        },
+      },
+    });
     const hydration = uiState.hydrateUiStateStore();
 
     uiState.continueUiStatePersistenceHydrationInBackground();
-    uiState.useUiStateStore.setState({ projectOrder: ["project-new"] });
-    recoveryRead.resolve('{"projectOrder":["project-old"]}');
-    await vi.waitFor(() => {
-      expect(setRendererState).toHaveBeenCalledOnce();
+    uiState.useUiStateStore.setState({
+      projectOrder: ["project-new"],
+      threadChangedFilesExpandedById: {
+        "thread-1": {
+          "turn-baseline": false,
+          "turn-local": false,
+        },
+      },
     });
+    uiState.continueUiStatePersistenceHydrationInBackground();
 
-    expect(setRendererState.mock.calls[0]?.[0]).toBe("ui-state");
+    expect(getRendererState).toHaveBeenCalledOnce();
+    initialRead.resolve(
+      JSON.stringify({
+        projectOrder: ["project-old"],
+        threadChangedFilesExpandedById: {
+          "thread-1": {
+            "turn-baseline": false,
+            "turn-durable": false,
+          },
+        },
+      }),
+    );
+    await hydration;
+
+    expect(getRendererState).toHaveBeenCalledOnce();
+    expect(uiState.useUiStateStore.getState().projectOrder).toEqual(["project-new"]);
+    expect(uiState.useUiStateStore.getState().threadChangedFilesExpandedById).toEqual({
+      "thread-1": {
+        "turn-baseline": false,
+        "turn-durable": false,
+        "turn-local": false,
+      },
+    });
+    expect(setRendererState).toHaveBeenCalledOnce();
     expect(JSON.parse(setRendererState.mock.calls[0]?.[1] ?? "{}")).toMatchObject({
       projectOrder: ["project-new"],
+      threadChangedFilesExpandedById: {
+        "thread-1": {
+          "turn-baseline": false,
+          "turn-durable": false,
+          "turn-local": false,
+        },
+      },
     });
-
-    write.resolve();
-    initialRead.resolve('{"projectOrder":["project-old"]}');
-    await hydration;
-    await uiState.flushUiStatePersistence();
-
-    expect(uiState.useUiStateStore.getState().projectOrder).toEqual(["project-new"]);
   });
 
   it("re-enables UI persistence after a transient hydration read failure", async () => {
@@ -153,15 +184,10 @@ describe("desktop client persistence races", () => {
     expect(setRendererState).not.toHaveBeenCalled();
   });
 
-  it("cancels a late model snapshot and awaits the latest composer preference write", async () => {
+  it("keeps one composer hydration read in flight and preserves a local provider change", async () => {
     const initialRead = deferred<string | null>();
-    const recoveryRead = deferred<string | null>();
-    const write = deferred<void>();
-    const setRendererState = vi.fn<DesktopBridge["setRendererState"]>(() => write.promise);
-    const getRendererState = vi
-      .fn()
-      .mockImplementationOnce(() => initialRead.promise)
-      .mockImplementation(() => recoveryRead.promise);
+    const setRendererState = vi.fn<DesktopBridge["setRendererState"]>().mockResolvedValue();
+    const getRendererState = vi.fn(() => initialRead.promise);
     installDesktopPersistenceBridge({
       getRendererState,
       setRendererState,
@@ -173,36 +199,26 @@ describe("desktop client persistence races", () => {
     composer.useComposerDraftStore.setState({
       stickyActiveProvider: ProviderInstanceId.make("codex"),
     });
-    recoveryRead.resolve(
-      '{"version":1,"stickyModelSelectionByProvider":{},"stickyActiveProvider":"claudeAgent"}',
-    );
-    await vi.waitFor(() => {
-      expect(setRendererState).toHaveBeenCalledOnce();
-    });
-
-    expect(setRendererState.mock.calls[0]?.[0]).toBe("composer-preferences");
-    expect(JSON.parse(setRendererState.mock.calls[0]?.[1] ?? "{}")).toMatchObject({
-      stickyActiveProvider: "codex",
-    });
-
-    write.resolve();
+    composer.continueComposerPreferencesHydrationInBackground();
+    expect(getRendererState).toHaveBeenCalledOnce();
     initialRead.resolve(
       '{"version":1,"stickyModelSelectionByProvider":{},"stickyActiveProvider":"claudeAgent"}',
     );
     await hydration;
-    await composer.flushComposerPreferencesPersistence();
 
+    expect(getRendererState).toHaveBeenCalledOnce();
+    expect(setRendererState).toHaveBeenCalledOnce();
+    expect(setRendererState.mock.calls[0]?.[0]).toBe("composer-preferences");
+    expect(JSON.parse(setRendererState.mock.calls[0]?.[1] ?? "{}")).toMatchObject({
+      stickyActiveProvider: "codex",
+    });
     expect(composer.useComposerDraftStore.getState().stickyActiveProvider).toBe("codex");
   });
 
   it("merges a post-timeout client edit into every untouched durable sidebar preference", async () => {
     const initialRead = deferred<ClientSettings | null>();
-    const recoveryRead = deferred<ClientSettings | null>();
     const setClientSettings = vi.fn<DesktopBridge["setClientSettings"]>().mockResolvedValue();
-    const getClientSettings = vi
-      .fn<DesktopBridge["getClientSettings"]>()
-      .mockImplementationOnce(() => initialRead.promise)
-      .mockImplementation(() => recoveryRead.promise);
+    const getClientSettings = vi.fn<DesktopBridge["getClientSettings"]>(() => initialRead.promise);
     installClientSettingsBridge({ getClientSettings, setClientSettings });
     const settings = await import("./hooks/useSettings");
     const hydration = settings.hydrateClientSettings();
@@ -222,7 +238,8 @@ describe("desktop client persistence races", () => {
 
     settings.continueClientSettingsHydrationInBackground();
     settings.updateClientSettings({ timestampFormat: "24-hour" });
-    recoveryRead.resolve(savedSettings);
+    expect(getClientSettings).toHaveBeenCalledOnce();
+    initialRead.resolve(savedSettings);
     await vi.waitFor(() => {
       expect(setClientSettings).toHaveBeenCalledOnce();
     });
@@ -278,7 +295,295 @@ describe("desktop client persistence races", () => {
 
     shutdownWrite.resolve();
     await shutdownFlush;
-    initialRead.resolve(savedSettings);
     await hydration;
+  });
+
+  it("waits for slow client-settings hydration before flushing a guarded edit", async () => {
+    const read = deferred<ClientSettings | null>();
+    const setClientSettings = vi.fn<DesktopBridge["setClientSettings"]>().mockResolvedValue();
+    installClientSettingsBridge({
+      getClientSettings: vi.fn(() => read.promise),
+      setClientSettings,
+    });
+    const settings = await import("./hooks/useSettings");
+    void settings.hydrateClientSettings();
+    settings.updateClientSettings({ timestampFormat: "24-hour" });
+
+    const flush = settings.flushClientSettingsPersistence();
+    let flushSettled = false;
+    void flush.then(() => {
+      flushSettled = true;
+    });
+    await Promise.resolve();
+    expect(flushSettled).toBe(false);
+    expect(setClientSettings).not.toHaveBeenCalled();
+
+    read.resolve(DEFAULT_CLIENT_SETTINGS);
+    await flush;
+
+    expect(setClientSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ timestampFormat: "24-hour" }),
+    );
+  });
+
+  it("waits for slow UI-state hydration before flushing a guarded edit", async () => {
+    const read = deferred<string | null>();
+    const setRendererState = vi.fn<DesktopBridge["setRendererState"]>().mockResolvedValue();
+    installDesktopPersistenceBridge({
+      getRendererState: vi.fn(() => read.promise),
+      setRendererState,
+    });
+    const uiState = await import("./uiStateStore");
+    void uiState.hydrateUiStateStore();
+    uiState.useUiStateStore.setState({ projectOrder: ["project-local"] });
+
+    const flush = uiState.flushUiStatePersistence();
+    let flushSettled = false;
+    void flush.then(() => {
+      flushSettled = true;
+    });
+    await Promise.resolve();
+    expect(flushSettled).toBe(false);
+    expect(setRendererState).not.toHaveBeenCalled();
+
+    read.resolve('{"projectOrder":["project-durable"]}');
+    await flush;
+
+    expect(JSON.parse(setRendererState.mock.calls.at(-1)?.[1] ?? "{}")).toMatchObject({
+      projectOrder: ["project-local"],
+    });
+  });
+
+  it("waits for slow composer hydration before flushing a guarded edit", async () => {
+    const read = deferred<string | null>();
+    const setRendererState = vi.fn<DesktopBridge["setRendererState"]>().mockResolvedValue();
+    installDesktopPersistenceBridge({
+      getRendererState: vi.fn(() => read.promise),
+      setRendererState,
+    });
+    const composer = await import("./composerDraftStore");
+    void composer.hydrateComposerPreferences();
+    composer.useComposerDraftStore.setState({
+      stickyActiveProvider: ProviderInstanceId.make("codex"),
+    });
+
+    const flush = composer.flushComposerPreferencesPersistence();
+    let flushSettled = false;
+    void flush.then(() => {
+      flushSettled = true;
+    });
+    await Promise.resolve();
+    expect(flushSettled).toBe(false);
+    expect(setRendererState).not.toHaveBeenCalled();
+
+    read.resolve(
+      '{"version":1,"stickyModelSelectionByProvider":{},"stickyActiveProvider":"claudeAgent"}',
+    );
+    await flush;
+
+    expect(JSON.parse(setRendererState.mock.calls.at(-1)?.[1] ?? "{}")).toMatchObject({
+      stickyActiveProvider: "codex",
+    });
+  });
+
+  it("lets durable composer preferences win over sticky fields in the draft store", async () => {
+    testWindow().localStorage.setItem(
+      "t3code:composer-drafts:v1",
+      JSON.stringify({
+        version: 8,
+        state: {
+          stickyModelSelectionByProvider: {
+            codex: { instanceId: "codex", model: "gpt-legacy" },
+          },
+          stickyActiveProvider: "codex",
+        },
+      }),
+    );
+    const setRendererState = vi.fn<DesktopBridge["setRendererState"]>().mockResolvedValue();
+    installDesktopPersistenceBridge({
+      getRendererState: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          version: 1,
+          stickyModelSelectionByProvider: {
+            claudeAgent: {
+              instanceId: "claudeAgent",
+              model: "claude-durable",
+            },
+          },
+          stickyActiveProvider: "claudeAgent",
+        }),
+      ),
+      setRendererState,
+    });
+
+    const composer = await import("./composerDraftStore");
+    await composer.hydrateComposerPreferences();
+
+    expect(composer.useComposerDraftStore.getState()).toMatchObject({
+      stickyModelSelectionByProvider: {
+        claudeAgent: {
+          instanceId: "claudeAgent",
+          model: "claude-durable",
+        },
+      },
+      stickyActiveProvider: "claudeAgent",
+    });
+    expect(setRendererState).not.toHaveBeenCalled();
+  });
+
+  it("migrates sticky composer preferences out of the legacy draft document", async () => {
+    testWindow().localStorage.setItem(
+      "t3code:composer-drafts:v1",
+      JSON.stringify({
+        version: 8,
+        state: {
+          stickyModelSelectionByProvider: {
+            codex: { instanceId: "codex", model: "gpt-legacy" },
+          },
+          stickyActiveProvider: "codex",
+        },
+      }),
+    );
+    const setRendererState = vi.fn<DesktopBridge["setRendererState"]>().mockResolvedValue();
+    installDesktopPersistenceBridge({
+      getRendererState: vi.fn().mockResolvedValue(null),
+      setRendererState,
+    });
+
+    const composer = await import("./composerDraftStore");
+    await composer.hydrateComposerPreferences();
+
+    expect(composer.useComposerDraftStore.getState()).toMatchObject({
+      stickyModelSelectionByProvider: {
+        codex: { instanceId: "codex", model: "gpt-legacy" },
+      },
+      stickyActiveProvider: "codex",
+    });
+    expect(setRendererState).toHaveBeenCalledOnce();
+    expect(setRendererState.mock.calls[0]?.[0]).toBe("composer-preferences");
+    expect(JSON.parse(setRendererState.mock.calls[0]?.[1] ?? "{}")).toEqual({
+      version: 1,
+      stickyModelSelectionByProvider: {
+        codex: { instanceId: "codex", model: "gpt-legacy" },
+      },
+      stickyActiveProvider: "codex",
+    });
+    expect(testWindow().localStorage.getItem("t3code:composer-drafts:v1")).not.toBeNull();
+  });
+
+  it("keeps the active provider when its model changes during hydration", async () => {
+    const read = deferred<string | null>();
+    const setRendererState = vi.fn<DesktopBridge["setRendererState"]>().mockResolvedValue();
+    installDesktopPersistenceBridge({
+      getRendererState: vi.fn(() => read.promise),
+      setRendererState,
+    });
+    const composer = await import("./composerDraftStore");
+    composer.useComposerDraftStore.setState({
+      stickyModelSelectionByProvider: {
+        [ProviderInstanceId.make("codex")]: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-baseline",
+        },
+      },
+      stickyActiveProvider: ProviderInstanceId.make("codex"),
+    });
+    const hydration = composer.hydrateComposerPreferences();
+    composer.useComposerDraftStore.setState({
+      stickyModelSelectionByProvider: {
+        [ProviderInstanceId.make("codex")]: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-local",
+        },
+      },
+    });
+
+    read.resolve(
+      JSON.stringify({
+        version: 1,
+        stickyModelSelectionByProvider: {
+          claudeAgent: { instanceId: "claudeAgent", model: "claude-durable" },
+          codex: { instanceId: "codex", model: "gpt-durable" },
+        },
+        stickyActiveProvider: "claudeAgent",
+      }),
+    );
+    await hydration;
+
+    expect(composer.useComposerDraftStore.getState()).toMatchObject({
+      stickyModelSelectionByProvider: {
+        claudeAgent: { instanceId: "claudeAgent", model: "claude-durable" },
+        codex: { instanceId: "codex", model: "gpt-local" },
+      },
+      stickyActiveProvider: "codex",
+    });
+  });
+
+  it("retries a transient reconciled UI-state write failure", async () => {
+    vi.useFakeTimers();
+    const setRendererState = vi
+      .fn<DesktopBridge["setRendererState"]>()
+      .mockRejectedValueOnce(new Error("write failed"))
+      .mockResolvedValue(undefined);
+    installDesktopPersistenceBridge({
+      getRendererState: vi.fn().mockResolvedValue('{"projectOrder":["project-durable"]}'),
+      setRendererState,
+    });
+    const uiState = await import("./uiStateStore");
+    const hydration = uiState.hydrateUiStateStore();
+    uiState.useUiStateStore.setState({ projectOrder: ["project-local"] });
+    await hydration;
+
+    expect(setRendererState).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.waitFor(() => {
+      expect(setRendererState).toHaveBeenCalledTimes(2);
+    });
+    expect(JSON.parse(setRendererState.mock.calls[1]?.[1] ?? "{}")).toMatchObject({
+      projectOrder: ["project-local"],
+    });
+  });
+
+  it("retries failed debounced composer preference writes", async () => {
+    vi.useFakeTimers();
+    const setRendererState = vi
+      .fn<DesktopBridge["setRendererState"]>()
+      .mockRejectedValueOnce(new Error("write failed"))
+      .mockResolvedValue(undefined);
+    installDesktopPersistenceBridge({
+      getRendererState: vi.fn().mockResolvedValue(null),
+      setRendererState,
+    });
+    const composer = await import("./composerDraftStore");
+    await composer.hydrateComposerPreferences();
+    composer.useComposerDraftStore.setState({
+      stickyActiveProvider: ProviderInstanceId.make("codex"),
+    });
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(setRendererState).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => {
+      expect(setRendererState).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("falls back to initial UI state when browser localStorage reads throw", async () => {
+    Reflect.deleteProperty(testWindow(), "desktopBridge");
+    const blockedStorage = {
+      ...createLocalStorageStub(),
+      getItem: () => {
+        throw new DOMException("blocked", "SecurityError");
+      },
+    } as Storage;
+    Object.defineProperty(testWindow(), "localStorage", {
+      configurable: true,
+      value: blockedStorage,
+    });
+    vi.stubGlobal("localStorage", blockedStorage);
+
+    const uiState = await import("./uiStateStore");
+
+    expect(uiState.useUiStateStore.getState().projectOrder).toEqual([]);
   });
 });

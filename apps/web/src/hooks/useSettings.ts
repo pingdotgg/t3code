@@ -158,9 +158,10 @@ export function continueClientSettingsHydrationInBackground(): void {
     return;
   }
   clientSettingsHydrationBaseline ??= clientSettingsSnapshot;
-  clientSettingsHydrationGeneration += 1;
-  clientSettingsHydrationPromise = null;
   setClientSettingsHydrated(true);
+  if (clientSettingsHydrationPromise !== null) {
+    return;
+  }
   void hydrateClientSettings();
 }
 
@@ -247,6 +248,9 @@ function persistClientSettings(settings: ClientSettings): void {
 }
 
 export async function flushClientSettingsPersistence(): Promise<void> {
+  if (!clientSettingsPersistenceReady) {
+    await hydrateClientSettings();
+  }
   if (!clientSettingsPersistenceReady) {
     return;
   }

@@ -107,6 +107,7 @@ const withIdentity = <A, E, R>(
     readonly environment?: TestEnvironmentInput;
     readonly existingUserDataPaths?: readonly string[];
     readonly pathProbeError?: PlatformError.PlatformError;
+    readonly renameError?: PlatformError.PlatformError;
     readonly packageJson?: string;
     readonly pngIconPath?: Option.Option<string>;
     readonly renamedPaths?: Array<{ readonly from: string; readonly to: string }>;
@@ -130,9 +131,11 @@ const withIdentity = <A, E, R>(
             readFileString: () =>
               Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
             rename: (from, to) =>
-              Effect.sync(() => {
-                input.renamedPaths?.push({ from, to });
-              }),
+              input.renameError
+                ? Effect.fail(input.renameError)
+                : Effect.sync(() => {
+                    input.renamedPaths?.push({ from, to });
+                  }),
           }),
         ),
         Layer.provideMerge(makeAssetsLayer(input.pngIconPath ?? Option.none())),
@@ -185,9 +188,10 @@ describe("DesktopAppIdentity", () => {
     );
   });
 
-  it.effect("uses the Nightly legacy path only for Nightly builds", () => {
+  it.effect("prefers the historical packaged profile when Nightly legacy profiles coexist", () => {
     const renamedPaths: Array<{ readonly from: string; readonly to: string }> = [];
-    const legacyPath = "/Users/alice/Library/Application Support/T3 Code (Nightly)";
+    const historicalLegacyPath = "/Users/alice/Library/Application Support/T3 Code (Alpha)";
+    const nightlyLegacyPath = "/Users/alice/Library/Application Support/T3 Code (Nightly)";
     const canonicalPath = "/Users/alice/Library/Application Support/t3code";
 
     return withIdentity(
@@ -196,16 +200,13 @@ describe("DesktopAppIdentity", () => {
         const userDataPath = yield* identity.resolveUserDataPath;
 
         assert.equal(userDataPath, canonicalPath);
-        assert.deepEqual(renamedPaths, [{ from: legacyPath, to: canonicalPath }]);
+        assert.deepEqual(renamedPaths, [{ from: historicalLegacyPath, to: canonicalPath }]);
       }),
       {
         environment: {
           appVersion: "0.0.29-nightly.20260723.864",
         },
-        existingUserDataPaths: [
-          "/Users/alice/Library/Application Support/T3 Code (Alpha)",
-          legacyPath,
-        ],
+        existingUserDataPaths: [historicalLegacyPath, nightlyLegacyPath],
         renamedPaths,
       },
     );
@@ -226,8 +227,7 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
 
-        assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathResolutionError);
-        assert.equal(error.operation, "inspect-path");
+        assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathInspectionError);
         assert.equal(error.path, canonicalPath);
         assert.strictEqual(error.cause, cause);
         assert.equal(
@@ -236,6 +236,38 @@ describe("DesktopAppIdentity", () => {
         );
       }),
       { pathProbeError: cause },
+    );
+  });
+
+  it.effect("preserves failures while migrating a legacy userData path", () => {
+    const legacyPath = "/Users/alice/Library/Application Support/T3 Code (Alpha)";
+    const canonicalPath = "/Users/alice/Library/Application Support/t3code";
+    const cause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "rename",
+      description: "permission denied",
+      pathOrDescriptor: legacyPath,
+    });
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathMigrationError);
+        assert.equal(error.path, legacyPath);
+        assert.equal(error.targetPath, canonicalPath);
+        assert.strictEqual(error.cause, cause);
+        assert.equal(
+          error.message,
+          `Failed to migrate legacy desktop user-data path from "${legacyPath}" to "${canonicalPath}".`,
+        );
+      }),
+      {
+        existingUserDataPaths: [legacyPath],
+        renameError: cause,
+      },
     );
   });
 

@@ -106,8 +106,8 @@ describe("DesktopEnvironment", () => {
         appVersion: "0.0.29-nightly.20260723.864",
       });
 
-      assert.equal(alpha.legacyUserDataDirName, "T3 Code (Alpha)");
-      assert.equal(nightly.legacyUserDataDirName, "T3 Code (Nightly)");
+      assert.deepEqual(alpha.legacyUserDataDirNames, ["T3 Code (Alpha)"]);
+      assert.deepEqual(nightly.legacyUserDataDirNames, ["T3 Code (Alpha)", "T3 Code (Nightly)"]);
       assert.equal(alpha.userDataDirName, "t3code");
       assert.equal(nightly.userDataDirName, "t3code");
     }),

@@ -176,6 +176,50 @@ describe("LocalApi", () => {
     expect(testWindow().localStorage.getItem("t3code:ui-state:v1")).toBeNull();
   });
 
+  it("migrates legacy sticky preferences without deleting persisted composer drafts", async () => {
+    const getRendererState = vi.fn().mockResolvedValue(null);
+    const setRendererState = vi.fn().mockResolvedValue(undefined);
+    const legacyDrafts = JSON.stringify({
+      version: 8,
+      state: {
+        draftsByThreadKey: {
+          "environment:thread": {
+            prompt: "keep this draft",
+            attachments: [],
+          },
+        },
+        stickyModelSelectionByProvider: {
+          codex: {
+            instanceId: "codex",
+            model: "gpt-5.6-sol",
+          },
+        },
+        stickyActiveProvider: "codex",
+      },
+    });
+    testWindow().localStorage.setItem("t3code:composer-drafts:v1", legacyDrafts);
+    testWindow().desktopBridge = {
+      getRendererState,
+      setRendererState,
+    } as unknown as DesktopBridge;
+
+    const { createLocalApi } = await import("./localApi");
+    const migrated = await createLocalApi().persistence.getRendererState("composer-preferences");
+
+    expect(migrated === null ? null : JSON.parse(migrated)).toEqual({
+      version: 1,
+      stickyModelSelectionByProvider: {
+        codex: {
+          instanceId: "codex",
+          model: "gpt-5.6-sol",
+        },
+      },
+      stickyActiveProvider: "codex",
+    });
+    expect(setRendererState).toHaveBeenCalledWith("composer-preferences", migrated);
+    expect(testWindow().localStorage.getItem("t3code:composer-drafts:v1")).toBe(legacyDrafts);
+  });
+
   it("keeps renderer state in localStorage when no desktop bridge is present", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi();

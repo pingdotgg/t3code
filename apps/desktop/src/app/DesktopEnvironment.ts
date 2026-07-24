@@ -67,7 +67,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly linuxDesktopEntryName: string;
     readonly linuxWmClass: string;
     readonly userDataDirName: string;
-    readonly legacyUserDataDirName: string;
+    readonly legacyUserDataDirNames: readonly string[];
     readonly defaultDesktopSettings: DesktopAppSettings.DesktopSettings;
     readonly runtimeInfo: DesktopRuntimeInfo;
     readonly resolvePickFolderDefaultPath: (rawOptions: unknown) => Option.Option<string>;
@@ -161,7 +161,9 @@ const make = Effect.fn("desktop.environment.make")(function* (
     isDevelopment && Option.isNone(configuredBaseDir) ? "dev" : "userdata",
   );
   const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = displayName;
+  const legacyUserDataDirNames = isDevelopment
+    ? [displayName]
+    : [...new Set(["T3 Code (Alpha)", displayName])];
   const resourcesPath = input.resourcesPath;
 
   return DesktopEnvironment.of({
@@ -206,7 +208,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
     linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
     userDataDirName,
-    legacyUserDataDirName,
+    legacyUserDataDirNames,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
     runtimeInfo: resolveDesktopRuntimeInfo({
       platform: input.platform,
