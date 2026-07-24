@@ -2,14 +2,18 @@ import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
   CommandId,
+  EventId,
   MessageId,
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -35,6 +39,8 @@ import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import type { ProviderAdapterV2Event, ProviderAdapterV2SessionRuntime } from "./ProviderAdapter.ts";
 import { ProviderEventIngestorV2 } from "./ProviderEventIngestor.ts";
 import {
+  canRouteRelatedSubagent,
+  cascadeTerminalizeRunOwnedSubagents,
   finalProviderThreadStatus,
   layer as runExecutionServiceLayer,
   makeProviderEventRoutingState,
@@ -179,6 +185,52 @@ it("does not route a superseded attempt through a reused provider thread", () =>
 
   const newState = makeProviderEventRoutingState({ identity: newAttempt, providerTurnId: null });
   assert.isFalse(routeProviderEvent(oldTurnEvent, newAttempt, newState)[0]);
+});
+
+it("does not carry interrupted child ownership into later attempts", () => {
+  assert.isFalse(canRouteRelatedSubagent("interrupted"));
+  assert.isFalse(canRouteRelatedSubagent("failed"));
+  assert.isFalse(canRouteRelatedSubagent("cancelled"));
+  assert.isTrue(canRouteRelatedSubagent("completed"));
+  assert.isTrue(canRouteRelatedSubagent("running"));
+
+  const threadId = ThreadId.make("thread:related-child:next-attempt");
+  const childThreadId = ThreadId.make("thread:related-child:interrupted");
+  const identity: ProviderEventRouteIdentity = {
+    threadId,
+    runId: RunId.make("run:related-child:next-attempt"),
+    attemptId: RunAttemptId.make("attempt:related-child:next-attempt"),
+    providerThreadId: ProviderThreadId.make("provider-thread:related-child:next-attempt"),
+  };
+  const state = makeProviderEventRoutingState({
+    identity,
+    providerTurnId: null,
+    relatedThreadIds: canRouteRelatedSubagent("interrupted") ? [childThreadId] : [],
+  });
+  const childNodeId = NodeId.make("node:related-child:interrupted");
+  const lateChildNode = {
+    type: "node.updated",
+    driver,
+    node: {
+      id: childNodeId,
+      threadId: childThreadId,
+      runId: null,
+      parentNodeId: null,
+      rootNodeId: childNodeId,
+      kind: "root_turn",
+      status: "completed",
+      countsForRun: false,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      runtimeRequestId: null,
+      checkpointScopeId: null,
+      startedAt: null,
+      completedAt: null,
+    },
+  } satisfies ProviderAdapterV2Event;
+
+  assert.isFalse(routeProviderEvent(lateChildNode, identity, state)[0]);
 });
 
 it.effect("rechecks run ownership immediately before calling the provider", () =>
@@ -542,11 +594,863 @@ it.effect("does not pin ingestion on background items when the root turn is inte
   }),
 );
 
-it.effect("omits run_interrupt_result when a superseding attempt already owns the run", () =>
+it.effect(
+  "cascade-terminalizes run-owned subagent rows on interrupt before root finalization",
+  () =>
+    Effect.gen(function* () {
+      const ids = backgroundScenarioIds("subagent-interrupt-cascade");
+      const childThreadId = ids.childThreadId;
+      const unrelatedChildThreadId = ThreadId.make(
+        "thread:subagent-interrupt-cascade:unrelated-child",
+      );
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const written = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+      const ingested = yield* Ref.make<ReadonlyArray<ProviderAdapterV2Event>>([]);
+      const ingestionDone = yield* Deferred.make<void>();
+      const testLayer = runExecutionServiceLayer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
+            Layer.mock(EventSinkV2)({
+              write: () => Effect.succeed([]),
+              writeWithEffects: (input) =>
+                Effect.gen(function* () {
+                  yield* Ref.update(written, (current) => [...current, ...input.events]);
+                  return [];
+                }),
+              writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
+            }),
+            idAllocatorLayer,
+            Layer.mock(ProviderEventIngestorV2)({
+              ingestNormalized: (input) =>
+                Ref.update(ingested, (current) => [...current, input.event]).pipe(Effect.as([])),
+            }),
+            ServerSettingsService.layerTest(),
+          ),
+        ),
+      );
+
+      const runningSubagent = makeRunOwnedSubagentFixture({
+        ids,
+        providerInstanceId,
+        childThreadId,
+        driver,
+        status: "running",
+      });
+      const runningTurnItem = makeRunOwnedSubagentTurnItemFixture({
+        ids,
+        providerInstanceId,
+        childThreadId,
+        driver,
+        status: "running",
+      });
+      const runningNode = makeRunOwnedSubagentNodeFixture({
+        ids,
+        status: "running",
+      });
+      const runningChildNode = makeRunOwnedSubagentChildNodeFixture({
+        ids,
+        status: "running",
+      });
+      const runningChildTurnItem = makeLinkedChildTurnItemFixture({
+        ids,
+        driver,
+        type: "command_execution",
+      });
+      const suppressedChildAssistantTurnItem = makeLinkedChildTurnItemFixture({
+        ids: {
+          ...ids,
+          childItemId: TurnItemId.make("turn-item:subagent-interrupt-cascade:suppressed-assistant"),
+        },
+        driver,
+        type: "assistant_message",
+      });
+      const unrelatedChildNode = {
+        ...runningChildNode,
+        id: NodeId.make("node:subagent-interrupt-cascade:unrelated-child"),
+        threadId: unrelatedChildThreadId,
+        runId: ids.runId,
+        rootNodeId: NodeId.make("node:subagent-interrupt-cascade:unrelated-child"),
+      };
+      const unrelatedChildTurnItem = {
+        ...runningChildTurnItem,
+        id: TurnItemId.make("turn-item:subagent-interrupt-cascade:unrelated-child"),
+        threadId: unrelatedChildThreadId,
+        nodeId: unrelatedChildNode.id,
+      };
+
+      yield* Effect.gen(function* () {
+        const runExecution = yield* RunExecutionServiceV2;
+        yield* runExecution.startRootRun({
+          commandId: CommandId.make("command:subagent-interrupt-cascade"),
+          appThread: { id: ids.threadId } as OrchestrationV2AppThread,
+          providerSessionId: ProviderSessionId.make("session:subagent-interrupt-cascade"),
+          session: {
+            events: Stream.empty,
+            subscribeEvents: Effect.succeed({
+              events: Stream.fromIterable([
+                childThreadCreatedEvent(ids),
+                {
+                  type: "subagent.updated",
+                  driver,
+                  subagent: runningSubagent,
+                },
+                {
+                  type: "node.updated",
+                  driver,
+                  node: runningNode,
+                },
+                {
+                  type: "node.updated",
+                  driver,
+                  node: runningChildNode,
+                },
+                {
+                  type: "node.updated",
+                  driver,
+                  node: unrelatedChildNode,
+                },
+                {
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: runningTurnItem,
+                },
+                {
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: runningChildTurnItem,
+                },
+                {
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: suppressedChildAssistantTurnItem,
+                },
+                {
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: unrelatedChildTurnItem,
+                },
+                rootTerminalEvent(ids, "interrupted"),
+                // Late provider completion after interrupt must not be ingested.
+                {
+                  type: "subagent.updated",
+                  driver,
+                  subagent: {
+                    ...runningSubagent,
+                    status: "completed" as const,
+                    result: "should-not-apply",
+                    completedAt: runningSubagent.updatedAt,
+                  },
+                },
+                {
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: {
+                    ...runningTurnItem,
+                    status: "completed" as const,
+                    result: "should-not-apply",
+                    completedAt: runningTurnItem.updatedAt,
+                    updatedAt: runningTurnItem.updatedAt,
+                  },
+                },
+                {
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: {
+                    ...runningChildTurnItem,
+                    status: "completed" as const,
+                    completedAt: runningChildTurnItem.updatedAt,
+                    updatedAt: runningChildTurnItem.updatedAt,
+                  },
+                },
+                {
+                  type: "node.updated",
+                  driver,
+                  node: {
+                    ...runningChildNode,
+                    status: "completed" as const,
+                    completedAt: runningChildNode.startedAt,
+                  },
+                },
+              ] satisfies ReadonlyArray<ProviderAdapterV2Event>),
+              close: Deferred.succeed(ingestionDone, undefined),
+            }),
+            startTurn: () => Effect.void,
+          } as unknown as ProviderAdapterV2SessionRuntime,
+          run: {
+            id: ids.runId,
+            threadId: ids.threadId,
+            ordinal: 1,
+            providerInstanceId,
+          } as OrchestrationV2Run,
+          rootNode: { id: ids.rootNodeId } as OrchestrationV2ExecutionNode,
+          checkpointScope: {
+            id: CheckpointScopeId.make("checkpoint-scope:subagent-interrupt-cascade"),
+          } as OrchestrationV2CheckpointScope,
+          providerThread: {
+            id: ids.providerThreadId,
+            driver,
+          } as OrchestrationV2ProviderThread,
+          attempt: {
+            id: ids.attemptId,
+            providerTurnId: ids.rootProviderTurnId,
+          } as OrchestrationV2RunAttempt,
+          attemptId: ids.attemptId,
+          relatedThreadIds: [unrelatedChildThreadId],
+          providerTurnOrdinal: 1,
+          message: {
+            messageId: MessageId.make("message:subagent-interrupt-cascade:user"),
+            text: "Spawn a subagent then stop.",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+          modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+            approvalPolicy: "never",
+            sandboxPolicy: {
+              type: "readOnly",
+              access: { type: "fullAccess" },
+              networkAccess: false,
+            },
+          },
+        });
+      }).pipe(Effect.provide(testLayer));
+
+      const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
+      assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
+
+      const events = yield* Ref.get(written);
+      const subagentEvents = events.flatMap((event) =>
+        event.type === "subagent.updated" ? [event] : [],
+      );
+      const turnItemEvents = events.flatMap((event) => {
+        if (event.type !== "turn-item.updated" || event.payload.type !== "subagent") {
+          return [];
+        }
+        return [
+          {
+            ...event,
+            payload: event.payload,
+          },
+        ];
+      });
+      const nodeEvents = events.flatMap((event) =>
+        event.type === "node.updated" &&
+        event.payload.status === "interrupted" &&
+        (event.payload.id === runningNode.id || event.payload.id === runningChildNode.id)
+          ? [event]
+          : [],
+      );
+      const runUpdatedIndex = events.findIndex((event) => event.type === "run.updated");
+      assert.isAtLeast(runUpdatedIndex, 0, "root run.updated must be written");
+
+      assert.lengthOf(subagentEvents, 1);
+      const terminalSubagent = subagentEvents[0];
+      assert.isDefined(terminalSubagent);
+      assert.equal(terminalSubagent.payload.status, "interrupted");
+      assert.equal(terminalSubagent.payload.childThreadId, childThreadId);
+      assert.equal(terminalSubagent.payload.result, null);
+      assert.isNotNull(terminalSubagent.payload.completedAt);
+
+      assert.lengthOf(turnItemEvents, 1);
+      const terminalTurnItem = turnItemEvents[0];
+      assert.isDefined(terminalTurnItem);
+      assert.equal(terminalTurnItem.payload.status, "interrupted");
+      assert.equal(terminalTurnItem.payload.childThreadId, childThreadId);
+      assert.equal(terminalTurnItem.payload.result, null);
+
+      const terminalChildTurnItems = events.flatMap((event) =>
+        event.type === "turn-item.updated" &&
+        event.payload.id === runningChildTurnItem.id &&
+        event.payload.status === "interrupted"
+          ? [event]
+          : [],
+      );
+      assert.lengthOf(terminalChildTurnItems, 1);
+      const terminalChildTurnItem = terminalChildTurnItems[0];
+      assert.isDefined(terminalChildTurnItem);
+      assert.equal(terminalChildTurnItem.threadId, childThreadId);
+      assert.equal(terminalChildTurnItem.payload.threadId, childThreadId);
+      assert.equal(terminalChildTurnItem.payload.runId, null);
+      assert.equal(terminalChildTurnItem.payload.type, "command_execution");
+      assert.isFalse(
+        events.some(
+          (event) =>
+            event.type === "turn-item.updated" &&
+            event.payload.id === unrelatedChildTurnItem.id &&
+            event.payload.status === "interrupted",
+        ),
+        "related but unlinked child turn items must not cascade",
+      );
+      assert.isFalse(
+        events.some(
+          (event) =>
+            event.type === "turn-item.updated" &&
+            event.payload.id === suppressedChildAssistantTurnItem.id,
+        ),
+        "suppressed streaming child items must not be created by the cascade",
+      );
+
+      assert.lengthOf(nodeEvents, 2);
+      assert.isTrue(
+        nodeEvents.some(
+          (event) => event.payload.id === runningNode.id && event.payload.kind === "subagent",
+        ),
+      );
+      assert.isFalse(
+        events.some(
+          (event) =>
+            event.type === "node.updated" &&
+            event.payload.id === unrelatedChildNode.id &&
+            event.payload.status === "interrupted",
+        ),
+        "owned child threads without a live run-owned subagent link must not cascade",
+      );
+      assert.isTrue(
+        nodeEvents.some(
+          (event) =>
+            event.payload.id === runningChildNode.id &&
+            event.runId === (runningChildNode.runId ?? ids.runId) &&
+            event.payload.threadId === childThreadId &&
+            event.payload.kind === "root_turn",
+        ),
+      );
+
+      const cascadeIndexes = events.flatMap((event, index) => {
+        if (event.type === "subagent.updated" && event.payload.status === "interrupted") {
+          return [index];
+        }
+        if (
+          event.type === "turn-item.updated" &&
+          event.payload.status === "interrupted" &&
+          (event.payload.type === "subagent" || event.payload.id === runningChildTurnItem.id)
+        ) {
+          return [index];
+        }
+        if (event.type === "node.updated" && event.payload.status === "interrupted") {
+          return event.payload.id === runningNode.id || event.payload.id === runningChildNode.id
+            ? [index]
+            : [];
+        }
+        return [];
+      });
+      assert.isTrue(
+        cascadeIndexes.every((index) => index < runUpdatedIndex),
+        "subagent cascade must precede run.updated",
+      );
+      assert.isFalse(
+        events.some((event) => {
+          if (event.type === "subagent.updated") {
+            return event.payload.status === "completed";
+          }
+          if (event.type === "turn-item.updated" && event.payload.type === "subagent") {
+            return event.payload.status === "completed";
+          }
+          return false;
+        }),
+        "late provider completion must not reopen cascaded subagent rows",
+      );
+      assert.isFalse(
+        (yield* Ref.get(ingested)).some(
+          (event) =>
+            (event.type === "subagent.updated" && event.subagent.status === "completed") ||
+            (event.type === "turn_item.updated" && event.turnItem.status === "completed") ||
+            (event.type === "node.updated" && event.node.status === "completed"),
+        ),
+        "late provider completion must not be ingested after interrupt",
+      );
+    }),
+);
+
+it.effect(
+  "cascades linked child-thread nodes after run-owned subagent and turn-item terminalize",
+  () =>
+    Effect.gen(function* () {
+      const ids = backgroundScenarioIds("subagent-link-survives-terminal");
+      const childThreadId = ids.childThreadId;
+      const unrelatedChildThreadId = ThreadId.make(
+        "thread:subagent-link-survives-terminal:unrelated-child",
+      );
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const written = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+      const ingestionDone = yield* Deferred.make<void>();
+      const testLayer = runExecutionServiceLayer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
+            Layer.mock(EventSinkV2)({
+              write: () => Effect.succeed([]),
+              writeWithEffects: (input) =>
+                Effect.gen(function* () {
+                  yield* Ref.update(written, (current) => [...current, ...input.events]);
+                  return [];
+                }),
+              writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
+            }),
+            idAllocatorLayer,
+            Layer.mock(ProviderEventIngestorV2)({
+              ingestNormalized: () => Effect.succeed([]),
+            }),
+            ServerSettingsService.layerTest(),
+          ),
+        ),
+      );
+
+      const runningSubagent = makeRunOwnedSubagentFixture({
+        ids,
+        providerInstanceId,
+        childThreadId,
+        driver,
+        status: "running",
+      });
+      const runningTurnItem = makeRunOwnedSubagentTurnItemFixture({
+        ids,
+        providerInstanceId,
+        childThreadId,
+        driver,
+        status: "running",
+      });
+      const runningNode = makeRunOwnedSubagentNodeFixture({
+        ids,
+        status: "running",
+      });
+      const runningChildNode = makeRunOwnedSubagentChildNodeFixture({
+        ids,
+        status: "running",
+      });
+      const unrelatedChildNode = {
+        ...runningChildNode,
+        id: NodeId.make("node:subagent-link-survives-terminal:unrelated-child"),
+        threadId: unrelatedChildThreadId,
+        runId: ids.runId,
+        rootNodeId: NodeId.make("node:subagent-link-survives-terminal:unrelated-child"),
+      };
+      const completedAt = runningSubagent.updatedAt;
+
+      yield* Effect.gen(function* () {
+        const runExecution = yield* RunExecutionServiceV2;
+        yield* runExecution.startRootRun({
+          commandId: CommandId.make("command:subagent-link-survives-terminal"),
+          appThread: { id: ids.threadId } as OrchestrationV2AppThread,
+          providerSessionId: ProviderSessionId.make("session:subagent-link-survives-terminal"),
+          session: {
+            events: Stream.empty,
+            subscribeEvents: Effect.succeed({
+              events: Stream.fromIterable([
+                childThreadCreatedEvent(ids),
+                {
+                  type: "subagent.updated",
+                  driver,
+                  subagent: runningSubagent,
+                },
+                {
+                  type: "node.updated",
+                  driver,
+                  node: runningNode,
+                },
+                {
+                  type: "node.updated",
+                  driver,
+                  node: runningChildNode,
+                },
+                {
+                  type: "node.updated",
+                  driver,
+                  node: unrelatedChildNode,
+                },
+                {
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: runningTurnItem,
+                },
+                // Subagent + turn-item settle before root interrupt; linkage
+                // must still prove the open child-thread node is cascadeable.
+                {
+                  type: "subagent.updated",
+                  driver,
+                  subagent: {
+                    ...runningSubagent,
+                    status: "completed" as const,
+                    result: "subagent finished first",
+                    completedAt,
+                  },
+                },
+                {
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: {
+                    ...runningTurnItem,
+                    status: "completed" as const,
+                    result: "turn item finished first",
+                    completedAt,
+                    updatedAt: completedAt,
+                  },
+                },
+                {
+                  type: "node.updated",
+                  driver,
+                  node: {
+                    ...runningNode,
+                    status: "completed" as const,
+                    completedAt,
+                  },
+                },
+                rootTerminalEvent(ids, "interrupted"),
+              ] satisfies ReadonlyArray<ProviderAdapterV2Event>),
+              close: Deferred.succeed(ingestionDone, undefined),
+            }),
+            startTurn: () => Effect.void,
+          } as unknown as ProviderAdapterV2SessionRuntime,
+          run: {
+            id: ids.runId,
+            threadId: ids.threadId,
+            ordinal: 1,
+            providerInstanceId,
+          } as OrchestrationV2Run,
+          rootNode: { id: ids.rootNodeId } as OrchestrationV2ExecutionNode,
+          checkpointScope: {
+            id: CheckpointScopeId.make("checkpoint-scope:subagent-link-survives-terminal"),
+          } as OrchestrationV2CheckpointScope,
+          providerThread: {
+            id: ids.providerThreadId,
+            driver,
+          } as OrchestrationV2ProviderThread,
+          attempt: {
+            id: ids.attemptId,
+            providerTurnId: ids.rootProviderTurnId,
+          } as OrchestrationV2RunAttempt,
+          attemptId: ids.attemptId,
+          relatedThreadIds: [unrelatedChildThreadId],
+          providerTurnOrdinal: 1,
+          message: {
+            messageId: MessageId.make("message:subagent-link-survives-terminal:user"),
+            text: "Subagent settles before root interrupt.",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+          modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+            approvalPolicy: "never",
+            sandboxPolicy: {
+              type: "readOnly",
+              access: { type: "fullAccess" },
+              networkAccess: false,
+            },
+          },
+        });
+      }).pipe(Effect.provide(testLayer));
+
+      const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
+      assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
+
+      const events = yield* Ref.get(written);
+      const runUpdatedIndex = events.findIndex((event) => event.type === "run.updated");
+      assert.isAtLeast(runUpdatedIndex, 0, "root run.updated must be written");
+
+      const cascadedChildNodeEvents = events.flatMap((event, index) =>
+        event.type === "node.updated" &&
+        event.payload.id === runningChildNode.id &&
+        event.payload.status === "interrupted"
+          ? [{ event, index }]
+          : [],
+      );
+      assert.lengthOf(
+        cascadedChildNodeEvents,
+        1,
+        "open linked child-thread node must cascade after subagent/turn-item terminalize",
+      );
+      const cascadedChild = cascadedChildNodeEvents[0];
+      assert.isDefined(cascadedChild);
+      assert.isTrue(
+        cascadedChild.index < runUpdatedIndex,
+        "child-thread cascade must precede run.updated",
+      );
+      assert.equal(cascadedChild.event.payload.threadId, childThreadId);
+      assert.equal(cascadedChild.event.payload.kind, "root_turn");
+      assert.isFalse(
+        events.some(
+          (event) =>
+            event.type === "node.updated" &&
+            event.payload.id === unrelatedChildNode.id &&
+            event.payload.status === "interrupted",
+        ),
+        "related but unlinked child threads must not cascade",
+      );
+      assert.isFalse(
+        events.some(
+          (event) => event.type === "subagent.updated" && event.payload.status === "interrupted",
+        ),
+        "already-terminal subagent rows must not be re-cascaded",
+      );
+      assert.isFalse(
+        events.some(
+          (event) =>
+            event.type === "turn-item.updated" &&
+            event.payload.type === "subagent" &&
+            event.payload.status === "interrupted",
+        ),
+        "already-terminal subagent turn items must not be re-cascaded",
+      );
+    }),
+);
+
+it.effect("cascade helper is provider-neutral for Claude and Codex-shaped child projections", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    let nextId = 0;
+    const allocateEventId = () =>
+      Effect.sync(() => EventId.make(`event:cascade-helper:${nextId++}`));
+
+    for (const driverKind of [
+      ProviderDriverKind.make("claudeAgent"),
+      ProviderDriverKind.make("codex"),
+    ] as const) {
+      const runId = RunId.make(`run:cascade-helper:${driverKind}`);
+      const threadId = ThreadId.make(`thread:cascade-helper:${driverKind}`);
+      const childThreadId = ThreadId.make(`thread:cascade-helper:${driverKind}:child`);
+      const subagentId = NodeId.make(`node:cascade-helper:${driverKind}:subagent`);
+      const childNodeId = NodeId.make(`node:cascade-helper:${driverKind}:child-root`);
+      const providerInstanceId = ProviderInstanceId.make(String(driverKind));
+      const terminalStatus = driverKind === "claudeAgent" ? "failed" : "cancelled";
+      const subagent: OrchestrationV2Subagent = {
+        id: subagentId,
+        threadId,
+        runId,
+        parentNodeId: NodeId.make(`node:cascade-helper:${driverKind}:root`),
+        origin: "provider_native",
+        createdBy: "agent",
+        driver: driverKind,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: {
+          driver: driverKind,
+          nativeId: `native-${driverKind}`,
+          strength: "strong",
+        },
+        prompt: "hold",
+        title: "hold",
+        model: null,
+        status: "running",
+        progress: "partial progress",
+        result: "partial result",
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      };
+      const turnItem = {
+        id: TurnItemId.make(`turn-item:cascade-helper:${driverKind}`),
+        threadId,
+        runId,
+        nodeId: subagentId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: subagent.nativeTaskRef,
+        parentItemId: null,
+        ordinal: 3,
+        status: "running" as const,
+        title: "hold",
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "subagent" as const,
+        subagentId,
+        origin: "provider_native" as const,
+        driver: driverKind,
+        providerInstanceId,
+        childThreadId,
+        prompt: "hold",
+        progress: "partial progress",
+        result: "partial result",
+      } satisfies Extract<OrchestrationV2TurnItem, { type: "subagent" }>;
+      const node: OrchestrationV2ExecutionNode = {
+        id: subagentId,
+        threadId,
+        runId,
+        parentNodeId: NodeId.make(`node:cascade-helper:${driverKind}:root`),
+        rootNodeId: NodeId.make(`node:cascade-helper:${driverKind}:root`),
+        kind: "subagent",
+        status: "running",
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: subagent.nativeTaskRef,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      };
+      const openChildNode: OrchestrationV2ExecutionNode = {
+        id: childNodeId,
+        threadId: childThreadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: childNodeId,
+        kind: "root_turn",
+        status: "running",
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      };
+      const childTurnItem: OrchestrationV2TurnItem =
+        driverKind === "claudeAgent"
+          ? {
+              id: TurnItemId.make(`turn-item:cascade-helper:${driverKind}:child-reasoning`),
+              threadId: childThreadId,
+              runId: null,
+              nodeId: childNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "running",
+              title: "Working",
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+              type: "reasoning",
+              text: "partial progress",
+              streaming: true,
+            }
+          : {
+              id: TurnItemId.make(`turn-item:cascade-helper:${driverKind}:child-command`),
+              threadId: childThreadId,
+              runId: null,
+              nodeId: childNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "running",
+              title: "sleep 300",
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+              type: "command_execution",
+              input: "sleep 300",
+            };
+
+      const events = yield* cascadeTerminalizeRunOwnedSubagents({
+        run: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId,
+        } as OrchestrationV2Run,
+        open: {
+          subagents: new Map([[subagentId, subagent]]),
+          turnItems: new Map([[subagentId, turnItem]]),
+          childTurnItems: new Map(),
+          nodes: new Map([[subagentId, node]]),
+          linkedChildThreadIds: new Set([childThreadId]),
+        },
+        status: terminalStatus,
+        completedAt: now,
+        allocateEventId,
+      });
+
+      assert.equal(events.length, 3, `${driverKind}: subagent + node + turn item`);
+      const terminalSubagent = events.find((event) => event.type === "subagent.updated");
+      assert.isDefined(terminalSubagent);
+      if (terminalSubagent?.type !== "subagent.updated") {
+        assert.fail("expected subagent.updated event");
+        return;
+      }
+      assert.equal(terminalSubagent.payload.status, terminalStatus);
+      assert.equal(terminalSubagent.payload.childThreadId, childThreadId);
+      assert.equal(terminalSubagent.payload.progress, "partial progress");
+      assert.equal(terminalSubagent.payload.result, "partial result");
+      assert.equal(terminalSubagent.payload.driver, driverKind);
+
+      const terminalItem = events.find(
+        (event) => event.type === "turn-item.updated" && event.payload.type === "subagent",
+      );
+      assert.isDefined(terminalItem);
+      if (terminalItem?.type !== "turn-item.updated" || terminalItem.payload.type !== "subagent") {
+        assert.fail("expected subagent turn-item.updated event");
+        return;
+      }
+      assert.equal(terminalItem.payload.status, terminalStatus);
+      assert.equal(terminalItem.payload.childThreadId, childThreadId);
+      assert.equal(terminalItem.payload.progress, "partial progress");
+      assert.equal(terminalItem.payload.result, "partial result");
+
+      // Shared cascade path: after subagent/turn-item rows are gone, only the
+      // preserved linkage may prove an open child-thread node is cascadeable.
+      const afterTerminalLinkEvents = yield* cascadeTerminalizeRunOwnedSubagents({
+        run: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId,
+        } as OrchestrationV2Run,
+        open: {
+          subagents: new Map(),
+          turnItems: new Map(),
+          childTurnItems: new Map([[childTurnItem.id, childTurnItem]]),
+          nodes: new Map([[childNodeId, openChildNode]]),
+          linkedChildThreadIds: new Set([childThreadId]),
+        },
+        status: terminalStatus,
+        completedAt: now,
+        allocateEventId,
+      });
+      assert.equal(
+        afterTerminalLinkEvents.length,
+        2,
+        `${driverKind}: linked child node and turn item cascade after link rows terminalize`,
+      );
+      const cascadedChild = afterTerminalLinkEvents.find((event) => event.type === "node.updated");
+      assert.isDefined(cascadedChild);
+      if (cascadedChild?.type !== "node.updated") {
+        assert.fail("expected node.updated for linked child thread");
+        return;
+      }
+      assert.equal(cascadedChild.payload.id, childNodeId);
+      assert.equal(cascadedChild.payload.threadId, childThreadId);
+      assert.equal(cascadedChild.payload.status, terminalStatus);
+      assert.equal(cascadedChild.payload.kind, "root_turn");
+      const cascadedChildTurnItem = afterTerminalLinkEvents.find(
+        (event) => event.type === "turn-item.updated",
+      );
+      assert.isDefined(cascadedChildTurnItem);
+      if (cascadedChildTurnItem?.type !== "turn-item.updated") {
+        assert.fail("expected turn-item.updated for linked child thread");
+        return;
+      }
+      assert.equal(cascadedChildTurnItem.threadId, childThreadId);
+      assert.equal(cascadedChildTurnItem.payload.id, childTurnItem.id);
+      assert.equal(cascadedChildTurnItem.payload.status, terminalStatus);
+      assert.equal(cascadedChildTurnItem.payload.runId, null);
+      assert.equal(cascadedChildTurnItem.payload.type, childTurnItem.type);
+      if (cascadedChildTurnItem.payload.type === "reasoning") {
+        assert.isFalse(cascadedChildTurnItem.payload.streaming);
+      }
+    }
+  }),
+);
+
+it.effect("omits interrupt results and subagent cascade for a superseded attempt", () =>
   Effect.gen(function* () {
     const written = yield* captureInterruptTerminalTurnItems({
       key: "steer-supersede",
       shouldFinalizeRun: () => Effect.succeed(false),
+      seedOpenSubagent: true,
     });
     assert.deepEqual(
       written.map((item) => item.type),
@@ -609,10 +1513,18 @@ function captureInterruptTerminalTurnItems(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, never>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
+  readonly seedOpenSubagent?: boolean;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
     const providerInstanceId = ProviderInstanceId.make("codex");
+    const runningSubagent = makeRunOwnedSubagentFixture({
+      ids,
+      providerInstanceId,
+      childThreadId: ids.childThreadId,
+      driver,
+      status: "running",
+    });
     const writtenItems = yield* Ref.make<
       ReadonlyArray<{ readonly type: string; readonly parentItemId: string | null }>
     >([]);
@@ -668,7 +1580,30 @@ function captureInterruptTerminalTurnItems(input: {
         session: {
           events: Stream.empty,
           subscribeEvents: Effect.succeed({
-            events: Stream.fromIterable([rootTerminalEvent(ids, "interrupted")]),
+            events: Stream.fromIterable([
+              ...(input.seedOpenSubagent
+                ? [
+                    { type: "subagent.updated", driver, subagent: runningSubagent } as const,
+                    {
+                      type: "node.updated",
+                      driver,
+                      node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+                    } as const,
+                    {
+                      type: "turn_item.updated",
+                      driver,
+                      turnItem: makeRunOwnedSubagentTurnItemFixture({
+                        ids,
+                        providerInstanceId,
+                        childThreadId: ids.childThreadId,
+                        driver,
+                        status: "running",
+                      }),
+                    } as const,
+                  ]
+                : []),
+              rootTerminalEvent(ids, "interrupted"),
+            ] satisfies ReadonlyArray<ProviderAdapterV2Event>),
             close: Deferred.succeed(ingestionDone, undefined),
           }),
           startTurn: () => Effect.void,
@@ -829,6 +1764,177 @@ function subagentEvent(
       status,
     },
   } as ProviderAdapterV2Event;
+}
+
+function makeRunOwnedSubagentFixture(input: {
+  readonly ids: BackgroundScenarioIds;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly childThreadId: ThreadId;
+  readonly driver: typeof driver;
+  readonly status: "running" | "interrupted";
+}): OrchestrationV2Subagent {
+  const now = DateTime.makeUnsafe("2026-07-21T12:00:00.000Z");
+  return {
+    id: input.ids.subagentNodeId,
+    threadId: input.ids.threadId,
+    runId: input.ids.runId,
+    parentNodeId: input.ids.rootNodeId,
+    origin: "provider_native",
+    createdBy: "agent",
+    driver: input.driver,
+    providerInstanceId: input.providerInstanceId,
+    providerThreadId: null,
+    childThreadId: input.childThreadId,
+    nativeTaskRef: {
+      driver: input.driver,
+      nativeId: `task:${input.ids.subagentNodeId}`,
+      strength: "strong",
+    },
+    prompt: "hold",
+    title: "Live-test subagent hold",
+    model: null,
+    status: input.status,
+    result: null,
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+  };
+}
+
+function makeRunOwnedSubagentTurnItemFixture(input: {
+  readonly ids: BackgroundScenarioIds;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly childThreadId: ThreadId;
+  readonly driver: typeof driver;
+  readonly status: "running" | "interrupted";
+}): Extract<OrchestrationV2TurnItem, { type: "subagent" }> {
+  const now = DateTime.makeUnsafe("2026-07-21T12:00:00.000Z");
+  return {
+    id: input.ids.itemId,
+    threadId: input.ids.threadId,
+    runId: input.ids.runId,
+    nodeId: input.ids.subagentNodeId,
+    providerThreadId: input.ids.providerThreadId,
+    providerTurnId: input.ids.rootProviderTurnId,
+    nativeItemRef: {
+      driver: input.driver,
+      nativeId: `task:${input.ids.subagentNodeId}`,
+      strength: "strong",
+    },
+    parentItemId: null,
+    ordinal: 3,
+    status: input.status,
+    title: "Live-test subagent hold",
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+    type: "subagent",
+    subagentId: input.ids.subagentNodeId,
+    origin: "provider_native",
+    driver: input.driver,
+    providerInstanceId: input.providerInstanceId,
+    childThreadId: input.childThreadId,
+    prompt: "hold",
+    result: null,
+  };
+}
+
+function makeLinkedChildTurnItemFixture(input: {
+  readonly ids: BackgroundScenarioIds;
+  readonly driver: typeof driver;
+  readonly type: "assistant_message" | "command_execution" | "reasoning";
+}): OrchestrationV2TurnItem {
+  const now = DateTime.makeUnsafe("2026-07-21T12:00:00.000Z");
+  const base = {
+    id: input.ids.childItemId,
+    threadId: input.ids.childThreadId,
+    runId: null,
+    nodeId: NodeId.make(`${input.ids.subagentNodeId}:child-root`),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "running" as const,
+    title: "Working",
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+  };
+  if (input.type === "assistant_message") {
+    return {
+      ...base,
+      type: "assistant_message",
+      messageId: MessageId.make(`${input.ids.childItemId}:message`),
+      text: "partial response",
+      streaming: true,
+    };
+  }
+  if (input.type === "reasoning") {
+    return {
+      ...base,
+      type: "reasoning",
+      text: "partial progress",
+      streaming: true,
+    };
+  }
+  return {
+    ...base,
+    type: "command_execution",
+    input: "sleep 300",
+  };
+}
+
+function makeRunOwnedSubagentNodeFixture(input: {
+  readonly ids: BackgroundScenarioIds;
+  readonly status: "running" | "interrupted";
+}): OrchestrationV2ExecutionNode {
+  const now = DateTime.makeUnsafe("2026-07-21T12:00:00.000Z");
+  return {
+    id: input.ids.subagentNodeId,
+    threadId: input.ids.threadId,
+    runId: input.ids.runId,
+    parentNodeId: input.ids.rootNodeId,
+    rootNodeId: input.ids.rootNodeId,
+    kind: "subagent",
+    status: input.status,
+    countsForRun: false,
+    providerThreadId: input.ids.providerThreadId,
+    providerTurnId: input.ids.rootProviderTurnId,
+    nativeItemRef: {
+      driver,
+      nativeId: `task:${input.ids.subagentNodeId}`,
+      strength: "strong",
+    },
+    runtimeRequestId: null,
+    checkpointScopeId: null,
+    startedAt: now,
+    completedAt: null,
+  };
+}
+
+function makeRunOwnedSubagentChildNodeFixture(input: {
+  readonly ids: BackgroundScenarioIds;
+  readonly status: "running" | "interrupted";
+}): OrchestrationV2ExecutionNode {
+  const now = DateTime.makeUnsafe("2026-07-21T12:00:00.000Z");
+  return {
+    id: NodeId.make(`${input.ids.subagentNodeId}:child-root`),
+    threadId: input.ids.childThreadId,
+    runId: null,
+    parentNodeId: null,
+    rootNodeId: NodeId.make(`${input.ids.subagentNodeId}:child-root`),
+    kind: "root_turn",
+    status: input.status,
+    countsForRun: false,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    runtimeRequestId: null,
+    checkpointScopeId: null,
+    startedAt: now,
+    completedAt: null,
+  };
 }
 
 function rootTerminalEvent(
