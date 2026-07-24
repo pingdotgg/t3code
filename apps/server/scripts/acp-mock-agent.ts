@@ -20,6 +20,8 @@ const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHO
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
+const xAiPromptCompleteMethod =
+  process.env.T3_ACP_XAI_PROMPT_COMPLETE_METHOD ?? "_x.ai/session/prompt_complete";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
@@ -477,14 +479,14 @@ const program = Effect.gen(function* () {
 
       if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 2) {
         const currentPromptId = promptIdFromRequestMeta(request) ?? "mock-current-xai-prompt-2";
-        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+        writeJsonRpcNotification(xAiPromptCompleteMethod, {
           sessionId: requestedSessionId,
           promptId: "mock-stale-xai-prompt-1",
           stopReason: "end_turn",
           agentResult: null,
         });
 
-        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+        writeJsonRpcNotification(xAiPromptCompleteMethod, {
           sessionId: requestedSessionId,
           promptId: currentPromptId,
           stopReason: "end_turn",
@@ -502,13 +504,13 @@ const program = Effect.gen(function* () {
       if (emitOverlappingXAiPromptCompleteOutOfOrder && promptCount === 2) {
         const secondPromptId = promptIdFromRequestMeta(request);
         if (overlappingFirstPromptId !== undefined && secondPromptId !== undefined) {
-          writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          writeJsonRpcNotification(xAiPromptCompleteMethod, {
             sessionId: requestedSessionId,
             promptId: secondPromptId,
             stopReason: "end_turn",
             agentResult: null,
           });
-          writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          writeJsonRpcNotification(xAiPromptCompleteMethod, {
             sessionId: requestedSessionId,
             promptId: overlappingFirstPromptId,
             stopReason: "end_turn",
@@ -541,7 +543,7 @@ const program = Effect.gen(function* () {
           });
         }
 
-        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+        writeJsonRpcNotification(xAiPromptCompleteMethod, {
           sessionId: requestedSessionId,
           promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
           ...(omitXAiPromptCompleteStopReason ? {} : { stopReason: "end_turn" }),
