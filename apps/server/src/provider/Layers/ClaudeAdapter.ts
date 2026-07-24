@@ -407,6 +407,16 @@ function asRuntimeItemId(value: string): RuntimeItemId {
   return RuntimeItemId.make(value);
 }
 
+/**
+ * Claude reports compaction through `status: compacting` / `compact_boundary`
+ * system messages rather than thread items. Synthesize a stable item id per
+ * turn so both lifecycle events share one `context_compaction` item and the
+ * ingestion layer can treat every provider identically.
+ */
+function claudeCompactionItemId(context: ClaudeSessionContext): RuntimeItemId {
+  return asRuntimeItemId(`claude-compaction-${context.turnState?.turnId ?? "no-turn"}`);
+}
+
 function maxClaudeContextWindowFromModelUsage(
   modelUsage: Record<string, ModelUsage> | undefined,
 ): number | undefined {
@@ -3684,6 +3694,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "status":
+        if (message.status === "compacting") {
+          // Surface compaction as a synthetic thread item so ingestion can
+          // show an in-progress compaction row, shared with other providers.
+          yield* offerRuntimeEvent({
+            ...base,
+            itemId: claudeCompactionItemId(context),
+            type: "item.started",
+            payload: {
+              itemType: "context_compaction",
+              status: "inProgress",
+              title: "Compacting context",
+            },
+          });
+        }
         yield* offerRuntimeEvent({
           ...base,
           type: "session.state.changed",
@@ -3694,19 +3718,38 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
-      case "compact_boundary":
-        yield* emitThreadTokenUsage(
-          context,
-          compactBoundaryTokenUsageSnapshot(
-            message as unknown as Record<string, unknown>,
-            context.lastKnownContextWindow,
-            context.lastKnownTotalProcessedTokens,
-          ),
-          {
-            rawMethod: "claude/system/compact_boundary",
-            rawPayload: message,
-          },
+      case "compact_boundary": {
+        const compactionUsage = compactBoundaryTokenUsageSnapshot(
+          message as unknown as Record<string, unknown>,
+          context.lastKnownContextWindow,
+          context.lastKnownTotalProcessedTokens,
         );
+        // Complete the synthetic compaction item BEFORE the token-usage and
+        // thread-state events so the ingestion layer records the terminal
+        // compaction row (with the pre/post token snapshot) first.
+        yield* offerRuntimeEvent({
+          ...base,
+          itemId: claudeCompactionItemId(context),
+          type: "item.completed",
+          payload: {
+            itemType: "context_compaction",
+            status: "completed",
+            title: "Context compacted",
+            ...(compactionUsage?.lastUsedTokens !== undefined
+              ? { usedTokensBefore: compactionUsage.lastUsedTokens }
+              : {}),
+            ...(compactionUsage !== undefined
+              ? { usedTokensAfter: compactionUsage.usedTokens }
+              : {}),
+            ...(compactionUsage?.maxTokens !== undefined
+              ? { maxTokens: compactionUsage.maxTokens }
+              : {}),
+          },
+        });
+        yield* emitThreadTokenUsage(context, compactionUsage, {
+          rawMethod: "claude/system/compact_boundary",
+          rawPayload: message,
+        });
         yield* offerRuntimeEvent({
           ...base,
           type: "thread.state.changed",
@@ -3716,6 +3759,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
+      }
       case "hook_started":
         yield* offerRuntimeEvent({
           ...base,

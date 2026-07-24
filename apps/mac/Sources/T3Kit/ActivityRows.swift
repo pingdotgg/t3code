@@ -30,7 +30,25 @@ public enum T3ActivityRow: Sendable, Equatable {
     /// Streaming task/reasoning progress ("what the agent is thinking now");
     /// successive updates of the same task share an id and replace in place.
     case reasoning(id: String, text: String)
+    /// Context-compaction lifecycle (`context-compaction` kind). The started
+    /// and terminal activities share one activity id (coalesced per turn), so
+    /// the terminal state replaces the in-progress row in place.
+    case compaction(
+        id: String, status: ContextCompactionStatus, summary: String,
+        usedTokensBefore: Int?, usedTokensAfter: Int?, maxTokens: Int?, detail: String?)
     case notice(id: String, text: String)
+
+    /// Stable identity for the app layer's upsert: lifecycle updates of one
+    /// tool call, reasoning stream, or compaction share it and replace the
+    /// prior row in place.
+    public var id: String {
+        switch self {
+        case .tool(let id, _, _, _, _, _, _): id
+        case .reasoning(let id, _): id
+        case .compaction(let id, _, _, _, _, _, _): id
+        case .notice(let id, _): id
+        }
+    }
 }
 
 public enum ActivityRows {
@@ -53,6 +71,12 @@ public enum ActivityRows {
             // T3SubagentTaskActivityState before calling this generic mapper;
             // mapping one event here would split/lose lifecycle aggregation.
             return nil
+
+        case ActivityKind.contextCompaction:
+            // A payload whose status this build can't place degrades to the
+            // generic tone-based rendering below (usually a plain notice with
+            // the server summary).
+            if let row = compactionRow(for: activity) { return row }
 
         case ActivityKind.turnReasoning:
             // Live reasoning/thought stream for the active turn. Stable id +
@@ -175,6 +199,33 @@ public enum ActivityRows {
         return .tool(
             id: id, title: title, detail: detail, itemType: nonEmpty(payload?.itemType),
             phase: phase, output: extracted?.text, outputIsError: extracted?.isError ?? false)
+    }
+
+    /// Context-compaction lifecycle row. The activity id is the row id: the
+    /// server coalesces one compaction per turn onto a single activity, so the
+    /// terminal event arrives with the same id and replaces the in-progress
+    /// row via the usual upsert path. Nil when the payload carries no status
+    /// this build understands — the caller then degrades to generic rendering.
+    private static func compactionRow(for activity: OrchestrationThreadActivity) -> T3ActivityRow? {
+        let payload = activity.decodePayload(ContextCompactionActivityPayload.self)
+        guard let status = payload?.status else { return nil }
+        let summary =
+            nonEmpty(activity.summary) ?? Self.defaultCompactionSummary(for: status)
+        return .compaction(
+            id: activity.id, status: status, summary: summary,
+            usedTokensBefore: payload?.usedTokensBefore,
+            usedTokensAfter: payload?.usedTokensAfter,
+            maxTokens: payload?.maxTokens,
+            detail: nonEmpty(payload?.detail))
+    }
+
+    private static func defaultCompactionSummary(for status: ContextCompactionStatus) -> String {
+        switch status {
+        case .started: "Compacting context…"
+        case .completed: "Context compacted"
+        case .failed: "Context compaction failed"
+        case .canceled: "Context compaction canceled"
+        }
     }
 
     private static func toolCallId(in payload: JSONValue) -> String? {

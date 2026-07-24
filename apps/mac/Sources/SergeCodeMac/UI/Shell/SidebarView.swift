@@ -1,14 +1,13 @@
 import SwiftUI
 
 private enum SidebarRowContext {
-    case shortcut
     case project(showMachine: Bool)
     case search
 }
 
 /// A project-first sidebar that presents local and remote sessions in one
-/// hierarchy. Attention shortcuts stay compact at the top, while Projects is
-/// the canonical home for ordering and managing each session.
+/// hierarchy: one collapsible section per project, ordered by most recent
+/// activity, with inline thread creation and per-project management.
 struct SidebarView: View {
     let multi: MultiDeviceModel
     let scenery: SceneryStore
@@ -29,7 +28,10 @@ struct SidebarView: View {
     @UIState private var deleteThreadTarget: ThreadActionTarget?
     @UIState private var forgetTarget: RemoteDeviceSession?
     @UIState private var searchText = ""
-    @UIState private var settledVisibleCount = 10
+    /// Projects whose thread list is expanded past the per-section cap.
+    @UIState private var expandedProjects: Set<String> = []
+    /// Projects whose settled-thread disclosure is open.
+    @UIState private var revealedSettled: Set<String> = []
 
     @AppStorage("sidebarMachineScope") private var machineScopeStorage =
         SidebarMachineScope.allStorageValue
@@ -57,18 +59,6 @@ struct SidebarView: View {
         SidebarProjection.activeThreads(in: projectGroups)
     }
 
-    private var settledThreads: [SidebarThreadItem] {
-        SidebarProjection.settledThreads(in: projectGroups)
-    }
-
-    private var visibleSettledThreads: [SidebarThreadItem] {
-        Array(settledThreads.prefix(settledVisibleCount))
-    }
-
-    private var hiddenSettledCount: Int {
-        max(0, settledThreads.count - visibleSettledThreads.count)
-    }
-
     private var searchResults: [SidebarThreadItem] {
         SidebarProjection.searchResults(in: projectGroups, query: searchText)
     }
@@ -86,7 +76,7 @@ struct SidebarView: View {
                 projectGroups: allProjectGroups,
                 projectScopeID: projectScopeID,
                 onSelectScope: setMachineScope,
-                onSelectProject: { projectScopeID = $0; settledVisibleCount = 10 })
+                onSelectProject: { projectScopeID = $0 })
 
             List(selection: Binding(
                 get: { multi.selection },
@@ -95,7 +85,7 @@ struct SidebarView: View {
                 if isSearching {
                     searchSection
                 } else {
-                    inboxSections
+                    projectSections
                 }
             }
             .listStyle(.sidebar)
@@ -215,58 +205,16 @@ struct SidebarView: View {
         }
     }
 
-    @ViewBuilder
-    private var inboxSections: some View {
-        Section {
-            if activeThreads.isEmpty {
-                SidebarEmptyRow(
-                    title: "Inbox clear",
-                    systemImage: "checkmark.circle",
-                    detail: emptyProjectMessage)
-            } else {
-                ForEach(activeThreads, id: \.id) { item in
-                    threadRow(item, context: .shortcut)
-                }
-            }
-        } header: {
-            SidebarSectionLabel(title: "Active", count: activeThreads.count, tint: AlpineTheme.meadow)
-        }
-
-        if !visibleSettledThreads.isEmpty {
-            Section {
-                ForEach(visibleSettledThreads, id: \.id) { item in
-                    threadRow(item, context: .shortcut)
-                }
-                if hiddenSettledCount > 0 {
-                    Button {
-                        settledVisibleCount += 25
-                    } label: {
-                        HStack {
-                            Spacer()
-                            Text("Show \(min(hiddenSettledCount, 25)) more")
-                                .font(.caption)
-                            Text("(\(hiddenSettledCount) hidden)")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.vertical, 4)
-                }
-            } header: {
-                SidebarSectionLabel(title: "Settled", count: settledThreads.count)
-            }
-        }
-    }
+    /// Rows shown per project before the "Show more" affordance kicks in.
+    private static let visibleThreadCap = 5
 
     @ViewBuilder
     private var projectSections: some View {
         if projectGroups.isEmpty {
             Section {
                 SidebarEmptyRow(
-                    title: "No active tasks",
-                    systemImage: "tray",
+                    title: "No projects yet",
+                    systemImage: "folder",
                     detail: emptyProjectMessage)
             } header: {
                 SidebarSectionLabel(title: "Projects")
@@ -276,22 +224,17 @@ struct SidebarView: View {
                 let isCollapsed = collapsedProjects.contains(group.id)
                 Section {
                     if !isCollapsed {
-                        ForEach(group.threads, id: \.id) { item in
-                            threadRow(
-                                item,
-                                context: .project(showMachine: group.members.count > 1))
-                        }
-                        .onMove { offsets, destination in
-                            moveThreads(in: group, fromOffsets: offsets, toOffset: destination)
-                        }
+                        projectSectionContent(group)
                     }
                 } header: {
                     ProjectSectionHeader(
                         group: group,
                         scenery: scenery,
                         isCollapsed: isCollapsed,
+                        machineBadge: machineBadge(for: group),
                         onToggleCollapse: { toggleProjectCollapse(group.id) },
                         onNewSession: createThread,
+                        onChooseTarget: openAdvancedNewSession,
                         onRename: beginRename,
                         onDelete: { member in
                             deleteTarget = ProjectActionTarget(
@@ -303,16 +246,108 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
+    private func projectSectionContent(_ group: SidebarProjectGroup) -> some View {
+        let split = SidebarProjection.groupThreads(group)
+        let showMachine = group.members.count > 1
+        if split.active.isEmpty && split.settled.isEmpty {
+            SidebarEmptyRow(
+                title: "No sessions",
+                systemImage: "bubble.left",
+                detail: "Use + above to start a session in this project.")
+        } else {
+            let isExpanded = expandedProjects.contains(group.id)
+            let visibleActive =
+                isExpanded ? split.active : Array(split.active.prefix(Self.visibleThreadCap))
+            ForEach(visibleActive, id: \.id) { item in
+                threadRow(item, context: .project(showMachine: showMachine))
+            }
+            let hiddenCount = split.active.count - visibleActive.count
+            if hiddenCount > 0 {
+                Button {
+                    expandedProjects.insert(group.id)
+                } label: {
+                    HStack {
+                        Spacer()
+                        Text("Show \(hiddenCount) more")
+                            .font(.caption)
+                        Spacer()
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 4)
+            }
+            if !split.settled.isEmpty {
+                settledDisclosure(group: group, settled: split.settled, showMachine: showMachine)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func settledDisclosure(
+        group: SidebarProjectGroup,
+        settled: [SidebarThreadItem],
+        showMachine: Bool
+    ) -> some View {
+        let isRevealed = revealedSettled.contains(group.id)
+        Button {
+            withAnimation(Motion.feedback) {
+                if isRevealed {
+                    revealedSettled.remove(group.id)
+                } else {
+                    revealedSettled.insert(group.id)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isRevealed ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 12, height: 12)
+                Text("Settled")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("\(settled.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 4)
+        .accessibilityLabel(
+            isRevealed
+                ? "Hide \(settled.count) settled sessions in \(group.name)"
+                : "Show \(settled.count) settled sessions in \(group.name)")
+        if isRevealed {
+            ForEach(settled, id: \.id) { item in
+                threadRow(item, context: .project(showMachine: showMachine))
+            }
+        }
+    }
+
+    /// Machine context shown on headers when the sidebar spans machines: a
+    /// count for repository-merged groups, the machine name for remote-only
+    /// projects, nothing for local-only ones.
+    private func machineBadge(for group: SidebarProjectGroup) -> String? {
+        guard machineScope == .all else { return nil }
+        if group.members.count > 1 {
+            return "\(group.members.count) machines"
+        }
+        let member = group.preferredMember
+        return member.location.isLocal ? nil : member.location.name
+    }
+
+    @ViewBuilder
     private func threadRow(_ item: SidebarThreadItem, context: SidebarRowContext) -> some View {
         SidebarThreadRow(item: item, context: context)
             .tag(item.id)
             .disabled(!item.isSelectable)
             .opacity(item.isSelectable ? 1 : 0.5)
-            // Applied here rather than at each `ForEach` so all five sections
-            // (search, needs-you, running, pinned, project) share one rule and
-            // the project section's `.onMove` offsets stay untouched.
-            // Unstaggered: sections are short and re-sort as thread status
-            // changes, and a cascade on every re-sort would read as fidgeting.
+            // Applied here rather than at each `ForEach` so the search and
+            // project sections share one rule. Unstaggered: sections are
+            // short and re-sort as thread status changes, and a cascade on
+            // every re-sort would read as fidgeting.
             .entrance(.row)
             .contextMenu {
                 let model = item.member.location.model
@@ -323,6 +358,17 @@ struct SidebarView: View {
                     model.togglePinned(item.thread)
                 }
                 .disabled(!item.isSelectable)
+                Menu("New Thread in This Project", systemImage: "plus.bubble") {
+                    ForEach(model.configuredProviderKinds) { provider in
+                        Button {
+                            createThread(item.member, provider: provider)
+                        } label: {
+                            ProviderLabel(provider: provider)
+                        }
+                        .disabled(!model.canCreateThread(with: provider))
+                    }
+                }
+                .disabled(!item.isSelectable || model.configuredProviderKinds.isEmpty)
                 Divider()
                 if item.thread.status != .settled && item.thread.status != .archived {
                     Button("Settle Thread", systemImage: "checkmark.circle") {
@@ -344,19 +390,6 @@ struct SidebarView: View {
                     deleteThreadTarget = ThreadActionTarget(model: model, thread: item.thread)
                 }
                 .disabled(!item.isSelectable)
-                if case .project = context {
-                    Divider()
-                    Button("Move Up", systemImage: "arrow.up") {
-                        model.moveThread(item.thread, direction: .up)
-                    }
-                    .disabled(
-                        !item.isSelectable || !model.canMoveThread(item.thread, direction: .up))
-                    Button("Move Down", systemImage: "arrow.down") {
-                        model.moveThread(item.thread, direction: .down)
-                    }
-                    .disabled(
-                        !item.isSelectable || !model.canMoveThread(item.thread, direction: .down))
-                }
             }
     }
 
@@ -395,29 +428,16 @@ struct SidebarView: View {
         }
     }
 
+    /// The advanced path: full device → project → provider → scenery chooser,
+    /// presented in its own window (same as ⌘N).
+    private func openAdvancedNewSession() {
+        NewSessionWindowController.shared.show(multi: multi, scenery: scenery)
+    }
+
     private func beginRename(_ member: SidebarProjectMember) {
         renameText = member.project.name
         renameTarget = ProjectActionTarget(
             model: member.location.model, project: member.project)
-    }
-
-    private func moveThreads(
-        in group: SidebarProjectGroup,
-        fromOffsets: IndexSet,
-        toOffset: Int
-    ) {
-        let sourceMembers = Set(fromOffsets.compactMap { offset in
-            group.threads.indices.contains(offset) ? group.threads[offset].member.id : nil
-        })
-        guard sourceMembers.count == 1, let memberID = sourceMembers.first,
-            let member = group.members.first(where: { $0.id == memberID })
-        else { return }
-
-        var reordered = group.threads
-        reordered.move(fromOffsets: fromOffsets, toOffset: toOffset)
-        member.location.model.applySidebarOrder(
-            reordered.filter { $0.member.id == memberID }.map(\.thread),
-            projectID: member.project.id)
     }
 
     private func setMachineScope(_ scope: SidebarMachineScope) {
@@ -633,21 +653,14 @@ private struct SidebarCommandBar: View {
 private struct SidebarSectionLabel: View {
     let title: String
     var count: Int?
-    var tint: Color?
 
-    init(title: String, count: Int? = nil, tint: Color? = nil) {
+    init(title: String, count: Int? = nil) {
         self.title = title
         self.count = count
-        self.tint = tint
     }
 
     var body: some View {
         HStack(spacing: 5) {
-            if let tint {
-                Circle()
-                    .fill(tint)
-                    .frame(width: 5, height: 5)
-            }
             Text(title)
             if let count {
                 Text("\(count)")
@@ -737,12 +750,17 @@ private struct ProjectSectionHeader: View {
     let group: SidebarProjectGroup
     let scenery: SceneryStore
     let isCollapsed: Bool
+    /// Machine context to show next to the name when the sidebar spans
+    /// machines ("2 machines", or the remote machine's name). Nil hides it.
+    let machineBadge: String?
     let onToggleCollapse: () -> Void
     let onNewSession: (SidebarProjectMember, ProviderKind) -> Void
+    let onChooseTarget: () -> Void
     let onRename: (SidebarProjectMember) -> Void
     let onDelete: (SidebarProjectMember) -> Void
 
     @UIState private var isNewTaskPresented = false
+    @UIState private var isHovering = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -760,46 +778,81 @@ private struct ProjectSectionHeader: View {
             Text(group.name)
                 .fontWeight(.semibold)
                 .lineLimit(1)
+            if let machineBadge {
+                Text(machineBadge)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(.quaternary, in: Capsule())
+            }
             Spacer(minLength: 4)
             if group.attentionThreadCount > 0 {
-                Text("\(group.attentionThreadCount) need you")
+                Label("\(group.attentionThreadCount)", systemImage: "exclamationmark.circle.fill")
                     .foregroundStyle(AlpineTheme.clay)
+                    .help("\(group.attentionThreadCount) need attention")
             } else if group.activeThreadCount > 0 {
-                Text("\(group.activeThreadCount) active")
+                Label("\(group.activeThreadCount)", systemImage: "bolt.fill")
                     .foregroundStyle(.secondary)
+                    .help("\(group.activeThreadCount) in progress")
             }
-            Button {
-                isNewTaskPresented.toggle()
-            } label: {
-                Image(systemName: "plus")
-                    .fontWeight(.semibold)
-                    .frame(width: 18, height: 18)
-                    .contentShape(Rectangle())
-                    .background {
-                        if isNewTaskPresented {
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(Color.primary.opacity(0.1))
+            HStack(spacing: 2) {
+                Menu {
+                    projectMenuContent
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Manage \(group.name)")
+
+                Button {
+                    isNewTaskPresented.toggle()
+                } label: {
+                    Image(systemName: "plus")
+                        .fontWeight(.semibold)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                        .background {
+                            if isNewTaskPresented {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(Color.primary.opacity(0.1))
+                            }
                         }
-                    }
+                }
+                .buttonStyle(.plain)
+                .help("New session in \(group.name)")
+                .popover(isPresented: $isNewTaskPresented, arrowEdge: .top) {
+                    newTaskPopover
+                }
             }
-            .buttonStyle(.plain)
-            .help("New task in \(group.name)")
-            .popover(isPresented: $isNewTaskPresented, arrowEdge: .top) {
-                newTaskPopover
-            }
+            // Hover-revealed so calm sections stay quiet; kept visible while
+            // the popover is up so the anchor doesn't vanish mid-interaction.
+            .opacity(isHovering || isNewTaskPresented ? 1 : 0)
+            .accessibilityHidden(!isHovering && !isNewTaskPresented)
         }
         .font(.caption)
         .contentShape(Rectangle())
         .onTapGesture(perform: onToggleCollapse)
+        .onHover { isHovering = $0 }
         .animation(Motion.feedback, value: isCollapsed)
+        .animation(Motion.feedback, value: isHovering)
         .contextMenu {
-            memberActionButtons(title: "Rename…", action: onRename)
-            Menu("Scenery Set") {
-                sceneryMenuContent
-            }
-            Divider()
-            memberActionButtons(title: "Delete Project…", destructive: true, action: onDelete)
+            projectMenuContent
         }
+    }
+
+    @ViewBuilder
+    private var projectMenuContent: some View {
+        memberActionButtons(title: "Rename…", action: onRename)
+        Menu("Scenery Set") {
+            sceneryMenuContent
+        }
+        Divider()
+        memberActionButtons(title: "Delete Project…", destructive: true, action: onDelete)
     }
 
     @ViewBuilder
@@ -820,7 +873,7 @@ private struct ProjectSectionHeader: View {
             VStack(spacing: 0) {
                 ComposerPickerHeader(
                     icon: "plus",
-                    title: "New task",
+                    title: "New session",
                     subtitle: group.name
                 )
                 Divider().opacity(0.55)
@@ -854,7 +907,20 @@ private struct ProjectSectionHeader: View {
                     }
                     .padding(8)
                 }
-                .frame(maxHeight: 420)
+                .frame(maxHeight: 380)
+                Divider().opacity(0.55)
+                VStack(spacing: 3) {
+                    ComposerPickerChoiceRow(
+                        icon: "slider.horizontal.3",
+                        title: "Choose Target…",
+                        detail: "Pick device, project, provider, and scenery",
+                        isSelected: false
+                    ) {
+                        isNewTaskPresented = false
+                        onChooseTarget()
+                    }
+                }
+                .padding(8)
             }
         }
     }
@@ -967,8 +1033,6 @@ private struct SidebarThreadRow: View {
     private var secondaryText: String {
         let parts: [String]
         switch context {
-        case .shortcut:
-            parts = [item.statusLabel, item.member.project.name, item.member.location.name]
         case .search:
             parts = [item.member.project.name, item.member.location.name, workMetadata]
         case .project(let showMachine):

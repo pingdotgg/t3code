@@ -43,6 +43,19 @@ public struct ChatScreen: View {
                                 .padding(.horizontal, 20)
                                 .padding(.top, 8)
                         }
+                        // Unsplash credit rides in the layout flow above the
+                        // composer, right-aligned to the same 1040pt column.
+                        // A floating corner overlay used to overlap the
+                        // composer glass on narrower windows.
+                        if let photo = scenery.photo(for: threadKey) {
+                            HStack {
+                                Spacer(minLength: 0)
+                                SceneryAttributionTag(photo: photo)
+                            }
+                            .frame(maxWidth: 1040)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 6)
+                        }
                         ComposerBar(
                             model: model,
                             accent: AlpineTheme.accent)
@@ -85,20 +98,6 @@ public struct ChatScreen: View {
                     fallbackSeed: threadKey)
             } else {
                 Rectangle().fill(.background)
-            }
-        }
-        // Unsplash credit anchors to the corner (same policy as the empty
-        // state) instead of sitting inline in the header, where badge/status
-        // changes and narrow windows used to displace it.
-        .overlay(alignment: .bottomTrailing) {
-            if let thread = model.selectedThread,
-                model.threadState(thread.id)?.isReviewing != true
-            {
-                let threadKey = model.scopedThreadKey(thread.id)
-                if let photo = scenery.photo(for: threadKey) {
-                    SceneryAttributionTag(photo: photo)
-                        .padding(10)
-                }
             }
         }
         .environment(

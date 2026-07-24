@@ -3201,6 +3201,345 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(activity?.summary).toBe("Context compacted");
     expect(activity?.tone).toBe("info");
+    expect(activity?.payload).toMatchObject({ status: "completed" });
+  });
+
+  it("coalesces compaction item lifecycle into a single in-place activity row", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-compaction-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      itemId: "item-compact-1",
+      payload: {
+        itemType: "context_compaction",
+        status: "inProgress",
+      },
+    });
+
+    const startedThread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "context-compaction",
+      ),
+    );
+    const started = startedThread.activities.find(
+      (candidate: ProviderRuntimeTestActivity) => candidate.kind === "context-compaction",
+    );
+    expect(started?.summary).toBe("Compacting context…");
+    expect(started?.tone).toBe("info");
+    expect(started?.payload).toMatchObject({ status: "started" });
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-compaction-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      itemId: "item-compact-1",
+      payload: {
+        itemType: "context_compaction",
+        status: "completed",
+        usedTokensBefore: 148_000,
+        usedTokensAfter: 32_500,
+        maxTokens: 200_000,
+      },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity: ProviderRuntimeTestActivity) => {
+        if (activity.kind !== "context-compaction") return false;
+        const payload = activity.payload as { status?: string } | undefined;
+        return payload?.status === "completed";
+      }),
+    );
+    const compactionRows = thread.activities.filter(
+      (candidate: ProviderRuntimeTestActivity) => candidate.kind === "context-compaction",
+    );
+    // The completed state replaces the in-progress row in place.
+    expect(compactionRows).toHaveLength(1);
+    expect(compactionRows[0]?.id).toBe(started?.id);
+    expect(compactionRows[0]?.summary).toBe("Context compacted");
+    expect(compactionRows[0]?.payload).toMatchObject({
+      status: "completed",
+      usedTokensBefore: 148_000,
+      usedTokensAfter: 32_500,
+      maxTokens: 200_000,
+    });
+  });
+
+  it("keeps the fallback compacted state idempotent with item-based completion", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-compaction-completed-rich"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      itemId: "claude-compaction-turn-1",
+      payload: {
+        itemType: "context_compaction",
+        status: "completed",
+        usedTokensBefore: 148_000,
+        usedTokensAfter: 32_500,
+      },
+    });
+    harness.emit({
+      type: "thread.state.changed",
+      eventId: asEventId("evt-compaction-fallback-after-item"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      payload: {
+        state: "compacted",
+      },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "context-compaction",
+      ),
+    );
+    const compactionRows = thread.activities.filter(
+      (candidate: ProviderRuntimeTestActivity) => candidate.kind === "context-compaction",
+    );
+    // The fallback thread-level signal must not produce a second row nor
+    // clobber the richer item-based completion payload.
+    expect(compactionRows).toHaveLength(1);
+    expect(compactionRows[0]?.payload).toMatchObject({
+      status: "completed",
+      usedTokensBefore: 148_000,
+      usedTokensAfter: 32_500,
+    });
+  });
+
+  it("synthesizes a failed compaction row when the turn fails mid-compaction", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-compaction-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+    });
+    await waitForThread(harness.readModel, (entry) => entry.session?.activeTurnId === "turn-1");
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-compaction-started-fail"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      itemId: "item-compact-fail",
+      payload: {
+        itemType: "context_compaction",
+        status: "inProgress",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-compaction-turn-failed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      payload: {
+        state: "failed",
+        errorMessage: "provider exploded",
+      },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity: ProviderRuntimeTestActivity) => {
+        if (activity.kind !== "context-compaction") return false;
+        const payload = activity.payload as { status?: string } | undefined;
+        return payload?.status === "failed";
+      }),
+    );
+    const compactionRows = thread.activities.filter(
+      (candidate: ProviderRuntimeTestActivity) => candidate.kind === "context-compaction",
+    );
+    expect(compactionRows).toHaveLength(1);
+    expect(compactionRows[0]?.summary).toBe("Context compaction failed");
+    expect(compactionRows[0]?.tone).toBe("error");
+    expect(compactionRows[0]?.payload).toMatchObject({
+      status: "failed",
+      detail:
+        "Compaction did not finish — the session context is unchanged. Start a new thread or retry.",
+    });
+  });
+
+  it("synthesizes a canceled compaction row when the turn is interrupted mid-compaction", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-compaction-started-interrupt"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      itemId: "item-compact-interrupt",
+      payload: {
+        itemType: "context_compaction",
+        status: "inProgress",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-compaction-turn-interrupted"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      payload: {
+        state: "interrupted",
+      },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity: ProviderRuntimeTestActivity) => {
+        if (activity.kind !== "context-compaction") return false;
+        const payload = activity.payload as { status?: string } | undefined;
+        return payload?.status === "canceled";
+      }),
+    );
+    const compactionRows = thread.activities.filter(
+      (candidate: ProviderRuntimeTestActivity) => candidate.kind === "context-compaction",
+    );
+    expect(compactionRows).toHaveLength(1);
+    expect(compactionRows[0]?.summary).toBe("Context compaction canceled");
+    expect(compactionRows[0]?.tone).toBe("error");
+    expect(compactionRows[0]?.payload).toMatchObject({
+      status: "canceled",
+      detail:
+        "Compaction did not finish — the session context is unchanged. Start a new thread or retry.",
+    });
+  });
+
+  it("synthesizes a failed compaction row when a runtime error arrives mid-compaction", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-compaction-started-runtime-error"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      itemId: "item-compact-runtime-error",
+      payload: {
+        itemType: "context_compaction",
+        status: "inProgress",
+      },
+    });
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-compaction-runtime-error"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      payload: {
+        message: "stream died",
+        class: "transport_error",
+      },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity: ProviderRuntimeTestActivity) => {
+        if (activity.kind !== "context-compaction") return false;
+        const payload = activity.payload as { status?: string } | undefined;
+        return payload?.status === "failed";
+      }),
+    );
+    const compactionRows = thread.activities.filter(
+      (candidate: ProviderRuntimeTestActivity) => candidate.kind === "context-compaction",
+    );
+    expect(compactionRows).toHaveLength(1);
+    expect(compactionRows[0]?.payload).toMatchObject({ status: "failed" });
+  });
+
+  it("does not fail a completed compaction when the turn later fails", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-compaction-started-then-fail"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      itemId: "item-compact-then-fail",
+      payload: {
+        itemType: "context_compaction",
+        status: "inProgress",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-compaction-completed-then-fail"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      itemId: "item-compact-then-fail",
+      payload: {
+        itemType: "context_compaction",
+        status: "completed",
+        usedTokensAfter: 31_000,
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-compaction-turn-failed-after-complete"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      payload: {
+        state: "failed",
+        errorMessage: "post-compaction failure",
+      },
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity: ProviderRuntimeTestActivity) => {
+        if (activity.kind !== "context-compaction") return false;
+        const payload = activity.payload as { status?: string } | undefined;
+        return payload?.status === "completed";
+      }),
+    );
+    const compactionRows = thread.activities.filter(
+      (candidate: ProviderRuntimeTestActivity) => candidate.kind === "context-compaction",
+    );
+    expect(compactionRows).toHaveLength(1);
+    expect(compactionRows[0]?.payload).toMatchObject({
+      status: "completed",
+      usedTokensAfter: 31_000,
+    });
   });
 
   it("projects Codex task lifecycle chunks into thread activities", async () => {

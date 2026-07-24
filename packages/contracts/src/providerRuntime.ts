@@ -476,12 +476,42 @@ const TurnDiffUpdatedPayload = Schema.Struct({
 });
 export type TurnDiffUpdatedPayload = typeof TurnDiffUpdatedPayload.Type;
 
+/**
+ * Lifecycle states surfaced for a context compaction. Emitted as typed thread
+ * activities (`kind: "context-compaction"`) so clients can render in-progress
+ * compaction, completion with a token delta, and failures with diagnostics.
+ */
+export const CompactionStatus = Schema.Literals(["started", "completed", "failed", "canceled"]);
+export type CompactionStatus = typeof CompactionStatus.Type;
+
+/**
+ * Payload carried by `context-compaction` orchestration activities
+ * (`ProviderRuntimeIngestion.ts`). Token counts are present on completion when
+ * the provider reported a pre/post compaction snapshot.
+ */
+export const CompactionActivityPayload = Schema.Struct({
+  status: CompactionStatus,
+  usedTokensBefore: Schema.optional(NonNegativeInt),
+  usedTokensAfter: Schema.optional(NonNegativeInt),
+  maxTokens: Schema.optional(PositiveInt),
+  /** Diagnostic / recovery hint, set on failed and canceled compactions. */
+  detail: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type CompactionActivityPayload = typeof CompactionActivityPayload.Type;
+
 export const ItemLifecyclePayload = Schema.Struct({
   itemType: CanonicalItemType,
   status: Schema.optional(RuntimeItemStatus),
   title: Schema.optional(TrimmedNonEmptyStringSchema),
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
   data: Schema.optional(Schema.Unknown),
+  /**
+   * Pre/post compaction token snapshot. Only set on `context_compaction` item
+   * completions when the provider reported one.
+   */
+  usedTokensBefore: Schema.optional(NonNegativeInt),
+  usedTokensAfter: Schema.optional(NonNegativeInt),
+  maxTokens: Schema.optional(PositiveInt),
 });
 export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;
 

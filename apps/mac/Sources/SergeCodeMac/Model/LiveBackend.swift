@@ -977,7 +977,12 @@ public actor LiveBackend: BackendService {
             // The live tail is not filtered by snapshot sequence (unlike
             // subscribeShell), so an activity already folded into the snapshot
             // can also arrive here again; dedup by id, seeded from the snapshot.
-            guard !(seenActivityIDs[threadID]?.contains(activity.id) ?? false) else { return }
+            // Exception: context-compaction coalesces its lifecycle onto one
+            // activity id, so the terminal state legitimately reuses the id —
+            // let it through to replace the in-progress row in place.
+            let replacesInPlace = activity.kind == ActivityKind.contextCompaction
+            guard replacesInPlace || !(seenActivityIDs[threadID]?.contains(activity.id) ?? false)
+            else { return }
             seenActivityIDs[threadID, default: []].insert(activity.id)
             let at = WireDate.parse(activity.createdAt) ?? Date()
             if applySubagentTaskActivity(activity, threadID: threadID, at: at) {
@@ -1010,7 +1015,7 @@ public actor LiveBackend: BackendService {
                     emitOrdered(threadID: threadID, event: .approvalResolved(id: requestID))
                 }
             default:
-                guard let item = mapActivity(activity, at: at) else { return }
+                guard let item = mapActivity(activity, threadID: threadID, at: at) else { return }
                 emitOrdered(
                     threadID: threadID,
                     event: .timelineAppended(threadID: threadID, item: item))
@@ -1092,6 +1097,8 @@ public actor LiveBackend: BackendService {
                 case .userInput(let request):
                     retainedActivityIDs.insert(request.id)
                 case .usageLimit(let notice):
+                    retainedActivityIDs.insert(notice.id)
+                case .compaction(let notice):
                     retainedActivityIDs.insert(notice.id)
                 }
             }
@@ -2831,7 +2838,7 @@ public actor LiveBackend: BackendService {
             case ActivityKind.sessionExited:
                 return mapSessionExit(activity, at: at)
             default:
-                return mapActivity(activity, at: at)
+                return mapActivity(activity, threadID: threadID, at: at)
             }
         case let .approvalActivity(activity, requestID, at):
             let id = requestID ?? activity.id
@@ -2841,7 +2848,7 @@ public actor LiveBackend: BackendService {
             guard activity.kind == ActivityKind.approvalRequested,
                 pendingApprovalIDs.contains(id)
             else {
-                return mapActivity(activity, at: at)
+                return mapActivity(activity, threadID: threadID, at: at)
             }
             return .approval(
                 ApprovalRequest(
@@ -2862,7 +2869,9 @@ public actor LiveBackend: BackendService {
     /// Refined activity row (ActivityRows): lifecycle noise maps to nil,
     /// tool rows get their human title + payload detail, and row ids are
     /// stable across one tool call so consumers upsert rather than append.
-    private func mapActivity(_ activity: OrchestrationThreadActivity, at: Date) -> TimelineItem? {
+    private func mapActivity(
+        _ activity: OrchestrationThreadActivity, threadID: String, at: Date
+    ) -> TimelineItem? {
         switch ActivityRows.row(for: activity) {
         case .tool(let id, let title, let detail, let itemType, let phase, let output, let outputIsError):
             let status: ToolEventStatus =
@@ -2878,10 +2887,28 @@ public actor LiveBackend: BackendService {
                 status: status, at: at, output: output, outputIsError: outputIsError)
         case .reasoning(let id, let text):
             return .reasoning(id: id, text: text, at: at)
+        case .compaction(
+            let id, let status, let summary, let usedTokensBefore, let usedTokensAfter,
+            let maxTokens, let detail):
+            return .compaction(
+                CompactionNotice(
+                    id: id, threadID: threadID, status: Self.compactionStatus(status),
+                    summary: summary, usedTokensBefore: usedTokensBefore,
+                    usedTokensAfter: usedTokensAfter, maxTokens: maxTokens, detail: detail,
+                    createdAt: at))
         case .notice(let id, let text):
             return .notice(id: id, text: text, at: at)
         case nil:
             return nil
+        }
+    }
+
+    private static func compactionStatus(_ status: ContextCompactionStatus) -> CompactionStatus {
+        switch status {
+        case .started: .started
+        case .completed: .completed
+        case .failed: .failed
+        case .canceled: .canceled
         }
     }
 

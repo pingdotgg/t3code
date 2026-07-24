@@ -125,6 +125,76 @@ struct ActivityPayloadTests {
         #expect(payload.maxTokens == nil)
     }
 
+    @Test("context-compaction decodes every lifecycle status")
+    func contextCompactionStatuses() throws {
+        for (raw, expected) in [
+            ("started", ContextCompactionStatus.started),
+            ("completed", ContextCompactionStatus.completed),
+            ("failed", ContextCompactionStatus.failed),
+            ("canceled", ContextCompactionStatus.canceled),
+        ] {
+            let activity = try activity(
+                kind: ActivityKind.contextCompaction,
+                payloadJSON: #"{"status": "\#(raw)"}"#)
+            #expect(
+                activity.decodePayload(ContextCompactionActivityPayload.self)?.status == expected)
+        }
+    }
+
+    @Test("context-compaction decodes token counts and detail")
+    func contextCompactionTokenCounts() throws {
+        let activity = try activity(
+            kind: ActivityKind.contextCompaction,
+            payloadJSON: """
+                {
+                  "status": "completed",
+                  "usedTokensBefore": 128000,
+                  "usedTokensAfter": 24000,
+                  "maxTokens": 200000,
+                  "detail": "12 messages summarized"
+                }
+                """)
+        let payload = try #require(activity.decodePayload(ContextCompactionActivityPayload.self))
+        #expect(payload.status == .completed)
+        #expect(payload.usedTokensBefore == 128_000)
+        #expect(payload.usedTokensAfter == 24_000)
+        #expect(payload.maxTokens == 200_000)
+        #expect(payload.detail == "12 messages summarized")
+    }
+
+    @Test("context-compaction tolerates missing fields and an unknown status")
+    func contextCompactionDefensive() throws {
+        // Bare status: everything else optional.
+        let started = try activity(
+            kind: ActivityKind.contextCompaction, payloadJSON: #"{"status": "started"}"#)
+        let startedPayload = try #require(
+            started.decodePayload(ContextCompactionActivityPayload.self))
+        #expect(startedPayload.status == .started)
+        #expect(startedPayload.usedTokensBefore == nil)
+        #expect(startedPayload.usedTokensAfter == nil)
+        #expect(startedPayload.detail == nil)
+
+        // An unknown future status degrades to nil (the row falls back to the
+        // activity summary) without failing the rest of the decode.
+        let unknown = try activity(
+            kind: ActivityKind.contextCompaction,
+            payloadJSON: #"{"status": "paused", "usedTokensBefore": 9000}"#)
+        let unknownPayload = try #require(
+            unknown.decodePayload(ContextCompactionActivityPayload.self))
+        #expect(unknownPayload.status == nil)
+        #expect(unknownPayload.usedTokensBefore == 9_000)
+
+        // An empty payload still decodes — every field is optional.
+        let empty = try activity(kind: ActivityKind.contextCompaction, payloadJSON: #"{}"#)
+        let emptyPayload = try #require(empty.decodePayload(ContextCompactionActivityPayload.self))
+        #expect(emptyPayload.status == nil)
+
+        // A non-object payload does not decode at all.
+        let garbage = try activity(
+            kind: ActivityKind.contextCompaction, payloadJSON: #""oops""#)
+        #expect(garbage.decodePayload(ContextCompactionActivityPayload.self) == nil)
+    }
+
     @Test("task.started decodes Claude SDK task fields")
     func taskStarted() throws {
         let activity = try activity(

@@ -19,6 +19,12 @@ public enum ActivityKind {
     public static let usageLimitReached = "usage-limit.reached"
     public static let turnPlanUpdated = "turn.plan.updated"
     public static let contextWindowUpdated = "context-window.updated"
+    /// Tone `.info` (`.warning`/`.error` on failure): server-side context
+    /// compaction lifecycle. The started and terminal (completed/failed/
+    /// canceled) activities share one activity id (coalesced per turn), so
+    /// consumers must upsert the row by that id — the terminal state replaces
+    /// the in-progress row, the way tool rows upsert by toolCallId.
+    public static let contextCompaction = "context-compaction"
     /// Tool lifecycle (tone `.tool`): started is pure noise (always followed
     /// by updated/completed for the same call); updated/completed carry the
     /// human title in `summary` and `{ itemType, status?, detail?, data? }`
@@ -397,6 +403,42 @@ public struct ContextWindowUpdatedActivityPayload: Decodable, Sendable {
     public var inputTokens: Int?
     public var outputTokens: Int?
     public var compactsAutomatically: Bool?
+}
+
+// MARK: - context-compaction
+
+/// Lifecycle state of one context compaction (`context-compaction` payload
+/// `status`). started → completed/failed/canceled.
+public enum ContextCompactionStatus: String, Decodable, Sendable {
+    case started, completed, failed, canceled
+}
+
+/// Activity payload for kind `context-compaction`:
+/// `{ status, usedTokensBefore?, usedTokensAfter?, maxTokens?, detail? }`.
+/// Every field is optional/defensive — the server side of this contract is
+/// still landing, so an unknown status or missing token counts must degrade
+/// (nil) rather than fail the whole decode.
+public struct ContextCompactionActivityPayload: Decodable, Sendable {
+    /// Nil when the wire `status` is missing or a value this build does not
+    /// know yet; consumers fall back to the activity summary/tone.
+    public var status: ContextCompactionStatus?
+    public var usedTokensBefore: Int?
+    public var usedTokensAfter: Int?
+    public var maxTokens: Int?
+    public var detail: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case status, usedTokensBefore, usedTokensAfter, maxTokens, detail
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status = try? c.decodeIfPresent(ContextCompactionStatus.self, forKey: .status)
+        usedTokensBefore = try? c.decodeIfPresent(Int.self, forKey: .usedTokensBefore)
+        usedTokensAfter = try? c.decodeIfPresent(Int.self, forKey: .usedTokensAfter)
+        maxTokens = try? c.decodeIfPresent(Int.self, forKey: .maxTokens)
+        detail = try? c.decodeIfPresent(String.self, forKey: .detail)
+    }
 }
 
 // MARK: - Decode helper

@@ -461,6 +461,44 @@ public enum UsageLimitActionState: Equatable, Sendable {
     case failed(String)
 }
 
+/// UI-level lifecycle state of one context compaction. Mirrors T3Kit's
+/// wire-level `ContextCompactionStatus`; kept separate so the domain model
+/// stays independent of wire-shape churn.
+public enum CompactionStatus: String, Hashable, Sendable {
+    case started, completed, failed, canceled
+}
+
+/// One context-compaction lifecycle row (`context-compaction` activities).
+/// The started and terminal states share the activity's id, so the terminal
+/// state replaces the in-progress row in place via the timeline upsert.
+public struct CompactionNotice: Identifiable, Hashable, Sendable {
+    public var id: String
+    public var threadID: String
+    public var status: CompactionStatus
+    public var summary: String
+    public var usedTokensBefore: Int?
+    public var usedTokensAfter: Int?
+    public var maxTokens: Int?
+    public var detail: String?
+    public var createdAt: Date
+
+    public init(
+        id: String, threadID: String, status: CompactionStatus, summary: String,
+        usedTokensBefore: Int? = nil, usedTokensAfter: Int? = nil, maxTokens: Int? = nil,
+        detail: String? = nil, createdAt: Date
+    ) {
+        self.id = id
+        self.threadID = threadID
+        self.status = status
+        self.summary = summary
+        self.usedTokensBefore = usedTokensBefore
+        self.usedTokensAfter = usedTokensAfter
+        self.maxTokens = maxTokens
+        self.detail = detail
+        self.createdAt = createdAt
+    }
+}
+
 /// Image (or future media) metadata on a user message. Bytes are not embedded —
 /// resolve via `BackendService.attachmentImageURL(id:)` / `assets.createUrl`.
 public struct MessageAttachment: Identifiable, Equatable, Hashable, Sendable {
@@ -493,6 +531,9 @@ public enum TimelineItem: Identifiable, Equatable, Sendable {
     case approval(ApprovalRequest)
     case userInput(UserInputRequest)
     case usageLimit(UsageLimitNotice)
+    /// Context-compaction lifecycle; started and terminal states share the
+    /// notice id, so the terminal row replaces the in-progress one in place.
+    case compaction(CompactionNotice)
     case checkpoint(Checkpoint)
     case plan(ProposedPlan)
     case notice(id: String, text: String, at: Date)
@@ -512,6 +553,7 @@ public enum TimelineItem: Identifiable, Equatable, Sendable {
         case .approval(let request): request.id
         case .userInput(let request): request.id
         case .usageLimit(let notice): notice.id
+        case .compaction(let notice): notice.id
         case .checkpoint(let checkpoint): checkpoint.id
         case .plan(let plan): plan.id
         case .notice(let id, _, _): id
@@ -532,6 +574,7 @@ public enum TimelineItem: Identifiable, Equatable, Sendable {
         case .approval(let request): request.createdAt
         case .userInput(let request): request.createdAt
         case .usageLimit(let notice): notice.createdAt
+        case .compaction(let notice): notice.createdAt
         case .checkpoint(let checkpoint): checkpoint.createdAt
         case .plan(let plan): plan.createdAt
         case .notice(_, _, let at): at
@@ -671,6 +714,9 @@ extension TimelineItem {
         case .subagentTask(var task):
             task.startedAt = firstAt
             return .subagentTask(task)
+        case .compaction(var notice):
+            notice.createdAt = firstAt
+            return .compaction(notice)
         default:
             return self
         }
