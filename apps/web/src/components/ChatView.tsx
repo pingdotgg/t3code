@@ -155,6 +155,7 @@ import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
+import { useNowMinute } from "../hooks/useNowMinute";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
@@ -3823,17 +3824,7 @@ function ChatViewContent(props: ChatViewProps) {
     hasDedicatedWorktree: (activeThread?.worktreePath ?? null) !== null,
   });
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
-  // Minute-quantized clock, same as the sidebar partition's: keeps this memo
-  // recomputing as time passes (inactivity auto-settle) without a per-render
-  // time source, and keeps banner and sidebar on the same tick.
-  const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
-  useEffect(() => {
-    const id = window.setInterval(
-      () => setNowMinute(new Date().toISOString().slice(0, 16)),
-      60_000,
-    );
-    return () => window.clearInterval(id);
-  }, []);
+  const nowMinute = useNowMinute();
   const activeThreadSettled = useMemo(() => {
     if (activeThreadShell === null || !supportsSettlement) return false;
     return effectiveSettled(activeThreadShell, {
@@ -3852,6 +3843,11 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const [isUnsettling, setIsUnsettling] = useState(false);
+  // The pending flag belongs to the thread that was un-settled: navigating
+  // to another settled thread mid-flight must not show it as "Un-settling...".
+  useEffect(() => {
+    setIsUnsettling(false);
+  }, [activeThread?.id]);
   const handleUnsettleActiveThread = useCallback(async () => {
     if (!activeThreadRef) return;
     setIsUnsettling(true);

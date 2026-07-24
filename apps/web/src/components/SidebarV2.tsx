@@ -78,6 +78,7 @@ import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
+import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
@@ -952,14 +953,7 @@ export default function SidebarV2() {
 
   // now is quantized to the minute so effectiveSettled memoization doesn't
   // churn on every render; auto-settle thresholds are day-granular anyway.
-  const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
-  useEffect(() => {
-    const id = window.setInterval(
-      () => setNowMinute(new Date().toISOString().slice(0, 16)),
-      60_000,
-    );
-    return () => window.clearInterval(id);
-  }, []);
+  const nowMinute = useNowMinute();
 
   // PR states stream in per-row (rows own the VCS subscriptions); a merged or
   // closed PR auto-settles its thread on the next partition.
