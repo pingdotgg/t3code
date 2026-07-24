@@ -590,6 +590,55 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
+  it.effect("rejects unauthenticated ACP session lifecycle requests", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      const listError = yield* runtime.listSessions().pipe(Effect.flip);
+      expect(listError._tag).toBe("AcpRequestError");
+      if (listError._tag === "AcpRequestError") {
+        expect(listError.code).toBe(-32000);
+      }
+
+      const forkError = yield* runtime.forkSession("mock-session-1").pipe(Effect.flip);
+      expect(forkError._tag).toBe("AcpRequestError");
+      if (forkError._tag === "AcpRequestError") {
+        expect(forkError.code).toBe(-32000);
+      }
+
+      const resumeError = yield* runtime.resumeSession("mock-session-1").pipe(Effect.flip);
+      expect(resumeError._tag).toBe("AcpRequestError");
+      if (resumeError._tag === "AcpRequestError") {
+        expect(resumeError.code).toBe(-32000);
+      }
+
+      const closeError = yield* runtime.closeSession().pipe(Effect.flip);
+      expect(closeError._tag).toBe("AcpRequestError");
+      if (closeError._tag === "AcpRequestError") {
+        expect(closeError.code).toBe(-32000);
+      }
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_REQUIRE_AUTH: "1",
+              T3_ACP_SESSION_LIFECYCLE: "1",
+            },
+          },
+          cwd: process.cwd(),
+          resumeSessionId: "mock-session-1",
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("skips no-op session config writes when the requested value is already active", () => {
     const requestEvents: Array<AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
