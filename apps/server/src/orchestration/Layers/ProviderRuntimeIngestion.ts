@@ -22,8 +22,11 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -92,6 +95,11 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+// Keep streaming responsive while preventing character-sized provider deltas
+// from forcing persistence and renderer reconciliation on every token.
+const STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS = 100;
+const MAX_COALESCED_STREAMING_ASSISTANT_CHARS = 512;
+const MAX_ASSISTANT_FINALIZATION_DEFECT_RETRIES = 3;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
@@ -107,7 +115,57 @@ type RuntimeIngestionInput =
   | {
       source: "domain";
       event: TurnStartRequestedDomainEvent;
+    }
+  | {
+      source: "assistant-flush";
+      event: ProviderRuntimeEvent;
+      threadId: ThreadId;
+      messageId: MessageId;
+      turnId?: TurnId;
+      isDeferred?: boolean;
+    }
+  | {
+      source: "assistant-delta";
+      event: ProviderRuntimeEvent;
+      threadId: ThreadId;
+      messageId: MessageId;
+      turnId?: TurnId;
+      deliveryMode: AssistantDeliveryMode;
+      delta: string;
+      flushPendingFirst?: boolean;
+      isDeferred?: boolean;
+    }
+  | {
+      source: "assistant-finalize";
+      event: ProviderRuntimeEvent;
+      threadId: ThreadId;
+      messageId: MessageId;
+      turnId?: TurnId;
+      createdAt: string;
+      commandTag: string;
+      finalDeltaCommandTag: string;
+      fallbackText?: string;
+      hasProjectedMessage?: boolean;
+      isDeferred: true;
     };
+
+export const finalizeTrackedAssistantMessages = <MessageIdValue, FinalizeError, FinalizeServices>(
+  messageIds: Iterable<MessageIdValue>,
+  finalize: (messageId: MessageIdValue) => Effect.Effect<boolean, FinalizeError, FinalizeServices>,
+  release: (messageId: MessageIdValue) => Effect.Effect<void>,
+) =>
+  Effect.forEach(
+    messageIds,
+    (messageId) =>
+      Effect.gen(function* () {
+        const finalized = yield* finalize(messageId);
+        if (finalized) {
+          yield* release(messageId);
+        }
+        return finalized;
+      }),
+    { concurrency: 1 },
+  );
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
   return value === undefined ? undefined : TurnId.make(String(value));
@@ -704,11 +762,57 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed(new Set<MessageId>()),
   });
 
+  const assistantMessageIdsByThreadId = yield* Cache.make<ThreadId, Set<MessageId>>({
+    capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
+    timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
+    lookup: () => Effect.succeed(new Set<MessageId>()),
+  });
+
   const bufferedAssistantTextByMessageId = yield* Cache.make<MessageId, string>({
     capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
     lookup: () => Effect.succeed(""),
   });
+
+  const streamingAssistantLastFlushAtByMessageId = yield* Cache.make<MessageId, number>({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(0),
+  });
+
+  const assistantLatestOccurredAtByMessageId = yield* Cache.make<MessageId, string>({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(""),
+  });
+
+  const streamingAssistantFlushScheduledByMessageId = yield* Cache.make<MessageId, boolean>({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(false),
+  });
+
+  const deferredAssistantDeltaCountByMessageId = yield* Cache.make<MessageId, number>({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(0),
+  });
+
+  const assistantFinalizationRetryScheduledByMessageId = yield* Cache.make<MessageId, boolean>({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(false),
+  });
+
+  const assistantFinalizationDefectRetriesByMessageId = yield* Cache.make<MessageId, number>({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(0),
+  });
+
+  const streamingFlushTimerScope = yield* Scope.make("sequential");
+  yield* Effect.addFinalizer(() => Scope.close(streamingFlushTimerScope, Exit.void));
+  let enqueueInput: ((input: RuntimeIngestionInput) => Effect.Effect<void>) | undefined;
 
   const assistantSegmentStateByTurnKey = yield* Cache.make<string, AssistantSegmentState>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -776,6 +880,69 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const rememberAssistantMessageIdForThread = (threadId: ThreadId, messageId: MessageId) =>
+    Cache.getOption(assistantMessageIdsByThreadId, threadId).pipe(
+      Effect.flatMap((existingIds) =>
+        Cache.set(
+          assistantMessageIdsByThreadId,
+          threadId,
+          Option.match(existingIds, {
+            onNone: () => new Set([messageId]),
+            onSome: (ids) => new Set([...ids, messageId]),
+          }),
+        ),
+      ),
+    );
+
+  const forgetAssistantMessageIdForThread = (threadId: ThreadId, messageId: MessageId) =>
+    Cache.getOption(assistantMessageIdsByThreadId, threadId).pipe(
+      Effect.flatMap((existingIds) =>
+        Option.match(existingIds, {
+          onNone: () => Effect.void,
+          onSome: (ids) => {
+            const nextIds = new Set(ids);
+            nextIds.delete(messageId);
+            return nextIds.size === 0
+              ? Cache.invalidate(assistantMessageIdsByThreadId, threadId)
+              : Cache.set(assistantMessageIdsByThreadId, threadId, nextIds);
+          },
+        }),
+      ),
+    );
+
+  const markDeferredAssistantDelta = (messageId: MessageId) =>
+    Cache.getOption(deferredAssistantDeltaCountByMessageId, messageId).pipe(
+      Effect.flatMap((count) =>
+        Cache.set(
+          deferredAssistantDeltaCountByMessageId,
+          messageId,
+          Option.getOrElse(count, () => 0) + 1,
+        ),
+      ),
+    );
+
+  const completeDeferredAssistantDelta = (messageId: MessageId) =>
+    Cache.getOption(deferredAssistantDeltaCountByMessageId, messageId).pipe(
+      Effect.flatMap((count) => {
+        const nextCount = Math.max(0, Option.getOrElse(count, () => 0) - 1);
+        return nextCount === 0
+          ? Cache.invalidate(deferredAssistantDeltaCountByMessageId, messageId)
+          : Cache.set(deferredAssistantDeltaCountByMessageId, messageId, nextCount);
+      }),
+    );
+
+  const hasDeferredAssistantDelta = (messageId: MessageId) =>
+    Cache.getOption(deferredAssistantDeltaCountByMessageId, messageId).pipe(
+      Effect.map((count) => Option.getOrElse(count, () => 0) > 0),
+    );
+
+  const hasDeferredAssistantDeltaAheadOfFinalization = (messageId: MessageId) =>
+    Cache.getOption(deferredAssistantDeltaCountByMessageId, messageId).pipe(
+      // One deferred entry belongs to the finalization retry itself. Any
+      // additional entries are delta retries that must drain first.
+      Effect.map((count) => Option.getOrElse(count, () => 0) > 1),
+    );
+
   const forgetAssistantMessageId = (threadId: ThreadId, turnId: TurnId, messageId: MessageId) =>
     Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
       Effect.flatMap((existingIds) =>
@@ -823,6 +990,29 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
+
+  const releaseFinalizedAssistantMessageForTurn = Effect.fn(
+    "releaseFinalizedAssistantMessageForTurn",
+  )(function* (threadId: ThreadId, turnId: TurnId, messageId: MessageId) {
+    yield* forgetAssistantMessageId(threadId, turnId, messageId);
+    const state = yield* getAssistantSegmentStateForTurn(threadId, turnId);
+    if (Option.isSome(state) && state.value.activeMessageId === messageId) {
+      yield* setAssistantSegmentStateForTurn(threadId, turnId, {
+        ...state.value,
+        activeMessageId: null,
+      });
+    }
+  });
+
+  const resetFinalizedAssistantMessageForTurn = Effect.fn("resetFinalizedAssistantMessageForTurn")(
+    function* (threadId: ThreadId, turnId: TurnId, messageId: MessageId) {
+      yield* forgetAssistantMessageId(threadId, turnId, messageId);
+      const state = yield* getAssistantSegmentStateForTurn(threadId, turnId);
+      if (Option.isSome(state) && state.value.activeMessageId === messageId) {
+        yield* clearAssistantSegmentStateForTurn(threadId, turnId);
+      }
+    },
+  );
 
   const startAssistantSegmentForTurn = (input: {
     threadId: ThreadId;
@@ -887,29 +1077,69 @@ const make = Effect.gen(function* () {
             onNone: () => delta,
             onSome: (text) => `${text}${delta}`,
           });
-          if (nextText.length <= MAX_BUFFERED_ASSISTANT_CHARS) {
-            yield* Cache.set(bufferedAssistantTextByMessageId, messageId, nextText);
+          yield* Cache.set(bufferedAssistantTextByMessageId, messageId, nextText);
+          if (nextText.length < MAX_BUFFERED_ASSISTANT_CHARS) {
             return "";
           }
 
           // Safety valve: flush full buffered text as an assistant delta to cap memory.
-          yield* Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
           return nextText;
         }),
       ),
     );
 
-  const takeBufferedAssistantText = (messageId: MessageId) =>
+  const appendCoalescedStreamingAssistantText = (
+    messageId: MessageId,
+    delta: string,
+    occurredAt: string,
+  ) =>
+    Effect.gen(function* () {
+      const pendingText = yield* Cache.getOption(bufferedAssistantTextByMessageId, messageId);
+      const nextText = `${Option.getOrElse(pendingText, () => "")}${delta}`;
+      const lastFlushedAt = yield* Cache.getOption(
+        streamingAssistantLastFlushAtByMessageId,
+        messageId,
+      );
+      const occurredAtMillis = Date.parse(occurredAt);
+      const elapsedSinceFlush = Option.match(lastFlushedAt, {
+        onNone: () => Number.POSITIVE_INFINITY,
+        onSome: (value) =>
+          Number.isFinite(occurredAtMillis) ? Math.max(0, occurredAtMillis - value) : 0,
+      });
+      const shouldFlush =
+        elapsedSinceFlush >= STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS ||
+        nextText.length >= MAX_COALESCED_STREAMING_ASSISTANT_CHARS;
+
+      if (!shouldFlush) {
+        yield* Cache.set(bufferedAssistantTextByMessageId, messageId, nextText);
+        return "";
+      }
+
+      // Keep the pending text buffered until the caller confirms dispatch. If
+      // dispatch fails, a later delta or terminal event can retry the complete
+      // chunk instead of silently dropping it.
+      yield* Cache.set(bufferedAssistantTextByMessageId, messageId, nextText);
+      return nextText;
+    });
+
+  const peekBufferedAssistantText = (messageId: MessageId) =>
     Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
-      Effect.flatMap((existingText) =>
-        Cache.invalidate(bufferedAssistantTextByMessageId, messageId).pipe(
-          Effect.as(Option.getOrElse(existingText, () => "")),
-        ),
-      ),
+      Effect.map((existingText) => Option.getOrElse(existingText, () => "")),
     );
 
   const clearBufferedAssistantText = (messageId: MessageId) =>
     Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
+
+  const consumeBufferedAssistantText = (messageId: MessageId, consumedText: string) =>
+    Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
+      Effect.flatMap((existing) => {
+        const text = Option.getOrElse(existing, () => "");
+        const remaining = text.startsWith(consumedText) ? text.slice(consumedText.length) : "";
+        return remaining.length === 0
+          ? clearBufferedAssistantText(messageId)
+          : Cache.set(bufferedAssistantTextByMessageId, messageId, remaining);
+      }),
+    );
 
   const appendBufferedProposedPlan = (planId: string, delta: string, createdAt: string) =>
     Cache.getOption(bufferedProposedPlanById, planId).pipe(
@@ -936,7 +1166,221 @@ const make = Effect.gen(function* () {
     Cache.invalidate(bufferedProposedPlanById, planId);
 
   const clearAssistantMessageState = (messageId: MessageId) =>
-    clearBufferedAssistantText(messageId);
+    Effect.all([
+      clearBufferedAssistantText(messageId),
+      Cache.invalidate(streamingAssistantLastFlushAtByMessageId, messageId),
+      Cache.invalidate(streamingAssistantFlushScheduledByMessageId, messageId),
+      Cache.invalidate(assistantLatestOccurredAtByMessageId, messageId),
+      Cache.invalidate(deferredAssistantDeltaCountByMessageId, messageId),
+      Cache.invalidate(assistantFinalizationRetryScheduledByMessageId, messageId),
+      Cache.invalidate(assistantFinalizationDefectRetriesByMessageId, messageId),
+    ]).pipe(Effect.asVoid);
+
+  const laterOccurredAt = (left: string, right: string) => {
+    const leftMillis = Date.parse(left);
+    const rightMillis = Date.parse(right);
+    if (!Number.isFinite(leftMillis)) return right;
+    if (!Number.isFinite(rightMillis)) return left;
+    return rightMillis >= leftMillis ? right : left;
+  };
+
+  const rememberAssistantOccurredAt = (messageId: MessageId, occurredAt: string) =>
+    Cache.getOption(assistantLatestOccurredAtByMessageId, messageId).pipe(
+      Effect.flatMap((existing) =>
+        Cache.set(
+          assistantLatestOccurredAtByMessageId,
+          messageId,
+          Option.match(existing, {
+            onNone: () => occurredAt,
+            onSome: (value) => (value.length > 0 ? laterOccurredAt(value, occurredAt) : occurredAt),
+          }),
+        ),
+      ),
+    );
+
+  const getLatestAssistantOccurredAt = (messageId: MessageId, fallback: string) =>
+    Cache.getOption(assistantLatestOccurredAtByMessageId, messageId).pipe(
+      Effect.map((existing) =>
+        Option.match(existing, {
+          onNone: () => fallback,
+          onSome: (value) => (value.length > 0 ? laterOccurredAt(value, fallback) : fallback),
+        }),
+      ),
+    );
+
+  const commitStreamingAssistantFlush = (
+    messageId: MessageId,
+    occurredAt: string,
+    consumedText: string,
+  ) =>
+    Effect.gen(function* () {
+      yield* consumeBufferedAssistantText(messageId, consumedText);
+      const occurredAtMillis = Date.parse(occurredAt);
+      if (Number.isFinite(occurredAtMillis)) {
+        const previous = yield* Cache.getOption(
+          streamingAssistantLastFlushAtByMessageId,
+          messageId,
+        );
+        yield* Cache.set(
+          streamingAssistantLastFlushAtByMessageId,
+          messageId,
+          Math.max(
+            Option.getOrElse(previous, () => 0),
+            occurredAtMillis,
+          ),
+        );
+      }
+    });
+
+  const dispatchRetainedAssistantDelta = (
+    command: Parameters<typeof orchestrationEngine.dispatch>[0],
+    acknowledge: Effect.Effect<void>,
+  ) =>
+    // Engine dispatch is transactional: failure means no event was committed.
+    // Mask interruption across a successful dispatch and its cache
+    // acknowledgement so a committed chunk cannot remain buffered for retry.
+    Effect.uninterruptible(
+      Effect.suspend(() => orchestrationEngine.dispatch(command)).pipe(
+        Effect.tap(() => acknowledge),
+      ),
+    );
+
+  const dispatchStreamingAssistantDelta = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    messageId: MessageId;
+    turnId?: TurnId;
+    delta: string;
+    createdAt: string;
+    commandTag: string;
+  }) =>
+    Effect.gen(function* () {
+      const createdAt = yield* getLatestAssistantOccurredAt(input.messageId, input.createdAt);
+      const commandId = yield* providerCommandId(input.event, input.commandTag);
+      yield* dispatchRetainedAssistantDelta(
+        {
+          type: "thread.message.assistant.delta",
+          commandId,
+          threadId: input.threadId,
+          messageId: input.messageId,
+          delta: input.delta,
+          ...(input.turnId ? { turnId: input.turnId } : {}),
+          createdAt,
+        },
+        commitStreamingAssistantFlush(input.messageId, createdAt, input.delta),
+      ).pipe(
+        // Keep a short synchronous retry window, then let the caller retain
+        // and defer the chunk so one failed message cannot monopolize the
+        // shared ingestion worker. One command id keeps retries idempotent.
+        Effect.retry({
+          schedule: Schedule.spaced(Duration.millis(STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS)),
+          times: 2,
+        }),
+      );
+    });
+
+  const dispatchBufferedAssistantDelta = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    messageId: MessageId;
+    turnId?: TurnId;
+    delta: string;
+    createdAt: string;
+  }) =>
+    Effect.gen(function* () {
+      const commandId = yield* providerCommandId(input.event, "assistant-delta-buffer-spill");
+      yield* dispatchRetainedAssistantDelta(
+        {
+          type: "thread.message.assistant.delta",
+          commandId,
+          threadId: input.threadId,
+          messageId: input.messageId,
+          delta: input.delta,
+          ...(input.turnId ? { turnId: input.turnId } : {}),
+          createdAt: input.createdAt,
+        },
+        consumeBufferedAssistantText(input.messageId, input.delta),
+      ).pipe(
+        Effect.retry({
+          schedule: Schedule.spaced(Duration.millis(STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS)),
+          times: 2,
+        }),
+      );
+    });
+
+  const scheduleStreamingAssistantFlush = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    messageId: MessageId;
+    turnId?: TurnId;
+    isDeferred?: boolean;
+  }) =>
+    Effect.gen(function* () {
+      const existing = yield* Cache.getOption(
+        streamingAssistantFlushScheduledByMessageId,
+        input.messageId,
+      );
+      if (Option.getOrElse(existing, () => false)) {
+        return;
+      }
+
+      yield* Cache.set(streamingAssistantFlushScheduledByMessageId, input.messageId, true);
+      yield* Effect.sleep(Duration.millis(STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS)).pipe(
+        Effect.flatMap(() =>
+          enqueueInput
+            ? enqueueInput({ source: "assistant-flush", ...input })
+            : Effect.die(new Error("provider runtime ingestion worker is not initialized")),
+        ),
+        Effect.forkIn(streamingFlushTimerScope),
+      );
+    });
+
+  const scheduleAssistantDeltaRetry = (
+    input: Extract<RuntimeIngestionInput, { source: "assistant-delta" }>,
+  ) =>
+    Effect.sleep(Duration.millis(STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS)).pipe(
+      Effect.flatMap(() =>
+        enqueueInput
+          ? enqueueInput(input)
+          : Effect.die(new Error("provider runtime ingestion worker is not initialized")),
+      ),
+      Effect.forkIn(streamingFlushTimerScope),
+      Effect.asVoid,
+    );
+
+  const scheduleAssistantFinalizationRetry = (
+    input: Extract<RuntimeIngestionInput, { source: "assistant-finalize" }>,
+  ) =>
+    Effect.gen(function* () {
+      const existing = yield* Cache.getOption(
+        assistantFinalizationRetryScheduledByMessageId,
+        input.messageId,
+      );
+      if (Option.getOrElse(existing, () => false)) {
+        return;
+      }
+
+      yield* Cache.set(assistantFinalizationRetryScheduledByMessageId, input.messageId, true);
+      yield* Effect.sleep(Duration.millis(STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS)).pipe(
+        Effect.flatMap(() =>
+          enqueueInput
+            ? enqueueInput(input)
+            : Effect.die(new Error("provider runtime ingestion worker is not initialized")),
+        ),
+        Effect.forkIn(streamingFlushTimerScope),
+      );
+    });
+
+  const scheduleRuntimeEventRetry = (event: ProviderRuntimeEvent) =>
+    Effect.sleep(Duration.millis(STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS)).pipe(
+      Effect.flatMap(() =>
+        enqueueInput
+          ? enqueueInput({ source: "runtime", event })
+          : Effect.die(new Error("provider runtime ingestion worker is not initialized")),
+      ),
+      Effect.forkIn(streamingFlushTimerScope),
+      Effect.asVoid,
+    );
 
   const flushBufferedAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -947,20 +1391,23 @@ const make = Effect.gen(function* () {
     commandTag: string;
   }) =>
     Effect.gen(function* () {
-      const bufferedText = yield* takeBufferedAssistantText(input.messageId);
+      const bufferedText = yield* peekBufferedAssistantText(input.messageId);
       if (!hasRenderableAssistantText(bufferedText)) {
         return false;
       }
 
-      yield* orchestrationEngine.dispatch({
-        type: "thread.message.assistant.delta",
-        commandId: yield* providerCommandId(input.event, input.commandTag),
-        threadId: input.threadId,
-        messageId: input.messageId,
-        delta: bufferedText,
-        ...(input.turnId ? { turnId: input.turnId } : {}),
-        createdAt: input.createdAt,
-      });
+      yield* dispatchRetainedAssistantDelta(
+        {
+          type: "thread.message.assistant.delta",
+          commandId: yield* providerCommandId(input.event, input.commandTag),
+          threadId: input.threadId,
+          messageId: input.messageId,
+          delta: bufferedText,
+          ...(input.turnId ? { turnId: input.turnId } : {}),
+          createdAt: input.createdAt,
+        },
+        clearBufferedAssistantText(input.messageId),
+      );
       return true;
     });
 
@@ -1007,40 +1454,113 @@ const make = Effect.gen(function* () {
     finalDeltaCommandTag: string;
     fallbackText?: string;
     hasProjectedMessage?: boolean;
+    isDeferred?: boolean;
   }) =>
     Effect.gen(function* () {
-      const bufferedText = yield* takeBufferedAssistantText(input.messageId);
-      const text =
-        bufferedText.length > 0
-          ? bufferedText
-          : (input.fallbackText?.trim().length ?? 0) > 0
-            ? input.fallbackText!
-            : "";
-      const hasRenderableText = hasRenderableAssistantText(text);
+      const bufferedText = yield* peekBufferedAssistantText(input.messageId);
+      const hasBufferedText = bufferedText.length > 0;
+      const text = hasBufferedText
+        ? bufferedText
+        : (input.fallbackText?.trim().length ?? 0) > 0
+          ? input.fallbackText!
+          : "";
+      const shouldDispatchText =
+        hasRenderableAssistantText(text) || (hasBufferedText && input.hasProjectedMessage === true);
+      const shouldComplete = input.hasProjectedMessage === true || shouldDispatchText;
+      const createdAt = yield* getLatestAssistantOccurredAt(input.messageId, input.createdAt);
 
-      if (hasRenderableText) {
-        yield* orchestrationEngine.dispatch({
-          type: "thread.message.assistant.delta",
-          commandId: yield* providerCommandId(input.event, input.finalDeltaCommandTag),
-          threadId: input.threadId,
-          messageId: input.messageId,
-          delta: text,
-          ...(input.turnId ? { turnId: input.turnId } : {}),
-          createdAt: input.createdAt,
+      const deferFinalization = (cause: Cause.Cause<unknown>, retainedText: string | undefined) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning(
+            "provider runtime ingestion deferred assistant finalization after retries",
+            {
+              eventId: input.event.eventId,
+              messageId: input.messageId,
+              cause: Cause.pretty(cause),
+            },
+          );
+          if (retainedText !== undefined && shouldDispatchText) {
+            yield* Cache.set(bufferedAssistantTextByMessageId, input.messageId, retainedText);
+          }
+          if (input.isDeferred !== true) {
+            yield* rememberAssistantMessageIdForThread(input.threadId, input.messageId);
+            yield* markDeferredAssistantDelta(input.messageId);
+          }
+          yield* scheduleAssistantFinalizationRetry({
+            source: "assistant-finalize",
+            event: input.event,
+            threadId: input.threadId,
+            messageId: input.messageId,
+            ...(input.turnId ? { turnId: input.turnId } : {}),
+            createdAt: input.createdAt,
+            commandTag: input.commandTag,
+            finalDeltaCommandTag: input.finalDeltaCommandTag,
+            hasProjectedMessage: shouldComplete,
+            isDeferred: true,
+          });
         });
+
+      if (shouldDispatchText) {
+        let offset = 0;
+        while (offset < text.length) {
+          const delta = text.slice(offset, offset + MAX_COALESCED_STREAMING_ASSISTANT_CHARS);
+          const commandId = yield* providerCommandId(input.event, input.finalDeltaCommandTag);
+          const dispatchExit = yield* Effect.exit(
+            dispatchRetainedAssistantDelta(
+              {
+                type: "thread.message.assistant.delta",
+                commandId,
+                threadId: input.threadId,
+                messageId: input.messageId,
+                delta,
+                ...(input.turnId ? { turnId: input.turnId } : {}),
+                createdAt,
+              },
+              hasBufferedText ? consumeBufferedAssistantText(input.messageId, delta) : Effect.void,
+            ).pipe(
+              Effect.retry({
+                schedule: Schedule.spaced(
+                  Duration.millis(STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS),
+                ),
+                times: 2,
+              }),
+            ),
+          );
+          if (Exit.isFailure(dispatchExit)) {
+            yield* deferFinalization(dispatchExit.cause, text.slice(offset));
+            return false;
+          }
+          offset += delta.length;
+        }
       }
 
-      if (input.hasProjectedMessage || hasRenderableText) {
-        yield* orchestrationEngine.dispatch({
-          type: "thread.message.assistant.complete",
-          commandId: yield* providerCommandId(input.event, input.commandTag),
-          threadId: input.threadId,
-          messageId: input.messageId,
-          ...(input.turnId ? { turnId: input.turnId } : {}),
-          createdAt: input.createdAt,
-        });
+      if (shouldComplete) {
+        const commandId = yield* providerCommandId(input.event, input.commandTag);
+        const dispatchExit = yield* Effect.exit(
+          Effect.suspend(() =>
+            orchestrationEngine.dispatch({
+              type: "thread.message.assistant.complete",
+              commandId,
+              threadId: input.threadId,
+              messageId: input.messageId,
+              ...(input.turnId ? { turnId: input.turnId } : {}),
+              createdAt,
+            }),
+          ).pipe(
+            Effect.retry({
+              schedule: Schedule.spaced(Duration.millis(STREAMING_ASSISTANT_FLUSH_INTERVAL_MILLIS)),
+              times: 2,
+            }),
+          ),
+        );
+        if (Exit.isFailure(dispatchExit)) {
+          yield* deferFinalization(dispatchExit.cause, undefined);
+          return false;
+        }
       }
       yield* clearAssistantMessageState(input.messageId);
+      yield* forgetAssistantMessageIdForThread(input.threadId, input.messageId);
+      return true;
     });
 
   const finalizeActiveAssistantSegmentForTurn = (input: {
@@ -1062,7 +1582,7 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      yield* finalizeAssistantMessage({
+      const finalized = yield* finalizeAssistantMessage({
         event: input.event,
         threadId: input.threadId,
         messageId: activeMessageId.value,
@@ -1074,15 +1594,14 @@ const make = Effect.gen(function* () {
           input.hasProjectedMessage ||
           (input.flushedMessageIds?.has(activeMessageId.value) ?? false),
       });
-      yield* forgetAssistantMessageId(input.threadId, input.turnId, activeMessageId.value);
-
-      const state = yield* getAssistantSegmentStateForTurn(input.threadId, input.turnId);
-      if (Option.isSome(state)) {
-        yield* setAssistantSegmentStateForTurn(input.threadId, input.turnId, {
-          ...state.value,
-          activeMessageId: null,
-        });
+      if (!finalized) {
+        return;
       }
+      yield* releaseFinalizedAssistantMessageForTurn(
+        input.threadId,
+        input.turnId,
+        activeMessageId.value,
+      );
     });
 
   const upsertProposedPlan = (input: {
@@ -1163,6 +1682,85 @@ const make = Effect.gen(function* () {
       yield* clearBufferedProposedPlan(input.planId);
     });
 
+  const finalizeAssistantMessagesForTerminalEvent = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    createdAt: string;
+  }) =>
+    Effect.gen(function* () {
+      const prefix = `${input.threadId}:`;
+      const turnKeys = Array.from(yield* Cache.keys(turnMessageIdsByTurnKey));
+      const detailedThread = yield* resolveThreadDetail(input.threadId);
+      const messages = detailedThread?.messages ?? [];
+      const finalizedMessageIds = new Set<MessageId>();
+
+      yield* Effect.forEach(
+        turnKeys,
+        (key) =>
+          Effect.gen(function* () {
+            if (!key.startsWith(prefix)) {
+              return;
+            }
+
+            const turnId = TurnId.make(key.slice(prefix.length));
+            const messageIds = yield* Cache.getOption(turnMessageIdsByTurnKey, key);
+            if (Option.isNone(messageIds)) {
+              return;
+            }
+
+            yield* Effect.forEach(
+              messageIds.value,
+              (messageId) =>
+                Effect.gen(function* () {
+                  finalizedMessageIds.add(messageId);
+                  const finalized = yield* finalizeAssistantMessage({
+                    event: input.event,
+                    threadId: input.threadId,
+                    messageId,
+                    turnId,
+                    createdAt: input.createdAt,
+                    commandTag: "assistant-complete-on-session-exit",
+                    finalDeltaCommandTag: "assistant-delta-finalize-on-session-exit",
+                    hasProjectedMessage: findMessageById(messages, messageId) !== undefined,
+                  });
+                  if (finalized) {
+                    yield* releaseFinalizedAssistantMessageForTurn(
+                      input.threadId,
+                      turnId,
+                      messageId,
+                    );
+                  }
+                }),
+              { concurrency: 1 },
+            ).pipe(Effect.asVoid);
+          }),
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+
+      const threadMessageIds = yield* Cache.getOption(
+        assistantMessageIdsByThreadId,
+        input.threadId,
+      );
+      if (Option.isSome(threadMessageIds)) {
+        yield* Effect.forEach(
+          threadMessageIds.value,
+          (messageId) =>
+            finalizedMessageIds.has(messageId)
+              ? Effect.void
+              : finalizeAssistantMessage({
+                  event: input.event,
+                  threadId: input.threadId,
+                  messageId,
+                  createdAt: input.createdAt,
+                  commandTag: "assistant-complete-on-session-exit",
+                  finalDeltaCommandTag: "assistant-delta-finalize-on-session-exit",
+                  hasProjectedMessage: findMessageById(messages, messageId) !== undefined,
+                }),
+          { concurrency: 1 },
+        ).pipe(Effect.asVoid);
+      }
+    });
+
   const clearTurnStateForSession = (threadId: ThreadId) =>
     Effect.gen(function* () {
       const prefix = `${threadId}:`;
@@ -1181,15 +1779,23 @@ const make = Effect.gen(function* () {
 
             const messageIds = yield* Cache.getOption(turnMessageIdsByTurnKey, key);
             if (Option.isSome(messageIds)) {
-              yield* Effect.forEach(messageIds.value, clearAssistantMessageState, {
-                concurrency: 1,
-              }).pipe(Effect.asVoid);
+              yield* Effect.forEach(
+                messageIds.value,
+                (messageId) =>
+                  hasDeferredAssistantDelta(messageId).pipe(
+                    Effect.flatMap((isDeferred) =>
+                      isDeferred ? Effect.void : clearAssistantMessageState(messageId),
+                    ),
+                  ),
+                { concurrency: 1 },
+              ).pipe(Effect.asVoid);
             }
 
             yield* Cache.invalidate(turnMessageIdsByTurnKey, key);
           }),
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
+      yield* Cache.invalidate(assistantMessageIdsByThreadId, threadId);
       yield* Effect.forEach(
         assistantSegmentKeys,
         (key) =>
@@ -1290,10 +1896,62 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const assistantMessageIdsForBoundaryEvent = (event: ProviderRuntimeEvent, threadId: ThreadId) =>
+    Effect.gen(function* () {
+      if (event.type === "item.completed" && event.payload.itemType === "assistant_message") {
+        const turnId = toTurnId(event.turnId);
+        const activeMessageId = turnId
+          ? yield* getActiveAssistantMessageIdForTurn(threadId, turnId)
+          : Option.none<MessageId>();
+        return [
+          Option.getOrElse(activeMessageId, () =>
+            MessageId.make(`assistant:${event.itemId ?? event.turnId ?? event.eventId}`),
+          ),
+        ];
+      }
+
+      if (
+        event.type === "turn.completed" ||
+        event.type === "turn.aborted" ||
+        event.type === "request.opened" ||
+        event.type === "user-input.requested"
+      ) {
+        const turnId = toTurnId(event.turnId);
+        return turnId ? Array.from(yield* getAssistantMessageIdsForTurn(threadId, turnId)) : [];
+      }
+
+      const isThreadTerminalBoundary =
+        event.type === "session.exited" ||
+        event.type === "runtime.error" ||
+        (event.type === "session.state.changed" &&
+          (event.payload.state === "error" || event.payload.state === "stopped"));
+      if (!isThreadTerminalBoundary) {
+        return [];
+      }
+      const messageIds = yield* Cache.getOption(assistantMessageIdsByThreadId, threadId);
+      return Array.from(Option.getOrElse(messageIds, () => new Set<MessageId>()));
+    });
+
+  const deferBoundaryEventForAssistantDeltas = (event: ProviderRuntimeEvent, threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const messageIds = yield* assistantMessageIdsForBoundaryEvent(event, threadId);
+      const hasDeferredDeltas = yield* Effect.forEach(messageIds, hasDeferredAssistantDelta).pipe(
+        Effect.map((entries) => entries.some(Boolean)),
+      );
+      if (!hasDeferredDeltas) {
+        return false;
+      }
+      yield* scheduleRuntimeEventRetry(event);
+      return true;
+    });
+
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
+      if (yield* deferBoundaryEventForAssistantDeltas(event, thread.id)) {
+        return;
+      }
 
       let loadedThreadDetail: OrchestrationThread | null | undefined;
       const getLoadedThreadDetail = () =>
@@ -1304,6 +1962,28 @@ const make = Effect.gen(function* () {
           loadedThreadDetail = (yield* resolveThreadDetail(thread.id)) ?? null;
           return loadedThreadDetail;
         });
+      let deferredThreadSession: NonNullable<typeof thread.session> | null = null;
+      const flushDeferredThreadSession = Effect.fnUntraced(function* () {
+        if (deferredThreadSession === null) {
+          return false;
+        }
+        if (yield* deferBoundaryEventForAssistantDeltas(event, thread.id)) {
+          return true;
+        }
+        const session = deferredThreadSession;
+        yield* orchestrationEngine.dispatch({
+          type: "thread.session.set",
+          commandId: yield* providerCommandId(
+            event,
+            event.type === "runtime.error" ? "runtime-error-session-set" : "thread-session-set",
+          ),
+          threadId: thread.id,
+          session,
+          createdAt: event.createdAt,
+        });
+        deferredThreadSession = null;
+        return false;
+      });
 
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
@@ -1432,24 +2112,49 @@ const make = Effect.gen(function* () {
             );
           }
 
-          yield* orchestrationEngine.dispatch({
-            type: "thread.session.set",
-            commandId: yield* providerCommandId(event, "thread-session-set"),
+          const nextSession = {
             threadId: thread.id,
-            session: {
+            status,
+            providerName: event.provider,
+            ...(event.providerInstanceId !== undefined
+              ? { providerInstanceId: event.providerInstanceId }
+              : {}),
+            runtimeMode: thread.session?.runtimeMode ?? "full-access",
+            activeTurnId: nextActiveTurnId,
+            lastError,
+            updatedAt: now,
+          } satisfies NonNullable<typeof thread.session>;
+          const shouldDeferSessionUpdate =
+            event.type === "turn.completed" ||
+            event.type === "session.exited" ||
+            (event.type === "session.state.changed" &&
+              (event.payload.state === "error" || event.payload.state === "stopped"));
+          if (shouldDeferSessionUpdate) {
+            deferredThreadSession = nextSession;
+          } else {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.session.set",
+              commandId: yield* providerCommandId(event, "thread-session-set"),
               threadId: thread.id,
-              status,
-              providerName: event.provider,
-              ...(event.providerInstanceId !== undefined
-                ? { providerInstanceId: event.providerInstanceId }
-                : {}),
-              runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: nextActiveTurnId,
-              lastError,
-              updatedAt: now,
-            },
-            createdAt: now,
-          });
+              session: nextSession,
+              createdAt: now,
+            });
+          }
+        }
+      }
+
+      if (
+        event.type === "session.state.changed" &&
+        shouldApplyThreadLifecycle &&
+        (event.payload.state === "error" || event.payload.state === "stopped")
+      ) {
+        yield* finalizeAssistantMessagesForTerminalEvent({
+          event,
+          threadId: thread.id,
+          createdAt: now,
+        });
+        if (yield* flushDeferredThreadSession()) {
+          return;
         }
       }
 
@@ -1467,6 +2172,7 @@ const make = Effect.gen(function* () {
           event,
           ...(turnId ? { turnId } : {}),
         });
+        yield* rememberAssistantMessageIdForThread(thread.id, assistantMessageId);
         if (turnId) {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
@@ -1475,29 +2181,27 @@ const make = Effect.gen(function* () {
           serverSettingsService.getSettings,
           (settings) => (settings.enableAssistantStreaming ? "streaming" : "buffered"),
         );
-        if (assistantDeliveryMode === "buffered") {
-          const spillChunk = yield* appendBufferedAssistantText(assistantMessageId, assistantDelta);
-          if (spillChunk.length > 0) {
-            yield* orchestrationEngine.dispatch({
-              type: "thread.message.assistant.delta",
-              commandId: yield* providerCommandId(event, "assistant-delta-buffer-spill"),
-              threadId: thread.id,
-              messageId: assistantMessageId,
-              delta: spillChunk,
-              ...(turnId ? { turnId } : {}),
-              createdAt: now,
-            });
-          }
-        } else {
-          yield* orchestrationEngine.dispatch({
-            type: "thread.message.assistant.delta",
-            commandId: yield* providerCommandId(event, "assistant-delta"),
-            threadId: thread.id,
-            messageId: assistantMessageId,
-            delta: assistantDelta,
-            ...(turnId ? { turnId } : {}),
-            createdAt: now,
+        const assistantDeltaInput = {
+          source: "assistant-delta",
+          event,
+          threadId: thread.id,
+          messageId: assistantMessageId,
+          ...(turnId ? { turnId } : {}),
+          deliveryMode: assistantDeliveryMode,
+          delta: assistantDelta,
+        } as const;
+        if (yield* hasDeferredAssistantDelta(assistantMessageId)) {
+          // Keep later provider events behind the already scheduled retry.
+          // Otherwise they can enter the retained buffer between a failed
+          // chunk and that input's unprocessed remainder.
+          yield* markDeferredAssistantDelta(assistantMessageId);
+          yield* scheduleAssistantDeltaRetry({
+            ...assistantDeltaInput,
+            flushPendingFirst: true,
+            isDeferred: true,
           });
+        } else {
+          yield* processAssistantDelta(assistantDeltaInput);
         }
       }
 
@@ -1544,6 +2248,12 @@ const make = Effect.gen(function* () {
             }),
           flushedMessageIds,
         });
+        // Finalization above can itself enter deferred retry state. Keep the
+        // request boundary behind that retry just like turn/session boundaries
+        // so approval and user-input activities never outrun assistant output.
+        if (yield* deferBoundaryEventForAssistantDeltas(event, thread.id)) {
+          return;
+        }
       }
 
       if (proposedPlanDelta && proposedPlanDelta.length > 0) {
@@ -1592,12 +2302,13 @@ const make = Effect.gen(function* () {
           hasAssistantMessagesForTurn &&
           (assistantCompletion.fallbackText?.trim().length ?? 0) === 0;
 
+        let assistantFinalized = true;
         if (!shouldSkipRedundantCompletion) {
           if (turnId && Option.isNone(activeAssistantMessageId)) {
             yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
           }
 
-          yield* finalizeAssistantMessage({
+          assistantFinalized = yield* finalizeAssistantMessage({
             event,
             threadId: thread.id,
             messageId: assistantMessageId,
@@ -1611,12 +2322,12 @@ const make = Effect.gen(function* () {
               : {}),
           });
 
-          if (turnId) {
+          if (turnId && assistantFinalized) {
             yield* forgetAssistantMessageId(thread.id, turnId, assistantMessageId);
           }
         }
 
-        if (turnId) {
+        if (turnId && assistantFinalized) {
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
         }
       }
@@ -1634,14 +2345,14 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (event.type === "turn.completed") {
+      if (event.type === "turn.completed" || event.type === "turn.aborted") {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
         const turnId = toTurnId(event.turnId);
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
-          yield* Effect.forEach(
+          const finalizedAssistantMessages = yield* finalizeTrackedAssistantMessages(
             assistantMessageIds,
             (assistantMessageId) =>
               finalizeAssistantMessage({
@@ -1654,10 +2365,16 @@ const make = Effect.gen(function* () {
                 finalDeltaCommandTag: "assistant-delta-finalize-fallback",
                 hasProjectedMessage: findMessageById(messages, assistantMessageId) !== undefined,
               }),
-            { concurrency: 1 },
-          ).pipe(Effect.asVoid);
-          yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
-          yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
+            (assistantMessageId) =>
+              releaseFinalizedAssistantMessageForTurn(thread.id, turnId, assistantMessageId),
+          );
+          if (finalizedAssistantMessages.every(Boolean)) {
+            yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
+            yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
+            if (event.type === "turn.completed" && (yield* flushDeferredThreadSession())) {
+              return;
+            }
+          }
 
           yield* finalizeBufferedProposedPlan({
             event,
@@ -1671,6 +2388,14 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "session.exited") {
+        yield* finalizeAssistantMessagesForTerminalEvent({
+          event,
+          threadId: thread.id,
+          createdAt: now,
+        });
+        if (yield* flushDeferredThreadSession()) {
+          return;
+        }
         yield* clearTurnStateForSession(thread.id);
       }
 
@@ -1682,24 +2407,26 @@ const make = Effect.gen(function* () {
           : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
 
         if (shouldApplyRuntimeError) {
-          yield* orchestrationEngine.dispatch({
-            type: "thread.session.set",
-            commandId: yield* providerCommandId(event, "runtime-error-session-set"),
+          deferredThreadSession = {
             threadId: thread.id,
-            session: {
-              threadId: thread.id,
-              status: "error",
-              providerName: event.provider,
-              ...(event.providerInstanceId !== undefined
-                ? { providerInstanceId: event.providerInstanceId }
-                : {}),
-              runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: eventTurnId ?? null,
-              lastError: runtimeErrorMessage,
-              updatedAt: now,
-            },
+            status: "error",
+            providerName: event.provider,
+            ...(event.providerInstanceId !== undefined
+              ? { providerInstanceId: event.providerInstanceId }
+              : {}),
+            runtimeMode: thread.session?.runtimeMode ?? "full-access",
+            activeTurnId: eventTurnId ?? null,
+            lastError: runtimeErrorMessage,
+            updatedAt: now,
+          };
+          yield* finalizeAssistantMessagesForTerminalEvent({
+            event,
+            threadId: thread.id,
             createdAt: now,
           });
+          if (yield* flushDeferredThreadSession()) {
+            return;
+          }
         }
       }
 
@@ -1764,6 +2491,10 @@ const make = Effect.gen(function* () {
         }
       }
 
+      if (yield* flushDeferredThreadSession()) {
+        return;
+      }
+
       const activities = runtimeEventToActivities(event, taskTitle);
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
@@ -1782,8 +2513,295 @@ const make = Effect.gen(function* () {
 
   const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
 
-  const processInput = (input: RuntimeIngestionInput) =>
-    input.source === "runtime" ? processRuntimeEvent(input.event) : processDomainEvent(input.event);
+  const processAssistantDelta = (
+    input: Extract<RuntimeIngestionInput, { source: "assistant-delta" }>,
+  ) =>
+    Effect.gen(function* () {
+      yield* rememberAssistantOccurredAt(input.messageId, input.event.createdAt);
+      const maxRetainedChars =
+        input.deliveryMode === "streaming"
+          ? MAX_COALESCED_STREAMING_ASSISTANT_CHARS
+          : MAX_BUFFERED_ASSISTANT_CHARS;
+      let offset = 0;
+      let flushPendingFirst = input.flushPendingFirst === true;
+
+      const deferRemainder = (cause: Cause.Cause<unknown>) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning(
+            "provider runtime ingestion deferred assistant delta after retries",
+            {
+              eventId: input.event.eventId,
+              messageId: input.messageId,
+              deliveryMode: input.deliveryMode,
+              cause: Cause.pretty(cause),
+            },
+          );
+          if (input.isDeferred !== true) {
+            yield* markDeferredAssistantDelta(input.messageId);
+          }
+          yield* scheduleAssistantDeltaRetry({
+            ...input,
+            delta: input.delta.slice(offset),
+            flushPendingFirst: true,
+            isDeferred: true,
+          });
+        });
+
+      while (offset < input.delta.length || flushPendingFirst) {
+        const pendingText = yield* peekBufferedAssistantText(input.messageId);
+        if (
+          pendingText.length > 0 &&
+          (flushPendingFirst || pendingText.length >= maxRetainedChars)
+        ) {
+          const retainedChunk = pendingText.slice(0, maxRetainedChars);
+          const dispatchExit = yield* Effect.exit(
+            input.deliveryMode === "streaming"
+              ? dispatchStreamingAssistantDelta({
+                  event: input.event,
+                  threadId: input.threadId,
+                  messageId: input.messageId,
+                  ...(input.turnId ? { turnId: input.turnId } : {}),
+                  delta: retainedChunk,
+                  createdAt: input.event.createdAt,
+                  commandTag: "assistant-delta-deferred-retry",
+                })
+              : dispatchBufferedAssistantDelta({
+                  event: input.event,
+                  threadId: input.threadId,
+                  messageId: input.messageId,
+                  ...(input.turnId ? { turnId: input.turnId } : {}),
+                  delta: retainedChunk,
+                  createdAt: input.event.createdAt,
+                }),
+          );
+          if (Exit.isFailure(dispatchExit)) {
+            yield* deferRemainder(dispatchExit.cause);
+            return;
+          }
+          flushPendingFirst = pendingText.length > retainedChunk.length;
+          continue;
+        }
+
+        if (offset >= input.delta.length) {
+          break;
+        }
+
+        const availableChars = Math.max(1, maxRetainedChars - pendingText.length);
+        const deltaChunk = input.delta.slice(offset, offset + availableChars);
+        offset += deltaChunk.length;
+        const flushChunk =
+          input.deliveryMode === "streaming"
+            ? yield* appendCoalescedStreamingAssistantText(
+                input.messageId,
+                deltaChunk,
+                input.event.createdAt,
+              )
+            : yield* appendBufferedAssistantText(input.messageId, deltaChunk);
+
+        if (input.deliveryMode === "streaming") {
+          yield* scheduleStreamingAssistantFlush({
+            event: input.event,
+            threadId: input.threadId,
+            messageId: input.messageId,
+            ...(input.turnId ? { turnId: input.turnId } : {}),
+          });
+        }
+
+        if (flushChunk.length === 0) {
+          continue;
+        }
+
+        const dispatchExit = yield* Effect.exit(
+          input.deliveryMode === "streaming"
+            ? dispatchStreamingAssistantDelta({
+                event: input.event,
+                threadId: input.threadId,
+                messageId: input.messageId,
+                ...(input.turnId ? { turnId: input.turnId } : {}),
+                delta: flushChunk,
+                createdAt: input.event.createdAt,
+                commandTag: "assistant-delta",
+              })
+            : dispatchBufferedAssistantDelta({
+                event: input.event,
+                threadId: input.threadId,
+                messageId: input.messageId,
+                ...(input.turnId ? { turnId: input.turnId } : {}),
+                delta: flushChunk,
+                createdAt: input.event.createdAt,
+              }),
+        );
+        if (Exit.isFailure(dispatchExit)) {
+          yield* deferRemainder(dispatchExit.cause);
+          return;
+        }
+      }
+
+      if (input.isDeferred === true) {
+        yield* completeDeferredAssistantDelta(input.messageId);
+      }
+    });
+
+  const processScheduledAssistantFlush = (
+    input: Extract<RuntimeIngestionInput, { source: "assistant-flush" }>,
+  ) =>
+    Effect.gen(function* () {
+      yield* Cache.invalidate(streamingAssistantFlushScheduledByMessageId, input.messageId);
+      const bufferedText = yield* peekBufferedAssistantText(input.messageId);
+      if (bufferedText.length === 0) {
+        if (input.isDeferred === true) {
+          yield* completeDeferredAssistantDelta(input.messageId);
+        }
+        return;
+      }
+
+      const retainedChunk = bufferedText.slice(0, MAX_COALESCED_STREAMING_ASSISTANT_CHARS);
+      const dispatchExit = yield* Effect.exit(
+        dispatchStreamingAssistantDelta({
+          event: input.event,
+          threadId: input.threadId,
+          messageId: input.messageId,
+          ...(input.turnId ? { turnId: input.turnId } : {}),
+          delta: retainedChunk,
+          createdAt: input.event.createdAt,
+          commandTag: "assistant-delta-timer-flush",
+        }),
+      );
+      if (Exit.isFailure(dispatchExit)) {
+        yield* Effect.logWarning(
+          "provider runtime ingestion rescheduled assistant timer flush after retries",
+          {
+            eventId: input.event.eventId,
+            messageId: input.messageId,
+            cause: Cause.pretty(dispatchExit.cause),
+          },
+        );
+        if (input.isDeferred !== true) {
+          yield* markDeferredAssistantDelta(input.messageId);
+        }
+        yield* scheduleStreamingAssistantFlush({
+          event: input.event,
+          threadId: input.threadId,
+          messageId: input.messageId,
+          ...(input.turnId ? { turnId: input.turnId } : {}),
+          isDeferred: true,
+        });
+      } else if (bufferedText.length > retainedChunk.length) {
+        yield* scheduleStreamingAssistantFlush({
+          event: input.event,
+          threadId: input.threadId,
+          messageId: input.messageId,
+          ...(input.turnId ? { turnId: input.turnId } : {}),
+          ...(input.isDeferred === true ? { isDeferred: true } : {}),
+        });
+      } else if (input.isDeferred === true) {
+        yield* completeDeferredAssistantDelta(input.messageId);
+      }
+    });
+
+  const processInput = (input: RuntimeIngestionInput) => {
+    switch (input.source) {
+      case "runtime":
+        return processRuntimeEvent(input.event);
+      case "domain":
+        return processDomainEvent(input.event);
+      case "assistant-flush":
+        return processScheduledAssistantFlush(input);
+      case "assistant-delta":
+        return processAssistantDelta(input);
+      case "assistant-finalize":
+        return Effect.gen(function* () {
+          yield* Cache.invalidate(assistantFinalizationRetryScheduledByMessageId, input.messageId);
+          if (yield* hasDeferredAssistantDeltaAheadOfFinalization(input.messageId)) {
+            yield* scheduleAssistantFinalizationRetry(input);
+            return;
+          }
+          const finalized = yield* finalizeAssistantMessage(input);
+          if (finalized && input.turnId) {
+            if (
+              input.event.type === "request.opened" ||
+              input.event.type === "user-input.requested"
+            ) {
+              yield* releaseFinalizedAssistantMessageForTurn(
+                input.threadId,
+                input.turnId,
+                input.messageId,
+              );
+            } else {
+              yield* resetFinalizedAssistantMessageForTurn(
+                input.threadId,
+                input.turnId,
+                input.messageId,
+              );
+            }
+          }
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.gen(function* () {
+              if (Cause.hasInterruptsOnly(cause)) {
+                return yield* Effect.failCause(cause);
+              }
+              const attempts = yield* Cache.getOption(
+                assistantFinalizationDefectRetriesByMessageId,
+                input.messageId,
+              ).pipe(Effect.map((count) => Option.getOrElse(count, () => 0)));
+              if (attempts < MAX_ASSISTANT_FINALIZATION_DEFECT_RETRIES) {
+                yield* Cache.set(
+                  assistantFinalizationDefectRetriesByMessageId,
+                  input.messageId,
+                  attempts + 1,
+                );
+                yield* Effect.logWarning(
+                  "provider runtime ingestion rescheduled defective assistant finalization",
+                  {
+                    eventId: input.event.eventId,
+                    messageId: input.messageId,
+                    attempt: attempts + 1,
+                    cause: Cause.pretty(cause),
+                  },
+                );
+                yield* scheduleAssistantFinalizationRetry(input);
+                return;
+              }
+
+              yield* Effect.logError(
+                "provider runtime ingestion abandoned defective assistant finalization",
+                {
+                  eventId: input.event.eventId,
+                  messageId: input.messageId,
+                  attempts,
+                  cause: Cause.pretty(cause),
+                },
+              );
+              // Release every ordering marker after bounded defect retries so
+              // a permanently broken finalizer cannot stall turn/session
+              // boundaries forever. The already persisted message content is
+              // left intact; only in-memory retry bookkeeping is discarded.
+              yield* clearAssistantMessageState(input.messageId);
+              yield* forgetAssistantMessageIdForThread(input.threadId, input.messageId);
+              if (input.turnId) {
+                if (
+                  input.event.type === "request.opened" ||
+                  input.event.type === "user-input.requested"
+                ) {
+                  yield* releaseFinalizedAssistantMessageForTurn(
+                    input.threadId,
+                    input.turnId,
+                    input.messageId,
+                  );
+                } else {
+                  yield* resetFinalizedAssistantMessageForTurn(
+                    input.threadId,
+                    input.turnId,
+                    input.messageId,
+                  );
+                }
+              }
+            }),
+          ),
+        );
+    }
+  };
 
   const processInputSafely = (input: RuntimeIngestionInput) =>
     processInput(input).pipe(
@@ -1801,6 +2819,7 @@ const make = Effect.gen(function* () {
     );
 
   const worker = yield* makeDrainableWorker(processInputSafely);
+  enqueueInput = worker.enqueue;
 
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
