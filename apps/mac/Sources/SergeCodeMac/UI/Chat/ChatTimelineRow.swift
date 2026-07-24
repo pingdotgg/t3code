@@ -4,12 +4,14 @@ import T3Kit
 
 /// Shared transcript card geometry — also used by the subagent inner thread.
 enum TranscriptMetrics {
-    static let cardRadius: CGFloat = 10
-    static let cardPadH: CGFloat = 10
-    static let cardPadV: CGFloat = 7
+    static let cardRadius: CGFloat = 12
+    static let cardPadH: CGFloat = 12
+    static let cardPadV: CGFloat = 10
     static let nestedRadius: CGFloat = 6
     static let railWidth: CGFloat = 2.5
-    static let iconColumn: CGFloat = 16
+    /// Leading activity-chip size. Deliberately large — the activity stream
+    /// should be glanceable, not zoomed-out small text.
+    static let iconColumn: CGFloat = 28
 }
 
 private struct TranscriptCardModifier: ViewModifier {
@@ -562,8 +564,12 @@ private func loadNSImage(from url: URL) async throws -> NSImage {
 }
 
 /// A finished burst of tool work, condensed to one disclosure row once the
-/// agent has moved on. Expanding reveals the original tool/reasoning rows.
+/// agent has moved on. The collapsed row leads with a fanned stack of the
+/// burst's tool-kind chips; expanding reveals the original tool/reasoning rows.
 private struct ToolGroupRow: View {
+    /// Kinds fanned out on the collapsed row; more than this reads as noise.
+    private static let maxFannedChips = 5
+
     let items: [TimelineItem]
     let summary: ToolGroupSummary
     let threadStatus: ThreadStatus?
@@ -571,8 +577,21 @@ private struct ToolGroupRow: View {
 
     @UIState private var isExpanded = false
 
+    /// Distinct tool kinds in the burst, in first-appearance order.
+    private var fannedKinds: [ToolEventKind] {
+        var kinds: [ToolEventKind] = []
+        for item in items {
+            guard case .toolEvent(_, _, _, let kind, _, _, _, _) = item,
+                  !kinds.contains(kind)
+            else { continue }
+            kinds.append(kind)
+            if kinds.count == Self.maxFannedChips { break }
+        }
+        return kinds
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Button {
                 // Settle, not snap: expanding can reveal dozens of rows, and
                 // the quick snap curve makes that layout shift feel violent.
@@ -580,17 +599,19 @@ private struct ToolGroupRow: View {
                     isExpanded.toggle()
                 }
             } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: summary.failedCount > 0
-                        ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(summary.failedCount > 0 ? Color.orange : AlpineTheme.statusSuccess)
-                        .frame(width: TranscriptMetrics.iconColumn)
+                HStack(spacing: 10) {
+                    chipFan
                     Text(headline)
-                        .font(.callout)
+                        .font(.body)
                         .foregroundStyle(.secondary)
                     Spacer()
+                    if summary.failedCount > 0 {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.callout)
+                            .foregroundStyle(Color.orange)
+                    }
                     Image(systemName: "chevron.right")
-                        .font(.caption2)
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
@@ -599,7 +620,7 @@ private struct ToolGroupRow: View {
             .buttonStyle(.plain)
 
             if isExpanded {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
                     ForEach(items) { item in
                         expandedRow(item)
                     }
@@ -608,6 +629,19 @@ private struct ToolGroupRow: View {
             }
         }
         .transcriptCard(fill: .quaternary.opacity(0.4))
+    }
+
+    /// Overlapping chips with alternating tilt, popping in with a clamped
+    /// stagger (`.control` entrances are delay-only, so this stays cheap).
+    private var chipFan: some View {
+        HStack(spacing: -6) {
+            ForEach(Array(fannedKinds.enumerated()), id: \.offset) { index, kind in
+                ActivityIconChip(style: kind.activityStyle, size: 24)
+                    .rotationEffect(.degrees(index.isMultiple(of: 2) ? -6 : 6))
+                    .zIndex(Double(index))
+                    .entrance(.control, index: index)
+            }
+        }
     }
 
     private var headline: String {
@@ -721,19 +755,21 @@ private struct ToolEventRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             Button {
                 withAnimation(Motion.feedback) { isExpanded.toggle() }
             } label: {
-                HStack(spacing: 8) {
-                    statusIcon
-                        .frame(width: TranscriptMetrics.iconColumn)
-                    Image(systemName: kind.symbolName)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(width: TranscriptMetrics.iconColumn)
+                HStack(spacing: 10) {
+                    ActivityIconChip(style: kind.activityStyle)
+                        .pulseGlow(isActive: displayState == .running)
+                        .overlay(alignment: .bottomTrailing) {
+                            statusBadge
+                        }
+                        .successRipple(
+                            fire: displayState == .succeeded,
+                            cornerRadius: TranscriptMetrics.iconColumn * 0.32)
                     Text(name)
-                        .font(.callout.weight(.medium))
+                        .font(.body.weight(.semibold))
                         .layoutPriority(1)
                     if let preview {
                         previewLabel(preview)
@@ -741,7 +777,7 @@ private struct ToolEventRow: View {
                     Spacer(minLength: 8)
                     if hasExpandableContent {
                         Image(systemName: "chevron.right")
-                            .font(.caption2)
+                            .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     }
@@ -759,11 +795,15 @@ private struct ToolEventRow: View {
             }
         }
         .transcriptCard(fill: cardFill)
+        .shimmerBorder(
+            color: kind.activityStyle.tint,
+            isActive: displayState == .running,
+            cornerRadius: TranscriptMetrics.cardRadius)
         .overlay(alignment: .topTrailing) {
             if isHovering, let at {
                 TranscriptTimestamp(date: at)
-                    .padding(.top, 7)
-                    .padding(.trailing, hasExpandableContent ? 24 : 10)
+                    .padding(.top, 9)
+                    .padding(.trailing, hasExpandableContent ? 28 : 12)
             }
         }
         .animation(Motion.ambient, value: displayState)
@@ -774,8 +814,10 @@ private struct ToolEventRow: View {
     private var cardFill: AnyShapeStyle {
         switch displayState {
         case .failed:
-            AnyShapeStyle(Color.red.opacity(0.06))
-        case .running, .succeeded, .settled:
+            AnyShapeStyle(Color.red.opacity(0.08))
+        case .running:
+            AnyShapeStyle(kind.activityStyle.tint.opacity(0.08))
+        case .succeeded, .settled:
             AnyShapeStyle(.quaternary.opacity(0.4))
         }
     }
@@ -803,7 +845,7 @@ private struct ToolEventRow: View {
     private func previewLabel(_ preview: (text: String, fullPath: String?)) -> some View {
         let label = Text(preview.text)
             .font(.system(
-                .caption,
+                .callout,
                 design: kind == .command || kind == .fileChange ? .monospaced : .default))
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -820,11 +862,11 @@ private struct ToolEventRow: View {
         let visible = Self.visibleOutput(text)
         VStack(alignment: .leading, spacing: 4) {
             Text("Output")
-                .font(.caption)
+                .font(.callout.weight(.medium))
                 .foregroundStyle(.secondary)
             if let notice = visible.truncationNotice {
                 Text(notice)
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
             }
             monospacedBody(
@@ -850,28 +892,33 @@ private struct ToolEventRow: View {
 
     private func monospacedBody(_ text: String, foreground: Color) -> some View {
         Text(text)
-            .font(.system(.caption, design: .monospaced))
+            .font(.system(.callout, design: .monospaced))
             .foregroundStyle(foreground)
             .textSelection(.enabled)
-            .padding(8)
+            .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 Color(nsColor: .textBackgroundColor),
                 in: RoundedRectangle(cornerRadius: TranscriptMetrics.nestedRadius))
     }
 
-    /// One `Image` whose name/tint swap rides `.contentTransition` — the
-    /// running → done flip morphs instead of hard-swapping glyphs.
+    /// Status badge pinned to the chip's bottom-trailing corner. One `Image`
+    /// whose name/tint swap rides `.contentTransition` — the running → done
+    /// flip morphs instead of hard-swapping glyphs; the running badge pulses
+    /// and a success bounces once (both dropped under Reduce Motion).
     @ViewBuilder
-    private var statusIcon: some View {
-        let icon = Image(systemName: iconName)
+    private var statusBadge: some View {
+        let badge = Image(systemName: iconName)
+            .font(.system(size: 11, weight: .bold))
             .foregroundStyle(iconTint)
             .contentTransition(
                 Motion.reduceMotion ? .identity : .symbolEffect(.replace))
         if Motion.reduceMotion {
-            icon
+            badge
+        } else if displayState == .running {
+            badge.symbolEffect(.pulse)
         } else {
-            icon.symbolEffect(.bounce, value: displayState == .succeeded)
+            badge.symbolEffect(.bounce, value: displayState == .succeeded)
         }
     }
 
@@ -895,21 +942,6 @@ private struct ToolEventRow: View {
 }
 
 extension ToolEventKind {
-    fileprivate var symbolName: String {
-        switch self {
-        case .command: "terminal"
-        case .fileChange: "square.and.pencil"
-        case .fileRead: "eye"
-        case .webSearch: "globe"
-        case .mcpCall: "wrench.adjustable"
-        case .skill: "wand.and.stars"
-        case .computerUse: "desktopcomputer"
-        case .subagent: "person.2"
-        case .imageView: "photo"
-        case .other: "hammer"
-        }
-    }
-
     /// Round-trip back to the wire item type for `ParsedToolDetail`'s hint.
     fileprivate var wireItemType: String? {
         switch self {
@@ -987,19 +1019,19 @@ private struct FileChangeDiffView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text(displayPath)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.callout, design: .monospaced))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(path)
                 Spacer(minLength: 4)
                 if additions > 0 {
                     Text("+\(additions)")
-                        .font(.caption.monospacedDigit())
+                        .font(.callout.monospacedDigit())
                         .foregroundStyle(.green)
                 }
                 if deletions > 0 {
                     Text("-\(deletions)")
-                        .font(.caption.monospacedDigit())
+                        .font(.callout.monospacedDigit())
                         .foregroundStyle(.red)
                 }
             }
@@ -1012,14 +1044,14 @@ private struct FileChangeDiffView: View {
             // runs rather than full-width row backgrounds.
             Text(FileChangeDiffText.attributedBody(visible.map(\.textLine)))
                 .textSelection(.enabled)
-                .font(.system(.caption, design: .monospaced))
+                .font(.system(.callout, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
 
             if hidden > 0 {
                 Text("… \(hidden) more line\(hidden == 1 ? "" : "s")")
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -1054,17 +1086,17 @@ enum FileChangeDiffText {
         switch kind {
         case .separator:
             var piece = AttributedString(text)
-            piece.font = .system(.caption, design: .monospaced)
+            piece.font = .system(.callout, design: .monospaced)
             piece.foregroundColor = Color.secondary.opacity(0.55)
             return piece
         case .removed:
             var piece = AttributedString("- " + text)
-            piece.font = .system(.caption, design: .monospaced)
+            piece.font = .system(.callout, design: .monospaced)
             piece.backgroundColor = Color.red.opacity(0.12)
             return piece
         case .added:
             var piece = AttributedString("+ " + text)
-            piece.font = .system(.caption, design: .monospaced)
+            piece.font = .system(.callout, design: .monospaced)
             piece.backgroundColor = Color.green.opacity(0.12)
             return piece
         }
@@ -1146,14 +1178,13 @@ private struct ReasoningRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: "sparkles")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .frame(width: TranscriptMetrics.iconColumn)
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            ActivityIconChip(
+                style: ToolActivityStyle(symbolName: "sparkles", tint: AlpineTheme.lavender),
+                size: 22)
             VStack(alignment: .leading, spacing: 4) {
                 Text(text)
-                    .font(.callout)
+                    .font(.body)
                     .italic()
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -1167,7 +1198,7 @@ private struct ReasoningRow: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .font(.caption.weight(.medium))
+                    .font(.callout.weight(.medium))
                     .foregroundStyle(.tint)
                 }
             }
@@ -1247,7 +1278,7 @@ private struct SessionExitRow: View {
             }
             ScrollView {
                 Text(stderrTail)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)

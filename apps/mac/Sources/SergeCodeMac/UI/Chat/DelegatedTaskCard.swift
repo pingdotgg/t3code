@@ -10,6 +10,10 @@ import SwiftUI
 struct DelegatedTaskCard: View {
     /// Expanded log shows the tail; older entries are summarized above.
     private static let maxVisibleLogEntries = 30
+    /// Compact status/glyph column. Deliberately not `TranscriptMetrics
+    /// .iconColumn` — that token tracks the activity stream's larger chips,
+    /// while this card keeps its own denser chrome.
+    private static let iconColumn: CGFloat = 16
 
     let task: SubagentTaskItem
     let modelDisplayNames: [String: String]
@@ -61,7 +65,7 @@ struct DelegatedTaskCard: View {
                 } label: {
                     HStack(alignment: .top, spacing: 9) {
                         SubagentTaskStatusIcon(task: task)
-                            .frame(width: TranscriptMetrics.iconColumn, height: 16)
+                            .frame(width: Self.iconColumn, height: 16)
                             .padding(.top, 1)
 
                         VStack(alignment: .leading, spacing: 5) {
@@ -69,7 +73,7 @@ struct DelegatedTaskCard: View {
                                 Image(systemName: task.entityKind == .command ? "terminal" : "person.2")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                    .frame(width: TranscriptMetrics.iconColumn)
+                                    .frame(width: Self.iconColumn)
                                 Text(title)
                                     .font(.callout.weight(.medium))
                                     .lineLimit(2)
