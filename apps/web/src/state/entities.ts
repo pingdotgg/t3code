@@ -20,6 +20,7 @@ import type {
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
@@ -146,16 +147,54 @@ export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread 
   );
 }
 
+/**
+ * Local drafts have a client-generated thread id before `thread.created` adds
+ * the server shell. Waiting for that shell prevents the expected pre-creation
+ * HTTP 404 from being treated as an authoritative deletion.
+ */
+export function shouldSubscribeToThreadDetail(input: {
+  readonly hasLocalDraft: boolean;
+  readonly hasServerShell: boolean;
+}): boolean {
+  return !input.hasLocalDraft || input.hasServerShell;
+}
+
+export function useThreadDetailWhenReady(
+  ref: ScopedThreadRef | null,
+  input: {
+    readonly hasLocalDraft: boolean;
+    readonly hasServerShell: boolean;
+  },
+): EnvironmentThread | null {
+  return useThreadDetail(shouldSubscribeToThreadDetail(input) ? ref : null);
+}
+
 export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),
   );
 }
 
+export function useThreadStatusWhenReady(
+  ref: ScopedThreadRef | null,
+  input: {
+    readonly hasLocalDraft: boolean;
+    readonly hasServerShell: boolean;
+  },
+): EnvironmentThreadStatus {
+  return useThreadStatus(shouldSubscribeToThreadDetail(input) ? ref : null);
+}
+
 /** Detail collections composed with shell-authoritative thread/workspace metadata. */
 export function useThread(ref: ScopedThreadRef | null): EnvironmentThread | null {
   const shell = useThreadShell(ref);
-  const detail = useThreadDetail(ref);
+  const hasLocalDraft = useComposerDraftStore((store) =>
+    ref === null ? false : store.getDraftThreadByRef(ref) !== null,
+  );
+  const detail = useThreadDetailWhenReady(ref, {
+    hasLocalDraft,
+    hasServerShell: shell !== null,
+  });
   return useMemo(() => mergeEnvironmentThread(detail, shell), [detail, shell]);
 }
 

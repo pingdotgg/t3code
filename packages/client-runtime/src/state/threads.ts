@@ -244,6 +244,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     subscribeDynamic(
       ORCHESTRATION_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
+        let current = yield* SubscriptionRef.get(state);
+        if (current.status === "deleted") {
+          return yield* Effect.interrupt;
+        }
+
         const supportsCompletionMarker = yield* session.initialConfig.pipe(
           Effect.map((config) => config.threadResumeCompletionMarker === true),
           Effect.orElseSucceed(() => false),
@@ -251,8 +256,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
 
-        let current = yield* SubscriptionRef.get(state);
-        if (Option.isNone(current.data) && current.status !== "deleted") {
+        current = yield* SubscriptionRef.get(state);
+        if (current.status === "deleted") {
+          return yield* Effect.interrupt;
+        }
+        if (Option.isNone(current.data)) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -267,7 +275,25 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpSnapshot = yield* snapshotLoader.load(prepared, threadId);
+          const httpSnapshot = yield* snapshotLoader.load(prepared, threadId).pipe(
+            Effect.catchTags({
+              EnvironmentResourceNotFoundError: (error) =>
+                Effect.gen(function* () {
+                  yield* Effect.logDebug(
+                    "Thread snapshot was not found over HTTP; terminating the subscription.",
+                  ).pipe(
+                    Effect.annotateLogs({
+                      environmentId,
+                      threadId,
+                      reason: error.reason,
+                      traceId: error.traceId,
+                    }),
+                  );
+                  yield* setDeleted();
+                  return yield* Effect.interrupt;
+                }),
+            }),
+          );
           if (Option.isSome(httpSnapshot)) {
             yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
             current = yield* SubscriptionRef.get(state);
