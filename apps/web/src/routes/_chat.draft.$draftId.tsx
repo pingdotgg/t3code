@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import ChatView from "../components/ChatView";
-import { threadHasStarted } from "../components/ChatView.logic";
+import { resolveStartedThreadRef } from "../components/ChatView.logic";
 import {
   DraftId,
   markPromotedDraftThreadByRef,
@@ -9,33 +9,28 @@ import {
 } from "../composerDraftStore";
 import { SidebarInset } from "../components/ui/sidebar";
 import { waitForDraftHeroTransition } from "../components/chat/draftHeroTransition";
-import { buildThreadRouteParams } from "../threadRoutes";
-import { useThread, useThreadRefs } from "../state/entities";
+import { buildThreadRouteParams, resolveDraftThreadSubscriptionRef } from "../threadRoutes";
+import { useThreadDetail } from "../state/entities";
 
 function DraftChatThreadRouteView() {
   const navigate = useNavigate();
   const { draftId: rawDraftId } = Route.useParams();
   const draftId = DraftId.make(rawDraftId);
   const draftSession = useComposerDraftStore((store) => store.getDraftSession(draftId));
-  const threadRefs = useThreadRefs();
-  const inferredThreadRef = draftSession
-    ? (threadRefs.find(
-        (ref) =>
-          ref.environmentId === draftSession.environmentId &&
-          ref.threadId === draftSession.threadId,
-      ) ?? null)
-    : null;
-  const serverThreadRef = draftSession?.promotedTo ?? inferredThreadRef;
-  const serverThread = useThread(serverThreadRef);
-  const serverThreadStarted = threadHasStarted(serverThread);
-  const canonicalThreadRef = serverThreadStarted ? serverThreadRef : null;
+  const serverThreadRef = resolveDraftThreadSubscriptionRef(draftSession);
+  // Promotion is driven by the authoritative detail stream. The composed
+  // `useThread` view intentionally overlays shell metadata, whose independent
+  // subscription can briefly lag and erase a started session/latest turn.
+  const serverThreadDetail = useThreadDetail(serverThreadRef);
+  const canonicalThreadRef = resolveStartedThreadRef(serverThreadRef, serverThreadDetail);
+  const serverThreadStarted = canonicalThreadRef !== null;
 
   useEffect(() => {
-    if (!inferredThreadRef || draftSession?.promotedTo) {
+    if (!serverThreadStarted || !serverThreadRef || draftSession?.promotedTo) {
       return;
     }
-    markPromotedDraftThreadByRef(inferredThreadRef);
-  }, [draftSession?.promotedTo, inferredThreadRef]);
+    markPromotedDraftThreadByRef(serverThreadRef);
+  }, [draftSession?.promotedTo, serverThreadRef, serverThreadStarted]);
 
   useEffect(() => {
     if (!canonicalThreadRef) {

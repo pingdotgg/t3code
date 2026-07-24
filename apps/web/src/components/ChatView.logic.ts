@@ -13,7 +13,7 @@ import { type ChatMessage, type SessionPhase, type Thread } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { environmentThreadDetails } from "../state/threads";
+import { environmentThreadDetails, environmentThreads } from "../state/threads";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
@@ -335,6 +335,13 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   );
 }
 
+export function resolveStartedThreadRef(
+  threadRef: ScopedThreadRef | null,
+  threadDetail: Thread | null | undefined,
+): ScopedThreadRef | null {
+  return threadRef !== null && threadHasStarted(threadDetail) ? threadRef : null;
+}
+
 // `threadProvider` is the open branded driver kind carried by the session.
 // Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
 // rollback / fork behavior — the routing layer is the right place to surface
@@ -451,6 +458,26 @@ export async function waitForStartedServerThread(
       finish(false);
     }, timeoutMs);
   });
+}
+
+/**
+ * A draft subscribes to its reserved thread id before the bootstrap command
+ * creates that thread. Normally the durable subscription retries and hydrates
+ * as soon as creation commits. If it remains empty after a successful command,
+ * restart only that thread stream so the draft can promote without a reload.
+ */
+export async function recoverDraftThreadAfterBootstrap(
+  threadRef: ScopedThreadRef,
+  timeoutMs = 1_000,
+): Promise<boolean> {
+  if (await waitForStartedServerThread(threadRef, timeoutMs)) {
+    return true;
+  }
+
+  appAtomRegistry.refresh(
+    environmentThreads.stateAtom(threadRef.environmentId, threadRef.threadId),
+  );
+  return false;
 }
 
 export interface LocalDispatchSnapshot {

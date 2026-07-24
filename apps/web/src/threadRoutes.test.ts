@@ -7,6 +7,7 @@ import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
+  resolveDraftThreadSubscriptionRef,
   resolveThreadRouteRenderState,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
@@ -93,7 +94,6 @@ describe("threadRoutes", () => {
       }),
     ).toBeNull();
   });
-
   it("keeps shell-only server threads in the loading state", () => {
     expect(
       resolveThreadRouteRenderState({
@@ -158,5 +158,31 @@ describe("threadRoutes", () => {
         draftThreadExists: false,
       }),
     ).toBe("missing");
+  });
+
+  it("observes a draft's reserved server ref before shell promotion", () => {
+    expect(
+      resolveDraftThreadSubscriptionRef({
+        environmentId: "env-1" as never,
+        threadId: ThreadId.make("draft-thread"),
+        promotedTo: null,
+      }),
+    ).toEqual({
+      environmentId: "env-1",
+      threadId: "draft-thread",
+    });
+  });
+
+  it("observes the promoted ref when a draft moves environments", () => {
+    expect(
+      resolveDraftThreadSubscriptionRef({
+        environmentId: "env-1" as never,
+        threadId: ThreadId.make("draft-thread"),
+        promotedTo: scopeThreadRef("env-2" as never, ThreadId.make("server-thread")),
+      }),
+    ).toEqual({
+      environmentId: "env-2",
+      threadId: "server-thread",
+    });
   });
 });
