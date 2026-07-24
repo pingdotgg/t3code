@@ -21,6 +21,10 @@ import {
   inferProjectTitleFromPath,
   isFilesystemBrowseQuery,
 } from "@t3tools/client-runtime/state/projects";
+import {
+  completeSourceControlCloneProgress,
+  type SourceControlCloneProgressPresentation,
+} from "@t3tools/client-runtime/state/source-control";
 import { CommandId, type EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
@@ -190,18 +194,79 @@ function PrimaryActionButton(props: {
   readonly label: string;
   readonly disabled?: boolean;
   readonly loading?: boolean;
+  readonly progress?: SourceControlCloneProgressPresentation | null;
   readonly onPress: () => void;
 }) {
   const primaryForeground = useThemeColor("--color-primary-foreground");
+  const isComplete = props.progress?.isComplete === true;
+  const progressLabel = isComplete
+    ? "Pull complete"
+    : props.progress?.stage === "connecting"
+      ? "Connecting to remote"
+      : props.progress?.stage === "receiving"
+        ? "Receiving objects"
+        : props.progress?.stage === "resolving"
+          ? "Resolving deltas"
+          : props.progress?.stage === "checkout"
+            ? "Checking out files"
+            : props.label;
 
   return (
     <Pressable
       disabled={props.disabled}
       onPress={props.onPress}
-      className="h-12 items-center justify-center rounded-full bg-primary active:opacity-70 disabled:opacity-45"
+      accessibilityRole={props.progress ? "progressbar" : "button"}
+      accessibilityLabel={props.progress ? progressLabel : props.label}
+      accessibilityValue={
+        props.progress
+          ? {
+              min: 0,
+              max: 100,
+              now: props.progress.overallPercent,
+            }
+          : undefined
+      }
+      className={cn(
+        "relative h-12 flex-row items-center justify-center gap-2 overflow-hidden rounded-full bg-primary active:opacity-70",
+        props.loading ? "disabled:opacity-100" : "disabled:opacity-45",
+      )}
     >
       {props.loading ? (
-        <ActivityIndicator color={String(primaryForeground)} />
+        <>
+          {isComplete ? (
+            <SymbolView
+              name="checkmark"
+              size={15}
+              tintColor={String(primaryForeground)}
+              type="monochrome"
+            />
+          ) : (
+            <ActivityIndicator size="small" color={String(primaryForeground)} />
+          )}
+          {props.progress ? (
+            <>
+              <Text
+                className="text-base font-t3-bold text-primary-foreground"
+                accessibilityLiveRegion="polite"
+              >
+                {progressLabel}
+              </Text>
+              {isComplete ? null : (
+                <Text className="text-sm font-t3-medium text-primary-foreground/65">
+                  {Math.round(props.progress.overallPercent)}%
+                </Text>
+              )}
+              <View className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-primary-foreground/20">
+                <View
+                  className="h-full bg-primary-foreground"
+                  style={{
+                    width: `${Math.max(0, Math.min(100, props.progress.overallPercent))}%`,
+                  }}
+                />
+              </View>
+            </>
+          ) : null}
+        </>
       ) : (
         <Text className="text-base font-t3-bold text-primary-foreground">{props.label}</Text>
       )}
@@ -750,9 +815,12 @@ export function AddProjectDestinationScreen(props: {
   readonly remoteUrl?: string | string[];
   readonly repositoryTitle?: string | string[];
 }) {
-  const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
-    reportFailure: false,
-  });
+  const cloneRepositoryWithProgress = useAtomCommand(
+    sourceControlEnvironment.cloneRepositoryWithProgress,
+    {
+      reportFailure: false,
+    },
+  );
   const environment = useEnvironmentFromParam(props.environmentId);
   const createProject = useCreateProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);
@@ -761,6 +829,9 @@ export function AddProjectDestinationScreen(props: {
     getAddProjectInitialQuery(environment?.baseDirectory),
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [cloneProgress, setCloneProgress] = useState<SourceControlCloneProgressPresentation | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -782,23 +853,34 @@ export function AddProjectDestinationScreen(props: {
     }
 
     setIsSubmitting(true);
-    const cloneResult = await cloneRepository({
-      environmentId: environment.environmentId,
-      input: {
-        remoteUrl,
-        destinationPath: resolved.path,
-      },
+    setCloneProgress({
+      stage: "connecting",
+      overallPercent: 0,
+      isComplete: false,
     });
-    if (AsyncResult.isFailure(cloneResult)) {
-      setError(errorMessage(Cause.squash(cloneResult.cause)));
-    } else {
-      const createResult = await createProject(cloneResult.value.cwd);
-      if (createResult && AsyncResult.isFailure(createResult)) {
-        setError(errorMessage(Cause.squash(createResult.cause)));
+    try {
+      const cloneResult = await cloneRepositoryWithProgress({
+        environmentId: environment.environmentId,
+        input: {
+          remoteUrl,
+          destinationPath: resolved.path,
+        },
+        onProgress: setCloneProgress,
+      });
+      if (AsyncResult.isFailure(cloneResult)) {
+        setError(errorMessage(Cause.squash(cloneResult.cause)));
+      } else {
+        setCloneProgress((progress) => completeSourceControlCloneProgress(progress));
+        const createResult = await createProject(cloneResult.value.cwd);
+        if (createResult && AsyncResult.isFailure(createResult)) {
+          setError(errorMessage(Cause.squash(createResult.cause)));
+        }
       }
+    } finally {
+      setCloneProgress(null);
+      setIsSubmitting(false);
     }
-    setIsSubmitting(false);
-  }, [cloneRepository, createProject, environment, isSubmitting, pathInput, remoteUrl]);
+  }, [cloneRepositoryWithProgress, createProject, environment, isSubmitting, pathInput, remoteUrl]);
 
   return (
     <AddProjectShell>
@@ -823,6 +905,7 @@ export function AddProjectDestinationScreen(props: {
             disabled={isSubmitting || !remoteUrl}
             onPress={() => void submitPath()}
             loading={isSubmitting}
+            progress={cloneProgress}
           />
           <FolderBrowser
             environment={environment}

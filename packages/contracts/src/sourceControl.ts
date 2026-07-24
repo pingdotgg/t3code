@@ -80,6 +80,37 @@ export const SourceControlCloneRepositoryResult = Schema.Struct({
 });
 export type SourceControlCloneRepositoryResult = typeof SourceControlCloneRepositoryResult.Type;
 
+export const SourceControlCloneProgressStage = Schema.Literals([
+  "connecting",
+  "receiving",
+  "resolving",
+  "checkout",
+]);
+export type SourceControlCloneProgressStage = typeof SourceControlCloneProgressStage.Type;
+
+export const SourceControlCloneProgress = Schema.Struct({
+  type: Schema.Literal("progress"),
+  stage: SourceControlCloneProgressStage,
+  percent: Schema.NullOr(Schema.Number),
+  completed: Schema.NullOr(Schema.Number),
+  total: Schema.NullOr(Schema.Number),
+  receivedBytes: Schema.NullOr(Schema.Number),
+  bytesPerSecond: Schema.NullOr(Schema.Number),
+});
+export type SourceControlCloneProgress = typeof SourceControlCloneProgress.Type;
+
+export const SourceControlCloneComplete = Schema.Struct({
+  type: Schema.Literal("complete"),
+  result: SourceControlCloneRepositoryResult,
+});
+export type SourceControlCloneComplete = typeof SourceControlCloneComplete.Type;
+
+export const SourceControlCloneProgressEvent = Schema.Union([
+  SourceControlCloneProgress,
+  SourceControlCloneComplete,
+]);
+export type SourceControlCloneProgressEvent = typeof SourceControlCloneProgressEvent.Type;
+
 export const SourceControlPublishRepositoryInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   provider: SourceControlProviderKind,

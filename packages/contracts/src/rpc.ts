@@ -136,6 +136,7 @@ import {
 } from "./server.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
+  SourceControlCloneProgressEvent,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
@@ -226,6 +227,7 @@ export const WS_METHODS = {
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
+  sourceControlCloneRepositoryWithProgress: "sourceControl.cloneRepositoryWithProgress",
   sourceControlPublishRepository: "sourceControl.publishRepository",
 
   // Streaming subscriptions
@@ -361,6 +363,16 @@ export const WsSourceControlCloneRepositoryRpc = Rpc.make(WS_METHODS.sourceContr
   success: SourceControlCloneRepositoryResult,
   error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
 });
+
+export const WsSourceControlCloneRepositoryWithProgressRpc = Rpc.make(
+  WS_METHODS.sourceControlCloneRepositoryWithProgress,
+  {
+    payload: SourceControlCloneRepositoryInput,
+    success: SourceControlCloneProgressEvent,
+    error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
 
 export const WsSourceControlPublishRepositoryRpc = Rpc.make(
   WS_METHODS.sourceControlPublishRepository,
@@ -717,6 +729,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
+  WsSourceControlCloneRepositoryWithProgressRpc,
   WsSourceControlPublishRepositoryRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,

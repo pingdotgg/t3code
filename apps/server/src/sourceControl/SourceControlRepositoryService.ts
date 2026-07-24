@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 import {
   SourceControlRepositoryError,
+  type SourceControlCloneProgress,
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneRepositoryResult,
   type SourceControlCloneProtocol,
@@ -21,8 +22,13 @@ import {
 
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { parseGitCloneProgressLine } from "./CloneProgress.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
+
+export interface SourceControlCloneProgressReporter {
+  readonly publish: (progress: SourceControlCloneProgress) => Effect.Effect<void, never>;
+}
 
 export class SourceControlRepositoryService extends Context.Service<
   SourceControlRepositoryService,
@@ -32,6 +38,7 @@ export class SourceControlRepositoryService extends Context.Service<
     ) => Effect.Effect<SourceControlRepositoryInfo, SourceControlRepositoryError>;
     readonly cloneRepository: (
       input: SourceControlCloneRepositoryInput,
+      progressReporter?: SourceControlCloneProgressReporter,
     ) => Effect.Effect<SourceControlCloneRepositoryResult, SourceControlRepositoryError>;
     readonly publishRepository: (
       input: SourceControlPublishRepositoryInput,
@@ -179,6 +186,7 @@ export const make = Effect.gen(function* () {
 
   const cloneRepository = Effect.fn("SourceControlRepositoryService.cloneRepository")(function* (
     input: SourceControlCloneRepositoryInput,
+    progressReporter?: SourceControlCloneProgressReporter,
   ) {
     const preparedDestination = yield* prepareDestination(input.destinationPath);
     let repository: SourceControlRepositoryInfo | null = null;
@@ -203,12 +211,40 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    if (progressReporter !== undefined) {
+      yield* progressReporter.publish({
+        type: "progress",
+        stage: "connecting",
+        percent: null,
+        completed: null,
+        total: null,
+        receivedBytes: null,
+        bytesPerSecond: null,
+      });
+    }
+
     yield* git.execute({
       operation: "SourceControlRepositoryService.cloneRepository",
       cwd: preparedDestination.parentPath,
-      args: ["clone", remoteUrl, preparedDestination.directoryName],
+      args:
+        progressReporter === undefined
+          ? ["clone", remoteUrl, preparedDestination.directoryName]
+          : ["clone", "--progress", remoteUrl, preparedDestination.directoryName],
+      ...(progressReporter === undefined ? {} : { env: { LC_ALL: "C" } }),
+      ...(progressReporter === undefined
+        ? {}
+        : {
+            progress: {
+              includeCarriageReturnLines: true,
+              onStderrLine: (line: string) => {
+                const progress = parseGitCloneProgressLine(line);
+                return progress === null ? Effect.void : progressReporter.publish(progress);
+              },
+            },
+          }),
       timeoutMs: 120_000,
       maxOutputBytes: 256 * 1024,
+      ...(progressReporter === undefined ? {} : { appendTruncationMarker: true }),
     });
 
     return {
@@ -278,8 +314,8 @@ export const make = Effect.gen(function* () {
   return SourceControlRepositoryService.of({
     lookupRepository: (input) =>
       lookupRepository(input).pipe(mapRepositoryError("lookupRepository", input.provider)),
-    cloneRepository: (input) =>
-      cloneRepository(input).pipe(
+    cloneRepository: (input, progressReporter) =>
+      cloneRepository(input, progressReporter).pipe(
         mapRepositoryError("cloneRepository", input.provider ?? "unknown"),
       ),
     publishRepository: (input) =>

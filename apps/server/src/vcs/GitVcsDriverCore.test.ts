@@ -134,6 +134,63 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("emits carriage-return-delimited progress lines when requested", () => {
+  const encoder = new TextEncoder();
+  const spawner = ChildProcessSpawner.make(() =>
+    Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(2),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.empty,
+        stderr: Stream.fromIterable([
+          encoder.encode("Receiving objects: 1% (1/100)\rReceiving"),
+          encoder.encode(" objects: 2% (2/100)\r\nResolving deltas: 5% (1/20)\n"),
+        ]),
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      }),
+    ),
+  );
+  const layer = GitVcsDriver.layer.pipe(
+    Layer.provide(ServerConfigLayer),
+    Layer.provideMerge(
+      Layer.merge(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const lines: string[] = [];
+
+    yield* driver.execute({
+      operation: "GitVcsDriver.test.carriageReturnProgress",
+      cwd: process.cwd(),
+      args: ["status"],
+      progress: {
+        includeCarriageReturnLines: true,
+        onStderrLine: (line) =>
+          Effect.sync(() => {
+            lines.push(line);
+          }),
+      },
+    });
+
+    assert.deepStrictEqual(lines, [
+      "Receiving objects: 1% (1/100)",
+      "Receiving objects: 2% (2/100)",
+      "Resolving deltas: 5% (1/20)",
+    ]);
+  }).pipe(Effect.provide(layer));
+});
+
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   describe("process environment", () => {
     it.effect("preserves the caller locale for general Git subprocesses", () =>

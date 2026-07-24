@@ -40,6 +40,8 @@ import {
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
+  type SourceControlCloneProgressEvent,
+  type SourceControlRepositoryError,
   ProjectListEntriesError,
   ProjectReadFileError,
   ProjectSearchEntriesError,
@@ -311,6 +313,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
   [WS_METHODS.sourceControlCloneRepository, AuthOrchestrationOperateScope],
+  [WS_METHODS.sourceControlCloneRepositoryWithProgress, AuthOrchestrationOperateScope],
   [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
   [WS_METHODS.projectsListEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsReadFile, AuthOrchestrationReadScope],
@@ -1601,6 +1604,30 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.sourceControlCloneRepository,
             sourceControlRepositories.cloneRepository(input),
+            {
+              "rpc.aggregate": "source-control",
+            },
+          ),
+        [WS_METHODS.sourceControlCloneRepositoryWithProgress]: (input) =>
+          observeRpcStream(
+            WS_METHODS.sourceControlCloneRepositoryWithProgress,
+            Stream.callback<SourceControlCloneProgressEvent, SourceControlRepositoryError>(
+              (queue) =>
+                sourceControlRepositories
+                  .cloneRepository(input, {
+                    publish: (progress) => Queue.offer(queue, progress).pipe(Effect.asVoid),
+                  })
+                  .pipe(
+                    Effect.matchCauseEffect({
+                      onFailure: (cause) => Queue.failCause(queue, cause),
+                      onSuccess: (result) =>
+                        Queue.offer(queue, {
+                          type: "complete",
+                          result,
+                        }).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid),
+                    }),
+                  ),
+            ),
             {
               "rpc.aggregate": "source-control",
             },
