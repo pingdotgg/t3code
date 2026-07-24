@@ -1468,10 +1468,15 @@ export default function SidebarV2() {
   );
   const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
   const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
-  const renderedSettledThreads = useMemo(
-    () => (settledShelfExpanded ? visibleSettledThreads : []),
-    [settledShelfExpanded, visibleSettledThreads],
-  );
+  const renderedSettledThreads = useMemo(() => {
+    if (settledShelfExpanded) return visibleSettledThreads;
+    if (routeThreadKey === null) return [];
+    const routeThread = visibleSettledThreads.find(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+    );
+    return routeThread === undefined ? [] : [routeThread];
+  }, [routeThreadKey, settledShelfExpanded, visibleSettledThreads]);
 
   // The snoozed shelf is collapsed by default: out of the way, never gone.
   // Collapsed threads don't render (and so don't participate in jump
@@ -2519,7 +2524,7 @@ export default function SidebarV2() {
               ) : null}
             </ul>
           </TooltipProvider>
-          {orderedThreads.length === 0 ? (
+          {activeThreads.length + snoozedThreads.length + settledThreads.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
                 <>
