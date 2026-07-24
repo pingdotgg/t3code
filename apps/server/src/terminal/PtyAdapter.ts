@@ -17,6 +17,7 @@ export class PtySpawnError extends Schema.TaggedErrorClass<PtySpawnError>()("Pty
   adapter: Schema.String,
   shell: Schema.optional(Schema.String),
   attemptedShells: Schema.optional(Schema.Array(Schema.String)),
+  retryWithFallbackShell: Schema.optional(Schema.Boolean),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {

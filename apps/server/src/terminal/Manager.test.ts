@@ -22,6 +22,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
@@ -29,6 +30,8 @@ import { expect } from "vite-plus/test";
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
+
+const isPtySpawnError = Schema.is(PtyAdapter.PtySpawnError);
 
 class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
   readonly message: string;
@@ -98,7 +101,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
 class FakePtyAdapter {
   readonly spawnInputs: PtyAdapter.PtySpawnInput[] = [];
   readonly processes: FakePtyProcess[] = [];
-  readonly spawnFailures: Error[] = [];
+  readonly spawnFailures: Array<Error | PtyAdapter.PtySpawnError> = [];
   private readonly mode: "sync" | "async";
   private nextPid = 9000;
 
@@ -112,6 +115,9 @@ class FakePtyAdapter {
     this.spawnInputs.push(input);
     const failure = this.spawnFailures.shift();
     if (failure) {
+      if (isPtySpawnError(failure)) {
+        return Effect.fail(failure);
+      }
       return Effect.fail(
         new PtyAdapter.PtySpawnError({
           adapter: "fake",
@@ -1257,6 +1263,25 @@ it.layer(
             .some((input) => input.shell !== "/definitely/missing-shell"),
         ).toBe(true);
       }
+    }),
+  );
+
+  it.effect("does not retry fallback shells when the PTY adapter cannot load", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      ptyAdapter.spawnFailures.push(
+        new PtyAdapter.PtySpawnError({
+          adapter: "node-pty",
+          shell: "/bin/zsh",
+          retryWithFallbackShell: false,
+          cause: new Error("ERR_DLOPEN_FAILED: GLIBC_2.27 not found"),
+        }),
+      );
+
+      const snapshot = yield* manager.open(openInput());
+
+      expect(snapshot.status).toBe("error");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
     }),
   );
 

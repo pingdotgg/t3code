@@ -254,12 +254,13 @@ jobs:
 
   # node-pty publishes no Linux prebuilt and the WSL backend runs under the
   # distro's own (Linux) Node, which can't load the Windows/Electron binary. We
-  # build the Linux pty.node here, on Linux, and hand it to the Windows packaging
-  # job — the Windows artifact then ships a ready WSL backend binary with no
-  # cross-compiling and no first-launch compiler/node-gyp/network on the user's
-  # machine. node-pty is N-API, so one binary works across all WSL Node versions.
+  # build the Linux pty.node in an old-glibc container and hand it to the Windows
+  # packaging job — the Windows artifact then ships a ready WSL backend binary
+  # with no cross-compiling and no first-launch compiler/node-gyp/network on the
+  # user's machine. node-pty is N-API, so one binary works across supported WSL
+  # Node versions; building on an old glibc keeps AL2 / glibc 2.26 compatible.
   build_wsl_node_pty:
-    name: Build WSL node-pty (linux-x64)
+    name: Build WSL node-pty (linux-x64, AL2 glibc)
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -282,15 +283,55 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Resolve node-pty from apps/server (where it's a dependency) and build
+          docker run --rm \
+            -e GITHUB_WORKSPACE=/workspace \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            amazonlinux:2 \
+            bash -euo pipefail <<'EOF'
+          yum install -y binutils curl file gcc gcc-c++ make python3 tar xz
+
+          node_version="v20.19.6"
+          node_dir="/opt/node-${node_version}-linux-x64-glibc-217"
+          curl -fsSL "https://unofficial-builds.nodejs.org/download/release/${node_version}/node-${node_version}-linux-x64-glibc-217.tar.xz" \
+            | tar -xJ -C /opt
+          export PATH="${node_dir}/bin:${PATH}"
+          export npm_config_python=python3
+
+          # Resolve node-pty from apps/server (where it is a dependency) and build
           # its native binary from source for Linux. node-addon-api resolves from
           # node-pty's own dependency tree, so node-gyp has everything it needs.
-          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
+          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['/workspace/apps/server'] }))")"
           pty_dir="$(dirname "$pty_pkg")"
           ( cd "$pty_dir" && npx --yes node-gyp rebuild )
-          mkdir -p wsl-prebuild
-          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
+
+          mkdir -p /workspace/wsl-prebuild
+          cp "$pty_dir/build/Release/pty.node" /workspace/wsl-prebuild/pty.node
+          file /workspace/wsl-prebuild/pty.node
+          EOF
+
+      - name: Verify WSL node-pty glibc compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
           file wsl-prebuild/pty.node
+          objdump -T wsl-prebuild/pty.node | tee wsl-prebuild/pty.symbols.txt
+
+          max_glibc="$(
+            sed -nE 's/.*GLIBC_([0-9]+(\.[0-9]+)*).*/\1/p' wsl-prebuild/pty.symbols.txt \
+              | sort -V \
+              | tail -n1
+          )"
+          echo "Max required GLIBC version: ${max_glibc:-none}"
+          if [[ -n "$max_glibc" && "$(printf '%s\n' "$max_glibc" "2.26" | sort -V | tail -n1)" != "2.26" ]]; then
+            echo "WSL node-pty prebuild requires GLIBC_${max_glibc}, which is newer than AL2's GLIBC_2.26." >&2
+            exit 1
+          fi
+
+          if grep -q 'memfd_create' wsl-prebuild/pty.symbols.txt; then
+            echo "WSL node-pty prebuild references memfd_create; use syscall fallback or an older-glibc build." >&2
+            exit 1
+          fi
 
       - name: Upload node-pty linux-x64 prebuild
         uses: actions/upload-artifact@v7

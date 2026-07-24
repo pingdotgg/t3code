@@ -565,6 +565,10 @@ function resolveShellCandidates(
 }
 
 function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
+  if (error.retryWithFallbackShell !== undefined) {
+    return error.retryWithFallbackShell;
+  }
+
   const queue: unknown[] = [error];
   const seen = new Set<unknown>();
   const messages: string[] = [];
