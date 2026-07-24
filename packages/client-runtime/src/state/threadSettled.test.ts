@@ -24,6 +24,7 @@ function makeShell(input: {
   readonly activityAt: string | null;
   readonly sessionStatus?: "starting" | "running";
   readonly pending?: "approval" | "user-input";
+  readonly monitorStatus?: "monitoring" | "ready" | "stopped" | "needs-attention";
 }): OrchestrationThreadShell {
   const threadId = ThreadId.make("thread-1");
   return {
@@ -67,6 +68,24 @@ function makeShell(input: {
     hasPendingApprovals: input.pending === "approval",
     hasPendingUserInput: input.pending === "user-input",
     hasActionableProposedPlan: false,
+    monitor:
+      input.monitorStatus === undefined
+        ? null
+        : {
+            prNumber: 4412,
+            status: input.monitorStatus,
+            blockersSummary: "2 checks pending · waiting on Bugbot",
+            headSha: "a41c2f9",
+            wakeCount: 1,
+            startedAt: "2026-04-01T00:00:00.000Z",
+            endedAt: input.monitorStatus === "monitoring" ? null : NOW,
+            endedReason:
+              input.monitorStatus === "monitoring"
+                ? null
+                : input.monitorStatus === "stopped"
+                  ? "session-ended"
+                  : input.monitorStatus,
+          },
   };
 }
 
@@ -275,6 +294,47 @@ describe("effectiveSettled", () => {
 
     expect(effectiveSettled(boundary, { now: NOW, autoSettleAfterDays: 3 })).toBe(false);
     expect(effectiveSettled(stale, { now: NOW, autoSettleAfterDays: null })).toBe(false);
+  });
+
+  it("holds an actively monitoring thread unsettled, outranking every auto and explicit settle signal (I2)", () => {
+    // A monitoring thread never auto-settles, even when stale, even on a
+    // merged PR, and even when the user explicitly settled it — the settle
+    // ends monitoring server-side (flipping status away from "monitoring")
+    // before this ever classifies it settled.
+    for (const settledOverride of [null, "settled"] as const) {
+      const monitoring = makeShell({
+        settledOverride,
+        activityAt: STALE,
+        monitorStatus: "monitoring",
+      });
+      expect(
+        effectiveSettled(monitoring, {
+          now: NOW,
+          autoSettleAfterDays: 3,
+          changeRequestState: "merged",
+        }),
+      ).toBe(false);
+      expect(effectiveSettled(monitoring, { now: NOW, autoSettleAfterDays: null })).toBe(false);
+    }
+  });
+
+  it("only the active 'monitoring' status blocks: ended monitors settle normally", () => {
+    // ready/stopped/needs-attention are terminal monitor states; the mode is
+    // over, so the underlying settle signals (merge, staleness, override)
+    // take over again.
+    for (const monitorStatus of ["ready", "stopped", "needs-attention"] as const) {
+      const ended = makeShell({ activityAt: STALE, monitorStatus });
+      expect(effectiveSettled(ended, { now: NOW, autoSettleAfterDays: 3 })).toBe(true);
+      expect(
+        effectiveSettled(
+          makeShell({ settledOverride: "settled", activityAt: null, monitorStatus }),
+          {
+            now: NOW,
+            autoSettleAfterDays: null,
+          },
+        ),
+      ).toBe(true);
+    }
   });
 });
 

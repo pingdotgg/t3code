@@ -2,6 +2,7 @@ import {
   CommandId,
   ORCHESTRATION_WS_METHODS,
   type ClientOrchestrationCommand,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -194,6 +195,30 @@ export const unsnoozeThread: (input: UnsnoozeThreadInput) => CommandEffect = Eff
     ...input,
     type: "thread.unsnooze",
     commandId: yield* commandId(input),
+  });
+});
+
+export interface EndThreadMonitorInput {
+  readonly threadId: ThreadId;
+  readonly blockersSummary: string;
+  readonly commandId?: CommandId;
+  readonly endedAt?: string;
+}
+
+// Clients can only end a monitor as a user stop; the other end reasons
+// (ready/terminal/session-ended/needs-attention) are server verdicts that the
+// client-dispatchable contracts union rejects from the wire.
+export const endThreadMonitor: (input: EndThreadMonitorInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.endThreadMonitor",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    type: "thread.monitor.end",
+    commandId: metadata.commandId,
+    threadId: input.threadId,
+    reason: "stopped",
+    blockersSummary: input.blockersSummary,
+    endedAt: metadata.createdAt,
   });
 });
 

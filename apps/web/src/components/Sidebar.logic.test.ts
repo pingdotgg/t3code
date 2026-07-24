@@ -13,6 +13,8 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  resolveMonitorReadyLabel,
+  resolveMonitorSidebarState,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -915,6 +917,121 @@ describe("resolveThreadStatusPill", () => {
         },
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
+  });
+
+  const activeMonitor = {
+    prNumber: 4412,
+    status: "monitoring" as const,
+    blockersSummary: "2 checks pending · waiting on Bugbot",
+    headSha: "a41c2f9",
+    wakeCount: 3,
+    startedAt: "2026-03-09T09:00:00.000Z",
+    endedAt: null,
+    endedReason: null,
+  };
+
+  it("shows a steady, non-pulsing Monitoring pill instead of Working during a wake turn (D6)", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: { ...baseThread, monitor: activeMonitor },
+      }),
+    ).toMatchObject({ label: "Monitoring", pulse: false });
+  });
+
+  it("never lets Monitoring swallow a blocked state (I4)", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: { ...baseThread, monitor: activeMonitor, hasPendingApprovals: true },
+      }),
+    ).toMatchObject({ label: "Pending Approval" });
+    expect(
+      resolveThreadStatusPill({
+        thread: { ...baseThread, monitor: activeMonitor, hasPendingUserInput: true },
+      }),
+    ).toMatchObject({ label: "Awaiting Input" });
+  });
+
+  it("suppresses the Completed pill for wake-turn completions while monitoring", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+          monitor: activeMonitor,
+          latestTurn: makeLatestTurn(),
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            activeTurnId: null,
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Monitoring" });
+  });
+
+  it("drops the Monitoring pill once the monitor is no longer active", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          monitor: { ...activeMonitor, status: "ready", endedReason: "ready" },
+          session: { ...baseThread.session, status: "ready", activeTurnId: null },
+        },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveMonitorSidebarState", () => {
+  const monitor = {
+    prNumber: 4412,
+    status: "monitoring" as const,
+    blockersSummary: "",
+    headSha: "a41c2f9",
+    wakeCount: 0,
+    startedAt: "2026-03-09T09:00:00.000Z",
+    endedAt: null,
+    endedReason: null,
+  };
+
+  it("returns null without a monitor", () => {
+    expect(resolveMonitorSidebarState(null)).toBeNull();
+    expect(resolveMonitorSidebarState(undefined)).toBeNull();
+  });
+
+  it("maps monitoring and ready straight through", () => {
+    expect(resolveMonitorSidebarState(monitor)).toBe("monitoring");
+    expect(resolveMonitorSidebarState({ ...monitor, status: "ready", endedReason: "ready" })).toBe(
+      "ready",
+    );
+  });
+
+  it("marks only a session-ended stop, deferring other terminal reasons", () => {
+    expect(
+      resolveMonitorSidebarState({
+        ...monitor,
+        status: "stopped",
+        endedReason: "session-ended",
+      }),
+    ).toBe("stopped");
+    expect(
+      resolveMonitorSidebarState({ ...monitor, status: "stopped", endedReason: "stopped" }),
+    ).toBeNull();
+    expect(
+      resolveMonitorSidebarState({
+        ...monitor,
+        status: "needs-attention",
+        endedReason: "needs-attention",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveMonitorReadyLabel", () => {
+  it("prefers the honest fallback when required-status data is unavailable", () => {
+    expect(resolveMonitorReadyLabel("No known blockers")).toBe("No known blockers");
+    expect(resolveMonitorReadyLabel("CI ✓ · Bugbot ✓ · Macroscope ✓")).toBe("Ready to merge");
   });
 });
 

@@ -55,6 +55,7 @@ import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import * as MonitorRegistry from "../../monitor/MonitorRegistry.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -215,7 +216,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
-    McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
+    MonitorRegistry.endActiveMonitorForSession(threadId).pipe(
+      Effect.andThen(McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId })),
       Effect.tap((credential) =>
         credential
           ? Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config))
@@ -223,7 +225,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     );
   const clearMcpSession = (threadId: ThreadId) =>
-    McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
+    MonitorRegistry.endActiveMonitorForSession(threadId).pipe(
+      Effect.andThen(McpSessionRegistry.revokeActiveMcpThread(threadId)),
       Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
     );
 

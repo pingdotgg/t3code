@@ -36,6 +36,8 @@ import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/Provide
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
+import * as MonitorRegistry from "./monitor/MonitorRegistry.ts";
+import * as PullRequestMonitor from "./monitor/PullRequestMonitor.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -158,6 +160,12 @@ const PlatformServicesLive = Layer.unwrap(
   }),
 );
 
+const PullRequestMonitorLayerLive = PullRequestMonitor.layer.pipe(
+  Layer.provide(
+    PullRequestMonitor.PullRequestSnapshotFetcherLive.pipe(Layer.provide(GitHubCli.layer)),
+  ),
+);
+
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
@@ -165,6 +173,11 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+  Layer.provideMerge(
+    Layer.effectDiscard(
+      PullRequestMonitor.PullRequestMonitor.pipe(Effect.flatMap((monitor) => monitor.start())),
+    ).pipe(Layer.provide(PullRequestMonitorLayerLive)),
+  ),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
 
@@ -184,6 +197,10 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
 );
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
+// Leave the registry's OrchestrationEngineService requirement open so it is
+// satisfied by the ambient runtime (and by mocks in tests) — eagerly providing
+// OrchestrationLayerLive here would build a second engine + DB connection.
+const MonitorRegistryLayerLive = MonitorRegistry.layer;
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
@@ -295,7 +312,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
-  Layer.provideMerge(PersistenceLayerLive),
+  Layer.provideMerge(Layer.mergeAll(PersistenceLayerLive, MonitorRegistryLayerLive)),
   Layer.provideMerge(Keybindings.layer),
   Layer.provideMerge(ProviderRegistryLive),
   // The instance registry is the new routing keystone — text generation,
@@ -363,7 +380,10 @@ export const makeRoutesLayer = Layer.mergeAll(
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
-  McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
+  McpHttpServer.layer.pipe(
+    Layer.provide(McpSessionRegistry.layer),
+    Layer.provide(MonitorRegistryLayerLive),
+  ),
 ).pipe(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer),

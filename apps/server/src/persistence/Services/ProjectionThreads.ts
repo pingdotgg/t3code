@@ -9,6 +9,7 @@
 import {
   IsoDateTime,
   ModelSelection,
+  OrchestrationThreadMonitor,
   NonNegativeInt,
   ProjectId,
   ProviderInteractionMode,
@@ -40,6 +41,7 @@ export const ProjectionThread = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozedUntil: Schema.NullOr(IsoDateTime),
   snoozedAt: Schema.NullOr(IsoDateTime),
+  monitor: Schema.NullOr(OrchestrationThreadMonitor),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,

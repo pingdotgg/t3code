@@ -20,6 +20,9 @@ import {
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
+  ThreadMonitorEndedPayload,
+  ThreadMonitorSnapshotUpdatedPayload,
+  ThreadMonitorStartedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
   ThreadSettledPayload,
@@ -294,6 +297,7 @@ export function projectEvent(
             settledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            monitor: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -390,6 +394,79 @@ export function projectEvent(
             snoozedAt: null,
             updatedAt: payload.updatedAt,
           }),
+        })),
+      );
+
+    case "thread.monitor-started":
+      return decodeForEvent(ThreadMonitorStartedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            monitor: {
+              prNumber: payload.prNumber,
+              status: "monitoring",
+              blockersSummary: payload.blockersSummary,
+              headSha: payload.headSha,
+              wakeCount: 0,
+              startedAt: payload.startedAt,
+              endedAt: null,
+              endedReason: null,
+            },
+            updatedAt: payload.startedAt,
+          }),
+        })),
+      );
+
+    case "thread.monitor-snapshot-updated":
+      return decodeForEvent(
+        ThreadMonitorSnapshotUpdatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: nextBase.threads.map((thread) =>
+            thread.id === payload.threadId && thread.monitor != null
+              ? {
+                  ...thread,
+                  monitor: {
+                    ...thread.monitor,
+                    blockersSummary: payload.blockersSummary,
+                    headSha: payload.headSha,
+                    wakeCount: payload.wakeCount,
+                  },
+                  updatedAt: payload.updatedAt,
+                }
+              : thread,
+          ),
+        })),
+      );
+
+    case "thread.monitor-ended":
+      return decodeForEvent(ThreadMonitorEndedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: nextBase.threads.map((thread) =>
+            thread.id === payload.threadId && thread.monitor != null
+              ? {
+                  ...thread,
+                  monitor: {
+                    ...thread.monitor,
+                    status:
+                      payload.reason === "ready"
+                        ? "ready"
+                        : payload.reason === "needs-attention"
+                          ? "needs-attention"
+                          : "stopped",
+                    blockersSummary: payload.blockersSummary,
+                    endedAt: payload.endedAt,
+                    endedReason: payload.reason,
+                  },
+                  updatedAt: payload.endedAt,
+                }
+              : thread,
+          ),
         })),
       );
 

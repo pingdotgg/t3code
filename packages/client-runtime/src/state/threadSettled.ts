@@ -231,8 +231,9 @@ export const CHANGE_REQUEST_SETTLE_IDLE_MS = 60 * 60 * 1_000;
 /**
  * Settled resolution over the server-backed settled lifecycle. Activity
  * blockers (pending approval/user-input, a live session, an unadjudicated
- * queued turn) are checked first and hold a thread active regardless of any
- * override. Past the blockers, the explicit user override (thread.settle /
+ * queued turn, an active PR monitor) are checked first and hold a thread
+ * active regardless of any override. Past the blockers, the explicit user
+ * override (thread.settle /
  * thread.unsettle commands, projected into settledOverride + settledAt)
  * wins in both directions; without one, a thread auto-settles on a
  * merged/closed PR (once idle) or inactivity past the window. The server
@@ -266,6 +267,13 @@ export function effectiveSettled(
       Date.parse(shell.settledAt) >= Date.parse(shell.latestUserMessageAt);
     if (!serverAdjudicated) return false;
   }
+  // An active PR monitor holds the thread unsettled for the mode's duration
+  // (invariant I2): a monitoring thread lives in the active area, receded,
+  // until monitor.ended fires. This outranks even an explicit "settled"
+  // override — the user settling a monitoring thread ends monitoring
+  // server-side, which flips status away from "monitoring" and releases the
+  // blocker, so there is no client-side special-casing beyond this check.
+  if (shell.monitor != null && shell.monitor.status === "monitoring") return false;
   if (shell.settledOverride === "settled") return true;
   // "active" is the explicit keep-active pin: it suppresses auto-settle
   // until real activity clears it server-side.

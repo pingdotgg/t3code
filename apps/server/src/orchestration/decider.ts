@@ -487,7 +487,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // settledAt: the engine rejects zero-event commands, and bulk-settle /
       // double-click must stay silent no-ops rather than surface errors.
       const alreadySettled = thread.settledOverride === "settled" && thread.settledAt !== null;
-      return {
+      const settledEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -502,6 +502,142 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           // so duplicate settles neither rewind nor churn ordering. A fresh
           // settle stamps the command time.
           updatedAt: alreadySettled ? thread.updatedAt : occurredAt,
+        },
+      };
+      if (thread.monitor?.status !== "monitoring") return settledEvent;
+      return [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.monitor-ended",
+          payload: {
+            threadId: command.threadId,
+            reason: "stopped",
+            blockersSummary: thread.monitor.blockersSummary,
+            endedAt: occurredAt,
+          },
+        },
+        settledEvent,
+      ];
+    }
+
+    case "thread.monitor.start": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.monitor?.status === "monitoring" && thread.monitor.prNumber !== command.prNumber) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} is already monitoring PR #${thread.monitor.prNumber}`,
+        });
+      }
+      const monitorStartedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.monitor-started",
+        payload: {
+          threadId: command.threadId,
+          prNumber: command.prNumber,
+          blockersSummary:
+            thread.monitor?.status === "monitoring"
+              ? thread.monitor.blockersSummary
+              : command.blockersSummary,
+          headSha:
+            thread.monitor?.status === "monitoring" ? thread.monitor.headSha : command.headSha,
+          startedAt:
+            thread.monitor?.status === "monitoring" ? thread.monitor.startedAt : command.createdAt,
+        },
+      };
+      // Monitoring holds the thread unsettled (I2). Like turn.start, starting
+      // a monitor is real activity: it must clear any settled override so the
+      // projection can't carry "settled" and "monitoring" simultaneously.
+      if (thread.settledOverride === null) {
+        return monitorStartedEvent;
+      }
+      return [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        },
+        monitorStartedEvent,
+      ];
+    }
+
+    case "thread.monitor.update": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.monitor?.status !== "monitoring") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} has no active monitor`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.monitor-snapshot-updated",
+        payload: {
+          threadId: command.threadId,
+          blockersSummary: command.blockersSummary,
+          headSha: command.headSha,
+          wakeCount: command.wakeCount,
+          updatedAt: command.updatedAt,
+        },
+      };
+    }
+
+    case "thread.monitor.end": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.monitor?.status !== "monitoring") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} has no active monitor`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.endedAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.monitor-ended",
+        payload: {
+          threadId: command.threadId,
+          reason: command.reason,
+          blockersSummary: command.blockersSummary,
+          endedAt: command.endedAt,
         },
       };
     }
