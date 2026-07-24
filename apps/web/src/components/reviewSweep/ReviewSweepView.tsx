@@ -13,6 +13,7 @@ import {
   dismissSweepItem,
   isSweepCandidate,
   retrySweepItem,
+  sortSweepCandidates,
   startReviewSweep,
   SWEEP_MAX_THREADS,
   useReviewSweepStore,
@@ -156,20 +157,28 @@ function SweepPreRunSummary() {
   const serverConfigs = useServerConfigs();
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
 
-  const { candidateCount, modelsByEnvironment } = useMemo(() => {
+  const { candidateCount, reviewedCount, modelsByEnvironment } = useMemo(() => {
     const now = new Date().toISOString();
-    let count = 0;
+    const candidates = sortSweepCandidates(
+      shells.filter((shell) =>
+        isSweepCandidate(shell, serverConfigs.get(shell.environmentId)?.environment.capabilities, {
+          now,
+          autoSettleAfterDays,
+        }),
+      ),
+    );
+    // Aggregate only what a run would actually review: the cap is applied
+    // here, in the same most-recently-active order startReviewSweep uses,
+    // so the environment/model rows never overstate the calls.
+    const reviewed = candidates.slice(0, SWEEP_MAX_THREADS);
     const models = new Map<string, { label: string; model: string; threads: number }>();
-    for (const shell of shells) {
+    for (const shell of reviewed) {
       const config = serverConfigs.get(shell.environmentId);
-      if (!isSweepCandidate(shell, config?.environment.capabilities, { now, autoSettleAfterDays }))
-        continue;
-      count += 1;
-      const selection = config?.settings.textGenerationModelSelection;
       const entry = models.get(shell.environmentId);
       if (entry) {
         entry.threads += 1;
       } else {
+        const selection = config?.settings.textGenerationModelSelection;
         models.set(shell.environmentId, {
           label: config?.environment.label ?? shell.environmentId,
           model: selection ? `${selection.model}` : "server default",
@@ -177,10 +186,12 @@ function SweepPreRunSummary() {
         });
       }
     }
-    return { candidateCount: count, modelsByEnvironment: [...models.values()] };
+    return {
+      candidateCount: candidates.length,
+      reviewedCount: reviewed.length,
+      modelsByEnvironment: [...models.values()],
+    };
   }, [autoSettleAfterDays, serverConfigs, shells]);
-
-  const reviewedCount = Math.min(candidateCount, SWEEP_MAX_THREADS);
 
   if (candidateCount === 0) {
     return (

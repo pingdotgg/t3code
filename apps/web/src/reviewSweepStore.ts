@@ -112,8 +112,9 @@ export function isSweepCandidate(
 }
 
 /** All unsettled, unarchived threads across every connected environment that
-    supports the sweep. */
-function collectSweepCandidates(): EnvironmentThreadShell[] {
+    supports the sweep, most recently active first — the exact order the
+    SWEEP_MAX_THREADS cap is applied in. */
+export function collectSweepCandidates(): EnvironmentThreadShell[] {
   const now = new Date().toISOString();
   const autoSettleAfterDays = getClientSettings().sidebarAutoSettleAfterDays;
   const candidates: EnvironmentThreadShell[] = [];
@@ -124,14 +125,20 @@ function collectSweepCandidates(): EnvironmentThreadShell[] {
     if (!isSweepCandidate(shell, capabilities, { now, autoSettleAfterDays })) continue;
     candidates.push(shell);
   }
-  // Most recently active first, so the SWEEP_MAX_THREADS cap drops the
-  // longest-idle threads rather than the oldest-created ones.
+  return sortSweepCandidates(candidates);
+}
+
+/** Most recently active first, so the SWEEP_MAX_THREADS cap drops the
+    longest-idle threads rather than the oldest-created ones. Exported so
+    the pre-run summary previews the exact capped selection. */
+export function sortSweepCandidates(
+  candidates: ReadonlyArray<EnvironmentThreadShell>,
+): EnvironmentThreadShell[] {
   const activityMs = (shell: EnvironmentThreadShell): number =>
     toSortableTimestamp(threadLastActivityAt(shell) ?? undefined) ??
     toSortableTimestamp(shell.createdAt) ??
     0;
-  candidates.sort((a, b) => activityMs(b) - activityMs(a));
-  return candidates;
+  return [...candidates].sort((a, b) => activityMs(b) - activityMs(a));
 }
 
 async function reviewOne(runId: number, item: SweepItem): Promise<void> {
