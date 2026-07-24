@@ -180,12 +180,20 @@ export function useNewThreadHandler() {
               });
             }
           }
+          // The workspace context must also ride along here: when projectRef
+          // targets a different physical member of the logical project,
+          // createDraftThreadState treats the remap as a project change and
+          // would otherwise wipe branch/worktree and force "local" mode,
+          // undoing the write above.
           setLogicalProjectDraftThreadId(
             logicalProjectKey,
             projectRef,
             reusableStoredDraftThread.draftId,
             {
               threadId: reusableStoredDraftThread.threadId,
+              ...(workspaceContext ?? {}),
+              ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
+              ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
           );
           if (

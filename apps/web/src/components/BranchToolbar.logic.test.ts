@@ -66,6 +66,33 @@ describe("resolvePreviousWorktreeSeed", () => {
       }),
     ).toBeNull();
   });
+
+  it("ignores archived threads and threads with unparseable timestamps", () => {
+    expect(
+      resolvePreviousWorktreeSeed({
+        threads: [
+          {
+            branch: "t3/archived",
+            worktreePath: "/repo/.t3/worktrees/archived",
+            updatedAt: "2026-07-23T00:00:00.000Z",
+            archivedAt: "2026-07-23T01:00:00.000Z",
+          },
+          {
+            branch: "t3/garbage-timestamp",
+            worktreePath: "/repo/.t3/worktrees/garbage",
+            updatedAt: "not-a-date",
+          },
+          {
+            branch: "t3/live",
+            worktreePath: "/repo/.t3/worktrees/live",
+            updatedAt: "2026-07-21T00:00:00.000Z",
+            archivedAt: null,
+          },
+        ],
+        currentWorktreePath: null,
+      }),
+    ).toEqual({ branch: "t3/live", worktreePath: "/repo/.t3/worktrees/live" });
+  });
 });
 
 describe("resolvePreviousWorktreeLabel", () => {
