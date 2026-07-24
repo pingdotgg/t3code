@@ -33,6 +33,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import { startLocalServerAdvertisement } from "./localServerAdvertisement.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
 import {
   formatHeadlessServeOutput,
@@ -450,6 +451,9 @@ export const make = Effect.gen(function* () {
       if (serverConfig.startupPresentation === "headless") {
         yield* Effect.logDebug("startup phase: headless access info");
         const accessInfo = yield* issueHeadlessServeAccessInfo();
+        yield* startLocalServerAdvertisement({
+          initialAccessInfo: accessInfo,
+        });
         yield* runStartupPhase(
           "headless.output",
           Console.log(formatHeadlessServeOutput(accessInfo)),

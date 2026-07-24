@@ -144,12 +144,18 @@ importers:
       electron-updater:
         specifier: ^6.6.2
         version: 6.8.3
+      env-paths:
+        specifier: ^2.2.1
+        version: 2.2.1
       playwright-core:
         specifier: 1.60.0
         version: 1.60.0
       react-grab:
         specifier: ^0.1.32
         version: 0.1.44(react@19.2.6)
+      semver:
+        specifier: ^7.3.5
+        version: 7.8.5
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-beta.78
