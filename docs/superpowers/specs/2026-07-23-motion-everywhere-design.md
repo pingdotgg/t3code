@@ -83,7 +83,7 @@ macros under this SDK and would break the command-line build.
 `.entrance` animates the view's own opacity and offset from local state. It is
 deliberately **not** implemented as a SwiftUI `.transition`.
 
-A transition only plays when the *parent* animates the insertion. That is
+A transition only plays when the _parent_ animates the insertion. That is
 exactly what `ChatTimelineScrollView` suppresses (`.animation(revealAnimation,
 value: displayItems.count)` plus a `transaction` that clears the animation) to
 stop the `LazyVStack` re-measuring realized rows mid-stream. Building entrance
