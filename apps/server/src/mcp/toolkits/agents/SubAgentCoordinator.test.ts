@@ -178,6 +178,7 @@ const makeCoordinator = (options?: {
     getThreadShellById: (threadId) =>
       Effect.succeed(Option.some((options?.parentShell ?? makeThreadShell)(threadId))),
     getThreadDetailById: (threadId) => Effect.sync(() => threadDetailLookup(threadId)),
+    getThreadDetailSnapshot: unused,
     listChildThreadRefs: () => Effect.succeed([]),
   });
 

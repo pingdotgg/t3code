@@ -2707,7 +2707,8 @@ public actor LiveBackend: BackendService {
         let status = mapStatus(
             session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
             settledOverride: shell.settledOverride,
-            hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput,
+            hasPendingApprovals: shell.hasPendingApprovals,
+            hasPendingUserInput: shell.hasPendingUserInput,
             activeSubagentCount: activeSubagentCount)
         let presentedStatus =
             status == .running
@@ -2716,7 +2717,18 @@ public actor LiveBackend: BackendService {
         let updatedAt = WireDate.parse(shell.updatedAt) ?? Date()
         return ChatThread(
             id: shell.id, projectID: shell.projectId, title: shell.title, provider: kind,
-            status: presentedStatus, updatedAt: updatedAt,
+            status: presentedStatus,
+            createdAt: WireDate.parse(shell.createdAt) ?? updatedAt, updatedAt: updatedAt,
+            settledOverride: shell.settledOverride,
+            settledAt: shell.settledAt.flatMap(WireDate.parse),
+            latestUserMessageAt: shell.latestUserMessageAt.flatMap(WireDate.parse),
+            latestTurnRequestedAt: shell.latestTurn.flatMap { WireDate.parse($0.requestedAt) },
+            latestTurnStartedAt: shell.latestTurn?.startedAt.flatMap(WireDate.parse),
+            latestTurnCompletedAt: shell.latestTurn?.completedAt.flatMap(WireDate.parse),
+            sessionStatus: shell.session?.status.rawValue,
+            hasPendingApproval: shell.hasPendingApprovals,
+            hasPendingUserInput: shell.hasPendingUserInput,
+            hasActionableProposedPlan: shell.hasActionableProposedPlan,
             runtimeMode: Self.uiRuntimeMode(shell.runtimeMode),
             interactionMode: Self.uiInteractionMode(shell.interactionMode),
             modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model,
@@ -2733,6 +2745,7 @@ public actor LiveBackend: BackendService {
         switch mode {
         case .approvalRequired: .approvalRequired
         case .autoAcceptEdits: .autoAcceptEdits
+        case .auto: .auto
         case .fullAccess: .fullAccess
         }
     }
@@ -2741,6 +2754,7 @@ public actor LiveBackend: BackendService {
         switch mode {
         case .approvalRequired: .approvalRequired
         case .autoAcceptEdits: .autoAcceptEdits
+        case .auto: .auto
         case .fullAccess: .fullAccess
         }
     }
@@ -2761,17 +2775,18 @@ public actor LiveBackend: BackendService {
 
     private func mapStatus(
         session: OrchestrationSession?, latestTurn: OrchestrationLatestTurn?, archivedAt: String?,
-        settledOverride: String?, hasPendingApprovals: Bool, activeSubagentCount: Int
+        settledOverride: String?, hasPendingApprovals: Bool, hasPendingUserInput: Bool = false, activeSubagentCount: Int
     ) -> ThreadStatus {
         switch ThreadStatusProjection.project(
             session: session, latestTurn: latestTurn, archivedAt: archivedAt,
             settledOverride: settledOverride, hasPendingApprovals: hasPendingApprovals,
-            activeSubagentCount: activeSubagentCount)
+            hasPendingUserInput: hasPendingUserInput, activeSubagentCount: activeSubagentCount)
         {
         case .idle: return .idle
         case .running: return .running
         case .waiting: return .waiting
         case .waitingApproval: return .waitingApproval
+        case .waitingInput: return .waitingInput
         case .backgroundWork: return .backgroundWork
         case .error: return .error
         case .archived: return .archived

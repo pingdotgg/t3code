@@ -127,6 +127,7 @@ export function mapRemoteEnvironmentError(
         traceId: error.traceId,
       });
     case "EnvironmentRequestInvalidError":
+    case "EnvironmentResourceNotFoundError":
       return new ConnectionBlockedError({
         reason: "configuration",
         detail: "The environment rejected the authentication request.",

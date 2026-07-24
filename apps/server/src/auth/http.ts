@@ -16,6 +16,8 @@ import {
   EnvironmentOperationForbiddenError,
   EnvironmentRequestInvalidError,
   type EnvironmentRequestInvalidReason,
+  EnvironmentResourceNotFoundError,
+  type EnvironmentResourceNotFoundReason,
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
@@ -105,6 +107,14 @@ export function failEnvironmentInvalidRequest(reason: EnvironmentRequestInvalidR
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(new EnvironmentRequestInvalidError({ code: "invalid_request", reason, traceId })),
+    ),
+  );
+}
+
+export function failEnvironmentNotFound(reason: EnvironmentResourceNotFoundReason) {
+  return currentEnvironmentTraceId.pipe(
+    Effect.flatMap((traceId) =>
+      Effect.fail(new EnvironmentResourceNotFoundError({ code: "not_found", reason, traceId })),
     ),
   );
 }

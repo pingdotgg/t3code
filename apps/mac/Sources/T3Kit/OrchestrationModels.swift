@@ -32,6 +32,7 @@ import Foundation
 public enum RuntimeMode: String, Codable, Sendable {
     case approvalRequired = "approval-required"
     case autoAcceptEdits = "auto-accept-edits"
+    case auto
     case fullAccess = "full-access"
 
     public static let wireDefault: RuntimeMode = .fullAccess

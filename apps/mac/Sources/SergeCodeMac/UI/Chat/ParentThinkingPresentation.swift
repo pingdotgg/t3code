@@ -54,10 +54,13 @@ enum ParentThinkingPresentation {
             sessionStatus = "waiting"
             latestTurnState = nil
         case .waitingApproval:
-            // Still an active turn, but approval wins via hasPendingApproval.
             sessionStatus = "running"
             latestTurnState = "running"
             hasPendingApproval = true
+        case .waitingInput:
+            sessionStatus = "running"
+            latestTurnState = "running"
+            hasPendingUserInput = true
         case .error:
             sessionStatus = "error"
             latestTurnState = "error"

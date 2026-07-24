@@ -294,6 +294,7 @@ private struct RuntimeModeMenu: View {
         switch mode {
         case .approvalRequired: "Ask before editing files or running commands."
         case .autoAcceptEdits: "Edit files freely; ask before broader actions."
+        case .auto: "Let the AI review approval requests before escalating to you."
         case .fullAccess: "Work independently in the current environment."
         }
     }

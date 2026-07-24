@@ -16,7 +16,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import {
   EnvironmentId,
-  OrchestrationThread,
+  OrchestrationThreadDetailSnapshot,
   OrchestrationShellSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
@@ -45,7 +45,7 @@ const StoredThreadSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION),
   environmentId: EnvironmentId,
   threadId: ThreadId,
-  thread: OrchestrationThread,
+  snapshot: OrchestrationThreadDetailSnapshot,
 });
 
 const LegacyStoredShellSnapshot = Schema.Struct({
@@ -355,18 +355,18 @@ export const connectionStorageLayer = Layer.effectContext(
             Schema.decodeUnknownResult(StoredThreadSnapshot)(parsed),
           ).pipe(Effect.mapError((cause) => shellPersistenceError("load-thread", cause)));
           return stored.environmentId === environmentId && stored.threadId === threadId
-            ? Option.some(stored.thread)
+            ? Option.some(stored.snapshot)
             : Option.none();
         }),
-      saveThread: (environmentId, thread) =>
+      saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
-          const file = yield* threadSnapshotFile(environmentId, thread.id, "save-thread");
+          const file = yield* threadSnapshotFile(environmentId, snapshot.thread.id, "save-thread");
           const encoded = yield* Effect.fromResult(
             Schema.encodeUnknownResult(StoredThreadSnapshot)({
               schemaVersion: THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION,
               environmentId,
-              threadId: thread.id,
-              thread,
+              threadId: snapshot.thread.id,
+              snapshot,
             }),
           ).pipe(Effect.mapError((cause) => shellPersistenceError("save-thread", cause)));
           yield* Effect.try({

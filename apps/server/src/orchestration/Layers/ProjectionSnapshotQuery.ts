@@ -2171,6 +2171,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
     });
 
+  const getThreadDetailSnapshot: ProjectionSnapshotQueryShape["getThreadDetailSnapshot"] = (
+    threadId,
+  ) =>
+    Effect.all([getThreadDetailById(threadId), getSnapshotSequence()]).pipe(
+      Effect.map(([thread, sequence]) =>
+        Option.map(thread, (value) => ({
+          snapshotSequence: sequence.snapshotSequence,
+          thread: value,
+        })),
+      ),
+    );
+
   const listChildThreadRefs: ProjectionSnapshotQueryShape["listChildThreadRefs"] = (
     parentThreadId,
   ) =>
@@ -2201,6 +2213,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadDetailById,
+    getThreadDetailSnapshot,
     listChildThreadRefs,
   } satisfies ProjectionSnapshotQueryShape;
 });

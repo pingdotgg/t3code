@@ -143,6 +143,10 @@ public final class AgentNotificationService: NSObject {
         selectedThreadID: String?,
         detail: String?
     ) {
+        // SwiftPM debug executables are not application bundles; UserNotifications
+        // raises an Objective-C exception when the UI probe or mock backend tries
+        // to deliver through that process shape.
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return }
         let isAppActive = isAppActiveOverride ?? NSApp.isActive
         let context = AgentNotificationPolicy.DeliveryContext(
             isAppActive: isAppActive,

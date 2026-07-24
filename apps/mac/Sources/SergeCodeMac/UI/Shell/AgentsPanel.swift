@@ -133,7 +133,7 @@ struct AgentsPanel: View {
     static func isWorking(_ thread: ChatThread) -> Bool {
         if thread.isStalled { return true }
         switch thread.status {
-        case .running, .backgroundWork, .waitingApproval: return true
+        case .running, .backgroundWork, .waitingApproval, .waitingInput: return true
         case .idle, .waiting, .error, .archived, .settled: return false
         }
     }
@@ -377,6 +377,7 @@ private struct AgentsPanelSiblingRow: View {
         case .waiting: return "waiting"
         case .backgroundWork: return "background work"
         case .waitingApproval: return "waiting for approval"
+        case .waitingInput: return "waiting for input"
         case .idle: return "idle"
         case .error: return "error"
         case .archived: return "archived"

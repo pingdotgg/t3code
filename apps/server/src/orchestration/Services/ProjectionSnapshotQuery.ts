@@ -171,6 +171,17 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
 
   /**
+   * Read a single thread detail together with the authoritative projection
+   * sequence used as the live-stream resume cursor.
+   */
+  readonly getThreadDetailSnapshot: (
+    threadId: ThreadId,
+  ) => Effect.Effect<
+    Option.Option<{ readonly snapshotSequence: number; readonly thread: OrchestrationThread }>,
+    ProjectionRepositoryError
+  >;
+
+  /**
    * List non-deleted child thread refs for a parent, including archived ones
    * (flagged) so archive-cascade traversal can pass through an auto-archived
    * child to reach its still-active descendants.

@@ -48,25 +48,26 @@ public struct Project: Identifiable, Hashable, Sendable {
 }
 
 public enum ThreadStatus: String, Sendable {
-    case idle, running, waiting, waitingApproval, backgroundWork, error, archived, settled
+    case idle, running, waiting, waitingApproval, waitingInput, backgroundWork, error, archived, settled
 
     public var isSettled: Bool {
         switch self {
         case .idle, .archived, .error, .settled: true
-        case .running, .waiting, .waitingApproval, .backgroundWork: false
+        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork: false
         }
     }
 }
 
 /// UI mirror of the wire `RuntimeMode` (how much the agent may do unprompted).
 public enum ThreadRuntimeMode: String, CaseIterable, Sendable, Identifiable {
-    case approvalRequired, autoAcceptEdits, fullAccess
+    case approvalRequired, autoAcceptEdits, auto, fullAccess
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
         case .approvalRequired: "Approvals required"
         case .autoAcceptEdits: "Auto-accept edits"
+        case .auto: "Auto"
         case .fullAccess: "Full access"
         }
     }
@@ -75,6 +76,7 @@ public enum ThreadRuntimeMode: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .approvalRequired: "hand.raised"
         case .autoAcceptEdits: "pencil.circle"
+        case .auto: "checkmark.shield"
         case .fullAccess: "bolt.circle"
         }
     }
@@ -182,7 +184,18 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     public var title: String
     public var provider: ProviderKind
     public var status: ThreadStatus
+    public var createdAt: Date
     public var updatedAt: Date
+    public var settledOverride: String?
+    public var settledAt: Date?
+    public var latestUserMessageAt: Date?
+    public var latestTurnRequestedAt: Date?
+    public var latestTurnStartedAt: Date?
+    public var latestTurnCompletedAt: Date?
+    public var sessionStatus: String?
+    public var hasPendingApproval: Bool
+    public var hasPendingUserInput: Bool
+    public var hasActionableProposedPlan: Bool
     public var runtimeMode: ThreadRuntimeMode
     public var interactionMode: ThreadInteractionMode
     /// Provider-instance + model slug backing this thread (from its
@@ -210,7 +223,12 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
 
     public init(
         id: String, projectID: String, title: String, provider: ProviderKind,
-        status: ThreadStatus, updatedAt: Date,
+        status: ThreadStatus, createdAt: Date? = nil, updatedAt: Date,
+        settledOverride: String? = nil, settledAt: Date? = nil,
+        latestUserMessageAt: Date? = nil, latestTurnRequestedAt: Date? = nil,
+        latestTurnStartedAt: Date? = nil, latestTurnCompletedAt: Date? = nil,
+        sessionStatus: String? = nil, hasPendingApproval: Bool = false,
+        hasPendingUserInput: Bool = false, hasActionableProposedPlan: Bool = false,
         runtimeMode: ThreadRuntimeMode = .fullAccess,
         interactionMode: ThreadInteractionMode = .normal,
         modelInstanceID: String? = nil, modelID: String? = nil,
@@ -223,7 +241,18 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         self.title = title
         self.provider = provider
         self.status = status
+        self.createdAt = createdAt ?? updatedAt
         self.updatedAt = updatedAt
+        self.settledOverride = settledOverride
+        self.settledAt = settledAt
+        self.latestUserMessageAt = latestUserMessageAt
+        self.latestTurnRequestedAt = latestTurnRequestedAt
+        self.latestTurnStartedAt = latestTurnStartedAt
+        self.latestTurnCompletedAt = latestTurnCompletedAt
+        self.sessionStatus = sessionStatus
+        self.hasPendingApproval = hasPendingApproval
+        self.hasPendingUserInput = hasPendingUserInput
+        self.hasActionableProposedPlan = hasActionableProposedPlan
         self.runtimeMode = runtimeMode
         self.interactionMode = interactionMode
         self.modelInstanceID = modelInstanceID
@@ -243,6 +272,17 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
             && title == other.title
             && provider == other.provider
             && status == other.status
+            && createdAt == other.createdAt
+            && settledOverride == other.settledOverride
+            && settledAt == other.settledAt
+            && latestUserMessageAt == other.latestUserMessageAt
+            && latestTurnRequestedAt == other.latestTurnRequestedAt
+            && latestTurnStartedAt == other.latestTurnStartedAt
+            && latestTurnCompletedAt == other.latestTurnCompletedAt
+            && sessionStatus == other.sessionStatus
+            && hasPendingApproval == other.hasPendingApproval
+            && hasPendingUserInput == other.hasPendingUserInput
+            && hasActionableProposedPlan == other.hasActionableProposedPlan
             && runtimeMode == other.runtimeMode
             && interactionMode == other.interactionMode
             && modelInstanceID == other.modelInstanceID

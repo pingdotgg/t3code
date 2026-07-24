@@ -1,7 +1,7 @@
 import Foundation
 
 public enum T3ProjectedThreadStatus: Sendable, Equatable {
-    case idle, running, waiting, waitingApproval, error, archived, backgroundWork, settled
+    case idle, running, waiting, waitingApproval, waitingInput, error, archived, backgroundWork, settled
 }
 
 /// Server-authoritative liveness for a thread's active provider turn, folded
@@ -82,13 +82,16 @@ public enum ThreadStatusProjection {
     public static func project(
         session: OrchestrationSession?, latestTurn: OrchestrationLatestTurn?,
         archivedAt: String?, settledOverride: String?, hasPendingApprovals: Bool,
-        activeSubagentCount: Int
+        hasPendingUserInput: Bool = false, activeSubagentCount: Int
     ) -> T3ProjectedThreadStatus {
         if session?.status == .error || latestTurn?.state == .error {
             return .error
         }
         if hasPendingApprovals {
             return .waitingApproval
+        }
+        if hasPendingUserInput {
+            return .waitingInput
         }
         if let status = session?.status {
             switch status {

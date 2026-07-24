@@ -89,7 +89,7 @@ struct SidebarThreadItem {
 
     var isInProgress: Bool {
         return switch thread.status {
-        case .running, .waiting, .waitingApproval, .backgroundWork: true
+        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork: true
         case .idle, .error, .archived, .settled: false
         }
     }
@@ -100,7 +100,8 @@ struct SidebarThreadItem {
 
     var attentionRank: Int {
         if thread.status == .waitingApproval { return 0 }
-        if thread.status == .error { return 1 }
+        if thread.status == .waitingInput { return 1 }
+        if thread.status == .error { return 2 }
         if hasConnectionIssue { return 2 }
         if thread.isStalled { return 3 }
         return 4
@@ -115,6 +116,7 @@ struct SidebarThreadItem {
         case .running: "Running"
         case .waiting: "Waiting"
         case .waitingApproval: "Needs approval"
+        case .waitingInput: "Needs input"
         case .error: "Error"
         case .archived: "Archived"
         case .settled: "Settled"
@@ -235,6 +237,32 @@ enum SidebarProjection {
         .sorted {
             $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
+    }
+
+    static func activeThreads(in groups: [SidebarProjectGroup], now: Date = Date()) -> [SidebarThreadItem] {
+        let items = groups.flatMap(\.threads).filter {
+            !ThreadInboxSemantics.effectiveSettled(
+                $0.thread,
+                now: now,
+                changeRequestState: $0.vcs?.prState)
+        }
+        let order = Dictionary(
+            uniqueKeysWithValues: ThreadInboxSemantics.sortActive(items.map(\.thread))
+                .enumerated().map { ($0.element.id, $0.offset) })
+        return items.sorted { (order[$0.thread.id] ?? .max) < (order[$1.thread.id] ?? .max) }
+    }
+
+    static func settledThreads(in groups: [SidebarProjectGroup], now: Date = Date()) -> [SidebarThreadItem] {
+        let items = groups.flatMap(\.threads).filter {
+            ThreadInboxSemantics.effectiveSettled(
+                $0.thread,
+                now: now,
+                changeRequestState: $0.vcs?.prState)
+        }
+        let order = Dictionary(
+            uniqueKeysWithValues: ThreadInboxSemantics.sortSettled(items.map(\.thread))
+                .enumerated().map { ($0.element.id, $0.offset) })
+        return items.sorted { (order[$0.thread.id] ?? .max) < (order[$1.thread.id] ?? .max) }
     }
 
     static func attentionThreads(in groups: [SidebarProjectGroup]) -> [SidebarThreadItem] {

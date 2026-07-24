@@ -95,11 +95,12 @@ public enum AgentNotificationPolicy {
                     return .finished
                 }
             case .waitingApproval:
-                // Covers both permission prompts and user-input questions at
-                // the shell level. Dedicated events refine the copy when
-                // available; this is the reconnect/snapshot fallback.
                 if previous.status != .waitingApproval {
                     return .needsApproval
+                }
+            case .waitingInput:
+                if previous.status != .waitingInput {
+                    return .needsInput
                 }
             case .running, .waiting, .backgroundWork, .archived:
                 break
@@ -171,7 +172,7 @@ public enum AgentNotificationPolicy {
 
     public static func isActivelyWorking(_ status: ThreadStatus) -> Bool {
         switch status {
-        case .running, .waiting, .waitingApproval, .backgroundWork:
+        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork:
             return true
         case .idle, .error, .archived, .settled:
             return false

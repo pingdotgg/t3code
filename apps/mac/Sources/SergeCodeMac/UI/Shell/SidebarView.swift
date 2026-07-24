@@ -29,10 +29,12 @@ struct SidebarView: View {
     @UIState private var deleteThreadTarget: ThreadActionTarget?
     @UIState private var forgetTarget: RemoteDeviceSession?
     @UIState private var searchText = ""
+    @UIState private var settledVisibleCount = 10
 
     @AppStorage("sidebarMachineScope") private var machineScopeStorage =
         SidebarMachineScope.allStorageValue
     @AppStorage("sidebarCollapsedProjects") private var collapsedProjectsData = Data()
+    @AppStorage("sidebarProjectScope") private var projectScopeID = "all"
     @UIState private var collapsedProjects: Set<String> = []
 
     private var machineScope: SidebarMachineScope {
@@ -43,20 +45,28 @@ struct SidebarView: View {
         SidebarProjection.locations(in: multi)
     }
 
-    private var projectGroups: [SidebarProjectGroup] {
+    private var allProjectGroups: [SidebarProjectGroup] {
         SidebarProjection.projectGroups(in: multi, scope: machineScope)
     }
 
-    private var attentionThreads: [SidebarThreadItem] {
-        SidebarProjection.attentionThreads(in: projectGroups)
+    private var projectGroups: [SidebarProjectGroup] {
+        projectScopeID == "all" ? allProjectGroups : allProjectGroups.filter { $0.id == projectScopeID }
     }
 
-    private var runningThreads: [SidebarThreadItem] {
-        SidebarProjection.runningThreads(in: projectGroups)
+    private var activeThreads: [SidebarThreadItem] {
+        SidebarProjection.activeThreads(in: projectGroups)
     }
 
-    private var pinnedThreads: [SidebarThreadItem] {
-        SidebarProjection.pinnedThreads(in: projectGroups)
+    private var settledThreads: [SidebarThreadItem] {
+        SidebarProjection.settledThreads(in: projectGroups)
+    }
+
+    private var visibleSettledThreads: [SidebarThreadItem] {
+        Array(settledThreads.prefix(settledVisibleCount))
+    }
+
+    private var hiddenSettledCount: Int {
+        max(0, settledThreads.count - visibleSettledThreads.count)
     }
 
     private var searchResults: [SidebarThreadItem] {
@@ -73,7 +83,10 @@ struct SidebarView: View {
                 searchText: $searchText,
                 locations: locations,
                 scope: machineScope,
-                onSelectScope: setMachineScope)
+                projectGroups: allProjectGroups,
+                projectScopeID: projectScopeID,
+                onSelectScope: setMachineScope,
+                onSelectProject: { projectScopeID = $0; settledVisibleCount = 10 })
 
             List(selection: Binding(
                 get: { multi.selection },
@@ -82,8 +95,7 @@ struct SidebarView: View {
                 if isSearching {
                     searchSection
                 } else {
-                    smartSections
-                    projectSections
+                    inboxSections
                 }
             }
             .listStyle(.sidebar)
@@ -204,36 +216,46 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private var smartSections: some View {
-        if !attentionThreads.isEmpty {
-            Section {
-                ForEach(attentionThreads, id: \.id) { item in
+    private var inboxSections: some View {
+        Section {
+            if activeThreads.isEmpty {
+                SidebarEmptyRow(
+                    title: "Inbox clear",
+                    systemImage: "checkmark.circle",
+                    detail: emptyProjectMessage)
+            } else {
+                ForEach(activeThreads, id: \.id) { item in
                     threadRow(item, context: .shortcut)
                 }
-            } header: {
-                SidebarSectionLabel(
-                    title: "Needs you", count: attentionThreads.count, tint: AlpineTheme.clay)
             }
+        } header: {
+            SidebarSectionLabel(title: "Active", count: activeThreads.count, tint: AlpineTheme.meadow)
         }
 
-        if !runningThreads.isEmpty {
+        if !visibleSettledThreads.isEmpty {
             Section {
-                ForEach(runningThreads, id: \.id) { item in
+                ForEach(visibleSettledThreads, id: \.id) { item in
                     threadRow(item, context: .shortcut)
                 }
-            } header: {
-                SidebarSectionLabel(
-                    title: "Running", count: runningThreads.count, tint: AlpineTheme.meadow)
-            }
-        }
-
-        if !pinnedThreads.isEmpty {
-            Section {
-                ForEach(pinnedThreads, id: \.id) { item in
-                    threadRow(item, context: .shortcut)
+                if hiddenSettledCount > 0 {
+                    Button {
+                        settledVisibleCount += 25
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Text("Show \(min(hiddenSettledCount, 25)) more")
+                                .font(.caption)
+                            Text("(\(hiddenSettledCount) hidden)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.vertical, 4)
                 }
             } header: {
-                SidebarSectionLabel(title: "Pinned", count: pinnedThreads.count)
+                SidebarSectionLabel(title: "Settled", count: settledThreads.count)
             }
         }
     }
@@ -304,9 +326,10 @@ struct SidebarView: View {
                 Divider()
                 if item.thread.status != .settled && item.thread.status != .archived {
                     Button("Settle Thread", systemImage: "checkmark.circle") {
-                        Task { await model.settleThread(item.thread) }
+                        settle(item)
                     }
-                    .disabled(!item.isSelectable)
+                    .disabled(
+                        !item.isSelectable || !ThreadInboxSemantics.canSettle(item.thread))
                 } else if item.thread.status == .settled {
                     Button("Mark as Active", systemImage: "arrow.counterclockwise") {
                         Task { await model.unsettleThread(item.thread) }
@@ -335,6 +358,20 @@ struct SidebarView: View {
                         !item.isSelectable || !model.canMoveThread(item.thread, direction: .down))
                 }
             }
+    }
+
+    private func settle(_ item: SidebarThreadItem) {
+        let wasSelected = multi.selection == item.id
+        let next = activeThreads.first { $0.id != item.id && $0.isSelectable }
+        Task {
+            await item.member.location.model.settleThread(item.thread)
+            guard wasSelected else { return }
+            if let next {
+                multi.select(threadID: next.thread.id, on: next.member.location.id)
+            } else {
+                createThread(item.member, provider: item.thread.provider)
+            }
+        }
     }
 
     private var emptyProjectMessage: String {
@@ -422,9 +459,13 @@ private struct SidebarCommandBar: View {
     @Binding var searchText: String
     let locations: [SidebarLocation]
     let scope: SidebarMachineScope
+    let projectGroups: [SidebarProjectGroup]
+    let projectScopeID: String
     let onSelectScope: (SidebarMachineScope) -> Void
+    let onSelectProject: (String) -> Void
 
     @UIState private var isScopePresented = false
+    @UIState private var isProjectScopePresented = false
 
     var body: some View {
         HStack(spacing: 7) {
@@ -448,6 +489,27 @@ private struct SidebarCommandBar: View {
             .padding(.horizontal, 8)
             .frame(height: 28)
             .background(.quaternary.opacity(0.7), in: RoundedRectangle(cornerRadius: 7))
+
+            Button {
+                isProjectScopePresented.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "folder")
+                    Text(projectScopeTitle)
+                        .lineLimit(1)
+                }
+                .font(.caption.weight(.medium))
+                .frame(height: 28)
+                .padding(.horizontal, 7)
+                .background(
+                    Color.primary.opacity(isProjectScopePresented ? 0.11 : 0.055),
+                    in: RoundedRectangle(cornerRadius: 7))
+            }
+            .buttonStyle(.plain)
+            .help("Filter tasks by project")
+            .popover(isPresented: $isProjectScopePresented, arrowEdge: .top) {
+                projectScopePopover
+            }
 
             Button {
                 isScopePresented.toggle()
@@ -510,6 +572,47 @@ private struct SidebarCommandBar: View {
                 .padding(8)
             }
         }
+    }
+
+    private var projectScopePopover: some View {
+        ComposerPickerSurface(width: 320) {
+            VStack(spacing: 0) {
+                ComposerPickerHeader(
+                    icon: "folder",
+                    title: "Project scope",
+                    subtitle: "Show tasks from one logical project")
+                Divider().opacity(0.55)
+                VStack(spacing: 3) {
+                    ComposerPickerChoiceRow(
+                        icon: "folder",
+                        title: "All projects",
+                        detail: "Every project on the selected machines",
+                        isSelected: projectScopeID == "all"
+                    ) {
+                        onSelectProject("all")
+                        isProjectScopePresented = false
+                    }
+                    ForEach(projectGroups) { group in
+                        ComposerPickerChoiceRow(
+                            icon: "folder.fill",
+                            title: group.name,
+                            detail: "\(group.members.count) location\(group.members.count == 1 ? "" : "s")",
+                            isSelected: projectScopeID == group.id
+                        ) {
+                            onSelectProject(group.id)
+                            isProjectScopePresented = false
+                        }
+                    }
+                }
+                .padding(8)
+            }
+        }
+    }
+
+    private var projectScopeTitle: String {
+        projectScopeID == "all"
+            ? "All projects"
+            : projectGroups.first(where: { $0.id == projectScopeID })?.name ?? "All projects"
     }
 
     private var scopeTitle: String {
@@ -916,6 +1019,7 @@ private struct SidebarThreadStatus: View {
         case .running: return AlpineTheme.accent
         case .waiting: return AlpineTheme.sky
         case .waitingApproval: return AlpineTheme.lichen
+        case .waitingInput: return AlpineTheme.sky
         case .backgroundWork: return AlpineTheme.meadow
         case .error: return .red
         case .archived: return .gray
@@ -932,6 +1036,7 @@ private struct SidebarThreadStatus: View {
         case .running: return "bolt.fill"
         case .waiting: return "clock.fill"
         case .waitingApproval: return "exclamationmark.circle.fill"
+        case .waitingInput: return "questionmark.bubble.fill"
         case .error: return "xmark.octagon.fill"
         case .archived: return "archivebox.fill"
         case .settled: return "checkmark.circle"

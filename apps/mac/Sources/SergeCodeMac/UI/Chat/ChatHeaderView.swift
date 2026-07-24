@@ -117,6 +117,7 @@ private struct StatusBadge: View {
         case .running: return "Running"
         case .waiting: return "Waiting"
         case .waitingApproval: return "Needs approval"
+        case .waitingInput: return "Needs input"
         case .backgroundWork: return "Background work"
         case .error: return "Error"
         case .archived: return "Archived"
@@ -131,6 +132,7 @@ private struct StatusBadge: View {
         case .running: return "bolt.fill"
         case .waiting: return "clock.fill"
         case .waitingApproval: return "exclamationmark.circle.fill"
+        case .waitingInput: return "questionmark.bubble.fill"
         case .backgroundWork: return "person.2.fill"
         case .error: return "xmark.octagon.fill"
         case .archived: return "archivebox.fill"
@@ -145,6 +147,7 @@ private struct StatusBadge: View {
         case .running: return AlpineTheme.accent
         case .waiting: return AlpineTheme.sky
         case .waitingApproval: return AlpineTheme.lichen
+        case .waitingInput: return AlpineTheme.sky
         case .backgroundWork: return AlpineTheme.meadow
         case .error: return .red
         case .archived: return .secondary
