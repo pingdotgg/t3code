@@ -175,7 +175,7 @@ export const ensureExclusiveStateDir = (input: {
   readonly isPidAlive?: (pid: number) => boolean;
 }) =>
   Effect.gen(function* () {
-    const existing = yield* readPersistedServerRuntimeState(input.statePath);
+    const existing = yield* readPersistedServerRuntimeStateForStartup(input.statePath);
     const decision = decideServerRuntimeStartup({
       existing,
       ownPid: input.ownPid ?? process.pid,
@@ -192,7 +192,17 @@ export const ensureExclusiveStateDir = (input: {
     }
   });
 
-export const readPersistedServerRuntimeState = (path: string) =>
+const logAndIgnoreRuntimeStateError = (error: ServerRuntimeStateError) =>
+  Effect.logWarning(error.message).pipe(
+    Effect.annotateLogs({
+      operation: error.operation,
+      statePath: error.statePath,
+      cause: error,
+    }),
+    Effect.as(Option.none<PersistedServerRuntimeState>()),
+  );
+
+const readPersistedServerRuntimeStateForStartup = (path: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const raw = yield* fs.readFileString(path).pipe(
@@ -233,13 +243,13 @@ export const readPersistedServerRuntimeState = (path: string) =>
   }).pipe(
     Effect.catchTags({
       ServerRuntimeStateError: (error) =>
-        Effect.logWarning(error.message).pipe(
-          Effect.annotateLogs({
-            operation: error.operation,
-            statePath: error.statePath,
-            cause: error,
-          }),
-          Effect.as(Option.none<PersistedServerRuntimeState>()),
-        ),
+        error.operation === "decode" ? logAndIgnoreRuntimeStateError(error) : Effect.fail(error),
+    }),
+  );
+
+export const readPersistedServerRuntimeState = (path: string) =>
+  readPersistedServerRuntimeStateForStartup(path).pipe(
+    Effect.catchTags({
+      ServerRuntimeStateError: logAndIgnoreRuntimeStateError,
     }),
   );

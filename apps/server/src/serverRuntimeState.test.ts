@@ -248,13 +248,15 @@ describe("ensureExclusiveStateDir", () => {
       }).pipe(Effect.flip);
 
       assert.isTrue(isServerStateDirConflictError(error));
-      assert.equal(error.pid, state.pid);
-      assert.equal(error.port, state.port);
-      assert.equal(error.origin, state.origin);
-      assert.equal(error.stateDir, stateDir);
-      assert.include(error.message, String(state.pid));
-      assert.include(error.message, stateDir);
-      assert.include(error.message, "--base-dir");
+      if (isServerStateDirConflictError(error)) {
+        assert.equal(error.pid, state.pid);
+        assert.equal(error.port, state.port);
+        assert.equal(error.origin, state.origin);
+        assert.equal(error.stateDir, stateDir);
+        assert.include(error.message, String(state.pid));
+        assert.include(error.message, stateDir);
+        assert.include(error.message, "--base-dir");
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -310,5 +312,30 @@ describe("ensureExclusiveStateDir", () => {
         ),
       ),
     ),
+  );
+
+  it.effect("fails closed when the discovery file cannot be read", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-state-dir-guard-test-",
+      });
+      const statePath = path.join(stateDir, "server-runtime.json");
+      yield* fileSystem.makeDirectory(statePath);
+
+      const error = yield* ServerRuntimeState.ensureExclusiveStateDir({
+        statePath,
+        stateDir,
+        ownPid: 999,
+        isPidAlive: () => true,
+      }).pipe(Effect.flip);
+
+      assert.isTrue(isServerRuntimeStateError(error));
+      if (isServerRuntimeStateError(error)) {
+        assert.equal(error.operation, "read");
+        assert.equal(error.statePath, statePath);
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
