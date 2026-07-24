@@ -280,6 +280,26 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
     }),
   );
 
+  it.effect("gives every tab in a batch close its own monotonic revision", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      yield* manager.open({ threadId, url: "http://localhost:5173" });
+      yield* manager.open({ threadId, url: "http://localhost:3000" });
+      const collector = yield* collectEvents;
+
+      yield* manager.close({ threadId });
+
+      const events = yield* collector.drain;
+      const listed = yield* manager.list({ threadId });
+      expect(events).toHaveLength(2);
+      expect(events.every((event) => event.type === "closed")).toBe(true);
+      expect(events[1]!.revision).toBeGreaterThan(events[0]!.revision);
+      expect(listed.revision).toBe(events[1]!.revision);
+      expect(listed.sessions).toHaveLength(0);
+    }),
+  );
+
   it.effect("close is idempotent for unknown threads", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();

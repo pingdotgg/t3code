@@ -510,7 +510,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("detaches a webview registered while tab close cleanup is in flight", () =>
+  effectIt.effect("blocks late webview and capture starts during tab close", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const capturePage = vi.fn(async () => ({
@@ -520,6 +520,7 @@ describe("PreviewManager", () => {
         const firstWebContents = makeTestPreviewWebContents(capturePage, 42);
         const replacementWebContents = makeTestPreviewWebContents(capturePage, 43);
         const replacementListenerSpies = replacementWebContents as unknown as {
+          readonly on: ReturnType<typeof vi.fn>;
           readonly off: ReturnType<typeof vi.fn>;
           readonly ipc: { readonly off: ReturnType<typeof vi.fn> };
         };
@@ -551,18 +552,25 @@ describe("PreviewManager", () => {
           .closeTab("tab_close_register_race")
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(closeCleanupPaused);
-        yield* manager.registerWebview("tab_close_register_race", 43);
+        const registrationExit = yield* Effect.exit(
+          manager.registerWebview("tab_close_register_race", 43),
+        );
+        const recordingExit = yield* Effect.exit(manager.startRecording("tab_close_register_race"));
         yield* Deferred.succeed(continueCloseCleanup, undefined);
         yield* Fiber.join(closeFiber);
 
-        expect(replacementListenerSpies.off).toHaveBeenCalledWith(
-          "did-navigate",
-          expect.any(Function),
-        );
-        expect(replacementListenerSpies.ipc.off).toHaveBeenCalledWith(
-          "preview:human-input",
-          expect.any(Function),
-        );
+        for (const exit of [registrationExit, recordingExit]) {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isSuccess(exit)) continue;
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewTabNotFoundError",
+            tabId: "tab_close_register_race",
+          });
+        }
+        expect(replacementListenerSpies.on).not.toHaveBeenCalled();
+        expect(replacementListenerSpies.off).not.toHaveBeenCalled();
+        expect(replacementListenerSpies.ipc.off).not.toHaveBeenCalled();
+        expect(capturePage).toHaveBeenCalledOnce();
       }),
     ),
   );
@@ -831,6 +839,63 @@ describe("PreviewManager", () => {
           concurrency: 2,
           discard: true,
         });
+      }),
+    ),
+  );
+
+  effectIt.effect("drops a captured frame when the tab webview changes during capture", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const staleImage: TestCapturedPreviewImage = {
+          toJPEG: vi.fn(() => Buffer.from("stale-recording-frame")),
+          getSize: vi.fn(() => ({ width: 1280, height: 720 })),
+        };
+        let markCaptureStarted!: () => void;
+        const captureStarted = new Promise<void>((resolve) => {
+          markCaptureStarted = resolve;
+        });
+        let resolveCapture: ((image: TestCapturedPreviewImage) => void) | undefined;
+        const staleCapturePage = vi.fn(() => {
+          markCaptureStarted();
+          return new Promise<TestCapturedPreviewImage>((resolve) => {
+            resolveCapture = resolve;
+          });
+        });
+        const replacementCapturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("replacement-recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        const initialWebContents = makeTestPreviewWebContents(staleCapturePage, 42);
+        const replacementWebContents = makeTestPreviewWebContents(replacementCapturePage, 43);
+        fromId.mockImplementation((webContentsId?: number) => {
+          if (webContentsId === 42) return initialWebContents;
+          if (webContentsId === 43) return replacementWebContents;
+          return null;
+        });
+        const frames: DesktopPreviewRecordingFrame[] = [];
+
+        yield* manager.subscribeRecordingFrames((frame) =>
+          Effect.sync(() => {
+            frames.push(frame);
+          }),
+        );
+        yield* manager.createTab("tab_capture_replaced");
+        yield* manager.registerWebview("tab_capture_replaced", 42);
+        const recordingFiber = yield* manager
+          .startRecording("tab_capture_replaced")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => captureStarted);
+
+        yield* manager.registerWebview("tab_capture_replaced", 43);
+        resolveCapture?.(staleImage);
+        yield* Fiber.join(recordingFiber);
+
+        expect(staleImage.getSize).not.toHaveBeenCalled();
+        expect(staleImage.toJPEG).not.toHaveBeenCalled();
+        expect(frames).toHaveLength(0);
+        expect(replacementCapturePage).not.toHaveBeenCalled();
+
+        yield* manager.stopRecording("tab_capture_replaced");
       }),
     ),
   );

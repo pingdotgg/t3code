@@ -470,6 +470,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   >(new Map());
   const pictureInPictureAspectRatiosRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const pictureInPictureMutationSemaphore = yield* Semaphore.make(1);
+  const closingTabIdsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -1349,50 +1350,66 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const closeTab = Effect.fn("PreviewManager.closeTab")(function* (tabId: string) {
-    if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) return;
-    yield* Effect.all(
-      [
-        cancelPickElement(tabId),
-        closePictureInPicture(tabId),
-        stopFrameCapture(tabId, "recording"),
-      ],
-      {
-        concurrency: 3,
-        discard: true,
-      },
-    );
-    const tab = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
-      const current = tabs.get(tabId);
-      if (!current) return [Option.none<PreviewTabState>(), tabs] as const;
-      return [
-        Option.some(current),
-        replaceMap(tabs, (copy) => {
-          copy.delete(tabId);
-        }),
-      ] as const;
+    const claimed = yield* Ref.modify(closingTabIdsRef, (closingTabIds) => {
+      if (closingTabIds.has(tabId)) return [false, closingTabIds] as const;
+      return [true, new Set([...closingTabIds, tabId])] as const;
     });
-    if (Option.isNone(tab)) return;
-    const closedTab = tab.value;
-    if (closedTab.webContentsId != null) {
+    if (!claimed) return;
+    return yield* Effect.gen(function* () {
+      if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) return;
       yield* Effect.all(
-        [detachControlSession(closedTab.webContentsId), detachListeners(closedTab.webContentsId)],
-        { concurrency: 2, discard: true },
+        [
+          cancelPickElement(tabId),
+          closePictureInPicture(tabId),
+          stopFrameCapture(tabId, "recording"),
+        ],
+        {
+          concurrency: 3,
+          discard: true,
+        },
       );
-    }
-    const updatedAt = yield* currentIso;
-    const closed: PreviewTabState = {
-      ...closedTab,
-      webContentsId: null,
-      navStatus: { kind: "Idle" },
-      canGoBack: false,
-      canGoForward: false,
-      zoomFactor: DEFAULT_ZOOM_FACTOR,
-      pictureInPicture: false,
-      colorScheme: "system",
-      controller: "none",
-      updatedAt,
-    };
-    yield* emit(tabId, closed);
+      const tab = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+        const current = tabs.get(tabId);
+        if (!current) return [Option.none<PreviewTabState>(), tabs] as const;
+        return [
+          Option.some(current),
+          replaceMap(tabs, (copy) => {
+            copy.delete(tabId);
+          }),
+        ] as const;
+      });
+      if (Option.isNone(tab)) return;
+      const closedTab = tab.value;
+      if (closedTab.webContentsId != null) {
+        yield* Effect.all(
+          [detachControlSession(closedTab.webContentsId), detachListeners(closedTab.webContentsId)],
+          { concurrency: 2, discard: true },
+        );
+      }
+      const updatedAt = yield* currentIso;
+      const closed: PreviewTabState = {
+        ...closedTab,
+        webContentsId: null,
+        navStatus: { kind: "Idle" },
+        canGoBack: false,
+        canGoForward: false,
+        zoomFactor: DEFAULT_ZOOM_FACTOR,
+        pictureInPicture: false,
+        colorScheme: "system",
+        controller: "none",
+        updatedAt,
+      };
+      yield* emit(tabId, closed);
+    }).pipe(
+      Effect.ensuring(
+        Ref.update(closingTabIdsRef, (closingTabIds) => {
+          if (!closingTabIds.has(tabId)) return closingTabIds;
+          const next = new Set(closingTabIds);
+          next.delete(tabId);
+          return next;
+        }),
+      ),
+    );
   });
 
   const registerWebview = Effect.fn("PreviewManager.registerWebview")(function* (
@@ -1400,7 +1417,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     webContentsId: number,
   ) {
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-    if (!tab) {
+    if (!tab || (yield* Ref.get(closingTabIdsRef)).has(tabId)) {
       return yield* new PreviewTabNotFoundError({ tabId });
     }
     const wc = webContents.fromId(webContentsId);
@@ -1894,6 +1911,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       },
       () => wc.capturePage(),
     );
+    const captureStillCurrent = yield* Effect.all(
+      [SynchronizedRef.get(frameCaptureSessionsRef), SynchronizedRef.get(tabsRef)],
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(
+        ([captureSessions, tabs]) =>
+          captureSessions.get(tabId) === captureSession &&
+          tabs.get(tabId)?.webContentsId === wc.id &&
+          !wc.isDestroyed(),
+      ),
+    );
+    if (!captureStillCurrent) return;
     const size = yield* attempt(
       {
         operation: "frameCapture.measureFrame",
@@ -2009,22 +2038,26 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ),
     );
     const created = yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) => {
-      const current = sessions.get(tabId);
-      if (current) {
-        if (current.consumers.has(consumer)) {
-          return Effect.succeed([false, sessions] as const);
-        }
-        return Effect.succeed([
-          false,
-          replaceMap(sessions, (copy) => {
-            copy.set(tabId, {
-              ...current,
-              consumers: new Set([...current.consumers, consumer]),
-            });
-          }),
-        ] as const);
-      }
       return Effect.gen(function* () {
+        const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+        if (!tab || (yield* Ref.get(closingTabIdsRef)).has(tabId)) {
+          return yield* new PreviewTabNotFoundError({ tabId });
+        }
+        const current = sessions.get(tabId);
+        if (current) {
+          if (current.consumers.has(consumer)) {
+            return [false, sessions] as const;
+          }
+          return [
+            false,
+            replaceMap(sessions, (copy) => {
+              copy.set(tabId, {
+                ...current,
+                consumers: new Set([...current.consumers, consumer]),
+              });
+            }),
+          ] as const;
+        }
         const scope = yield* Scope.fork(parentScope, "sequential");
         yield* Effect.forkIn(Effect.forever(captureNextFrame), scope);
         return [
@@ -3171,18 +3204,6 @@ export class PreviewArtifactImageLoadError extends Schema.TaggedErrorClass<Previ
   }
 }
 
-export class PreviewRecordingAlreadyActiveError extends Schema.TaggedErrorClass<PreviewRecordingAlreadyActiveError>()(
-  "PreviewRecordingAlreadyActiveError",
-  {
-    requestedTabId: Schema.String,
-    activeTabId: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Cannot record preview tab ${this.requestedTabId} while tab ${this.activeTabId} is already recording`;
-  }
-}
-
 export class PreviewAutomationDevToolsOpenError extends Schema.TaggedErrorClass<PreviewAutomationDevToolsOpenError>()(
   "PreviewAutomationDevToolsOpenError",
   { webContentsId: Schema.Number },
@@ -3345,7 +3366,6 @@ export const PreviewManagerError = Schema.Union([
   PreviewOperationError,
   PreviewArtifactPathOutsideDirectoryError,
   PreviewArtifactImageLoadError,
-  PreviewRecordingAlreadyActiveError,
   PreviewAutomationDevToolsOpenError,
   PreviewAutomationDebuggerAttachedError,
   PreviewAutomationEvaluationError,

@@ -115,6 +115,10 @@ let unsubscribeFrames: (() => void) | null = null;
 export const BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS = 5_000;
 export const BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS = 5_000;
 
+export function readActiveBrowserRecordingTabIds(): ReadonlySet<string> {
+  return new Set(activeRecordings.keys());
+}
+
 const preferredMimeType = (): string => {
   const candidates = ["video/mp4;codecs=avc1.42E01E", "video/webm;codecs=vp9", "video/webm"];
   return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? "video/webm";

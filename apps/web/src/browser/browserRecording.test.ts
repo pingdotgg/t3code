@@ -89,6 +89,7 @@ import {
   BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS,
   BrowserRecordingConflictError,
   BrowserRecordingOperationError,
+  readActiveBrowserRecordingTabIds,
   startBrowserRecording,
   stopBrowserRecording,
 } from "./browserRecording";
@@ -331,11 +332,14 @@ describe("browser recording", () => {
     expect(startScreencast).toHaveBeenCalledTimes(2);
     expect(onFrame).toHaveBeenCalledOnce();
     expect(events).toContain("publish:recording-tab,recording-tab-2");
+    expect(readActiveBrowserRecordingTabIds()).toEqual(
+      new Set(["recording-tab", "recording-tab-2"]),
+    );
 
-    await Promise.all([
-      stopBrowserRecording("recording-tab"),
-      stopBrowserRecording("recording-tab-2"),
-    ]);
+    await stopBrowserRecording("recording-tab");
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set(["recording-tab-2"]));
+    await stopBrowserRecording("recording-tab-2");
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
     expect(save).toHaveBeenCalledTimes(2);
   });
 

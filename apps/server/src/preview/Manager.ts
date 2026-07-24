@@ -379,8 +379,9 @@ export const make = Effect.gen(function* PreviewManagerMake() {
               (entry): entry is PreviewSessionState => entry !== undefined,
             )
           : sessionsForThread(state, input.threadId);
-        const revision = targets.length > 0 ? state.revision + 1 : state.revision;
+        let revision = state.revision;
         for (const target of targets) {
+          revision += 1;
           sessions.delete(compositeKey(target.threadId, target.tabId));
           eventsToEmit.push({
             type: "closed",
