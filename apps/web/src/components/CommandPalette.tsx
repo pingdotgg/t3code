@@ -56,12 +56,9 @@ import { useEnvironmentQuery } from "../state/query";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
-import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
-import {
-  startNewThreadInProjectFromContext,
-  startNewThreadFromContext,
-} from "../lib/chatThreadActions";
+import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
   canNavigateUp,
@@ -79,7 +76,7 @@ import {
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { getLatestThreadForProject } from "../lib/threadSort";
+import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
@@ -106,6 +103,7 @@ import {
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
 } from "./CommandPalette.logic";
+import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
@@ -128,6 +126,12 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
+import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
+import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import {
+  buildSidebarProjectPickerEntries,
+  buildSidebarProjectSnapshots,
+} from "../sidebarProjectGrouping";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
@@ -487,10 +491,11 @@ function OpenCommandPaletteDialog(props: {
   });
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
-  const primaryEnvironment = usePrimaryEnvironment();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
+  const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providers = useAtomValue(primaryServerProvidersAtom);
@@ -504,7 +509,93 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
-  const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  const projectGroupingSettings = useMemo(
+    () => selectProjectGroupingSettings(clientSettings),
+    [clientSettings],
+  );
+
+  const environmentLabelById = useMemo(
+    () =>
+      new Map(
+        environments.map((environment) => [environment.environmentId, environment.label] as const),
+      ),
+    [environments],
+  );
+  const orderedProjects = useMemo(
+    () =>
+      orderItemsByPreferredIds({
+        items: projects,
+        preferredIds: projectOrder,
+        getId: getProjectOrderKey,
+        getPreferenceIds: (project) => [
+          getProjectOrderKey(project),
+          legacyProjectCwdPreferenceKey(project.workspaceRoot),
+        ],
+      }),
+    [projectOrder, projects],
+  );
+  const unsortedProjectGroups = useMemo(
+    () =>
+      buildSidebarProjectSnapshots({
+        projects: clientSettings.sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
+        settings: projectGroupingSettings,
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
+      }),
+    [
+      clientSettings.sidebarProjectSortOrder,
+      environmentLabelById,
+      orderedProjects,
+      primaryEnvironmentId,
+      projectGroupingSettings,
+      projects,
+    ],
+  );
+  const projectGroups = useMemo(
+    () =>
+      sortLogicalProjectsForSidebar(
+        unsortedProjectGroups,
+        threads,
+        clientSettings.sidebarProjectSortOrder,
+      ),
+    [clientSettings.sidebarProjectSortOrder, threads, unsortedProjectGroups],
+  );
+  const contextualProjectRef = useMemo(
+    () =>
+      resolveThreadActionProjectRef({
+        activeDraftThread,
+        activeThread: activeThread ?? undefined,
+        defaultProjectRef,
+        handleNewThread,
+      }),
+    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread],
+  );
+  const projectPickerEntries = useMemo(
+    () =>
+      buildSidebarProjectPickerEntries({
+        groups: projectGroups,
+        preferredProjectRef: contextualProjectRef,
+      }),
+    [contextualProjectRef, projectGroups],
+  );
+  const pickerProjects = useMemo(
+    () =>
+      projectPickerEntries.map(({ group, targetProject }) => ({
+        ...targetProject,
+        title: group.displayName,
+      })),
+    [projectPickerEntries],
+  );
+  const projectGroupByTargetKey = useMemo(
+    () =>
+      new Map(
+        projectPickerEntries.map(({ group, targetProject }) => [
+          `${targetProject.environmentId}:${targetProject.id}`,
+          group,
+        ]),
+      ),
+    [projectPickerEntries],
+  );
 
   const addProjectEnvironmentOptions = useMemo(() => {
     const options = environments.map((environment): AddProjectEnvironmentOption => {
@@ -648,11 +739,28 @@ function OpenCommandPaletteDialog(props: {
 
   const openProjectFromSearch = useMemo(
     () => async (project: (typeof projects)[number]) => {
-      const latestThread = getLatestThreadForProject(
-        threads.filter((thread) => thread.environmentId === project.environmentId),
-        project.id,
-        clientSettings.sidebarThreadSortOrder,
-      );
+      const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+      const groupedProjectKeys = group
+        ? new Set(
+            group.memberProjectRefs.map(
+              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+            ),
+          )
+        : null;
+      const latestThread = groupedProjectKeys
+        ? (sortThreads(
+            threads.filter(
+              (thread) =>
+                thread.archivedAt === null &&
+                groupedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
+            ),
+            clientSettings.sidebarThreadSortOrder,
+          )[0] ?? null)
+        : getLatestThreadForProject(
+            threads.filter((thread) => thread.environmentId === project.environmentId),
+            project.id,
+            clientSettings.sidebarThreadSortOrder,
+          );
       if (latestThread) {
         await navigate({
           to: "/$environmentId/$threadId",
@@ -665,14 +773,26 @@ function OpenCommandPaletteDialog(props: {
 
       await handleNewThread(scopeProjectRef(project.environmentId, project.id));
     },
-    [handleNewThread, navigate, clientSettings.sidebarThreadSortOrder, threads],
+    [
+      clientSettings.sidebarThreadSortOrder,
+      handleNewThread,
+      navigate,
+      projectGroupByTargetKey,
+      threads,
+    ],
   );
 
   const projectSearchItems = useMemo(
     () =>
       buildProjectActionItems({
-        projects,
+        projects: pickerProjects,
         valuePrefix: "project",
+        searchTerms: (project) => {
+          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          return (
+            group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
+          );
+        },
         icon: (project) => (
           <ProjectFavicon
             environmentId={project.environmentId}
@@ -682,15 +802,21 @@ function OpenCommandPaletteDialog(props: {
         ),
         runProject: openProjectFromSearch,
       }),
-    [openProjectFromSearch, projects],
+    [openProjectFromSearch, pickerProjects, projectGroupByTargetKey],
   );
 
   const projectThreadItems = useMemo(
     () =>
       enumerateCommandPaletteItems(
         buildProjectActionItems({
-          projects,
+          projects: pickerProjects,
           valuePrefix: "new-thread-in",
+          searchTerms: (project) => {
+            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+            return (
+              group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
+            );
+          },
           icon: (project) => (
             <ProjectFavicon
               environmentId={project.environmentId}
@@ -699,19 +825,23 @@ function OpenCommandPaletteDialog(props: {
             />
           ),
           runProject: async (project) => {
-            await startNewThreadInProjectFromContext(
-              {
-                activeDraftThread,
-                activeThread: activeThread ?? undefined,
-                defaultProjectRef,
-                handleNewThread,
-              },
-              scopeProjectRef(project.environmentId, project.id),
+            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+            const contextualRefBelongsToGroup =
+              contextualProjectRef !== null &&
+              group?.memberProjectRefs.some(
+                (projectRef) =>
+                  projectRef.environmentId === contextualProjectRef.environmentId &&
+                  projectRef.projectId === contextualProjectRef.projectId,
+              );
+            await handleNewThread(
+              contextualRefBelongsToGroup
+                ? contextualProjectRef
+                : scopeProjectRef(project.environmentId, project.id),
             );
           },
         }),
       ),
-    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, projects],
+    [contextualProjectRef, handleNewThread, pickerProjects, projectGroupByTargetKey],
   );
 
   const allThreadItems = useMemo(
@@ -1018,9 +1148,9 @@ function OpenCommandPaletteDialog(props: {
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
-    const activeProjectTitle = currentProjectId
-      ? (projectTitleById.get(currentProjectId) ?? null)
-      : null;
+    const activeProjectTitle =
+      projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
+      (currentProjectId ? (projectTitleById.get(currentProjectId) ?? null) : null);
 
     if (activeProjectTitle) {
       actionItems.push({

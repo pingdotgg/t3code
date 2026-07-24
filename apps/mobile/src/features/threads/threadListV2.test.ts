@@ -77,6 +77,85 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("hides snoozed threads and counts them — visibility parity with web", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("active"), title: "Active" }),
+        makeThread({
+          id: ThreadId.make("snoozed"),
+          title: "Snoozed",
+          snoozedUntil: "2026-06-03T09:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("woken"),
+          title: "Woken",
+          // Wake time already passed: back in the active list.
+          snoozedUntil: "2026-06-01T18:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    // Same createdAt → static sort tiebreaks by id; the point is the woken
+    // thread is BACK in the card block and the snoozed one is gone.
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "woken"]);
+    expect(layout.snoozedCount).toBe(1);
+  });
+
+  it("classifies snooze with the second-precise clock and reports the next wake", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("just-woke"),
+          title: "Just woke",
+          // Woke 30s ago: hidden under the minute-floored clock, visible
+          // under the precise one.
+          snoozedUntil: "2026-06-02T00:00:30.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("still-snoozed"),
+          title: "Still snoozed",
+          snoozedUntil: "2026-06-02T09:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      // Minute-floored partition clock vs precise snooze clock.
+      now: "2026-06-02T00:01:00.000Z",
+      snoozeNow: "2026-06-02T00:01:07.500Z",
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["just-woke"]);
+    expect(layout.snoozedCount).toBe(1);
+    expect(layout.nextSnoozeWakeAt).toBe("2026-06-02T09:00:00.000Z");
+  });
+
+  it("keeps snoozed threads visible on environments without the snooze capability", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("snoozed"),
+          title: "Snoozed",
+          snoozedUntil: "2026-06-03T09:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      snoozeEnvironmentIds: new Set(),
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["snoozed"]);
+    expect(layout.snoozedCount).toBe(0);
+  });
+
   it("partitions settled threads into a slim tail with one divider", () => {
     const { items } = buildThreadListV2Items({
       threads: [
@@ -166,12 +245,35 @@ describe("buildThreadListV2Items", () => {
         }),
       ],
       environmentId: null,
-      projectRef: { environmentId, projectId: ProjectId.make("project-1") },
+      projectRefs: [{ environmentId, projectId: ProjectId.make("project-1") }],
       searchQuery: "",
       now: NOW,
     });
 
     expect(items.map((item) => item.thread.id)).toEqual(["included"]);
+  });
+
+  it("scopes the flat list to every environment member of a logical project", () => {
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const { items } = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("local"), title: "Local" }),
+        makeThread({
+          environmentId: remoteEnvironmentId,
+          id: ThreadId.make("remote"),
+          title: "Remote",
+        }),
+      ],
+      environmentId: null,
+      projectRefs: [
+        { environmentId, projectId: ProjectId.make("project-1") },
+        { environmentId: remoteEnvironmentId, projectId: ProjectId.make("project-1") },
+      ],
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(items.map((item) => item.thread.id)).toEqual(["local", "remote"]);
   });
 });
 

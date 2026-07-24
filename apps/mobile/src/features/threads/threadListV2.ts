@@ -1,4 +1,4 @@
-import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
@@ -84,6 +84,13 @@ export interface ThreadListV2Layout {
   readonly items: ThreadListV2Item[];
   /** Settled threads beyond the render limit (behind "Show more"). */
   readonly hiddenSettledCount: number;
+  /** Snoozed threads hidden from the list (visibility parity with web's
+      collapsed Snoozed shelf; mobile has no shelf UI yet). */
+  readonly snoozedCount: number;
+  /** Soonest wake time among hidden snoozed threads, or null. Callers arm
+      a timeout at this boundary so the list re-partitions the moment a
+      snooze expires instead of on the next minute tick. */
+  readonly nextSnoozeWakeAt: string | null;
 }
 
 /**
@@ -95,10 +102,10 @@ export interface ThreadListV2Layout {
 export function buildThreadListV2Items(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly environmentId: EnvironmentId | null;
-  readonly projectRef?: {
+  readonly projectRefs?: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly projectId: ProjectId;
-  } | null;
+  }> | null;
   readonly searchQuery: string;
   /** Per-row PR state reported up by visible rows ("env:threadId" keys). */
   readonly changeRequestStateByKey?: ReadonlyMap<string, "open" | "closed" | "merged">;
@@ -106,33 +113,58 @@ export function buildThreadListV2Items(input: {
       other environments never classify as settled — the user could neither
       un-settle nor pin them. Absent = no gating (tests). */
   readonly settlementEnvironmentIds?: ReadonlySet<EnvironmentId>;
+  /** Environments whose server supports thread.snooze/unsnooze. Same
+      contract as settlementEnvironmentIds. */
+  readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly autoSettleAfterDays?: number;
   /** Max settled rows to render; the rest are counted, not built. */
   readonly settledLimit?: number;
   /** Injectable for tests; defaults to now. */
   readonly now?: string;
+  /** Second-precise clock for snooze classification. Callers pass a
+      minute-quantized `now` for memoization; snooze wake times are
+      second-precise, so classifying with the floored minute would hold a
+      woken thread hidden for up to a minute. Defaults to `now`. */
+  readonly snoozeNow?: string;
 }): ThreadListV2Layout {
   const now = input.now ?? new Date().toISOString();
+  const snoozeNow = input.snoozeNow ?? now;
   const autoSettleAfterDays = input.autoSettleAfterDays ?? 3;
   const query = input.searchQuery.trim().toLocaleLowerCase();
+  const projectKeys = input.projectRefs
+    ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
+    : null;
 
   const active: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
+  let snoozedCount = 0;
+  let nextSnoozeWakeAt: string | null = null;
   for (const thread of input.threads) {
     // Callers pass live (unarchived) shells; settled threads are among them
     // and partition into the tail via effectiveSettled.
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
-    if (
-      input.projectRef != null &&
-      (thread.environmentId !== input.projectRef.environmentId ||
-        thread.projectId !== input.projectRef.projectId)
-    ) {
+    if (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) {
       continue;
     }
     if (query.length > 0 && !thread.title.toLocaleLowerCase().includes(query)) continue;
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
+    const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
     const changeRequestState =
       input.changeRequestStateByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
+    // Visibility parity with web: a snoozed thread leaves the list until it
+    // wakes (or raises its hand — effectiveSnoozed refuses blocked/failed
+    // work). Snooze outranks settled classification, same as web.
+    if (supportsSnooze && effectiveSnoozed(thread, { now: snoozeNow })) {
+      snoozedCount += 1;
+      if (
+        thread.snoozedUntil != null &&
+        (nextSnoozeWakeAt === null ||
+          parseTimestampMs(thread.snoozedUntil) < parseTimestampMs(nextSnoozeWakeAt))
+      ) {
+        nextSnoozeWakeAt = thread.snoozedUntil;
+      }
+      continue;
+    }
     if (
       supportsSettlement &&
       effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
@@ -169,5 +201,10 @@ export function buildThreadListV2Items(input: {
   if (last) {
     items[items.length - 1] = { ...last, isLast: true };
   }
-  return { items, hiddenSettledCount: orderedSettled.length - visibleSettled.length };
+  return {
+    items,
+    hiddenSettledCount: orderedSettled.length - visibleSettled.length,
+    snoozedCount,
+    nextSnoozeWakeAt,
+  };
 }

@@ -4,7 +4,10 @@ import type {
   EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { mergeEnvironmentThread } from "@t3tools/client-runtime/state/threads";
+import {
+  type EnvironmentThreadStatus,
+  mergeEnvironmentThread,
+} from "@t3tools/client-runtime/state/threads";
 import type {
   OrchestrationMessage,
   OrchestrationProposedPlan,
@@ -43,6 +46,9 @@ const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).p
 );
 const EMPTY_THREAD_DETAIL_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
   Atom.withLabel("web-thread-detail:empty"),
+);
+const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pipe(
+  Atom.withLabel("web-thread-status:empty"),
 );
 const EMPTY_MESSAGES_ATOM = Atom.make(EMPTY_MESSAGES).pipe(
   Atom.withLabel("web-thread-messages:empty"),
@@ -140,6 +146,12 @@ export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread 
   );
 }
 
+export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),
+  );
+}
+
 /** Detail collections composed with shell-authoritative thread/workspace metadata. */
 export function useThread(ref: ScopedThreadRef | null): EnvironmentThread | null {
   const shell = useThreadShell(ref);
@@ -192,6 +204,15 @@ export function readEnvironmentSupportsSettlement(environmentId: EnvironmentId):
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadSettlement === true
+  );
+}
+
+/** Whether the environment's server understands thread.snooze/unsnooze.
+    Same version-skew contract as settlement. */
+export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadSnooze === true
   );
 }
 
