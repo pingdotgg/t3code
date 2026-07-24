@@ -196,6 +196,66 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       ]);
     }));
 
+  it("touchLastSeen bumps last_seen_at for a live binding", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("thread-touch-live");
+
+      yield* runtimeRepository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: "2026-01-01T00:00:00.000Z",
+        resumeCursor: null,
+        runtimePayload: null,
+      });
+
+      yield* directory.touchLastSeen(threadId);
+
+      const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        // A fresh timestamp replaces the stale one; other fields are preserved.
+        assert.notEqual(runtime.value.lastSeenAt, "2026-01-01T00:00:00.000Z");
+        assert.equal(runtime.value.status, "running");
+        assert.equal(runtime.value.providerName, "claudeAgent");
+      }
+    }));
+
+  it("touchLastSeen does not resurrect a stopped binding", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("thread-touch-stopped");
+      const stoppedAt = "2026-01-01T00:00:00.000Z";
+
+      yield* runtimeRepository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "stopped",
+        lastSeenAt: stoppedAt,
+        resumeCursor: null,
+        runtimePayload: null,
+      });
+
+      yield* directory.touchLastSeen(threadId);
+
+      const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        // Stopped rows are left untouched — the reaper already killed them.
+        assert.equal(runtime.value.lastSeenAt, stoppedAt);
+        assert.equal(runtime.value.status, "stopped");
+      }
+    }));
+
   it("resets adapterKey to the new provider when provider changes without an explicit adapter key", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;

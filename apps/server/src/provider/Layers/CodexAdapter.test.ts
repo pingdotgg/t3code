@@ -218,6 +218,7 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   getBinding: () => Effect.succeed(Option.none()),
   listThreadIds: () => Effect.succeed([]),
   listBindings: () => Effect.succeed([]),
+  touchLastSeen: () => Effect.void,
 });
 
 const validationRuntimeFactory = makeRuntimeFactory();
