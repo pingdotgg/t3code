@@ -5,10 +5,12 @@ import * as NodeOS from "node:os";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveT3XdgBaseDir, selectT3XdgDirectory } from "@t3tools/shared/path";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -28,10 +30,6 @@ const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
 const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
 const DEV_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::1", "::"] as const;
-
-export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
-  path.join(NodeOS.homedir(), ".t3"),
-);
 
 const MODE_ARGS = {
   dev: [
@@ -202,7 +200,10 @@ export function resolveOffset(config: {
   return Effect.succeed({ offset, source: `hashed T3CODE_DEV_INSTANCE=${seed}` });
 }
 
-function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, never, Path.Path> {
+function resolveBaseDir(
+  baseDir: string | undefined,
+  xdgDataHome: string | undefined,
+): Effect.Effect<string, never, FileSystem.FileSystem | Path.Path> {
   return Effect.gen(function* () {
     const path = yield* Path.Path;
     const configured = baseDir?.trim();
@@ -211,7 +212,23 @@ function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, neve
       return path.resolve(configured);
     }
 
-    return yield* DEFAULT_T3_HOME;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const legacyDirectory = path.join(NodeOS.homedir(), ".t3");
+    const xdgDirectory = resolveT3XdgBaseDir({
+      platform: yield* HostProcessPlatform,
+      xdgHome: xdgDataHome,
+      path,
+    });
+    return selectT3XdgDirectory({
+      xdgDirectory,
+      legacyDirectory,
+      xdgDirectoryExists:
+        xdgDirectory !== undefined &&
+        (yield* fileSystem.exists(xdgDirectory).pipe(Effect.orElseSucceed(() => false))),
+      legacyDirectoryExists: yield* fileSystem
+        .exists(legacyDirectory)
+        .pipe(Effect.orElseSucceed(() => false)),
+    });
   });
 }
 
@@ -241,12 +258,16 @@ export function createDevRunnerEnv({
   host,
   port,
   devUrl,
-}: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
+}: CreateDevRunnerEnvInput): Effect.Effect<
+  NodeJS.ProcessEnv,
+  never,
+  FileSystem.FileSystem | Path.Path
+> {
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
     const configuredBaseDir = t3Home?.trim() || baseEnv.T3CODE_HOME?.trim() || undefined;
-    const resolvedBaseDir = yield* resolveBaseDir(configuredBaseDir);
+    const resolvedBaseDir = yield* resolveBaseDir(configuredBaseDir, baseEnv.XDG_DATA_HOME);
     const isDesktopMode = mode === "dev:desktop";
 
     const output: NodeJS.ProcessEnv = {
@@ -523,7 +544,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       serverOffset !== offset || webOffset !== offset
         ? ` selectedOffset(server=${serverOffset},web=${webOffset})`
         : "";
-    const baseDir = env.T3CODE_HOME ?? (yield* DEFAULT_T3_HOME);
+    const baseDir = env.T3CODE_HOME ?? (yield* resolveBaseDir(undefined, env.XDG_DATA_HOME));
 
     yield* Effect.logInfo(
       `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,

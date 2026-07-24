@@ -4,10 +4,11 @@ import type {
   DesktopRuntimeArch,
   DesktopRuntimeInfo,
 } from "@t3tools/contracts";
-import { resolveDefaultT3BaseDir, resolveT3XdgBaseDir } from "@t3tools/shared/path";
+import { resolveT3XdgBaseDir, selectT3XdgDirectory } from "@t3tools/shared/path";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -43,6 +44,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly homeDirectory: string;
     readonly appDataDirectory: string;
     readonly baseDir: string;
+    readonly baseDirIsExplicit: boolean;
     readonly stateDir: string;
     readonly configDir: string;
     readonly desktopSettingsPath: string;
@@ -135,8 +137,13 @@ function resolveDesktopRuntimeInfo(input: {
 
 const make = Effect.fn("desktop.environment.make")(function* (
   input: MakeDesktopEnvironmentInput,
-): Effect.fn.Return<DesktopEnvironment["Service"], Config.ConfigError, Path.Path> {
+): Effect.fn.Return<
+  DesktopEnvironment["Service"],
+  Config.ConfigError,
+  FileSystem.FileSystem | Path.Path
+> {
   const path = yield* Path.Path;
+  const fileSystem = yield* FileSystem.FileSystem;
   const config = yield* DesktopConfig.DesktopConfig;
   const homeDirectory = input.homeDirectory;
   const devServerUrl = config.devServerUrl;
@@ -150,14 +157,25 @@ const make = Effect.fn("desktop.environment.make")(function* (
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
   const configuredBaseDir = config.t3Home;
-  const baseDir = Option.getOrElse(configuredBaseDir, () =>
-    resolveDefaultT3BaseDir({
-      platform: input.platform,
-      homeDirectory,
-      xdgHome: Option.getOrUndefined(config.xdgDataHome),
-      path,
-    }),
-  );
+  const baseDirIsExplicit = Option.isSome(configuredBaseDir);
+  const legacyBaseDir = path.join(homeDirectory, ".t3");
+  const xdgBaseDir = resolveT3XdgBaseDir({
+    platform: input.platform,
+    xdgHome: Option.getOrUndefined(config.xdgDataHome),
+    path,
+  });
+  const baseDir = Option.isSome(configuredBaseDir)
+    ? configuredBaseDir.value
+    : selectT3XdgDirectory({
+        xdgDirectory: xdgBaseDir,
+        legacyDirectory: legacyBaseDir,
+        xdgDirectoryExists:
+          xdgBaseDir !== undefined &&
+          (yield* fileSystem.exists(xdgBaseDir).pipe(Effect.orElseSucceed(() => false))),
+        legacyDirectoryExists: yield* fileSystem
+          .exists(legacyBaseDir)
+          .pipe(Effect.orElseSucceed(() => false)),
+      });
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
   const branding = resolveDesktopAppBranding({
@@ -165,21 +183,34 @@ const make = Effect.fn("desktop.environment.make")(function* (
     appVersion: input.appVersion,
   });
   const displayName = branding.displayName;
-  const stateDir = path.join(
-    baseDir,
-    isDevelopment && Option.isNone(configuredBaseDir) ? "dev" : "userdata",
-  );
+  const stateDir = path.join(baseDir, isDevelopment && !baseDirIsExplicit ? "dev" : "userdata");
   const xdgConfigDir = resolveT3XdgBaseDir({
     platform: input.platform,
     xdgHome: Option.getOrUndefined(config.xdgConfigHome),
     path,
   });
-  const configDir =
-    Option.isSome(configuredBaseDir) || xdgConfigDir === undefined
-      ? stateDir
-      : isDevelopment
+  const legacyConfigDir = path.join(
+    legacyBaseDir,
+    isDevelopment && !baseDirIsExplicit ? "dev" : "userdata",
+  );
+  const preferredConfigDir =
+    xdgConfigDir === undefined
+      ? undefined
+      : isDevelopment && !baseDirIsExplicit
         ? path.join(xdgConfigDir, "dev")
         : xdgConfigDir;
+  const configDir = baseDirIsExplicit
+    ? stateDir
+    : selectT3XdgDirectory({
+        xdgDirectory: preferredConfigDir,
+        legacyDirectory: legacyConfigDir,
+        xdgDirectoryExists:
+          preferredConfigDir !== undefined &&
+          (yield* fileSystem.exists(preferredConfigDir).pipe(Effect.orElseSucceed(() => false))),
+        legacyDirectoryExists: yield* fileSystem
+          .exists(legacyConfigDir)
+          .pipe(Effect.orElseSucceed(() => false)),
+      });
   const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
   const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
   const resourcesPath = input.resourcesPath;
@@ -197,6 +228,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     homeDirectory,
     appDataDirectory,
     baseDir,
+    baseDirIsExplicit,
     stateDir,
     configDir,
     desktopSettingsPath: path.join(configDir, "desktop-settings.json"),

@@ -9,12 +9,14 @@ import * as LogLevel from "effect/LogLevel";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as NodeOS from "node:os";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/unstable/cli";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
+import { selectT3XdgDirectory } from "@t3tools/shared/path";
 import { expandHomePath, resolveBaseDir, resolveXdgBaseDir } from "../os-jank.ts";
 
 export const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
@@ -212,6 +214,7 @@ export const resolveServerConfig = (
   options?: {
     readonly startupPresentation?: ServerConfig.StartupPresentation;
     readonly forceAutoBootstrapProjectFromCwd?: boolean;
+    readonly homeDirectory?: string;
   },
 ) =>
   Effect.gen(function* () {
@@ -277,21 +280,54 @@ export const resolveServerConfig = (
       explicitBaseDir,
       Option.fromUndefinedOr(bootstrap?.t3Home),
     ).pipe(Option.filter((value) => value.trim().length > 0));
-    const baseDir = yield* resolveBaseDir(Option.getOrUndefined(selectedBaseDir), env.xdgDataHome);
+    const homeDirectory = options?.homeDirectory ?? NodeOS.homedir();
+    const baseDir = yield* resolveBaseDir(
+      Option.getOrUndefined(selectedBaseDir),
+      env.xdgDataHome,
+      homeDirectory,
+    );
+    const bootstrapBaseDirIsExplicit =
+      bootstrap?.t3Home === undefined ? false : (bootstrap.t3HomeIsExplicit ?? true);
+    const baseDirIsExplicit = Option.isSome(explicitBaseDir) || bootstrapBaseDirIsExplicit;
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
-    const xdgConfigBaseDir = Option.isNone(selectedBaseDir)
-      ? yield* resolveXdgBaseDir(env.xdgConfigHome)
-      : undefined;
-    const configDir =
+    const rawBootstrapConfigDir = bootstrap?.configDir?.trim();
+    const bootstrapConfigDir =
+      rawBootstrapConfigDir === undefined || rawBootstrapConfigDir.length === 0
+        ? undefined
+        : rawBootstrapConfigDir;
+    const xdgConfigBaseDir =
+      !baseDirIsExplicit && bootstrapConfigDir === undefined
+        ? yield* resolveXdgBaseDir(env.xdgConfigHome)
+        : undefined;
+    const preferredConfigDir =
       xdgConfigBaseDir === undefined
         ? undefined
         : devUrl === undefined
           ? xdgConfigBaseDir
           : path.join(xdgConfigBaseDir, "dev");
+    const legacyConfigDir = path.join(
+      homeDirectory,
+      ".t3",
+      devUrl === undefined || baseDirIsExplicit ? "userdata" : "dev",
+    );
+    const configDir = baseDirIsExplicit
+      ? undefined
+      : bootstrapConfigDir !== undefined
+        ? path.resolve(yield* expandHomePath(bootstrapConfigDir))
+        : selectT3XdgDirectory({
+            xdgDirectory: preferredConfigDir,
+            legacyDirectory: legacyConfigDir,
+            xdgDirectoryExists:
+              preferredConfigDir !== undefined &&
+              (yield* fs.exists(preferredConfigDir).pipe(Effect.orElseSucceed(() => false))),
+            legacyDirectoryExists: yield* fs
+              .exists(legacyConfigDir)
+              .pipe(Effect.orElseSucceed(() => false)),
+          });
     const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
-      baseDirIsExplicit: Option.isSome(selectedBaseDir),
+      baseDirIsExplicit,
       ...(configDir === undefined ? {} : { configDir }),
     });
     yield* ServerConfig.ensureServerDirectories(derivedPaths);

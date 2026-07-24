@@ -6,6 +6,7 @@ import {
   isWindowsDrivePath,
   resolveDefaultT3BaseDir,
   resolveT3XdgBaseDir,
+  selectT3XdgDirectory,
 } from "./path.ts";
 
 const posixPath = {
@@ -105,5 +106,45 @@ describe("path helpers", () => {
         path: posixPath,
       }),
     ).toBeUndefined();
+  });
+
+  it("keeps an existing legacy directory until XDG storage is initialized", () => {
+    expect(
+      selectT3XdgDirectory({
+        xdgDirectory: "/home/alice/.local/share/t3code",
+        legacyDirectory: "/home/alice/.t3",
+        xdgDirectoryExists: false,
+        legacyDirectoryExists: true,
+      }),
+    ).toBe("/home/alice/.t3");
+
+    expect(
+      selectT3XdgDirectory({
+        xdgDirectory: "/home/alice/.local/share/t3code",
+        legacyDirectory: "/home/alice/.t3",
+        xdgDirectoryExists: true,
+        legacyDirectoryExists: true,
+      }),
+    ).toBe("/home/alice/.local/share/t3code");
+  });
+
+  it("uses XDG storage for a new installation and legacy storage without XDG", () => {
+    expect(
+      selectT3XdgDirectory({
+        xdgDirectory: "/home/alice/.config/t3code",
+        legacyDirectory: "/home/alice/.t3/userdata",
+        xdgDirectoryExists: false,
+        legacyDirectoryExists: false,
+      }),
+    ).toBe("/home/alice/.config/t3code");
+
+    expect(
+      selectT3XdgDirectory({
+        xdgDirectory: undefined,
+        legacyDirectory: "/home/alice/.t3/userdata",
+        xdgDirectoryExists: false,
+        legacyDirectoryExists: true,
+      }),
+    ).toBe("/home/alice/.t3/userdata");
   });
 });

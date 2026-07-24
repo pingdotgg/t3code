@@ -67,6 +67,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const xdgDataHome = yield* fs.makeTempDirectoryScoped({
         prefix: "t3-cli-config-xdg-data-",
       });
+      const homeDirectory = path.join(xdgDataHome, "home");
       const resolved = yield* resolveServerConfig(
         {
           mode: Option.none(),
@@ -83,6 +84,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
         },
         Option.none(),
+        { homeDirectory },
       ).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -110,6 +112,60 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         resolved.settingsPath,
         path.join(xdgDataHome, "config", "t3code", "settings.json"),
       );
+    }),
+  );
+
+  it.effect("keeps an existing legacy home until XDG storage is initialized", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-config-xdg-legacy-",
+      });
+      const homeDirectory = path.join(root, "home");
+      const legacyConfigDir = path.join(homeDirectory, ".t3", "userdata");
+      const xdgDataHome = path.join(root, "data");
+      const xdgConfigHome = path.join(root, "config");
+      yield* fs.makeDirectory(legacyConfigDir, { recursive: true });
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.none(),
+          port: Option.none(),
+          host: Option.none(),
+          baseDir: Option.none(),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+        { homeDirectory },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  XDG_CONFIG_HOME: xdgConfigHome,
+                  XDG_DATA_HOME: xdgDataHome,
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+        Effect.provideService(HostProcessPlatform, "linux"),
+      );
+
+      assert.equal(resolved.baseDir, path.join(homeDirectory, ".t3"));
+      assert.equal(resolved.stateDir, legacyConfigDir);
+      assert.equal(resolved.keybindingsConfigPath, path.join(legacyConfigDir, "keybindings.json"));
+      assert.equal(resolved.settingsPath, path.join(legacyConfigDir, "settings.json"));
     }),
   );
 
@@ -401,6 +457,68 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  it.effect("preserves the desktop's implicit dev and config directory resolution", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-cli-config-desktop-xdg-",
+      });
+      const baseDir = path.join(root, "data", "t3code");
+      const configDir = path.join(root, "config", "t3code", "dev");
+      const devUrl = new URL("http://127.0.0.1:5173");
+      const fd = yield* openBootstrapFd(
+        makeDesktopBootstrap({
+          t3Home: baseDir,
+          t3HomeIsExplicit: false,
+          configDir,
+        }),
+      );
+      const derivedPaths = yield* deriveServerPaths(baseDir, devUrl, {
+        baseDirIsExplicit: false,
+        configDir,
+      });
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.none(),
+          port: Option.none(),
+          host: Option.none(),
+          baseDir: Option.none(),
+          cwd: Option.none(),
+          devUrl: Option.some(devUrl),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+        { homeDirectory: path.join(root, "home") },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  T3CODE_BOOTSTRAP_FD: String(fd),
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      assert.equal(resolved.baseDir, baseDir);
+      assert.equal(resolved.stateDir, path.join(baseDir, "dev"));
+      assert.equal(resolved.settingsPath, path.join(configDir, "settings.json"));
+      assert.equal(resolved.keybindingsConfigPath, path.join(configDir, "keybindings.json"));
+      expect(resolved).toMatchObject(derivedPaths);
+    }),
+  );
+
   it.effect("creates derived runtime directories during config resolution", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -459,6 +577,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           port: 4888,
           host: "127.0.0.2",
           t3Home: "/tmp/t3-bootstrap-home",
+          t3HomeIsExplicit: false,
+          configDir: "/tmp/ignored-bootstrap-config",
           noBrowser: false,
           desktopBootstrapToken: "desktop-token",
           tailscaleServeEnabled: false,

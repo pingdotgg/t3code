@@ -50,6 +50,26 @@ export function resolveDefaultT3BaseDir(
   return resolveT3XdgBaseDir(input) ?? input.path.join(input.homeDirectory, ".t3");
 }
 
+/**
+ * Preserve an existing legacy installation until the matching XDG directory
+ * has been initialized. This keeps upgrades non-destructive while still
+ * making XDG the default for new installations.
+ */
+export function selectT3XdgDirectory(input: {
+  readonly xdgDirectory: string | undefined;
+  readonly legacyDirectory: string;
+  readonly xdgDirectoryExists: boolean;
+  readonly legacyDirectoryExists: boolean;
+}): string {
+  if (input.xdgDirectory === undefined) {
+    return input.legacyDirectory;
+  }
+  if (input.xdgDirectoryExists || !input.legacyDirectoryExists) {
+    return input.xdgDirectory;
+  }
+  return input.legacyDirectory;
+}
+
 function isRootPath(value: string): boolean {
   return value === "/" || value === "\\" || /^[a-zA-Z]:[/\\]?$/.test(value);
 }

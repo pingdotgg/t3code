@@ -1,5 +1,5 @@
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { resolveDefaultT3BaseDir, resolveT3XdgBaseDir } from "@t3tools/shared/path";
+import { resolveT3XdgBaseDir, selectT3XdgDirectory } from "@t3tools/shared/path";
 import {
   listLoginShellCandidates,
   mergePathEntries,
@@ -87,17 +87,29 @@ export const expandHomePath = Effect.fn(function* (input: string) {
 export const resolveBaseDir = Effect.fn(function* (
   raw: string | undefined,
   xdgDataHome: string | undefined,
+  homeDirectory = NodeOS.homedir(),
 ) {
-  const { resolve } = yield* Path.Path;
+  const path = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
-    return resolveDefaultT3BaseDir({
+    const fileSystem = yield* FileSystem.FileSystem;
+    const legacyDirectory = path.join(homeDirectory, ".t3");
+    const xdgDirectory = resolveT3XdgBaseDir({
       platform: yield* HostProcessPlatform,
-      homeDirectory: NodeOS.homedir(),
       xdgHome: xdgDataHome,
-      path: yield* Path.Path,
+      path,
+    });
+    return selectT3XdgDirectory({
+      xdgDirectory,
+      legacyDirectory,
+      xdgDirectoryExists:
+        xdgDirectory !== undefined &&
+        (yield* fileSystem.exists(xdgDirectory).pipe(Effect.orElseSucceed(() => false))),
+      legacyDirectoryExists: yield* fileSystem
+        .exists(legacyDirectory)
+        .pipe(Effect.orElseSucceed(() => false)),
     });
   }
-  return resolve(yield* expandHomePath(raw.trim()));
+  return path.resolve(yield* expandHomePath(raw.trim()));
 });
 
 export const resolveXdgBaseDir = Effect.fn(function* (raw: string | undefined) {

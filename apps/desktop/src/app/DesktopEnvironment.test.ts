@@ -1,8 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
@@ -135,6 +137,34 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.baseDir, "/srv/t3");
       assert.equal(environment.configDir, "/srv/t3/userdata");
     }),
+  );
+
+  it.effect("keeps existing legacy data and config until XDG directories are initialized", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-xdg-legacy-",
+      });
+      const homeDirectory = path.join(root, "home");
+      const legacyConfigDir = path.join(homeDirectory, ".t3", "userdata");
+      yield* fileSystem.makeDirectory(legacyConfigDir, { recursive: true });
+
+      const environment = yield* makeEnvironment(
+        {
+          homeDirectory,
+          platform: "linux",
+        },
+        {
+          XDG_CONFIG_HOME: path.join(root, "config"),
+          XDG_DATA_HOME: path.join(root, "data"),
+        },
+      );
+
+      assert.equal(environment.baseDir, path.join(homeDirectory, ".t3"));
+      assert.equal(environment.stateDir, legacyConfigDir);
+      assert.equal(environment.configDir, legacyConfigDir);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps implicit development state separate from production state", () =>

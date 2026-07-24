@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -114,6 +115,30 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
         { sharedHome: baseDir },
       ).pipe(Effect.flip);
       assert.equal(aliasError._tag, "SqliteStateSharedHomeMutationError");
+    }),
+  );
+
+  it.effect("refuses the shared XDG data home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const xdgDataHome = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-sqlite-state-xdg-",
+      });
+      const baseDir = path.join(xdgDataHome, "t3code");
+      yield* createFixtureDatabase(baseDir);
+
+      const error = yield* runSqliteState({
+        operation: "exec",
+        baseDir,
+        sql: "DELETE FROM fixtures",
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcessEnvironment, { XDG_DATA_HOME: xdgDataHome }),
+        Effect.flip,
+      );
+
+      assert.equal(error._tag, "SqliteStateSharedHomeMutationError");
     }),
   );
 });
