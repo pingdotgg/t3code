@@ -469,6 +469,21 @@ export const make = Effect.gen(function* () {
     return Option.some(encoded);
   });
 
+  // A catalog that fails to decrypt (a stale OS-level key after a Windows
+  // credential/profile change, corruption, etc.) must not take down the whole
+  // connection registry — the *local* primary environment doesn't even need
+  // this file. Treat it as unreadable rather than propagating the failure:
+  // callers (EnvironmentRegistry in particular) build synchronously against
+  // this store, so a thrown error here previously broke environment discovery
+  // entirely, with no console-visible signal. Leave the file on disk (rather
+  // than deleting it) so a later successful decrypt — e.g. once the OS key
+  // issue resolves — can still recover it.
+  const treatAsUnreadableCatalog = (cause: unknown) =>
+    Effect.logWarning("Could not read the desktop connection catalog; treating it as empty.", {
+      catalogPath,
+      cause,
+    }).pipe(Effect.as(Option.none<string>()));
+
   return DesktopConnectionCatalogStore.of({
     get: Effect.gen(function* () {
       const document = yield* readDocument(fileSystem, catalogPath);
@@ -491,8 +506,10 @@ export const make = Effect.gen(function* () {
             ),
           ),
         ),
+        Effect.map(Option.some<string>),
+        Effect.catch(treatAsUnreadableCatalog),
       );
-      return Option.some(decrypted);
+      return decrypted;
     }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
       if (!(yield* encryptionAvailable)) {
