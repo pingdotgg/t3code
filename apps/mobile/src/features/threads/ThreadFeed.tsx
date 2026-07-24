@@ -35,6 +35,7 @@ import {
 } from "react-native-nitro-markdown";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Linking,
   Platform,
@@ -112,6 +113,7 @@ import { environmentThreadShells, threadEnvironment } from "../../state/threads"
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import { waitForThreadShellReady } from "./threadForkNavigation";
 
 const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
@@ -174,12 +176,14 @@ export interface ThreadFeedProps {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
 }
 
-async function waitForThreadShell(environmentId: EnvironmentId, threadId: ThreadId): Promise<void> {
+async function waitForThreadShell(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): Promise<boolean> {
   const atom = environmentThreadShells.threadShellAtom(scopeThreadRef(environmentId, threadId));
-  const deadline = Date.now() + 2_000;
-  while (appAtomRegistry.get(atom) === null && Date.now() < deadline) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 40));
-  }
+  return waitForThreadShellReady({
+    read: () => appAtomRegistry.get(atom) !== null,
+  });
 }
 
 function AssistantForkButton(props: {
@@ -224,13 +228,18 @@ function AssistantForkButton(props: {
         })
           .then(async (result) => {
             if (result._tag !== "Success") return;
-            await waitForThreadShell(props.environmentId, targetThreadId);
-            router.push(
-              buildThreadRoutePath({
-                environmentId: props.environmentId,
-                threadId: targetThreadId,
-              }),
-            );
+            const targetThreadReady = await waitForThreadShell(props.environmentId, targetThreadId);
+            if (!targetThreadReady) {
+              Alert.alert(
+                "Fork created",
+                "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
+              );
+              return;
+            }
+            navigation.navigate("Thread", {
+              environmentId: props.environmentId,
+              threadId: targetThreadId,
+            });
           })
           .finally(() => setBusy(false));
       }}
