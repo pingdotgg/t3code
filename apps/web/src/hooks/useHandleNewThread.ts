@@ -172,7 +172,12 @@ export function useNewThreadHandler() {
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             });
             if (carryModelSelection) {
-              setModelSelection(reusableStoredDraftThread.draftId, carryModelSelection);
+              // The carried selection is a complete snapshot of the viewed
+              // thread's model state: absent options mean "no options", not
+              // "keep the stale draft's options".
+              setModelSelection(reusableStoredDraftThread.draftId, carryModelSelection, {
+                replaceOptions: true,
+              });
             }
           }
           setLogicalProjectDraftThreadId(
@@ -253,8 +258,10 @@ export function useNewThreadHandler() {
         if (carryModelSelection) {
           // After sticky state so the viewed thread's exact selection
           // (model + options like effort and context window) wins over the
-          // globally sticky one.
-          setModelSelection(draftId, carryModelSelection);
+          // globally sticky one. replaceOptions: the carried selection is a
+          // complete snapshot — absent options mean "no options", not "keep
+          // whatever sticky state just wrote".
+          setModelSelection(draftId, carryModelSelection, { replaceOptions: true });
         }
 
         await router.navigate({
