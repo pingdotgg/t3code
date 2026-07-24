@@ -135,6 +135,11 @@ it.effect("uses gh json listing for non-open change request state queries", () =
 
     const changeRequests = yield* provider.listChangeRequests({
       cwd: "/repo",
+      context: {
+        provider: { kind: "github", name: "github.com", baseUrl: "https://github.com" },
+        remoteName: "upstream",
+        remoteUrl: "git@github.com:T3Tools/t3code.git",
+      },
       headSelector: "feature/merged",
       state: "all",
       limit: 10,
@@ -149,6 +154,8 @@ it.effect("uses gh json listing for non-open change request state queries", () =
       "all",
       "--limit",
       "10",
+      "--repo",
+      "T3Tools/t3code",
       "--json",
       "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
     ]);
@@ -158,6 +165,31 @@ it.effect("uses gh json listing for non-open change request state queries", () =
       changeRequests[0]?.updatedAt,
       Option.some(DateTime.makeUnsafe("2026-01-02T00:00:00.000Z")),
     );
+  }),
+);
+
+it.effect("targets the upstream repository when listing open pull requests for a fork", () =>
+  Effect.gen(function* () {
+    let repository: string | undefined;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        repository = input.repository;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: { kind: "github", name: "github.com", baseUrl: "https://github.com" },
+        remoteName: "upstream",
+        remoteUrl: "https://github.com/T3Tools/t3code.git",
+      },
+      headSelector: "contributor:feature/fork-pr",
+      state: "open",
+    });
+
+    assert.strictEqual(repository, "T3Tools/t3code");
   }),
 );
 

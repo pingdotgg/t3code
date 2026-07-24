@@ -1047,19 +1047,22 @@ export const make = Effect.gen(function* () {
     const shouldProbeLocalBranchSelector =
       headBranchFromUpstream.length === 0 || headBranch === details.branch;
 
-    const [remoteRepository, originRepository] = yield* Effect.all(
+    const [remoteRepository, upstreamRepository, originRepository] = yield* Effect.all(
       [
         resolveRemoteRepositoryContext(cwd, remoteName),
+        resolveRemoteRepositoryContext(cwd, "upstream"),
         resolveRemoteRepositoryContext(cwd, "origin"),
       ],
       { concurrency: "unbounded" },
     );
 
+    const targetRepository =
+      upstreamRepository.repositoryNameWithOwner !== null ? upstreamRepository : originRepository;
     const isCrossRepository =
       remoteRepository.repositoryNameWithOwner !== null &&
-      originRepository.repositoryNameWithOwner !== null
+      targetRepository.repositoryNameWithOwner !== null
         ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
-          originRepository.repositoryNameWithOwner.toLowerCase()
+          targetRepository.repositoryNameWithOwner.toLowerCase()
         : remoteName !== null &&
           remoteName !== "origin" &&
           remoteRepository.repositoryNameWithOwner !== null;

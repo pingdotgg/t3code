@@ -529,6 +529,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "open",
             "--limit",
             String(input.limit ?? 1),
+            ...(input.repository ? ["--repo", input.repository] : []),
             "--json",
             "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
           ],
@@ -1075,6 +1076,70 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         });
         expect(ghCalls).toContain(
           "pr list --head jasonLaster:statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        );
+      }),
+    20_000,
+  );
+
+  it.effect(
+    "status detects fork PRs opened against the conventional upstream remote",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const forkDir = yield* createBareRemote();
+        const upstreamDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", forkDir]);
+        yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/upstream-pr"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/upstream-pr"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "git@github.com:contributor/t3code.git",
+          forkDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "upstream",
+          "git@github.com:T3Tools/t3code.git",
+          upstreamDir,
+        );
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListSequence: [
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify([
+                {
+                  number: 1701,
+                  title: "Fix fork PR detection",
+                  url: "https://github.com/T3Tools/t3code/pull/1701",
+                  baseRefName: "main",
+                  headRefName: "feature/upstream-pr",
+                  state: "OPEN",
+                  updatedAt: "2026-07-11T12:00:00Z",
+                  isCrossRepository: true,
+                  headRepository: { nameWithOwner: "contributor/t3code" },
+                  headRepositoryOwner: { login: "contributor" },
+                },
+              ]),
+            ],
+          },
+        });
+
+        const status = yield* manager.status({ cwd: repoDir });
+
+        expect(status.pr).toEqual({
+          number: 1701,
+          title: "Fix fork PR detection",
+          url: "https://github.com/T3Tools/t3code/pull/1701",
+          baseRef: "main",
+          headRef: "feature/upstream-pr",
+          state: "open",
+        });
+        expect(ghCalls).toContain(
+          "pr list --head contributor:feature/upstream-pr --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
         );
       }),
     20_000,
