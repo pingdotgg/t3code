@@ -5,6 +5,7 @@ import {
   effectiveSettled,
   threadLastActivityAt,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type {
   EnvironmentId,
@@ -109,11 +110,11 @@ function collectSweepCandidates(): EnvironmentThreadShell[] {
   }
   // Most recently active first, so the SWEEP_MAX_THREADS cap drops the
   // longest-idle threads rather than the oldest-created ones.
-  candidates.sort(
-    (a, b) =>
-      Date.parse(threadLastActivityAt(b) ?? b.createdAt) -
-      Date.parse(threadLastActivityAt(a) ?? a.createdAt),
-  );
+  const activityMs = (shell: EnvironmentThreadShell): number =>
+    toSortableTimestamp(threadLastActivityAt(shell) ?? undefined) ??
+    toSortableTimestamp(shell.createdAt) ??
+    0;
+  candidates.sort((a, b) => activityMs(b) - activityMs(a));
   return candidates;
 }
 
@@ -202,6 +203,7 @@ export function retrySweepItem(key: string): void {
 
 export async function applySweepTitle(key: string): Promise<boolean> {
   const store = useReviewSweepStore.getState();
+  const runId = store.runId;
   const item = store.items[key];
   const suggestedTitle = item?.result?.suggestedTitle;
   if (!item || !suggestedTitle || item.titleApplied) return false;
@@ -225,14 +227,19 @@ export async function applySweepTitle(key: string): Promise<boolean> {
     );
     return false;
   }
-  useReviewSweepStore
-    .getState()
-    .patchItem(key, { titleApplied: true, threadTitle: suggestedTitle });
+  // The rename itself succeeded either way, but a Re-run mid-flight replaces
+  // the item set with fresh reviews — don't stamp stale applied-state onto
+  // the new run's card.
+  const current = useReviewSweepStore.getState();
+  if (current.runId === runId) {
+    current.patchItem(key, { titleApplied: true, threadTitle: suggestedTitle });
+  }
   return true;
 }
 
 export async function applySweepSettle(key: string): Promise<boolean> {
   const store = useReviewSweepStore.getState();
+  const runId = store.runId;
   const item = store.items[key];
   if (!item || !item.result?.recommendSettle || item.settleApplied) return false;
   // Re-check against the live shell: the thread may have gone active since
@@ -268,23 +275,33 @@ export async function applySweepSettle(key: string): Promise<boolean> {
     );
     return false;
   }
-  useReviewSweepStore.getState().patchItem(key, { settleApplied: true });
+  // Same staleness guard as applySweepTitle: never patch a newer run's item.
+  const current = useReviewSweepStore.getState();
+  if (current.runId === runId) {
+    current.patchItem(key, { settleApplied: true });
+  }
   return true;
 }
 
 /** Sequentially apply every un-dismissed recommendation: titles first, then
-    settles, tolerating per-item failures (each failure already toasts). */
+    settles, tolerating per-item failures (each failure already toasts).
+    Items are re-read from the store on every step so dismissals (and
+    re-runs) mid-apply are respected. */
 export async function applyAllSweepRecommendations(): Promise<void> {
-  const { order, items } = useReviewSweepStore.getState();
+  const { order, runId } = useReviewSweepStore.getState();
   for (const key of order) {
-    const item = items[key];
+    const current = useReviewSweepStore.getState();
+    if (current.runId !== runId) return;
+    const item = current.items[key];
     if (!item || item.dismissed) continue;
     if (item.result?.suggestedTitle && !item.titleApplied) {
       await applySweepTitle(key);
     }
   }
   for (const key of order) {
-    const item = useReviewSweepStore.getState().items[key];
+    const current = useReviewSweepStore.getState();
+    if (current.runId !== runId) return;
+    const item = current.items[key];
     if (!item || item.dismissed) continue;
     if (item.result?.recommendSettle && !item.settleApplied) {
       await applySweepSettle(key);

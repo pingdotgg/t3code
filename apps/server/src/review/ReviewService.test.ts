@@ -369,4 +369,46 @@ describe("ReviewService", () => {
         assert.strictEqual(result.settleReason, null);
       }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("summarizeThread treats a queued turn start as active", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const reviewCalls: Array<TextGeneration.ThreadReviewGenerationInput> = [];
+      const thread = makeThread({});
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.summarizeThread({ threadId: thread.id, canSettleNow: true });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            thread,
+            reviewCalls,
+            // A just-sent user message with no adopting turn: session still
+            // null, but the thread has in-flight work. it.effect runs on the
+            // TestClock (epoch 0), so "just sent" is the epoch.
+            shellOverrides: {
+              latestUserMessageAt: "1970-01-01T00:00:00.000Z",
+              latestTurn: null,
+              session: null,
+            },
+            generateThreadReview: () =>
+              Effect.succeed({
+                summary: "Looks finished.",
+                suggestedTitle: null,
+                recommendSettle: true,
+                settleReason: "Done.",
+              }),
+          }),
+        ),
+      );
+
+      assert.strictEqual(reviewCalls[0]?.isActive, true);
+      assert.strictEqual(result.recommendSettle, false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

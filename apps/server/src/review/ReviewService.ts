@@ -39,6 +39,41 @@ export class ReviewService extends Context.Service<
   }
 >()("t3/review/ReviewService") {}
 
+// Mirrors QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts and
+// the decider's thread.settle guard.
+const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+
+/** A user message no turn has adopted yet is in-flight work even though the
+    session is still null. Mirrors the decider's settle guard and the
+    client's hasQueuedTurnStart: newest user message strictly newer than
+    every latestTurn timestamp, within the adoption grace window, and not
+    already surfaced as a failed session start. */
+function hasQueuedTurnStart(
+  shell: {
+    readonly latestUserMessageAt: string | null;
+    readonly latestTurn: {
+      readonly requestedAt: string | null;
+      readonly startedAt: string | null;
+      readonly completedAt: string | null;
+    } | null;
+    readonly session: { readonly status: string } | null;
+  },
+  nowMs: number,
+): boolean {
+  if (shell.latestUserMessageAt === null) return false;
+  if (shell.session?.status === "error") return false;
+  const messageAt = Date.parse(shell.latestUserMessageAt);
+  if (Number.isNaN(messageAt)) return false;
+  // Bounded on both sides: message timestamps originate on client devices,
+  // so a clock ahead of the server must not hold the queued state open.
+  if (Math.abs(nowMs - messageAt) > QUEUED_TURN_START_GRACE_MS) return false;
+  const turn = shell.latestTurn;
+  if (turn === null) return true;
+  return [turn.requestedAt, turn.startedAt, turn.completedAt].every(
+    (candidate) => candidate === null || Date.parse(candidate) < messageAt,
+  );
+}
+
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -162,12 +197,14 @@ export const make = Effect.gen(function* () {
       .getThreadShellById(input.threadId)
       .pipe(Effect.mapError(mapProjectionError));
     const shell = Option.isSome(shellOption) ? shellOption.value : null;
+    const now = yield* DateTime.now;
     const serverSideActive =
       shell === null ||
       shell.hasPendingApprovals ||
       shell.hasPendingUserInput ||
       shell.session?.status === "starting" ||
-      shell.session?.status === "running";
+      shell.session?.status === "running" ||
+      hasQueuedTurnStart(shell, DateTime.toEpochMillis(now));
     const canSettleNow = input.canSettleNow && !serverSideActive;
     const isActive = !canSettleNow;
 
