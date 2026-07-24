@@ -102,14 +102,19 @@ function TooltipPopup({
   );
 }
 
-function TooltipCardPopup({ className, sideOffset = 8, ...props }: TooltipPopupProps) {
+function TooltipCardPopup({ className, sideOffset = 8, style, ...props }: TooltipPopupProps) {
   return (
     <TooltipPopup
       className={cn(
-        "dropdown-glass max-w-80 border-0! bg-[color-mix(in_srgb,var(--background)_var(--glass-opacity),transparent)] text-left whitespace-normal shadow-lg/10 before:hidden dark:shadow-none",
+        "dropdown-glass max-w-80 border-0! text-left whitespace-normal shadow-lg/10 before:hidden dark:shadow-none",
         className,
       )}
       sideOffset={sideOffset}
+      style={{
+        background:
+          "color-mix(in srgb, var(--popover) 18%, color-mix(in srgb, var(--popover) var(--glass-opacity), transparent))",
+        ...style,
+      }}
       {...props}
     />
   );
