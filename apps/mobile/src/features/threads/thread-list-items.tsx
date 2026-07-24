@@ -13,7 +13,6 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { hasDelegatedAgentTitle } from "../../lib/delegatedAgents";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { SceneryImage } from "../scenery/SceneryImage";
@@ -36,14 +35,6 @@ export type ThreadListVariant = "compact" | "sidebar";
 /** Left inset that aligns compact secondary rows with the title column. */
 export const THREAD_LIST_COMPACT_INSET = 20;
 const SIDEBAR_ROW_RADIUS = 12;
-const DELEGATED_AGENT_BADGE_STYLE = {
-  alignItems: "center",
-  borderRadius: 99,
-  flexDirection: "row",
-  gap: 3,
-  paddingHorizontal: 5,
-  paddingVertical: 2,
-} as const;
 
 /* ─── Project group header ───────────────────────────────────────────── */
 
@@ -448,13 +439,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       : null,
   );
   const status = health?.stalled ? resolveThreadStatus(thread, health) : baseStatus;
-  const delegatedAgent = hasDelegatedAgentTitle(thread.title);
   // Mirrors what the row actually renders (scene name, plus the
   // server-generated description once titled), not the raw thread.title the
   // row no longer displays on its own.
   const rowAccessibilityLabel = [
     names.description !== null ? `${names.primary}, ${names.description}` : names.primary,
-    delegatedAgent ? "Delegated agent" : null,
     status?.kind === "stalled" ? "Stalled — no recent activity" : null,
   ]
     .filter((part): part is string => part !== null)
@@ -510,26 +499,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   ) : null;
 
   const subtitleRow =
-    delegatedAgent || subtitleParts.length > 0 || pr !== null ? (
+    subtitleParts.length > 0 || pr !== null ? (
       <View className="flex-row items-center gap-1.5" style={{ marginTop: 1 }}>
-        {delegatedAgent ? (
-          <View
-            className={selected ? "bg-white/20" : "bg-subtle-strong"}
-            style={DELEGATED_AGENT_BADGE_STYLE}
-          >
-            <SymbolView
-              name="person.2"
-              size={9}
-              tintColor={selected ? selectedMutedColor : compact ? iconSubtleColor : effectiveMuted}
-              type="monochrome"
-            />
-            <Text
-              className={`text-3xs font-t3-bold ${selected ? "text-white" : "text-foreground-muted"}`}
-            >
-              Agent
-            </Text>
-          </View>
-        ) : null}
         {subtitleParts.length > 0 ? (
           <>
             <SymbolView
