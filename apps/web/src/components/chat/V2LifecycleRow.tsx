@@ -2,6 +2,7 @@ import type { OrchestrationV2TurnItem, ThreadId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   BotIcon,
+  ChevronDownIcon,
   ExternalLinkIcon,
   GitForkIcon,
   MessageSquareIcon,
@@ -27,6 +28,22 @@ const LIFECYCLE_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
 export function isV2LifecycleItem(item: OrchestrationV2TurnItem): boolean {
   return LIFECYCLE_TYPES.has(item.type);
 }
+
+// Aborted subagents (cancelled/interrupted) keep whatever result text had
+// streamed before the abort, so only completed/failed results are final.
+const FINAL_RESULT_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
+  "completed",
+  "failed",
+]);
+
+// Once a subagent stops, its last streamed result says more than the stale
+// progress line; while it runs, live progress comes first.
+const TERMINAL_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
 
 export function V2LifecycleRow(props: {
   readonly item: OrchestrationV2TurnItem;
@@ -115,14 +132,20 @@ export function V2LifecycleRow(props: {
     );
   }
   if (item.type === "subagent") {
+    const streamedResult = item.result?.trim() ? item.result : null;
+    const finalResult = FINAL_RESULT_SUBAGENT_STATUSES.has(item.status) ? streamedResult : null;
+    const detail = TERMINAL_SUBAGENT_STATUSES.has(item.status)
+      ? (streamedResult ?? item.progress ?? item.prompt)
+      : (item.progress ?? streamedResult ?? item.prompt);
     return (
       <RelatedThreadCard
         itemType={item.type}
         icon={BotIcon}
         title={subagentDisplayTitle(item.title ?? "Subagent")}
-        detail={item.result ?? item.progress ?? item.prompt}
+        detail={detail}
         badge={item.status}
         threadId={item.childThreadId}
+        expandedDetail={finalResult}
         onOpenThread={props.onOpenThread}
       />
     );
@@ -135,12 +158,14 @@ function RelatedThreadCard(props: {
   readonly icon: LucideIcon;
   readonly title: string;
   readonly detail: string;
+  readonly expandedDetail?: string | null;
   readonly badge: string;
   readonly threadId: ThreadId | null;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
   const Icon = props.icon;
   const threadId = props.threadId;
+  const expandedDetail = props.expandedDetail ?? null;
   const content = (
     <>
       <Icon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -149,11 +174,45 @@ function RelatedThreadCard(props: {
       <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
         {props.badge}
       </span>
-      {threadId === null ? null : (
-        <ExternalLinkIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-      )}
     </>
   );
+
+  if (expandedDetail !== null) {
+    return (
+      <div
+        data-v2-item-type={props.itemType}
+        className="relative min-w-0 overflow-hidden rounded-lg border border-border/60 bg-card/30"
+      >
+        <details className="group" data-v2-subagent-result-disclosure="true">
+          <summary
+            aria-label={`Show full result for ${props.title}`}
+            className="flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 pr-11 text-left transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden"
+          >
+            {content}
+            <ChevronDownIcon
+              className="size-3 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
+              aria-hidden="true"
+            />
+          </summary>
+          <div className="border-border/60 border-t px-3 py-2" data-v2-subagent-result="true">
+            <p className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">
+              {expandedDetail}
+            </p>
+          </div>
+        </details>
+        {threadId === null ? null : (
+          <button
+            type="button"
+            aria-label={`Open ${props.title}`}
+            onClick={() => props.onOpenThread(threadId)}
+            className="absolute top-1.5 right-1.5 flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <ExternalLinkIcon className="size-3" aria-hidden="true" />
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return threadId === null ? (
     <div
@@ -171,6 +230,7 @@ function RelatedThreadCard(props: {
       className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-card/30 px-3 py-2 text-left transition-colors hover:bg-muted/50"
     >
       {content}
+      <ExternalLinkIcon className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
     </button>
   );
 }
