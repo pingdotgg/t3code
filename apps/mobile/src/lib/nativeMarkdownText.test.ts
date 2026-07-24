@@ -173,6 +173,39 @@ describe("nativeMarkdownDocumentRuns", () => {
     ]);
   });
 
+  it("uses sent-message boundaries for skill references", () => {
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "text",
+              content: "$update-main? echo $HOME/.codex and use PHP $value;",
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(
+      nativeMarkdownDocumentRuns(node, [
+        { name: "update-main", displayName: "Update Main" },
+        { name: "HOME", displayName: "Home" },
+        { name: "value", displayName: "Value" },
+      ]),
+    ).toEqual([
+      {
+        text: "$update-main",
+        role: "body",
+        skillName: "update-main",
+        skillLabel: "Update Main",
+      },
+      { text: "? echo $HOME/.codex and use PHP $value;", role: "body" },
+    ]);
+  });
+
   it("leaves unknown skill-like text unchanged", () => {
     const node: MarkdownNode = {
       type: "document",

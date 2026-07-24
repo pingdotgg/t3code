@@ -165,6 +165,7 @@ import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings"
 import { useNowMinute } from "../hooks/useNowMinute";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { useProviderWorkspaceSkills } from "../lib/providerWorkspaceSkillsState";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -262,10 +263,12 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveProviderSkillsCwd,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  timelineMessagesHaveCompleteSkillReference,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -1171,6 +1174,8 @@ function ChatViewContent(props: ChatViewProps) {
     () => new Map(environments.map((environment) => [environment.environmentId, environment])),
     [environments],
   );
+  const providerSkillsConnectionAvailable =
+    environmentById.get(environmentId)?.connection.phase === "connected";
   const composerDraftTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
   const serverThread = useThread(routeThreadRef);
@@ -2321,6 +2326,12 @@ function ChatViewContent(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  const providerSkillsCwd = resolveProviderSkillsCwd({
+    gitCwd,
+    isLocalDraftThread,
+    draftThreadEnvMode: draftThread?.envMode,
+    worktreePath: activeThread?.worktreePath ?? null,
+  });
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
@@ -2354,6 +2365,24 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const activeProviderFallbackSkills = activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS;
+  const timelineSkillReferenceCacheRef = useRef(new WeakMap<object, boolean>());
+  const timelineHasSkillReference = useMemo(
+    () =>
+      timelineMessagesHaveCompleteSkillReference(
+        timelineMessages,
+        timelineSkillReferenceCacheRef.current,
+      ),
+    [timelineMessages],
+  );
+  const activeProviderWorkspaceSkills = useProviderWorkspaceSkills({
+    environmentId,
+    instanceId: activeProviderStatus?.instanceId ?? null,
+    cwd: providerSkillsCwd,
+    enabled: timelineHasSkillReference,
+    connectionAvailable: providerSkillsConnectionAvailable,
+    fallbackSkills: activeProviderFallbackSkills,
+  });
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null
@@ -5698,7 +5727,7 @@ function ChatViewContent(props: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
-                skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                skills={activeProviderWorkspaceSkills.skills}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
@@ -5830,6 +5859,8 @@ function ChatViewContent(props: ChatViewProps) {
                             keybindings={keybindings}
                             terminalOpen={Boolean(terminalUiState.terminalOpen)}
                             gitCwd={gitCwd}
+                            providerSkillsCwd={providerSkillsCwd}
+                            providerSkillsConnectionAvailable={providerSkillsConnectionAvailable}
                             promptRef={promptRef}
                             composerImagesRef={composerImagesRef}
                             composerTerminalContextsRef={composerTerminalContextsRef}

@@ -110,6 +110,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   triggerKind: ComposerTriggerKind | null;
   groupSlashCommandSections?: boolean;
   emptyStateText?: string;
+  errorText?: string | null;
   activeItemId: string | null;
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
@@ -140,6 +141,11 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
       }}
     >
       <div ref={listRef} className="dropdown-glass relative w-full overflow-hidden rounded-[20px]">
+        {props.errorText ? (
+          <p className="border-b border-border/70 px-5 py-3 text-xs text-destructive" role="alert">
+            {props.errorText}
+          </p>
+        ) : null}
         {props.items.length > 0 ? (
           <CommandList className="max-h-72">
             {groups.map((group, groupIndex) => (
@@ -165,7 +171,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               </div>
             ))}
           </CommandList>
-        ) : (
+        ) : props.errorText ? null : (
           <div className="px-5 py-3.5">
             {props.triggerKind === "skill" ? (
               <CommandGroup>

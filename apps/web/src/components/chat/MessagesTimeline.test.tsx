@@ -436,7 +436,33 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-collapsible="false"');
   });
 
-  it("renders inline terminal labels with the composer chip UI", () => {
+  it("renders local skill references as chips in user message bubbles", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("$update-main? $piz-git-workflow")]}
+        skills={[
+          {
+            name: "update-main",
+            displayName: "Update Main",
+          },
+          {
+            name: "piz-git-workflow",
+            displayName: "Piz Git Workflow",
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Update Main");
+    expect(markup).toContain("Piz Git Workflow");
+    expect(markup).toContain('data-markdown-copy="$update-main"');
+    expect(markup).toContain('data-markdown-copy="$piz-git-workflow"');
+  });
+
+  it("renders inline terminal labels with the composer chip UI", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}

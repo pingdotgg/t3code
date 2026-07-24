@@ -79,6 +79,10 @@
       "types": "./src/state/preview.ts",
       "default": "./src/state/preview.ts"
     },
+    "./state/provider-workspace-skills": {
+      "types": "./src/state/providerWorkspaceSkills.ts",
+      "default": "./src/state/providerWorkspaceSkills.ts"
+    },
     "./state/projects": {
       "types": "./src/state/projects.ts",
       "default": "./src/state/projects.ts"

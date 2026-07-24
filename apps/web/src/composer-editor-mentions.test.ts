@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  promptHasComposerSkillReference,
   selectionTouchesMentionBoundary,
   splitPromptIntoComposerSegments,
 } from "./composer-editor-mentions";
@@ -164,6 +165,22 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " " },
     ]);
+  });
+});
+
+describe("promptHasComposerSkillReference", () => {
+  it("returns true only when the prompt contains a complete skill token", () => {
+    expect(promptHasComposerSkillReference("Use $review-follow-up please")).toBe(true);
+    expect(promptHasComposerSkillReference("Use $review-follow-up")).toBe(false);
+    expect(promptHasComposerSkillReference("Read @AGENTS.md please")).toBe(false);
+  });
+
+  it("ignores terminal context placeholders while checking text slices", () => {
+    expect(
+      promptHasComposerSkillReference(
+        `Inspect ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}$review-follow-up please`,
+      ),
+    ).toBe(true);
   });
 });
 

@@ -7,6 +7,7 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
+  ServerProviderSkill,
 } from "@t3tools/contracts";
 import {
   detectComposerTrigger,
@@ -57,11 +58,6 @@ import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
-  insertRankedSearchResult,
-  normalizeSearchQuery,
-  scoreQueryMatch,
-} from "@t3tools/shared/searchRanking";
-import {
   applyProviderOptionMenuEvent,
   buildProviderOptionMenuActions,
   providerOptionsConfigurationLabel,
@@ -69,6 +65,7 @@ import {
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import { buildComposerSkillItems } from "./thread-composer-skill-items";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -99,6 +96,9 @@ export interface ThreadComposerProps {
   readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: OrchestrationThreadShell;
   readonly serverConfig: T3ServerConfig | null;
+  readonly workspaceSkills: ReadonlyArray<ServerProviderSkill>;
+  readonly workspaceSkillsIsPending: boolean;
+  readonly workspaceSkillsError: string | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
   readonly environmentId: EnvironmentId;
@@ -115,6 +115,7 @@ export interface ThreadComposerProps {
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
   readonly onReconnectEnvironment: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
+  readonly onWorkspaceSkillsLookupActiveChange?: (active: boolean) => void;
 }
 
 /**
@@ -360,6 +361,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
     return detectComposerTrigger(props.draftMessage, composerSelection.end);
   }, [composerSelection, props.draftMessage]);
+  const workspaceSkillsLookupActive = composerTrigger?.kind === "skill";
+  const { onWorkspaceSkillsLookupActiveChange } = props;
+  useEffect(() => {
+    onWorkspaceSkillsLookupActiveChange?.(workspaceSkillsLookupActive);
+    return () => onWorkspaceSkillsLookupActiveChange?.(false);
+  }, [onWorkspaceSkillsLookupActiveChange, workspaceSkillsLookupActive]);
   const pathSearch = useComposerPathSearch({
     environmentId: props.environmentId,
     cwd: composerTrigger?.kind === "path" ? props.projectCwd : null,
@@ -412,86 +419,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     if (composerTrigger.kind === "skill") {
-      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((s) => s.enabled);
-      const normalizedQuery = normalizeSearchQuery(composerTrigger.query, {
-        trimLeadingPattern: /^\$+/,
-      });
-
-      if (!normalizedQuery) {
-        return enabledSkills.slice(0, 20).map((skill) => ({
-          id: `skill:${skill.name}`,
-          type: "skill" as const,
-          skill,
-          label: skill.displayName ?? skill.name,
-          description: skill.shortDescription ?? skill.description ?? "",
-        }));
-      }
-
-      const ranked: Array<{
-        item: (typeof enabledSkills)[number];
-        score: number;
-        tieBreaker: string;
-      }> = [];
-      for (const skill of enabledSkills) {
-        const displayLabel = (skill.displayName ?? skill.name).toLowerCase();
-        const scores = [
-          scoreQueryMatch({
-            value: skill.name.toLowerCase(),
-            query: normalizedQuery,
-            exactBase: 0,
-            prefixBase: 2,
-            boundaryBase: 4,
-            includesBase: 6,
-            fuzzyBase: 100,
-            boundaryMarkers: ["-", "_", "/"],
-          }),
-          scoreQueryMatch({
-            value: displayLabel,
-            query: normalizedQuery,
-            exactBase: 1,
-            prefixBase: 3,
-            boundaryBase: 5,
-            includesBase: 7,
-            fuzzyBase: 110,
-          }),
-          scoreQueryMatch({
-            value: skill.shortDescription?.toLowerCase() ?? "",
-            query: normalizedQuery,
-            exactBase: 20,
-            prefixBase: 22,
-            boundaryBase: 24,
-            includesBase: 26,
-          }),
-          scoreQueryMatch({
-            value: skill.description?.toLowerCase() ?? "",
-            query: normalizedQuery,
-            exactBase: 30,
-            prefixBase: 32,
-            boundaryBase: 34,
-            includesBase: 36,
-          }),
-        ].filter((s): s is number => s !== null);
-
-        if (scores.length > 0) {
-          insertRankedSearchResult(
-            ranked,
-            {
-              item: skill,
-              score: Math.min(...scores),
-              tieBreaker: `${displayLabel}\u0000${skill.name}`,
-            },
-            20,
-          );
-        }
-      }
-
-      return ranked.map(({ item: skill }) => ({
-        id: `skill:${skill.name}`,
-        type: "skill" as const,
-        skill,
-        label: skill.displayName ?? skill.name,
-        description: skill.shortDescription ?? skill.description ?? "",
-      }));
+      return buildComposerSkillItems(props.workspaceSkills, composerTrigger.query);
     }
 
     if (composerTrigger.kind === "path") {
@@ -509,7 +437,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
+  }, [composerTrigger, pathSearch.entries, props.workspaceSkills, selectedProviderStatus]);
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
@@ -724,12 +652,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         layout={COMPOSER_LAYOUT_TRANSITION}
         style={{ maxWidth: props.contentMaxWidth }}
       >
-        {composerTrigger && composerMenuItems.length > 0 ? (
+        {composerTrigger && (composerMenuItems.length > 0 || composerTrigger.kind === "skill") ? (
           <View className="absolute inset-x-0 bottom-full z-10 mb-2">
             <ComposerCommandPopover
               items={composerMenuItems}
               triggerKind={composerTrigger.kind}
-              isLoading={pathSearch.isPending}
+              isLoading={
+                composerTrigger.kind === "skill"
+                  ? props.workspaceSkillsIsPending
+                  : pathSearch.isPending
+              }
+              error={composerTrigger.kind === "skill" ? props.workspaceSkillsError : null}
               onSelect={handleCommandSelect}
             />
           </View>
@@ -783,7 +716,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               ref={inputRef}
               multiline
               value={props.draftMessage}
-              skills={selectedProviderStatus?.skills ?? []}
+              skills={props.workspaceSkills}
               selection={composerSelection}
               onChangeText={props.onChangeDraftMessage}
               onSelectionChange={handleSelectionChange}

@@ -1,4 +1,5 @@
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
+import { parseInlineSkillTokens } from "@t3tools/shared/skillInlineTokens";
 
 import type { SelectableMarkdownSkill } from "./SelectableMarkdownText.types";
 import { resolveMarkdownLinkPresentation, type MarkdownFileIcon } from "./markdownLinks";
@@ -184,8 +185,6 @@ function appendRun(
   return runs;
 }
 
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
-
 function formatSkillLabel(skill: SelectableMarkdownSkill): string {
   const displayName = skill.displayName?.trim();
   if (displayName) {
@@ -216,14 +215,13 @@ function decorateSkillRuns(
 
     let cursor = 0;
     let matched = false;
-    for (const match of run.text.matchAll(SKILL_TOKEN_REGEX)) {
-      const prefix = match[1] ?? "";
-      const name = match[2] ?? "";
+    for (const match of parseInlineSkillTokens(run.text)) {
+      const { name } = match;
       const skill = skillByName.get(name);
       if (!skill) {
         continue;
       }
-      const start = (match.index ?? 0) + prefix.length;
+      const { start } = match;
       const end = start + name.length + 1;
       if (start > cursor) {
         decorated.push({ ...run, text: run.text.slice(cursor, start) });

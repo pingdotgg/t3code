@@ -23,10 +23,12 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveProviderSkillsCwd,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
+  timelineMessagesHaveCompleteSkillReference,
 } from "./ChatView.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -133,6 +135,78 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+});
+
+describe("timelineMessagesHaveCompleteSkillReference", () => {
+  it("keeps empty drafts and unrelated messages from requesting workspace skills", () => {
+    expect(timelineMessagesHaveCompleteSkillReference([])).toBe(false);
+    expect(
+      timelineMessagesHaveCompleteSkillReference([
+        { role: "user", text: "Inspect @AGENTS.md" },
+        { role: "user", text: "$" },
+        { role: "user", text: "$123invalid" },
+        { role: "user", text: "echo $HOME/.codex" },
+        { role: "user", text: "use PHP $value;" },
+      ]),
+    ).toBe(false);
+  });
+
+  it("ignores complete skill references in assistant messages", () => {
+    expect(
+      timelineMessagesHaveCompleteSkillReference([
+        { role: "assistant", text: "Try $repo-skill next." },
+      ]),
+    ).toBe(false);
+  });
+
+  it("requests workspace skills when a sent user prompt contains a complete skill token", () => {
+    expect(
+      timelineMessagesHaveCompleteSkillReference([
+        { role: "user", text: "Use $repo-skill to inspect this." },
+      ]),
+    ).toBe(true);
+    expect(
+      timelineMessagesHaveCompleteSkillReference([{ role: "user", text: "Use $repo-skill" }]),
+    ).toBe(true);
+    expect(
+      timelineMessagesHaveCompleteSkillReference([{ role: "user", text: "Use $repo-skill?" }]),
+    ).toBe(true);
+  });
+});
+
+describe("resolveProviderSkillsCwd", () => {
+  it("uses the selected checkout for local drafts", () => {
+    expect(
+      resolveProviderSkillsCwd({
+        gitCwd: "/repo/worktrees/existing-feature",
+        isLocalDraftThread: true,
+        draftThreadEnvMode: "local",
+        worktreePath: "/repo/worktrees/existing-feature",
+      }),
+    ).toBe("/repo/worktrees/existing-feature");
+  });
+
+  it("uses a materialized worktree for worktree drafts", () => {
+    expect(
+      resolveProviderSkillsCwd({
+        gitCwd: "/repo/worktrees/new-feature",
+        isLocalDraftThread: true,
+        draftThreadEnvMode: "worktree",
+        worktreePath: "/repo/worktrees/new-feature",
+      }),
+    ).toBe("/repo/worktrees/new-feature");
+  });
+
+  it("does not probe the base checkout for a future worktree draft", () => {
+    expect(
+      resolveProviderSkillsCwd({
+        gitCwd: "/repo",
+        isLocalDraftThread: true,
+        draftThreadEnvMode: "worktree",
+        worktreePath: null,
+      }),
+    ).toBeNull();
   });
 });
 

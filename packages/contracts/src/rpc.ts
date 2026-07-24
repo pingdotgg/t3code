@@ -121,6 +121,9 @@ import {
   ServerLifecycleStreamEvent,
   ServerRemoveKeybindingInput,
   ServerRemoveKeybindingResult,
+  ServerProviderSkillsListError,
+  ServerProviderSkillsListInput,
+  ServerProviderSkillsListResult,
   ServerProviderUpdatedPayload,
   ServerSelfUpdateError,
   ServerSelfUpdateInput,
@@ -207,6 +210,7 @@ export const WS_METHODS = {
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
+  serverListProviderSkills: "server.listProviderSkills",
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
   serverUpsertKeybinding: "server.upsertKeybinding",
@@ -275,6 +279,12 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
   }),
   success: ServerProviderUpdatedPayload,
   error: EnvironmentAuthorizationError,
+});
+
+export const WsServerListProviderSkillsRpc = Rpc.make(WS_METHODS.serverListProviderSkills, {
+  payload: ServerProviderSkillsListInput,
+  success: ServerProviderSkillsListResult,
+  error: Schema.Union([ServerProviderSkillsListError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvider, {
@@ -702,6 +712,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
+  WsServerListProviderSkillsRpc,
   WsServerUpdateProviderRpc,
   WsServerUpdateServerRpc,
   WsServerUpsertKeybindingRpc,

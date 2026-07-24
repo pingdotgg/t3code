@@ -42,6 +42,7 @@ interface ComposerCommandPopoverProps {
   readonly items: ReadonlyArray<ComposerCommandItem>;
   readonly triggerKind: ComposerTriggerKind | null;
   readonly isLoading: boolean;
+  readonly error: string | null;
   readonly onSelect: (item: ComposerCommandItem) => void;
 }
 
@@ -181,6 +182,13 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
           </Text>
         </View>
       ) : null}
+      {props.error ? (
+        <View className="px-3.5 py-2.5">
+          <Text className="text-xs text-danger-foreground" numberOfLines={3}>
+            {props.error}
+          </Text>
+        </View>
+      ) : null}
       {props.items.length > 0 ? (
         <ScrollView
           className="max-h-[180px]"
@@ -196,7 +204,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
             />
           ))}
         </ScrollView>
-      ) : (
+      ) : props.error ? null : (
         <View className="px-3.5 py-2.5">
           <Text className="text-xs text-foreground-tertiary">
             {emptyText(props.triggerKind, props.isLoading)}

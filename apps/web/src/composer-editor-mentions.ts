@@ -221,3 +221,13 @@ export function splitPromptIntoComposerSegments(
 
   return segments;
 }
+
+export function promptHasComposerSkillReference(prompt: string): boolean {
+  if (!prompt) {
+    return false;
+  }
+
+  return forEachPromptTextSlice(prompt, (text) =>
+    collectComposerInlineTokens(text).some((match) => match.type === "skill"),
+  );
+}
