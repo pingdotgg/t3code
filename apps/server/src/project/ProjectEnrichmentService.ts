@@ -24,6 +24,8 @@ const DEFAULT_FAILURE_TTL = Duration.seconds(5);
 export interface ProjectEnrichment {
   readonly repositoryIdentity: RepositoryIdentity | null;
   readonly faviconPath: string | null;
+  /** True when identity resolution completed successfully, including cached null. */
+  readonly repositoryIdentityResolved: boolean;
 }
 
 export interface ProjectEnrichmentChange {
@@ -70,6 +72,13 @@ function availableValue<A, E>(cached: Option.Option<Exit.Exit<A, E>>): A | null 
         onFailure: () => null,
         onSuccess: (value) => value,
       }),
+  });
+}
+
+function isSuccessfullyResolved<A, E>(cached: Option.Option<Exit.Exit<A, E>>): boolean {
+  return Option.match(cached, {
+    onNone: () => false,
+    onSome: (exit) => Exit.isSuccess(exit),
   });
 }
 
@@ -159,12 +168,14 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
       const repositoryIdentity = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
       yield* logFailure(workspaceRoot, "repositoryIdentity", repositoryIdentity);
       const faviconPath = yield* Cache.getSuccess(faviconCache, workspaceRoot);
+      const repositoryIdentityResolved = Exit.isSuccess(repositoryIdentity);
       yield* PubSub.publish(changes, {
         workspaceRoot,
-        repositoryIdentityResolved: Exit.isSuccess(repositoryIdentity),
+        repositoryIdentityResolved,
         enrichment: {
           repositoryIdentity: availableValue(Option.some(repositoryIdentity)),
           faviconPath: availableValue(faviconPath),
+          repositoryIdentityResolved,
         },
       });
     },
@@ -227,6 +238,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
     return {
       repositoryIdentity: availableValue(repositoryIdentity),
       faviconPath: availableValue(faviconPath),
+      repositoryIdentityResolved: isSuccessfullyResolved(repositoryIdentity),
     };
   });
 

@@ -117,6 +117,9 @@ const encodeJsonRpcNotification = Schema.encodeUnknownExit(
   ),
 );
 
+const isEffectRpcRequestId = (requestId: string): boolean =>
+  requestId !== "" && /^-?\d+$/.test(requestId);
+
 export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(function* (
   options: AcpPatchedProtocolOptions,
 ): Effect.fn.Return<AcpPatchedProtocol, never, Scope.Scope> {
@@ -452,12 +455,19 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     return observeIncoming.pipe(Effect.andThen(Queue.offer(serverQueue, message)), Effect.asVoid);
   };
 
+  const forwardToRpcClient = (
+    message: RpcMessage.ResponseChunkEncoded | RpcMessage.ResponseExitEncoded,
+  ) =>
+    isEffectRpcRequestId(message.requestId)
+      ? Queue.offer(clientQueue, message).pipe(Effect.asVoid)
+      : Effect.void;
+
   const handleExitEncoded = (message: RpcMessage.ResponseExitEncoded) =>
     Ref.get(extPending).pipe(
       Effect.flatMap((pending) => {
         const pendingRequest = pending.get(String(message.requestId));
         if (!pendingRequest) {
-          return Queue.offer(clientQueue, message).pipe(Effect.asVoid);
+          return forwardToRpcClient(message);
         }
         if (message.exit._tag === "Success") {
           return completeExtPendingSuccess(message.requestId, message.exit.value);
@@ -504,7 +514,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
                     message.requestId,
                   ),
                 )
-              : Queue.offer(clientQueue, message).pipe(Effect.asVoid);
+              : forwardToRpcClient(message);
           }),
         );
       case "Defect":
