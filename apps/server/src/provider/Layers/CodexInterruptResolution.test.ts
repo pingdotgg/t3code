@@ -128,6 +128,20 @@ describe("resolveCodexInterruptTurnId", () => {
     }),
   );
 
+  it.effect("falls back to the projected turn when the live lookup dies", () =>
+    Effect.gen(function* () {
+      const projectedTurnId = TurnId.make("turn-projected");
+      const turnId = yield* resolveCodexInterruptTurnId({
+        providerThreadId: "provider-thread-1",
+        requestedTurnId: undefined,
+        readSessionActiveTurnId: Effect.succeed(projectedTurnId),
+        readThread: () => Effect.die("lookup defect"),
+      });
+
+      NodeAssert.equal(turnId, projectedTurnId);
+    }),
+  );
+
   it.effect("bounds the live lookup and falls back to the projected turn on timeout", () =>
     Effect.gen(function* () {
       const projectedTurnId = TurnId.make("turn-projected");

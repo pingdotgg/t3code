@@ -773,6 +773,12 @@ export function resolveCodexInterruptTurnId<E>(input: {
       ),
       // A failed lookup can still use the locally projected id. A successful
       // lookup with no active turn must not revive a stale local id.
+      Effect.catchDefect((defect) =>
+        Effect.logWarning("Failed to resolve active Codex turn before interrupt.", {
+          providerThreadId: input.providerThreadId,
+          cause: defect,
+        }).pipe(Effect.andThen(input.readSessionActiveTurnId)),
+      ),
       Effect.catch(() => input.readSessionActiveTurnId),
     );
 }
