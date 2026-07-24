@@ -3327,6 +3327,105 @@ describe("ProviderRuntimeIngestion", () => {
     await waitForThread(harness.readModel, (entry) => entry.session?.status === "idle");
   });
 
+  it("returns a waiting thread to ready when its last task is stopped", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-stopped-task-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        taskId: "stopped-task-1",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-stopped-task-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId: asTurnId("turn-stopped-task"),
+      payload: {
+        state: "completed",
+      },
+    });
+    await waitForThread(harness.readModel, (entry) => entry.session?.status === "idle");
+
+    // A stopped task never wakes the agent, so Waiting must resolve here.
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-stopped-task-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        taskId: "stopped-task-1",
+        status: "stopped",
+      },
+    });
+
+    await waitForThread(harness.readModel, (entry) => entry.session?.status === "ready");
+  });
+
+  it("keeps a waiting thread waiting when its last task completes (the wake turn follows)", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-wake-task-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        taskId: "wake-task-1",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-wake-task-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId: asTurnId("turn-wake-task"),
+      payload: {
+        state: "completed",
+      },
+    });
+    await waitForThread(harness.readModel, (entry) => entry.session?.status === "idle");
+
+    // A successful completion wakes the agent; the status must go straight
+    // to running with no intermediate ready flash.
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-wake-task-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        taskId: "wake-task-1",
+        status: "completed",
+      },
+    });
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-wake-task-wake-turn"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:03.000Z",
+      turnId: asTurnId("turn-wake-follow-up"),
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "running",
+    );
+    expect(thread.session?.activeTurnId).toBe("turn-wake-follow-up");
+  });
+
   it("ignores late task progress for a completed task", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
