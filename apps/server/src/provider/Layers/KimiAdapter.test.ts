@@ -16,6 +16,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
+  ApprovalRequestId,
   KimiSettings,
   ProviderDriverKind,
   ThreadId,
@@ -473,6 +474,152 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
       assert.isUndefined(readySession?.activeTurnId);
 
       yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect(
+    "routes AskUserQuestion permission bridges to structured user input in full-access",
+    () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("kimi-ask-user-question-full-access");
+        const tempDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-acp-ask-question-")),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        const wrapperPath = yield* Effect.promise(() =>
+          makeMockKimiWrapper({
+            T3_ACP_EMIT_KIMI_ASK_USER_QUESTION: "1",
+            T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          }),
+        );
+        const adapter = yield* makeTestAdapter(wrapperPath);
+
+        const requested =
+          yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "user-input.requested" }>>();
+        const resolved =
+          yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "user-input.resolved" }>>();
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+          if (String(event.threadId) !== String(threadId)) {
+            return Effect.void;
+          }
+          if (event.type === "user-input.requested") {
+            return Deferred.succeed(requested, event).pipe(Effect.ignore);
+          }
+          if (event.type === "user-input.resolved") {
+            return Deferred.succeed(resolved, event).pipe(Effect.ignore);
+          }
+          return Effect.void;
+        }).pipe(Effect.forkChild);
+
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("kimi"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        });
+
+        const sendTurnFiber = yield* adapter
+          .sendTurn({ threadId, input: "ask before continuing", attachments: [] })
+          .pipe(Effect.forkChild);
+
+        const requestedEvent = yield* Deferred.await(requested).pipe(Effect.timeout("2 seconds"));
+        assert.equal(requestedEvent.payload.questions.length, 1);
+        assert.equal(requestedEvent.payload.questions[0]?.id, "q0");
+        assert.equal(requestedEvent.payload.questions[0]?.question, "Which scope should Kimi use?");
+        assert.deepEqual(
+          requestedEvent.payload.questions[0]?.options.map((option) => option.label),
+          ["Workspace", "Session"],
+        );
+
+        yield* adapter.respondToUserInput(
+          threadId,
+          ApprovalRequestId.make(String(requestedEvent.requestId)),
+          { q0: "Session" },
+        );
+
+        const resolvedEvent = yield* Deferred.await(resolved).pipe(Effect.timeout("2 seconds"));
+        assert.deepEqual(resolvedEvent.payload.answers, { q0: "Session" });
+        yield* Fiber.join(sendTurnFiber).pipe(Effect.timeout("2 seconds"));
+
+        // The selected answer must reach the agent as q0_opt_1 — full-access
+        // auto-approve would have picked q0_opt_0 without ever asking.
+        const requestLog = yield* waitForFileContent(requestLogPath, 80, '"q0_opt_1"');
+        assert.isTrue(
+          requestLog
+            .split("\n")
+            .some((line) => line.includes('"optionId":"q0_opt_1"') && line.includes('"result"')),
+        );
+
+        yield* Fiber.interrupt(eventsFiber);
+        yield* adapter.stopSession(threadId);
+      }).pipe(TestClock.withLive),
+  );
+
+  it.effect("settles a pending AskUserQuestion as skip when the turn is interrupted", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("kimi-ask-user-question-interrupt");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-acp-ask-question-cancel-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockKimiWrapper({
+          T3_ACP_EMIT_KIMI_ASK_USER_QUESTION: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const turnStarted = yield* Deferred.make<TurnId>();
+      const requested =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "user-input.requested" }>>();
+      const resolved =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "user-input.resolved" }>>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (String(event.threadId) !== String(threadId)) {
+          return Effect.void;
+        }
+        if (event.type === "turn.started" && event.turnId !== undefined) {
+          return Deferred.succeed(turnStarted, event.turnId).pipe(Effect.ignore);
+        }
+        if (event.type === "user-input.requested") {
+          return Deferred.succeed(requested, event).pipe(Effect.ignore);
+        }
+        if (event.type === "user-input.resolved") {
+          return Deferred.succeed(resolved, event).pipe(Effect.ignore);
+        }
+        return Effect.void;
+      }).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("kimi"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "ask before continuing", attachments: [] })
+        .pipe(Effect.forkChild);
+
+      yield* Deferred.await(requested).pipe(Effect.timeout("2 seconds"));
+      const turnId = yield* Deferred.await(turnStarted).pipe(Effect.timeout("2 seconds"));
+      yield* adapter.interruptTurn(threadId, turnId).pipe(Effect.timeout("2 seconds"));
+      yield* Fiber.join(sendTurnFiber).pipe(Effect.timeout("2 seconds"));
+
+      const resolvedEvent = yield* Deferred.await(resolved).pipe(Effect.timeout("2 seconds"));
+      assert.deepEqual(resolvedEvent.payload.answers, {});
+
+      // The cancelled question must reach the agent as the skip option.
+      const requestLog = yield* waitForFileContent(requestLogPath, 80, '"q0_skip"');
+      assert.isTrue(
+        requestLog
+          .split("\n")
+          .some((line) => line.includes('"optionId":"q0_skip"') && line.includes('"result"')),
+      );
+
+      yield* Fiber.interrupt(eventsFiber);
       yield* adapter.stopSession(threadId);
     }).pipe(TestClock.withLive),
   );
