@@ -579,7 +579,7 @@ private struct ToolGroupRow: View {
                 HStack(spacing: 8) {
                     Image(systemName: summary.failedCount > 0
                         ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(summary.failedCount > 0 ? Color.orange : Color.green)
+                        .foregroundStyle(summary.failedCount > 0 ? Color.orange : AlpineTheme.statusSuccess)
                         .frame(width: TranscriptMetrics.iconColumn)
                     Text(headline)
                         .font(.callout)
@@ -883,7 +883,7 @@ private struct ToolEventRow: View {
     private var iconTint: Color {
         switch displayState {
         case .running: .secondary
-        case .succeeded: .green
+        case .succeeded: AlpineTheme.statusSuccess
         case .failed: .red
         case .settled: .secondary
         }

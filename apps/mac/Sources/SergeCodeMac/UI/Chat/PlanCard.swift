@@ -41,8 +41,8 @@ public struct PlanCard: View {
                             .font(.caption)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(.green.opacity(0.15), in: Capsule())
-                            .foregroundStyle(.green)
+                            .background(AlpineTheme.statusSuccess.opacity(0.15), in: Capsule())
+                            .foregroundStyle(AlpineTheme.statusSuccess)
                             .transition(Motion.materialize)
                     }
                     Spacer()

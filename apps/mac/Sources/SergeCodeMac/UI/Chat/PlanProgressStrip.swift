@@ -149,7 +149,7 @@ struct PlanProgressStrip: View {
         switch status {
         case .pending: .secondary
         case .inProgress: AlpineTheme.accent
-        case .completed: AlpineTheme.meadow
+        case .completed: AlpineTheme.statusSuccess
         }
     }
 }

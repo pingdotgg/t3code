@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The app's visual identity: refined alpine-nature look built around
@@ -56,6 +57,20 @@ enum AlpineTheme {
 
     /// Pastel nature tones for secondary, semantic accents.
     static let meadow = Color(red: 0.47, green: 0.72, blue: 0.55)
+
+    /// Success status tint for completion glyphs (tool-call checkmarks, plan
+    /// steps, subagent tasks). Appearance-aware so the pastel tone stays
+    /// legible on both light and dark surfaces; use `meadow` for fills and
+    /// rails where contrast demands are lower.
+    static let statusSuccess = Color(nsColor: NSColor(name: nil) { appearance in
+        if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
+            // Dark surfaces: full pastel meadow reads clearly (~7:1).
+            return NSColor(red: 0.47, green: 0.72, blue: 0.55, alpha: 1)
+        }
+        // Light surfaces: deepened sage in the same hue family as meadow,
+        // so small status glyphs keep ≥4:1 contrast on near-white cards.
+        return NSColor(red: 0.267, green: 0.541, blue: 0.349, alpha: 1)
+    })
     static let sky = Color(red: 0.57, green: 0.75, blue: 0.78)
     static let clay = Color(red: 0.82, green: 0.60, blue: 0.49)
     static let lichen = Color(red: 0.82, green: 0.76, blue: 0.52)
