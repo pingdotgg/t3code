@@ -126,7 +126,15 @@ jobs:
         run: |
           vp check
           vp run typecheck
-          swift test --package-path apps/mac
+          # --no-parallel: the suites share process-wide static caches
+          # (TimelineDisplayCache, StreamingMarkdownCache) and are all
+          # @MainActor, so parallel execution only interleaves them at
+          # await points on the main thread — one suite's resetForTesting()
+          # can land inside another suite's counter assertions (this flaked
+          # AppModelTimelineEvictionTests on the alpha.7 release run).
+          # Parallelism buys nothing here anyway: MainActor tests already
+          # serialize on the main thread.
+          swift test --package-path apps/mac --no-parallel
 
       - name: Build server sidecar
         run: vp run build:server
