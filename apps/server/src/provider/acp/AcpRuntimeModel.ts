@@ -378,16 +378,17 @@ function makeToolCallState(
     command !== undefined ||
     normalizedTitle !== undefined ||
     textContent !== undefined;
+  const status = normalizeToolCallStatus(input.status, options?.fallbackStatus);
   const presentation = hasPresentationSeed
     ? deriveToolActivityPresentation({
         itemType: canonicalItemTypeFromAcpToolKind(kind),
+        status,
         title,
         detail: fallbackDetail,
         data,
         fallbackSummary: title ?? "Tool",
       })
     : undefined;
-  const status = normalizeToolCallStatus(input.status, options?.fallbackStatus);
   return {
     toolCallId,
     ...(kind ? { kind } : {}),
@@ -426,10 +427,31 @@ export function mergeToolCallState(
 ): AcpToolCallState {
   const nextKind = typeof next.data.kind === "string" ? next.data.kind : undefined;
   const kind = nextKind ?? previous?.kind;
-  const title = next.title ?? previous?.title;
   const status = next.status ?? previous?.status;
   const command = next.command ?? previous?.command;
   const detail = next.detail ?? previous?.detail;
+  const data: Record<string, unknown> = {
+    ...previous?.data,
+    ...next.data,
+  };
+  let title = next.title ?? previous?.title;
+  // A status-only update (e.g. `tool_call_update` carrying just `completed`)
+  // inherits the earlier in-progress title; re-derive it so "Running command"
+  // does not linger once the call has finished.
+  if (
+    next.title === undefined &&
+    title !== undefined &&
+    (status === "completed" || status === "failed")
+  ) {
+    title = deriveToolActivityPresentation({
+      itemType: canonicalItemTypeFromAcpToolKind(kind),
+      status,
+      title,
+      detail,
+      data,
+      fallbackSummary: title,
+    }).summary;
+  }
   return {
     toolCallId: next.toolCallId,
     ...(kind ? { kind } : {}),
@@ -437,10 +459,7 @@ export function mergeToolCallState(
     ...(status ? { status } : {}),
     ...(command ? { command } : {}),
     ...(detail ? { detail } : {}),
-    data: {
-      ...previous?.data,
-      ...next.data,
-    },
+    data,
   };
 }
 
