@@ -222,10 +222,10 @@ export function renderS6RunScript(plan: BootServicePlan): string {
           "s6-envuidgid",
           "-nB",
           `${plan.serviceUser}:${plan.serviceGroup}`,
-          "s6-applyuidgid",
-          "-Uz",
-          "-G",
-          "",
+          "/bin/sh",
+          "-c",
+          'exec s6-applyuidgid -Uz -G "$GID" "$@"',
+          "t3code-applyuidgid",
         ];
   return [
     "#!/bin/sh",
