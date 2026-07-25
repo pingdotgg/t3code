@@ -331,6 +331,22 @@ extension Array where Element == TimelineItem {
             }
         return Set(keys).count
     }
+
+    /// Summary for an existing tool group whose rows changed in place — the
+    /// same computation as the initial grouping pass, so a succeeded→failed
+    /// flip refreshes the headline numbers instead of reusing the stale cache.
+    @MainActor
+    static func toolGroupSummary(of items: [TimelineItem]) -> ToolGroupSummary {
+        let tools = items.compactMap { item -> ToolCall? in
+            guard case .toolEvent(_, _, let detail, let kind, let status, _, _, _) = item
+            else { return nil }
+            return ToolCall(detail: detail, kind: kind, status: status)
+        }
+        return ToolGroupSummary(
+            toolCount: tools.count,
+            editedFileCount: editedFileCount(of: tools),
+            failedCount: tools.count { $0.status == .failed })
+    }
 }
 
 // MARK: - Grouped-display cache
@@ -450,10 +466,13 @@ enum TimelineDisplayCache {
                 guard item != cachedItem else { return cached }
                 rebuiltRows += 1
                 return .single(item)
-            case .toolGroup(let id, let cachedItems, let summary):
+            case .toolGroup(let id, let cachedItems, _):
                 guard !items[range].elementsEqual(cachedItems) else { return cached }
                 rebuiltRows += 1
-                return .toolGroup(id: id, items: Array(items[range]), summary: summary)
+                let refreshedItems = Array(items[range])
+                return .toolGroup(
+                    id: id, items: refreshedItems,
+                    summary: [TimelineItem].toolGroupSummary(of: refreshedItems))
             case .daySeparator:
                 // Label freshness is guaranteed by relativeDay in the
                 // structure key; content refreshes reuse it as-is.

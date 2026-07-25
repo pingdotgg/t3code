@@ -499,19 +499,22 @@ public struct CompactionNotice: Identifiable, Hashable, Sendable {
     }
 }
 
-/// Image (or future media) metadata on a user message. Bytes are not embedded —
-/// resolve via `BackendService.attachmentImageURL(id:)` / `assets.createUrl`.
+/// Image (or other media) metadata on a user message. Image bytes are not
+/// embedded — resolve via `BackendService.attachmentImageURL(id:)` /
+/// `assets.createUrl`. Text attachments carry an inline `preview` instead.
 public struct MessageAttachment: Identifiable, Equatable, Hashable, Sendable {
     public var id: String
     public var name: String
     public var mimeType: String
     public var sizeBytes: Int
+    public var preview: String?
 
-    public init(id: String, name: String, mimeType: String, sizeBytes: Int) {
+    public init(id: String, name: String, mimeType: String, sizeBytes: Int, preview: String? = nil) {
         self.id = id
         self.name = name
         self.mimeType = mimeType
         self.sizeBytes = sizeBytes
+        self.preview = preview
     }
 }
 
