@@ -382,16 +382,33 @@ export default function ProjectScriptsControl({
               })}
             </div>
           ) : (
-            <div className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
-              No project actions configured.
+            <div className="flex min-w-0 items-center justify-between gap-3 px-3 py-2 sm:px-4">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-foreground">Actions</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  No project actions configured.
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={openAddDialog}
+              >
+                <PlusIcon className="size-3.5" />
+                Add action
+              </Button>
             </div>
           )}
-          <div className="px-3 py-2.5 sm:px-4">
-            <Button type="button" size="sm" variant="outline" onClick={openAddDialog}>
-              <PlusIcon className="size-3.5" />
-              Add action
-            </Button>
-          </div>
+          {scripts.length > 0 ? (
+            <div className="px-3 py-2 sm:px-4">
+              <Button type="button" size="sm" variant="outline" onClick={openAddDialog}>
+                <PlusIcon className="size-3.5" />
+                Add action
+              </Button>
+            </div>
+          ) : null}
         </div>
       );
     }

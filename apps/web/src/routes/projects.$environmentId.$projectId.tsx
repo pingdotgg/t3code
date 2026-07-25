@@ -1028,8 +1028,8 @@ function ProjectRouteView() {
                   </div>
                 </section>
 
-                <div className="grid min-w-0 gap-6 xl:grid-cols-2 xl:items-start">
-                  <div className="grid min-w-0 content-start gap-6">
+                <div className="grid min-w-0 gap-x-6 gap-y-4 xl:grid-cols-2 xl:items-start">
+                  <div className="min-w-0">
                     <SettingsSection title="General" className="space-y-1.5">
                       <div className="mx-3 rounded-xl p-1 sm:mx-4">
                         <ProjectSettingRow
@@ -1102,7 +1102,7 @@ function ProjectRouteView() {
                                 modelOptionsByInstance={modelOptionsByInstance}
                                 terminalOpen={false}
                                 triggerVariant="outline"
-                                triggerClassName="max-w-md"
+                                triggerClassName="max-w-48 sm:max-w-52"
                                 disabled={projectProviderInstanceEntries.length === 0}
                                 onInstanceModelChange={(instanceId, model) =>
                                   commitDefaultModelSelection(
@@ -1120,7 +1120,7 @@ function ProjectRouteView() {
                                   modelOptions={displayedModelSelection.options}
                                   allowPromptInjectedEffort={false}
                                   triggerVariant="outline"
-                                  triggerClassName="max-w-md"
+                                  triggerClassName="max-w-32 sm:max-w-36"
                                   onModelOptionsChange={(nextOptions) =>
                                     commitDefaultModelSelection(
                                       createModelSelection(
@@ -1141,86 +1141,9 @@ function ProjectRouteView() {
                         />
                       </div>
                     </SettingsSection>
-
-                    <SettingsSection title="Providers" className="space-y-1.5">
-                      <div className="mx-3 grid gap-1 rounded-xl p-1 sm:mx-4 sm:grid-cols-2">
-                        {globallyEnabledProviderInstanceEntries.map((entry) => {
-                          const allowed = !disabledProviderInstanceIds.includes(entry.instanceId);
-                          const isLastAllowedProvider =
-                            allowed && projectProviderInstanceEntries.length <= 1;
-                          const duplicateDriverCount =
-                            globallyEnabledProviderInstanceEntries.filter(
-                              (candidate) => candidate.driverKind === entry.driverKind,
-                            ).length;
-                          return (
-                            <div
-                              key={entry.instanceId}
-                              className="flex min-w-0 items-center justify-between gap-3 rounded-lg px-3 py-2.5"
-                            >
-                              <div className="flex min-w-0 items-center gap-2.5">
-                                <ProviderInstanceIcon
-                                  driverKind={entry.driverKind}
-                                  displayName={entry.displayName}
-                                  accentColor={entry.accentColor}
-                                  showBadge={Boolean(entry.accentColor) || duplicateDriverCount > 1}
-                                  className={duplicateDriverCount > 1 ? "size-5" : "size-4"}
-                                  iconClassName="size-4"
-                                  badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 text-[7px]"
-                                />
-                                <div className="min-w-0">
-                                  <div className="truncate text-sm font-medium text-foreground">
-                                    {entry.displayName}
-                                  </div>
-                                  <div className="truncate text-xs text-muted-foreground">
-                                    {entry.instanceId}
-                                  </div>
-                                </div>
-                              </div>
-                              <Switch
-                                checked={allowed}
-                                disabled={isLastAllowedProvider}
-                                aria-label={`${allowed ? "Disable" : "Enable"} ${entry.displayName} for this project`}
-                                title={
-                                  isLastAllowedProvider
-                                    ? "At least one provider must stay enabled for this project."
-                                    : undefined
-                                }
-                                onCheckedChange={(checked) =>
-                                  commitProviderInstanceAllowed(entry.instanceId, Boolean(checked))
-                                }
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </SettingsSection>
-
-                    <SettingsSection title="Danger zone" className="space-y-1.5">
-                      <div className="mx-3 rounded-xl p-1 sm:mx-4">
-                        <ProjectSettingRow
-                          title="Remove project"
-                          description={
-                            projectThreadCount > 0
-                              ? "All project threads will be deleted."
-                              : "No threads will be deleted."
-                          }
-                          control={
-                            <Button
-                              variant="destructive-outline"
-                              size="sm"
-                              disabled={removeProjectPending}
-                              onClick={() => void removeProject()}
-                            >
-                              <Trash2Icon className="size-3.5" />
-                              Remove
-                            </Button>
-                          }
-                        />
-                      </div>
-                    </SettingsSection>
                   </div>
 
-                  <div className="grid min-w-0 content-start gap-6">
+                  <div className="min-w-0">
                     <SettingsSection title="Git info" className="space-y-1.5">
                       <div className="mx-3 rounded-xl p-1 sm:mx-4">
                         <ProjectSettingRow
@@ -1413,29 +1336,101 @@ function ProjectRouteView() {
                         />
                       </div>
                     </SettingsSection>
+                  </div>
 
-                    <SettingsSection title="Automation" className="space-y-1.5">
-                      <div className="mx-3 rounded-xl p-1 sm:mx-4">
-                        <ProjectScriptsControl
-                          variant="settings"
-                          scripts={projectDetails.data.scripts}
-                          keybindings={keybindings}
-                          onAddScript={saveProjectScript}
-                          onUpdateScript={updateProjectScript}
-                          onDeleteScript={deleteProjectScript}
-                        />
-                        <ProjectSettingRow
-                          title="Variables"
-                          align="start"
-                          control={
-                            <ActionEnvironmentEditor
-                              environment={actionEnvironment}
-                              onChange={commitActionEnvironment}
+                  <SettingsSection title="Providers" className="space-y-1.5 xl:col-span-2">
+                    <div className="mx-3 grid gap-1 rounded-xl p-1 sm:mx-4 sm:grid-cols-2 xl:grid-cols-4">
+                      {globallyEnabledProviderInstanceEntries.map((entry) => {
+                        const allowed = !disabledProviderInstanceIds.includes(entry.instanceId);
+                        const isLastAllowedProvider =
+                          allowed && projectProviderInstanceEntries.length <= 1;
+                        const duplicateDriverCount = globallyEnabledProviderInstanceEntries.filter(
+                          (candidate) => candidate.driverKind === entry.driverKind,
+                        ).length;
+                        return (
+                          <div
+                            key={entry.instanceId}
+                            className="flex min-w-0 items-center justify-between gap-3 rounded-lg px-3 py-2"
+                          >
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              <ProviderInstanceIcon
+                                driverKind={entry.driverKind}
+                                displayName={entry.displayName}
+                                accentColor={entry.accentColor}
+                                showBadge={Boolean(entry.accentColor) || duplicateDriverCount > 1}
+                                className={duplicateDriverCount > 1 ? "size-5" : "size-4"}
+                                iconClassName="size-4"
+                                badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 text-[7px]"
+                              />
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-foreground">
+                                  {entry.displayName}
+                                </div>
+                                <div className="truncate text-xs text-muted-foreground">
+                                  {entry.instanceId}
+                                </div>
+                              </div>
+                            </div>
+                            <Switch
+                              checked={allowed}
+                              disabled={isLastAllowedProvider}
+                              aria-label={`${allowed ? "Disable" : "Enable"} ${entry.displayName} for this project`}
+                              title={
+                                isLastAllowedProvider
+                                  ? "At least one provider must stay enabled for this project."
+                                  : undefined
+                              }
+                              onCheckedChange={(checked) =>
+                                commitProviderInstanceAllowed(entry.instanceId, Boolean(checked))
+                              }
                             />
-                          }
-                        />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </SettingsSection>
+
+                  <SettingsSection title="Automation" className="space-y-1.5 xl:col-span-2">
+                    <div className="mx-3 grid min-w-0 gap-1 rounded-xl p-1 sm:mx-4 lg:grid-cols-2">
+                      <ProjectScriptsControl
+                        variant="settings"
+                        scripts={projectDetails.data.scripts}
+                        keybindings={keybindings}
+                        onAddScript={saveProjectScript}
+                        onUpdateScript={updateProjectScript}
+                        onDeleteScript={deleteProjectScript}
+                      />
+                      <ProjectSettingRow
+                        title="Variables"
+                        align="start"
+                        control={
+                          <ActionEnvironmentEditor
+                            environment={actionEnvironment}
+                            onChange={commitActionEnvironment}
+                          />
+                        }
+                      />
+                    </div>
+                  </SettingsSection>
+
+                  <div className="mx-4 flex min-w-0 items-center justify-between gap-4 rounded-lg px-3 py-2 xl:col-span-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-foreground">Remove project</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {projectThreadCount > 0
+                          ? "All project threads will be deleted."
+                          : "No threads will be deleted."}
                       </div>
-                    </SettingsSection>
+                    </div>
+                    <Button
+                      variant="destructive-outline"
+                      size="sm"
+                      disabled={removeProjectPending}
+                      onClick={() => void removeProject()}
+                    >
+                      <Trash2Icon className="size-3.5" />
+                      Remove
+                    </Button>
                   </div>
                 </div>
               </>
