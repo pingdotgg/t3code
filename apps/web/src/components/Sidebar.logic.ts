@@ -51,7 +51,10 @@ export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "line
 }
 
 export function filterSidebarV2VisibleThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "lineage" | "projectId">,
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
+    environmentId: string;
+    projectId: string;
+  },
 >(threads: readonly T[], scopedProjectKeys: ReadonlySet<string> | null): T[] {
   return threads.filter(
     (thread) =>
@@ -789,6 +792,21 @@ export function sortLogicalProjectsForSidebar<
     (project) => threadsByProjectKey.get(project.projectKey) ?? [],
     (left, right) =>
       left.title.localeCompare(right.title) || left.projectKey.localeCompare(right.projectKey),
+  );
+}
+
+export function sortSidebarV2ProjectGroups<
+  TProject extends LogicalSidebarProject,
+  TThread extends ScopedSidebarThread & Pick<SidebarThreadSummary, "lineage">,
+>(
+  projects: readonly TProject[],
+  threads: readonly TThread[],
+  sortOrder: SidebarProjectSortOrder,
+): TProject[] {
+  return sortLogicalProjectsForSidebar(
+    projects,
+    filterSidebarV2VisibleThreads(threads, null),
+    sortOrder,
   );
 }
 

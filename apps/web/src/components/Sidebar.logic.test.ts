@@ -28,6 +28,7 @@ import {
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
+  sortSidebarV2ProjectGroups,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
@@ -1559,6 +1560,54 @@ describe("sortLogicalProjectsForSidebar", () => {
     expect(sortLogicalProjectsForSidebar(projects, threads, "manual")).toEqual(projects);
     expect(
       sortLogicalProjectsForSidebar(projects, threads, "updated_at").map(
+        (project) => project.projectKey,
+      ),
+    ).toEqual(["logical-newer", "logical-older"]);
+  });
+});
+
+describe("sortSidebarV2ProjectGroups", () => {
+  it("does not let a hidden subagent thread reorder projects", () => {
+    const olderProjectId = ProjectId.make("project-older");
+    const newerProjectId = ProjectId.make("project-newer");
+    const olderRootThreadId = ThreadId.make("thread-older-root");
+    const projects = [
+      {
+        ...makeProject({ id: olderProjectId, title: "A older project" }),
+        projectKey: "logical-older",
+        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: olderProjectId }],
+      },
+      {
+        ...makeProject({ id: newerProjectId, title: "Z newer project" }),
+        projectKey: "logical-newer",
+        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: newerProjectId }],
+      },
+    ];
+    const threads = [
+      makeThread({
+        id: olderRootThreadId,
+        projectId: olderProjectId,
+        updatedAt: "2026-03-09T10:01:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("thread-newer-root"),
+        projectId: newerProjectId,
+        updatedAt: "2026-03-09T10:05:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("thread-hidden-subagent"),
+        projectId: olderProjectId,
+        updatedAt: "2026-03-09T10:10:00.000Z",
+        lineage: {
+          rootThreadId: olderRootThreadId,
+          parentThreadId: olderRootThreadId,
+          relationshipToParent: "subagent",
+        },
+      }),
+    ];
+
+    expect(
+      sortSidebarV2ProjectGroups(projects, threads, "updated_at").map(
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
