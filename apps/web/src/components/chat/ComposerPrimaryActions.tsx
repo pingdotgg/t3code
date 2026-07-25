@@ -17,7 +17,7 @@ interface ComposerPrimaryActionsProps {
   compact: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
-  hasQueuedHermesFollowUp: boolean;
+  hasQueuedNonSteerableFollowUp: boolean;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -57,7 +57,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
   isRunning,
-  hasQueuedHermesFollowUp,
+  hasQueuedNonSteerableFollowUp,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -126,7 +126,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (isRunning) {
-    if (hasQueuedHermesFollowUp) {
+    if (hasQueuedNonSteerableFollowUp) {
       return (
         <Button
           type="button"

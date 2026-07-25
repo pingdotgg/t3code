@@ -1703,6 +1703,7 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        turnSteering: "supported",
       },
       startSession,
       sendTurn,

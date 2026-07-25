@@ -23,8 +23,28 @@ describe("ServerProvider", () => {
 
     expect(parsed.slashCommands).toEqual([]);
     expect(parsed.skills).toEqual([]);
+    expect(parsed.supportsSteering).toBeUndefined();
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
+  });
+
+  it("decodes providers that explicitly disable steering", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "hermes",
+      driver: "hermes",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      supportsSteering: false,
+    });
+
+    expect(parsed.supportsSteering).toBe(false);
   });
 
   it("defaults one-click update support when decoding older advisory snapshots", () => {

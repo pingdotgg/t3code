@@ -407,18 +407,21 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(codexSnapshot.instanceId).toBe(codexId);
       expect(codexSnapshot.driver).toBe(codexDriverKind);
       expect(codexSnapshot.enabled).toBe(false);
+      expect(codexSnapshot.supportsSteering).toBe(true);
       expect(codexSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
 
       const claudeSnapshot = yield* claude!.snapshot.getSnapshot;
       expect(claudeSnapshot.instanceId).toBe(claudeId);
       expect(claudeSnapshot.driver).toBe(claudeDriverKind);
       expect(claudeSnapshot.enabled).toBe(false);
+      expect(claudeSnapshot.supportsSteering).toBe(true);
       expect(claudeSnapshot.continuation?.groupKey).toBe("claude:home:/home/julius/.claude-work");
 
       const cursorSnapshot = yield* cursor!.snapshot.getSnapshot;
       expect(cursorSnapshot.instanceId).toBe(cursorId);
       expect(cursorSnapshot.driver).toBe(cursorDriverKind);
       expect(cursorSnapshot.enabled).toBe(false);
+      expect(cursorSnapshot.supportsSteering).toBe(true);
       expect(cursorSnapshot.continuation?.groupKey).toBe(
         `${cursorDriverKind}:instance:${cursorId}`,
       );
@@ -427,12 +430,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(grokSnapshot.instanceId).toBe(grokId);
       expect(grokSnapshot.driver).toBe(grokDriverKind);
       expect(grokSnapshot.enabled).toBe(false);
+      expect(grokSnapshot.supportsSteering).toBe(true);
       expect(grokSnapshot.continuation?.groupKey).toBe(`${grokDriverKind}:instance:${grokId}`);
 
       const openCodeSnapshot = yield* openCode!.snapshot.getSnapshot;
       expect(openCodeSnapshot.instanceId).toBe(openCodeId);
       expect(openCodeSnapshot.driver).toBe(openCodeDriverKind);
       expect(openCodeSnapshot.enabled).toBe(false);
+      expect(openCodeSnapshot.supportsSteering).toBe(true);
       expect(openCodeSnapshot.continuation?.groupKey).toBe(
         `${openCodeDriverKind}:instance:${openCodeId}`,
       );
@@ -441,6 +446,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(hermesSnapshot.instanceId).toBe(hermesId);
       expect(hermesSnapshot.driver).toBe(hermesDriverKind);
       expect(hermesSnapshot.enabled).toBe(false);
+      expect(hermesSnapshot.supportsSteering).toBe(false);
       expect(hermesSnapshot.continuation?.groupKey).toBe(
         `${hermesDriverKind}:instance:${hermesId}`,
       );

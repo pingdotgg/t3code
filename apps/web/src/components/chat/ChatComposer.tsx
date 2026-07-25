@@ -45,7 +45,7 @@ import {
 } from "../../composer-logic";
 import {
   deriveComposerSendState,
-  hasQueuedHermesFollowUp,
+  hasQueuedNonSteerableFollowUp,
   readFileAsDataUrl,
 } from "../ChatView.logic";
 import {
@@ -361,7 +361,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     isComplete: boolean;
   } | null;
   isRunning: boolean;
-  hasQueuedHermesFollowUp: boolean;
+  hasQueuedNonSteerableFollowUp: boolean;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -388,7 +388,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         compact={props.compact}
         pendingAction={props.pendingAction}
         isRunning={props.isRunning}
-        hasQueuedHermesFollowUp={props.hasQueuedHermesFollowUp}
+        hasQueuedNonSteerableFollowUp={props.hasQueuedNonSteerableFollowUp}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
         isSendBusy={props.isSendBusy}
@@ -811,6 +811,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
   );
+  const activeTurnProviderStatus = useMemo(() => {
+    const session = activeThread?.session;
+    if (!session) {
+      return selectedProviderStatus;
+    }
+    return (
+      providerStatuses.find(
+        (provider) =>
+          session.providerInstanceId !== undefined &&
+          provider.instanceId === session.providerInstanceId,
+      ) ??
+      providerStatuses.find((provider) => provider.driver === session.providerName) ??
+      selectedProviderStatus
+    );
+  }, [activeThread?.session, providerStatuses, selectedProviderStatus]);
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
@@ -2280,7 +2295,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       compact
                       pendingAction={pendingPrimaryAction}
                       isRunning={false}
-                      hasQueuedHermesFollowUp={false}
+                      hasQueuedNonSteerableFollowUp={false}
                       showPlanFollowUpPrompt={false}
                       promptHasText={false}
                       isSendBusy={isSendBusy}
@@ -2547,7 +2562,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     compact
                     pendingAction={pendingPrimaryAction}
                     isRunning={false}
-                    hasQueuedHermesFollowUp={false}
+                    hasQueuedNonSteerableFollowUp={false}
                     showPlanFollowUpPrompt={false}
                     promptHasText={false}
                     isSendBusy={isSendBusy}
@@ -2678,7 +2693,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   activeThreadProviderDisplayName={activeThreadProviderDisplayName}
                   pendingAction={pendingPrimaryAction}
                   isRunning={phase === "running"}
-                  hasQueuedHermesFollowUp={hasQueuedHermesFollowUp(activeThread)}
+                  hasQueuedNonSteerableFollowUp={hasQueuedNonSteerableFollowUp(
+                    activeThread,
+                    activeTurnProviderStatus,
+                  )}
                   showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
                   promptHasText={prompt.trim().length > 0}
                   isSendBusy={isSendBusy}

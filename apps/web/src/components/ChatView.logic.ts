@@ -87,11 +87,14 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
   };
 }
 
-export function hasQueuedHermesFollowUp(
+export function hasQueuedNonSteerableFollowUp(
   thread: Pick<Thread, "latestTurn" | "messages" | "session"> | null | undefined,
+  provider: Pick<ServerProvider, "supportsSteering"> | null | undefined,
 ): boolean {
   if (
-    thread?.session?.providerName !== "hermes" ||
+    provider?.supportsSteering !== false ||
+    thread?.session === null ||
+    thread?.session === undefined ||
     thread.session.status !== "running" ||
     thread.latestTurn?.state !== "running"
   ) {

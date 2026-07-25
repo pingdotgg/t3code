@@ -167,6 +167,9 @@ export const ServerProvider = Schema.Struct({
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
+  // Optional for back-compat. Missing snapshots are treated as steerable;
+  // current servers populate this from the provider adapter capability.
+  supportsSteering: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),

@@ -101,6 +101,24 @@ const decodedConfigEnabled = (config: unknown): boolean | undefined => {
   return typeof enabled === "boolean" ? enabled : undefined;
 };
 
+const applyAdapterCapabilities = (instance: ProviderInstance): ProviderInstance => {
+  const supportsSteering = instance.adapter.capabilities.turnSteering !== "unsupported";
+  const stampCapabilities = (snapshot: ServerProvider): ServerProvider => ({
+    ...snapshot,
+    supportsSteering,
+  });
+
+  return {
+    ...instance,
+    snapshot: {
+      ...instance.snapshot,
+      getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(stampCapabilities)),
+      refresh: instance.snapshot.refresh.pipe(Effect.map(stampCapabilities)),
+      streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(stampCapabilities)),
+    },
+  };
+};
+
 /**
  * Build one live entry from a raw config envelope. Returns either a
  * `LiveEntry` plus undefined unavailable shadow, or a shadow snapshot and
@@ -197,7 +215,7 @@ const buildEntry = <R>(input: {
     return {
       kind: "live" as const,
       live: {
-        instance: createResult.success,
+        instance: applyAdapterCapabilities(createResult.success),
         scope: childScope,
         entry,
       },
