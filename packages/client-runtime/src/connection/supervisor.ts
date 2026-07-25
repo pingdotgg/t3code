@@ -667,20 +667,31 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   });
 
-  yield* connectivity.changes.pipe(
-    Stream.runForEach((network) =>
-      Ref.modify(intent, (current) =>
-        current.network === network ? [false, current] : ([true, { ...current, network }] as const),
-      ).pipe(
-        Effect.flatMap((changed) =>
-          changed ? signal({ _tag: "NetworkChanged", network }) : Effect.void,
-        ),
-      ),
-    ),
-    Effect.forkScoped,
-  );
+  const applyNetworkStatus = Effect.fnUntraced(function* (network: NetworkStatus) {
+    const changed = yield* Ref.modify(intent, (current) =>
+      current.network === network ? [false, current] : ([true, { ...current, network }] as const),
+    );
+    if (changed) {
+      yield* signal({ _tag: "NetworkChanged", network });
+    }
+  });
+
+  yield* connectivity.changes.pipe(Stream.runForEach(applyNetworkStatus), Effect.forkScoped);
   yield* wakeups.changes.pipe(
-    Stream.runForEach((reason) => signal({ _tag: "Wakeup", reason })),
+    Stream.runForEach((reason) =>
+      Effect.gen(function* () {
+        // Platform connectivity listeners can drop transitions while the app is
+        // suspended, so a device that went offline and back online while
+        // backgrounded leaves `intent.network` stuck on "offline". The offline
+        // branch of `run` only waits for signals, so no later wakeup recovers on
+        // its own. Re-reading the live status on resume keeps a restart from
+        // being the only way back online.
+        if (reason === "application-active") {
+          yield* applyNetworkStatus(yield* connectivity.status);
+        }
+        yield* signal({ _tag: "Wakeup", reason });
+      }),
+    ),
     Effect.forkScoped,
   );
   yield* run().pipe(Effect.forkScoped);
