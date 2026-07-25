@@ -214,6 +214,33 @@
                 await snapshotSettings(
                     tab: .scenery, name: "12-settings-scenery", model: model, scenery: scenery,
                     dir: dir)
+                await snapshotSettings(
+                    tab: .general, name: "13-settings-general", model: model, scenery: scenery,
+                    dir: dir)
+                await snapshotSettings(
+                    tab: .providers, name: "14-settings-providers", model: model, scenery: scenery,
+                    dir: dir)
+                // Archive a seeded thread so the Archive tab captures its
+                // search field and thread rows, not just the empty state.
+                // thread-2 is safe to borrow: the service-tier step above is
+                // its last consumer. Restored right after the capture.
+                let borrowedThread = model.threads.first { $0.id == "thread-2" }
+                if let borrowedThread {
+                    await model.archiveThread(borrowedThread)
+                    await model.refreshArchivedThreads()
+                }
+                await snapshotSettings(
+                    tab: .archive, name: "15-settings-archive", model: model, scenery: scenery,
+                    dir: dir)
+                if let borrowedThread {
+                    await model.unarchiveThread(borrowedThread)
+                }
+                await snapshotSettings(
+                    tab: .remoteMacs, name: "16-settings-remote-macs", model: model,
+                    scenery: scenery, dir: dir)
+                await snapshotSettings(
+                    tab: .autoReview, name: "17-settings-auto-review", model: model,
+                    scenery: scenery, dir: dir)
 
                 // Window glass translucency: capture solid (1.0) and floor
                 // (0.5) states, logging NSWindow isOpaque/clear + behind-window
@@ -685,7 +712,7 @@
                     scenery: scenery,
                     initialTab: tab))
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 760, height: 560),
+                contentRect: NSRect(x: 0, y: 0, width: 780, height: 560),
                 styleMask: [.titled], backing: .buffered, defer: false)
             DarkAppearanceConfigurator.applyAppearance(to: window)
             window.contentView = hosting

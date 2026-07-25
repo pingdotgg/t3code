@@ -39,8 +39,9 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
 }
 
 // Settings window content: `Settings { SettingsScene(...) }` in App.swift.
-// Standard macOS Form-based settings — glass is not used here (this is a
-// utility window, not a chrome surface over long-form content).
+// Alpine-skinned custom chrome (see SettingsChrome.swift) — glass is not
+// used here (this is a utility window, not a chrome surface over long-form
+// content), so surfaces are plain dark fills and materials.
 public struct SettingsScene: View {
     private let model: AppModel
     private let multi: MultiDeviceModel
@@ -60,52 +61,74 @@ public struct SettingsScene: View {
     }
 
     public var body: some View {
-        NavigationSplitView {
-            List(selection: selectedTabBinding) {
-                Section {
-                    settingsRow(.general)
-                }
-                Section("Agents") {
-                    settingsRow(.providers)
-                    settingsRow(.dictation)
-                    settingsRow(.autoReview)
-                }
-                Section("Workspace") {
-                    settingsRow(.archive)
-                    settingsRow(.scenery)
-                }
-                Section("Devices") {
-                    settingsRow(.devices)
-                    settingsRow(.remoteMacs)
-                    settingsRow(.connection)
-                }
-            }
-            .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 170, ideal: 184, max: 210)
-            .navigationTitle("Settings")
-        } detail: {
-            settingsDetail
-                .navigationTitle(selectedTab.title)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Every tab body arrives the same way. Keying on the tab makes
-                // each switch a fresh identity, so this one call covers all of
-                // them rather than each tab hand-rolling its own arrival.
-                .entrance(.pane)
-                .id(selectedTab)
+        HStack(spacing: 0) {
+            SettingsSidebar(selection: sidebarSelection)
+            Rectangle()
+                .fill(Color.white.opacity(0.09))
+                .frame(width: 1)
+            settingsDetailPane
         }
-        .frame(width: 760, height: 560)
+        .frame(width: 780, height: 560)
+        .navigationTitle("Settings")
+        .background {
+            // Same dark base as the main window's solid plate, plus the
+            // shared diagonal nature wash used on picker surfaces.
+            ZStack {
+                Color(nsColor: .windowBackgroundColor)
+                LinearGradient(
+                    colors: [
+                        AlpineTheme.accent.opacity(0.075),
+                        Color.clear,
+                        AlpineTheme.sky.opacity(0.045),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing)
+            }
+        }
     }
 
-    private var selectedTabBinding: Binding<SettingsTab?> {
+    /// Selection is never nil: the sidebar binding only ever writes a tab.
+    private var sidebarSelection: Binding<SettingsTab> {
         Binding(
             get: { selectedTab },
-            set: { if let tab = $0 { selectedTab = tab } })
+            set: { selectedTab = $0 })
     }
 
-    private func settingsRow(_ tab: SettingsTab) -> some View {
-        Label(tab.title, systemImage: tab.symbolName)
-            .tag(tab)
-            .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+    private var settingsDetailPane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                paneHeader
+                settingsDetail
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 20)
+            .frame(maxWidth: 560, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Every tab body arrives the same way. Keying on the tab makes
+        // each switch a fresh identity, so this one call covers all of
+        // them rather than each tab hand-rolling its own arrival.
+        .entrance(.pane)
+        .id(selectedTab)
+        .animation(Motion.structure, value: selectedTab)
+    }
+
+    /// Accent-tile icon + tab title, mirroring the composer picker header.
+    private var paneHeader: some View {
+        HStack(spacing: 10) {
+            Image(systemName: selectedTab.symbolName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(AlpineTheme.forest)
+                .frame(width: 30, height: 30)
+                .background(
+                    AlpineTheme.accent.opacity(0.9),
+                    in: RoundedRectangle(
+                        cornerRadius: AlpineTheme.Corners.control, style: .continuous))
+            Text(selectedTab.title)
+                .font(.title3.bold())
+            Spacer(minLength: 0)
+        }
     }
 
     @ViewBuilder
@@ -148,97 +171,126 @@ private struct GeneralSettingsTab: View {
     @UIState private var notifyFailed = AgentNotificationPreferences.isEnabled(.failed)
 
     var body: some View {
-        Form {
+        VStack(spacing: 18) {
             if let settings = draft {
-                Section("Behaviour") {
-                    Toggle(
-                        "Stream assistant replies",
+                SettingsSection(header: "Behaviour") {
+                    SettingsToggleRow(
+                        title: "Stream assistant replies",
                         isOn: binding(settings, \.assistantStreaming))
-                    Toggle(
-                        "Check for provider CLI updates",
+                    SettingsDivider()
+                    SettingsToggleRow(
+                        title: "Check for provider CLI updates",
                         isOn: binding(settings, \.providerUpdateChecks))
                 }
 
-                Section("New threads") {
-                    Picker("Run threads in", selection: binding(settings, \.defaultEnvMode)) {
+                SettingsSection(header: "New threads") {
+                    SettingsPickerRow(
+                        "Run threads in",
+                        selection: binding(settings, \.defaultEnvMode)
+                    ) {
                         ForEach(ProjectEnvMode.allCases) { mode in
                             Text(mode.displayName).tag(mode)
                         }
                     }
-                    Toggle(
-                        "Start new worktrees from origin",
+                    SettingsDivider()
+                    SettingsToggleRow(
+                        title: "Start new worktrees from origin",
                         isOn: binding(settings, \.newWorktreesStartFromOrigin))
-                    TextField(
-                        "Default projects directory",
-                        text: textBinding(settings, \.addProjectBaseDirectory))
-                        .focused($projectsDirectoryFocused)
-                        .onSubmit { commitProjectsDirectory() }
+                    SettingsDivider()
+                    SettingsCardRow {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Default projects directory")
+                                .font(.callout)
+                            TextField(
+                                "Default projects directory",
+                                text: textBinding(settings, \.addProjectBaseDirectory))
+                                .textFieldStyle(.settings)
+                                .focused($projectsDirectoryFocused)
+                                .onSubmit { commitProjectsDirectory() }
+                        }
+                    }
                 }
             } else {
-                Section {
-                    if model.connection == .ready {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        Text("Connect to the server to edit settings.")
-                            .foregroundStyle(.secondary)
+                SettingsSection {
+                    SettingsCardRow {
+                        if model.connection == .ready {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Connect to the server to edit settings.")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
 
-            Section {
-                Toggle("Agent notifications", isOn: $notificationsMasterEnabled)
+            SettingsSection(header: "Notifications") {
+                SettingsToggleRow(
+                    title: "Agent notifications",
+                    description:
+                        "Banner when agents finish, stall, fail, or need your input — suppressed while that thread is frontmost.",
+                    isOn: $notificationsMasterEnabled)
                     .onChange(of: notificationsMasterEnabled) { _, enabled in
                         AgentNotificationPreferences.isMasterEnabled = enabled
                         if enabled {
                             AgentNotificationService.shared.requestAuthorizationIfNeeded()
                         }
                     }
-                Text(
-                    "Banner when agents finish, stall, fail, or need your input — suppressed while that thread is frontmost."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
                 if notificationsMasterEnabled {
-                    Toggle(AgentNotificationKind.finished.settingsLabel, isOn: $notifyFinished)
+                    SettingsDivider()
+                    SettingsToggleRow(
+                        title: AgentNotificationKind.finished.settingsLabel,
+                        isOn: $notifyFinished)
                         .onChange(of: notifyFinished) { _, enabled in
                             AgentNotificationPreferences.setEnabled(.finished, enabled)
                         }
                         .help(AgentNotificationKind.finished.settingsHelp)
-                    Toggle(AgentNotificationKind.stalled.settingsLabel, isOn: $notifyStalled)
+                    SettingsDivider()
+                    SettingsToggleRow(
+                        title: AgentNotificationKind.stalled.settingsLabel,
+                        isOn: $notifyStalled)
                         .onChange(of: notifyStalled) { _, enabled in
                             AgentNotificationPreferences.setEnabled(.stalled, enabled)
                         }
                         .help(AgentNotificationKind.stalled.settingsHelp)
-                    Toggle(AgentNotificationKind.needsApproval.settingsLabel, isOn: $notifyApproval)
+                    SettingsDivider()
+                    SettingsToggleRow(
+                        title: AgentNotificationKind.needsApproval.settingsLabel,
+                        isOn: $notifyApproval)
                         .onChange(of: notifyApproval) { _, enabled in
                             AgentNotificationPreferences.setEnabled(.needsApproval, enabled)
                         }
                         .help(AgentNotificationKind.needsApproval.settingsHelp)
-                    Toggle(AgentNotificationKind.needsInput.settingsLabel, isOn: $notifyInput)
+                    SettingsDivider()
+                    SettingsToggleRow(
+                        title: AgentNotificationKind.needsInput.settingsLabel,
+                        isOn: $notifyInput)
                         .onChange(of: notifyInput) { _, enabled in
                             AgentNotificationPreferences.setEnabled(.needsInput, enabled)
                         }
                         .help(AgentNotificationKind.needsInput.settingsHelp)
-                    Toggle(AgentNotificationKind.failed.settingsLabel, isOn: $notifyFailed)
+                    SettingsDivider()
+                    SettingsToggleRow(
+                        title: AgentNotificationKind.failed.settingsLabel,
+                        isOn: $notifyFailed)
                         .onChange(of: notifyFailed) { _, enabled in
                             AgentNotificationPreferences.setEnabled(.failed, enabled)
                         }
                         .help(AgentNotificationKind.failed.settingsHelp)
                 }
-            } header: {
-                Text("Notifications")
             }
 
-            Section {
-                LabeledContent("Appearance", value: "Dark")
-                    .help("SurgeCode uses its dark appearance independently of macOS system appearance.")
-                LabeledContent("Version", value: Bundle.main.appVersionDisplay)
+            SettingsSection(header: "About") {
+                SettingsValueRow(title: "Appearance", value: "Dark")
+                    .help(
+                        "SurgeCode uses its dark appearance independently of macOS system appearance."
+                    )
+                SettingsDivider()
+                SettingsValueRow(
+                    title: "Version", value: Bundle.main.appVersionDisplay, technical: true)
             }
         }
-        .formStyle(.grouped)
-        .padding()
         // Loaded settings fade in over the placeholder spinner.
         .animation(Motion.reveal, value: draft == nil)
         .task {
@@ -303,61 +355,54 @@ struct DictationSettingsTab: View {
     }
 
     var body: some View {
-        Form {
-            Section("Speech model") {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Parakeet v3 (on-device)")
-                        Text("25 languages · ~2.5 GB · runs on the Neural Engine")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        VStack(spacing: 18) {
+            SettingsSection(header: "Speech model") {
+                SettingsCardRow {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Parakeet v3 (on-device)")
+                                .font(.callout)
+                            Text("25 languages · ~2.5 GB · runs on the Neural Engine")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        modelStatusControl
                     }
-                    Spacer()
-                    modelStatusControl
                 }
-                .padding(.vertical, 2)
-
-                LabeledContent("Storage") {
+                SettingsDivider()
+                SettingsValueRow(title: "Storage") {
                     Text(dictation.modelCacheDirectory.path(percentEncoded: false))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(SurgeTypography.technicalMetadata)
                         .textSelection(.enabled)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
             }
 
-            Section("Transcript cleanup") {
-                Toggle(
-                    "Clean up transcript with on-device AI",
+            SettingsSection(header: "Transcript cleanup") {
+                SettingsToggleRow(
+                    title: "Clean up transcript with on-device AI",
+                    description:
+                        dictation.cleanupAvailable
+                        ? "Fixes punctuation and removes filler words with the built-in Apple Intelligence model. The raw transcript is inserted first, then polished in place. Nothing leaves this Mac."
+                        : "Requires Apple Intelligence. Until it's enabled, dictation inserts the raw transcript.",
                     isOn: $dictation.cleanupEnabled)
                     .disabled(!dictation.cleanupAvailable)
-                Text(
-                    dictation.cleanupAvailable
-                        ? "Fixes punctuation and removes filler words with the built-in Apple Intelligence model. The raw transcript is inserted first, then polished in place. Nothing leaves this Mac."
-                        : "Requires Apple Intelligence. Until it's enabled, dictation inserts the raw transcript."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
 
-            Section("Language") {
-                Picker("Spoken language", selection: $dictation.languageCode) {
+            SettingsSection(
+                header: "Language",
+                footer: "Dictation is fully local: audio and transcripts never leave this Mac."
+            ) {
+                SettingsPickerRow("Spoken language", selection: $dictation.languageCode) {
                     Text("Auto-detect").tag(DictationController.autoLanguage)
                     ForEach(DictationController.supportedLanguageCodes, id: \.self) { code in
                         Text(Self.languageName(for: code)).tag(code)
                     }
                 }
             }
-
-            Section {
-                Text("Dictation is fully local: audio and transcripts never leave this Mac.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
-        .formStyle(.grouped)
-        .padding()
         .animation(Motion.ambient, value: dictation.modelStatus)
     }
 
@@ -406,11 +451,13 @@ private struct ArchiveSettingsTab: View {
     private static let defaultAutoArchiveAfterMs: Double = 3 * dayMs
 
     var body: some View {
-        Form {
+        VStack(spacing: 18) {
             if let settings = draft {
-                Section {
-                    Toggle(
-                        "Auto-archive settled threads",
+                SettingsSection(header: "Auto-archive") {
+                    SettingsToggleRow(
+                        title: "Auto-archive settled threads",
+                        description:
+                            "Threads that have been settled — explicitly or by inactivity — are archived automatically once they have sat longer than this.",
                         isOn: Binding(
                             get: { (draft ?? settings).autoArchiveSettledAfterMs != nil },
                             set: { enabled in
@@ -421,112 +468,91 @@ private struct ArchiveSettingsTab: View {
                                 Task { await model.saveSettings(next) }
                             }))
                     if (draft ?? settings).autoArchiveSettledAfterMs != nil {
+                        SettingsDivider()
                         autoArchiveAfterRow(settings)
                     }
-                    Text(
-                        "Threads that have been settled — explicitly or by inactivity — are archived automatically once they have sat longer than this."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                } header: {
-                    Text("Auto-archive")
                 }
             }
 
-            Section("Archived threads") {
+            SettingsSection(header: "Archived threads") {
                 if model.archivedThreadsLoading && model.archivedThreads.isEmpty {
-                    ProgressView("Loading archived threads…")
+                    SettingsCardRow {
+                        ProgressView("Loading archived threads…")
+                    }
                 } else if let error = model.archivedThreadsError {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Could not load archived threads", systemImage: "exclamationmark.triangle")
+                    SettingsCardRow {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(
+                                "Could not load archived threads",
+                                systemImage: "exclamationmark.triangle"
+                            )
                             .foregroundStyle(.red)
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button("Try Again") {
-                            Task { await model.refreshArchivedThreads() }
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("Try Again") {
+                                Task { await model.refreshArchivedThreads() }
+                            }
+                            .controlSize(.small)
                         }
                     }
                 } else if model.archivedThreads.isEmpty {
-                    Text("No archived threads.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
+                    SettingsCardRow {
+                        Text("No archived threads.")
                             .foregroundStyle(.secondary)
-                        TextField("Search archived threads", text: $searchText)
-                            .textFieldStyle(.plain)
                     }
-                    .padding(.vertical, 4)
+                } else {
+                    SettingsCardRow {
+                        SettingsSearchField(
+                            prompt: "Search archived threads", text: $searchText)
+                    }
 
                     if filteredThreads.isEmpty {
+                        SettingsDivider()
                         ContentUnavailableView(
                             "No Matching Threads",
                             systemImage: "magnifyingglass",
                             description: Text("Try a different title or provider name."))
+                            .padding(.vertical, 8)
                     }
 
                     ForEach(filteredThreads) { thread in
-                        HStack {
-                            ProviderIcon(
-                                provider: thread.provider, modelID: thread.modelID, size: 16
-                            )
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(thread.title)
-                                    .lineLimit(1)
-                                Text(thread.provider.displayName)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("Unarchive") {
-                                Task { await model.unarchiveThread(thread) }
-                            }
-                            Menu {
-                                Button("Delete Permanently", role: .destructive) {
-                                    deleteTarget = thread
-                                }
-                            } label: {
-                                Image(systemName: "ellipsis.circle")
-                            }
-                            .menuStyle(.borderlessButton)
-                            .menuIndicator(.hidden)
-                            .fixedSize()
-                            .accessibilityLabel("More actions for \(thread.title)")
-                        }
-                        .padding(.vertical, 2)
-                        .transition(Motion.rise)
+                        SettingsDivider()
+                        archivedThreadRow(thread)
                     }
 
-                    Text(
-                        "Showing \(model.archivedThreads.count) of \(model.archivedThreadsTotal) archived threads"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    SettingsDivider()
+                    SettingsCardRow {
+                        Text(
+                            "Showing \(model.archivedThreads.count) of \(model.archivedThreadsTotal) archived threads"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
 
                     if model.archivedThreadsNextCursor != nil {
-                        Button {
-                            Task { await model.loadMoreArchivedThreads() }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Text("Load more")
-                                if model.archivedThreadsLoading && !model.archivedThreads.isEmpty {
-                                    ProgressView()
-                                        .controlSize(.small)
+                        SettingsDivider()
+                        SettingsCardRow {
+                            Button {
+                                Task { await model.loadMoreArchivedThreads() }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Text("Load more")
+                                    if model.archivedThreadsLoading
+                                        && !model.archivedThreads.isEmpty
+                                    {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    }
                                 }
                             }
+                            .disabled(model.archivedThreadsLoading)
+                            .transition(Motion.rise)
                         }
-                        .disabled(model.archivedThreadsLoading)
-                        .transition(Motion.rise)
                     }
                 }
             }
         }
-        .formStyle(.grouped)
-        .padding()
         .task {
             await model.loadSettings()
             draft = model.settings
@@ -558,6 +584,43 @@ private struct ArchiveSettingsTab: View {
         }
     }
 
+    private func archivedThreadRow(_ thread: ChatThread) -> some View {
+        HStack {
+            ProviderIcon(
+                provider: thread.provider, modelID: thread.modelID, size: 16
+            )
+            .foregroundStyle(.secondary)
+            .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(thread.title)
+                    .font(.callout)
+                    .lineLimit(1)
+                Text(thread.provider.displayName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Unarchive") {
+                Task { await model.unarchiveThread(thread) }
+            }
+            .controlSize(.small)
+            Menu {
+                Button("Delete Permanently", role: .destructive) {
+                    deleteTarget = thread
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("More actions for \(thread.title)")
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 6)
+        .transition(Motion.rise)
+    }
+
     private var filteredThreads: [ChatThread] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return model.archivedThreads }
@@ -574,43 +637,46 @@ private struct ArchiveSettingsTab: View {
         let ms = (draft ?? settings).autoArchiveSettledAfterMs ?? Self.defaultAutoArchiveAfterMs
         let unit = ms.truncatingRemainder(dividingBy: Self.dayMs) == 0 ? "days" : "hours"
         let divisor = unit == "days" ? Self.dayMs : Self.hourMs
-        return HStack {
-            Text("Archive after")
-            Spacer()
-            TextField(
-                "amount",
-                value: Binding(
-                    get: { max(1, Int(ms / divisor)) },
-                    set: { newValue in
-                        var next = draft ?? settings
-                        next.autoArchiveSettledAfterMs = Double(max(1, newValue)) * divisor
-                        draft = next
-                    }),
-                format: .number
-            )
-            .frame(width: 56)
-            .multilineTextAlignment(.trailing)
-            .focused($autoArchiveValueFocused)
-            .onSubmit { commitAutoArchiveValue() }
-            Picker(
-                "unit",
-                selection: Binding(
-                    get: { unit },
-                    set: { newUnit in
-                        var next = draft ?? settings
-                        let amount = max(1, Int(ms / divisor))
-                        next.autoArchiveSettledAfterMs =
-                            Double(amount) * (newUnit == "days" ? Self.dayMs : Self.hourMs)
-                        draft = next
-                        Task { await model.saveSettings(next) }
-                    })
-            ) {
-                Text("hours").tag("hours")
-                Text("days").tag("days")
+        return SettingsCardRow {
+            HStack(spacing: 8) {
+                Text("Archive after")
+                    .font(.callout)
+                Spacer()
+                TextField(
+                    "amount",
+                    value: Binding(
+                        get: { max(1, Int(ms / divisor)) },
+                        set: { newValue in
+                            var next = draft ?? settings
+                            next.autoArchiveSettledAfterMs = Double(max(1, newValue)) * divisor
+                            draft = next
+                        }),
+                    format: .number
+                )
+                .textFieldStyle(.settings)
+                .frame(width: 64)
+                .multilineTextAlignment(.trailing)
+                .focused($autoArchiveValueFocused)
+                .onSubmit { commitAutoArchiveValue() }
+                AlpineSegmentedControl(
+                    segments: [
+                        AlpineSegmentedControl<String>.Segment(value: "hours", title: "hours"),
+                        AlpineSegmentedControl<String>.Segment(value: "days", title: "days"),
+                    ],
+                    selection: Binding(
+                        get: { unit },
+                        set: { newUnit in
+                            var next = draft ?? settings
+                            let amount = max(1, Int(ms / divisor))
+                            next.autoArchiveSettledAfterMs =
+                                Double(amount) * (newUnit == "days" ? Self.dayMs : Self.hourMs)
+                            draft = next
+                            Task { await model.saveSettings(next) }
+                        }),
+                    height: 26
+                )
+                .frame(width: 120)
             }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(width: 150)
         }
     }
 
@@ -627,23 +693,10 @@ private struct ProvidersSettingsTab: View {
     @UIState private var isRefreshing = false
 
     var body: some View {
-        Form {
-            Section {
-                if model.providers.isEmpty {
-                    ContentUnavailableView(
-                        "No Providers Found",
-                        systemImage: "puzzlepiece.extension",
-                        description: Text("Refresh to detect installed agent CLIs.")
-                    )
-                } else {
-                    ForEach(model.providers) { provider in
-                        ProviderRow(provider: provider, model: model)
-                    }
-                }
-            } header: {
-                HStack {
-                    Text("Installed Providers")
-                    Spacer()
+        VStack(spacing: 18) {
+            SettingsSection(
+                header: "Installed Providers",
+                headerTrailing: {
                     Button {
                         refresh()
                     } label: {
@@ -653,16 +706,33 @@ private struct ProvidersSettingsTab: View {
                                 .transition(.opacity)
                         } else {
                             Label("Refresh", systemImage: "arrow.clockwise")
+                                .font(.caption.weight(.medium))
                                 .transition(.opacity)
                         }
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                     .disabled(isRefreshing)
                     .animation(Motion.reveal, value: isRefreshing)
                 }
+            ) {
+                if model.providers.isEmpty {
+                    ContentUnavailableView(
+                        "No Providers Found",
+                        systemImage: "puzzlepiece.extension",
+                        description: Text("Refresh to detect installed agent CLIs.")
+                    )
+                    .padding(.vertical, 8)
+                } else {
+                    ForEach(Array(model.providers.enumerated()), id: \.element.id) { index, provider in
+                        if index > 0 { SettingsDivider() }
+                        SettingsCardRow {
+                            ProviderRow(provider: provider, model: model)
+                        }
+                    }
+                }
             }
         }
-        .formStyle(.grouped)
-        .padding()
     }
 
     private func refresh() {
@@ -691,9 +761,10 @@ private struct ProviderRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(provider.kind.displayName)
+                    .font(.callout)
                 if let version = provider.version {
                     Text(version)
-                        .font(.caption)
+                        .font(SurgeTypography.technicalMetadata)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -730,7 +801,6 @@ private struct ProviderRow: View {
                 }
             }
         }
-        .padding(.vertical, 2)
     }
 }
 
@@ -819,44 +889,39 @@ private struct PhoneSettingsTab: View {
     @UIState private var mintGeneration = 0
 
     var body: some View {
-        Form {
-            Section {
-                Toggle(
-                    "Remote access over Tailscale",
+        VStack(spacing: 18) {
+            SettingsSection(header: "Tailscale") {
+                SettingsToggleRow(
+                    title: "Remote access over Tailscale",
+                    description:
+                        "Reach this Mac from anywhere your Tailscale network extends. When active, pairing links use this Mac's tailnet address (\(tailnetHostname ?? "your MagicDNS name")) instead of a local-network IP.",
                     isOn: Binding(
                         get: { tailscaleEnabled },
                         set: { newValue in
                             tailscaleEnabled = newValue
                             TailscaleAccessPreference.setEnabled(newValue)
                         }))
-                Text(
-                    "Reach this Mac from anywhere your Tailscale network extends. When active, pairing links use this Mac's tailnet address (\(tailnetHostname ?? "your MagicDNS name")) instead of a local-network IP."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
                 if checkedReachability {
-                    LabeledContent("Remote address") {
+                    SettingsDivider()
+                    SettingsValueRow(title: "Remote address") {
                         Text(remoteAddressText)
+                            .font(SurgeTypography.technicalMetadata)
                             .textSelection(.enabled)
                     }
                 }
             }
 
-            Section {
-                Toggle(
-                    "Allow iPhone and Mac connections on your local network",
+            SettingsSection(header: "Local network") {
+                SettingsToggleRow(
+                    title: "Allow iPhone and Mac connections on your local network",
+                    description:
+                        "Pair SurgeCode on an iPhone or another Mac to chat with this Mac's sessions over Wi‑Fi. The same one-time link or QR code below works for either device; macOS may ask to allow incoming network connections.",
                     isOn: Binding(
                         get: { allowConnections },
                         set: { newValue in
                             allowConnections = newValue
                             MobileAccessPreference.setEnabled(newValue)
                         }))
-                Text(
-                    "Pair SurgeCode on an iPhone or another Mac to chat with this Mac's sessions over Wi‑Fi. The same one-time link or QR code below works for either device; macOS may ask to allow incoming network connections."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
 
             // The sidecar's bind host and Tailscale-serve flag are captured
@@ -868,41 +933,53 @@ private struct PhoneSettingsTab: View {
             // position is not what the server is actually doing, and that's
             // security-relevant when it disagrees by still being open.
             if checkedReachability && !tailscaleEnabled && tailnetHostname != nil {
-                Section {
-                    Label(
-                        "Tailscale access is still on for this session — quit and reopen SurgeCode to stop serving over your tailnet.",
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .foregroundStyle(.red)
+                SettingsSection {
+                    SettingsCardRow {
+                        Label(
+                            "Tailscale access is still on for this session — quit and reopen SurgeCode to stop serving over your tailnet.",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             if checkedReachability && tailscaleEnabled && tailnetHostname == nil {
-                Section {
-                    Label(
-                        "Tailscale isn't serving yet — if you just turned this on, quit and reopen SurgeCode; otherwise make sure Tailscale is installed and signed in on this Mac.",
-                        systemImage: "info.circle"
-                    )
-                    .foregroundStyle(.secondary)
+                SettingsSection {
+                    SettingsCardRow {
+                        Label(
+                            "Tailscale isn't serving yet — if you just turned this on, quit and reopen SurgeCode; otherwise make sure Tailscale is installed and signed in on this Mac.",
+                            systemImage: "info.circle"
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             if checkedReachability && allowConnections != lanReachable {
-                Section {
-                    Label(
-                        relaunchWarningText,
-                        systemImage: relaunchWarningSymbol
-                    )
-                    .foregroundStyle(relaunchWarningColor)
+                SettingsSection {
+                    SettingsCardRow {
+                        Label(
+                            relaunchWarningText,
+                            systemImage: relaunchWarningSymbol
+                        )
+                        .font(.callout)
+                        .foregroundStyle(relaunchWarningColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
 
             if pairingAvailable {
-                Section("Pair a device") {
-                    pairingContent
+                SettingsSection(header: "Pair a device") {
+                    SettingsCardRow {
+                        pairingContent
+                    }
                 }
             }
         }
-        .formStyle(.grouped)
-        .padding()
         .animation(Motion.structure, value: allowConnections)
         .animation(Motion.structure, value: tailscaleEnabled)
         .animation(Motion.structure, value: pairing)
@@ -974,6 +1051,7 @@ private struct PhoneSettingsTab: View {
                     }
                     LabeledContent("Address") {
                         Text(pairing.pairingURL.host() ?? "—")
+                            .font(SurgeTypography.technicalMetadata)
                             .textSelection(.enabled)
                     }
 
@@ -1013,11 +1091,15 @@ private struct PhoneSettingsTab: View {
                     }
                 }
             }
-            .padding(.vertical, 4)
         } else if let pairingError {
-            Label(pairingError, systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.red)
-            Button("Try Again") { mintGeneration += 1 }
+            VStack(alignment: .leading, spacing: 8) {
+                Label(pairingError, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Try Again") { mintGeneration += 1 }
+                    .controlSize(.small)
+            }
         } else {
             ProgressView()
                 .frame(maxWidth: .infinity)
@@ -1081,6 +1163,7 @@ private struct PhoneSettingsTab: View {
 
 // MARK: - Remote Macs
 
+// Internal (not private) so the DEBUG UIProbe can host it directly.
 struct RemoteMacsSettingsTab: View {
     let multi: MultiDeviceModel
 
@@ -1093,51 +1176,65 @@ struct RemoteMacsSettingsTab: View {
     @UIState private var forgetTarget: DeviceID?
 
     var body: some View {
-        Form {
-            Section("Add a Mac") {
-                HStack(spacing: 8) {
-                    TextField("Paste pairing link…", text: $pairingLink)
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(isPairing)
-                    Button("Connect") { connect() }
-                        .disabled(isPairing || pairingLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
+        VStack(spacing: 18) {
+            SettingsSection(
+                header: "Add a Mac",
+                footer:
+                    "On the other Mac, open Settings ▸ Devices and copy its pairing link or scan its QR code."
+            ) {
+                SettingsCardRow {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            TextField("Paste pairing link…", text: $pairingLink)
+                                .textFieldStyle(.settings)
+                                .disabled(isPairing)
+                            Button("Connect") { connect() }
+                                .disabled(
+                                    isPairing
+                                        || pairingLink.trimmingCharacters(in: .whitespacesAndNewlines)
+                                            .isEmpty)
+                        }
 
-                if isPairing {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                        if isPairing {
+                            ProgressView()
+                                .controlSize(.small)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
 
-                if let pairingError {
-                    Label(pairingError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if pairingErrorIsLocalNetworkDenial {
-                        Button("Open Local Network Settings") { openLocalNetworkSettings() }
-                            .controlSize(.small)
+                        if let pairingError {
+                            Label(pairingError, systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if pairingErrorIsLocalNetworkDenial {
+                                Button("Open Local Network Settings") {
+                                    openLocalNetworkSettings()
+                                }
+                                .controlSize(.small)
+                            }
+                        }
                     }
                 }
-
-                Text("On the other Mac, open Settings ▸ Devices and copy its pairing link or scan its QR code.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
-            Section("Paired Macs") {
+            SettingsSection(header: "Paired Macs") {
                 if multi.remoteSessions.isEmpty {
-                    Text("No Macs paired yet.")
-                        .foregroundStyle(.secondary)
+                    SettingsCardRow {
+                        Text("No Macs paired yet.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
-                    ForEach(multi.remoteSessions) { session in
-                        remoteMacRow(session)
+                    ForEach(Array(multi.remoteSessions.enumerated()), id: \.element.id) {
+                        index, session in
+                        if index > 0 { SettingsDivider() }
+                        SettingsCardRow {
+                            remoteMacRow(session)
+                        }
                     }
                 }
             }
         }
-        .formStyle(.grouped)
-        .padding()
         .confirmationDialog(
             "Forget Mac?",
             isPresented: Binding(
@@ -1166,8 +1263,9 @@ struct RemoteMacsSettingsTab: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.descriptor.name)
+                        .font(.callout.weight(.medium))
                     Text(address(for: session))
-                        .font(.caption)
+                        .font(SurgeTypography.technicalMetadata)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
@@ -1215,7 +1313,6 @@ struct RemoteMacsSettingsTab: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.vertical, 3)
     }
 
     private func address(for session: RemoteDeviceSession) -> String {
@@ -1247,7 +1344,8 @@ struct RemoteMacsSettingsTab: View {
                     pairingError =
                         "macOS is blocking local network access for SurgeCode. Enable SurgeCode under Privacy & Security → Local Network, then try again."
                 } else {
-                    pairingError = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                    pairingError =
+                        (error as? LocalizedError)?.errorDescription ?? String(describing: error)
                 }
             }
             isPairing = false
@@ -1295,9 +1393,9 @@ private struct ConnectionSettingsTab: View {
         lanReachable: false, tailnetHostname: nil)
 
     var body: some View {
-        Form {
-            Section {
-                LabeledContent("Status") {
+        VStack(spacing: 18) {
+            SettingsSection {
+                SettingsValueRow(title: "Status") {
                     Label(model.connection.statusText, systemImage: model.connection.symbolName)
                         .foregroundStyle(model.connection.statusColor)
                         .contentTransition(
@@ -1306,26 +1404,26 @@ private struct ConnectionSettingsTab: View {
                 }
             }
 
-            Section("Server") {
-                LabeledContent(
-                    "Host",
+            SettingsSection(header: "Server", footer: serverCaption) {
+                SettingsValueRow(
+                    title: "Host",
                     value: access.lanReachable
-                        ? "0.0.0.0 (local network)" : "127.0.0.1 (loopback)")
-                LabeledContent(
-                    "Mode",
+                        ? "0.0.0.0 (local network)" : "127.0.0.1 (loopback)",
+                    technical: true)
+                SettingsDivider()
+                SettingsValueRow(
+                    title: "Mode",
                     value: access.lanReachable || access.tailnetHostname != nil
-                        ? "remote-reachable" : "desktop-managed-local")
-                LabeledContent("Tailscale") {
+                        ? "remote-reachable" : "desktop-managed-local",
+                    technical: true)
+                SettingsDivider()
+                SettingsValueRow(title: "Tailscale") {
                     Text(access.tailnetHostname ?? "Off")
+                        .font(SurgeTypography.technicalMetadata)
                         .textSelection(.enabled)
                 }
-                Text(serverCaption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .padding()
         // Keyed to the connection phase so the rows update if the server
         // comes up (or restarts) after the Settings window opened. The serve
         // record can arrive shortly after the sidecar becomes reachable.

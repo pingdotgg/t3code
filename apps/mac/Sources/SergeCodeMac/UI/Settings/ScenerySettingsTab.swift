@@ -65,61 +65,57 @@ struct ScenerySettingsTab: View {
     let scenery: SceneryStore
 
     var body: some View {
-        Form {
+        VStack(spacing: 18) {
             appearanceSection
             projectsSection
         }
-        .formStyle(.grouped)
-        .padding()
         .animation(Motion.feedback, value: scenery.sceneryTranslucency)
     }
 
     // MARK: Appearance
 
     private var appearanceSection: some View {
-        Section {
-            HStack(spacing: 12) {
-                Slider(
-                    value: translucencyBinding,
-                    in: ScenerySettingsFile.translucencyRange,
-                    label: {
-                        Text("Scenery opacity")
-                    },
-                    minimumValueLabel: {
-                        Text("50%")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    },
-                    maximumValueLabel: {
-                        Text("100%")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    },
-                    onEditingChanged: { editing in
-                        if !editing {
-                            scenery.flushPendingSettingsSave()
-                        }
-                    }
-                )
-                .accessibilityLabel("Scenery opacity")
-                .accessibilityValue("\(percentLabel) percent")
-
-                Text("\(percentLabel)%")
-                    .font(.body.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 40, alignment: .trailing)
-                    .accessibilityHidden(true)
-            }
-        } header: {
-            Text("Window glass")
-        } footer: {
-            Text(
+        SettingsSection(
+            header: "Window glass",
+            footer:
                 "How much of the window the app paints over the blurred desktop. 100% is a fully solid window; at 50% the scene is half transparent and the desktop reads through it. Every new session gets a random photo from the built-in World collection."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        ) {
+            SettingsCardRow {
+                HStack(spacing: 12) {
+                    Slider(
+                        value: translucencyBinding,
+                        in: ScenerySettingsFile.translucencyRange,
+                        label: {
+                            Text("Scenery opacity")
+                        },
+                        minimumValueLabel: {
+                            Text("50%")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        },
+                        maximumValueLabel: {
+                            Text("100%")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        },
+                        onEditingChanged: { editing in
+                            if !editing {
+                                scenery.flushPendingSettingsSave()
+                            }
+                        }
+                    )
+                    .accessibilityLabel("Scenery opacity")
+                    .accessibilityValue("\(percentLabel) percent")
+
+                    Text("\(percentLabel)%")
+                        .font(.body.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 40, alignment: .trailing)
+                        .accessibilityHidden(true)
+                }
+            }
         }
     }
 
@@ -136,26 +132,25 @@ struct ScenerySettingsTab: View {
     // MARK: Projects
 
     private var projectsSection: some View {
-        Section {
+        SettingsSection(
+            header: "Per project",
+            footer: "Accent and symbol appear as subtle badges in the sidebar and chat header."
+        ) {
             if model.projects.isEmpty {
-                Text("No projects yet. Open a project to assign badge preferences.")
-                    .foregroundStyle(.secondary)
+                SettingsCardRow {
+                    Text("No projects yet. Open a project to assign badge preferences.")
+                        .foregroundStyle(.secondary)
+                }
             } else {
-                ForEach(model.projects) { project in
-                    ProjectSceneryPrefsRow(
-                        project: project,
-                        scenery: scenery)
-                    .padding(.vertical, 2)
+                ForEach(Array(model.projects.enumerated()), id: \.element.id) { index, project in
+                    if index > 0 { SettingsDivider() }
+                    SettingsCardRow {
+                        ProjectSceneryPrefsRow(
+                            project: project,
+                            scenery: scenery)
+                    }
                 }
             }
-        } header: {
-            Text("Per project")
-        } footer: {
-            Text(
-                "Accent and symbol appear as subtle badges in the sidebar and chat header."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
     }
 }
