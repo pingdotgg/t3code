@@ -61,12 +61,28 @@ struct MessageActionButton: View {
                 .frame(width: 22, height: 20)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MessageActionButtonStyle())
         .foregroundStyle(tint)
         .disabled(disabled)
         .opacity(disabled ? 0.4 : 1)
         .help(help)
         .accessibilityLabel(help)
+    }
+}
+
+/// Press/hover feedback for the compact message-action icons: a small scale
+/// dip while pressed and a gentle brightness lift under the pointer. Render
+/// transforms only, so they are safe on rows inside the streaming timeline.
+private struct MessageActionButtonStyle: ButtonStyle {
+    @UIState private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .brightness(isHovered ? 0.08 : 0)
+            .animation(Motion.feedback, value: configuration.isPressed)
+            .animation(Motion.feedback, value: isHovered)
+            .onHover { isHovered = $0 }
     }
 }
 

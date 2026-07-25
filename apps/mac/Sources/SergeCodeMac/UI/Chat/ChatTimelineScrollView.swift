@@ -123,17 +123,20 @@ struct ChatTimelineScrollView: View {
         // the autoscroll machinery and avoids a blank flash before the first
         // snapshot lands. Keep showing retained content while a background
         // reload is in flight (stale-while-revalidate).
-        if displayItems.isEmpty && isLoadingTimeline {
-            VStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("Loading conversation…")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollViewReader { proxy in
+        let showColdLoader = displayItems.isEmpty && isLoadingTimeline
+        Group {
+            if showColdLoader {
+                VStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading conversation…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(Motion.paneChange)
+            } else {
+                ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
                         ForEach(displayItems) { item in
@@ -267,7 +270,12 @@ struct ChatTimelineScrollView: View {
                     }
                 }
             }
+            .transition(Motion.paneChange)
+            }
         }
+        // Cold load → first snapshot swaps the spinner for the whole
+        // ScrollView; crossfade it so a thread open never hard-cuts.
+        .animation(Motion.structure, value: showColdLoader)
     }
 
     /// True only for phases a person drives (drag, scroll wheel, momentum) —

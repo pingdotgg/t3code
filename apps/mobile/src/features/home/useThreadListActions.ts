@@ -8,16 +8,22 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-type ThreadListAction = "archive" | "unarchive" | "delete";
+type ThreadListAction = "archive" | "unarchive" | "settle" | "unsettle" | "delete";
+
+const ACTION_PAST_TENSE: Record<ThreadListAction, string> = {
+  archive: "archived",
+  unarchive: "unarchived",
+  settle: "settled",
+  unsettle: "marked as active",
+  delete: "deleted",
+};
 
 function actionFailureMessage(action: ThreadListAction, cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }
-  const verb =
-    action === "archive" ? "archived" : action === "unarchive" ? "unarchived" : "deleted";
-  return `The thread could not be ${verb}.`;
+  return `The thread could not be ${ACTION_PAST_TENSE[action]}.`;
 }
 
 function selectionHaptic(): void {
@@ -29,6 +35,8 @@ function selectionHaptic(): void {
 function actionFailureTitle(action: ThreadListAction): string {
   if (action === "archive") return "Could not archive thread";
   if (action === "unarchive") return "Could not unarchive thread";
+  if (action === "settle") return "Could not settle thread";
+  if (action === "unsettle") return "Could not mark thread as active";
   return "Could not delete thread";
 }
 
@@ -37,6 +45,8 @@ function useThreadActionExecutor(
 ) {
   const archiveMutation = useAtomCommand(threadEnvironment.archive, { reportFailure: false });
   const unarchiveMutation = useAtomCommand(threadEnvironment.unarchive, { reportFailure: false });
+  const settleMutation = useAtomCommand(threadEnvironment.settle, { reportFailure: false });
+  const unsettleMutation = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
   const deleteMutation = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const inFlightThreadKeys = useRef(new Set<string>());
 
@@ -50,16 +60,27 @@ function useThreadActionExecutor(
       inFlightThreadKeys.current.add(key);
       selectionHaptic();
       try {
-        const mutation =
-          action === "archive"
-            ? archiveMutation
-            : action === "unarchive"
-              ? unarchiveMutation
-              : deleteMutation;
-        const result = await mutation({
-          environmentId: thread.environmentId,
-          input: { threadId: thread.id },
-        });
+        const result =
+          action === "settle"
+            ? await settleMutation({
+                environmentId: thread.environmentId,
+                input: { threadId: thread.id },
+              })
+            : action === "unsettle"
+              ? await unsettleMutation({
+                  environmentId: thread.environmentId,
+                  input: { threadId: thread.id, reason: "user" },
+                })
+              : await (
+                  action === "archive"
+                    ? archiveMutation
+                    : action === "unarchive"
+                      ? unarchiveMutation
+                      : deleteMutation
+                )({
+                  environmentId: thread.environmentId,
+                  input: { threadId: thread.id },
+                });
         if (result._tag === "Failure") {
           Alert.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
           return;
@@ -69,7 +90,14 @@ function useThreadActionExecutor(
         inFlightThreadKeys.current.delete(key);
       }
     },
-    [archiveMutation, deleteMutation, onCompleted, unarchiveMutation],
+    [
+      archiveMutation,
+      deleteMutation,
+      onCompleted,
+      settleMutation,
+      unarchiveMutation,
+      unsettleMutation,
+    ],
   );
 
   return executeAction;
@@ -101,6 +129,8 @@ function useConfirmDeleteThread(
 
 export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => void;
+  readonly settleThread: (thread: EnvironmentThreadShell) => void;
+  readonly unsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
 } {
   const executeAction = useThreadActionExecutor();
@@ -112,9 +142,23 @@ export function useThreadListActions(): {
     [executeAction],
   );
 
+  const settleThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      void executeAction("settle", thread);
+    },
+    [executeAction],
+  );
+
+  const unsettleThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      void executeAction("unsettle", thread);
+    },
+    [executeAction],
+  );
+
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
 
-  return { archiveThread, confirmDeleteThread };
+  return { archiveThread, settleThread, unsettleThread, confirmDeleteThread };
 }
 
 export function useArchivedThreadListActions(

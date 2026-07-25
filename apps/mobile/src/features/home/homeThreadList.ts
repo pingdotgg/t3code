@@ -17,6 +17,7 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import { isThreadSettled, sortSettledThreads } from "../../lib/threadInbox";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
@@ -28,6 +29,12 @@ export interface HomeThreadGroup {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  /**
+   * Settled threads leave the inbox (mac ThreadInboxSemantics) but stay
+   * reachable behind the group's "Settled" disclosure, most recently settled
+   * first.
+   */
+  readonly settledThreads: ReadonlyArray<EnvironmentThreadShell>;
 }
 
 interface MutableHomeThreadGroup {
@@ -35,10 +42,11 @@ interface MutableHomeThreadGroup {
   readonly projects: EnvironmentProject[];
   readonly pendingTasks: PendingNewTask[];
   readonly threads: EnvironmentThreadShell[];
+  readonly settledThreads: EnvironmentThreadShell[];
 }
 
 function groupSortTimestamp(group: HomeThreadGroup, sortOrder: HomeProjectSortOrder): number {
-  const latestThread = group.threads.reduce(
+  const latestThread = [...group.threads, ...group.settledThreads].reduce(
     (latest, thread) => Math.max(latest, getThreadSortTimestamp(thread, sortOrder)),
     Number.NEGATIVE_INFINITY,
   );
@@ -57,7 +65,10 @@ export function buildHomeThreadGroups(input: {
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  /** Injected for tests; defaults to the current time. */
+  readonly now?: string;
 }): ReadonlyArray<HomeThreadGroup> {
+  const now = input.now ?? new Date().toISOString();
   const groups = new Map<string, MutableHomeThreadGroup>();
   const groupKeyByProjectKey = new Map<string, string>();
 
@@ -76,7 +87,13 @@ export function buildHomeThreadGroups(input: {
     if (existing) {
       existing.projects.push(project);
     } else {
-      groups.set(groupKey, { key: groupKey, projects: [project], pendingTasks: [], threads: [] });
+      groups.set(groupKey, {
+        key: groupKey,
+        projects: [project],
+        pendingTasks: [],
+        threads: [],
+        settledThreads: [],
+      });
     }
   }
 
@@ -114,6 +131,7 @@ export function buildHomeThreadGroups(input: {
         ],
         pendingTasks: [],
         threads: [],
+        settledThreads: [],
       });
     }
     groups.get(groupKey)?.pendingTasks.push(pendingTask);
@@ -132,7 +150,12 @@ export function buildHomeThreadGroups(input: {
     if (!groupKey) {
       continue;
     }
-    groups.get(groupKey)?.threads.push(thread);
+    const group = groups.get(groupKey);
+    if (isThreadSettled(thread, now)) {
+      group?.settledThreads.push(thread);
+    } else {
+      group?.threads.push(thread);
+    }
   }
 
   const query = input.searchQuery.trim().toLocaleLowerCase();
@@ -140,7 +163,12 @@ export function buildHomeThreadGroups(input: {
 
   for (const group of groups.values()) {
     const representative = group.projects[0];
-    if (!representative || (group.threads.length === 0 && group.pendingTasks.length === 0)) {
+    if (
+      !representative ||
+      (group.threads.length === 0 &&
+        group.settledThreads.length === 0 &&
+        group.pendingTasks.length === 0)
+    ) {
       continue;
     }
 
@@ -155,13 +183,20 @@ export function buildHomeThreadGroups(input: {
     const matchingThreads = groupMatches
       ? group.threads
       : group.threads.filter((thread) => thread.title.toLocaleLowerCase().includes(query));
+    const matchingSettledThreads = groupMatches
+      ? group.settledThreads
+      : group.settledThreads.filter((thread) => thread.title.toLocaleLowerCase().includes(query));
     const matchingPendingTasks = groupMatches
       ? group.pendingTasks
       : group.pendingTasks.filter((pendingTask) =>
           pendingTask.title.toLocaleLowerCase().includes(query),
         );
 
-    if (matchingThreads.length === 0 && matchingPendingTasks.length === 0) {
+    if (
+      matchingThreads.length === 0 &&
+      matchingSettledThreads.length === 0 &&
+      matchingPendingTasks.length === 0
+    ) {
       continue;
     }
 
@@ -172,6 +207,7 @@ export function buildHomeThreadGroups(input: {
       projects: group.projects,
       pendingTasks: matchingPendingTasks,
       threads: sortThreads(matchingThreads, input.threadSortOrder),
+      settledThreads: sortSettledThreads(matchingSettledThreads),
     });
   }
 

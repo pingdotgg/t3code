@@ -14,6 +14,7 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
+import { resolveThreadListPrimaryAction } from "../../lib/threadInbox";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { SceneryImage } from "../scenery/SceneryImage";
 import { useSceneryPhoto, useThreadDisplayNames } from "../scenery/use-scenery";
@@ -182,6 +183,87 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
       {showsMore ? button("Show more", "chevron.down", handleShowMore) : null}
       {props.canShowLess ? button("Show less", "chevron.up", handleShowLess) : null}
     </View>
+  );
+});
+
+/* ─── Settled disclosure row ─────────────────────────────────────────── */
+
+/**
+ * Per-group "Settled" disclosure (mac SidebarView.settledDisclosure parity):
+ * settled threads leave the inbox and collapse behind this row; tapping
+ * reveals them underneath.
+ */
+export const ThreadListSettledToggleRow = memo(function ThreadListSettledToggleRow(props: {
+  readonly variant: ThreadListVariant;
+  readonly settledCount: number;
+  readonly revealed: boolean;
+  readonly groupKey: string;
+  readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
+}) {
+  const iconSubtleColor = useThemeColor("--color-icon-subtle");
+  const separatorColor = useThemeColor("--color-separator");
+  const compact = props.variant === "compact";
+  const { groupKey, onGroupAction } = props;
+  const handleToggle = useCallback(
+    () => onGroupAction(groupKey, "toggle-settled"),
+    [groupKey, onGroupAction],
+  );
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded: props.revealed }}
+      accessibilityLabel={`Settled, ${props.settledCount} threads`}
+      accessibilityHint={props.revealed ? "Hides the settled threads" : "Shows the settled threads"}
+      className={compact ? "bg-screen" : undefined}
+      onPress={handleToggle}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 6,
+          paddingLeft: compact ? THREAD_LIST_COMPACT_INSET : 12,
+          paddingRight: compact ? 18 : 12,
+          paddingVertical: compact ? 10 : 8,
+          borderTopWidth: 1,
+          borderTopColor: separatorColor,
+        }}
+      >
+        <SymbolView
+          name="checkmark.circle"
+          size={compact ? 13 : 11}
+          tintColor={iconSubtleColor}
+          type="monochrome"
+        />
+        <Text
+          className={
+            compact
+              ? "flex-1 text-sm font-t3-medium text-foreground-muted"
+              : "flex-1 text-xs font-t3-medium text-foreground-muted"
+          }
+        >
+          Settled
+        </Text>
+        <Text
+          className={
+            compact
+              ? "text-sm font-t3-medium text-foreground-tertiary"
+              : "text-xs font-t3-medium text-foreground-tertiary"
+          }
+        >
+          {props.settledCount}
+        </Text>
+        <SymbolView
+          name={props.revealed ? "chevron.down" : "chevron.right"}
+          size={compact ? 12 : 10}
+          tintColor={iconSubtleColor}
+          type="monochrome"
+          weight="semibold"
+        />
+      </View>
+    </Pressable>
   );
 });
 
@@ -381,10 +463,17 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
 
 /* ─── Thread row ─────────────────────────────────────────────────────── */
 
-const THREAD_ROW_MENU_ACTIONS: MenuAction[] = [
-  { id: "archive", title: "Archive", image: "archivebox" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
+const THREAD_ROW_MENU_ARCHIVE_ACTION: MenuAction = {
+  id: "archive",
+  title: "Archive",
+  image: "archivebox",
+};
+const THREAD_ROW_MENU_DELETE_ACTION: MenuAction = {
+  id: "delete",
+  title: "Delete",
+  image: "trash",
+  attributes: { destructive: true },
+};
 
 export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly variant: ThreadListVariant;
@@ -398,6 +487,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly fullSwipeWidth?: number;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSettleThread?: (thread: EnvironmentThreadShell) => void;
+  readonly onUnsettleThread?: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
@@ -423,7 +514,14 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const selectedForegroundColor = useThemeColor("--color-user-bubble-foreground");
   const selectedMutedColor = useThemeColor("--color-user-bubble-foreground-muted");
 
-  const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
+  const {
+    thread,
+    onSelectThread,
+    onArchiveThread,
+    onSettleThread,
+    onUnsettleThread,
+    onDeleteThread,
+  } = props;
   const threadKey = scopedThreadKey(thread.environmentId, thread.id);
   const scenePhoto = useSceneryPhoto(threadKey);
   // Two-line scene naming (mac parity): primary is the stable scene place
@@ -467,21 +565,72 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
-  const primaryAction = useMemo(
-    () => ({
+  const handleSettle = useCallback(() => onSettleThread?.(thread), [onSettleThread, thread]);
+  const handleUnsettle = useCallback(() => onUnsettleThread?.(thread), [onUnsettleThread, thread]);
+  // Swipe primary by lifecycle state (mac context-menu parity): settled rows
+  // offer "Mark as Active", settleable active rows offer "Settle", and rows
+  // the inbox semantics refuse to settle (running, pending approval/input)
+  // keep "Archive".
+  const primaryActionKind = resolveThreadListPrimaryAction(thread);
+  const primaryAction = useMemo(() => {
+    if (primaryActionKind === "unsettle" && onUnsettleThread) {
+      return {
+        accessibilityLabel: `Mark ${thread.title} as active`,
+        icon: "arrow.counterclockwise" as const,
+        label: "Unsettle",
+        onPress: handleUnsettle,
+      };
+    }
+    if (primaryActionKind === "settle" && onSettleThread) {
+      return {
+        accessibilityLabel: `Settle ${thread.title}`,
+        icon: "checkmark.circle" as const,
+        label: "Settle",
+        onPress: handleSettle,
+      };
+    }
+    return {
       accessibilityLabel: `Archive ${thread.title}`,
       icon: "archivebox" as const,
       label: "Archive",
       onPress: handleArchive,
-    }),
-    [handleArchive, thread.title],
-  );
+    };
+  }, [
+    handleArchive,
+    handleSettle,
+    handleUnsettle,
+    onSettleThread,
+    onUnsettleThread,
+    primaryActionKind,
+    thread.title,
+  ]);
+  const menuActions = useMemo<MenuAction[]>(() => {
+    const actions: MenuAction[] = [];
+    if (primaryActionKind === "unsettle" && onUnsettleThread) {
+      actions.push({
+        id: "unsettle",
+        title: "Mark as Active",
+        image: "arrow.counterclockwise",
+      });
+    } else if (onSettleThread) {
+      actions.push({
+        id: "settle",
+        title: "Settle Thread",
+        image: "checkmark.circle",
+        attributes: primaryActionKind === "settle" ? undefined : { disabled: true },
+      });
+    }
+    actions.push(THREAD_ROW_MENU_ARCHIVE_ACTION, THREAD_ROW_MENU_DELETE_ACTION);
+    return actions;
+  }, [onSettleThread, onUnsettleThread, primaryActionKind]);
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (nativeEvent.event === "settle") handleSettle();
+      if (nativeEvent.event === "unsettle") handleUnsettle();
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "delete") handleDelete();
     },
-    [handleArchive, handleDelete],
+    [handleArchive, handleDelete, handleSettle, handleUnsettle],
   );
 
   const statusPill = effectiveStatus ? (
@@ -691,7 +840,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         // the interaction is hosted by the component view and the underlying
         // UIButton passes touches through, so row taps keep working.
         <ControlPillMenu
-          actions={THREAD_ROW_MENU_ACTIONS}
+          actions={menuActions}
           onPressAction={handleMenuAction}
           shouldOpenOnLongPress
         >

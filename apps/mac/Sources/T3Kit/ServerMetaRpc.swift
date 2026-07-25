@@ -67,11 +67,15 @@ public struct ServerSettingsPatch: Encodable, Sendable {
     public var newWorktreesStartFromOrigin: Bool?
     public var addProjectBaseDirectory: String?
     public var autoReview: AutoReviewSettingsPatch?
+    /// Outer `nil` = leave unchanged; inner `nil` = disable (encoded as an
+    /// explicit JSON null so the server clears the setting).
+    public var autoArchiveSettledAfterMs: Double??
 
     public init(
         enableAssistantStreaming: Bool? = nil, enableProviderUpdateChecks: Bool? = nil,
         defaultThreadEnvMode: ThreadEnvMode? = nil, newWorktreesStartFromOrigin: Bool? = nil,
-        addProjectBaseDirectory: String? = nil, autoReview: AutoReviewSettingsPatch? = nil
+        addProjectBaseDirectory: String? = nil, autoReview: AutoReviewSettingsPatch? = nil,
+        autoArchiveSettledAfterMs: Double?? = nil
     ) {
         self.enableAssistantStreaming = enableAssistantStreaming
         self.enableProviderUpdateChecks = enableProviderUpdateChecks
@@ -79,11 +83,13 @@ public struct ServerSettingsPatch: Encodable, Sendable {
         self.newWorktreesStartFromOrigin = newWorktreesStartFromOrigin
         self.addProjectBaseDirectory = addProjectBaseDirectory
         self.autoReview = autoReview
+        self.autoArchiveSettledAfterMs = autoArchiveSettledAfterMs
     }
 
     private enum CodingKeys: String, CodingKey {
         case enableAssistantStreaming, enableProviderUpdateChecks, defaultThreadEnvMode,
-            newWorktreesStartFromOrigin, addProjectBaseDirectory, autoReview
+            newWorktreesStartFromOrigin, addProjectBaseDirectory, autoReview,
+            autoArchiveSettledAfter
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -94,6 +100,9 @@ public struct ServerSettingsPatch: Encodable, Sendable {
         try c.encodeIfPresent(newWorktreesStartFromOrigin, forKey: .newWorktreesStartFromOrigin)
         try c.encodeIfPresent(addProjectBaseDirectory, forKey: .addProjectBaseDirectory)
         try c.encodeIfPresent(autoReview, forKey: .autoReview)
+        if let autoArchiveSettledAfterMs {
+            try c.encode(autoArchiveSettledAfterMs, forKey: .autoArchiveSettledAfter)
+        }
     }
 }
 

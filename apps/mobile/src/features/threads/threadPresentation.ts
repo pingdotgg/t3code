@@ -2,6 +2,7 @@ import type { StatusTone } from "../../components/StatusPill";
 import type { OrchestrationLatestTurn, OrchestrationSession } from "@t3tools/contracts";
 import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { ThreadHealth } from "../../lib/threadHealth";
+import { isThreadSettled } from "../../lib/threadInbox";
 
 export function threadSortValue(thread: EnvironmentThreadShell): number {
   const candidate = Date.parse(thread.updatedAt ?? thread.createdAt);
@@ -16,7 +17,8 @@ export type ThreadStatusKind =
   | "waiting"
   | "connecting"
   | "error"
-  | "plan-ready";
+  | "plan-ready"
+  | "settled";
 
 export interface ThreadStatusPresentation extends StatusTone {
   readonly kind: ThreadStatusKind;
@@ -161,6 +163,21 @@ export function resolveThreadStatus(
       textClassName: "text-violet-700 dark:text-violet-300",
       iconColor: "#bf5af2",
       iconBackground: "rgba(191,90,242,0.22)",
+      pulse: false,
+    };
+  }
+
+  // Lowest priority: actionable/live states above always outrank settled, and
+  // isThreadSettled already refuses running/pending threads — a settled badge
+  // only ever lands on a quiescent row (mac: .settled → secondary).
+  if (isThreadSettled(thread)) {
+    return {
+      kind: "settled",
+      label: "Settled",
+      pillClassName: "bg-zinc-500/12 dark:bg-zinc-500/16",
+      textClassName: "text-zinc-600 dark:text-zinc-300",
+      iconColor: THREAD_STATUS_NEUTRAL_ICON.iconColor,
+      iconBackground: THREAD_STATUS_NEUTRAL_ICON.iconBackground,
       pulse: false,
     };
   }

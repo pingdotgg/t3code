@@ -626,6 +626,12 @@ export const ServerSettings = Schema.Struct({
       Effect.succeed(Duration.toMillis(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
     ),
   ),
+  // How long a settled thread (explicitly settled, or simply idle) may sit
+  // before the server archives it automatically. `null` disables the
+  // auto-archive janitor entirely.
+  autoArchiveSettledAfter: Schema.NullOr(Schema.DurationFromMillis).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
   ),
@@ -802,6 +808,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
+  autoArchiveSettledAfter: Schema.optionalKey(Schema.NullOr(Schema.DurationFromMillis)),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),

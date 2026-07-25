@@ -1,9 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// Slim git status strip under the chat header: current branch (switch/
-/// create/pull menu), working-tree and ahead/behind chips, PR link, and the
-/// stacked commit/push/PR action menu.
+/// The git section under the chat header: a self-contained card that groups
+/// the branch dropdown, working-tree status chips, PR affordances, and the
+/// git-actions dropdown into one clearly bounded surface. The card and its
+/// dropdown triggers use the app's branded chrome (accent tiles, bordered
+/// pills, alpine-tinted material) instead of the native macOS toolbar look,
+/// so the section reads as a distinct, obviously interactive zone.
 struct VcsToolbar: View {
     let model: AppModel
     /// The thread this toolbar instance is scoped to. The call site keys
@@ -15,6 +18,7 @@ struct VcsToolbar: View {
     let threadID: String
 
     @UIState private var branches: [BranchRef] = []
+    @UIState private var branchQuery = ""
     @UIState private var showNewBranchPrompt = false
     @UIState private var newBranchName = ""
     @UIState private var pendingAction: GitAction?
@@ -25,8 +29,15 @@ struct VcsToolbar: View {
     @UIState private var showGitActions = false
     @UIState private var branchMenuHovering = false
     @UIState private var gitActionsHovering = false
+    @FocusState private var branchSearchFocused: Bool
 
     private var isRunningAction: Bool { runningAction != nil }
+
+    private var filteredBranches: [BranchRef] {
+        let query = branchQuery.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return branches }
+        return branches.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
 
     var body: some View {
         if let status = model.selectedVcsStatus(), status.isRepo {
@@ -37,110 +48,47 @@ struct VcsToolbar: View {
 
     private func vcsStrip(_ status: VcsStatus) -> some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 branchMenu(status)
                 statusChips(status)
-                Spacer()
-                if let prURL = status.prURL, let url = URL(string: prURL) {
-                    let isMerged = status.prState == .merged
-                    let isDraft = status.isDraftPR == true
-                    Button {
-                        NSWorkspace.shared.open(url)
-                    } label: {
-                        Label(
-                            (status.prNumber.map { "PR #\($0)" } ?? "PR")
-                                + (isMerged ? " · Merged" : isDraft ? " · Draft" : ""),
-                            systemImage: isMerged
-                                ? "checkmark.seal.fill"
-                                : isDraft ? "doc.badge.clock" : "arrow.triangle.pull")
-                        .font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(
-                        isMerged
-                            ? AnyShapeStyle(.purple)
-                            : isDraft ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
-                    .help(status.prTitle ?? "Open pull request")
-                }
-                if status.prState == .open, status.hasPrConflicts {
-                    Label("Conflicts", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .transition(Motion.materialize)
-                        .help("This pull request has merge conflicts with its base branch.")
-                }
-                if let prNumber = status.prNumber {
-                    Button {
-                        pullRequestReviewReference = String(prNumber)
-                    } label: {
-                        Label(
-                            status.unresolvedReviewThreadCount.map { "Comments · \($0)" }
-                                ?? "Comments",
-                            systemImage: "bubble.left.and.bubble.right")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(
-                        (status.unresolvedReviewThreadCount ?? 0) > 0
-                            ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                    .help("View comments and review threads on PR #\(prNumber)")
-                }
-                if status.prState == .open, status.isDraftPR == true {
-                    Button {
-                        run(.readyPR, message: nil)
-                    } label: {
-                        if runningAction == .readyPR {
-                            HStack(spacing: 6) {
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text("Marking ready…")
-                            }
-                            .transition(.opacity)
-                        } else {
-                            Label("Ready for Review", systemImage: "checkmark.circle")
-                                .transition(.opacity)
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-                    .disabled(isRunningAction)
-                    .animation(Motion.reveal, value: runningAction)
-                    .help("Mark PR #\(status.prNumber ?? 0) ready for review")
-                }
-                if MergeReadiness.isReady(for: status) {
-                    Button {
-                        run(.mergePR, message: nil)
-                    } label: {
-                        if runningAction == .mergePR {
-                            HStack(spacing: 6) {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .black))
-                                    .controlSize(.small)
-                                Text("Merging…")
-                            }
-                            .transition(.opacity)
-                        } else {
-                            Label("Merge PR", systemImage: "arrow.triangle.merge")
-                                .transition(.opacity)
-                        }
-                    }
-                    .buttonStyle(VcsMergePillButtonStyle())
-                    .disabled(isRunningAction)
-                    .animation(Motion.reveal, value: runningAction)
-                    .help("Merge the open pull request")
-                }
+                Spacer(minLength: 8)
+                prControls(status)
                 actionMenu(status)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
 
             if let outcome = model.lastGitActionOutcome(for: threadID) {
+                Divider()
+                    .opacity(0.4)
+                    .padding(.horizontal, 8)
                 outcomeBanner(outcome)
                     .transition(Motion.banner)
             }
-
-            Divider()
         }
+        .background {
+            let shape = RoundedRectangle(
+                cornerRadius: AlpineTheme.Corners.card, style: .continuous)
+            ZStack {
+                shape.fill(.regularMaterial)
+                shape.fill(
+                    LinearGradient(
+                        colors: [
+                            AlpineTheme.accent.opacity(0.10),
+                            Color.clear,
+                            AlpineTheme.sky.opacity(0.06),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+            }
+            .overlay {
+                shape.strokeBorder(.quaternary, lineWidth: 1)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 6)
         .animation(Motion.reveal, value: model.lastGitActionOutcome(for: threadID))
         .animation(Motion.ambient, value: status)
         .alert("New branch", isPresented: $showNewBranchPrompt) {
@@ -170,49 +118,120 @@ struct VcsToolbar: View {
         }
     }
 
-    // MARK: - Branch menu
+    // MARK: - Dropdown chrome
 
-    /// Shared chrome for the strip's dropdown triggers: caption label with a
-    /// disclosure chevron and a hover wash, opening an Alpine popover.
+    /// Shared chrome for the card's dropdown triggers: a bordered pill that is
+    /// always visibly a button (fill + hairline, deepening on hover/open)
+    /// with a chevron that flips while the popover is presented. `prominent`
+    /// tints the pill with the alpine accent for the primary git-actions menu.
     private func dropdownTrigger<LabelContent: View>(
         isPresented: Bool,
         isHovering: Bool,
+        prominent: Bool = false,
         @ViewBuilder label: () -> LabelContent
     ) -> some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             label()
             Image(systemName: "chevron.down")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(
+                    prominent ? AlpineTheme.forest.opacity(0.75) : Color.secondary)
+                .rotationEffect(.degrees(isPresented ? 180 : 0))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
         .contentShape(
             RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
         .background {
-            if isHovering || isPresented {
-                RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
-                    .fill(Color.primary.opacity(isPresented ? 0.1 : 0.07))
-            }
+            let shape = RoundedRectangle(
+                cornerRadius: AlpineTheme.Corners.control, style: .continuous)
+            shape
+                .fill(
+                    prominent
+                        ? AlpineTheme.accent.opacity(
+                            isPresented ? 0.62 : isHovering ? 0.5 : 0.34)
+                        : Color.primary.opacity(
+                            isPresented ? 0.11 : isHovering ? 0.085 : 0.05)
+                )
+                .overlay {
+                    shape.strokeBorder(
+                        prominent
+                            ? AlpineTheme.accent.opacity(0.95)
+                            : Color.primary.opacity(isPresented || isHovering ? 0.16 : 0.10),
+                        lineWidth: 1)
+                }
         }
     }
+
+    /// Bordered capsule button for the card's inline actions (PR link,
+    /// comments, ready-for-review). A view (not a `ButtonStyle`) so the hover
+    /// state can live in `@UIState`; the pill deepens under the pointer like
+    /// the dropdown triggers do.
+    private struct PillButton<LabelContent: View>: View {
+        let action: () -> Void
+        @ViewBuilder let label: LabelContent
+
+        @UIState private var isHovering = false
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            Button(action: action) { label }
+                .buttonStyle(.plain)
+                .font(.caption.weight(.medium))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4.5)
+                .contentShape(Capsule())
+                .background {
+                    Capsule()
+                        .fill(Color.primary.opacity(isHovering ? 0.1 : 0.05))
+                        .overlay {
+                            Capsule()
+                                .strokeBorder(
+                                    Color.primary.opacity(isHovering ? 0.16 : 0.10),
+                                    lineWidth: 1)
+                        }
+                }
+                .opacity(isEnabled ? 1 : 0.5)
+                .onHover { isHovering = $0 }
+                .animation(Motion.feedback, value: isHovering)
+        }
+    }
+
+    // MARK: - Branch menu
 
     private func branchMenu(_ status: VcsStatus) -> some View {
         Button {
             showBranchMenu.toggle()
         } label: {
             dropdownTrigger(isPresented: showBranchMenu, isHovering: branchMenuHovering) {
-                Label(status.branch ?? "no branch", systemImage: "arrow.triangle.branch")
-                    .font(.caption)
+                HStack(spacing: 7) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(AlpineTheme.forest)
+                        .frame(width: 20, height: 20)
+                        .background(
+                            AlpineTheme.accent.opacity(0.85),
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    Text(status.branch ?? "no branch")
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
         }
         .buttonStyle(.plain)
-        .fixedSize()
+        // No `.fixedSize()` here: it would counter-propose the label's ideal
+        // width and defeat the middle-truncation for long branch names.
+        .frame(maxWidth: 260, alignment: .leading)
         .onHover { branchMenuHovering = $0 }
         .animation(Motion.feedback, value: branchMenuHovering)
         .animation(Motion.feedback, value: showBranchMenu)
+        .help("Current branch — click to switch, create, or pull")
         .popover(isPresented: $showBranchMenu, arrowEdge: .bottom) {
             branchPopover(status)
+        }
+        .onChange(of: showBranchMenu) { _, presented in
+            if !presented { branchQuery = "" }
         }
         // Keyed to the thread (not a one-shot `.onAppear`) so the branch
         // list refreshes for the repo this toolbar instance now belongs to,
@@ -230,48 +249,107 @@ struct VcsToolbar: View {
     }
 
     private func branchPopover(_ status: VcsStatus) -> some View {
-        ComposerPickerSurface(width: 300) {
+        ComposerPickerSurface(width: 320) {
             VStack(spacing: 0) {
                 ComposerPickerHeader(
                     icon: "arrow.triangle.branch",
                     title: "Branches",
                     subtitle: "Current: \(status.branch ?? "none")")
+                branchSearchField
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
                 Divider().opacity(0.55)
                 ScrollView {
                     LazyVStack(spacing: 3) {
-                        ForEach(branches) { branch in
-                            AlpineMenuRow(
-                                icon: "arrow.triangle.branch",
-                                title: branch.name,
-                                isSelected: branch.isCurrent
-                            ) {
-                                showBranchMenu = false
-                                Task {
-                                    await model.switchBranch(branch.name)
-                                    await refreshBranches()
-                                }
+                        if filteredBranches.isEmpty {
+                            VStack(spacing: 6) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.system(size: 16, weight: .medium))
+                                Text("No branches match “\(branchQuery)”")
+                                    .font(.caption)
                             }
-                            .disabled(branch.isCurrent)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 22)
+                        } else {
+                            ComposerPickerSectionLabel(title: "Switch branch")
+                            ForEach(filteredBranches) { branch in
+                                AlpineMenuRow(
+                                    icon: "arrow.triangle.branch",
+                                    title: branch.name,
+                                    isSelected: branch.isCurrent
+                                ) {
+                                    showBranchMenu = false
+                                    Task {
+                                        await model.switchBranch(branch.name)
+                                        await refreshBranches()
+                                    }
+                                }
+                                .disabled(branch.isCurrent)
+                            }
                         }
                     }
                     .padding(8)
                 }
-                .frame(maxHeight: 260)
+                .frame(maxHeight: 280)
                 Divider().opacity(0.55)
                 VStack(spacing: 3) {
-                    AlpineMenuRow(icon: "plus", title: "New Branch…") {
+                    ComposerPickerSectionLabel(title: "Repository")
+                    AlpineMenuRow(
+                        icon: "plus", title: "New Branch…",
+                        detail: "Create and switch to a new branch"
+                    ) {
                         showBranchMenu = false
                         // Defer one runloop turn so the alert never races the
                         // popover dismissal.
                         DispatchQueue.main.async { showNewBranchPrompt = true }
                     }
-                    AlpineMenuRow(icon: "arrow.triangle.pull", title: "Pull") {
+                    AlpineMenuRow(
+                        icon: "arrow.triangle.pull", title: "Pull",
+                        detail: "Fetch and merge the latest remote changes"
+                    ) {
                         showBranchMenu = false
                         Task { await model.pull() }
                     }
                 }
                 .padding(8)
             }
+        }
+        .onAppear { branchSearchFocused = true }
+    }
+
+    private var branchSearchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+            TextField("Filter branches", text: $branchQuery)
+                .textFieldStyle(.plain)
+                .focused($branchSearchFocused)
+            if !branchQuery.isEmpty {
+                Button {
+                    branchQuery = ""
+                    branchSearchFocused = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear filter")
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .background(
+            .fill.quaternary,
+            in: RoundedRectangle(
+                cornerRadius: AlpineTheme.Corners.control, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
+                .strokeBorder(
+                    branchSearchFocused
+                        ? AlpineTheme.accent : Color.primary.opacity(0.08),
+                    lineWidth: 1)
         }
     }
 
@@ -280,28 +358,150 @@ struct VcsToolbar: View {
     @ViewBuilder
     private func statusChips(_ status: VcsStatus) -> some View {
         if status.changedFileCount > 0 {
-            Text("\(status.changedFileCount) changed  +\(status.insertions) −\(status.deletions)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                .contentTransition(.numericText())
-                .transition(Motion.materialize)
-        }
-        if status.aheadCount > 0 || status.behindCount > 0 {
-            HStack(spacing: 2) {
-                if status.aheadCount > 0 {
-                    Label("\(status.aheadCount)", systemImage: "arrow.up")
-                }
-                if status.behindCount > 0 {
-                    Label("\(status.behindCount)", systemImage: "arrow.down")
+            statusChip {
+                HStack(spacing: 5) {
+                    Text(
+                        "^[\(status.changedFileCount) file](inflect: true) changed"
+                    )
+                    if status.insertions > 0 {
+                        Text("+\(status.insertions)")
+                            .foregroundStyle(AlpineTheme.statusSuccess)
+                    }
+                    if status.deletions > 0 {
+                        Text("−\(status.deletions)")
+                            .foregroundStyle(.red)
+                    }
                 }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .monospacedDigit()
             .contentTransition(.numericText())
             .transition(Motion.materialize)
-            .help("Commits ahead/behind upstream")
+            .help("Uncommitted changes in the working tree")
+        }
+        if status.aheadCount > 0 || status.behindCount > 0 {
+            statusChip {
+                HStack(spacing: 6) {
+                    if status.aheadCount > 0 {
+                        Label("\(status.aheadCount)", systemImage: "arrow.up")
+                    }
+                    if status.behindCount > 0 {
+                        Label("\(status.behindCount)", systemImage: "arrow.down")
+                    }
+                }
+            }
+            .contentTransition(.numericText())
+            .transition(Motion.materialize)
+            .help("Commits ahead of / behind the upstream branch")
+        }
+    }
+
+    /// A bordered capsule tag so working-tree state reads as glanceable
+    /// status rather than bare toolbar text.
+    private func statusChip<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.primary.opacity(0.05), in: Capsule())
+            .overlay {
+                Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            }
+    }
+
+    // MARK: - PR controls
+
+    @ViewBuilder
+    private func prControls(_ status: VcsStatus) -> some View {
+        if let prURL = status.prURL, let url = URL(string: prURL) {
+            let isMerged = status.prState == .merged
+            let isDraft = status.isDraftPR == true
+            PillButton {
+                NSWorkspace.shared.open(url)
+            } label: {
+                Label(
+                    (status.prNumber.map { "PR #\($0)" } ?? "PR")
+                        + (isMerged ? " · Merged" : isDraft ? " · Draft" : ""),
+                    systemImage: isMerged
+                        ? "checkmark.seal.fill"
+                        : isDraft ? "doc.badge.clock" : "arrow.triangle.pull")
+            }
+            .foregroundStyle(
+                isMerged
+                    ? AnyShapeStyle(.purple)
+                    : isDraft ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+            .help(status.prTitle ?? "Open pull request")
+        }
+        if status.prState == .open, status.hasPrConflicts {
+            Label("Conflicts", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.red)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.red.opacity(0.12), in: Capsule())
+                .overlay {
+                    Capsule().strokeBorder(Color.red.opacity(0.25), lineWidth: 1)
+                }
+                .transition(Motion.materialize)
+                .help("This pull request has merge conflicts with its base branch.")
+        }
+        if let prNumber = status.prNumber {
+            PillButton {
+                pullRequestReviewReference = String(prNumber)
+            } label: {
+                Label(
+                    status.unresolvedReviewThreadCount.map { "Comments · \($0)" }
+                        ?? "Comments",
+                    systemImage: "bubble.left.and.bubble.right")
+            }
+            .foregroundStyle(
+                (status.unresolvedReviewThreadCount ?? 0) > 0
+                    ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+            .help("View comments and review threads on PR #\(prNumber)")
+        }
+        if status.prState == .open, status.isDraftPR == true {
+            PillButton {
+                run(.readyPR, message: nil)
+            } label: {
+                if runningAction == .readyPR {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Marking ready…")
+                    }
+                    .transition(.opacity)
+                } else {
+                    Label("Ready for Review", systemImage: "checkmark.circle")
+                        .transition(.opacity)
+                }
+            }
+            .disabled(isRunningAction)
+            .animation(Motion.reveal, value: runningAction)
+            .help("Mark PR #\(status.prNumber ?? 0) ready for review")
+        }
+        if MergeReadiness.isReady(for: status) {
+            Button {
+                run(.mergePR, message: nil)
+            } label: {
+                if runningAction == .mergePR {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                            .controlSize(.small)
+                        Text("Merging…")
+                    }
+                    .transition(.opacity)
+                } else {
+                    Label("Merge PR", systemImage: "arrow.triangle.merge")
+                        .transition(.opacity)
+                }
+            }
+            .buttonStyle(VcsMergePillButtonStyle())
+            .disabled(isRunningAction)
+            .animation(Motion.reveal, value: runningAction)
+            .help("Merge the open pull request")
         }
     }
 
@@ -311,16 +511,20 @@ struct VcsToolbar: View {
         Button {
             showGitActions.toggle()
         } label: {
-            dropdownTrigger(isPresented: showGitActions, isHovering: gitActionsHovering) {
+            dropdownTrigger(
+                isPresented: showGitActions, isHovering: gitActionsHovering, prominent: true
+            ) {
                 // Merge owns its own in-button spinner; only show the menu
                 // spinner for other actions.
                 if let runningAction, runningAction != .mergePR, runningAction != .readyPR {
                     ProgressView()
                         .controlSize(.small)
+                        .tint(AlpineTheme.forest)
                         .transition(.opacity)
                 } else {
                     Label("Git", systemImage: "arrow.up.circle")
-                        .font(.caption)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(AlpineTheme.forest)
                         .transition(.opacity)
                 }
             }
@@ -331,13 +535,14 @@ struct VcsToolbar: View {
         .onHover { gitActionsHovering = $0 }
         .animation(Motion.feedback, value: gitActionsHovering)
         .animation(Motion.reveal, value: runningAction)
+        .help("Commit, push, and pull-request actions")
         .popover(isPresented: $showGitActions, arrowEdge: .bottom) {
             gitActionsPopover(status)
         }
     }
 
     private func gitActionsPopover(_ status: VcsStatus) -> some View {
-        ComposerPickerSurface(width: 280) {
+        ComposerPickerSurface(width: 300) {
             VStack(spacing: 0) {
                 ComposerPickerHeader(
                     icon: "arrow.up.circle",
@@ -346,7 +551,11 @@ struct VcsToolbar: View {
                 Divider().opacity(0.55)
                 VStack(spacing: 3) {
                     ForEach(GitAction.menuActions) { action in
-                        AlpineMenuRow(icon: action.menuSymbol, title: action.displayName) {
+                        AlpineMenuRow(
+                            icon: action.menuSymbol,
+                            title: action.displayName,
+                            detail: action.menuDetail
+                        ) {
                             showGitActions = false
                             if action.needsCommitMessage {
                                 commitMessage = ""
@@ -448,9 +657,8 @@ struct VcsToolbar: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 5)
-        .background(.quaternary.opacity(0.3))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 }
 
@@ -481,6 +689,19 @@ private extension GitAction {
         case .commitPushPR: "arrow.triangle.pull"
         case .readyPR: "checkmark.seal"
         case .mergePR: "arrow.triangle.merge"
+        }
+    }
+
+    /// One-line explanation under the action title, so the menu teaches what
+    /// each stacked action does instead of relying on the name alone.
+    var menuDetail: String {
+        switch self {
+        case .commit: "Commit all working-tree changes"
+        case .push: "Push committed changes to the remote"
+        case .commitPush: "Commit all changes, then push"
+        case .commitPushPR: "Commit, push, and open a pull request"
+        case .readyPR: "Mark the draft PR ready for review"
+        case .mergePR: "Merge the open pull request"
         }
     }
 }

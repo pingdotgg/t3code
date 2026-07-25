@@ -12,11 +12,14 @@ export interface HomeGroupDisplayState {
   readonly collapsed: boolean;
   /** How many threads are currently revealed (clamped to the group size). */
   readonly visibleCount: number;
+  /** Whether the group's settled-thread disclosure is open (mac parity). */
+  readonly settledRevealed: boolean;
 }
 
 export const DEFAULT_GROUP_DISPLAY_STATE: HomeGroupDisplayState = {
   collapsed: false,
   visibleCount: HOME_INITIAL_VISIBLE_THREADS,
+  settledRevealed: false,
 };
 
 export interface HomeHeaderListItem {
@@ -51,18 +54,31 @@ export interface HomeShowMoreListItem {
   readonly canShowLess: boolean;
 }
 
+export interface HomeSettledToggleListItem {
+  readonly type: "settled-toggle";
+  readonly key: string;
+  readonly groupKey: string;
+  readonly settledCount: number;
+  readonly revealed: boolean;
+}
+
 export type HomeListItem =
   | HomeHeaderListItem
   | HomePendingTaskListItem
   | HomeThreadListItem
-  | HomeShowMoreListItem;
+  | HomeShowMoreListItem
+  | HomeSettledToggleListItem;
 
 export interface HomeListLayout {
   readonly items: ReadonlyArray<HomeListItem>;
   readonly stickyHeaderIndices: ReadonlyArray<number>;
 }
 
-export type HomeGroupDisplayAction = "toggle-collapsed" | "show-more" | "show-less";
+export type HomeGroupDisplayAction =
+  | "toggle-collapsed"
+  | "show-more"
+  | "show-less"
+  | "toggle-settled";
 
 export function nextGroupDisplayState(
   current: HomeGroupDisplayState,
@@ -75,6 +91,8 @@ export function nextGroupDisplayState(
       return { ...current, visibleCount: current.visibleCount + HOME_SHOW_MORE_STEP };
     case "show-less":
       return { ...current, visibleCount: HOME_INITIAL_VISIBLE_THREADS };
+    case "toggle-settled":
+      return { ...current, settledRevealed: !current.settledRevealed };
   }
 }
 
@@ -112,6 +130,13 @@ export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem
         previous.groupKey === item.groupKey &&
         previous.hiddenCount === item.hiddenCount &&
         previous.canShowLess === item.canShowLess
+      );
+    case "settled-toggle":
+      return (
+        previous.type === "settled-toggle" &&
+        previous.groupKey === item.groupKey &&
+        previous.settledCount === item.settledCount &&
+        previous.revealed === item.revealed
       );
   }
 }
@@ -151,6 +176,7 @@ export function buildHomeListLayout(input: {
     const visibleThreads = group.threads.slice(0, visibleCount);
     const hiddenCount = totalCount - visibleCount;
     const hasShowMoreRow = !input.showAllThreads && totalCount > HOME_INITIAL_VISIBLE_THREADS;
+    const hasSettledRow = group.settledThreads.length > 0;
 
     // Pending (unsent) tasks lead the group and are never paginated away.
     for (const [pendingIndex, pendingTask] of group.pendingTasks.entries()) {
@@ -161,7 +187,8 @@ export function buildHomeListLayout(input: {
         isLast:
           pendingIndex === group.pendingTasks.length - 1 &&
           visibleThreads.length === 0 &&
-          !hasShowMoreRow,
+          !hasShowMoreRow &&
+          !hasSettledRow,
       });
     }
 
@@ -170,7 +197,7 @@ export function buildHomeListLayout(input: {
         type: "thread",
         key: `thread:${thread.environmentId}:${thread.id}`,
         thread,
-        isLast: threadIndex === visibleThreads.length - 1 && !hasShowMoreRow,
+        isLast: threadIndex === visibleThreads.length - 1 && !hasShowMoreRow && !hasSettledRow,
       });
     }
 
@@ -182,6 +209,29 @@ export function buildHomeListLayout(input: {
         hiddenCount,
         canShowLess: visibleCount > HOME_INITIAL_VISIBLE_THREADS,
       });
+    }
+
+    // Settled threads leave the inbox but stay reachable behind a per-group
+    // disclosure (mac parity), most recently settled first.
+    if (group.settledThreads.length > 0) {
+      const settledRevealed = display.settledRevealed;
+      items.push({
+        type: "settled-toggle",
+        key: `settled-toggle:${group.key}`,
+        groupKey: group.key,
+        settledCount: group.settledThreads.length,
+        revealed: settledRevealed,
+      });
+      if (settledRevealed) {
+        for (const [settledIndex, thread] of group.settledThreads.entries()) {
+          items.push({
+            type: "thread",
+            key: `thread:${thread.environmentId}:${thread.id}`,
+            thread,
+            isLast: settledIndex === group.settledThreads.length - 1,
+          });
+        }
+      }
     }
   }
 

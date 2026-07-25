@@ -1428,11 +1428,15 @@ public struct AppSettings: Hashable, Sendable {
     public var newWorktreesStartFromOrigin: Bool
     public var addProjectBaseDirectory: String
     public var autoReview: AppAutoReviewSettings
+    /// Milliseconds a settled thread may sit before the server auto-archives
+    /// it. `nil` disables auto-archiving.
+    public var autoArchiveSettledAfterMs: Double?
 
     public init(
         assistantStreaming: Bool, providerUpdateChecks: Bool, defaultEnvMode: ProjectEnvMode,
         newWorktreesStartFromOrigin: Bool, addProjectBaseDirectory: String,
-        autoReview: AppAutoReviewSettings = AppAutoReviewSettings()
+        autoReview: AppAutoReviewSettings = AppAutoReviewSettings(),
+        autoArchiveSettledAfterMs: Double? = nil
     ) {
         self.assistantStreaming = assistantStreaming
         self.providerUpdateChecks = providerUpdateChecks
@@ -1440,6 +1444,7 @@ public struct AppSettings: Hashable, Sendable {
         self.newWorktreesStartFromOrigin = newWorktreesStartFromOrigin
         self.addProjectBaseDirectory = addProjectBaseDirectory
         self.autoReview = autoReview
+        self.autoArchiveSettledAfterMs = autoArchiveSettledAfterMs
     }
 }
 

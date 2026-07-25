@@ -23,6 +23,7 @@ public struct ChatScreen: View {
                     DiffReviewView(model: model, threadID: thread.id)
                         .transition(Motion.paneChange)
                 } else {
+                    Group {
                     ChatHeaderView(
                         thread: thread, model: model, scenery: scenery, threadKey: threadKey)
                     Divider()
@@ -70,10 +71,14 @@ public struct ChatScreen: View {
                     // SceneryChatBackground supplies the adaptive frost/wash for
                     // long-form legibility; individual controls add glass only where
                     // they need a distinct interactive surface.
+                    }
+                    // Pane swap animates in both directions: entering review
+                    // already carries this on DiffReviewView.
+                    .transition(Motion.paneChange)
                 }
             } else {
                 ChatEmptyStateView()
-                    .transition(.opacity)
+                    .transition(Motion.materialize)
             }
         }
         // Thread selection is frequent and often keyboard-driven, so the new
@@ -84,6 +89,14 @@ public struct ChatScreen: View {
         )
         // The VCS strip unfolds when repo status first arrives for a thread.
         .animation(Motion.structure, value: model.selectedVcsStatus()?.isRepo ?? false)
+        // The plan strip mounts/dismounts on run start/end; ease the flip so
+        // the composer glides instead of jumping.
+        .animation(
+            Motion.structure,
+            value: model.selectedThread.map {
+                $0.status == .running || $0.status == .backgroundWork
+            } ?? false
+        )
         .background {
             // The thread's scene as a full chat wallpaper; the wash inside
             // keeps timeline text readable (see SceneryChatBackground).

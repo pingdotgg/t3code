@@ -270,32 +270,46 @@ struct SubagentTaskHealthTags: View {
 
     @ViewBuilder
     var body: some View {
-        if task.state == .running {
-            let runningSilently = SubagentTaskPresentation.isRunningSilently(task: task, at: now)
-            HStack(spacing: 6) {
-                Text(activityLabel(runningSilently: runningSilently))
-                    .font(.caption2)
-                    .foregroundStyle(Color.secondary)
-                if runningSilently {
+        Group {
+            if task.state == .running {
+                let runningSilently = SubagentTaskPresentation.isRunningSilently(task: task, at: now)
+                HStack(spacing: 6) {
+                    Text(activityLabel(runningSilently: runningSilently))
+                        .font(.caption2)
+                        .foregroundStyle(Color.secondary)
+                    // Flips on the 1Hz tick, so it reserves its space and
+                    // fades render-only instead of animating an insertion
+                    // into a live timeline row.
                     TranscriptPill(
                         "running silently",
                         tint: .secondary,
                         fill: AnyShapeStyle(Color.secondary.opacity(0.14)))
+                        .opacity(runningSilently ? 1 : 0)
+                        .accessibilityHidden(!runningSilently)
+                    if task.isBackgrounded {
+                        TranscriptPill("background")
+                            .transition(.opacity)
+                    }
                 }
-                if task.isBackgrounded {
-                    TranscriptPill("background")
+                .animation(Motion.ambient, value: runningSilently)
+            } else if task.state == .paused {
+                HStack(spacing: 6) {
+                    TranscriptPill("paused")
+                        .transition(.opacity)
+                    if task.isBackgrounded {
+                        TranscriptPill("background")
+                            .transition(.opacity)
+                    }
                 }
+            } else if task.isBackgrounded {
+                TranscriptPill("background")
+                    .transition(.opacity)
             }
-        } else if task.state == .paused {
-            HStack(spacing: 6) {
-                TranscriptPill("paused")
-                if task.isBackgrounded {
-                    TranscriptPill("background")
-                }
-            }
-        } else if task.isBackgrounded {
-            TranscriptPill("background")
         }
+        // State- and background-driven pill swaps fade in/out instead of
+        // blinking; ambient keeps the fades quiet and Reduce Motion-safe.
+        .animation(Motion.ambient, value: task.state)
+        .animation(Motion.ambient, value: task.isBackgrounded)
     }
 
     private func activityLabel(runningSilently: Bool) -> String {

@@ -31,7 +31,7 @@ public struct PlanCard: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
-                withAnimation(Motion.feedback) { isExpanded.toggle() }
+                withAnimation(Motion.structure) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
                     Label(plan.isImplemented ? "Plan" : "Plan ready", systemImage: "list.clipboard")
@@ -95,7 +95,10 @@ public struct PlanCard: View {
                 .stroke(.separator.opacity(0.65), lineWidth: 1)
         }
         // Implemented state arrives from the model, not a tap, so the badge
-        // swap and button removal animate off this value change.
-        .animation(Motion.structure, value: plan.isImplemented)
+        // swap and button removal animate off this value change. The rare
+        // success beat gets the delight budget; the ripple fires only on the
+        // false→true edge, so a restored transcript never replays it.
+        .animation(Motion.delight, value: plan.isImplemented)
+        .successRipple(fire: plan.isImplemented, cornerRadius: AlpineTheme.Corners.card)
     }
 }
