@@ -135,7 +135,11 @@ export function statusSummary(
     readonly workingTree?: { readonly files: readonly { readonly path: string }[] };
     readonly aheadCount?: number;
     readonly behindCount?: number;
-    readonly pr?: { readonly state?: string; readonly number?: number } | null;
+    readonly pr?: {
+      readonly state?: string;
+      readonly number?: number;
+      readonly isDraft?: boolean;
+    } | null;
   } | null,
 ): string {
   if (!gitStatus) {
@@ -160,7 +164,7 @@ export function statusSummary(
     parts.push(`${gitStatus.behindCount} behind`);
   }
   if (gitStatus.pr?.state === "open") {
-    parts.push(`PR #${gitStatus.pr.number} open`);
+    parts.push(`PR #${gitStatus.pr.number} ${gitStatus.pr.isDraft === true ? "draft" : "open"}`);
   }
 
   return parts.join(" \u00b7 ");

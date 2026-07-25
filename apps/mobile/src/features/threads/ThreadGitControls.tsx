@@ -58,7 +58,10 @@ function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
     parts.push(`${gitStatus.behindCount} behind`);
   }
   if (gitStatus.pr?.state === "open") {
-    parts.push(`PR #${gitStatus.pr.number}`);
+    parts.push(`PR #${gitStatus.pr.number}${gitStatus.pr.isDraft === true ? " · Draft" : ""}`);
+  }
+  if (gitStatus.pr?.state === "open" && gitStatus.pr.mergeStateStatus === "dirty") {
+    parts.push("Conflicts");
   }
 
   return parts.join(" · ");

@@ -2,14 +2,13 @@ import { useRoute, type RouteProp } from "@react-navigation/native";
 import { useMemo, useRef } from "react";
 import {
   EnvironmentId,
-  type OrchestrationThread,
   ThreadId,
   type ScopedProjectRef,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as Option from "effect/Option";
 
+import { threadDetailToShell } from "../lib/threadDetailShell";
 import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentThread } from "../state/threads";
 import {
@@ -27,47 +26,6 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
   }
 
   return value ?? null;
-}
-
-function latestUserMessageAt(thread: OrchestrationThread): OrchestrationThread["updatedAt"] | null {
-  for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
-    const message = thread.messages[index];
-    if (message?.role === "user") {
-      return message.createdAt;
-    }
-  }
-
-  return null;
-}
-
-function threadDetailToShell(
-  environmentId: EnvironmentId,
-  thread: OrchestrationThread,
-): EnvironmentThreadShell {
-  return {
-    environmentId,
-    id: thread.id,
-    projectId: thread.projectId,
-    title: thread.title,
-    modelSelection: thread.modelSelection,
-    executorModelSelection: thread.executorModelSelection,
-    runtimeMode: thread.runtimeMode,
-    interactionMode: thread.interactionMode,
-    branch: thread.branch,
-    worktreePath: thread.worktreePath,
-    parentThreadId: thread.parentThreadId,
-    latestTurn: thread.latestTurn,
-    createdAt: thread.createdAt,
-    updatedAt: thread.updatedAt,
-    archivedAt: thread.archivedAt,
-    settledOverride: thread.settledOverride,
-    settledAt: thread.settledAt,
-    session: thread.session,
-    latestUserMessageAt: latestUserMessageAt(thread),
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
-  };
 }
 
 function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefined) {

@@ -112,4 +112,23 @@ describe("buildThreadNavigationGroups", () => {
       })[0]?.threads.map((thread) => thread.id),
     ).toEqual(["newer", "older"]);
   });
+
+  it("excludes settled threads, which stay reachable via the home disclosure", () => {
+    const settled = makeThread({
+      id: ThreadId.make("settled"),
+      projectId: project.id,
+      title: "Settled work",
+      settledOverride: "settled",
+      settledAt: "2026-06-04T00:00:00.000Z",
+      updatedAt: "2026-06-04T00:00:00.000Z",
+    });
+
+    expect(
+      buildThreadNavigationGroups({
+        projects: [project],
+        threads: [...threads, settled],
+        now: "2026-06-10T00:00:00.000Z",
+      })[0]?.threads.map((thread) => thread.id),
+    ).toEqual(["newer", "older"]);
+  });
 });

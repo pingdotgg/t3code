@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { VcsStatusResult } from "@t3tools/contracts";
 
-import { isMergeReady } from "./mergeReadiness";
+import { hasPrConflicts, isMergeReady, shouldOfferReadyPr } from "./mergeReadiness";
 
 function statusWith(
   pr: Partial<NonNullable<VcsStatusResult["pr"]>> | null,
@@ -72,5 +72,67 @@ describe("isMergeReady", () => {
   it("is not ready when there is no PR", () => {
     expect(isMergeReady(statusWith(null))).toBe(false);
     expect(isMergeReady(null)).toBe(false);
+  });
+
+  it("is not ready when the PR is a draft", () => {
+    expect(isMergeReady(statusWith({ isDraft: true }))).toBe(false);
+  });
+
+  it("is ready when the PR is explicitly not a draft", () => {
+    expect(isMergeReady(statusWith({ isDraft: false }))).toBe(true);
+  });
+
+  it("is not ready when the PR has merge conflicts (dirty merge state)", () => {
+    expect(isMergeReady(statusWith({ mergeStateStatus: "dirty" }))).toBe(false);
+  });
+
+  it("treats only an explicit dirty merge state as conflicts", () => {
+    // Mirrors mac MergeReadiness: unknown/non-dirty merge state never blocks.
+    expect(isMergeReady(statusWith({ mergeStateStatus: "clean" }))).toBe(true);
+    expect(isMergeReady(statusWith({ mergeStateStatus: "blocked" }))).toBe(true);
+    expect(isMergeReady(statusWith({ mergeStateStatus: "behind" }))).toBe(true);
+    expect(isMergeReady(statusWith({ mergeStateStatus: null }))).toBe(true);
+  });
+
+  it("ignores reviewLifecycle for merge readiness, like mac MergeReadiness", () => {
+    // The review lifecycle gates the "Fix Reviews" follow-up (mac
+    // ReviewFollowUp), never the merge predicate — keep that parity.
+    expect(isMergeReady(statusWith({ reviewLifecycle: "review-in-progress" }))).toBe(true);
+    expect(isMergeReady(statusWith({ reviewLifecycle: "actionable-comments" }))).toBe(true);
+  });
+});
+
+describe("hasPrConflicts", () => {
+  it("is true only when the merge state is dirty", () => {
+    expect(hasPrConflicts(statusWith({ mergeStateStatus: "dirty" }))).toBe(true);
+    expect(hasPrConflicts(statusWith({ mergeStateStatus: "clean" }))).toBe(false);
+    expect(hasPrConflicts(statusWith({ mergeStateStatus: null }))).toBe(false);
+    expect(hasPrConflicts(statusWith({}))).toBe(false);
+  });
+
+  it("is false when there is no PR", () => {
+    expect(hasPrConflicts(statusWith(null))).toBe(false);
+    expect(hasPrConflicts(null)).toBe(false);
+  });
+});
+
+describe("shouldOfferReadyPr", () => {
+  it("is true only for an open draft PR", () => {
+    expect(shouldOfferReadyPr(statusWith({ isDraft: true }))).toBe(true);
+  });
+
+  it("is false when the PR is not a draft or the draft state is unknown", () => {
+    expect(shouldOfferReadyPr(statusWith({ isDraft: false }))).toBe(false);
+    expect(shouldOfferReadyPr(statusWith({}))).toBe(false);
+  });
+
+  it("is false when the PR is not open", () => {
+    expect(shouldOfferReadyPr(statusWith({ isDraft: true, state: "merged" }))).toBe(false);
+    expect(shouldOfferReadyPr(statusWith({ isDraft: true, state: "closed" }))).toBe(false);
+  });
+
+  it("is false when there is no PR", () => {
+    expect(shouldOfferReadyPr(statusWith(null))).toBe(false);
+    expect(shouldOfferReadyPr(null)).toBe(false);
   });
 });

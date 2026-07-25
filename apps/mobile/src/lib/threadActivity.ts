@@ -1,4 +1,9 @@
-import { ApprovalRequestId, isToolLifecycleItemType, ToolSurface } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  CompactionActivityPayload,
+  isToolLifecycleItemType,
+  ToolSurface,
+} from "@t3tools/contracts";
 import type {
   OrchestrationLatestTurn,
   OrchestrationThread,
@@ -11,6 +16,7 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { deriveToolIdentityFromData, type ToolIdentity } from "@t3tools/shared/toolIdentity";
 
 import * as Arr from "effect/Array";
+import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 
@@ -18,7 +24,12 @@ import { deriveSubagentTasks, type SubagentTaskItem } from "./subagentTaskActivi
 
 export interface PendingApproval {
   readonly requestId: ApprovalRequestId;
-  readonly requestKind: "command" | "file-read" | "file-change";
+  /**
+   * "other" covers canonical request types with no dedicated rendering yet
+   * (e.g. `dynamic_tool_call`, `auth_tokens_refresh`): they still surface as a
+   * generic approval card rather than being dropped.
+   */
+  readonly requestKind: "command" | "file-read" | "file-change" | "other";
   readonly createdAt: string;
   readonly detail?: string;
 }
@@ -47,6 +58,7 @@ export interface ThreadFeedActivity {
     | "alert"
     | "check"
     | "command"
+    | "compress"
     | "computer"
     | "edit"
     | "eye"
@@ -170,7 +182,9 @@ export type ThreadFeedLatestTurn = Pick<
   "turnId" | "state" | "startedAt" | "completedAt"
 >;
 
-function requestKindFromRequestType(requestType: unknown): PendingApproval["requestKind"] | null {
+function requestKindFromRequestType(
+  requestType: unknown,
+): Exclude<PendingApproval["requestKind"], "other"> | null {
   switch (requestType) {
     case "command_execution_approval":
     case "exec_command_approval":
@@ -183,6 +197,26 @@ function requestKindFromRequestType(requestType: unknown): PendingApproval["requ
     default:
       return null;
   }
+}
+
+/**
+ * The server-provided `payload.requestKind` wins; the local requestType
+ * mapping is only a fallback for activities persisted before the server
+ * computed one. Newer canonical request types (e.g. `dynamic_tool_call`,
+ * `auth_tokens_refresh`) match neither and return null — the caller decides
+ * whether that drops the row or degrades to a generic approval.
+ */
+function requestKindFromPayload(
+  payload: Record<string, unknown> | null,
+): Exclude<PendingApproval["requestKind"], "other"> | null {
+  if (
+    payload?.requestKind === "command" ||
+    payload?.requestKind === "file-read" ||
+    payload?.requestKind === "file-change"
+  ) {
+    return payload.requestKind;
+  }
+  return requestKindFromRequestType(payload?.requestType);
 }
 
 function isStalePendingRequestFailureDetail(detail: string | undefined): boolean {
@@ -354,6 +388,11 @@ function toDerivedWorkLogEntry(
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
       : null;
+  // Compaction rows are a typed lifecycle (started/completed/failed/canceled)
+  // with a token delta, not a generic tone-based row.
+  if (activity.kind === "context-compaction") {
+    return toDerivedCompactionEntry(activity, payload);
+  }
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
@@ -413,6 +452,13 @@ function toDerivedWorkLogEntry(
       entry.detail = presentation.subtitle;
     }
   }
+  if (activity.kind === "usage-limit.reached") {
+    // The payload carries `message` (not `detail`) plus an optional reset time.
+    const usageDetail = usageLimitActivityDetail(payload);
+    if (usageDetail) {
+      entry.detail = usageDetail;
+    }
+  }
   if (commandPreview.command) {
     entry.command = commandPreview.command;
   }
@@ -453,6 +499,96 @@ function toDerivedWorkLogEntry(
     entry.collapseKey = collapseKey;
   }
   return entry;
+}
+
+const decodeCompactionActivityPayload = Schema.decodeUnknownOption(CompactionActivityPayload);
+
+function toDerivedCompactionEntry(
+  activity: OrchestrationThreadActivity,
+  payload: Record<string, unknown> | null,
+): DerivedWorkLogEntry {
+  const compaction = Option.getOrNull(decodeCompactionActivityPayload(payload));
+  const detail = compactionActivityDetail(compaction);
+  return {
+    id: activity.id,
+    createdAt: activity.createdAt,
+    turnId: activity.turnId,
+    label: activity.summary,
+    ...(detail ? { detail } : {}),
+    tone: activity.tone === "error" ? "error" : "info",
+    activityKind: activity.kind,
+  };
+}
+
+/**
+ * Mac renders "9.5k → 2.1k tokens" on completion (ChatTimelineRow); the
+ * context window size is appended when the provider reported it, and the
+ * failure/cancel diagnostic rides along when present.
+ */
+function compactionActivityDetail(payload: CompactionActivityPayload | null): string | null {
+  if (!payload) {
+    return null;
+  }
+  const parts: string[] = [];
+  if (payload.usedTokensBefore !== undefined && payload.usedTokensAfter !== undefined) {
+    const delta = `${formatCompactTokenCount(payload.usedTokensBefore)} → ${formatCompactTokenCount(payload.usedTokensAfter)}`;
+    parts.push(
+      payload.maxTokens !== undefined
+        ? `${delta} of ${formatCompactTokenCount(payload.maxTokens)} tokens`
+        : `${delta} tokens`,
+    );
+  }
+  if (payload.detail !== undefined) {
+    parts.push(payload.detail);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/** Compact token counts in the composer-meter style: "800", "9.5k", "128k". */
+function formatCompactTokenCount(value: number): string {
+  if (value < 1_000) {
+    return value.toLocaleString("en-US");
+  }
+  if (value < 10_000) {
+    return `${(value / 1_000).toFixed(1)}k`;
+  }
+  return `${Math.round(value / 1_000)}k`;
+}
+
+const USAGE_LIMIT_RESET_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function usageLimitResetTimestampMs(payload: Record<string, unknown>): number | null {
+  const resetsAt = asTrimmedString(payload.resetsAt);
+  if (resetsAt) {
+    const parsed = Date.parse(resetsAt);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  const epochSeconds = payload.resetsAtEpochSeconds;
+  if (typeof epochSeconds === "number" && Number.isFinite(epochSeconds)) {
+    return epochSeconds * 1_000;
+  }
+  return null;
+}
+
+function usageLimitActivityDetail(payload: Record<string, unknown> | null): string | null {
+  if (!payload) {
+    return null;
+  }
+  const parts: string[] = [];
+  const message = asTrimmedString(payload.message);
+  if (message) {
+    parts.push(message);
+  }
+  const resetMs = usageLimitResetTimestampMs(payload);
+  if (resetMs !== null) {
+    parts.push(`Resets at ${USAGE_LIMIT_RESET_TIME_FORMATTER.format(new Date(resetMs))}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 function collapseDerivedWorkLogEntries(
@@ -645,6 +781,10 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
     return "message";
   }
   if (entry.activityKind === "runtime.warning") return "warning";
+  if (entry.activityKind === "context-compaction") {
+    return entry.tone === "error" ? "alert" : "compress";
+  }
+  if (entry.activityKind === "usage-limit.reached") return "alert";
   // Native tool families read off the call's identity, not its item type: a
   // skill and an MCP call both arrive as generic tool item types.
   if (entry.toolIdentity?.family === "skill") return "skill";
@@ -1000,14 +1140,7 @@ function extractWorkLogItemType(
 function extractWorkLogRequestKind(
   payload: Record<string, unknown> | null,
 ): WorkLogEntry["requestKind"] | undefined {
-  if (
-    payload?.requestKind === "command" ||
-    payload?.requestKind === "file-read" ||
-    payload?.requestKind === "file-change"
-  ) {
-    return payload.requestKind;
-  }
-  return requestKindFromRequestType(payload?.requestType) ?? undefined;
+  return requestKindFromPayload(payload) ?? undefined;
 }
 
 function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {
@@ -1376,12 +1509,9 @@ export function derivePendingApprovals(
         ? (activity.payload as Record<string, unknown>)
         : null;
     const requestId = parseApprovalRequestId(payload?.requestId);
-    const requestKind =
-      payload?.requestKind === "command" ||
-      payload?.requestKind === "file-read" ||
-      payload?.requestKind === "file-change"
-        ? payload.requestKind
-        : requestKindFromRequestType(payload?.requestType);
+    // Unknown/new request types degrade to a generic approval card ("other")
+    // instead of being dropped — the request is still actionable.
+    const requestKind = requestKindFromPayload(payload) ?? "other";
     const detail = typeof payload?.detail === "string" ? payload.detail : undefined;
 
     if (activity.kind === "approval.requested" && requestId && requestKind) {

@@ -58,6 +58,8 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): SFSymbol {
       return "checkmark";
     case "command":
       return "terminal";
+    case "compress":
+      return "arrow.down.right.and.arrow.up.left";
     case "computer":
       return "desktopcomputer";
     case "edit":

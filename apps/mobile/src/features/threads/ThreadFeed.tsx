@@ -1,11 +1,15 @@
 import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import * as Haptics from "expo-haptics";
+import { useAtomValue } from "@effect/atom-react";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import {
+  CommandId,
+  MessageId,
   RuntimeTaskId,
   type EnvironmentId,
-  type MessageId,
+  type OrchestrationProposedPlan,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
@@ -92,8 +96,11 @@ import { SubagentTaskRow } from "./SubagentTaskRow";
 import { SessionExitRow } from "./SessionExitRow";
 import { useAssetUrlState } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
-import { threadEnvironment } from "../../state/threads";
+import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { makeQueuedMessageMetadata } from "../../lib/commandMetadata";
+import { buildImplementPlanTurnInput, deriveRelevantProposedPlan } from "../../lib/proposedPlans";
+import { ProposedPlanCard } from "./ProposedPlanCard";
 import {
   chatAttachmentAccessibilityLabel,
   formatChatAttachmentSize,
@@ -1398,6 +1405,30 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     label: "thread subagent task stop",
     reportFailure: false,
   });
+  const threadDetailRef = useMemo(
+    () => ({ environmentId: props.environmentId, threadId: props.threadId }),
+    [props.environmentId, props.threadId],
+  );
+  const threadDetail = useAtomValue(environmentThreadDetails.detailAtom(threadDetailRef));
+  const relevantProposedPlan = useMemo(
+    () =>
+      threadDetail !== null
+        ? deriveRelevantProposedPlan({
+            proposedPlans: threadDetail.proposedPlans,
+            latestTurnId: threadDetail.latestTurn?.turnId ?? null,
+          })
+        : null,
+    [threadDetail],
+  );
+  const [implementingPlanId, setImplementingPlanId] = useState<string | null>(null);
+  const setInteractionModeCommand = useAtomCommand(
+    threadEnvironment.setInteractionMode,
+    "thread plan implementation",
+  );
+  const startTurnCommand = useAtomCommand(
+    threadEnvironment.startTurn,
+    "thread plan implementation",
+  );
   const [expandedImage, setExpandedImage] = useState<{
     uri: string;
     headers?: Record<string, string>;
@@ -1753,6 +1784,54 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [props.environmentId, props.threadId, stopSubagentTaskCommand],
   );
 
+  const onImplementPlan = useCallback(
+    async (plan: OrchestrationProposedPlan) => {
+      if (threadDetail === null || implementingPlanId !== null) {
+        return;
+      }
+
+      setImplementingPlanId(plan.id);
+      try {
+        // The server starts the turn with the thread's persisted interaction
+        // mode, and implementation turns always run in the default mode — so
+        // flip plan mode off before starting the turn (same ordering as mac's
+        // implementPlan).
+        if (threadDetail.interactionMode !== "default") {
+          const modeResult = await setInteractionModeCommand({
+            environmentId: props.environmentId,
+            input: { threadId: props.threadId, interactionMode: "default" },
+          });
+          if (AsyncResult.isFailure(modeResult)) {
+            return;
+          }
+        }
+
+        const metadata = makeQueuedMessageMetadata();
+        await startTurnCommand({
+          environmentId: props.environmentId,
+          input: buildImplementPlanTurnInput({
+            threadId: props.threadId,
+            planId: plan.id,
+            runtimeMode: threadDetail.runtimeMode,
+            commandId: CommandId.make(metadata.commandId),
+            messageId: MessageId.make(metadata.messageId),
+            createdAt: metadata.createdAt,
+          }),
+        });
+      } finally {
+        setImplementingPlanId(null);
+      }
+    },
+    [
+      implementingPlanId,
+      props.environmentId,
+      props.threadId,
+      setInteractionModeCommand,
+      startTurnCommand,
+      threadDetail,
+    ],
+  );
+
   const renderItem = useCallback(
     (info: { item: ThreadFeedEntry; index: number }) =>
       renderFeedEntry(info, {
@@ -1880,6 +1959,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             scrollEventThrottle={16}
             ListHeaderComponent={
               usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />
+            }
+            ListFooterComponent={
+              relevantProposedPlan !== null ? (
+                <View style={{ paddingBottom: 12 }}>
+                  <ProposedPlanCard
+                    plan={relevantProposedPlan}
+                    implementing={implementingPlanId === relevantProposedPlan.id}
+                    onImplement={onImplementPlan}
+                  />
+                </View>
+              ) : undefined
             }
             contentContainerStyle={{
               paddingTop: 12,

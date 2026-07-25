@@ -31,6 +31,7 @@ import {
   PendingTaskListRow,
   ThreadListGroupHeader,
   ThreadListRow,
+  ThreadListSettledToggleRow,
   ThreadListShowMoreRow,
 } from "../threads/thread-list-items";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
@@ -73,6 +74,8 @@ interface HomeScreenProps {
   readonly onStartNewTask: () => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSettleThread: (thread: EnvironmentThreadShell) => void;
+  readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
@@ -287,6 +290,8 @@ export function HomeScreen(props: HomeScreenProps) {
               }
               isLast={item.isLast}
               onArchiveThread={props.onArchiveThread}
+              onSettleThread={props.onSettleThread}
+              onUnsettleThread={props.onUnsettleThread}
               onDeleteThread={props.onDeleteThread}
               onSelectThread={props.onSelectThread}
               onSwipeableClose={handleSwipeableClose}
@@ -294,6 +299,16 @@ export function HomeScreen(props: HomeScreenProps) {
             />
           );
         }
+        case "settled-toggle":
+          return (
+            <ThreadListSettledToggleRow
+              variant="compact"
+              settledCount={item.settledCount}
+              revealed={item.revealed}
+              groupKey={item.groupKey}
+              onGroupAction={updateGroupDisplay}
+            />
+          );
         case "show-more":
           return (
             <ThreadListShowMoreRow
@@ -315,6 +330,8 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onDeleteThread,
       props.onSelectPendingTask,
       props.onSelectThread,
+      props.onSettleThread,
+      props.onUnsettleThread,
       props.savedConnectionsById,
       updateGroupDisplay,
     ],

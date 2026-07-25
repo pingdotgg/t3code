@@ -1,8 +1,10 @@
 import type {
   ModelCapabilities,
   ModelSelection,
+  ProviderDriverKind,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
+import { isProviderAvailable, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
@@ -31,12 +33,9 @@ function providerDisplayLabel(provider: {
   readonly instanceId: string;
 }): string {
   if (provider.displayName) return provider.displayName;
-  if (provider.driver === "codex") return "Codex";
-  if (provider.driver === "claudeAgent") return "Claude";
-  if (provider.driver === "kimi") return "Kimi";
-  if (provider.driver === "grok") return "Grok";
-  if (provider.driver === "fugu") return "Fugu";
-  return provider.instanceId;
+  // Unknown driver kinds fall back to the instance id so unfamiliar
+  // providers still render something meaningful.
+  return PROVIDER_DISPLAY_NAMES[provider.driver as ProviderDriverKind] ?? provider.instanceId;
 }
 
 function normalizeSelectionOptions(
@@ -84,7 +83,15 @@ export function buildModelOptions(
   const options = new Map<string, ModelOption>();
 
   for (const provider of config?.providers ?? []) {
-    if (!provider.enabled || !provider.installed || provider.auth.status === "unauthenticated") {
+    // Unavailable providers (missing driver in this build) are also
+    // disabled/uninstalled per the contracts invariant, but check the field
+    // explicitly; a missing `availability` means "available".
+    if (
+      !provider.enabled ||
+      !provider.installed ||
+      provider.auth.status === "unauthenticated" ||
+      !isProviderAvailable(provider)
+    ) {
       continue;
     }
 

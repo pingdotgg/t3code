@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import * as TestClock from "effect/testing/TestClock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -112,52 +114,59 @@ describe("AutoArchiveJanitor.tick", () => {
             archived.push(threadId);
           })),
     };
-    return Effect.runPromise(
-      Effect.gen(function* () {
-        const janitor = yield* AutoArchiveJanitor.make(deps);
-        yield* janitor.tick;
-        return archived;
-      }),
-    );
+    return Effect.gen(function* () {
+      // it.effect runs on the TestClock (epoch 0); align it with NOW_MS so
+      // eligibility windows compare against the fixtures' timestamps.
+      yield* TestClock.adjust(Duration.millis(NOW_MS));
+      const janitor = yield* AutoArchiveJanitor.make(deps);
+      yield* janitor.tick;
+      return archived;
+    });
   };
 
-  it("does nothing when the setting is disabled (null)", async () => {
-    const archived = await runTick({
-      autoArchiveSettledAfter: null,
-      threads: [makeThread()],
-    });
-    expect(archived).toEqual([]);
-  });
+  it.effect("does nothing when the setting is disabled (null)", () =>
+    Effect.gen(function* () {
+      const archived = yield* runTick({
+        autoArchiveSettledAfter: null,
+        threads: [makeThread()],
+      });
+      expect(archived).toEqual([]);
+    }),
+  );
 
-  it("archives only eligible threads", async () => {
-    const stale = makeThread({ id: ThreadId.make("stale") });
-    const fresh = makeThread({
-      id: ThreadId.make("fresh"),
-      latestUserMessageAt: iso(DateTime.toEpochMillis(DateTime.nowUnsafe()) - HOUR_MS),
-    });
-    const pinned = makeThread({ id: ThreadId.make("pinned"), settledOverride: "active" });
-    const archived = await runTick({
-      autoArchiveSettledAfter: Duration.days(1),
-      threads: [stale, fresh, pinned],
-    });
-    expect(archived).toEqual([ThreadId.make("stale")]);
-  });
+  it.effect("archives only eligible threads", () =>
+    Effect.gen(function* () {
+      const stale = makeThread({ id: ThreadId.make("stale") });
+      const fresh = makeThread({
+        id: ThreadId.make("fresh"),
+        latestUserMessageAt: iso(DateTime.toEpochMillis(DateTime.nowUnsafe()) - HOUR_MS),
+      });
+      const pinned = makeThread({ id: ThreadId.make("pinned"), settledOverride: "active" });
+      const archived = yield* runTick({
+        autoArchiveSettledAfter: Duration.days(1),
+        threads: [stale, fresh, pinned],
+      });
+      expect(archived).toEqual([ThreadId.make("stale")]);
+    }),
+  );
 
-  it("keeps sweeping when one archive fails", async () => {
-    const first = makeThread({ id: ThreadId.make("first") });
-    const second = makeThread({ id: ThreadId.make("second") });
-    const pushed: Array<ThreadId> = [];
-    const result = await runTick({
-      autoArchiveSettledAfter: Duration.days(1),
-      threads: [first, second],
-      archiveThread: (threadId) =>
-        threadId === ThreadId.make("first")
-          ? Effect.fail("boom")
-          : Effect.sync(() => {
-              pushed.push(threadId);
-            }),
-    });
-    expect(pushed).toEqual([ThreadId.make("second")]);
-    expect(result).toEqual([]);
-  });
+  it.effect("keeps sweeping when one archive fails", () =>
+    Effect.gen(function* () {
+      const first = makeThread({ id: ThreadId.make("first") });
+      const second = makeThread({ id: ThreadId.make("second") });
+      const pushed: Array<ThreadId> = [];
+      const result = yield* runTick({
+        autoArchiveSettledAfter: Duration.days(1),
+        threads: [first, second],
+        archiveThread: (threadId) =>
+          threadId === ThreadId.make("first")
+            ? Effect.fail("boom")
+            : Effect.sync(() => {
+                pushed.push(threadId);
+              }),
+      });
+      expect(pushed).toEqual([ThreadId.make("second")]);
+      expect(result).toEqual([]);
+    }),
+  );
 });

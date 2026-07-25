@@ -13,6 +13,7 @@ import {
 
 import {
   buildThreadFeed,
+  derivePendingApprovals,
   deriveThreadFeedPresentation,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
@@ -841,5 +842,316 @@ describe("buildThreadFeed", () => {
 
     // Unknown surface -> generic -> icon falls through to the itemType chain.
     expect(activity).toMatchObject({ summary: "AcmeDoThing", icon: "wrench" });
+  });
+
+  it("renders an in-progress context compaction as a distinct row", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-compaction-started"),
+      projectId: ProjectId.make("project-1"),
+      title: "Compaction started",
+      activities: [
+        makeActivity({
+          id: EventId.make("compaction-started"),
+          kind: "context-compaction",
+          tone: "info",
+          summary: "Compacting context…",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          payload: { status: "started" },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+    expect(group.activities[0]).toMatchObject({
+      summary: "Compacting context…",
+      detail: null,
+      icon: "compress",
+      toolLike: false,
+      status: null,
+    });
+  });
+
+  it("renders a completed context compaction with its token delta", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-compaction-completed"),
+      projectId: ProjectId.make("project-1"),
+      title: "Compaction completed",
+      activities: [
+        makeActivity({
+          id: EventId.make("compaction-completed"),
+          kind: "context-compaction",
+          tone: "info",
+          summary: "Context compacted",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          payload: {
+            status: "completed",
+            usedTokensBefore: 95_000,
+            usedTokensAfter: 2_100,
+            maxTokens: 200_000,
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+    expect(group.activities[0]).toMatchObject({
+      summary: "Context compacted",
+      detail: "95k → 2.1k of 200k tokens",
+      icon: "compress",
+      toolLike: false,
+      status: null,
+    });
+  });
+
+  it("renders a failed context compaction as an error row with its diagnostic", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-compaction-failed"),
+      projectId: ProjectId.make("project-1"),
+      title: "Compaction failed",
+      activities: [
+        makeActivity({
+          id: EventId.make("compaction-failed"),
+          kind: "context-compaction",
+          tone: "error",
+          summary: "Context compaction failed",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          payload: {
+            status: "failed",
+            detail: "Compaction did not finish — the session context is unchanged.",
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+    expect(group.activities[0]).toMatchObject({
+      summary: "Context compaction failed",
+      detail: "Compaction did not finish — the session context is unchanged.",
+      icon: "alert",
+      status: "failure",
+    });
+  });
+
+  it("keeps a compaction row with an undecodable payload instead of dropping it", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-compaction-unknown"),
+      projectId: ProjectId.make("project-1"),
+      title: "Compaction unknown payload",
+      activities: [
+        makeActivity({
+          id: EventId.make("compaction-unknown"),
+          kind: "context-compaction",
+          tone: "info",
+          summary: "Context compacted",
+          createdAt: "2026-04-01T00:00:04.000Z",
+          payload: { status: "surprised" },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+    expect(group.activities[0]).toMatchObject({
+      summary: "Context compacted",
+      detail: null,
+      icon: "compress",
+    });
+  });
+
+  it("renders a usage-limit activity as a warning row with its reset time", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-usage-limit"),
+      projectId: ProjectId.make("project-1"),
+      title: "Usage limit",
+      activities: [
+        makeActivity({
+          id: EventId.make("usage-limit"),
+          kind: "usage-limit.reached",
+          tone: "error",
+          summary: "Usage limit reached",
+          createdAt: "2026-04-01T00:00:05.000Z",
+          payload: {
+            message: "You've hit your usage limit",
+            provider: "codex",
+            resetsAt: "2026-04-01T15:04:00.000Z",
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+    const activity = group.activities[0];
+    expect(activity).toMatchObject({
+      summary: "Usage limit reached",
+      icon: "alert",
+      status: "failure",
+    });
+    expect(activity?.detail).toContain("You've hit your usage limit");
+    expect(activity?.detail).toContain("Resets at");
+  });
+
+  it("renders a usage-limit activity without a reset time as message only", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-usage-limit-no-reset"),
+      projectId: ProjectId.make("project-1"),
+      title: "Usage limit without reset",
+      activities: [
+        makeActivity({
+          id: EventId.make("usage-limit-no-reset"),
+          kind: "usage-limit.reached",
+          tone: "error",
+          summary: "Usage limit reached",
+          createdAt: "2026-04-01T00:00:06.000Z",
+          payload: {
+            message: "Upgrade to keep going",
+            provider: "codex",
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    if (!group || group.type !== "activity-group") {
+      throw new Error("expected an activity group");
+    }
+    expect(group.activities[0]).toMatchObject({
+      summary: "Usage limit reached",
+      detail: "Upgrade to keep going",
+      icon: "alert",
+    });
+  });
+});
+
+describe("derivePendingApprovals", () => {
+  it("prefers the server-provided payload requestKind over the local requestType mapping", () => {
+    const approvals = derivePendingApprovals([
+      makeActivity({
+        id: EventId.make("approval-requested"),
+        kind: "approval.requested",
+        tone: "approval",
+        summary: "Approval requested",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        payload: {
+          requestId: "req-1",
+          requestKind: "file-change",
+          requestType: "command_execution_approval",
+        },
+      }),
+    ]);
+
+    expect(approvals).toEqual([
+      {
+        requestId: "req-1",
+        requestKind: "file-change",
+        createdAt: "2026-04-01T00:00:01.000Z",
+      },
+    ]);
+  });
+
+  it("keeps approvals for newer request types as generic cards instead of dropping them", () => {
+    const approvals = derivePendingApprovals([
+      makeActivity({
+        id: EventId.make("approval-dynamic-tool"),
+        kind: "approval.requested",
+        tone: "approval",
+        summary: "Approval requested",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        payload: {
+          requestId: "req-dynamic",
+          requestType: "dynamic_tool_call",
+          detail: "Run a dynamic tool",
+        },
+      }),
+      makeActivity({
+        id: EventId.make("approval-auth-refresh"),
+        kind: "approval.requested",
+        tone: "approval",
+        summary: "Approval requested",
+        createdAt: "2026-04-01T00:00:02.000Z",
+        payload: {
+          requestId: "req-auth",
+          requestType: "auth_tokens_refresh",
+        },
+      }),
+      makeActivity({
+        id: EventId.make("approval-unknown-type"),
+        kind: "approval.requested",
+        tone: "approval",
+        summary: "Approval requested",
+        createdAt: "2026-04-01T00:00:03.000Z",
+        payload: {
+          requestId: "req-unknown",
+          requestType: "some_future_request_type",
+        },
+      }),
+    ]);
+
+    expect(approvals).toEqual([
+      {
+        requestId: "req-dynamic",
+        requestKind: "other",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        detail: "Run a dynamic tool",
+      },
+      {
+        requestId: "req-auth",
+        requestKind: "other",
+        createdAt: "2026-04-01T00:00:02.000Z",
+      },
+      {
+        requestId: "req-unknown",
+        requestKind: "other",
+        createdAt: "2026-04-01T00:00:03.000Z",
+      },
+    ]);
+  });
+
+  it("still resolves pending approvals for the newer request types", () => {
+    const approvals = derivePendingApprovals([
+      makeActivity({
+        id: EventId.make("approval-requested"),
+        kind: "approval.requested",
+        tone: "approval",
+        summary: "Approval requested",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        payload: {
+          requestId: "req-dynamic",
+          requestType: "dynamic_tool_call",
+        },
+      }),
+      makeActivity({
+        id: EventId.make("approval-resolved"),
+        kind: "approval.resolved",
+        tone: "approval",
+        summary: "Approval resolved",
+        createdAt: "2026-04-01T00:00:02.000Z",
+        payload: {
+          requestId: "req-dynamic",
+          requestType: "dynamic_tool_call",
+          decision: "accept",
+        },
+      }),
+    ]);
+
+    expect(approvals).toEqual([]);
   });
 });

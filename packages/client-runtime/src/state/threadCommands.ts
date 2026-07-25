@@ -12,10 +12,12 @@ import {
   type RevertThreadCheckpointInput,
   type SetThreadInteractionModeInput,
   type SetThreadRuntimeModeInput,
+  type SettleThreadInput,
   type StartThreadTurnInput,
   type StopThreadSessionInput,
   type StopThreadTaskInput,
   type UnarchiveThreadInput,
+  type UnsettleThreadInput,
   type UpdateThreadMetadataInput,
   archiveThread,
   createThread,
@@ -26,10 +28,12 @@ import {
   revertThreadCheckpoint,
   setThreadInteractionMode,
   setThreadRuntimeMode,
+  settleThread,
   startThreadTurn,
   stopThreadSession,
   stopThreadTask,
   unarchiveThread,
+  unsettleThread,
   updateThreadMetadata,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -44,10 +48,12 @@ export type {
   RevertThreadCheckpointInput,
   SetThreadInteractionModeInput,
   SetThreadRuntimeModeInput,
+  SettleThreadInput,
   StartThreadTurnInput,
   StopThreadSessionInput,
   StopThreadTaskInput,
   UnarchiveThreadInput,
+  UnsettleThreadInput,
   UpdateThreadMetadataInput,
 } from "../operations/commands.ts";
 
@@ -82,6 +88,18 @@ export function createThreadEnvironmentAtoms<R, E>(
     unarchive: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unarchive",
       execute: (input: UnarchiveThreadInput) => unarchiveThread(input),
+      scheduler,
+      concurrency,
+    }),
+    settle: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:settle",
+      execute: (input: SettleThreadInput) => settleThread(input),
+      scheduler,
+      concurrency,
+    }),
+    unsettle: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:unsettle",
+      execute: (input: UnsettleThreadInput) => unsettleThread(input),
       scheduler,
       concurrency,
     }),
