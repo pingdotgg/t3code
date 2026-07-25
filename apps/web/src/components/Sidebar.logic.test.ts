@@ -4,6 +4,7 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
+  filterSidebarV2VisibleThreads,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -236,6 +237,55 @@ describe("resolveSidebarStageBadgeLabel", () => {
 });
 
 describe("sidebar thread lineage helpers", () => {
+  it("keeps only top-level, unarchived threads in the Sidebar V2 project scope", () => {
+    const parentId = ThreadId.make("thread-parent");
+    const projectId = ProjectId.make("project-visible");
+    const environmentId = EnvironmentId.make("environment-visible");
+    const root = makeThreadFixture({
+      id: parentId,
+      environmentId,
+      projectId,
+    });
+    const subagent = makeThreadFixture({
+      id: ThreadId.make("thread-subagent"),
+      environmentId,
+      projectId,
+      lineage: {
+        rootThreadId: parentId,
+        parentThreadId: parentId,
+        relationshipToParent: "subagent",
+      },
+    });
+    const fork = makeThreadFixture({
+      id: ThreadId.make("thread-fork"),
+      environmentId,
+      projectId,
+      lineage: {
+        rootThreadId: parentId,
+        parentThreadId: parentId,
+        relationshipToParent: "fork",
+      },
+    });
+    const archived = makeThreadFixture({
+      id: ThreadId.make("thread-archived"),
+      environmentId,
+      projectId,
+      archivedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const otherProject = makeThreadFixture({
+      id: ThreadId.make("thread-other-project"),
+      environmentId,
+      projectId: ProjectId.make("project-other"),
+    });
+
+    expect(
+      filterSidebarV2VisibleThreads(
+        [root, subagent, fork, archived, otherProject],
+        new Set([`${environmentId}:${projectId}`]),
+      ).map((thread) => thread.id),
+    ).toEqual([parentId, fork.id]);
+  });
+
   it("identifies subagent threads so the sidebar can hide them", () => {
     const parentId = ThreadId.make("thread-parent");
     const subagent = makeThreadFixture({

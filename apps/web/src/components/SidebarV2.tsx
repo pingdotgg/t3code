@@ -109,6 +109,7 @@ import { cn } from "~/lib/utils";
 import {
   buildBulkTitleRegenerationContextMenuItem,
   formatWorkingDurationLabel,
+  filterSidebarV2VisibleThreads,
   firstValidTimestampMs,
   hasUnseenCompletion,
   isTrailingDoubleClick,
@@ -1570,12 +1571,7 @@ export default function SidebarV2() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    const visible = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
-    );
+    const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
     const active: EnvironmentThreadShell[] = [];
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
