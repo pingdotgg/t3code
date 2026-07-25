@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Terminal from "effect/Terminal";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/unstable/cli";
+import * as CliError from "effect/unstable/cli/CliError";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
@@ -20,6 +21,7 @@ export const bootServiceLayer = (
     readonly serverPort?: number;
     readonly serviceUser?: string;
     readonly serviceGroup?: string;
+    readonly serviceEnvironment?: ReadonlyArray<BootService.ServiceEnvironmentEntry>;
   },
 ) =>
   BootService.layer({
@@ -32,6 +34,9 @@ export const bootServiceLayer = (
     ...(options?.serverPort === undefined ? {} : { serverPort: options.serverPort }),
     ...(options?.serviceUser === undefined ? {} : { serviceUser: options.serviceUser }),
     ...(options?.serviceGroup === undefined ? {} : { serviceGroup: options.serviceGroup }),
+    ...(options?.serviceEnvironment === undefined
+      ? {}
+      : { serviceEnvironment: options.serviceEnvironment }),
   }).pipe(Layer.provide(ProcessRunner.layer));
 
 const supervisorFlag = Flag.choice("supervisor", ["systemd", "s6"] as const).pipe(
@@ -56,6 +61,14 @@ const serviceGroupFlag = Flag.string("service-group").pipe(
   Flag.optional,
 );
 
+const serviceEnvironmentFlag = Flag.string("service-environment").pipe(
+  Flag.atLeast(0),
+  Flag.withDescription(
+    "Environment entry for the s6 service as NAME=VALUE. Repeat for multiple entries.",
+  ),
+  Flag.withMetavar("NAME=VALUE"),
+);
+
 const serviceFlags = {
   ...projectLocationFlags,
   host: hostFlag,
@@ -65,6 +78,36 @@ const serviceFlags = {
   serviceUser: serviceUserFlag,
   serviceGroup: serviceGroupFlag,
 };
+
+const serviceMutationFlags = {
+  ...serviceFlags,
+  serviceEnvironment: serviceEnvironmentFlag,
+};
+
+export function parseServiceEnvironmentEntries(
+  values: ReadonlyArray<string>,
+  supervisor: BootService.ServiceSupervisor,
+): ReadonlyArray<BootService.ServiceEnvironmentEntry> {
+  const entries = values.map((entry) => {
+    const separator = entry.indexOf("=");
+    if (separator < 1) {
+      throw new BootService.ServiceEnvironmentInputError("invalidEntry");
+    }
+    return {
+      name: entry.slice(0, separator),
+      value: entry.slice(separator + 1),
+    };
+  });
+  return BootService.normalizeServiceEnvironment(entries, supervisor);
+}
+
+class ServiceEnvironmentCliError extends CliError.UserError {
+  override get message(): string {
+    return this.cause instanceof Error
+      ? this.cause.message
+      : "Invalid service environment configuration.";
+  }
+}
 
 export type ServiceReconcileResult =
   | {
@@ -150,9 +193,14 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
     readonly s6ServiceDir: Option.Option<string>;
     readonly serviceUser: Option.Option<string>;
     readonly serviceGroup: Option.Option<string>;
+    readonly serviceEnvironment?: ReadonlyArray<string>;
   },
   run: Effect.Effect<A, E, BootService.BootService>,
 ) {
+  const serviceEnvironment = yield* Effect.try({
+    try: () => parseServiceEnvironmentEntries(flags.serviceEnvironment ?? [], flags.supervisor),
+    catch: (cause) => new ServiceEnvironmentCliError({ cause }),
+  });
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
   return yield* run.pipe(
@@ -164,12 +212,13 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
         ...(Option.isSome(flags.port) ? { serverPort: flags.port.value } : {}),
         ...(Option.isSome(flags.serviceUser) ? { serviceUser: flags.serviceUser.value } : {}),
         ...(Option.isSome(flags.serviceGroup) ? { serviceGroup: flags.serviceGroup.value } : {}),
+        ...(serviceEnvironment.length === 0 ? {} : { serviceEnvironment }),
       }),
     ),
   );
 });
 
-const serviceInstallCommand = Command.make("install", serviceFlags).pipe(
+const serviceInstallCommand = Command.make("install", serviceMutationFlags).pipe(
   Command.withDescription("Install T3 Code as a background service for this user."),
   Command.withHandler((flags) =>
     runServiceCommand(
@@ -190,7 +239,7 @@ const serviceInstallCommand = Command.make("install", serviceFlags).pipe(
   ),
 );
 
-const serviceUpdateCommand = Command.make("update", serviceFlags).pipe(
+const serviceUpdateCommand = Command.make("update", serviceMutationFlags).pipe(
   Command.withDescription(
     "Update or repair the background service using this CLI version. Use `npx t3@latest service update` for the latest release.",
   ),

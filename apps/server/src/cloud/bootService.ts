@@ -42,6 +42,90 @@ export const S6_SERVICE_LAUNCHER_ENV = "T3_S6_SERVICE_LAUNCHER";
 
 export type ServiceSupervisor = "systemd" | "s6";
 
+export interface ServiceEnvironmentEntry {
+  readonly name: string;
+  readonly value: string;
+}
+
+export type ServiceEnvironmentErrorReason =
+  | "invalidEntry"
+  | "invalidName"
+  | "reservedName"
+  | "duplicateName"
+  | "unsafeValue"
+  | "unsupportedSupervisor";
+
+const SERVICE_ENVIRONMENT_ERROR_MESSAGES: Record<ServiceEnvironmentErrorReason, string> = {
+  invalidEntry: "Service environment entries must use NAME=VALUE.",
+  invalidName:
+    "Service environment names must start with a letter or underscore and contain only letters, digits, and underscores.",
+  reservedName: "Service environment names must not conflict with T3-managed variables.",
+  duplicateName: "Service environment names must be unique.",
+  unsafeValue: "Service environment values must not contain CR, LF, or NUL characters.",
+  unsupportedSupervisor: "--service-environment is supported only with --supervisor s6.",
+};
+
+const RESERVED_SERVICE_ENVIRONMENT_NAMES = new Set([
+  "HOME",
+  "UID",
+  "GID",
+  "T3CODE_HOME",
+  "T3CODE_HOST",
+  "T3CODE_PORT",
+  BOOT_SERVICE_UNIT_ENV,
+  SERVICE_SUPERVISOR_ENV,
+  SERVICE_VERSION_ENV,
+  S6_SERVICE_DIR_ENV,
+  S6_SERVICE_USER_ENV,
+  S6_SERVICE_GROUP_ENV,
+  S6_SERVICE_LAUNCHER_ENV,
+]);
+
+/** Sanitized validation error: it intentionally retains neither names nor values. */
+export class ServiceEnvironmentInputError extends Error {
+  readonly reason: ServiceEnvironmentErrorReason;
+
+  constructor(reason: ServiceEnvironmentErrorReason) {
+    super(SERVICE_ENVIRONMENT_ERROR_MESSAGES[reason]);
+    this.name = "ServiceEnvironmentInputError";
+    this.reason = reason;
+  }
+}
+
+export function normalizeServiceEnvironment(
+  entries: ReadonlyArray<ServiceEnvironmentEntry>,
+  supervisor: ServiceSupervisor,
+): ReadonlyArray<ServiceEnvironmentEntry> {
+  if (entries.length > 0 && supervisor !== "s6") {
+    throw new ServiceEnvironmentInputError("unsupportedSupervisor");
+  }
+
+  const names = new Set<string>();
+  for (const entry of entries) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(entry.name)) {
+      throw new ServiceEnvironmentInputError("invalidName");
+    }
+    if (RESERVED_SERVICE_ENVIRONMENT_NAMES.has(entry.name)) {
+      throw new ServiceEnvironmentInputError("reservedName");
+    }
+    if (names.has(entry.name)) {
+      throw new ServiceEnvironmentInputError("duplicateName");
+    }
+    if (
+      entry.value.includes("\r") ||
+      entry.value.includes("\n") ||
+      entry.value.includes("\u0000")
+    ) {
+      throw new ServiceEnvironmentInputError("unsafeValue");
+    }
+    names.add(entry.name);
+  }
+
+  return entries
+    .map(({ name, value }) => ({ name, value }))
+    .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+}
+
 const EPHEMERAL_CACHE_SEGMENTS = [
   "/_npx/", // npx
   "\\_npx\\",
@@ -100,6 +184,8 @@ export interface BootServicePlan {
   readonly serverHost?: string;
   /** Optional fixed HTTP/WebSocket port persisted into the service environment. */
   readonly serverPort?: number;
+  /** Extra environment exported only after the s6 service drops root privileges. */
+  readonly serviceEnvironment?: ReadonlyArray<ServiceEnvironmentEntry>;
   readonly logPath: string;
   readonly unitPath: string;
 }
@@ -116,6 +202,12 @@ function serviceExecutableArgs(plan: BootServicePlan): ReadonlyArray<string> {
 
 export function quoteShellValue(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+export function renderServiceEnvironmentExports(
+  entries: ReadonlyArray<ServiceEnvironmentEntry>,
+): string {
+  return entries.map(({ name, value }) => `export ${name}=${quoteShellValue(value)}`).join("\n");
 }
 
 export interface S6ServiceIdentity {
@@ -231,7 +323,12 @@ export function renderS6RunScript(plan: BootServicePlan): string {
       ? serviceExecArgs(plan)
       : [plan.serviceLauncherPath, "serve"];
   const serviceDir = pathForS6ServiceDir(plan.unitPath);
-  const shellCommand = `exec "$@" >>${quoteShellValue(plan.logPath)} 2>&1`;
+  const shellCommand = [
+    renderServiceEnvironmentExports(plan.serviceEnvironment ?? []),
+    `exec "$@" >>${quoteShellValue(plan.logPath)} 2>&1`,
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
   const privilegeDropArgs =
     plan.serviceGroup === undefined
       ? ["s6-setuidgid", plan.serviceUser]
@@ -408,6 +505,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly s6ServiceDir?: string;
   readonly serviceUser?: string;
   readonly serviceGroup?: string;
+  readonly serviceEnvironment?: ReadonlyArray<ServiceEnvironmentEntry>;
 }) {
   const hostExecPath = yield* HostProcessExecutablePath;
   const hostArguments = yield* HostProcessArguments;
@@ -431,6 +529,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   };
 
   const supervisor = input.supervisor ?? "systemd";
+  const serviceEnvironment = yield* Effect.try({
+    try: () => normalizeServiceEnvironment(input.serviceEnvironment ?? [], supervisor),
+    catch: (cause) => new BootServiceInstallError({ cause }),
+  });
   const serviceIdentity =
     supervisor === "s6"
       ? resolveS6ServiceIdentity({
@@ -579,6 +681,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     cliVersion: input.cliVersion,
     ...(input.serverHost === undefined ? {} : { serverHost: input.serverHost }),
     ...(input.serverPort === undefined ? {} : { serverPort: input.serverPort }),
+    ...(serviceEnvironment.length === 0 ? {} : { serviceEnvironment }),
     logPath,
     unitPath: definitionPath,
   };
@@ -889,4 +992,5 @@ export const layer = (input: {
   readonly s6ServiceDir?: string;
   readonly serviceUser?: string;
   readonly serviceGroup?: string;
+  readonly serviceEnvironment?: ReadonlyArray<ServiceEnvironmentEntry>;
 }) => Layer.effect(BootService, make(input));

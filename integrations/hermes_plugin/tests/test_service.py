@@ -26,17 +26,32 @@ class ServiceDefinitionTest(unittest.TestCase):
         self.config = load_config(plugin_root=root / "plugin")
 
     def test_uses_t3_native_s6_service_command(self) -> None:
-        args = _t3_service_args(self.config, "install")
+        config = replace(
+            self.config,
+            hermes_home=(Path(self.temporary.name) / "Hermes Home=production").resolve(),
+        )
 
-        self.assertEqual(args[0], str(self.config.binary_path))
-        self.assertEqual(args[1:3], ["service", "install"])
-        self.assertIn("--supervisor", args)
-        self.assertIn("s6", args)
-        self.assertIn(str(self.config.service_dir), args)
-        self.assertIn("--host", args)
-        self.assertIn("--port", args)
-        self.assertIn("--service-user", args)
-        self.assertIn(self.config.service_user, args)
+        for action in ("install", "update"):
+            with self.subTest(action=action):
+                args = _t3_service_args(config, action)
+
+                self.assertEqual(args[0], str(config.binary_path))
+                self.assertEqual(args[1:3], ["service", action])
+                self.assertIn("--supervisor", args)
+                self.assertIn("s6", args)
+                self.assertIn(str(config.service_dir), args)
+                self.assertIn("--host", args)
+                self.assertIn("--port", args)
+                self.assertIn("--service-user", args)
+                self.assertIn(config.service_user, args)
+                self.assertEqual(args.count("--service-environment"), 1)
+                environment_index = args.index("--service-environment")
+                self.assertEqual(
+                    args[environment_index + 1],
+                    f"HERMES_HOME={config.hermes_home}",
+                )
+
+        self.assertNotIn("--service-environment", _t3_service_args(config, "uninstall"))
 
     def test_watchdog_definition_tracks_plugin_and_both_services(self) -> None:
         run = _render_watchdog_run(

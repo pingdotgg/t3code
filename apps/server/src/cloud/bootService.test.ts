@@ -162,6 +162,12 @@ it("quotes systemd values containing spaces and escapes percent specifiers", () 
 });
 
 it("renders a classic s6 run script with supervisor markers and shell-safe paths", () => {
+  const serviceEnvironment = [
+    {
+      name: "HERMES_HOME",
+      value: "/home/hermes/T3's $data `literal` mode=service",
+    },
+  ];
   const script = BootService.renderS6RunScript({
     supervisor: "s6",
     serviceUser: "theo",
@@ -172,6 +178,7 @@ it("renders a classic s6 run script with supervisor markers and shell-safe paths
     cliVersion: "0.0.27",
     serverHost: "0.0.0.0",
     serverPort: 3773,
+    serviceEnvironment,
     logPath: "/home/me/T3 Data/logs/service.log",
     unitPath: "/etc/s6-overlay/s6-rc.d/user/contents.d/t3code/run",
   });
@@ -195,6 +202,24 @@ it("renders a classic s6 run script with supervisor markers and shell-safe paths
   assert.include(script, "'/home/me/T3'\\''s bin/t3' 'serve'");
   assert.include(script, 'exec "$@" >>');
   assert.include(script, "/home/me/T3 Data/logs/service.log");
+  assert.include(script, "export HERMES_HOME=");
+  assert.notInclude(script, serviceEnvironment[0]?.value ?? "");
+  assert.equal(
+    BootService.renderServiceEnvironmentExports(serviceEnvironment),
+    "export HERMES_HOME='/home/hermes/T3'\\''s $data `literal` mode=service'",
+  );
+
+  const launcher = BootService.renderS6LauncherScript({
+    supervisor: "s6",
+    nodePath: "/home/me/t3",
+    t3EntryPath: "",
+    baseDir: "/home/me/.t3",
+    serviceEnvironment,
+    logPath: "/home/me/.t3/log",
+    unitPath: "/run/service/t3code/run",
+  });
+  assert.notInclude(launcher, "HERMES_HOME");
+  assert.notInclude(launcher, serviceEnvironment[0]?.value ?? "");
 });
 
 it("resolves the selected user's primary group for delegated s6 control", () => {
@@ -387,6 +412,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         cliVersion: "0.0.27",
         supervisor: "s6",
         s6ServiceDir: serviceDir,
+        serviceEnvironment: [{ name: "HERMES_HOME", value: "/home/hermes/old=config" }],
         host: {
           execPath: dirs.stableEntry,
           cliEntryPath: "",
@@ -413,16 +439,14 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       assert.include(script, "export T3_S6_SERVICE_USER='1000'");
       assert.include(script, "export T3_S6_SERVICE_GROUP='1000'");
       assert.include(script, `export T3_S6_SERVICE_LAUNCHER='${plan.serviceLauncherPath}'`);
+      assert.include(script, "export HERMES_HOME=");
       assert.include(script, `s6-svperms -G ':1000' '${serviceDir}'`);
       assert.notInclude(script, dirs.stableEntry);
-      assert.include(
-        yield* fs.readFileString(plan.serviceLauncherPath ?? ""),
-        `exec '${dirs.stableEntry}' "$@"`,
-      );
-      assert.include(
-        yield* fs.readFileString(plan.serviceLauncherPath ?? ""),
-        "export T3_SERVICE_VERSION='0.0.27'",
-      );
+      const launcher = yield* fs.readFileString(plan.serviceLauncherPath ?? "");
+      assert.include(launcher, `exec '${dirs.stableEntry}' "$@"`);
+      assert.include(launcher, "export T3_SERVICE_VERSION='0.0.27'");
+      assert.notInclude(launcher, "HERMES_HOME");
+      assert.notInclude(launcher, "/home/hermes/old=config");
       assert.isTrue((yield* fs.stat(plan.unitPath)).mode % 2 === 1);
       assert.isTrue((yield* service.status).current);
 
@@ -430,9 +454,10 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       const updatedService = yield* BootService.make({
         baseDir: dirs.baseDir,
         logsDir: dirs.logsDir,
-        cliVersion: "0.0.28",
+        cliVersion: "0.0.27",
         supervisor: "s6",
         s6ServiceDir: serviceDir,
+        serviceEnvironment: [{ name: "HERMES_HOME", value: "/home/hermes/new=config" }],
         host: {
           execPath: dirs.stableEntry,
           cliEntryPath: "",
@@ -445,14 +470,50 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         Effect.provideService(BootService.BootService, updatedService),
       );
       assert.isTrue(update.changed);
-      assert.deepEqual(updateCommands.at(-1), {
-        command: "s6-svc",
-        args: ["-r", serviceDir],
-      });
+      assert.lengthOf(
+        updateCommands.filter(({ command, args }) => command === "s6-svc" && args[0] === "-r"),
+        1,
+      );
+      assert.notInclude(JSON.stringify(updateCommands), "/home/hermes/new=config");
+      assert.isTrue((yield* updatedService.status).current);
 
       assert.isTrue(yield* service.uninstall);
       assert.deepEqual(commands.at(-1), { command: "s6-svc", args: ["-d", serviceDir] });
       assert.isFalse(yield* fs.exists(plan.unitPath));
+    }),
+  );
+
+  it.effect("does not leak s6 service environment values into errors or logs", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const secret = "do-not-log-$SECRET=`command`";
+      const serviceDir = path.join(dirs.home, "service", "t3code");
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+        serviceEnvironment: [{ name: "EXAMPLE", value: secret }],
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(
+          makeRecordingRunnerLayer(commands, {
+            failCommand: "s6-svscanctl",
+          }),
+        ),
+        provideHostRefs(""),
+      );
+
+      const error = yield* service.install.pipe(Effect.flip);
+      assert.instanceOf(error, Error);
+      assert.notInclude(error.message, secret);
+      assert.notInclude(JSON.stringify(commands), secret);
+      assert.notInclude(
+        yield* fs.readFileString(path.join(dirs.logsDir, "boot-service.log")),
+        secret,
+      );
     }),
   );
 
