@@ -264,7 +264,13 @@ public actor ServerProcess {
                 emit(.ready(pid: pid))
                 return
             }
-            try? await Task.sleep(nanoseconds: UInt64(Self.readinessPollInterval * 1_000_000_000))
+            do {
+                try await Task.sleep(nanoseconds: UInt64(Self.readinessPollInterval * 1_000_000_000))
+            } catch {
+                // Cancelled: the poll's outcome no longer matters; abort
+                // rather than spinning hot until the readiness deadline.
+                return
+            }
         }
 
         guard runID == currentRunID else { return }
@@ -354,7 +360,13 @@ public actor ServerProcess {
     private func waitForExit(of process: Process, timeout: TimeInterval) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while process.isRunning && Date() < deadline {
-            try? await Task.sleep(nanoseconds: 50_000_000)
+            // `try?` would swallow cancellation and spin hot until the
+            // deadline; bail out and report the process's actual state.
+            do {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            } catch {
+                break
+            }
         }
         return !process.isRunning
     }

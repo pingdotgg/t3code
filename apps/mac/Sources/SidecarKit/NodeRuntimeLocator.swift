@@ -133,7 +133,20 @@ public struct NodeRuntimeLocator: Sendable {
     ///
     /// Each candidate must exist, be executable, and report a version
     /// satisfying the server's engines range (`^22.16 || ^23.11 || >=24.10`).
-    public func locate() throws -> LocatedNode {
+    ///
+    /// Async because the probes spawn processes and poll them with blocking
+    /// sleeps: they run on a GCD queue so a caller on the cooperative pool
+    /// (e.g. an actor) doesn't park a cooperative thread for the full probe
+    /// duration (several seconds on slow login-shell configs).
+    public func locate() async throws -> LocatedNode {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(with: Result(catching: self.locateBlocking))
+            }
+        }
+    }
+
+    private func locateBlocking() throws -> LocatedNode {
         if let override = environment["SERGECODE_NODE"], !override.isEmpty {
             if let located = validatedNode(at: override) {
                 onLocated?(located.path)
