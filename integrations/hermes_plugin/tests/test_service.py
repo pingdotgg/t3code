@@ -28,7 +28,7 @@ class ServiceDefinitionTest(unittest.TestCase):
     def test_uses_t3_native_s6_service_command(self) -> None:
         config = replace(
             self.config,
-            hermes_home=(Path(self.temporary.name) / "Hermes Home=production").resolve(),
+            hermes_home=(Path(self.temporary.name) / "Hermes' Home=production").resolve(),
         )
 
         for action in ("install", "update"):
