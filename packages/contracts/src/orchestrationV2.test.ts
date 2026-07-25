@@ -189,6 +189,43 @@ describe("orchestration V2 contracts", () => {
     expect(command.parentNodeId).toBe(NodeId.make("node-parent-1"));
   });
 
+  it("decodes delegated task wake-policy commands", () => {
+    const command = decodeOrchestrationV2Command({
+      type: "delegated_task.wake-policy",
+      commandId: "command-delegate-wake-policy-1",
+      parentThreadId: "thread-parent-1",
+      taskId: "node-subagent-1",
+      completionWake: "always",
+    });
+
+    expect(command.type).toBe("delegated_task.wake-policy");
+    if (command.type !== "delegated_task.wake-policy") {
+      throw new Error("expected delegated_task.wake-policy");
+    }
+    expect(command.parentThreadId).toBe(ThreadId.make("thread-parent-1"));
+    expect(command.taskId).toBe(NodeId.make("node-subagent-1"));
+    expect(command.completionWake).toBe("always");
+
+    // The policy carries the whole decision, so it is required and closed.
+    expect(() =>
+      decodeOrchestrationV2Command({
+        type: "delegated_task.wake-policy",
+        commandId: "command-delegate-wake-policy-2",
+        parentThreadId: "thread-parent-1",
+        taskId: "node-subagent-1",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeOrchestrationV2Command({
+        type: "delegated_task.wake-policy",
+        commandId: "command-delegate-wake-policy-3",
+        parentThreadId: "thread-parent-1",
+        taskId: "node-subagent-1",
+        completionWake: "sometimes",
+      }),
+    ).toThrow();
+  });
+
   it("decodes durable created-thread timeline records", () => {
     const command = decodeOrchestrationV2Command({
       type: "thread.created.record",
@@ -411,6 +448,39 @@ describe("orchestration V2 contracts", () => {
     expect(turnItem.type).toBe("subagent");
     if (turnItem.type !== "subagent") throw new Error("expected subagent item");
     expect(turnItem.progress).toBe("Inspecting package metadata");
+  });
+
+  it("decodes app-owned subagent parent-wake policies", () => {
+    const appOwnedSubagent = {
+      id: "node-subagent-2",
+      threadId: "thread-1",
+      runId: "run-1",
+      parentNodeId: "node-root-1",
+      origin: "app_owned",
+      createdBy: "agent",
+      driver: "codex",
+      providerInstanceId: "codex",
+      providerThreadId: null,
+      childThreadId: "thread-child-1",
+      nativeTaskRef: null,
+      prompt: "Inspect the API boundary.",
+      title: "API inspection",
+      model: "gpt-5.4",
+      status: "running",
+      result: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    };
+    const decode = Schema.decodeUnknownSync(OrchestrationV2Subagent);
+
+    // Legacy records predate the field and must behave as settled_only.
+    expect(decode(appOwnedSubagent).completionWake).toBeUndefined();
+    expect(decode({ ...appOwnedSubagent, completionWake: "always" }).completionWake).toBe("always");
+    expect(decode({ ...appOwnedSubagent, completionWake: "settled_only" }).completionWake).toBe(
+      "settled_only",
+    );
+    expect(() => decode({ ...appOwnedSubagent, completionWake: "sometimes" })).toThrow();
   });
 
   it("decodes thread projections with an ordered turn item rendering stream", () => {
