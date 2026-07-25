@@ -1016,6 +1016,91 @@ describe("ProviderRuntimeIngestion", () => {
     ]);
   });
 
+  it("labels a straggling completion with its own turn's model, not the newest turn's", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const responderFor = (effort: string): OrchestrationMessageResponder => ({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+        options: [{ id: "reasoningEffort", value: effort }],
+      },
+      autoEffort: true,
+    });
+
+    await harness.recordResponder(responderFor("low"));
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-first-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-first"),
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-first-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-first"),
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    await harness.recordResponder(responderFor("xhigh"));
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-second-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-second"),
+    });
+    await harness.drain();
+
+    // Arrives while the second turn owns the thread, but belongs to the first.
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-straggler-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-first"),
+      itemId: asItemId("item-straggler"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "late",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-straggler-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-first"),
+      itemId: asItemId("item-straggler"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-straggler" && !message.streaming,
+      ),
+    );
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-straggler",
+    );
+    expect(message?.responder?.modelSelection.options).toEqual([
+      { id: "reasoningEffort", value: "low" },
+    ]);
+  });
+
   it("uses assistant item completion detail when no assistant deltas were streamed", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

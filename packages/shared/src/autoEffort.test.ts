@@ -419,6 +419,23 @@ describe("resolving a selection for a turn", () => {
     expect(resolved?.requested).toBeNull();
   });
 
+  it("falls back to the clamped default when the reviewer answers off the ladder", () => {
+    const resolved = resolveAutoEffortSelection({
+      modelSelection: autoSelection([
+        { id: "reasoningEffort", value: AUTO_EFFORT_VALUE },
+        { id: autoEffortFloorOptionId("reasoningEffort"), value: "low" },
+        { id: autoEffortCeilingOptionId("reasoningEffort"), value: "xhigh" },
+      ]),
+      caps: codexCaps,
+      requestedEffort: "turbo",
+    });
+
+    // Nonsense must not read as "above the ceiling" and spend xhigh.
+    expect(resolved?.effort).toBe("high");
+    expect(resolved?.requested).toBe("turbo");
+    expect(resolved?.clamped).toBe(false);
+  });
+
   it("falls back to the provider default, clamped to the window, without a reviewer", () => {
     const resolved = resolveAutoEffortSelection({
       modelSelection: autoSelection([

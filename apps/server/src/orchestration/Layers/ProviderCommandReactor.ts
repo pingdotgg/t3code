@@ -31,8 +31,9 @@ import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { type DrainableWorker, makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
@@ -70,6 +71,36 @@ type ProviderIntentEvent = Extract<
   }
 >;
 
+type TurnStartRequestedEvent = Extract<
+  ProviderIntentEvent,
+  { type: "thread.turn-start-requested" }
+>;
+
+/**
+ * Everything the second half of a turn start needs, captured before the
+ * auto-effort reviewer runs.
+ */
+interface TurnStartWork {
+  readonly event: TurnStartRequestedEvent;
+  readonly messageText: string;
+  readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
+  /** Thread default, used to label messages when the turn carries no selection. */
+  readonly threadModelSelection: ModelSelection;
+  /** Set only when the auto-effort reviewer resolved an effort for this turn. */
+  readonly autoEffortModelSelection: ModelSelection | undefined;
+}
+
+/**
+ * Queue items for the reactor's single worker.
+ *
+ * Turn starts come back around as their own item: the auto-effort reviewer runs
+ * off the queue, and the turn resumes on the worker once it answers so every
+ * provider mutation still happens on one fiber, in order.
+ */
+type ReactorWorkItem =
+  | { readonly kind: "event"; readonly event: ProviderIntentEvent }
+  | { readonly kind: "turn-start"; readonly work: TurnStartWork };
+
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
@@ -100,8 +131,8 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 /**
  * The auto-effort reviewer runs before the turn starts, so a stuck CLI would
- * stall the whole turn. Give up well before the provider's own timeout and use
- * the clamped default effort instead.
+ * leave the turn waiting indefinitely. Give up well before the provider's own
+ * timeout and use the clamped default effort instead.
  */
 const AUTO_EFFORT_REVIEW_TIMEOUT = Duration.seconds(45);
 /** How many earlier messages the reviewer sees as thread context. */
@@ -875,6 +906,12 @@ const make = Effect.gen(function* () {
       );
   });
 
+  /** Whether a turn needs the reviewer at all, from capabilities alone. */
+  const isAutoEffortTurn = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
+    const caps = yield* resolveModelCapabilities(modelSelection);
+    return resolveAutoEffortState({ caps, selections: modelSelection.options })?.active === true;
+  });
+
   /**
    * Replace an `auto` reasoning effort with a concrete one for this turn.
    *
@@ -936,7 +973,7 @@ const make = Effect.gen(function* () {
   });
 
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
-    event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
+    event: TurnStartRequestedEvent,
   ) {
     const key = turnStartKeyForEvent(event);
     if (yield* hasHandledTurnStartRecently(key)) {
@@ -993,6 +1030,55 @@ const make = Effect.gen(function* () {
       }
     }
 
+    const work = {
+      event,
+      messageText: message.text,
+      attachments: message.attachments,
+      threadModelSelection: thread.modelSelection,
+    };
+
+    // The reviewer is a provider CLI call, so it runs off the queue: leaving it
+    // here would hold every other thread's events behind one slow review.
+    if (!(yield* isAutoEffortTurn(event.payload.modelSelection ?? thread.modelSelection))) {
+      return yield* startTurn({ ...work, autoEffortModelSelection: undefined });
+    }
+
+    yield* worker.fork(
+      resolveAutoEffortForTurn({
+        threadId: event.payload.threadId,
+        modelSelection: event.payload.modelSelection ?? thread.modelSelection,
+        cwd: generationCwd,
+        messageText: message.text,
+        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        conversation: buildAutoEffortConversationContext({
+          messages: thread.messages,
+          currentMessageId: event.payload.messageId,
+        }),
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider command reactor failed to resolve auto effort", {
+            threadId: event.payload.threadId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(undefined)),
+        ),
+        // Back onto the worker: the session and the turn are configured there,
+        // one thread at a time.
+        Effect.flatMap((autoEffortModelSelection) =>
+          worker.enqueue({ kind: "turn-start", work: { ...work, autoEffortModelSelection } }),
+        ),
+      ),
+    );
+  });
+
+  /**
+   * Configure the session and send the turn, with the effort auto effort picked.
+   *
+   * Runs on the worker so provider mutations for a thread stay ordered, even
+   * though the reviewer that precedes it does not.
+   */
+  const startTurn = Effect.fn("startTurn")(function* (work: TurnStartWork) {
+    const event = work.event;
+
     const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
       if (Cause.hasInterruptsOnly(cause)) {
         return Effect.void;
@@ -1029,25 +1115,12 @@ const make = Effect.gen(function* () {
         ),
       );
 
-    // Auto effort resolves before the session is configured so both the session
-    // and the turn agree on the effort the reviewer picked.
-    const autoEffortModelSelection = yield* resolveAutoEffortForTurn({
-      threadId: event.payload.threadId,
-      modelSelection: event.payload.modelSelection ?? thread.modelSelection,
-      cwd: generationCwd,
-      messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-      conversation: buildAutoEffortConversationContext({
-        messages: thread.messages,
-        currentMessageId: event.payload.messageId,
-      }),
-    });
-    const modelSelectionForTurn = autoEffortModelSelection ?? event.payload.modelSelection;
+    const modelSelectionForTurn = work.autoEffortModelSelection ?? event.payload.modelSelection;
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+      messageText: work.messageText,
+      ...(work.attachments !== undefined ? { attachments: work.attachments } : {}),
       ...(modelSelectionForTurn !== undefined ? { modelSelection: modelSelectionForTurn } : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
@@ -1065,8 +1138,8 @@ const make = Effect.gen(function* () {
     yield* turnResponder.record({
       threadId: event.payload.threadId,
       responder: {
-        modelSelection: sendTurnRequest.value.modelSelection ?? thread.modelSelection,
-        ...(autoEffortModelSelection !== undefined ? { autoEffort: true } : {}),
+        modelSelection: sendTurnRequest.value.modelSelection ?? work.threadModelSelection,
+        ...(work.autoEffortModelSelection !== undefined ? { autoEffort: true } : {}),
       },
     });
 
@@ -1260,20 +1333,21 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const processDomainEventSafely = (event: ProviderIntentEvent) =>
-    processDomainEvent(event).pipe(
+  const processWorkItemSafely = (item: ReactorWorkItem) =>
+    (item.kind === "turn-start" ? startTurn(item.work) : processDomainEvent(item.event)).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.failCause(cause);
         }
         return Effect.logWarning("provider command reactor failed to process event", {
-          eventType: event.type,
+          eventType: item.kind === "turn-start" ? item.work.event.type : item.event.type,
           cause: Cause.pretty(cause),
         });
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  const worker: DrainableWorker<ReactorWorkItem, never, Scope.Scope> =
+    yield* makeDrainableWorker(processWorkItemSafely);
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
@@ -1285,7 +1359,7 @@ const make = Effect.gen(function* () {
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested"
       ) {
-        return yield* worker.enqueue(event);
+        return yield* worker.enqueue({ kind: "event", event });
       }
     });
 

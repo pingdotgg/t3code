@@ -407,6 +407,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
   const selectReasoningEffort: TextGeneration.TextGeneration["Service"]["selectReasoningEffort"] =
     Effect.fn("CodexTextGeneration.selectReasoningEffort")(function* (input) {
+      const { imagePaths } = yield* materializeImageAttachments(
+        "selectReasoningEffort",
+        input.attachments,
+      );
       const { prompt, outputSchema } = buildReasoningEffortPrompt({
         message: input.message,
         conversation: input.conversation,
@@ -419,6 +423,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         cwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
+        imagePaths,
         modelSelection: input.modelSelection,
       });
 

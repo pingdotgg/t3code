@@ -550,7 +550,11 @@ export function resolveAutoEffortSelection(input: {
     return null;
   }
   const requested = input.requestedEffort?.trim() || null;
-  const effort = requested === null ? state.fallback : clampAutoEffort(state, requested);
+  // Only an effort the model actually offers counts as a choice. Clamping an
+  // off-ladder answer would read it as "above the ceiling" and spend the
+  // maximum, so anything else is treated as no answer at all.
+  const chosen = requested !== null && ladderIndex(state.ladder, requested) >= 0 ? requested : null;
+  const effort = chosen === null ? state.fallback : clampAutoEffort(state, chosen);
   const options = (input.modelSelection.options ?? []).map((selection) =>
     selection.id === state.descriptorId ? { id: selection.id, value: effort } : selection,
   );
@@ -558,7 +562,7 @@ export function resolveAutoEffortSelection(input: {
   return {
     effort,
     requested,
-    clamped: requested !== null && requested !== effort,
+    clamped: chosen !== null && chosen !== effort,
     ceiling: state.ceiling,
     floor: state.floor,
     modelSelection: { ...input.modelSelection, options },

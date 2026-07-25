@@ -448,7 +448,7 @@ describe("ProviderCommandReactor", () => {
       generateBranchName,
       generateThreadTitle,
       selectReasoningEffort,
-      recordedResponder: () => turnResponder.get(ThreadId.make("thread-1")),
+      recordedResponder: () => turnResponder.get({ threadId: ThreadId.make("thread-1") }),
       runtimeSessions,
       stateDir,
       drain,
@@ -665,6 +665,64 @@ describe("ProviderCommandReactor", () => {
         expect(request.modelSelection?.options).toContainEqual({
           id: "reasoningEffort",
           value: "medium",
+        });
+      }),
+    );
+
+    effectIt.effect("keeps handling other events while the reviewer is still deciding", () =>
+      Effect.gen(function* () {
+        const harness = yield* createAutoEffortHarness();
+        const releaseReview = yield* Deferred.make<void>();
+        harness.selectReasoningEffort.mockReturnValue(
+          Deferred.await(releaseReview).pipe(
+            Effect.as({ effort: "low", reason: "Released by the test." }),
+          ),
+        );
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-auto-effort-slow-review"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-auto-effort-slow-review"),
+            role: "user",
+            text: "think about it",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Effect.promise(() =>
+          waitFor(() => harness.selectReasoningEffort.mock.calls.length === 1),
+        );
+
+        // The reviewer holds this turn, but the queue behind it must keep moving.
+        yield* harness.engine.dispatch({
+          type: "thread.session.stop",
+          commandId: CommandId.make("cmd-session-stop-during-review"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Effect.promise(() =>
+          waitFor(async () => {
+            const readModel = await harness.readModel();
+            return (
+              readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
+                ?.status === "stopped"
+            );
+          }),
+        );
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+
+        yield* Deferred.succeed(releaseReview, undefined);
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+        const request = harness.sendTurn.mock.calls[0]?.[0] as {
+          modelSelection?: ModelSelection;
+        };
+        expect(request.modelSelection?.options).toContainEqual({
+          id: "reasoningEffort",
+          value: "low",
         });
       }),
     );

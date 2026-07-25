@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as TxQueue from "effect/TxQueue";
 import * as TxRef from "effect/TxRef";
 
-export interface DrainableWorker<A> {
+export interface DrainableWorker<A, E = never, R = never> {
   /**
    * Enqueue a work item and track it for `drain()`.
    *
@@ -23,7 +23,19 @@ export interface DrainableWorker<A> {
   readonly enqueue: (item: A) => Effect.Effect<void>;
 
   /**
-   * Resolves when the queue is empty and the worker is idle (not processing).
+   * Run work off the queue, without blocking it, while still counting toward
+   * `drain()`.
+   *
+   * For slow work that only one item depends on: keeping it in `process` would
+   * hold every other queued item behind it. The forked fiber lives as long as
+   * the worker, and failures surface as fiber failures, so work passed here
+   * should handle its own errors.
+   */
+  readonly fork: (work: Effect.Effect<void, E, R>) => Effect.Effect<void, never, R>;
+
+  /**
+   * Resolves when the queue is empty, the worker is idle (not processing), and
+   * no forked work is outstanding.
    */
   readonly drain: Effect.Effect<void>;
 }
@@ -39,10 +51,13 @@ export interface DrainableWorker<A> {
  */
 export const makeDrainableWorker = <A, E, R>(
   process: (item: A) => Effect.Effect<void, E, R>,
-): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
+): Effect.Effect<DrainableWorker<A, E, R>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
     const queue = yield* Effect.acquireRelease(TxQueue.unbounded<A>(), TxQueue.shutdown);
     const outstanding = yield* TxRef.make(0);
+    // Forked work outlives the enqueue path that started it, so it belongs to
+    // the worker's scope rather than to whichever fiber called `fork`.
+    const workerScope = yield* Effect.scope;
 
     yield* TxQueue.take(queue).pipe(
       Effect.tap((a) =>
@@ -66,5 +81,19 @@ export const makeDrainableWorker = <A, E, R>(
         Effect.tx,
       );
 
-    return { enqueue, drain } satisfies DrainableWorker<A>;
+    const fork: DrainableWorker<A, E, R>["fork"] = (work) =>
+      TxRef.update(outstanding, (n) => n + 1).pipe(
+        Effect.andThen(
+          Effect.forkIn(
+            Effect.ensuring(
+              work,
+              TxRef.update(outstanding, (n) => n - 1),
+            ),
+            workerScope,
+          ),
+        ),
+        Effect.asVoid,
+      );
+
+    return { enqueue, fork, drain } satisfies DrainableWorker<A, E, R>;
   });
