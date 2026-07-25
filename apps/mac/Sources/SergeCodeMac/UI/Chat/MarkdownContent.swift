@@ -755,6 +755,7 @@ struct AssistantMarkdownView: View {
     }
 
     @UIState private var isHovering = false
+    @UIState private var streamSettleOpacity: Double = 1
     @Environment(\.openSelectText) private var openSelectText
 
     var body: some View {
@@ -785,24 +786,38 @@ struct AssistantMarkdownView: View {
             .frame(
                 maxWidth: style == .userBubble ? nil : .infinity,
                 alignment: .leading)
+            .opacity(streamSettleOpacity)
         }
         .overlay(alignment: .topTrailing) {
-            if showsRoleChrome && style == .assistant && !isStreaming {
-                // Copies the raw markdown, not the rendered text — pasted
-                // content survives round-trips into editors and issues.
-                MessageActionChip {
-                    CopyActionButton(text: markdown)
+            Group {
+                if showsRoleChrome && style == .assistant && !isStreaming {
+                    // Copies the raw markdown, not the rendered text — pasted
+                    // content survives round-trips into editors and issues.
+                    MessageActionChip {
+                        CopyActionButton(text: markdown)
+                    }
+                    .opacity(isHovering ? 1 : 0)
+                    .allowsHitTesting(isHovering)
+                    .accessibilityHidden(!isHovering)
+                    .padding(.top, 2)
+                    .padding(.trailing, 2)
+                    .transition(.opacity)
                 }
-                .opacity(isHovering ? 1 : 0)
-                .allowsHitTesting(isHovering)
-                .accessibilityHidden(!isHovering)
-                .padding(.top, 2)
-                .padding(.trailing, 2)
             }
+            // Scoped to this non-layout overlay so the chip still fades in
+            // at stream end without an implicit animation over the blocks.
+            .animation(Motion.reveal, value: isStreaming)
         }
         .onHover { isHovering = $0 }
         .animation(Motion.feedback, value: isHovering)
-        .animation(Motion.reveal, value: isStreaming)
+        .onChange(of: isStreaming) { _, streaming in
+            // One-shot settle cue at stream end: the content dips and
+            // restores its opacity. Render-only — the timeline never
+            // re-measures. Deferred so the dip commits before the restore.
+            guard !streaming, Motion.profile.allowsDecorativeEffects else { return }
+            streamSettleOpacity = 0.6
+            withDeferredAnimation(Motion.reveal) { streamSettleOpacity = 1 }
+        }
         .modifier(
             RemoteFileLinkHelpModifier(
                 message: model.capabilities.opensLocalEditor
@@ -921,23 +936,33 @@ private struct MarkdownBlocksView: View {
     let showsStreamingIndicator: Bool
 
     var body: some View {
-        ForEach(Array(renderedBlocks.enumerated()), id: \.element.id) { index, entry in
-            markdownBlockView(
-                entry.block,
-                allowsHighlight: markdownBlockAllowsHighlight(
-                    style: style,
-                    isStreaming: isStreaming,
-                    sourceKey: entry.sourceKey,
-                    lastSourceKey: renderedBlocks.last?.sourceKey))
-                .padding(.top, blockGap(at: index))
+        // Captured once so the Sendable alignment-guide closure below never
+        // touches the actor-isolated computed property.
+        let indicatorGap = streamingIndicatorGap
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(renderedBlocks.enumerated()), id: \.element.id) { index, entry in
+                markdownBlockView(
+                    entry.block,
+                    allowsHighlight: markdownBlockAllowsHighlight(
+                        style: style,
+                        isStreaming: isStreaming,
+                        sourceKey: entry.sourceKey,
+                        lastSourceKey: renderedBlocks.last?.sourceKey))
+                    .padding(.top, blockGap(at: index))
+            }
         }
-        if showsStreamingIndicator {
-            Image(systemName: "ellipsis")
-                .symbolEffect(.variableColor.iterative, isActive: !Motion.reduceMotion)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Assistant is responding")
-                .transition(.opacity)
-                .padding(.top, streamingIndicatorGap)
+        // The indicator hangs below the blocks in a non-layout overlay, so
+        // its removal at stream end never re-measures the block stack and
+        // the timeline below stays put.
+        .overlay(alignment: .bottomLeading) {
+            if showsStreamingIndicator {
+                Image(systemName: "ellipsis")
+                    .symbolEffect(.variableColor.iterative, isActive: !Motion.reduceMotion)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Assistant is responding")
+                    .transition(.opacity)
+                    .alignmentGuide(.bottom) { $0[.top] - indicatorGap }
+            }
         }
     }
 
@@ -1632,6 +1657,9 @@ private struct MarkdownCodeBlock: View {
     @UIState private var isHovering = false
     @UIState private var isWrapped = false
     @UIState private var displayedText: AttributedString
+    /// Latches once the syntax-highlighted string first replaces the plain
+    /// one, driving a one-shot crossfade (`.id(highlightArrived)` below).
+    @UIState private var highlightArrived = false
     @Environment(\.colorScheme) private var colorScheme
 
     init(language: String?, code: String, allowsHighlight: Bool) {
@@ -1653,7 +1681,7 @@ private struct MarkdownCodeBlock: View {
                         systemImage: isWrapped ? "arrow.left.and.right" : "arrow.down.right.and.line.horizontal.and.line.vertical.and.arrow.down",
                         help: isWrapped ? "Disable word wrap" : "Enable word wrap"
                     ) {
-                        withAnimation(Motion.feedback) { isWrapped.toggle() }
+                        withDeferredAnimation(Motion.structure) { isWrapped.toggle() }
                     }
                     .transition(.opacity)
                 }
@@ -1675,7 +1703,6 @@ private struct MarkdownCodeBlock: View {
         }
         .onHover { isHovering = $0 }
         .animation(Motion.feedback, value: isHovering)
-        .animation(Motion.feedback, value: isWrapped)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Solid opaque fill — code blocks live inside long-form assistant
         // text, so no glass/material here per Liquid Glass content rules.
@@ -1694,27 +1721,44 @@ private struct MarkdownCodeBlock: View {
             // its hosting view is still laying out.
             try? await Task.sleep(for: .milliseconds(1))
             guard !Task.isCancelled else { return }
-            withAnimation(Motion.feedback) {
-                displayedText = highlighted
+            displayedText = highlighted
+            // SwiftUI can't interpolate two AttributedStrings, so animating
+            // the assignment pops the colors in one frame. Flip the latched
+            // identity flag instead: the plain text crossfades into the
+            // highlighted one exactly once; later identical re-renders just
+            // swap the string without restarting the fade.
+            guard !highlightArrived else { return }
+            if Motion.reduceMotion {
+                highlightArrived = true
+            } else {
+                withAnimation(Motion.reveal) { highlightArrived = true }
             }
         }
     }
 
     @ViewBuilder
     private var codeContent: some View {
+        // The wrap modes are structurally different trees (Text vs
+        // ScrollView+Text) — nothing interpolates — so the toggle crossfades
+        // the swap. `.id(highlightArrived)` gives the one-shot highlight
+        // crossfade a view identity to transition on.
         if isWrapped {
             Text(displayedText)
                 .font(SurgeTypography.code)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .id(highlightArrived)
+                .transition(.opacity)
         } else {
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(displayedText)
                     .font(SurgeTypography.code)
                     .textSelection(.enabled)
                     .fixedSize()
+                    .id(highlightArrived)
             }
+            .transition(.opacity)
         }
     }
 

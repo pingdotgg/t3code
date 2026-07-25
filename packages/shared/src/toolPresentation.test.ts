@@ -115,6 +115,43 @@ describe("deriveToolPresentation", () => {
     expect(decodePresentation(presentation)).toBeDefined();
   });
 
+  it("uses the progressive tense for in-flight invocations", () => {
+    const runningEdit = deriveToolPresentation({
+      itemType: "file_change",
+      status: "inProgress",
+      data: {
+        toolName: "Edit",
+        input: { file_path: "/repo/src/app.ts", old_string: "a", new_string: "b" },
+      },
+    });
+    expect(runningEdit.title).toBe("Changing files");
+    expect(runningEdit.state).toBe("running");
+
+    const runningCommand = deriveToolPresentation({
+      itemType: "command_execution",
+      data: { toolName: "Bash", input: { command: "pnpm test" } },
+      fallbackState: "running",
+    });
+    expect(runningCommand.title).toBe("Running command");
+
+    const runningRead = deriveToolPresentation({
+      itemType: "dynamic_tool_call",
+      status: "in_progress",
+      data: { toolName: "Read", input: { file_path: "/repo/README.md" } },
+    });
+    expect(runningRead.title).toBe("Reading file");
+
+    const completedEdit = deriveToolPresentation({
+      itemType: "file_change",
+      status: "completed",
+      data: {
+        toolName: "Edit",
+        input: { file_path: "/repo/src/app.ts", old_string: "a", new_string: "b" },
+      },
+    });
+    expect(completedEdit.title).toBe("Changed files");
+  });
+
   it("renders a Skill call as a skill surface even though the adapter typed it as a dynamic tool", () => {
     const presentation = deriveToolPresentation({
       itemType: "dynamic_tool_call",

@@ -3,7 +3,6 @@ import SwiftUI
 
 /// Contextual next-step strip between the timeline and the composer. Shows
 /// at most one suggestion:
-/// - the branch's PR merged → offer to archive the finished chat;
 /// - the branch has an open PR whose review is mid-cycle → report where the
 ///   review stands (bot reviewing, our fix turn running), offer to fix the
 ///   actionable comments when there are any, and plain link to the PR when the
@@ -19,15 +18,54 @@ struct ChatFollowUpBar: View {
         Group {
             if let thread = model.selectedThread, thread.status != .archived {
                 let vcs = model.selectedVcsStatus()
-                if let vcs, vcs.prState == .merged {
-                    archiveSuggestion(thread: thread, vcs: vcs)
-                        .transition(Motion.banner)
-                } else if let vcs {
+                if let vcs, vcs.prState != .merged {
                     reviewFollowUp(thread: thread, vcs: vcs)
                 }
             }
         }
-        .animation(Motion.structure, value: model.selectedVcsStatus())
+        // A merged PR is the bar's rarest success moment: ripple once on the
+        // merged edge (the Group identity persists across strip swaps, so
+        // `fire` sees a real false→true) and let the strip spring in on the
+        // delight curve. Every other strip swap keeps Motion.structure.
+        .successRipple(
+            fire: visibleStrip == .archive,
+            cornerRadius: AlpineTheme.Corners.card)
+        // Key on which strip is showing, not the whole VcsStatus: mid-run
+        // file-count republishes must not re-animate the bar.
+        .animation(
+            visibleStrip == .archive ? Motion.delight : Motion.structure,
+            value: visibleStrip)
+    }
+
+    /// Identity of whichever suggestion strip is on screen. Mirrors the
+    /// branching in `body` so the bar's swap animation keys on presence and
+    /// identity only — count-only VCS republishes leave it unchanged.
+    private enum VisibleStrip: Equatable {
+        case none
+        case archive
+        case fixReviews
+        case reviewInProgress
+        case fixesInProgress
+        case openPR
+        case createPR
+    }
+
+    private var visibleStrip: VisibleStrip {
+        guard let thread = model.selectedThread, thread.status != .archived,
+            let vcs = model.selectedVcsStatus()
+        else { return .none }
+        if vcs.prState == .merged { return .archive }
+        switch ReviewLifecycle.followUp(
+            threadStatus: thread.status, vcs: vcs, timeline: model.selectedTimeline())
+        {
+        case .fixReviews: return .fixReviews
+        case .reviewInProgress: return .reviewInProgress
+        case .fixesInProgress: return .fixesInProgress
+        case .none:
+            if vcs.prState == .open, pullRequestURL(vcs) != nil { return .openPR }
+            if shouldOfferPR(thread: thread, vcs: vcs) { return .createPR }
+            return .none
+        }
     }
 
     @ViewBuilder
@@ -103,28 +141,6 @@ struct ChatFollowUpBar: View {
             return number
         }
         return "\(number) · \(title)"
-    }
-
-    // MARK: - PR merged → archive
-
-    private func archiveSuggestion(thread: ChatThread, vcs: VcsStatus) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checkmark.seal.fill")
-                .foregroundStyle(AlpineTheme.lavender)
-            Text(vcs.prNumber.map { "PR #\($0) merged" } ?? "PR merged")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Button {
-                Task { await model.archiveThread(thread) }
-            } label: {
-                Label("Archive Chat", systemImage: "archivebox")
-                    .font(.callout)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(.quaternary.opacity(0.3))
     }
 
     // MARK: - Turn done → create PR

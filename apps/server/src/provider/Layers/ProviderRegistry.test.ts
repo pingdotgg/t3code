@@ -1168,6 +1168,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   claudex: { enabled: false },
                   grok: { enabled: false },
                   fugu: { enabled: false },
+                  kimi: { enabled: false },
                 },
               }),
             ),

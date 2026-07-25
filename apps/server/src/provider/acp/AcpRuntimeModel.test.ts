@@ -181,7 +181,7 @@ describe("AcpRuntimeModel", () => {
         toolCall: {
           toolCallId: "tool-1",
           kind: "execute",
-          title: "Ran command",
+          title: "Running command",
           status: "pending",
           command: "bun run typecheck",
           detail: "bun run typecheck",

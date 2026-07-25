@@ -31,6 +31,7 @@ function isEquivalent(left: string | undefined, right: string | undefined): bool
 
 export interface ToolActivityPresentationInput {
   readonly itemType?: ToolLifecycleItemType | null | undefined;
+  readonly status?: string | null | undefined;
   readonly title?: string | null | undefined;
   readonly detail?: string | null | undefined;
   readonly data?: unknown;
@@ -51,6 +52,7 @@ export function deriveToolActivityPresentation(
 
   const presentation = deriveToolPresentation({
     itemType: input.itemType,
+    status: input.status,
     title: input.title,
     detail: input.detail,
     data: input.data,
@@ -60,15 +62,7 @@ export function deriveToolActivityPresentation(
     case "command":
     case "file_read":
     case "file_change":
-      return {
-        summary: presentation.title,
-        ...(presentation.subtitle ? { detail: presentation.subtitle } : {}),
-      };
     case "file_search":
-      return {
-        summary: "Searched files",
-        ...(presentation.subtitle ? { detail: presentation.subtitle } : {}),
-      };
     case "web_search":
       return {
         summary: presentation.title,

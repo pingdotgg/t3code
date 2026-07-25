@@ -299,7 +299,9 @@ private struct UserMessageBubble: View {
                         .overlay(alignment: .bottomLeading) {
                             if isLarge {
                                 Button(isExpanded ? "Show Less" : "Show More") {
-                                    isExpanded.toggle()
+                                    withDeferredAnimation(Motion.structure) {
+                                        isExpanded.toggle()
+                                    }
                                 }
                                 .buttonStyle(.plain)
                                 .font(.caption.weight(.medium))
@@ -327,9 +329,14 @@ private struct UserMessageBubble: View {
                         .padding(3)
                 }
 
+            }
+            // Timestamp lives in a non-layout overlay: inserting it into the
+            // VStack above would re-measure every sibling row on each hover.
+            .overlay(alignment: .bottomTrailing) {
                 if let at, isHovering {
                     TranscriptTimestamp(date: at)
                         .transition(.opacity)
+                        .offset(y: 15)
                 }
             }
             // Hover and context menu live on the bubble cluster, not the full
@@ -407,6 +414,7 @@ private struct ChatAttachmentThumbnail: View {
                     Image(nsImage: image)
                         .resizable()
                         .scaledToFill()
+                        .transition(.opacity)
                 }
                 if phase == .loading {
                     ProgressView()
@@ -461,10 +469,16 @@ private struct ChatAttachmentThumbnail: View {
         do {
             let url = try await model.attachmentImageURL(id: attachment.id)
             let loaded = try await loadNSImage(from: url)
-            image = loaded
-            phase = .loaded
+            // Crossfade the spinner into the decoded image; the ZStack frame
+            // is fixed, so this stays a render-only opacity change.
+            withAnimation(Motion.reveal) {
+                image = loaded
+                phase = .loaded
+            }
         } catch {
-            phase = .failed
+            withAnimation(Motion.reveal) {
+                phase = .failed
+            }
         }
     }
 }
@@ -757,7 +771,9 @@ private struct ToolEventRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
-                withAnimation(Motion.feedback) { isExpanded.toggle() }
+                // Settle, not snap, and deferred like ToolGroupRow: the
+                // disclosure can reveal dozens of output lines.
+                withDeferredAnimation(Motion.structure) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 10) {
                     ActivityIconChip(style: kind.activityStyle)
@@ -1303,25 +1319,33 @@ private struct CompactionRow: View {
     let onStartNewThread: () -> Void
 
     var body: some View {
-        switch notice.status {
-        case .started:
-            HStack(spacing: 6) {
-                ProgressView()
-                    .controlSize(.small)
-                Text(notice.summary)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .center)
-        case .completed:
-            Text(completedLine)
+        // Started and terminal states share the row id, so the swap is a
+        // crossfade here rather than an in-place teleport.
+        Group {
+            switch notice.status {
+            case .started:
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(notice.summary)
+                }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity, alignment: .center)
-        case .failed, .canceled:
-            failureCard
+                .transition(Motion.unfold)
+            case .completed:
+                Text(completedLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .transition(Motion.unfold)
+            case .failed, .canceled:
+                failureCard
+                    .transition(Motion.materialize)
+            }
         }
+        .animation(Motion.reveal, value: notice.status)
     }
 
     private var completedLine: String {

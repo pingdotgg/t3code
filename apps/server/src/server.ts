@@ -58,6 +58,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as AutoReviewJobStore from "./autoReview/AutoReviewJobStore.ts";
 import * as AutoReviewRunner from "./autoReview/AutoReviewRunner.ts";
 import * as AutoReviewRuntime from "./autoReview/AutoReviewRuntime.ts";
+import * as AutoArchiveRuntime from "./autoArchive/AutoArchiveRuntime.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -484,6 +485,7 @@ export const makeServerLayer = Layer.unwrap(
     // Starts after RuntimeServicesLive is provided below — store/runner/settings/
     // orchestration are already in that graph (see AutoReviewLayerLive).
     const autoReviewStartLayer = AutoReviewRuntime.layer;
+    const autoArchiveStartLayer = AutoArchiveRuntime.layer;
 
     const serverApplicationLayer = Layer.mergeAll(
       HttpRouter.serve(makeRoutesLayer, {
@@ -494,6 +496,7 @@ export const makeServerLayer = Layer.unwrap(
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
       autoReviewStartLayer,
+      autoArchiveStartLayer,
     );
 
     return serverApplicationLayer.pipe(
