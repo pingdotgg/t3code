@@ -47,6 +47,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
+import { ProviderService } from "../../../provider/Services/ProviderService.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 
 const WAIT_POLL_INTERVAL_MILLIS = 500;
@@ -171,6 +172,10 @@ const makeDelegateCoordinator = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   const snapshotQuery = yield* ProjectionSnapshotQuery;
   const providerRegistry = yield* ProviderRegistry;
+  // Optional: used to heartbeat the parent's turn-activity watchdog while the
+  // parent turn is blocked on a delegated child. Without it the parent emits
+  // no runtime events of its own and would be flagged as stalled.
+  const providerService = yield* Effect.serviceOption(ProviderService);
   const records = yield* SynchronizedRef.make<ReadonlyMap<ThreadId, DelegateRecord>>(new Map());
   // The concurrency-cap check and record insertion are check-then-act over
   // shared state; serialize just that section (not the wait) so concurrent
@@ -336,12 +341,23 @@ const makeDelegateCoordinator = Effect.gen(function* () {
     }
   });
 
+  /**
+   * The parent turn is blocked on the delegate tool call and emits no runtime
+   * events of its own; heartbeat the turn-activity watchdog so the parent
+   * thread is not flagged as stalled while the delegated child is working.
+   */
+  const noteParentActivity = (record: DelegateRecord) =>
+    Option.isSome(providerService) && providerService.value.noteSessionActivity !== undefined
+      ? providerService.value.noteSessionActivity(record.parentThreadId)
+      : Effect.void;
+
   const awaitCompletion = Effect.fn("DelegateCoordinator.awaitCompletion")(function* (
     childThreadId: ThreadId,
     record: DelegateRecord,
   ) {
     const deadline = (yield* Clock.currentTimeMillis) + WAIT_TIMEOUT_MILLIS;
     while (true) {
+      yield* noteParentActivity(record);
       const detail = yield* snapshotQuery
         .getThreadDetailById(childThreadId)
         .pipe(Effect.mapError(dispatchFailed("read delegated thread state")));

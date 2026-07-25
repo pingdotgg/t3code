@@ -1153,6 +1153,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
               : { lastActivityAt: snapshot.lastActivityAt, stalled: snapshot.stalled },
           ),
         ),
+    noteSessionActivity: (threadId) => turnActivityWatchdog.noteActivity(threadId),
     startSession,
     sendTurn,
     interruptTurn,

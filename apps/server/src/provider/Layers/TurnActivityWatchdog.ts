@@ -44,6 +44,15 @@ export interface TurnActivitySnapshot {
 
 export interface TurnActivityWatchdog {
   readonly observe: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
+  /**
+   * Record activity for a thread from outside the provider event stream.
+   *
+   * A turn can be legitimately busy without emitting runtime events on its own
+   * thread — for example while it is blocked on a `delegate_task` tool call
+   * whose child runs as a separate thread. The delegate coordinator uses this
+   * to heartbeat the parent so the watchdog does not flag it as stalled.
+   */
+  readonly noteActivity: (threadId: ThreadId) => Effect.Effect<void>;
   readonly getSnapshot: (threadId: ThreadId) => Effect.Effect<TurnActivitySnapshot | undefined>;
 }
 
@@ -194,6 +203,41 @@ export const makeTurnActivityWatchdog = Effect.fn("makeTurnActivityWatchdog")(fu
     yield* emit(transition);
   });
 
+  const noteActivity = Effect.fn("TurnActivityWatchdog.noteActivity")(function* (
+    threadId: ThreadId,
+  ) {
+    const now = yield* DateTime.now;
+    const nowMs = DateTime.toEpochMillis(now);
+    const nowIso = DateTime.formatIso(now);
+    const transition = yield* Ref.modify(activityByThread, (current) => {
+      const previous = current.get(threadId);
+      if (previous === undefined) return [undefined, current] as const;
+      const recovered =
+        previous.stalled && previous.activeTurnId !== undefined
+          ? ({
+              threadId,
+              provider: previous.provider,
+              ...(previous.providerInstanceId !== undefined
+                ? { providerInstanceId: previous.providerInstanceId }
+                : {}),
+              turnId: previous.activeTurnId,
+              state: "active",
+              lastActivityAt: nowIso,
+            } satisfies TurnHealthTransition)
+          : undefined;
+      const nextMap = new Map(current);
+      nextMap.set(threadId, {
+        ...previous,
+        lastActivityAt: nowIso,
+        lastActivityAtMs: nowMs,
+        stalled: false,
+      });
+      return [recovered, nextMap] as const;
+    });
+
+    yield* emit(transition);
+  });
+
   const checkOnce = Effect.gen(function* () {
     if (thresholdMs === 0) return;
     const nowMs = yield* Clock.currentTimeMillis;
@@ -236,6 +280,7 @@ export const makeTurnActivityWatchdog = Effect.fn("makeTurnActivityWatchdog")(fu
 
   return {
     observe,
+    noteActivity,
     getSnapshot: (threadId) =>
       Ref.get(activityByThread).pipe(
         Effect.map((entries) => {

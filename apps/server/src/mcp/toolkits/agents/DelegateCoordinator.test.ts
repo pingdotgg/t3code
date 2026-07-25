@@ -24,6 +24,10 @@ import * as TestClock from "effect/testing/TestClock";
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
+import {
+  ProviderService,
+  type ProviderServiceShape,
+} from "../../../provider/Services/ProviderService.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 import { __testing, DelegateCoordinator } from "./DelegateCoordinator.ts";
 
@@ -154,6 +158,7 @@ interface Harness {
 
 const makeCoordinator = (options?: {
   readonly parentShell?: (threadId: ThreadId) => OrchestrationThreadShell;
+  readonly noteSessionActivity?: (threadId: ThreadId) => Effect.Effect<void>;
 }): Effect.Effect<readonly [DelegateCoordinator["Service"], Harness], never, never> => {
   const dispatched: Array<OrchestrationCommand> = [];
   let threadDetailLookup: (threadId: ThreadId) => Option.Option<OrchestrationThread> = () =>
@@ -199,12 +204,19 @@ const makeCoordinator = (options?: {
     streamChanges: Stream.never,
   });
 
+  const providerServiceLayer = options?.noteSessionActivity
+    ? Layer.succeed(ProviderService, {
+        noteSessionActivity: options.noteSessionActivity,
+      } as unknown as ProviderServiceShape)
+    : Layer.empty;
+
   const layer = Layer.effect(DelegateCoordinator, __testing.make).pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(OrchestrationEngineService, engine),
         Layer.succeed(ProjectionSnapshotQuery, snapshotQuery),
         Layer.succeed(ProviderRegistry, providerRegistry),
+        providerServiceLayer,
       ),
     ),
     Layer.provideMerge(NodeServices.layer),
@@ -311,5 +323,31 @@ it.effect("sanitizes agent names into thread titles", () =>
       "Agent: my agent",
     );
     expect(__testing.resolveTitle({ prompt: "first line\nsecond line" })).toBe("Agent: first line");
+  }),
+);
+
+it.effect("heartbeats the parent's session activity while the delegated child runs", () =>
+  Effect.gen(function* () {
+    const noted: Array<ThreadId> = [];
+    const [coordinator, harness] = yield* makeCoordinator({
+      noteSessionActivity: (threadId) =>
+        Effect.sync(() => {
+          noted.push(threadId);
+        }),
+    });
+    // The child stays running: no latestTurn and no failure activities.
+    harness.setThreadDetail((threadId) => Option.some(makeThreadDetail(threadId)));
+
+    // The parent turn is blocked on the delegate call and emits no runtime
+    // events of its own; the coordinator must keep the parent's turn-activity
+    // watchdog alive so the thread is not flagged as stalled.
+    const fiber = yield* coordinator
+      .delegate(makeScope(), { prompt: "long running task" })
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust(Duration.seconds(5));
+    yield* Fiber.interrupt(fiber);
+
+    expect(noted.length).toBeGreaterThan(0);
+    expect(noted.every((threadId) => threadId === parentThreadId)).toBe(true);
   }),
 );

@@ -162,6 +162,62 @@ describe("TurnActivityWatchdog", () => {
     ),
   );
 
+  it.effect("noteActivity keeps a blocked turn out of stalled and recovers it", () =>
+    withTestClock(
+      Effect.gen(function* () {
+        const transitions = yield* Ref.make<Array<TurnHealthTransition>>([]);
+        const watchdog = yield* makeTurnActivityWatchdog({
+          thresholdMs: 1_000,
+          pollIntervalMs: 100,
+          onTransition: (transition) =>
+            Ref.update(transitions, (current) => [...current, transition]),
+        });
+
+        // A turn blocked on a delegated child emits no runtime events of its
+        // own, but the coordinator heartbeats noteActivity — it must never be
+        // flagged stalled while the heartbeats keep coming.
+        yield* watchdog.observe(event("turn.started"));
+        for (let index = 0; index < 12; index += 1) {
+          yield* TestClock.adjust(Duration.millis(500));
+          yield* watchdog.noteActivity(threadId);
+        }
+        assert.deepEqual(yield* Ref.get(transitions), []);
+
+        // Once the heartbeats stop the turn stalls, and the next heartbeat
+        // recovers it with an active transition.
+        yield* TestClock.adjust(Duration.millis(1_200));
+        assert.deepEqual(
+          (yield* Ref.get(transitions)).map((transition) => transition.state),
+          ["stalled"],
+        );
+        yield* watchdog.noteActivity(threadId);
+        assert.deepEqual(
+          (yield* Ref.get(transitions)).map((transition) => transition.state),
+          ["stalled", "active"],
+        );
+      }),
+    ),
+  );
+
+  it.effect("noteActivity is a no-op for untracked threads", () =>
+    withTestClock(
+      Effect.gen(function* () {
+        const transitions = yield* Ref.make<Array<TurnHealthTransition>>([]);
+        const watchdog = yield* makeTurnActivityWatchdog({
+          thresholdMs: 1_000,
+          pollIntervalMs: 100,
+          onTransition: (transition) =>
+            Ref.update(transitions, (current) => [...current, transition]),
+        });
+
+        yield* watchdog.noteActivity(threadId);
+        assert.isUndefined(yield* watchdog.getSnapshot(threadId));
+        yield* TestClock.adjust(Duration.minutes(10));
+        assert.deepEqual(yield* Ref.get(transitions), []);
+      }),
+    ),
+  );
+
   it.effect("removes stopped sessions without emitting recovery", () =>
     withTestClock(
       Effect.gen(function* () {
