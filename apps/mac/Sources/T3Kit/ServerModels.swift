@@ -454,11 +454,15 @@ public struct ServerSettings: Decodable, Sendable {
     public var providerInstances: JSONValue
     public var observability: ObservabilitySettings
     public var autoReview: AutoReviewSettings
+    /// `Schema.NullOr(Schema.DurationFromMillis)` — milliseconds, or null
+    /// when the auto-archive janitor is disabled.
+    public var autoArchiveSettledAfterMs: Double?
 
     private enum CodingKeys: String, CodingKey {
         case enableAssistantStreaming, enableProviderUpdateChecks, automaticGitFetchInterval,
             defaultThreadEnvMode, newWorktreesStartFromOrigin, addProjectBaseDirectory,
-            textGenerationModelSelection, providers, providerInstances, observability, autoReview
+            textGenerationModelSelection, providers, providerInstances, observability, autoReview,
+            autoArchiveSettledAfter
     }
 
     public init(from decoder: Decoder) throws {
@@ -485,6 +489,8 @@ public struct ServerSettings: Decodable, Sendable {
             default: ObservabilitySettings(rawTracesUrl: "", rawMetricsUrl: ""))
         autoReview = try c.decodeIfPresent(AutoReviewSettings.self, forKey: .autoReview)
             ?? .default
+        autoArchiveSettledAfterMs = try c.decodeIfPresent(
+            Double.self, forKey: .autoArchiveSettledAfter)
     }
 }
 

@@ -397,9 +397,43 @@ private struct ArchiveSettingsTab: View {
     let model: AppModel
     @UIState private var deleteTarget: ChatThread?
     @UIState private var searchText = ""
+    @UIState private var draft: AppSettings?
+    @FocusState private var autoArchiveValueFocused: Bool
+
+    private static let hourMs: Double = 3_600_000
+    private static let dayMs: Double = 86_400_000
+    /// Preselected window when the toggle is flipped on.
+    private static let defaultAutoArchiveAfterMs: Double = 3 * dayMs
 
     var body: some View {
         Form {
+            if let settings = draft {
+                Section {
+                    Toggle(
+                        "Auto-archive settled threads",
+                        isOn: Binding(
+                            get: { (draft ?? settings).autoArchiveSettledAfterMs != nil },
+                            set: { enabled in
+                                var next = draft ?? settings
+                                next.autoArchiveSettledAfterMs =
+                                    enabled ? Self.defaultAutoArchiveAfterMs : nil
+                                draft = next
+                                Task { await model.saveSettings(next) }
+                            }))
+                    if (draft ?? settings).autoArchiveSettledAfterMs != nil {
+                        autoArchiveAfterRow(settings)
+                    }
+                    Text(
+                        "Threads that have been settled — explicitly or by inactivity — are archived automatically once they have sat longer than this."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                } header: {
+                    Text("Auto-archive")
+                }
+            }
+
             Section("Archived threads") {
                 if model.archivedThreadsLoading && model.archivedThreads.isEmpty {
                     ProgressView("Loading archived threads…")
@@ -471,8 +505,16 @@ private struct ArchiveSettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
-        .task { await model.refreshArchivedThreads() }
+        .task {
+            await model.loadSettings()
+            draft = model.settings
+            await model.refreshArchivedThreads()
+        }
         .animation(Motion.structure, value: model.archivedThreads.map(\.id))
+        .onChange(of: autoArchiveValueFocused) { wasFocused, isFocused in
+            if wasFocused && !isFocused { commitAutoArchiveValue() }
+        }
+        .onDisappear { commitAutoArchiveValue() }
         .alert(
             "Delete Session?",
             isPresented: Binding(
@@ -501,6 +543,58 @@ private struct ArchiveSettingsTab: View {
             $0.title.localizedCaseInsensitiveContains(query)
                 || $0.provider.displayName.localizedCaseInsensitiveContains(query)
         }
+    }
+
+    /// Amount + unit editor for the auto-archive window. The amount field
+    /// edits the draft only and commits on submit/blur (a full-settings RPC
+    /// per keystroke would be noisy); the unit picker saves immediately.
+    private func autoArchiveAfterRow(_ settings: AppSettings) -> some View {
+        let ms = (draft ?? settings).autoArchiveSettledAfterMs ?? Self.defaultAutoArchiveAfterMs
+        let unit = ms.truncatingRemainder(dividingBy: Self.dayMs) == 0 ? "days" : "hours"
+        let divisor = unit == "days" ? Self.dayMs : Self.hourMs
+        return HStack {
+            Text("Archive after")
+            Spacer()
+            TextField(
+                "amount",
+                value: Binding(
+                    get: { max(1, Int(ms / divisor)) },
+                    set: { newValue in
+                        var next = draft ?? settings
+                        next.autoArchiveSettledAfterMs = Double(max(1, newValue)) * divisor
+                        draft = next
+                    }),
+                format: .number
+            )
+            .frame(width: 56)
+            .multilineTextAlignment(.trailing)
+            .focused($autoArchiveValueFocused)
+            .onSubmit { commitAutoArchiveValue() }
+            Picker(
+                "unit",
+                selection: Binding(
+                    get: { unit },
+                    set: { newUnit in
+                        var next = draft ?? settings
+                        let amount = max(1, Int(ms / divisor))
+                        next.autoArchiveSettledAfterMs =
+                            Double(amount) * (newUnit == "days" ? Self.dayMs : Self.hourMs)
+                        draft = next
+                        Task { await model.saveSettings(next) }
+                    })
+            ) {
+                Text("hours").tag("hours")
+                Text("days").tag("days")
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 150)
+        }
+    }
+
+    private func commitAutoArchiveValue() {
+        guard let draft else { return }
+        Task { await model.saveSettings(draft) }
     }
 }
 

@@ -2465,7 +2465,8 @@ public actor LiveBackend: BackendService {
             defaultThreadEnvMode: settings.defaultEnvMode == .worktree ? .worktree : .local,
             newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
             addProjectBaseDirectory: settings.addProjectBaseDirectory,
-            autoReview: autoReviewPatch)
+            autoReview: autoReviewPatch,
+            autoArchiveSettledAfterMs: .some(settings.autoArchiveSettledAfterMs))
         return Self.uiSettings(
             try await client.updateSettings(patch: patch),
             projects: Array(projectsByID.values))
@@ -2535,7 +2536,8 @@ public actor LiveBackend: BackendService {
                 mentionHandle: ar.mentionHandle,
                 pollIntervalSeconds: max(15, ar.pollIntervalMs / 1000),
                 autoFixOriginThread: ar.autoFixOriginThread,
-                projectOverrides: overrides))
+                projectOverrides: overrides),
+            autoArchiveSettledAfterMs: settings.autoArchiveSettledAfterMs)
     }
 
     private static func projectIDs(from projects: JSONValue) -> Set<String> {

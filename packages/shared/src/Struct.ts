@@ -16,8 +16,20 @@ export function deepMerge<T extends Record<string, unknown>>(current: T, patch: 
     if (value === undefined) continue;
 
     const existing = next[key];
-    next[key] = P.isObject(existing) && P.isObject(value) ? deepMerge(existing, value) : value;
+    next[key] =
+      isPlainObject(existing) && isPlainObject(value) ? deepMerge(existing, value) : value;
   }
 
   return next as T;
+}
+
+/**
+ * Only plain objects are recursively merged. Class instances (e.g. Effect
+ * `Duration`, `Date`) are replaced wholesale so their prototypes survive the
+ * merge.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!P.isObject(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
