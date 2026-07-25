@@ -71,6 +71,8 @@ export const followNetworkStatus = Effect.fnUntraced(function* (options: {
     Stream.runForEach((reason) =>
       reason === "application-active"
         ? Effect.gen(function* () {
+            // `runForEach` is sequential, so resume reads cannot overlap: a
+            // second resume does not start a read until this one has applied.
             const startedAt = (yield* Ref.get(applied)).changeCount;
             const status = yield* options.connectivity.status;
             yield* applyLock.withPermits(1)(

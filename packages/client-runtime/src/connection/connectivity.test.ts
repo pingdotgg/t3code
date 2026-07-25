@@ -148,6 +148,45 @@ describe("followNetworkStatus", () => {
     ),
   );
 
+  it.effect("does not start a second status read while one is in flight", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstRead = yield* Deferred.make<NetworkStatus>();
+        const readCount = yield* Ref.make(0);
+        const harness = yield* makeHarness({
+          initialStatus: "unknown",
+          status: Ref.updateAndGet(readCount, (count) => count + 1).pipe(
+            Effect.andThen(Deferred.await(firstRead)),
+          ),
+        });
+        yield* Connectivity.followNetworkStatus({
+          connectivity: harness.connectivity,
+          wakeups: harness.wakeups,
+          apply: harness.apply,
+        });
+
+        yield* harness.resume.pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.repeat({
+            until: () => Ref.get(readCount).pipe(Effect.map((count) => count >= 1)),
+          }),
+        );
+
+        // Resumes are consumed sequentially, so further resumes cannot start a
+        // read that races the one already in flight. Overlapping snapshots
+        // therefore cannot apply out of order.
+        yield* harness.resume;
+        yield* harness.resume;
+        yield* Effect.yieldNow;
+        expect(yield* Ref.get(readCount)).toBe(1);
+
+        yield* Deferred.succeed(firstRead, "online");
+        yield* Effect.yieldNow;
+        expect(yield* Ref.get(harness.applied)).toEqual(["online"]);
+      }),
+    ),
+  );
+
   it.effect("discards a resumed read that a newer reported change superseded", () =>
     Effect.scoped(
       Effect.gen(function* () {
