@@ -1,7 +1,8 @@
 name: Release macOS App
 
 on:
-  push:
+  pull_request:
+    types: [closed]
     branches:
       - main
   workflow_dispatch:
@@ -23,11 +24,13 @@ jobs:
     name: Build, publish, and update appcast
     runs-on: macos-latest
     timeout-minutes: 45
-    # Bot commits pushed by this workflow carry "[skip release]" so they
-    # don't trigger another release. Everything else on main releases.
+    # Releases only ship when a PR carrying the "release" label is merged
+    # into main (or via manual workflow_dispatch). Plain merges and bot
+    # commits never trigger a release.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      !contains(github.event.head_commit.message, '[skip release]')
+      (github.event.pull_request.merged == true &&
+        contains(github.event.pull_request.labels.*.name, 'release'))
 
     steps:
       - name: Checkout merged main
@@ -38,13 +41,15 @@ jobs:
 
       - name: Require main branch
         run: |
-          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+          # pull_request events are already restricted to base `main` by the
+          # trigger; only manual dispatches can come from another ref.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "$GITHUB_REF" != "refs/heads/main" ]]; then
             echo "Run this workflow from the merged main branch." >&2
             exit 1
           fi
 
       - name: Bump prerelease version
-        if: github.event_name == 'push'
+        if: github.event_name == 'pull_request'
         id: bump
         run: |
           set -euo pipefail
@@ -93,7 +98,7 @@ jobs:
           BUMP_TAG: ${{ steps.bump.outputs.tag }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == "push" ]]; then
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
             # Version was just bumped and pushed by the previous step.
             echo "version=$BUMP_VERSION" >> "$GITHUB_OUTPUT"
             echo "build=$BUMP_BUILD" >> "$GITHUB_OUTPUT"

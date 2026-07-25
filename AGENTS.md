@@ -17,14 +17,15 @@ SergeCode (github.com/SergeSerb2/SergeCode) is a **permanent hard fork** of `pin
 
 ## macOS App Versioning and Release Policy
 
-Releases are automated: **every push to `main` triggers the
-`Release macOS App` workflow**, which bumps the prerelease version and
-`buildNumber` in `apps/mac/version.json`, builds and signs the app, publishes
-a GitHub Release, and commits the updated Sparkle appcast back to `main`.
-Installed apps then see the update via Sparkle. Bot commits pushed by the
-workflow carry `[skip release]` in their message so they do not re-trigger
-the workflow — never remove that marker from automation commits, and never
-cherry-pick a bot commit without keeping the marker.
+Releases are automated but opt-in: **merging a PR into `main` only triggers
+the `Release macOS App` workflow when that PR carries the `release` label**.
+Plain merges never ship an update. When triggered, the workflow bumps the
+prerelease version and `buildNumber` in `apps/mac/version.json`, builds and
+signs the app, publishes a GitHub Release, and commits the updated Sparkle
+appcast back to `main`. Installed apps then see the update via Sparkle. Bot
+commits pushed by the workflow carry `[skip release]` in their message —
+never remove that marker from automation commits, and never cherry-pick a
+bot commit without keeping the marker.
 
 Before _manually_ changing `apps/mac/version.json`, tagging a release,
 generating an appcast entry, or running the macOS release workflow by hand,
@@ -34,9 +35,9 @@ every agent MUST ask the user this question and wait for the answer:
 > the current rolling/pending version number?
 
 Do not infer the answer from the size of the change, the PR title, or the
-current branch. Note that merging anything to `main` already produces an
-automatic prerelease — this question is about _manual_ version-line changes
-(major/minor/patch) and manual release actions.
+current branch. Note that merging a PR labeled `release` to `main` produces
+an automatic prerelease — this question is about _manual_ version-line
+changes (major/minor/patch) and manual release actions.
 
 - **Rolling/pending version:** keep both `version` and `buildNumber` in
   `apps/mac/version.json` unchanged in the PR. The automation bumps the

@@ -92,9 +92,17 @@ fi
 # materializes exactly that (workspace prod deps are bundled into dist by
 # `vp pack`, so only registry deps land here). --legacy is required because
 # the workspace does not set inject-workspace-packages=true.
+# CI runners (setup-vp) don't put pnpm itself on PATH; fall back to
+# corepack, which ships with Node and resolves pnpm from the root
+# packageManager field.
+if command -v pnpm >/dev/null 2>&1; then
+  PNPM=(pnpm)
+else
+  PNPM=(corepack pnpm)
+fi
 DEPLOY_DIR="$(mktemp -d)/deploy"
 echo "Deploying production server payload with pnpm deploy"
-(cd "$REPO_ROOT" && pnpm --filter t3 deploy --prod --legacy "$DEPLOY_DIR")
+(cd "$REPO_ROOT" && "${PNPM[@]}" --filter t3 deploy --prod --legacy "$DEPLOY_DIR")
 
 rm -rf "$SERVER_OUT"
 mkdir -p "$SERVER_OUT"
