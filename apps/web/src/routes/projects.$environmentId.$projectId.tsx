@@ -959,7 +959,7 @@ function ProjectRouteView() {
         {project && projectDetails.isPending && !projectDetails.data ? (
           <ProjectSettingsLoading />
         ) : (
-          <SettingsPageContainer compact className="min-h-full max-w-7xl gap-5">
+          <SettingsPageContainer compact className="max-w-7xl gap-5">
             {!project ? (
               <ProjectNotice title="Project not found" description="This project is not loaded." />
             ) : projectDetails.error !== null ? (
@@ -1028,13 +1028,10 @@ function ProjectRouteView() {
                   </div>
                 </section>
 
-                <div className="grid min-w-0 gap-6 xl:min-h-0 xl:flex-1 xl:grid-cols-2 xl:grid-rows-[auto_minmax(0,1fr)_auto] xl:items-stretch">
-                  <div className="grid min-w-0 content-start gap-6 xl:contents">
-                    <SettingsSection
-                      title="General"
-                      className="space-y-1.5 xl:col-start-1 xl:row-start-1"
-                    >
-                      <div className="mx-3 rounded-xl bg-muted/15 p-1 sm:mx-4">
+                <div className="grid min-w-0 gap-6 xl:grid-cols-2 xl:items-start">
+                  <div className="grid min-w-0 content-start gap-6">
+                    <SettingsSection title="General" className="space-y-1.5">
+                      <div className="mx-3 rounded-xl p-1 sm:mx-4">
                         <ProjectSettingRow
                           title="Name"
                           control={
@@ -1095,7 +1092,7 @@ function ProjectRouteView() {
                             ) : null
                           }
                           control={
-                            <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+                            <div className="flex min-w-0 flex-wrap items-center justify-start gap-1.5">
                               <ProviderModelPicker
                                 activeInstanceId={displayedModelSelection.instanceId}
                                 model={displayedModelSelection.model}
@@ -1145,11 +1142,8 @@ function ProjectRouteView() {
                       </div>
                     </SettingsSection>
 
-                    <SettingsSection
-                      title="Providers"
-                      className="space-y-1.5 xl:col-start-1 xl:row-start-2 xl:flex xl:min-h-0 xl:flex-col"
-                    >
-                      <div className="mx-3 grid gap-1 rounded-xl bg-muted/15 p-1 sm:mx-4 sm:grid-cols-2 xl:flex-1 xl:content-start">
+                    <SettingsSection title="Providers" className="space-y-1.5">
+                      <div className="mx-3 grid gap-1 rounded-xl p-1 sm:mx-4 sm:grid-cols-2">
                         {globallyEnabledProviderInstanceEntries.map((entry) => {
                           const allowed = !disabledProviderInstanceIds.includes(entry.instanceId);
                           const isLastAllowedProvider =
@@ -1161,7 +1155,7 @@ function ProjectRouteView() {
                           return (
                             <div
                               key={entry.instanceId}
-                              className="flex min-w-0 items-center justify-between gap-3 rounded-lg bg-background/30 px-3 py-2.5"
+                              className="flex min-w-0 items-center justify-between gap-3 rounded-lg px-3 py-2.5"
                             >
                               <div className="flex min-w-0 items-center gap-2.5">
                                 <ProviderInstanceIcon
@@ -1200,14 +1194,35 @@ function ProjectRouteView() {
                         })}
                       </div>
                     </SettingsSection>
+
+                    <SettingsSection title="Danger zone" className="space-y-1.5">
+                      <div className="mx-3 rounded-xl p-1 sm:mx-4">
+                        <ProjectSettingRow
+                          title="Remove project"
+                          description={
+                            projectThreadCount > 0
+                              ? "All project threads will be deleted."
+                              : "No threads will be deleted."
+                          }
+                          control={
+                            <Button
+                              variant="destructive-outline"
+                              size="sm"
+                              disabled={removeProjectPending}
+                              onClick={() => void removeProject()}
+                            >
+                              <Trash2Icon className="size-3.5" />
+                              Remove
+                            </Button>
+                          }
+                        />
+                      </div>
+                    </SettingsSection>
                   </div>
 
-                  <div className="grid min-w-0 content-start gap-6 xl:contents">
-                    <SettingsSection
-                      title="Git info"
-                      className="space-y-1.5 xl:col-start-2 xl:row-start-1"
-                    >
-                      <div className="mx-3 rounded-xl bg-muted/15 p-1 sm:mx-4">
+                  <div className="grid min-w-0 content-start gap-6">
+                    <SettingsSection title="Git info" className="space-y-1.5">
+                      <div className="mx-3 rounded-xl p-1 sm:mx-4">
                         <ProjectSettingRow
                           title="Remote"
                           description={
@@ -1229,7 +1244,7 @@ function ProjectRouteView() {
                           }
                           control={
                             <div className="grid w-full min-w-0 gap-4">
-                              <div className="flex w-full justify-end">
+                              <div className="flex w-full justify-start">
                                 <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                                   <span>Custom</span>
                                   <Switch
@@ -1399,11 +1414,8 @@ function ProjectRouteView() {
                       </div>
                     </SettingsSection>
 
-                    <SettingsSection
-                      title="Automation"
-                      className="space-y-1.5 xl:col-start-2 xl:row-start-2 xl:flex xl:min-h-0 xl:flex-col"
-                    >
-                      <div className="mx-3 rounded-xl bg-muted/15 p-1 sm:mx-4 xl:flex-1">
+                    <SettingsSection title="Automation" className="space-y-1.5">
+                      <div className="mx-3 rounded-xl p-1 sm:mx-4">
                         <ProjectScriptsControl
                           variant="settings"
                           scripts={projectDetails.data.scripts}
@@ -1420,33 +1432,6 @@ function ProjectRouteView() {
                               environment={actionEnvironment}
                               onChange={commitActionEnvironment}
                             />
-                          }
-                        />
-                      </div>
-                    </SettingsSection>
-
-                    <SettingsSection
-                      title="Danger zone"
-                      className="space-y-1.5 xl:col-span-2 xl:row-start-3"
-                    >
-                      <div className="mx-3 rounded-xl bg-destructive/4 p-1 sm:mx-4">
-                        <ProjectSettingRow
-                          title="Remove project"
-                          description={
-                            projectThreadCount > 0
-                              ? "All project threads will be deleted."
-                              : "No threads will be deleted."
-                          }
-                          control={
-                            <Button
-                              variant="destructive-outline"
-                              size="sm"
-                              disabled={removeProjectPending}
-                              onClick={() => void removeProject()}
-                            >
-                              <Trash2Icon className="size-3.5" />
-                              Remove
-                            </Button>
                           }
                         />
                       </div>
@@ -1510,7 +1495,7 @@ function ProjectPathLink({ path }: { path: string }) {
   return (
     <button
       type="button"
-      className="min-w-0 max-w-full cursor-pointer truncate text-left text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:text-right"
+      className="min-w-0 max-w-full cursor-pointer truncate text-left text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       title={path}
       aria-label="Open project folder"
       onClick={openPath}
@@ -1612,14 +1597,11 @@ function ProjectSettingRow({
         </div>
         <div className={cn("min-w-0 sm:flex-1", alignStart && control && "sm:self-stretch")}>
           {control ? (
-            <div className="flex min-w-0 w-full items-center sm:h-full sm:justify-end">
+            <div className="flex min-w-0 w-full items-center sm:h-full sm:justify-start">
               {control}
             </div>
           ) : value !== undefined ? (
-            <div
-              className="min-w-0 truncate text-sm text-muted-foreground sm:text-right"
-              title={value}
-            >
+            <div className="min-w-0 truncate text-left text-sm text-muted-foreground" title={value}>
               {value}
             </div>
           ) : null}
@@ -1701,7 +1683,7 @@ function ActionEnvironmentEditor({
 
   if (entries.length === 0) {
     return (
-      <div className="flex w-full min-w-0 flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-end">
+      <div className="flex w-full min-w-0 flex-col items-start gap-2 sm:flex-row sm:items-center">
         <p className="text-sm text-muted-foreground">No action variables configured.</p>
         <Button type="button" variant="outline" size="sm" onClick={addEntry}>
           <PlusIcon className="size-3.5" />
