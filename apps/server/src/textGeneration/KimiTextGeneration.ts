@@ -31,6 +31,7 @@ import {
   makeKimiAcpRuntime,
   resolveKimiAcpBaseModelId,
 } from "../provider/acp/KimiAcpSupport.ts";
+import { registerAutoApprovePermissionHandler } from "../provider/acp/AcpPermissionAutoApprove.ts";
 
 const KIMI_TIMEOUT_MS = 180_000;
 
@@ -71,6 +72,11 @@ export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(functi
         modelSelection,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
       });
+
+      // Headless session: no user is present to approve tool permissions, so
+      // auto-approve them instead of letting the turn stall (or the CLI fall
+      // back to its own terminal prompt) and produce no usable output.
+      yield* registerAutoApprovePermissionHandler(runtime);
 
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;
