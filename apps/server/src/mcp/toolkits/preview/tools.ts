@@ -54,7 +54,7 @@ export const PreviewStatusTool = Tool.make("preview_status", {
 export const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Show and initialize a collaborative browser tab. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab.",
+      "Show and initialize a collaborative browser tab. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab. Newly created tabs return after creation; wait on the returned tab before interacting while its initial page loads.",
     parameters: PreviewAutomationOpenInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,

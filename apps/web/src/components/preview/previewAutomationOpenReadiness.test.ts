@@ -1,7 +1,7 @@
 import type { PreviewAutomationOpenInput, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { previewAutomationOpenNeedsOverlay } from "./previewAutomationOpenReadiness";
+import { resolvePreviewAutomationOpenWaitPolicy } from "./previewAutomationOpenReadiness";
 
 const snapshot = (navStatus: PreviewSessionSnapshot["navStatus"]): PreviewSessionSnapshot => ({
   threadId: "thread-1",
@@ -13,34 +13,53 @@ const snapshot = (navStatus: PreviewSessionSnapshot["navStatus"]): PreviewSessio
 });
 
 describe("preview automation open readiness", () => {
-  it("does not wait for a desktop overlay when opening an empty tab", () => {
+  it("acknowledges a newly created URL tab before cold renderer readiness", () => {
     expect(
-      previewAutomationOpenNeedsOverlay(
-        {} as PreviewAutomationOpenInput,
-        snapshot({ _tag: "Idle" }),
+      resolvePreviewAutomationOpenWaitPolicy(
+        { url: "https://example.com" } as PreviewAutomationOpenInput,
+        snapshot({
+          _tag: "Loading",
+          url: "https://example.com/",
+          title: "",
+        }),
+        false,
       ),
-    ).toBe(false);
+    ).toEqual({
+      acknowledgeAfterCreation: true,
+      waitForOverlay: false,
+      waitForVisibility: false,
+    });
   });
 
-  it("waits when an empty tab is immediately given a URL", () => {
+  it("waits for the overlay and visibility when navigating a reused tab", () => {
     expect(
-      previewAutomationOpenNeedsOverlay(
+      resolvePreviewAutomationOpenWaitPolicy(
         { url: "https://example.com" } as PreviewAutomationOpenInput,
         snapshot({ _tag: "Idle" }),
+        true,
       ),
-    ).toBe(true);
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: true,
+      waitForVisibility: true,
+    });
   });
 
-  it("waits for existing tabs that already have rendered content", () => {
+  it("waits for an existing rendered overlay without requiring visibility when show is false", () => {
     expect(
-      previewAutomationOpenNeedsOverlay(
-        {} as PreviewAutomationOpenInput,
+      resolvePreviewAutomationOpenWaitPolicy(
+        { show: false } as PreviewAutomationOpenInput,
         snapshot({
           _tag: "Success",
           url: "https://example.com/",
           title: "Example",
         }),
+        true,
       ),
-    ).toBe(true);
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: true,
+      waitForVisibility: false,
+    });
   });
 });

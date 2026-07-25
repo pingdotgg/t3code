@@ -54,7 +54,7 @@ import {
   PreviewAutomationVisibilityTimeoutError,
   PreviewAutomationViewportTimeoutError,
 } from "./previewAutomationErrors";
-import { previewAutomationOpenNeedsOverlay } from "./previewAutomationOpenReadiness";
+import { resolvePreviewAutomationOpenWaitPolicy } from "./previewAutomationOpenReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
 import {
@@ -403,7 +403,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             if (input.show ?? true) {
               useRightPanelStore.getState().openBrowser(threadRef, activeTabId);
             }
-            if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
+            const waitPolicy = activeSnapshot
+              ? resolvePreviewAutomationOpenWaitPolicy(input, activeSnapshot, reusedExistingTab)
+              : null;
+            if (waitPolicy?.acknowledgeAfterCreation) {
+              return await currentStatus(threadRef, activeTabId);
+            }
+            if (waitPolicy?.waitForOverlay) {
               await waitForDesktopOverlay(
                 threadRef,
                 request.requestId,
@@ -421,7 +427,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 request.timeoutMs,
               );
             }
-            if (input.show ?? true) {
+            if (waitPolicy?.waitForVisibility) {
               await waitForBrowserSurfaceVisibility(
                 threadRef,
                 request.requestId,

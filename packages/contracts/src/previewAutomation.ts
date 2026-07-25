@@ -107,7 +107,7 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   )
   .annotate({
     description:
-      "Opens the collaborative browser for the current thread. Use preview_navigate afterward when readiness waiting matters.",
+      "Opens the collaborative browser for the current thread. Newly created tabs acknowledge creation before renderer readiness; wait on the returned tab before interacting while its initial page loads.",
   });
 export type PreviewAutomationOpenInput = typeof PreviewAutomationOpenInput.Type;
 
