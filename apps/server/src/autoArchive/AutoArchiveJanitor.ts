@@ -109,7 +109,7 @@ export interface AutoArchiveJanitorDeps {
 }
 
 export const make = (deps: AutoArchiveJanitorDeps) =>
-  Effect.gen(function* () {
+  Effect.sync(() => {
     const fiberRef = { current: null as Fiber.Fiber<void, never> | null };
 
     const tick: AutoArchiveJanitor["Service"]["tick"] = Effect.gen(function* () {
