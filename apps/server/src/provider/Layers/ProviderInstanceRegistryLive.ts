@@ -45,11 +45,14 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { buildUnavailableProviderSnapshot } from "../unavailableProviderSnapshot.ts";
 import {
@@ -101,23 +104,54 @@ const decodedConfigEnabled = (config: unknown): boolean | undefined => {
   return typeof enabled === "boolean" ? enabled : undefined;
 };
 
-const applyAdapterCapabilities = (instance: ProviderInstance): ProviderInstance => {
+const applyAdapterCapabilities = Effect.fn("applyAdapterCapabilities")(function* (
+  instance: ProviderInstance,
+) {
   const supportsSteering = instance.adapter.capabilities.turnSteering !== "unsupported";
   const stampCapabilities = (snapshot: ServerProvider): ServerProvider => ({
     ...snapshot,
     supportsSteering,
   });
+  const snapshot = {
+    ...instance.snapshot,
+    getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(stampCapabilities)),
+    refresh: instance.snapshot.refresh.pipe(Effect.map(stampCapabilities)),
+    streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(stampCapabilities)),
+  };
+
+  if (supportsSteering) {
+    return { ...instance, snapshot };
+  }
+
+  const turnQueueLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
+  const getTurnQueueSemaphore = (threadId: string) =>
+    SynchronizedRef.modifyEffect(turnQueueLocksRef, (current) => {
+      const existing = Option.fromNullishOr(current.get(threadId));
+      return Option.match(existing, {
+        onNone: () =>
+          Semaphore.make(1).pipe(
+            Effect.map((semaphore) => {
+              const next = new Map(current);
+              next.set(threadId, semaphore);
+              return [semaphore, next] as const;
+            }),
+          ),
+        onSome: (semaphore) => Effect.succeed([semaphore, current] as const),
+      });
+    });
 
   return {
     ...instance,
-    snapshot: {
-      ...instance.snapshot,
-      getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(stampCapabilities)),
-      refresh: instance.snapshot.refresh.pipe(Effect.map(stampCapabilities)),
-      streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(stampCapabilities)),
+    adapter: {
+      ...instance.adapter,
+      sendTurn: (input) =>
+        Effect.flatMap(getTurnQueueSemaphore(input.threadId), (semaphore) =>
+          semaphore.withPermit(instance.adapter.sendTurn(input)),
+        ),
     },
+    snapshot,
   };
-};
+});
 
 /**
  * Build one live entry from a raw config envelope. Returns either a
@@ -215,7 +249,7 @@ const buildEntry = <R>(input: {
     return {
       kind: "live" as const,
       live: {
-        instance: applyAdapterCapabilities(createResult.success),
+        instance: yield* applyAdapterCapabilities(createResult.success),
         scope: childScope,
         entry,
       },

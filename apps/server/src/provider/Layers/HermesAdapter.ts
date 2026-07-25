@@ -12,6 +12,7 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -571,176 +572,232 @@ export function makeHermesAdapter(
       );
 
     const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
-      Effect.gen(function* () {
-        const prepared = yield* withThreadLock(
-          input.threadId,
-          Effect.gen(function* () {
-            const context = yield* requireSession(input.threadId);
-            if (context.activeTurnId) {
-              return yield* new ProviderAdapterValidationError({
-                provider: PROVIDER,
-                operation: "sendTurn",
-                issue: "A Hermes turn is already running for this thread.",
-              });
-            }
-
-            const modelSelection =
-              input.modelSelection?.instanceId === boundInstanceId
-                ? input.modelSelection
-                : undefined;
-            const currentModelId = yield* applyHermesAcpSelection({
-              runtime: context.acp,
-              currentModelId: context.currentModelId,
-              selection: modelSelection,
-              mapError: ({ cause, method }) =>
-                mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
-            });
-            const text = input.input?.trim();
-            const imageParts = yield* Effect.forEach(input.attachments ?? [], (attachment) =>
-              Effect.gen(function* () {
-                const attachmentPath = resolveAttachmentPath({
-                  attachmentsDir: serverConfig.attachmentsDir,
-                  attachment,
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const prepared = yield* withThreadLock(
+            input.threadId,
+            Effect.gen(function* () {
+              const context = yield* requireSession(input.threadId);
+              if (context.activeTurnId) {
+                return yield* new ProviderAdapterValidationError({
+                  provider: PROVIDER,
+                  operation: "sendTurn",
+                  issue: "A Hermes turn is already running for this thread.",
                 });
-                if (!attachmentPath) {
-                  return yield* new ProviderAdapterRequestError({
-                    provider: PROVIDER,
-                    method: "session/prompt",
-                    detail: `Invalid attachment id '${attachment.id}'.`,
-                  });
-                }
-                const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ProviderAdapterRequestError({
-                        provider: PROVIDER,
-                        method: "session/prompt",
-                        detail: cause.message,
-                        cause,
-                      }),
-                  ),
-                );
-                return {
-                  type: "image",
-                  data: Buffer.from(bytes).toString("base64"),
-                  mimeType: attachment.mimeType,
-                } satisfies EffectAcpSchema.ContentBlock;
-              }),
-            );
-            const prompt: Array<EffectAcpSchema.ContentBlock> = [
-              ...(text ? [{ type: "text" as const, text }] : []),
-              ...imageParts,
-            ];
-            if (prompt.length === 0) {
-              return yield* new ProviderAdapterValidationError({
-                provider: PROVIDER,
-                operation: "sendTurn",
-                issue: "Turn requires non-empty text or attachments.",
+              }
+
+              const modelSelection =
+                input.modelSelection?.instanceId === boundInstanceId
+                  ? input.modelSelection
+                  : undefined;
+              const currentModelId = yield* applyHermesAcpSelection({
+                runtime: context.acp,
+                currentModelId: context.currentModelId,
+                selection: modelSelection,
+                mapError: ({ cause, method }) =>
+                  mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
               });
-            }
+              const text = input.input?.trim();
+              const imageParts = yield* Effect.forEach(input.attachments ?? [], (attachment) =>
+                Effect.gen(function* () {
+                  const attachmentPath = resolveAttachmentPath({
+                    attachmentsDir: serverConfig.attachmentsDir,
+                    attachment,
+                  });
+                  if (!attachmentPath) {
+                    return yield* new ProviderAdapterRequestError({
+                      provider: PROVIDER,
+                      method: "session/prompt",
+                      detail: `Invalid attachment id '${attachment.id}'.`,
+                    });
+                  }
+                  const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderAdapterRequestError({
+                          provider: PROVIDER,
+                          method: "session/prompt",
+                          detail: cause.message,
+                          cause,
+                        }),
+                    ),
+                  );
+                  return {
+                    type: "image",
+                    data: Buffer.from(bytes).toString("base64"),
+                    mimeType: attachment.mimeType,
+                  } satisfies EffectAcpSchema.ContentBlock;
+                }),
+              );
+              const prompt: Array<EffectAcpSchema.ContentBlock> = [
+                ...(text ? [{ type: "text" as const, text }] : []),
+                ...imageParts,
+              ];
+              if (prompt.length === 0) {
+                return yield* new ProviderAdapterValidationError({
+                  provider: PROVIDER,
+                  operation: "sendTurn",
+                  issue: "Turn requires non-empty text or attachments.",
+                });
+              }
 
-            const turnId = TurnId.make(yield* randomUUIDv4);
-            const model = currentModelId ?? context.session.model ?? HERMES_DEFAULT_MODEL;
-            context.activeTurnId = turnId;
-            context.currentModelId = currentModelId;
-            context.session = {
-              ...context.session,
-              status: "running",
-              activeTurnId: turnId,
-              model,
-              updatedAt: yield* nowIso,
-            };
-            yield* offerRuntimeEvent({
-              type: "turn.started",
-              ...(yield* makeEventStamp()),
-              provider: PROVIDER,
-              threadId: input.threadId,
-              turnId,
-              payload: { model },
-            });
-            return {
-              acp: context.acp,
-              acpSessionId: context.acpSessionId,
-              model,
-              prompt,
-              turnId,
-            };
-          }),
-        );
-
-        const promptResult = yield* prepared.acp.prompt({ prompt: prepared.prompt }).pipe(
-          Effect.mapError((error) =>
-            mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
-          ),
-          Effect.result,
-        );
-        yield* prepared.acp.drainEvents;
-
-        return yield* withThreadLock(
-          input.threadId,
-          Effect.gen(function* () {
-            const context = yield* requireSession(input.threadId);
-            if (
-              context.acpSessionId !== prepared.acpSessionId ||
-              context.activeTurnId !== prepared.turnId
-            ) {
-              return {
-                threadId: input.threadId,
-                turnId: prepared.turnId,
-                resumeCursor: context.session.resumeCursor,
+              const turnId = TurnId.make(yield* randomUUIDv4);
+              const model = currentModelId ?? context.session.model ?? HERMES_DEFAULT_MODEL;
+              context.activeTurnId = turnId;
+              context.currentModelId = currentModelId;
+              context.session = {
+                ...context.session,
+                status: "running",
+                activeTurnId: turnId,
+                model,
+                updatedAt: yield* nowIso,
               };
-            }
-
-            const completedAt = yield* nowIso;
-            const { activeTurnId: _activeTurnId, ...readySession } = context.session;
-            context.activeTurnId = undefined;
-            context.session = {
-              ...readySession,
-              status: "ready",
-              model: prepared.model,
-              updatedAt: completedAt,
-            };
-
-            if (Result.isFailure(promptResult)) {
               yield* offerRuntimeEvent({
-                type: "turn.completed",
+                type: "turn.started",
                 ...(yield* makeEventStamp()),
                 provider: PROVIDER,
                 threadId: input.threadId,
-                turnId: prepared.turnId,
-                payload: {
-                  state: "failed",
-                  errorMessage: promptResult.failure.message,
-                },
+                turnId,
+                payload: { model },
               });
-              return yield* promptResult.failure;
-            }
+              return {
+                acp: context.acp,
+                acpSessionId: context.acpSessionId,
+                model,
+                prompt,
+                turnId,
+              };
+            }),
+          );
 
-            appendPromptResultToTurn(
-              context,
-              prepared.turnId,
-              prepared.prompt,
-              promptResult.success,
+          const settleInterruptedTurn = Effect.gen(function* () {
+            yield* prepared.acp.cancel.pipe(Effect.ignore);
+            yield* prepared.acp.drainEvents.pipe(Effect.ignore);
+            yield* withThreadLock(
+              input.threadId,
+              Effect.gen(function* () {
+                const context = yield* requireSession(input.threadId);
+                if (
+                  context.acpSessionId !== prepared.acpSessionId ||
+                  context.activeTurnId !== prepared.turnId
+                ) {
+                  return;
+                }
+
+                const completedAt = yield* nowIso;
+                const { activeTurnId: _activeTurnId, ...readySession } = context.session;
+                context.activeTurnId = undefined;
+                context.session = {
+                  ...readySession,
+                  status: "ready",
+                  model: prepared.model,
+                  updatedAt: completedAt,
+                };
+                yield* settlePendingApprovals(context);
+                yield* offerRuntimeEvent({
+                  type: "turn.completed",
+                  ...(yield* makeEventStamp()),
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  turnId: prepared.turnId,
+                  payload: {
+                    state: "cancelled",
+                    stopReason: "cancelled",
+                  },
+                });
+              }),
             );
-            yield* offerRuntimeEvent({
-              type: "turn.completed",
-              ...(yield* makeEventStamp()),
-              provider: PROVIDER,
-              threadId: input.threadId,
-              turnId: prepared.turnId,
-              payload: {
-                state: promptResult.success.stopReason === "cancelled" ? "cancelled" : "completed",
-                stopReason: promptResult.success.stopReason,
-              },
-            });
-            return {
-              threadId: input.threadId,
-              turnId: prepared.turnId,
-              resumeCursor: context.session.resumeCursor,
-            };
-          }),
-        );
-      });
+          });
+
+          return yield* Effect.acquireUseRelease(
+            Effect.succeed(prepared),
+            () =>
+              restore(
+                Effect.gen(function* () {
+                  const promptResult = yield* prepared.acp.prompt({ prompt: prepared.prompt }).pipe(
+                    Effect.mapError((error) =>
+                      mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
+                    ),
+                    Effect.result,
+                  );
+                  yield* prepared.acp.drainEvents;
+
+                  return yield* withThreadLock(
+                    input.threadId,
+                    Effect.gen(function* () {
+                      const context = yield* requireSession(input.threadId);
+                      if (
+                        context.acpSessionId !== prepared.acpSessionId ||
+                        context.activeTurnId !== prepared.turnId
+                      ) {
+                        return {
+                          threadId: input.threadId,
+                          turnId: prepared.turnId,
+                          resumeCursor: context.session.resumeCursor,
+                        };
+                      }
+
+                      const completedAt = yield* nowIso;
+                      const { activeTurnId: _activeTurnId, ...readySession } = context.session;
+                      context.activeTurnId = undefined;
+                      context.session = {
+                        ...readySession,
+                        status: "ready",
+                        model: prepared.model,
+                        updatedAt: completedAt,
+                      };
+
+                      if (Result.isFailure(promptResult)) {
+                        yield* offerRuntimeEvent({
+                          type: "turn.completed",
+                          ...(yield* makeEventStamp()),
+                          provider: PROVIDER,
+                          threadId: input.threadId,
+                          turnId: prepared.turnId,
+                          payload: {
+                            state: "failed",
+                            errorMessage: promptResult.failure.message,
+                          },
+                        });
+                        return yield* promptResult.failure;
+                      }
+
+                      appendPromptResultToTurn(
+                        context,
+                        prepared.turnId,
+                        prepared.prompt,
+                        promptResult.success,
+                      );
+                      yield* offerRuntimeEvent({
+                        type: "turn.completed",
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId: prepared.turnId,
+                        payload: {
+                          state:
+                            promptResult.success.stopReason === "cancelled"
+                              ? "cancelled"
+                              : "completed",
+                          stopReason: promptResult.success.stopReason,
+                        },
+                      });
+                      return {
+                        threadId: input.threadId,
+                        turnId: prepared.turnId,
+                        resumeCursor: context.session.resumeCursor,
+                      };
+                    }),
+                  );
+                }),
+              ),
+            (_prepared, exit) =>
+              Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)
+                ? settleInterruptedTurn.pipe(Effect.ignore)
+                : Effect.void,
+          );
+        }),
+      );
 
     const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (
       threadId,

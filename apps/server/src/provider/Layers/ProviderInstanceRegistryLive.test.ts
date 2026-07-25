@@ -34,13 +34,18 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
+  ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderAdapterValidationError } from "../Errors.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
@@ -450,6 +455,85 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(hermesSnapshot.continuation?.groupKey).toBe(
         `${hermesDriverKind}:instance:${hermesId}`,
       );
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("serializes non-steerable turns for the lifetime of the provider instance", () =>
+    Effect.gen(function* () {
+      const firstTurnStarted = yield* Deferred.make<void>();
+      const releaseFirstTurn = yield* Deferred.make<void>();
+      let active = false;
+      let sendCount = 0;
+      const driver = {
+        ...HermesDriver,
+        create: (input: Parameters<typeof HermesDriver.create>[0]) =>
+          HermesDriver.create(input).pipe(
+            Effect.map((instance) => ({
+              ...instance,
+              adapter: {
+                ...instance.adapter,
+                interruptTurn: () =>
+                  Deferred.succeed(releaseFirstTurn, undefined).pipe(Effect.asVoid),
+                sendTurn: (turnInput: Parameters<typeof instance.adapter.sendTurn>[0]) =>
+                  Effect.gen(function* () {
+                    if (active) {
+                      return yield* new ProviderAdapterValidationError({
+                        provider: instance.adapter.provider,
+                        operation: "sendTurn",
+                        issue: "A provider turn is already running for this thread.",
+                      });
+                    }
+                    active = true;
+                    sendCount += 1;
+                    const currentSend = sendCount;
+                    if (currentSend === 1) {
+                      yield* Deferred.succeed(firstTurnStarted, undefined);
+                      yield* Deferred.await(releaseFirstTurn);
+                    }
+                    active = false;
+                    return {
+                      threadId: turnInput.threadId,
+                      turnId: TurnId.make(`turn-${currentSend}`),
+                    };
+                  }),
+              },
+            })),
+          ),
+      };
+      const instanceId = ProviderInstanceId.make("hermes_queue_test");
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [driver],
+        configMap: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("hermes"),
+            enabled: false,
+            config: makeHermesConfig({}),
+          },
+        },
+      });
+      const instance = yield* registry.getInstance(instanceId);
+      expect(instance).toBeDefined();
+      const threadId = ThreadId.make("provider-instance-queue-thread");
+
+      const firstTurnFiber = yield* instance!.adapter
+        .sendTurn({ threadId, input: "first", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(firstTurnStarted);
+      const secondTurnFiber = yield* instance!.adapter
+        .sendTurn({ threadId, input: "second", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      expect(secondTurnFiber.pollUnsafe()).toBeUndefined();
+      expect(sendCount).toBe(1);
+
+      yield* instance!.adapter.interruptTurn(threadId);
+      const [firstTurn, secondTurn] = yield* Effect.all([
+        Fiber.join(firstTurnFiber),
+        Fiber.join(secondTurnFiber),
+      ]);
+      expect(firstTurn.turnId).not.toBe(secondTurn.turnId);
+      expect(sendCount).toBe(2);
     }).pipe(Effect.provide(testLayer)),
   );
 });

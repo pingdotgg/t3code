@@ -33,9 +33,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import {
   increment,
@@ -215,25 +213,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
-  const turnQueueLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-  const getTurnQueueSemaphore = (threadId: ThreadId) =>
-    SynchronizedRef.modifyEffect(turnQueueLocksRef, (current) => {
-      const existing = Option.fromNullishOr(current.get(threadId));
-      return Option.match(existing, {
-        onNone: () =>
-          Semaphore.make(1).pipe(
-            Effect.map((semaphore) => {
-              const next = new Map(current);
-              next.set(threadId, semaphore);
-              return [semaphore, next] as const;
-            }),
-          ),
-        onSome: (semaphore) => Effect.succeed([semaphore, current] as const),
-      });
-    });
-  const withTurnQueueLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
-    Effect.flatMap(getTurnQueueSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
       Effect.tap((credential) =>
@@ -723,11 +703,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
         return turn;
       });
-      const sendEffect =
-        routed.adapter.capabilities.turnSteering === "unsupported"
-          ? withTurnQueueLock(input.threadId, sendRoutedTurn)
-          : sendRoutedTurn;
-      return yield* sendEffect;
+      return yield* sendRoutedTurn;
     }).pipe(
       withMetrics({
         counter: providerTurnsTotal,
