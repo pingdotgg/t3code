@@ -1065,6 +1065,20 @@ export function acpPostSettleWakeShouldBuffer(
   );
 }
 
+/**
+ * An app-owned wake (a delegated child finishing) is injected by the
+ * orchestrator, not typed by the user. It reports on a sibling child and says
+ * nothing about this session's own pending wake frames, so it must not discard
+ * them the way a real user turn does. ClaudeAdapterV2 already leaves its buffer
+ * alone on non-continuation turns; this keeps ACP consistent.
+ */
+export function acpIsAppOwnedWakeTurn(message: {
+  readonly createdBy: string;
+  readonly creationSource: string;
+}): boolean {
+  return message.createdBy === "agent" && message.creationSource === "server";
+}
+
 export function acpPostSettleMonitorPromptShouldSuppress(
   mutation:
     | {
@@ -4455,13 +4469,22 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             });
             yield* Ref.set(suppressPostSettleMonitorPrompt, false);
             yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
-            yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
             // Continuation turns attach to wake traffic the agent already produced
             // after the prior root turn settled; do not re-prompt the ACP session.
             const isContinuationTurn =
               postSettleContinuationEnabled &&
               turnInput.message.createdBy === "agent" &&
               turnInput.message.creationSource === "provider";
+            const isAppOwnedWakeTurn = acpIsAppOwnedWakeTurn(turnInput.message);
+            // An app-owned wake reports on a sibling delegated child and owns
+            // none of this session's background work, so it must not discard
+            // pending wake evidence: neither the mid-turn completion marks kept
+            // across a settle with work still running, nor the wake buffer
+            // below. Dropping the marks here would lose the offer for a task
+            // that completed unreported before the settle.
+            if (!isAppOwnedWakeTurn) {
+              yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
+            }
             // User turns must not inherit prior-turn wake residue. Stale injected-
             // turn ack chatter buffered for in-turn-handled work can otherwise
             // arm a mid-turn offer when a later monitor completes (multiturn
@@ -4470,7 +4493,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             // and re-buffer evidence when they complete; a user message means
             // this turn owns the conversation, so prior wake frames cannot be
             // legitimate for a synthetic continuation of the previous turn.
-            if (!isContinuationTurn) {
+            if (!isContinuationTurn && !isAppOwnedWakeTurn) {
               yield* Ref.set(wakeBuffer, []);
             }
             // Drop a sticky continuation offer when any new turn starts so idle
