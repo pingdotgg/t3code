@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as NodeChildProcess from "node:child_process";
 
 import {
   HostProcessArguments,
@@ -18,7 +19,7 @@ import {
   HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
 
-import { reconcileService } from "../cli/service.ts";
+import { formatServiceStatus, reconcileService } from "../cli/service.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as BootService from "./bootService.ts";
 
@@ -204,6 +205,10 @@ it("renders a classic s6 run script with supervisor markers and shell-safe paths
   assert.include(script, "/home/me/T3 Data/logs/service.log");
   assert.include(script, "export HERMES_HOME=");
   assert.notInclude(script, serviceEnvironment[0]?.value ?? "");
+  const privilegeDropCommand = script.trimEnd().split("\n").at(-1) ?? "";
+  assert.include(privilegeDropCommand, BootService.S6_SERVICE_ENVIRONMENT_SENTINEL);
+  assert.include(privilegeDropCommand, "'/bin/sh' '-s' '--'");
+  assert.notInclude(privilegeDropCommand, serviceEnvironment[0]?.value ?? "");
   assert.equal(
     BootService.renderServiceEnvironmentExports(serviceEnvironment),
     "export HERMES_HOME='/home/hermes/T3'\\''s $data `literal` mode=service'",
@@ -406,13 +411,14 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       const { dirs, fs, path } = yield* makeTestContext();
       const commands: Array<RecordedCommand> = [];
       const serviceDir = path.join(dirs.home, "service", "t3code");
+      const initialEnvironmentValue = "/home/hermes/T3's $data `literal` mode=old and=preserved";
       const service = yield* BootService.make({
         baseDir: dirs.baseDir,
         logsDir: dirs.logsDir,
         cliVersion: "0.0.27",
         supervisor: "s6",
         s6ServiceDir: serviceDir,
-        serviceEnvironment: [{ name: "HERMES_HOME", value: "/home/hermes/old=config" }],
+        serviceEnvironment: [{ name: "HERMES_HOME", value: initialEnvironmentValue }],
         host: {
           execPath: dirs.stableEntry,
           cliEntryPath: "",
@@ -446,18 +452,64 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       assert.include(launcher, `exec '${dirs.stableEntry}' "$@"`);
       assert.include(launcher, "export T3_SERVICE_VERSION='0.0.27'");
       assert.notInclude(launcher, "HERMES_HOME");
-      assert.notInclude(launcher, "/home/hermes/old=config");
-      assert.isTrue((yield* fs.stat(plan.unitPath)).mode % 2 === 1);
+      assert.notInclude(launcher, initialEnvironmentValue);
+      assert.equal((yield* fs.stat(plan.unitPath)).mode & 0o777, 0o700);
       assert.isTrue((yield* service.status).current);
 
+      const postDropArguments = [
+        "-s",
+        "--",
+        BootService.S6_SERVICE_ENVIRONMENT_SENTINEL,
+        process.execPath,
+        "-e",
+        "process.exit(process.env.HERMES_HOME === process.env.EXPECTED_HERMES_HOME ? 0 : 1)",
+      ];
+      assert.notInclude(JSON.stringify(postDropArguments), initialEnvironmentValue);
+      const postDropResult = NodeChildProcess.spawnSync("/bin/sh", postDropArguments, {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          EXPECTED_HERMES_HOME: initialEnvironmentValue,
+        },
+        input: script,
+      });
+      assert.isUndefined(postDropResult.error);
+      assert.equal(postDropResult.status, 0);
+      assert.notInclude(yield* fs.readFileString(plan.logPath), initialEnvironmentValue);
+
+      const statusCommands: Array<RecordedCommand> = [];
+      const environmentlessStatusService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+        host: {
+          execPath: dirs.stableEntry,
+          cliEntryPath: "",
+          standalone: true,
+        },
+      }).pipe(Effect.provide(makeRecordingRunnerLayer(statusCommands)), provideHostRefs(""));
+      const environmentlessStatus = yield* environmentlessStatusService.status;
+      assert.isTrue(environmentlessStatus.current);
+      assert.isEmpty(statusCommands);
+      const statusOutput = formatServiceStatus(environmentlessStatus, "0.0.27", {
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+      });
+      assert.notInclude(statusOutput, initialEnvironmentValue);
+      assert.notInclude(statusOutput, "--service-environment");
+      assert.notInclude(statusOutput, "Next:");
+
       const updateCommands: Array<RecordedCommand> = [];
+      const updatedEnvironmentValue = "/home/hermes/T3's $data `literal` mode=new and=changed";
       const updatedService = yield* BootService.make({
         baseDir: dirs.baseDir,
         logsDir: dirs.logsDir,
         cliVersion: "0.0.27",
         supervisor: "s6",
         s6ServiceDir: serviceDir,
-        serviceEnvironment: [{ name: "HERMES_HOME", value: "/home/hermes/new=config" }],
+        serviceEnvironment: [{ name: "HERMES_HOME", value: updatedEnvironmentValue }],
         host: {
           execPath: dirs.stableEntry,
           cliEntryPath: "",
@@ -474,12 +526,83 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         updateCommands.filter(({ command, args }) => command === "s6-svc" && args[0] === "-r"),
         1,
       );
-      assert.notInclude(JSON.stringify(updateCommands), "/home/hermes/new=config");
+      assert.notInclude(JSON.stringify(updateCommands), updatedEnvironmentValue);
       assert.isTrue((yield* updatedService.status).current);
 
       assert.isTrue(yield* service.uninstall);
       assert.deepEqual(commands.at(-1), { command: "s6-svc", args: ["-d", serviceDir] });
       assert.isFalse(yield* fs.exists(plan.unitPath));
+    }),
+  );
+
+  it.effect("preserves an installed s6 environment when update does not specify one", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const serviceDir = path.join(dirs.home, "service", "t3code");
+      const environmentValue = "/home/hermes/T3's Home=production";
+      const installCommands: Array<RecordedCommand> = [];
+      const installedService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+        serviceEnvironment: [{ name: "HERMES_HOME", value: environmentValue }],
+        host: {
+          execPath: dirs.stableEntry,
+          cliEntryPath: "",
+          standalone: true,
+        },
+      }).pipe(Effect.provide(makeRecordingRunnerLayer(installCommands)), provideHostRefs(""));
+      yield* installedService.install;
+
+      const updateCommands: Array<RecordedCommand> = [];
+      const preservingUpdate = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.28",
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+        host: {
+          execPath: dirs.stableEntry,
+          cliEntryPath: "",
+          standalone: true,
+        },
+      }).pipe(Effect.provide(makeRecordingRunnerLayer(updateCommands)), provideHostRefs(""));
+      const staleStatus = yield* preservingUpdate.status;
+      assert.isFalse(staleStatus.current);
+      const repairOutput = formatServiceStatus(staleStatus, "0.0.28", {
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+      });
+      assert.notInclude(repairOutput, environmentValue);
+      assert.notInclude(repairOutput, "--service-environment");
+
+      const update = yield* reconcileService().pipe(
+        Effect.provideService(BootService.BootService, preservingUpdate),
+      );
+      assert.isTrue(update.changed);
+      assert.lengthOf(
+        updateCommands.filter(({ command, args }) => command === "s6-svc" && args[0] === "-r"),
+        1,
+      );
+      assert.notInclude(JSON.stringify(updateCommands), environmentValue);
+      assert.equal((yield* fs.stat(path.join(serviceDir, "run"))).mode & 0o777, 0o700);
+
+      const exactEnvironmentService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.28",
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+        serviceEnvironment: [{ name: "HERMES_HOME", value: environmentValue }],
+        host: {
+          execPath: dirs.stableEntry,
+          cliEntryPath: "",
+          standalone: true,
+        },
+      }).pipe(Effect.provide(makeRecordingRunnerLayer([])), provideHostRefs(""));
+      assert.isTrue((yield* exactEnvironmentService.status).current);
     }),
   );
 

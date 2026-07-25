@@ -2,6 +2,7 @@
 set -eu
 
 printf "%s\n" "${HOME}" >"${T3CODE_HOME}/runtime-home"
+printf "%s\n" "${HERMES_HOME}" >"${T3CODE_HOME}/service-environment"
 id -g >"${T3CODE_HOME}/runtime-gid"
 id -u >"${T3CODE_HOME}/runtime-uid"
 

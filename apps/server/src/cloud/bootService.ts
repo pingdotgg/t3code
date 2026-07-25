@@ -39,6 +39,7 @@ export const S6_SERVICE_DIR_ENV = "T3_S6_SERVICE_DIR";
 export const S6_SERVICE_USER_ENV = "T3_S6_SERVICE_USER";
 export const S6_SERVICE_GROUP_ENV = "T3_S6_SERVICE_GROUP";
 export const S6_SERVICE_LAUNCHER_ENV = "T3_S6_SERVICE_LAUNCHER";
+export const S6_SERVICE_ENVIRONMENT_SENTINEL = "__t3_s6_service_environment__";
 
 export type ServiceSupervisor = "systemd" | "s6";
 
@@ -210,6 +211,45 @@ export function renderServiceEnvironmentExports(
   return entries.map(({ name, value }) => `export ${name}=${quoteShellValue(value)}`).join("\n");
 }
 
+const S6_SERVICE_ENVIRONMENT_BEGIN = "  # t3-service-environment:begin";
+const S6_SERVICE_ENVIRONMENT_END = "  # t3-service-environment:end";
+
+function serviceEnvironmentBlock(script: string): string | undefined {
+  const startMarker = `${S6_SERVICE_ENVIRONMENT_BEGIN}\n`;
+  const endMarker = `${S6_SERVICE_ENVIRONMENT_END}\n`;
+  const start = script.indexOf(startMarker);
+  if (start < 0) return undefined;
+  const contentStart = start + startMarker.length;
+  const end = script.indexOf(endMarker, contentStart);
+  return end < 0 ? undefined : script.slice(contentStart, end);
+}
+
+function replaceServiceEnvironmentBlock(script: string, content: string): string {
+  const startMarker = `${S6_SERVICE_ENVIRONMENT_BEGIN}\n`;
+  const endMarker = `${S6_SERVICE_ENVIRONMENT_END}\n`;
+  const start = script.indexOf(startMarker);
+  if (start < 0) return script;
+  const contentStart = start + startMarker.length;
+  const end = script.indexOf(endMarker, contentStart);
+  return end < 0 ? script : `${script.slice(0, contentStart)}${content}${script.slice(end)}`;
+}
+
+function s6DefinitionsMatch(
+  installed: string,
+  expected: string,
+  serviceEnvironmentSpecified: boolean,
+): boolean {
+  if (serviceEnvironmentSpecified) return installed === expected;
+  const installedEnvironment = serviceEnvironmentBlock(installed);
+  const expectedEnvironment = serviceEnvironmentBlock(expected);
+  if (installedEnvironment === undefined || expectedEnvironment === undefined) {
+    return installed === expected;
+  }
+  return (
+    replaceServiceEnvironmentBlock(installed, "") === replaceServiceEnvironmentBlock(expected, "")
+  );
+}
+
 export interface S6ServiceIdentity {
   readonly serviceUser: string;
   readonly serviceGroup?: string;
@@ -323,12 +363,7 @@ export function renderS6RunScript(plan: BootServicePlan): string {
       ? serviceExecArgs(plan)
       : [plan.serviceLauncherPath, "serve"];
   const serviceDir = pathForS6ServiceDir(plan.unitPath);
-  const shellCommand = [
-    renderServiceEnvironmentExports(plan.serviceEnvironment ?? []),
-    `exec "$@" >>${quoteShellValue(plan.logPath)} 2>&1`,
-  ]
-    .filter((line) => line !== "")
-    .join("\n");
+  const environmentExports = renderServiceEnvironmentExports(plan.serviceEnvironment ?? []);
   const privilegeDropArgs =
     plan.serviceGroup === undefined
       ? ["s6-setuidgid", plan.serviceUser]
@@ -344,6 +379,16 @@ export function renderS6RunScript(plan: BootServicePlan): string {
   return [
     "#!/bin/sh",
     "set -eu",
+    `if [ "\${1-}" = ${quoteShellValue(S6_SERVICE_ENVIRONMENT_SENTINEL)} ]; then`,
+    "  shift",
+    S6_SERVICE_ENVIRONMENT_BEGIN,
+    ...environmentExports
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => `  ${line}`),
+    S6_SERVICE_ENVIRONMENT_END,
+    `  exec "$@" >>${quoteShellValue(plan.logPath)} 2>&1`,
+    "fi",
     `export T3CODE_HOME=${quoteShellValue(plan.baseDir)}`,
     ...(plan.serverHost === undefined
       ? []
@@ -379,9 +424,16 @@ export function renderS6RunScript(plan: BootServicePlan): string {
             /^\d+$/u.test(plan.serviceGroup) ? `:${plan.serviceGroup}` : plan.serviceGroup,
           )} ${quoteShellValue(serviceDir)}`,
         ]),
-    `exec ${[...privilegeDropArgs, "/bin/sh", "-c", shellCommand, "t3code", ...serviceCommand]
+    `exec ${[
+      ...privilegeDropArgs,
+      "/bin/sh",
+      "-s",
+      "--",
+      S6_SERVICE_ENVIRONMENT_SENTINEL,
+      ...serviceCommand,
+    ]
       .map(quoteShellValue)
-      .join(" ")}`,
+      .join(" ")} <"$0"`,
     "",
   ].join("\n");
 }
@@ -529,6 +581,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   };
 
   const supervisor = input.supervisor ?? "systemd";
+  const serviceEnvironmentSpecified = input.serviceEnvironment !== undefined;
   const serviceEnvironment = yield* Effect.try({
     try: () => normalizeServiceEnvironment(input.serviceEnvironment ?? [], supervisor),
     catch: (cause) => new BootServiceInstallError({ cause }),
@@ -783,11 +836,19 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         ]);
       }
 
-      const definition =
+      const renderedDefinition =
         supervisor === "systemd" ? renderBootServiceUnit(plan) : renderS6RunScript(plan);
+      const previousServiceEnvironment =
+        supervisor === "s6" && !serviceEnvironmentSpecified && Option.isSome(previousUnit)
+          ? serviceEnvironmentBlock(previousUnit.value)
+          : undefined;
+      const definition =
+        previousServiceEnvironment === undefined
+          ? renderedDefinition
+          : replaceServiceEnvironmentBlock(renderedDefinition, previousServiceEnvironment);
       yield* fs.makeDirectory(unitDir, { recursive: true }).pipe(
         Effect.andThen(fs.writeFileString(definitionPath, definition)),
-        Effect.andThen(supervisor === "s6" ? fs.chmod(definitionPath, 0o755) : Effect.void),
+        Effect.andThen(supervisor === "s6" ? fs.chmod(definitionPath, 0o700) : Effect.void),
         Effect.mapError((cause) => new BootServiceInstallError({ cause })),
       );
 
@@ -944,6 +1005,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       };
     }
     const unit = yield* fs.readFileString(definitionPath);
+    const definitionPermissionsCurrent =
+      supervisor !== "s6" || ((yield* fs.stat(definitionPath)).mode & 0o777) === 0o700;
     // A unit is current only if it matches what install would write now (an
     // older CLI wrote a different runtime/node path) AND the entry point it
     // references still exists (a pinned runtime under ~/.t3 can be deleted to
@@ -971,7 +1034,13 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         : serviceIdentity === undefined
           ? undefined
           : renderS6RunScript(plan);
-    const current = expected !== undefined && unit === expected && entryExists && launcherCurrent;
+    const definitionCurrent =
+      expected !== undefined &&
+      (supervisor === "systemd"
+        ? unit === expected
+        : s6DefinitionsMatch(unit, expected, serviceEnvironmentSpecified));
+    const current =
+      definitionCurrent && definitionPermissionsCurrent && entryExists && launcherCurrent;
     return { supported: true, installed: true, current, unitPath: definitionPath, logPath };
   }).pipe(
     Effect.mapError((cause) => new BootServiceInstallError({ cause })),
