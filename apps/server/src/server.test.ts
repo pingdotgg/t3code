@@ -3468,7 +3468,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       const listedLinks = (yield* listResponse.json) as ReadonlyArray<{
         readonly id: string;
-        readonly credential: string;
+        readonly credential?: string;
       }>;
 
       const revokeResponse = yield* HttpClient.post("/api/auth/pairing-links/revoke", {
@@ -3483,6 +3483,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(createdResponse.status, 200);
       assert.equal(listResponse.status, 200);
       assert.isTrue(listedLinks.some((entry) => entry.id === createdBody.id));
+      // Listing is metadata only: an access:read client must not be able to
+      // read a pending link back and redeem it.
+      for (const entry of listedLinks) {
+        assert.notProperty(entry, "credential");
+      }
       assert.equal(revokeResponse.status, 200);
       assert.equal(revokedBootstrap.response.status, 401);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),

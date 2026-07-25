@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+
 import {
   AuthAdministrativeScopes,
   AuthStandardClientScopes,
@@ -248,6 +250,15 @@ const PAIRING_TOKEN_LENGTH = 12;
 const PAIRING_TOKEN_REJECTION_LIMIT =
   Math.floor(256 / PAIRING_TOKEN_ALPHABET.length) * PAIRING_TOKEN_ALPHABET.length;
 
+/**
+ * Pairing tokens are stored as a digest so a database copy cannot be replayed
+ * into a session. A plain hash is enough here: these tokens are random,
+ * single-use, and live for minutes, so there is nothing for a slow KDF to buy.
+ */
+function hashPairingToken(credential: string): string {
+  return NodeCrypto.createHash("sha256").update(credential, "utf8").digest("hex");
+}
+
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
@@ -322,11 +333,13 @@ export const make = Effect.gen(function* () {
       const now = yield* DateTime.now;
       const rows = yield* pairingLinks.listActive({ now });
 
+      // Metadata only. The token itself is handed out once, at creation; an
+      // inspect-only client must not be able to read a link back and redeem
+      // whatever scopes it carries.
       return rows.map((row) =>
         row.label
           ? ({
               id: row.id,
-              credential: row.credential,
               scopes: row.scopes,
               subject: row.subject,
               label: row.label,
@@ -335,7 +348,6 @@ export const make = Effect.gen(function* () {
             } satisfies AuthPairingLink)
           : ({
               id: row.id,
-              credential: row.credential,
               scopes: row.scopes,
               subject: row.subject,
               createdAt: row.createdAt,
@@ -385,7 +397,7 @@ export const make = Effect.gen(function* () {
     yield* pairingLinks
       .create({
         id,
-        credential,
+        credentialHash: hashPairingToken(credential),
         method: "one-time-token",
         scopes: input?.scopes ?? AuthStandardClientScopes,
         subject,
@@ -407,7 +419,6 @@ export const make = Effect.gen(function* () {
       );
     yield* emitUpsert({
       id,
-      credential,
       scopes: input?.scopes ?? AuthStandardClientScopes,
       subject: input?.subject ?? "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
@@ -497,9 +508,10 @@ export const make = Effect.gen(function* () {
         return yield* seededResult.error;
       }
 
+      const credentialHash = hashPairingToken(credential);
       const consumed = yield* pairingLinks
         .consumeAvailable({
-          credential,
+          credentialHash,
           proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
           consumedAt: now,
           now,
@@ -521,7 +533,7 @@ export const make = Effect.gen(function* () {
       }
 
       const matching = yield* pairingLinks
-        .getByCredential({ credential })
+        .getByCredentialHash({ credentialHash })
         .pipe(Effect.mapError((cause) => new BootstrapCredentialLookupError({ cause })));
       if (Option.isNone(matching)) {
         return yield* new UnknownBootstrapCredentialError({});

@@ -109,14 +109,14 @@ describe("persistence error correlation", () => {
       const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
       const sql = yield* SqlClient.SqlClient;
       const id = "pairing-link-correlation";
-      const credential = "pairing-credential-secret-sentinel";
+      const credentialHash = "pairing-credential-hash-sentinel";
       const subject = "pairing-subject-secret-sentinel";
       const scopesPayload = "pairing-scopes-secret-sentinel";
 
       yield* sql`
         INSERT INTO auth_pairing_links (
           id,
-          credential,
+          credential_hash,
           method,
           scopes,
           subject,
@@ -129,7 +129,7 @@ describe("persistence error correlation", () => {
         )
         VALUES (
           ${id},
-          ${credential},
+          ${credentialHash},
           ${"one-time-token"},
           ${scopesPayload},
           ${subject},
@@ -142,14 +142,14 @@ describe("persistence error correlation", () => {
         )
       `;
 
-      const decodeError = yield* Effect.flip(pairingLinks.getByCredential({ credential }));
+      const decodeError = yield* Effect.flip(pairingLinks.getByCredentialHash({ credentialHash }));
       assert.instanceOf(decodeError, PersistenceErrors.PersistenceDecodeError);
       assert.deepStrictEqual(decodeError.correlation, { pairingLinkId: id });
       assert.equal(
         decodeError.message,
-        `Decode error in AuthPairingLinkRepository.getByCredential:decodeRow: ${decodeError.issue}`,
+        `Decode error in AuthPairingLinkRepository.getByCredentialHash:decodeRow: ${decodeError.issue}`,
       );
-      assert.notInclude(decodeError.issue, credential);
+      assert.notInclude(decodeError.issue, credentialHash);
       assert.notInclude(decodeError.issue, subject);
       assert.notInclude(decodeError.issue, scopesPayload);
       assert.notInclude(decodeError.message, DateTime.formatIso(issuedAt));
@@ -158,7 +158,7 @@ describe("persistence error correlation", () => {
       const createError = yield* Effect.flip(
         pairingLinks.create({
           id,
-          credential,
+          credentialHash,
           method: "one-time-token",
           scopes,
           subject,
@@ -170,14 +170,14 @@ describe("persistence error correlation", () => {
       );
       assert.instanceOf(createError, PersistenceErrors.PersistenceSqlError);
       assert.deepStrictEqual(createError.correlation, { pairingLinkId: id });
-      assert.notInclude(createError.message, credential);
+      assert.notInclude(createError.message, credentialHash);
       assert.notInclude(createError.message, subject);
       assert.notInclude(createError.message, DateTime.formatIso(issuedAt));
 
       const revokeError = yield* Effect.flip(pairingLinks.revoke({ id, revokedAt: now }));
       assert.instanceOf(revokeError, PersistenceErrors.PersistenceSqlError);
       assert.deepStrictEqual(revokeError.correlation, { pairingLinkId: id });
-      assert.notInclude(revokeError.message, credential);
+      assert.notInclude(revokeError.message, credentialHash);
       assert.notInclude(revokeError.message, DateTime.formatIso(now));
     }).pipe(Effect.provide(authPairingLinkLayer)),
   );

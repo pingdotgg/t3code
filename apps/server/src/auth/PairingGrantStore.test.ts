@@ -1,10 +1,15 @@
+import * as NodeCrypto from "node:crypto";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
@@ -36,6 +41,12 @@ const makePairingGrantStoreLayer = (
     Layer.provide(makeServerConfigLayer(overrides)),
   );
 
+/** Same wiring, but keeps the SQL client visible so a test can inspect rows. */
+const pairingGrantStoreWithSqlLayer = PairingGrantStore.layer.pipe(
+  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provide(makeServerConfigLayer()),
+);
+
 const makePairingGrantStoreTestLayer = (
   overrides: Partial<AuthPairingLinks.AuthPairingLinkRepository["Service"]>,
 ) =>
@@ -48,7 +59,7 @@ const makePairingGrantStoreTestLayer = (
           consumeAvailable: () => Effect.succeed(Option.none()),
           listActive: () => Effect.succeed([]),
           revoke: () => Effect.succeed(false),
-          getByCredential: () => Effect.succeed(Option.none()),
+          getByCredentialHash: () => Effect.succeed(Option.none()),
           ...overrides,
         }),
       ),
@@ -216,6 +227,60 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       expect(revokedConsume.message).toContain("no longer available");
       expect(revokedConsume._tag).toBe("UnavailableBootstrapCredentialError");
     }).pipe(Effect.provide(makePairingGrantStoreLayer())),
+  );
+
+  it.effect("never hands the redeemable token back through list or stream", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const changes = yield* Effect.forkChild(
+        bootstrapCredentials.streamChanges.pipe(Stream.take(1), Stream.runCollect),
+      );
+      yield* Effect.yieldNow;
+
+      const issued = yield* bootstrapCredentials.issueOneTimeToken({ label: "Julius iPhone" });
+      const [listed] = yield* bootstrapCredentials.listActive();
+      const [upserted] = Array.from(yield* Fiber.join(changes));
+
+      expect(listed).toEqual({
+        id: issued.id,
+        scopes: [
+          "orchestration:read",
+          "orchestration:operate",
+          "terminal:operate",
+          "review:write",
+          "relay:read",
+        ],
+        subject: "one-time-token",
+        label: "Julius iPhone",
+        createdAt: listed?.createdAt,
+        expiresAt: issued.expiresAt,
+      });
+      expect(upserted?.type).toBe("pairingLinkUpserted");
+      if (upserted?.type === "pairingLinkUpserted") {
+        expect(upserted.pairingLink).not.toHaveProperty("credential");
+      }
+    }).pipe(Effect.provide(makePairingGrantStoreLayer())),
+  );
+
+  it.effect("stores pairing tokens as a digest that is still redeemable", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const sql = yield* SqlClient.SqlClient;
+      const issued = yield* bootstrapCredentials.issueOneTimeToken();
+
+      const rows = yield* sql<{ readonly credentialHash: string }>`
+        SELECT credential_hash AS "credentialHash" FROM auth_pairing_links
+      `;
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.credentialHash).not.toBe(issued.credential);
+      expect(rows[0]?.credentialHash).toBe(
+        NodeCrypto.createHash("sha256").update(issued.credential, "utf8").digest("hex"),
+      );
+      expect((yield* bootstrapCredentials.consume(issued.credential)).subject).toBe(
+        "one-time-token",
+      );
+    }).pipe(Effect.provide(pairingGrantStoreWithSqlLayer)),
   );
 
   it.effect("identifies consume-available failures and preserves their cause", () => {
