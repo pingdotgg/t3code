@@ -171,37 +171,32 @@ describe("PreviewManager", () => {
           const detach = vi.fn(() => {
             attached = false;
           });
-          const capturePage = vi.fn();
-          const sendCommand = vi.fn(
-            async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
-              if (method === "Runtime.evaluate") {
-                return {
-                  result: {
-                    value: {
-                      url: "https://example.com/",
-                      title: "Example",
-                      loading: false,
-                      visibleText: "Example body",
-                      interactiveElements: [],
-                    },
+          const focus = vi.fn();
+          const restoreFocus = vi.fn();
+          const capturePage = vi.fn(async () => image);
+          const sendCommand = vi.fn(async (method: string): Promise<unknown> => {
+            if (method === "Runtime.evaluate") {
+              return {
+                result: {
+                  value: {
+                    url: "https://example.com/",
+                    title: "Example",
+                    loading: false,
+                    visibleText: "Example body",
+                    interactiveElements: [],
                   },
-                };
-              }
-              if (method === "Accessibility.getFullAXTree") {
-                return { nodes: [] };
-              }
-              if (method === "Page.captureScreenshot") {
-                if (!captureAvailable) throw new Error("UnknownVizError");
-                expect(params).toEqual({
-                  format: "png",
-                  fromSurface: true,
-                  captureBeyondViewport: false,
-                });
-                return { data: png.toString("base64") };
-              }
-              return undefined;
-            },
-          );
+                },
+              };
+            }
+            if (method === "Accessibility.getFullAXTree") {
+              return { nodes: [] };
+            }
+            if (method === "Page.captureScreenshot") {
+              if (!captureAvailable) throw new Error("UnknownVizError");
+              return { data: png.toString("base64") };
+            }
+            return undefined;
+          });
           fromId.mockReturnValue({
             id: 42,
             isDestroyed: () => false,
@@ -218,6 +213,7 @@ describe("PreviewManager", () => {
             send: webviewSend,
             navigationHistory: { canGoBack: () => false, canGoForward: () => false },
             setWindowOpenHandler: vi.fn(),
+            focus,
             capturePage,
             debugger: {
               isAttached: () => attached,
@@ -227,6 +223,11 @@ describe("PreviewManager", () => {
               on: vi.fn(),
               off: vi.fn(),
             },
+          } as never);
+          getFocusedWebContents.mockReturnValue({
+            id: 7,
+            isDestroyed: () => false,
+            focus: restoreFocus,
           } as never);
 
           yield* manager.createTab("tab_snapshot");
@@ -248,16 +249,45 @@ describe("PreviewManager", () => {
             },
           });
           expect(capturePage).not.toHaveBeenCalled();
+          expect(sendCommand).toHaveBeenCalledWith("Page.captureScreenshot", {
+            format: "png",
+            fromSurface: true,
+            captureBeyondViewport: false,
+          });
+
+          const backgroundCdpCaptured = yield* manager.automationSnapshot("tab_snapshot", true);
+          expect(backgroundCdpCaptured.screenshot).toMatchObject({ width: 640, height: 360 });
+          expect(sendCommand).toHaveBeenCalledWith("Page.captureScreenshot", {
+            format: "png",
+            fromSurface: true,
+            captureBeyondViewport: false,
+          });
+          expect(sendCommand).toHaveBeenCalledWith("Page.bringToFront", undefined);
+          expect(focus).toHaveBeenCalledOnce();
+          expect(restoreFocus).toHaveBeenCalledOnce();
+          expect(capturePage).not.toHaveBeenCalled();
 
           captureAvailable = false;
+          const backgroundFallbackCaptured = yield* manager.automationSnapshot(
+            "tab_snapshot",
+            true,
+          );
+          expect(backgroundFallbackCaptured.screenshot).toMatchObject({ width: 640, height: 360 });
+          expect(focus).toHaveBeenCalledTimes(2);
+          expect(restoreFocus).toHaveBeenCalledTimes(2);
+          expect(capturePage).toHaveBeenCalledOnce();
+          expect(capturePage).toHaveBeenCalledWith(undefined, { stayHidden: false });
+
+          capturePage.mockClear();
           const degraded = yield* manager.automationSnapshot("tab_snapshot");
           expect(degraded.screenshot).toBeNull();
-          expect(detach).toHaveBeenCalledOnce();
+          expect(capturePage).not.toHaveBeenCalled();
+          expect(detach).toHaveBeenCalledTimes(2);
 
           captureAvailable = true;
           const recovered = yield* manager.automationSnapshot("tab_snapshot");
           expect(recovered.screenshot).toMatchObject({ width: 640, height: 360 });
-          expect(attach).toHaveBeenCalledTimes(2);
+          expect(attach).toHaveBeenCalledTimes(3);
         }),
       ),
   );

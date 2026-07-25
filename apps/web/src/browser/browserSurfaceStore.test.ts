@@ -2,13 +2,34 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   acquireBrowserSurface,
+  acquireBrowserSurfaceBackgroundCapture,
   resolveBrowserSurfacePanelRect,
   useBrowserSurfaceStore,
 } from "./browserSurfaceStore";
 
 describe("browserSurfaceStore", () => {
   beforeEach(() => {
-    useBrowserSurfaceStore.setState({ byTabId: {} });
+    useBrowserSurfaceStore.setState({ byTabId: {}, backgroundCaptureCountByTabId: {} });
+  });
+
+  it("reference-counts background capture leases", () => {
+    const releaseFirst = acquireBrowserSurfaceBackgroundCapture("tab-background");
+    const releaseSecond = acquireBrowserSurfaceBackgroundCapture("tab-background");
+
+    expect(useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"]).toBe(
+      2,
+    );
+
+    releaseFirst();
+    releaseFirst();
+    expect(useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"]).toBe(
+      1,
+    );
+
+    releaseSecond();
+    expect(
+      useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+    ).toBeUndefined();
   });
 
   it("tracks content dimensions for a browser that has never been visible", () => {

@@ -37,7 +37,10 @@ import {
   stopBrowserRecording,
 } from "~/browser/browserRecording";
 import { resolveBrowserRecordingStopTarget } from "~/browser/browserRecordingScope";
-import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
+import {
+  acquireBrowserSurfaceBackgroundCapture,
+  useBrowserSurfaceStore,
+} from "~/browser/browserSurfaceStore";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
@@ -106,6 +109,28 @@ const waitForBrowserSurfaceVisibility = async (
     tabId,
     timeoutMs,
   });
+};
+
+const waitForBackgroundCapturePresentation = async (tabId: string): Promise<void> => {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() <= deadline) {
+    const wrapper = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-preview-viewport]"),
+    ).find(
+      (candidate) =>
+        candidate.dataset["previewViewport"] === tabId &&
+        candidate.dataset["previewBackgroundCapture"] === "true",
+    );
+    if (wrapper) {
+      // Force the staged wrapper through layout, then allow Chromium two
+      // compositor frames before asking the guest WebContents for pixels.
+      void wrapper.offsetWidth;
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      return;
+    }
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+  }
 };
 
 const waitForNavigationReadiness = async (
@@ -500,7 +525,19 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "snapshot": {
             const ready = await requireReadyTab();
-            return await ready.bridge.automation.snapshot(ready.tabId);
+            const background = !(
+              useBrowserSurfaceStore.getState().byTabId[ready.tabId]?.visible ?? false
+            );
+            if (!background) {
+              return await ready.bridge.automation.snapshot(ready.tabId, false);
+            }
+            const releaseCapture = acquireBrowserSurfaceBackgroundCapture(ready.tabId);
+            try {
+              await waitForBackgroundCapturePresentation(ready.tabId);
+              return await ready.bridge.automation.snapshot(ready.tabId, true);
+            } finally {
+              releaseCapture();
+            }
           }
           case "click": {
             const ready = await requireReadyTab();

@@ -104,6 +104,8 @@ const MAX_SCREENSHOT_WIDTH = 1280;
 const DEFAULT_AUTOMATION_TIMEOUT_MS = 15_000;
 const AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS = 250;
 const AUTOMATION_SCREENSHOT_TIMEOUT_MS = 5_000;
+const AUTOMATION_BACKGROUND_CDP_SCREENSHOT_TIMEOUT_MS = 2_000;
+const AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS = 3_000;
 const DIAGNOSTIC_BUFFER_LIMIT = 200;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
 const AGENT_CURSOR_MOVE_MS = 160;
@@ -1929,6 +1931,36 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         };
   });
 
+  const encodeAutomationScreenshot = Effect.fn("PreviewManager.encodeAutomationScreenshot")(
+    function* (
+      tabId: string,
+      wc: Electron.WebContents,
+      sourceImage: Electron.NativeImage,
+      operation: string,
+    ) {
+      if (sourceImage.isEmpty()) {
+        return yield* new PreviewOperationError({
+          operation,
+          tabId,
+          webContentsId: wc.id,
+          cause: new Error("Screenshot capture returned an invalid PNG"),
+        });
+      }
+      const sourceSize = sourceImage.getSize();
+      const image =
+        sourceSize.width > MAX_SCREENSHOT_WIDTH
+          ? sourceImage.resize({ width: MAX_SCREENSHOT_WIDTH })
+          : sourceImage;
+      const size = image.getSize();
+      return {
+        mimeType: "image/png" as const,
+        data: image.toPNG().toString("base64"),
+        width: size.width,
+        height: size.height,
+      };
+    },
+  );
+
   const captureAutomationScreenshot = Effect.fn("PreviewManager.captureAutomationScreenshot")(
     function* (tabId: string, wc: Electron.WebContents, send: SendCommand) {
       const response = yield* send("Page.captureScreenshot", {
@@ -1960,31 +1992,37 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         },
         () => nativeImage.createFromBuffer(Buffer.from(data, "base64")),
       );
-      if (sourceImage.isEmpty()) {
-        return yield* new PreviewOperationError({
-          operation: "automationSnapshot.createImage",
-          tabId,
-          webContentsId: wc.id,
-          cause: new Error("Page.captureScreenshot returned an invalid PNG"),
-        });
-      }
-      const sourceSize = sourceImage.getSize();
-      const image =
-        sourceSize.width > MAX_SCREENSHOT_WIDTH
-          ? sourceImage.resize({ width: MAX_SCREENSHOT_WIDTH })
-          : sourceImage;
-      const size = image.getSize();
-      return {
-        mimeType: "image/png" as const,
-        data: image.toPNG().toString("base64"),
-        width: size.width,
-        height: size.height,
-      };
+      return yield* encodeAutomationScreenshot(
+        tabId,
+        wc,
+        sourceImage,
+        "automationSnapshot.createImage",
+      );
     },
   );
 
+  const captureBackgroundPage = Effect.fn("PreviewManager.captureBackgroundPage")(function* (
+    tabId: string,
+    wc: Electron.WebContents,
+  ) {
+    const sourceImage = yield* attemptPromise(
+      {
+        operation: "automationSnapshot.captureBackgroundPage",
+        tabId,
+        webContentsId: wc.id,
+      },
+      () => wc.capturePage(undefined, { stayHidden: false }),
+    );
+    return yield* encodeAutomationScreenshot(
+      tabId,
+      wc,
+      sourceImage,
+      "automationSnapshot.captureBackgroundPage",
+    );
+  });
+
   const captureAutomationSnapshot = Effect.fn("PreviewManager.captureAutomationSnapshot")(
-    function* (tabId: string, wc: Electron.WebContents, send: SendCommand) {
+    function* (tabId: string, wc: Electron.WebContents, send: SendCommand, background: boolean) {
       yield* Effect.all([send("Runtime.enable"), send("Accessibility.enable")], {
         concurrency: 2,
         discard: true,
@@ -2056,30 +2094,58 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Ref.get(diagnosticsRef),
         Ref.get(actionTimelineRef),
       ]);
-      const screenshotResult = yield* captureAutomationScreenshot(tabId, wc, send).pipe(
-        Effect.timeoutOption(AUTOMATION_SCREENSHOT_TIMEOUT_MS),
+      const cdpScreenshotTimeoutMs = background
+        ? AUTOMATION_BACKGROUND_CDP_SCREENSHOT_TIMEOUT_MS
+        : AUTOMATION_SCREENSHOT_TIMEOUT_MS;
+      const cdpScreenshotResult = yield* captureAutomationScreenshot(tabId, wc, send).pipe(
+        Effect.timeoutOption(cdpScreenshotTimeoutMs),
         Effect.exit,
       );
-      const screenshot =
-        Exit.isSuccess(screenshotResult) && Option.isSome(screenshotResult.value)
-          ? screenshotResult.value.value
+      let screenshot: PreviewAutomationSnapshot["screenshot"] =
+        Exit.isSuccess(cdpScreenshotResult) && Option.isSome(cdpScreenshotResult.value)
+          ? cdpScreenshotResult.value.value
           : null;
       if (screenshot === null) {
-        const failure = Exit.isFailure(screenshotResult)
-          ? screenshotResult.cause
+        const cdpFailure = Exit.isFailure(cdpScreenshotResult)
+          ? cdpScreenshotResult.cause
           : new PreviewAutomationTimeoutError({
               tabId,
-              timeoutMs: AUTOMATION_SCREENSHOT_TIMEOUT_MS,
+              timeoutMs: cdpScreenshotTimeoutMs,
             });
-        yield* Effect.logWarning("Preview automation screenshot capture was unavailable.", {
-          tabId,
-          webContentsId: wc.id,
-          cause: failure,
-        });
         // A timed-out debugger command may still settle after its Effect has
         // been interrupted. Detach the session so later automation starts
         // from a fresh CDP connection instead of inheriting that command.
         yield* detachControlSession(wc.id);
+        const backgroundScreenshotResult = background
+          ? yield* captureBackgroundPage(tabId, wc).pipe(
+              Effect.timeoutOption(AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS),
+              Effect.exit,
+            )
+          : null;
+        screenshot =
+          backgroundScreenshotResult !== null &&
+          Exit.isSuccess(backgroundScreenshotResult) &&
+          Option.isSome(backgroundScreenshotResult.value)
+            ? backgroundScreenshotResult.value.value
+            : null;
+        if (screenshot === null) {
+          const backgroundFailure =
+            backgroundScreenshotResult === null
+              ? null
+              : Exit.isFailure(backgroundScreenshotResult)
+                ? backgroundScreenshotResult.cause
+                : new PreviewAutomationTimeoutError({
+                    tabId,
+                    timeoutMs: AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS,
+                  });
+          yield* Effect.logWarning("Preview automation screenshot capture was unavailable.", {
+            tabId,
+            webContentsId: wc.id,
+            background,
+            cdpCause: cdpFailure,
+            backgroundCause: backgroundFailure,
+          });
+        }
       }
       const browserDiagnostics = diagnostics.get(wc.id);
       return {
@@ -2095,11 +2161,50 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const automationSnapshot = Effect.fn("PreviewManager.automationSnapshot")(function* (
     tabId: string,
+    background = false,
   ) {
     const wc = yield* requireWebContents(tabId);
-    return yield* withControlSession(tabId, wc, "snapshot", (send) =>
-      captureAutomationSnapshot(tabId, wc, send),
+    if (!background) {
+      return yield* withControlSession(tabId, wc, "snapshot", (send) =>
+        captureAutomationSnapshot(tabId, wc, send, false),
+      );
+    }
+
+    const previouslyFocused = yield* attempt(
+      { operation: "automationSnapshot.getFocusedWebContents", tabId, webContentsId: wc.id },
+      () => webContents.getFocusedWebContents(),
     );
+    const restoreFocus =
+      previouslyFocused && previouslyFocused.id !== wc.id
+        ? attempt(
+            {
+              operation: "automationSnapshot.restoreFocusedWebContents",
+              tabId,
+              webContentsId: previouslyFocused.id,
+            },
+            () => {
+              if (!previouslyFocused.isDestroyed()) previouslyFocused.focus();
+            },
+          ).pipe(Effect.ignore)
+        : Effect.void;
+
+    // A mounted-but-unselected <webview> remains a live guest, but Chromium
+    // does not expose its composited pixels until that guest is foregrounded.
+    // The renderer stages it transparently while this short capture lease
+    // activates the guest itself. Restoring the prior WebContents preserves
+    // both application focus and the user-visible preview selection.
+    return yield* Effect.gen(function* () {
+      yield* attempt(
+        { operation: "automationSnapshot.focusWebContents", tabId, webContentsId: wc.id },
+        () => wc.focus(),
+      );
+      return yield* withControlSession(tabId, wc, "snapshot", (send) =>
+        Effect.gen(function* () {
+          yield* send("Page.bringToFront");
+          return yield* captureAutomationSnapshot(tabId, wc, send, true);
+        }),
+      );
+    }).pipe(Effect.ensuring(restoreFocus));
   });
 
   const resolveClickPoint = Effect.fn("PreviewManager.resolveClickPoint")(function* (
@@ -3018,6 +3123,7 @@ export class PreviewManager extends Context.Service<
     ) => Effect.Effect<PreviewAutomationStatus, PreviewManagerError>;
     readonly automationSnapshot: (
       tabId: string,
+      background?: boolean,
     ) => Effect.Effect<PreviewAutomationSnapshot, PreviewManagerError>;
     readonly automationClick: (
       tabId: string,

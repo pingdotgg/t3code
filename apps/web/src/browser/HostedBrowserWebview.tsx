@@ -52,6 +52,7 @@ export function HostedBrowserWebview(props: {
     useShallow((state) => {
       const current = state.byTabId[tabId];
       return {
+        backgroundCapture: (state.backgroundCaptureCountByTabId[tabId] ?? 0) > 0,
         rect: resolveBrowserSurfacePanelRect(state.byTabId, tabId),
         visible: current?.visible ?? false,
       };
@@ -113,6 +114,7 @@ export function HostedBrowserWebview(props: {
   }, [config, tabId]);
 
   const active = presentation.visible && presentation.rect !== null;
+  const backgroundCapture = !active && presentation.backgroundCapture && presentation.rect !== null;
   const lastRect = presentation.rect;
   const normalizedZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;
@@ -131,7 +133,7 @@ export function HostedBrowserWebview(props: {
           height: viewport.height * normalizedZoomFactor,
         }
       : { width: lastRect?.width ?? 1280, height: lastRect?.height ?? 800 };
-  const containerSize = active && lastRect ? lastRect : hiddenSize;
+  const containerSize = (active || backgroundCapture) && lastRect ? lastRect : hiddenSize;
   const deviceToolbarVisible = active && viewport._tag !== "fill";
   const {
     activeDrag,
@@ -178,6 +180,7 @@ export function HostedBrowserWebview(props: {
 
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,
+    backgroundCapture,
     rect: lastRect,
     hiddenSize,
   });
@@ -189,6 +192,7 @@ export function HostedBrowserWebview(props: {
       style={{ ...wrapperStyle, overscrollBehavior: "contain" }}
       onScroll={syncContentPresentation}
       data-preview-viewport={tabId}
+      data-preview-background-capture={backgroundCapture ? "true" : undefined}
     >
       <div className="relative" style={{ width: layout.canvasWidth, height: layout.canvasHeight }}>
         {deviceToolbarVisible && effectiveViewport._tag !== "fill" ? (
@@ -219,7 +223,7 @@ export function HostedBrowserWebview(props: {
               ? Math.max(1, Math.round(layout.viewportHeight / normalizedZoomFactor))
               : effectiveViewport.height
           }
-          aria-hidden={active ? undefined : true}
+          aria-hidden={active || backgroundCapture ? undefined : true}
           className={cn(
             "absolute flex overflow-hidden bg-background",
             active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",

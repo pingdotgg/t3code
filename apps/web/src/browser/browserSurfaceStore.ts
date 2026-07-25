@@ -27,6 +27,7 @@ export interface BrowserSurfaceContentPresentation {
 
 interface BrowserSurfaceStoreState {
   readonly byTabId: Record<string, BrowserSurfacePresentation>;
+  readonly backgroundCaptureCountByTabId: Record<string, number>;
   readonly claim: (tabId: string, owner: symbol) => void;
   readonly present: (
     tabId: string,
@@ -36,6 +37,8 @@ interface BrowserSurfaceStoreState {
   ) => void;
   readonly presentContent: (tabId: string, content: BrowserSurfaceContentPresentation) => void;
   readonly release: (tabId: string, owner: symbol) => void;
+  readonly retainBackgroundCapture: (tabId: string) => void;
+  readonly releaseBackgroundCapture: (tabId: string) => void;
 }
 
 export interface BrowserSurfaceLease {
@@ -72,6 +75,7 @@ const rectEquals = (left: BrowserSurfaceRect | null, right: BrowserSurfaceRect):
 
 export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) => ({
   byTabId: {},
+  backgroundCaptureCountByTabId: {},
   claim: (tabId, owner) =>
     set((state) => {
       const current = state.byTabId[tabId];
@@ -149,6 +153,25 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
         },
       };
     }),
+  retainBackgroundCapture: (tabId) =>
+    set((state) => ({
+      backgroundCaptureCountByTabId: {
+        ...state.backgroundCaptureCountByTabId,
+        [tabId]: (state.backgroundCaptureCountByTabId[tabId] ?? 0) + 1,
+      },
+    })),
+  releaseBackgroundCapture: (tabId) =>
+    set((state) => {
+      const current = state.backgroundCaptureCountByTabId[tabId] ?? 0;
+      if (current <= 0) return state;
+      const next = { ...state.backgroundCaptureCountByTabId };
+      if (current === 1) {
+        delete next[tabId];
+      } else {
+        next[tabId] = current - 1;
+      }
+      return { backgroundCaptureCountByTabId: next };
+    }),
 }));
 
 export function acquireBrowserSurface(tabId: string): BrowserSurfaceLease {
@@ -166,5 +189,15 @@ export function acquireBrowserSurface(tabId: string): BrowserSurfaceLease {
       released = true;
       useBrowserSurfaceStore.getState().release(tabId, owner);
     },
+  };
+}
+
+export function acquireBrowserSurfaceBackgroundCapture(tabId: string): () => void {
+  let released = false;
+  useBrowserSurfaceStore.getState().retainBackgroundCapture(tabId);
+  return () => {
+    if (released) return;
+    released = true;
+    useBrowserSurfaceStore.getState().releaseBackgroundCapture(tabId);
   };
 }

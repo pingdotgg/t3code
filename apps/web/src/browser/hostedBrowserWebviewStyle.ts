@@ -12,17 +12,21 @@ export interface HostedBrowserWebviewWrapperStyle {
   readonly height: number;
   readonly zIndex: number;
   readonly pointerEvents: "auto" | "none";
+  readonly opacity?: number;
   readonly visibility?: "visible";
 }
 
 export const HIDDEN_BROWSER_WEBVIEW_OFFSET = -100_000;
+export const BACKGROUND_CAPTURE_BROWSER_WEBVIEW_Z_INDEX = 31;
+export const BACKGROUND_CAPTURE_BROWSER_WEBVIEW_OPACITY = 0.001;
 
 export function resolveHostedBrowserWebviewWrapperStyle(input: {
   readonly active: boolean;
+  readonly backgroundCapture: boolean;
   readonly rect: BrowserSurfaceRect | null;
   readonly hiddenSize: HostedBrowserWebviewSize;
 }): HostedBrowserWebviewWrapperStyle {
-  const { active, hiddenSize, rect } = input;
+  const { active, backgroundCapture, hiddenSize, rect } = input;
   if (active && rect) {
     return {
       left: rect.x,
@@ -31,6 +35,17 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
       height: rect.height,
       zIndex: 30,
       pointerEvents: "auto",
+    };
+  }
+  if (backgroundCapture && rect) {
+    return {
+      left: rect.x,
+      top: rect.y,
+      width: rect.width,
+      height: rect.height,
+      zIndex: BACKGROUND_CAPTURE_BROWSER_WEBVIEW_Z_INDEX,
+      pointerEvents: "none",
+      opacity: BACKGROUND_CAPTURE_BROWSER_WEBVIEW_OPACITY,
     };
   }
 
