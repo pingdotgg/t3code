@@ -39,6 +39,18 @@ it("preserves s6 selection in the repair command", () => {
   );
 });
 
+it("preserves an explicit s6 service identity in the repair command", () => {
+  assert.include(
+    formatServiceStatus({ ...status, current: false }, "0.0.29", {
+      supervisor: "s6",
+      s6ServiceDir: "/run/service/t3code",
+      serviceUser: "t3 service",
+      serviceGroup: "t3",
+    }),
+    "--service-user 't3 service' --service-group 't3'",
+  );
+});
+
 it("explains service availability without a configured supervisor", () => {
   assert.include(
     formatServiceStatus({ ...status, supported: false, installed: false }, "0.0.29"),

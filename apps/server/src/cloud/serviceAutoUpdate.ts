@@ -23,10 +23,12 @@ import {
   BOOT_SERVICE_UNIT_ENV,
   BOOT_SERVICE_UNIT_FILE,
   renderBootServiceUnit,
-  renderS6RunScript,
+  renderS6LauncherScript,
   S6_SERVICE_DIR_ENV,
+  S6_SERVICE_GROUP_ENV,
+  S6_SERVICE_LAUNCHER_ENV,
+  S6_SERVICE_USER_ENV,
   SERVICE_SUPERVISOR_ENV,
-  type ServiceSupervisor,
 } from "./bootService.ts";
 import { serviceUpdateCoordinator } from "./serviceUpdateCoordinator.ts";
 
@@ -65,11 +67,19 @@ export interface ServiceUpdateCandidate {
   readonly assetName: string;
 }
 
-export interface ManagedService {
-  readonly supervisor: ServiceSupervisor;
-  readonly definitionPath: string;
-  readonly serviceDir?: string;
-}
+export type ManagedService =
+  | {
+      readonly supervisor: "systemd";
+      readonly definitionPath: string;
+    }
+  | {
+      readonly supervisor: "s6";
+      readonly definitionPath: string;
+      readonly serviceDir: string;
+      readonly serviceUser: string;
+      readonly serviceGroup?: string;
+      readonly launcherPath: string;
+    };
 
 export function parseGitHubRepositoryUrl(value: string): GitHubRepository | null {
   try {
@@ -180,13 +190,21 @@ export function resolveManagedService(input: {
   if (
     declaredSupervisor === "s6" &&
     input.env[S6_SERVICE_DIR_ENV] &&
-    input.path.isAbsolute(input.env[S6_SERVICE_DIR_ENV])
+    input.path.isAbsolute(input.env[S6_SERVICE_DIR_ENV]) &&
+    input.env[S6_SERVICE_USER_ENV] &&
+    input.env[S6_SERVICE_LAUNCHER_ENV] &&
+    input.path.isAbsolute(input.env[S6_SERVICE_LAUNCHER_ENV])
   ) {
     const serviceDir = input.env[S6_SERVICE_DIR_ENV];
     return {
       supervisor: "s6",
       serviceDir,
       definitionPath: input.path.join(serviceDir, "run"),
+      serviceUser: input.env[S6_SERVICE_USER_ENV],
+      launcherPath: input.env[S6_SERVICE_LAUNCHER_ENV],
+      ...(input.env[S6_SERVICE_GROUP_ENV] === undefined
+        ? {}
+        : { serviceGroup: input.env[S6_SERVICE_GROUP_ENV] }),
     };
   }
   if (
@@ -416,8 +434,12 @@ export const make = Effect.gen(function* () {
       yield* coordinator.withActivationHandoff(
         Effect.gen(function* () {
           yield* providerCommandReactor.drain;
+          const activationDefinitionPath =
+            managedService.supervisor === "s6"
+              ? managedService.launcherPath
+              : managedService.definitionPath;
           const previousDefinition = yield* fs
-            .readFileString(managedService.definitionPath)
+            .readFileString(activationDefinitionPath)
             .pipe(
               Effect.mapError((cause) => fail("Could not read the service definition.", cause)),
             );
@@ -432,12 +454,12 @@ export const make = Effect.gen(function* () {
           const nextDefinition =
             managedService.supervisor === "systemd"
               ? renderBootServiceUnit(plan)
-              : renderS6RunScript(plan);
+              : renderS6LauncherScript(plan);
 
-          yield* writeDefinition(managedService.definitionPath, nextDefinition).pipe(
+          yield* writeDefinition(activationDefinitionPath, nextDefinition).pipe(
             Effect.andThen(
               managedService.supervisor === "s6"
-                ? fs.chmod(managedService.definitionPath, 0o755)
+                ? fs.chmod(activationDefinitionPath, 0o755)
                 : Effect.void,
             ),
             Effect.mapError((cause) =>
@@ -458,12 +480,12 @@ export const make = Effect.gen(function* () {
                 )
               : runSupervisor(
                   "s6-svc",
-                  ["-r", managedService.serviceDir ?? path.dirname(managedService.definitionPath)],
+                  ["-r", managedService.serviceDir],
                   "restart the s6 service",
                 );
           yield* activate.pipe(
             Effect.catch((activationError) =>
-              writeDefinition(managedService.definitionPath, previousDefinition).pipe(
+              writeDefinition(activationDefinitionPath, previousDefinition).pipe(
                 Effect.mapError((cause) =>
                   fail("Could not restore the previous service definition.", cause),
                 ),
@@ -471,10 +493,10 @@ export const make = Effect.gen(function* () {
                   managedService.supervisor === "systemd"
                     ? runSupervisor("systemctl", ["--user", "daemon-reload"], "restore systemd")
                     : fs
-                        .chmod(managedService.definitionPath, 0o755)
+                        .chmod(activationDefinitionPath, 0o755)
                         .pipe(
                           Effect.mapError((cause) =>
-                            fail("Could not restore the s6 service definition.", cause),
+                            fail("Could not restore the s6 service launcher.", cause),
                           ),
                         ),
                 ),

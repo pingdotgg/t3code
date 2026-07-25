@@ -95,6 +95,9 @@ it.effect("detects only explicitly marked managed systemd and s6 services", () =
           HOME: "/home/theo",
           T3_SERVICE_SUPERVISOR: "s6",
           T3_S6_SERVICE_DIR: "/run/service/t3code",
+          T3_S6_SERVICE_USER: "1000",
+          T3_S6_SERVICE_GROUP: "1000",
+          T3_S6_SERVICE_LAUNCHER: "/home/theo/.t3/runtime/s6-service-launcher",
         },
         homeDir: "/home/theo",
         path,
@@ -103,10 +106,24 @@ it.effect("detects only explicitly marked managed systemd and s6 services", () =
         supervisor: "s6",
         serviceDir: "/run/service/t3code",
         definitionPath: "/run/service/t3code/run",
+        serviceUser: "1000",
+        serviceGroup: "1000",
+        launcherPath: "/home/theo/.t3/runtime/s6-service-launcher",
       },
     );
     assert.equal(
       resolveManagedService({ env: { HOME: "/home/theo" }, homeDir: "/home/theo", path }),
+      null,
+    );
+    assert.equal(
+      resolveManagedService({
+        env: {
+          T3_SERVICE_SUPERVISOR: "s6",
+          T3_S6_SERVICE_DIR: "/run/service/t3code",
+        },
+        homeDir: "/home/theo",
+        path,
+      }),
       null,
     );
   }).pipe(Effect.provide(NodeServices.layer)),
