@@ -53,8 +53,14 @@ public final class SceneryStore {
     private var poolFetchedAt: [String: Date] = [:]
     /// setId → photos whose download_location was already pinged.
     private var registeredBySet: [String: Set<String>] = [:]
+    /// "setId/photoID" pairs whose registration ping is currently in flight.
+    /// Claimed before the ping suspends so concurrent ensureImage calls for
+    /// different variants of one photo can't double-ping download_location.
+    private var registrationClaims: Set<String> = []
 
     private var images: [String: NSImage] = [:]  // "setId/photoID/variant" -> image
+    /// Insertion order of the hero/blur keys in `images`, for FIFO eviction.
+    private var heavyImageCacheOrder: [String] = []
     private var loadingKeys: Set<String> = []
     /// Session-scoped in-flight + failed-extraction guard. Prevents unbounded
     /// re-spawns when extract returns nil; cleared only when no sample files
@@ -87,6 +93,12 @@ public final class SceneryStore {
     private let heroBackingScale: CGFloat
 
     private static let poolCap = 24
+    /// Cap on cached hero + blur entries. Each is a full-screen bitmap
+    /// (~30-40MB decoded; a visited thread holds hero + 2 blurs ≈ 100MB), so
+    /// an unbounded cache grows memory monotonically across threads. 8 keeps
+    /// the active thread's trio plus a couple of recently visited threads;
+    /// thumbs are ~200px and stay unbounded.
+    private static let heavyImageCacheCap = 8
     private static let poolMaxAge: TimeInterval = 14 * 24 * 3600
     /// Tuned by eye to match the previous SwiftUI `.blur(radius: 4/9,
     /// opaque: true)` plus saturation; these may be adjusted by eye.
@@ -426,6 +438,21 @@ public final class SceneryStore {
         }
     }
 
+    /// Inserts into the decoded-image cache. Hero and blur variants are
+    /// bounded FIFO (`heavyImageCacheCap`): past the cap the oldest heavy
+    /// entries are dropped and re-decode from disk on their next ensureImage.
+    private func cacheImage(_ image: NSImage, forKey key: String, variant: ImageVariant) {
+        images[key] = image
+        guard variant != .thumb else { return }
+        heavyImageCacheOrder.append(key)
+        let overflow = heavyImageCacheOrder.count - Self.heavyImageCacheCap
+        guard overflow > 0 else { return }
+        for evictedKey in heavyImageCacheOrder.prefix(overflow) {
+            images[evictedKey] = nil
+        }
+        heavyImageCacheOrder.removeFirst(overflow)
+    }
+
     private func ensureImage(
         _ photo: SceneryPhoto?,
         variant: ImageVariant,
@@ -484,11 +511,14 @@ public final class SceneryStore {
                     backingScale: backingScale)
             }.value
             if let blurredCGImage {
-                images[key] = NSImage(
-                    cgImage: blurredCGImage,
-                    size: NSSize(
-                        width: CGFloat(blurredCGImage.width),
-                        height: CGFloat(blurredCGImage.height)))
+                cacheImage(
+                    NSImage(
+                        cgImage: blurredCGImage,
+                        size: NSSize(
+                            width: CGFloat(blurredCGImage.width),
+                            height: CGFloat(blurredCGImage.height))),
+                    forKey: key,
+                    variant: variant)
                 if triggerPaletteBackfill {
                     await generatePaletteIfNeeded(for: setId)
                 }
@@ -532,9 +562,12 @@ public final class SceneryStore {
                 return decoded
             }.value
             if let cgImage {
-                images[key] = NSImage(
-                    cgImage: cgImage,
-                    size: NSSize(width: CGFloat(cgImage.width), height: CGFloat(cgImage.height)))
+                cacheImage(
+                    NSImage(
+                        cgImage: cgImage,
+                        size: NSSize(width: CGFloat(cgImage.width), height: CGFloat(cgImage.height))),
+                    forKey: key,
+                    variant: variant)
                 if triggerPaletteBackfill {
                     await generatePaletteIfNeeded(for: setId)
                 }
@@ -743,6 +776,7 @@ public final class SceneryStore {
         // Drop stale decoded images for this set from a previous pool.
         let prefix = "\(setId)/"
         images = images.filter { !$0.key.hasPrefix(prefix) }
+        heavyImageCacheOrder.removeAll { $0.hasPrefix(prefix) }
         if setId == ScenerySet.worldID {
             syncDefaultPool()
         }
@@ -993,9 +1027,11 @@ public final class SceneryStore {
     }
 
     /// Unsplash download_location ping + local registration bookkeeping.
-    /// Awaits `register` first; mutates `registeredBySet` and disk only on
-    /// success. Failures leave the photo unregistered (natural retry) and
-    /// are not surfaced to the user.
+    /// Claims the photo in `registrationClaims` before the ping suspends so
+    /// concurrent ensureImage calls (e.g. sidebar thumb + hero) can't both
+    /// pass the registered check and double-ping; mutates `registeredBySet`
+    /// and disk only on success. Failures leave the photo unregistered
+    /// (natural retry) and are not surfaced to the user.
     func registerDownloadIfNeeded(
         setId: String,
         photoId: String,
@@ -1003,12 +1039,15 @@ public final class SceneryStore {
         register: (URL) async throws -> Void
     ) async {
         guard let ping = downloadLocationURL else { return }
-        var registered = registeredBySet[setId] ?? []
-        guard !registered.contains(photoId) else { return }
+        let claim = "\(setId)/\(photoId)"
+        guard registeredBySet[setId]?.contains(photoId) != true,
+            !registrationClaims.contains(claim)
+        else { return }
+        registrationClaims.insert(claim)
+        defer { registrationClaims.remove(claim) }
         do {
             try await register(ping)
-            registered.insert(photoId)
-            registeredBySet[setId] = registered
+            registeredBySet[setId, default: []].insert(photoId)
             saveRegisteredDownloads(for: setId)
         } catch {
             // Transient ping failure — retry on a later ensureImage.
@@ -1105,6 +1144,7 @@ public final class SceneryStore {
         poolFetchedAt = [:]
         registeredBySet = [:]
         images = [:]
+        heavyImageCacheOrder = []
         paletteExtractionAttempted = []
         loadFromDisk()
     }

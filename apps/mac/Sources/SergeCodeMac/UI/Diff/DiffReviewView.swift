@@ -469,6 +469,14 @@ public struct DiffReviewView: View {
                     let rows = try DiffPresentation.buildUnifiedRows(for: captured)
                     try Task.checkCancellation()
                     await MainActor.run {
+                        // A dropped result (stale mode/selection) still owns
+                        // the in-flight slot; release it so the next request
+                        // for this file/mode isn't deduped into a dead spinner.
+                        if inFlightRequest == request {
+                            inFlightRequest = nil
+                            isPreparing = false
+                            rowPreparationTask = nil
+                        }
                         guard generation == preparationGeneration,
                               selectedFileKey == key,
                               renderedMode == mode else { return }
@@ -482,6 +490,14 @@ public struct DiffReviewView: View {
                     let rows = try DiffPresentation.buildSideBySideRows(for: captured)
                     try Task.checkCancellation()
                     await MainActor.run {
+                        // A dropped result (stale mode/selection) still owns
+                        // the in-flight slot; release it so the next request
+                        // for this file/mode isn't deduped into a dead spinner.
+                        if inFlightRequest == request {
+                            inFlightRequest = nil
+                            isPreparing = false
+                            rowPreparationTask = nil
+                        }
                         guard generation == preparationGeneration,
                               selectedFileKey == key,
                               renderedMode == mode else { return }
