@@ -6,6 +6,15 @@
         <language>en</language>
         <!-- CI will inject release items here -->
         <item>
+            <title>0.1.0-alpha.11</title>
+            <pubDate>Sat, 25 Jul 2026 17:23:35 +0000</pubDate>
+            <sparkle:version>11</sparkle:version>
+            <sparkle:shortVersionString>0.1.0-alpha.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.1.0-alpha.11/SurgeCode-0.1.0-alpha.11.zip" length="154602344" type="application/octet-stream" sparkle:edSignature="u/bb8046M8wLyM8reI8Nbwd+pRxV2Mj30NZQV1ij3hlfO4GujYN+IkWVoacAdRwL84tNet0qu/5XzwmXSDizDQ=="/>
+        </item>
+        <item>
             <title>0.1.0-alpha.5</title>
             <pubDate>Sat, 25 Jul 2026 03:23:38 +0000</pubDate>
             <sparkle:version>5</sparkle:version>
