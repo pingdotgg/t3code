@@ -1422,6 +1422,141 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("lists only live project roots and worktrees as addressable workspace roots", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES
+          (
+            'project-live',
+            'Live Project',
+            '/tmp/live-project',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:00.000Z',
+            NULL
+          ),
+          (
+            'project-gone',
+            'Deleted Project',
+            '/tmp/deleted-project',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:01.000Z'
+          )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES
+          (
+            'thread-archived',
+            'project-live',
+            'Archived Thread',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            '/tmp/worktrees/archived',
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:01.000Z',
+            NULL
+          ),
+          (
+            'thread-deleted',
+            'project-live',
+            'Deleted Thread',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            '/tmp/worktrees/deleted',
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:00.000Z',
+            NULL,
+            '2026-04-06T00:00:02.000Z'
+          ),
+          (
+            'thread-of-deleted-project',
+            'project-gone',
+            'Orphan Thread',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            '/tmp/worktrees/orphan',
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:00.000Z',
+            NULL,
+            NULL
+          )
+      `;
+
+      const roots = yield* snapshotQuery.listWorkspaceRoots();
+
+      // Archived threads keep their worktree so the archive view can still read
+      // files; deleted threads and deleted projects lose access entirely.
+      assert.deepStrictEqual(Array.from(roots).toSorted(), [
+        "/tmp/live-project",
+        "/tmp/worktrees/archived",
+      ]);
+    }),
+  );
+
   it.effect("keeps deleted project and thread tombstones in the command read model", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;

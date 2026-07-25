@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -90,6 +91,7 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as WorkspaceRootAccess from "./workspace/WorkspaceRootAccess.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -137,13 +139,19 @@ function legacySetupFailureDescription(cause: unknown): string {
   return String(cause);
 }
 
-function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesError): {
+function projectEntriesFailureContext(
+  error:
+    | WorkspaceEntries.WorkspaceEntriesError
+    | WorkspaceRootAccess.WorkspaceRootNotRegisteredError,
+): {
   readonly failure: ProjectEntriesFailure;
   readonly normalizedCwd?: string;
   readonly timeout?: string;
   readonly detail?: string;
 } {
   switch (error._tag) {
+    case "WorkspaceRootNotRegisteredError":
+      return { failure: "workspace_root_not_registered" };
     case "WorkspaceRootNotExistsError":
       return {
         failure: "workspace_root_not_found",
@@ -208,7 +216,8 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
 function projectFileFailureContext(
   error:
     | WorkspaceFileSystem.WorkspaceFileSystemError
-    | WorkspacePaths.WorkspacePathOutsideRootError,
+    | WorkspacePaths.WorkspacePathOutsideRootError
+    | WorkspaceRootAccess.WorkspaceRootNotRegisteredError,
 ): {
   readonly failure: ProjectFileFailure;
   readonly resolvedPath?: string;
@@ -217,6 +226,8 @@ function projectFileFailureContext(
   readonly operationPath?: string;
 } {
   switch (error._tag) {
+    case "WorkspaceRootNotRegisteredError":
+      return { failure: "workspace_root_not_registered" };
     case "WorkspacePathOutsideRootError":
       return { failure: "workspace_path_outside_root" };
     case "WorkspaceFileSystemOperationError":
@@ -317,7 +328,9 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.projectsSearchEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
-  [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
+  // Browsing is a host-wide directory picker for adding a project, so it is
+  // gated behind the same scope as creating one rather than plain read access.
+  [WS_METHODS.filesystemBrowse, AuthOrchestrationOperateScope],
   [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
@@ -406,6 +419,7 @@ const makeWsRpcLayer = (
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
+      const path = yield* Path.Path;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -523,6 +537,32 @@ const makeWsRpcLayer = (
       const serverEventId = randomUUID.pipe(Effect.map(EventId.make));
       const serverCommandId = (tag: string) =>
         randomUUID.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
+
+      /**
+       * Bind a workspace file RPC to a root the server actually manages.
+       *
+       * Without this the `cwd` on these payloads is just "whatever directory
+       * the client named", so a read-only pairing could walk the host
+       * filesystem. A registry read that fails denies access rather than
+       * widening it.
+       */
+      const authorizeWorkspaceRoot = Effect.fn("ws.authorizeWorkspaceRoot")(function* (
+        workspaceRoot: string,
+      ) {
+        const registeredRoots = yield* projectionSnapshotQuery
+          .listWorkspaceRoots()
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new WorkspaceRootAccess.WorkspaceRootNotRegisteredError({ workspaceRoot, cause }),
+            ),
+          );
+        return yield* WorkspaceRootAccess.authorizeWorkspaceRoot({
+          workspaceRoot,
+          registeredRoots,
+          path,
+        });
+      });
 
       const loadAuthAccessSnapshot = () =>
         Effect.all({
@@ -1618,7 +1658,8 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
-            workspaceEntries.search(input).pipe(
+            authorizeWorkspaceRoot(input.cwd).pipe(
+              Effect.flatMap(() => workspaceEntries.search(input)),
               Effect.mapError(
                 (cause) =>
                   new ProjectSearchEntriesError({
@@ -1635,7 +1676,8 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsListEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsListEntries,
-            workspaceEntries.list(input).pipe(
+            authorizeWorkspaceRoot(input.cwd).pipe(
+              Effect.flatMap(() => workspaceEntries.list(input)),
               Effect.mapError(
                 (cause) =>
                   new ProjectListEntriesError({
@@ -1650,7 +1692,8 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsReadFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsReadFile,
-            workspaceFileSystem.readFile(input).pipe(
+            authorizeWorkspaceRoot(input.cwd).pipe(
+              Effect.flatMap(() => workspaceFileSystem.readFile(input)),
               Effect.mapError(
                 (cause) =>
                   new ProjectReadFileError({
@@ -1665,7 +1708,8 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
-            workspaceFileSystem.writeFile(input).pipe(
+            authorizeWorkspaceRoot(input.cwd).pipe(
+              Effect.flatMap(() => workspaceFileSystem.writeFile(input)),
               Effect.mapError(
                 (cause) =>
                   new ProjectWriteFileError({

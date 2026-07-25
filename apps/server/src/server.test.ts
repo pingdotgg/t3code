@@ -318,6 +318,16 @@ const makeBrowserOtlpPayload = (spanName: string) =>
     return JSON.parse(request.body) as OtlpTracer.TraceData;
   });
 
+/**
+ * Workspace file RPCs are bound to the roots the projection knows about, so a
+ * test that pokes at a temp directory has to register it first.
+ */
+const registeredWorkspaceRoots = (...roots: ReadonlyArray<string>) => ({
+  projectionSnapshotQuery: {
+    listWorkspaceRoots: () => Effect.succeed(roots),
+  },
+});
+
 const buildAppUnderTest = (options?: {
   config?: Partial<ServerConfig.ServerConfig["Service"]>;
   layers?: {
@@ -714,6 +724,7 @@ const buildAppUnderTest = (options?: {
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+          listWorkspaceRoots: () => Effect.succeed([]),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
@@ -4401,7 +4412,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "export const needle = 1;",
       );
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(workspaceDir) });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const response = yield* Effect.scoped(
@@ -4431,7 +4442,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "export const answer = 42;\n",
       );
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(workspaceDir) });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const response = yield* Effect.scoped(
@@ -4477,6 +4488,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       yield* buildAppUnderTest({
         layers: {
+          ...registeredWorkspaceRoots(workspaceDir),
           vcsDriver: {
             isInsideWorkTree: () => Effect.succeed(true),
             listWorkspaceFiles: () =>
@@ -4513,6 +4525,58 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
+  it.effect("refuses workspace file rpcs for directories outside registered projects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const projectDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-registered-" });
+      const secretsDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-unregistered-" });
+      yield* fs.writeFileString(path.join(secretsDir, "id_rsa"), "PRIVATE KEY");
+
+      yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(projectDir) });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const results = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.all({
+            read: client[WS_METHODS.projectsReadFile]({
+              cwd: secretsDir,
+              relativePath: "id_rsa",
+            }).pipe(Effect.result),
+            list: client[WS_METHODS.projectsListEntries]({ cwd: secretsDir }).pipe(Effect.result),
+            write: client[WS_METHODS.projectsWriteFile]({
+              cwd: secretsDir,
+              relativePath: "authorized_keys",
+              contents: "attacker",
+            }).pipe(Effect.result),
+          }),
+        ),
+      );
+
+      if (results.read._tag !== "Failure" || results.read.failure._tag !== "ProjectReadFileError") {
+        assert.fail("Expected a ProjectReadFileError");
+      }
+      assert.equal(results.read.failure.failure, "workspace_root_not_registered");
+
+      if (
+        results.list._tag !== "Failure" ||
+        results.list.failure._tag !== "ProjectListEntriesError"
+      ) {
+        assert.fail("Expected a ProjectListEntriesError");
+      }
+      assert.equal(results.list.failure.failure, "workspace_root_not_registered");
+
+      if (
+        results.write._tag !== "Failure" ||
+        results.write.failure._tag !== "ProjectWriteFileError"
+      ) {
+        assert.fail("Expected a ProjectWriteFileError");
+      }
+      assert.equal(results.write.failure.failure, "workspace_root_not_registered");
+      assert.isFalse(yield* fs.exists(path.join(secretsDir, "authorized_keys")));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("preserves structured workspace rpc failures", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -4528,7 +4592,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* fs.symlink(outsideFile, path.join(workspaceDir, "linked-outside.txt"));
       const resolvedOutsideFile = yield* fs.realPath(outsideFile);
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(workspaceDir) });
 
       const invalidWorkspace = path.join(workspaceDir, "missing-workspace");
       const missingBrowseParent = path.join(workspaceDir, "missing-browse");
@@ -4638,7 +4702,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* fs.chmod(blockedRoot, 0o000);
 
       const result = yield* Effect.gen(function* () {
-        yield* buildAppUnderTest();
+        yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(workspaceRoot) });
         const wsUrl = yield* getWsServerUrl("/ws");
         return yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
@@ -4663,7 +4727,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const path = yield* Path.Path;
       const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-write-" });
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(workspaceDir) });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const response = yield* Effect.scoped(
@@ -4721,7 +4785,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-write-" });
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(workspaceDir) });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const result = yield* Effect.scoped(

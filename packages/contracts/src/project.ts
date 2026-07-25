@@ -39,6 +39,7 @@ export type ProjectListEntriesResult = typeof ProjectListEntriesResult.Type;
 
 export const ProjectEntriesFailure = Schema.Literals([
   "workspace_root_not_found",
+  "workspace_root_not_registered",
   "workspace_root_create_failed",
   "workspace_root_stat_failed",
   "workspace_root_not_directory",
@@ -131,6 +132,7 @@ export const ProjectReadFileResult = Schema.Struct({
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
 export const ProjectFileFailure = Schema.Literals([
+  "workspace_root_not_registered",
   "workspace_path_outside_root",
   "resolved_path_outside_root",
   "path_not_file",
