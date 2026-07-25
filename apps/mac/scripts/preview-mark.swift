@@ -141,12 +141,13 @@ private func renderMark(
     context.scaleBy(x: 1, y: -1)
 
     let silhouette = BrandMarkGeometry.silhouette(candidate, in: imageRect)
-    let moss = color(BrandMarkGeometry.moss)
+    // The brand mark is blue-on-snow only; there is no green variant.
+    let brandBlue = color(BrandMarkGeometry.skyStops[0])
     let snow = color(BrandMarkGeometry.snow)
 
     switch style {
     case .monochrome:
-        context.setFillColor(moss)
+        context.setFillColor(brandBlue)
         context.addPath(silhouette)
         if let accent = BrandMarkGeometry.accent(candidate, in: imageRect) {
             context.addPath(accent)
@@ -157,7 +158,7 @@ private func renderMark(
         }
 
     case .fullColor:
-        context.setFillColor(moss)
+        context.setFillColor(brandBlue)
         context.addPath(silhouette)
         let usesEvenOdd = candidate != .surgePeak
         context.drawPath(using: usesEvenOdd ? .eoFill : .fill)

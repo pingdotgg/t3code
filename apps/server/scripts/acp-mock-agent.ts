@@ -19,8 +19,12 @@ const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
+const emitSubagentToolCall = process.env.T3_ACP_EMIT_SUBAGENT_TOOL_CALL === "1";
+const subagentToolCallFails = process.env.T3_ACP_SUBAGENT_TOOL_CALL_FAILS === "1";
+const emitSubagentThenHang = process.env.T3_ACP_EMIT_SUBAGENT_THEN_HANG === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const emitKimiAskUserQuestion = process.env.T3_ACP_EMIT_KIMI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const emitThoughtChunks = process.env.T3_ACP_EMIT_THOUGHT_CHUNKS === "1";
@@ -129,6 +133,27 @@ function writeAutonomousChunk(requestedSessionId: string, text: string): void {
       content: { type: "text", text },
     },
   });
+}
+
+const subagentToolCallId = "subagent-tool-call-1";
+
+/** Mimics the kimi CLI's Agent tool ACP wire shape (kind "other", args in rawInput). */
+function subagentToolCallStart(requestedSessionId: string) {
+  return {
+    sessionId: requestedSessionId,
+    update: {
+      sessionUpdate: "tool_call" as const,
+      toolCallId: subagentToolCallId,
+      title: "Launching coder agent: investigate the bug",
+      kind: "other" as const,
+      status: "in_progress" as const,
+      rawInput: {
+        description: "investigate the bug",
+        prompt: "Find the root cause of the failing test.",
+        subagent_type: "coder",
+      },
+    },
+  };
 }
 
 /**
@@ -723,6 +748,23 @@ const program = Effect.gen(function* () {
         );
       }
 
+      if (emitSubagentThenHang) {
+        // Agent tool call starts, then the turn hangs: the sub-agent never gets
+        // a terminal tool_call_update, like a cancel mid-sub-agent.
+        yield* agent.client.sessionUpdate(subagentToolCallStart(requestedSessionId));
+        hungTurnActive = true;
+        const gate = yield* Deferred.make<AcpSchema.PromptResponse>();
+        pendingHangGates.push(gate);
+        return yield* Deferred.await(gate).pipe(
+          Effect.uninterruptible,
+          Effect.ensuring(
+            Effect.sync(() => {
+              hungTurnActive = false;
+            }),
+          ),
+        );
+      }
+
       if (emitXAiPromptCompleteThenHang) {
         writeJsonRpcNotification("session/update", {
           sessionId: requestedSessionId,
@@ -955,6 +997,50 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
+      if (emitSubagentToolCall) {
+        yield* agent.client.sessionUpdate(subagentToolCallStart(requestedSessionId));
+
+        // A regular tool call in the same turn: must keep flowing as a generic
+        // tool-call item, unaffected by the sub-agent mapping.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "regular-tool-call-1",
+            title: "Terminal",
+            kind: "execute",
+            status: "completed",
+            rawInput: {
+              command: ["echo", "ok"],
+            },
+          },
+        });
+
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: subagentToolCallId,
+            title: "Running coder agent: investigating",
+            status: "in_progress",
+          },
+        });
+
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: subagentToolCallId,
+            status: subagentToolCallFails ? "failed" : "completed",
+            rawOutput: subagentToolCallFails
+              ? "sub-agent failed to finish"
+              : "sub-agent final report",
+          },
+        });
+
+        return { stopReason: "end_turn" };
+      }
+
       if (emitAskQuestion) {
         yield* agent.client.extRequest("cursor/ask_question", {
           toolCallId: "ask-question-tool-call-1",
@@ -972,6 +1058,40 @@ const program = Effect.gen(function* () {
         });
 
         return { stopReason: "end_turn" };
+      }
+
+      if (emitKimiAskUserQuestion) {
+        // Mirrors how the Kimi CLI bridges AskUserQuestion through
+        // session/request_permission (q{index}_opt_{n} options plus a skip).
+        const permission = yield* agent.client.requestPermission({
+          sessionId: requestedSessionId,
+          toolCall: {
+            toolCallId: "kimi-ask-user-question-tool-call-1",
+            title: "AskUserQuestion",
+            kind: "other",
+            status: "pending",
+            content: [
+              {
+                type: "content",
+                content: {
+                  type: "text",
+                  text: "Which scope should Kimi use?",
+                },
+              },
+            ],
+          },
+          options: [
+            { optionId: "q0_opt_0", name: "Workspace", kind: "allow_once" },
+            { optionId: "q0_opt_1", name: "Session", kind: "allow_once" },
+            { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+          ],
+        });
+
+        const cancelled =
+          cancelledSessions.delete(requestedSessionId) ||
+          permission.outcome.outcome === "cancelled";
+
+        return { stopReason: cancelled ? "cancelled" : "end_turn" };
       }
 
       if (emitXAiAskUserQuestion) {

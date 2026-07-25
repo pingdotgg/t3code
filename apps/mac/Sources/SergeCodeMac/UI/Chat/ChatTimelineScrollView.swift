@@ -175,12 +175,17 @@ struct ChatTimelineScrollView: View {
                     // Never animate stack layout mid-run or mid-gesture: a row
                     // landing while the user drags (or while tools regroup)
                     // re-measures realized rows for the animation duration and
-                    // is what made the transcript judder / blank.
+                    // is what made the transcript judder / blank. Clearing the
+                    // ambient animation is enough for that — implicit layout
+                    // animation cannot start without one. `disablesAnimations`
+                    // is deliberately NOT set here: it would also kill the
+                    // row-local entrance `withAnimation`, which is render-time
+                    // only (opacity/scale/offset) and safe mid-run. Scroll
+                    // re-anchors opt out individually below.
                     .animation(revealAnimation, value: displayItems.count)
                     .transaction { transaction in
                         if suppressLayoutAnimation {
                             transaction.animation = nil
-                            transaction.disablesAnimations = true
                         }
                     }
                     // A LazyVStack realizes rows as they scroll into view, so

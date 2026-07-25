@@ -38,6 +38,11 @@ public struct VcsStatusChangeRequest: Decodable, Sendable {
     /// "review-in-progress" | "actionable-comments" | "review-complete", absent
     /// when the review lifecycle is unknown.
     public var reviewLifecycle: String?
+    /// "clean" | "dirty" | "unstable" | "blocked" | "behind" | null; absent
+    /// when the merge state is unknown (older servers / non-GitHub providers).
+    /// "dirty" means the PR has merge conflicts with its base branch. Never
+    /// treat unknown as "no conflicts".
+    public var mergeStateStatus: String?
 }
 
 /// `VcsStatusLocalResult` — repo-local status (no network).

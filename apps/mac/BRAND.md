@@ -8,6 +8,8 @@ Use **SurgeCode** in all user-facing copy. The internal identifiers that intenti
 
 The primary mark is `passportPeak`: a stamp ring enclosing twin peaks. The case name is historical brand geometry only; there is no Passport product feature. `surgePeak` and `notchPeak` remain in code as unshipped explorations. Use the mark in the About window and empty state. Do not use it in the sidebar, toolbars, sheets, or Settings. Minimum size is 16pt. Clear space is 25% of the mark width on every side.
 
+The mark ships in exactly one colorway: the snow mark (`#F2F7FB`) on the blue sky-gradient squircle (`BrandMarkGeometry.skyStops`), i.e. the app icon. There is no green variant — `BrandMarkView(style: .fullColor)` renders this colorway, and the mobile Icon Composer bundles stay in sync with it for every build variant, so system surfaces (notifications, Dock, Home Screen) always show the blue icon.
+
 ## Palette
 
 - Alpine sage accent: `#91C9A3` (`AlpineTheme.accent`)

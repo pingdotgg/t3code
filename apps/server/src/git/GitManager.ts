@@ -52,6 +52,7 @@ import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type {
   ChangeRequest,
+  GitPullRequestMergeStateStatus,
   GitPullRequestReviewDecision,
   GitPullRequestReviewLifecycle,
 } from "@t3tools/contracts";
@@ -477,6 +478,7 @@ function toStatusPr(
     unresolvedReviewThreadCount: number | null;
     actionableReviewItemCount?: number | null;
     reviewLifecycle?: GitPullRequestReviewLifecycle | null;
+    mergeStateStatus?: GitPullRequestMergeStateStatus | null;
   },
 ): {
   number: number;
@@ -490,6 +492,7 @@ function toStatusPr(
   unresolvedReviewThreadCount: number | null;
   actionableReviewItemCount?: number | null;
   reviewLifecycle?: GitPullRequestReviewLifecycle;
+  mergeStateStatus: GitPullRequestMergeStateStatus | null;
 } {
   const reviewLifecycle = review?.reviewLifecycle ?? null;
   return {
@@ -507,6 +510,8 @@ function toStatusPr(
       : {}),
     // Omitted rather than nulled: an absent lifecycle means unknown.
     ...(reviewLifecycle !== null ? { reviewLifecycle } : {}),
+    // Explicit null: unknown merge state, never an implicit "no conflicts".
+    mergeStateStatus: review?.mergeStateStatus ?? null,
   };
 }
 
@@ -1068,7 +1073,15 @@ export const make = Effect.gen(function* () {
         })),
       );
 
-    return toStatusPr(pr, review);
+    // Best-effort like the review lookup: null means unknown, never "clean".
+    const mergeStateStatus = yield* githubCli
+      .getPullRequestMergeState({
+        cwd,
+        reference: String(pr.number),
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+
+    return toStatusPr(pr, { ...review, mergeStateStatus });
   });
 
   const buildCompletionToast = Effect.fn("buildCompletionToast")(function* (
@@ -1772,6 +1785,29 @@ export const make = Effect.gen(function* () {
         cwd,
         detail: "No open pull request found for the current branch.",
       });
+    }
+
+    // Fail fast with a clear error when the PR is known to have merge
+    // conflicts, instead of surfacing a raw `gh pr merge` CLI failure.
+    // Unknown state (null) never blocks the merge.
+    const mergeProviderKind = yield* sourceControlProvider(cwd).pipe(
+      Effect.map((provider) => provider.kind),
+      Effect.orElseSucceed(() => "unknown" as const),
+    );
+    if (mergeProviderKind === "github") {
+      const mergeStateStatus = yield* githubCli
+        .getPullRequestMergeState({
+          cwd,
+          reference: String(openPr.number),
+        })
+        .pipe(Effect.orElseSucceed(() => null));
+      if (mergeStateStatus === "dirty") {
+        return yield* new GitManagerError({
+          operation: "runStackedAction",
+          cwd,
+          detail: `Pull request #${openPr.number} has merge conflicts with ${openPr.baseRefName}. Resolve the conflicts before merging.`,
+        });
+      }
     }
 
     yield* githubCli

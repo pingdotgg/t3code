@@ -96,57 +96,85 @@ struct RootView: View {
         }
     }
 
-    /// Primary click opens the scalable chooser. The disclosure menu stays a
-    /// genuinely quick path: Quick Chat, the full chooser, or repeat the
-    /// current session's project/provider. It deliberately does not reproduce
-    /// the full device × project × provider tree.
+    /// Primary click opens the scalable chooser. The chevron's Alpine popover
+    /// stays a genuinely quick path: Quick Chat, the full chooser, or repeat
+    /// the current session's project/provider. It deliberately does not
+    /// reproduce the full device × project × provider tree.
     @ViewBuilder
     private var newSessionMenu: some View {
-        NewSessionSplitControl(onNewSession: { showNewSessionSheet = true }) {
-            Button {
-                startQuickChat()
-            } label: {
-                Label("Quick Chat", systemImage: "bubble.left.and.bubble.right")
-            }
-            .help("Start a general session in \(GeneralWorkspace.relativePath)")
-            .disabled(!multi.local.capabilities.canBrowseLocalFolders)
+        NewSessionSplitControl(onNewSession: { showNewSessionSheet = true }) { isPresented in
+            ComposerPickerSurface(width: 320) {
+                VStack(spacing: 0) {
+                    ComposerPickerHeader(
+                        icon: "plus",
+                        title: "New session",
+                        subtitle: "Start quickly, or repeat the current target")
+                    Divider().opacity(0.55)
+                    VStack(spacing: 3) {
+                        AlpineMenuRow(
+                            icon: "bubble.left.and.bubble.right",
+                            title: "Quick Chat",
+                            detail: "General session in \(GeneralWorkspace.relativePath)"
+                        ) {
+                            isPresented.wrappedValue = false
+                            startQuickChat()
+                        }
+                        .disabled(!multi.local.capabilities.canBrowseLocalFolders)
 
-            Button {
-                showNewSessionSheet = true
-            } label: {
-                Label("Choose Target…", systemImage: "slider.horizontal.3")
-            }
+                        AlpineMenuRow(
+                            icon: "slider.horizontal.3",
+                            title: "Choose Target…",
+                            detail: "Pick a device, project, and provider"
+                        ) {
+                            isPresented.wrappedValue = false
+                            // Defer one runloop turn so the sheet never races
+                            // the popover dismissal.
+                            DispatchQueue.main.async { showNewSessionSheet = true }
+                        }
 
-            if let thread = multi.selectedThread, let project = selectedProject {
-                Divider()
-                Section(project.name) {
-                    Button {
-                        createSession(
-                            owner: model,
-                            projectID: project.id,
-                            provider: thread.provider,
-                            deviceID: model.deviceID)
-                    } label: {
-                        ProviderLabel(
-                            provider: thread.provider,
-                            modelID: thread.modelID,
-                            title: "New \(thread.provider.displayName) Session")
-                    }
+                        if let thread = multi.selectedThread, let project = selectedProject {
+                            ComposerPickerSectionLabel(title: project.name)
+                                .padding(.top, 4)
 
-                    Menu("Other Provider") {
-                        ForEach(model.configuredProviderKinds) { provider in
-                            Button {
+                            AlpineMenuRow(
+                                title: "New \(thread.provider.displayName) Session",
+                                detail: "Same project and provider as this session"
+                            ) {
+                                isPresented.wrappedValue = false
                                 createSession(
                                     owner: model,
                                     projectID: project.id,
-                                    provider: provider,
+                                    provider: thread.provider,
                                     deviceID: model.deviceID)
-                            } label: {
-                                ProviderLabel(provider: provider)
+                            } leading: {
+                                ProviderIcon(
+                                    provider: thread.provider,
+                                    modelID: thread.modelID,
+                                    size: 14)
                             }
-                            .disabled(!model.canCreateThread(with: provider))
+
+                            let otherProviders = model.configuredProviderKinds.filter {
+                                $0 != thread.provider
+                            }
+                            if !otherProviders.isEmpty {
+                                ComposerPickerSectionLabel(title: "Other providers")
+                                ForEach(otherProviders) { provider in
+                                    AlpineMenuRow(title: provider.displayName) {
+                                        isPresented.wrappedValue = false
+                                        createSession(
+                                            owner: model,
+                                            projectID: project.id,
+                                            provider: provider,
+                                            deviceID: model.deviceID)
+                                    } leading: {
+                                        ProviderIcon(provider: provider, size: 14)
+                                    }
+                                    .disabled(!model.canCreateThread(with: provider))
+                                }
+                            }
                         }
                     }
+                    .padding(8)
                 }
             }
         }

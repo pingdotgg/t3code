@@ -414,7 +414,10 @@ describe("GitHubCli.layer", () => {
       ]);
       const args = mockRun.mock.calls[0]?.[0]?.args ?? [];
       assert.equal(args.includes("--head"), false);
-      assert.equal(args.some((arg) => String(arg).includes("headRefOid")), true);
+      assert.equal(
+        args.some((arg) => String(arg).includes("headRefOid")),
+        true,
+      );
     }).pipe(Effect.provide(layer)),
   );
 
@@ -483,6 +486,66 @@ describe("GitHubCli.layer", () => {
       assert.ok(call?.stdin?.includes("abcdef1234567890"));
       assert.ok(call?.stdin?.includes("npe risk"));
       assert.ok(call?.args.includes("--input"));
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("normalizes CONFLICTING merge state to dirty", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeStateStatus: "CONFLICTING" }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.getPullRequestMergeState({ cwd: "/repo", reference: "12" });
+
+      assert.strictEqual(result, "dirty");
+      const args = mockRun.mock.calls[0]?.[0]?.args ?? [];
+      assert.equal(args.includes("mergeStateStatus"), true);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("treats UNKNOWN merge state as no data, not as clean", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({ mergeStateStatus: "UNKNOWN" }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.getPullRequestMergeState({ cwd: "/repo", reference: "12" });
+
+      assert.strictEqual(result, null);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("degrades a failed merge state lookup to null", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitHubCli.execute",
+            command: "gh pr view",
+            cwd: "/repo",
+            exitCode: 1,
+            failureKind: "not-found",
+            detail: "no such pull request",
+          }),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.getPullRequestMergeState({ cwd: "/repo", reference: "12" });
+
+      assert.strictEqual(result, null);
     }).pipe(Effect.provide(layer)),
   );
 });
