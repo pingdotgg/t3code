@@ -142,4 +142,50 @@ describe("followNetworkStatus", () => {
       }),
     ),
   );
+
+  it.effect("keeps a reported change from interleaving with a resumed apply", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const applyStarted = yield* Deferred.make<void>();
+        const releaseApply = yield* Deferred.make<void>();
+        const harness = yield* makeHarness({ initialStatus: "offline" });
+        // Holds the resumed apply open once it begins, so a reported change has
+        // a window to interleave between the guard and its apply.
+        const gatedApply = (status: NetworkStatus) =>
+          status === "online"
+            ? Deferred.succeed(applyStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseApply)),
+                Effect.andThen(harness.apply(status)),
+              )
+            : harness.apply(status);
+
+        yield* Connectivity.followNetworkStatus({
+          connectivity: harness.connectivity,
+          wakeups: harness.wakeups,
+          apply: gatedApply,
+        });
+
+        yield* harness.setLiveStatus("online");
+        yield* harness.resume.pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.repeat({ until: () => Deferred.isDone(applyStarted) }),
+        );
+
+        // The listener reports a newer transition mid-apply.
+        yield* harness.report("offline");
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseApply, undefined);
+        yield* Effect.yieldNow.pipe(
+          Effect.repeat({
+            until: () =>
+              Ref.get(harness.applied).pipe(Effect.map((statuses) => statuses.length >= 2)),
+          }),
+        );
+
+        // The reported change has to land last; applying it before the resumed
+        // status finished would leave the stale "online" as the final word.
+        expect(yield* Ref.get(harness.applied)).toEqual(["online", "offline"]);
+      }),
+    ),
+  );
 });
