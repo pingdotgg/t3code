@@ -505,6 +505,12 @@ function isHostedAppPairingUrl(value: string): boolean {
 
 type PairingLinkListRowProps = {
   pairingLink: ServerPairingLinkRecord;
+  /**
+   * The link's token, which the server returns only when the link is created.
+   * Absent for links this browser session did not mint — those can be reviewed
+   * and revoked, but not re-shared.
+   */
+  credential: string | undefined;
   endpointUrl: string | null | undefined;
   endpoints: ReadonlyArray<AdvertisedEndpoint>;
   defaultEndpointKey: string | null;
@@ -515,6 +521,7 @@ type PairingLinkListRowProps = {
 
 const PairingLinkListRow = memo(function PairingLinkListRow({
   pairingLink,
+  credential,
   endpointUrl,
   endpoints,
   defaultEndpointKey,
@@ -530,20 +537,23 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   const [isRevealDialogOpen, setIsRevealDialogOpen] = useState(false);
 
   const currentOriginPairingUrl = useMemo(
-    () => resolveCurrentOriginPairingUrl(pairingLink.credential),
-    [pairingLink.credential],
+    () => (credential === undefined ? null : resolveCurrentOriginPairingUrl(credential)),
+    [credential],
   );
   const hostedPairingUrl = useMemo(
     () =>
-      endpointUrl != null && endpointUrl !== ""
-        ? resolveHostedPairingUrl(endpointUrl, pairingLink.credential)
+      credential !== undefined && endpointUrl != null && endpointUrl !== ""
+        ? resolveHostedPairingUrl(endpointUrl, credential)
         : null,
-    [endpointUrl, pairingLink.credential],
+    [credential, endpointUrl],
   );
   const endpointPairingUrl = useMemo(() => {
+    if (credential === undefined) {
+      return null;
+    }
     const endpoint = selectPairingEndpoint(endpoints, defaultEndpointKey);
-    return endpoint ? resolveAdvertisedEndpointPairingUrl(endpoint, pairingLink.credential) : null;
-  }, [defaultEndpointKey, endpoints, pairingLink.credential]);
+    return endpoint ? resolveAdvertisedEndpointPairingUrl(endpoint, credential) : null;
+  }, [credential, defaultEndpointKey, endpoints]);
   const endpointCopyOptions = useMemo(() => {
     const options: Array<{
       readonly key: string;
@@ -551,11 +561,14 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       readonly url: string;
       readonly detail: string;
     }> = [];
+    if (credential === undefined) {
+      return options;
+    }
     for (const endpoint of endpoints) {
       if (endpoint.status === "unavailable") {
         continue;
       }
-      const url = resolveAdvertisedEndpointPairingUrl(endpoint, pairingLink.credential);
+      const url = resolveAdvertisedEndpointPairingUrl(endpoint, credential);
       options.push({
         key: endpointDefaultPreferenceKey(endpoint),
         label: endpoint.label,
@@ -564,15 +577,17 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       });
     }
     return options;
-  }, [endpoints, pairingLink.credential]);
+  }, [credential, endpoints]);
   const shareablePairingUrl =
-    endpointPairingUrl ??
-    (endpointUrl != null && endpointUrl !== ""
-      ? (hostedPairingUrl ?? resolveDesktopPairingUrl(endpointUrl, pairingLink.credential))
-      : isLoopbackHostname(window.location.hostname)
-        ? null
-        : currentOriginPairingUrl);
-  const revealValue = shareablePairingUrl ?? pairingLink.credential;
+    credential === undefined
+      ? null
+      : (endpointPairingUrl ??
+        (endpointUrl != null && endpointUrl !== ""
+          ? (hostedPairingUrl ?? resolveDesktopPairingUrl(endpointUrl, credential))
+          : isLoopbackHostname(window.location.hostname)
+            ? null
+            : currentOriginPairingUrl));
+  const revealValue = shareablePairingUrl ?? credential ?? "";
   const isShareableHostedAppPairingUrl =
     shareablePairingUrl !== null && isHostedAppPairingUrl(shareablePairingUrl);
   const canCopyToClipboard =
@@ -629,8 +644,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   );
 
   const handleCopyCode = useCallback(() => {
-    copyPairingValue(pairingLink.credential, "code");
-  }, [copyPairingValue, pairingLink.credential]);
+    if (credential === undefined) return;
+    copyPairingValue(credential, "code");
+  }, [copyPairingValue, credential]);
 
   const handleCopyDefaultLink = useCallback(() => {
     if (!shareablePairingUrl) return;
@@ -772,7 +788,12 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             <span aria-hidden> · </span>
             <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
           </p>
-          {shareablePairingUrl === null ? (
+          {credential === undefined ? (
+            <p className="text-[11px] text-muted-foreground/70">
+              The code was shown once, when this link was created. Revoke it and create a new link
+              to share it again.
+            </p>
+          ) : shareablePairingUrl === null ? (
             <p className="text-[11px] text-muted-foreground/70">
               Copy the token and pair from another client using this backend&apos;s reachable host.
             </p>
@@ -780,7 +801,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
           <Dialog open={isRevealDialogOpen} onOpenChange={setIsRevealDialogOpen}>
-            {canCopyToClipboard ? (
+            {credential === undefined ? null : canCopyToClipboard ? (
               <>
                 {shareablePairingUrl ? (
                   <Group aria-label="Copy selected endpoint">
@@ -972,12 +993,14 @@ type AuthorizedClientsHeaderActionProps = {
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   isRevokingOtherClients: boolean;
   onRevokeOtherClients: () => void;
+  onPairingLinkCreated: (id: string, credential: string) => void;
 };
 
 const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderAction({
   clientSessions,
   isRevokingOtherClients,
   onRevokeOtherClients,
+  onPairingLinkCreated,
 }: AuthorizedClientsHeaderActionProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pairingLabel, setPairingLabel] = useState("");
@@ -989,7 +1012,13 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
   const handleCreatePairingLink = useCallback(async () => {
     setIsCreatingPairingLink(true);
     try {
-      await createServerPairingCredential({ label: pairingLabel, scopes: pairingScopes });
+      // This response is the only time the server hands back the token, so
+      // hold on to it for the row that is about to arrive on the access stream.
+      const created = await createServerPairingCredential({
+        label: pairingLabel,
+        scopes: pairingScopes,
+      });
+      onPairingLinkCreated(created.id, created.credential);
       setPairingLabel("");
       setPairingScopes([...AuthStandardClientScopes]);
       setDialogOpen(false);
@@ -1005,7 +1034,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
     } finally {
       setIsCreatingPairingLink(false);
     }
-  }, [pairingLabel, pairingScopes]);
+  }, [onPairingLinkCreated, pairingLabel, pairingScopes]);
 
   const togglePairingScope = useCallback((scope: AuthEnvironmentScope, checked: boolean) => {
     setPairingScopes((current) =>
@@ -1149,6 +1178,8 @@ type PairingClientsListProps = {
   presentation?: AccessSectionPresentation;
   isLoading: boolean;
   pairingLinks: ReadonlyArray<ServerPairingLinkRecord>;
+  /** Tokens for links minted in this browser session, keyed by pairing link id. */
+  issuedPairingCredentials: ReadonlyMap<string, string>;
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   revokingPairingLinkId: string | null;
   revokingClientSessionId: string | null;
@@ -1163,6 +1194,7 @@ const PairingClientsList = memo(function PairingClientsList({
   presentation = "current",
   isLoading,
   pairingLinks,
+  issuedPairingCredentials,
   clientSessions,
   revokingPairingLinkId,
   revokingClientSessionId,
@@ -1175,6 +1207,7 @@ const PairingClientsList = memo(function PairingClientsList({
         <PairingLinkListRow
           key={pairingLink.id}
           pairingLink={pairingLink}
+          credential={issuedPairingCredentials.get(pairingLink.id)}
           endpointUrl={endpointUrl}
           endpoints={endpoints}
           defaultEndpointKey={defaultEndpointKey}
@@ -2291,6 +2324,15 @@ export function ConnectionsSettings() {
   );
 
   const visibleDesktopPairingLinks = desktopPairingLinks;
+  // The server returns a pairing token exactly once, when the link is created,
+  // so sharing controls are only available for links minted here. Reloading the
+  // settings page intentionally loses them.
+  const [issuedDesktopPairingCredentials, setIssuedDesktopPairingCredentials] = useState<
+    ReadonlyMap<string, string>
+  >(() => new Map());
+  const handleDesktopPairingLinkCreated = useCallback((id: string, credential: string) => {
+    setIssuedDesktopPairingCredentials((current) => new Map(current).set(id, credential));
+  }, []);
   const tailscaleHttpsEndpoint = useMemo(
     () => desktopAdvertisedEndpoints.find(isTailscaleHttpsEndpoint) ?? null,
     [desktopAdvertisedEndpoints],
@@ -2905,6 +2947,7 @@ export function ConnectionsSettings() {
         presentation={presentation}
         isLoading={isLoadingDesktopAccessManagement}
         pairingLinks={visibleDesktopPairingLinks}
+        issuedPairingCredentials={issuedDesktopPairingCredentials}
         clientSessions={desktopClientSessions}
         revokingPairingLinkId={revokingDesktopPairingLinkId}
         revokingClientSessionId={revokingDesktopClientSessionId}
@@ -3027,6 +3070,7 @@ export function ConnectionsSettings() {
                   clientSessions={desktopClientSessions}
                   isRevokingOtherClients={isRevokingOtherDesktopClients}
                   onRevokeOtherClients={handleRevokeOtherDesktopClients}
+                  onPairingLinkCreated={handleDesktopPairingLinkCreated}
                 />
               }
             >

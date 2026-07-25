@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -271,6 +272,50 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         expect(revokedClientWebSocket.sessionId).toBe(client.sessionId);
         expect(revokedClientWebSocket.revokedAt.epochMilliseconds).toBeGreaterThanOrEqual(0);
       }
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("reports a session as live until it is revoked or expires", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const revoked = yield* sessions.issue({ subject: "revoked" });
+      const expiring = yield* sessions.issue({ subject: "expiring", ttl: Duration.seconds(1) });
+
+      expect(yield* sessions.isLive(revoked.sessionId)).toBe(true);
+      expect(yield* sessions.isLive(expiring.sessionId)).toBe(true);
+
+      yield* sessions.revoke(revoked.sessionId);
+      yield* TestClock.adjust(Duration.seconds(2));
+
+      expect(yield* sessions.isLive(revoked.sessionId)).toBe(false);
+      expect(yield* sessions.isLive(expiring.sessionId)).toBe(false);
+    }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
+  );
+
+  it.effect("wakes revocation watchers when the session is revoked", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ subject: "watched" });
+      const other = yield* sessions.issue({ subject: "unrelated" });
+
+      const watcher = yield* Effect.forkChild(sessions.awaitRevoked(issued.sessionId));
+
+      yield* sessions.revoke(other.sessionId);
+      yield* Effect.yieldNow;
+      expect(watcher.pollUnsafe()).toBeUndefined();
+
+      yield* sessions.revoke(issued.sessionId);
+      yield* Fiber.join(watcher);
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("returns immediately when watching an already revoked session", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ subject: "already-revoked" });
+      yield* sessions.revoke(issued.sessionId);
+
+      yield* sessions.awaitRevoked(issued.sessionId);
     }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
 

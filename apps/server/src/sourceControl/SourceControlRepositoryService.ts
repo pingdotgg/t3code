@@ -21,6 +21,7 @@ import {
 
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { remoteUrlRejectionReason, repositoryIdentifierRejectionReason } from "./cloneTarget.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 
@@ -111,6 +112,51 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  /**
+   * Guard an identifier that a provider CLI receives as a positional
+   * argument, so a leading `-` cannot turn it into an option.
+   */
+  const ensureSafeRepositoryIdentifier = Effect.fn(
+    "SourceControlRepositoryService.ensureSafeRepositoryIdentifier",
+  )(function* (input: {
+    readonly operation: string;
+    readonly provider: SourceControlProviderKind;
+    readonly repository: string;
+  }) {
+    const repository = input.repository.trim();
+    const rejection = repositoryIdentifierRejectionReason(repository);
+    if (rejection !== null) {
+      return yield* new SourceControlRepositoryError({
+        operation: input.operation,
+        provider: input.provider,
+        detail: rejection,
+      });
+    }
+    return repository;
+  });
+
+  /**
+   * Guard a clone URL that git receives as a positional argument, so it cannot
+   * be parsed as an option (`--upload-pack=`, `--config=core.sshCommand=`) or
+   * as a command-executing transport helper (`ext::`).
+   */
+  const ensureSafeRemoteUrl = Effect.fn("SourceControlRepositoryService.ensureSafeRemoteUrl")(
+    function* (input: {
+      readonly provider: SourceControlProviderKind;
+      readonly remoteUrl: string;
+    }) {
+      const rejection = remoteUrlRejectionReason(input.remoteUrl);
+      if (rejection !== null) {
+        return yield* new SourceControlRepositoryError({
+          operation: "cloneRepository",
+          provider: input.provider,
+          detail: rejection,
+        });
+      }
+      return input.remoteUrl;
+    },
+  );
+
   const lookupRepository = Effect.fn("SourceControlRepositoryService.lookupRepository")(function* (
     input: SourceControlRepositoryLookupInput,
   ) {
@@ -118,10 +164,15 @@ export const make = Effect.gen(function* () {
       operation: "lookupRepository",
       provider: input.provider,
     });
+    const repository = yield* ensureSafeRepositoryIdentifier({
+      operation: "lookupRepository",
+      provider: providerKind,
+      repository: input.repository,
+    });
     const provider = yield* providers.get(providerKind);
     const urls = yield* provider.getRepositoryCloneUrls({
       cwd: input.cwd ?? config.cwd,
-      repository: input.repository.trim(),
+      repository,
     });
     return toRepositoryInfo(providerKind, urls);
   });
@@ -203,17 +254,19 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    const safeRemoteUrl = yield* ensureSafeRemoteUrl({ provider, remoteUrl });
+
     yield* git.execute({
       operation: "SourceControlRepositoryService.cloneRepository",
       cwd: preparedDestination.parentPath,
-      args: ["clone", remoteUrl, preparedDestination.directoryName],
+      args: ["clone", "--", safeRemoteUrl, preparedDestination.directoryName],
       timeoutMs: 120_000,
       maxOutputBytes: 256 * 1024,
     });
 
     return {
       cwd: preparedDestination.destinationPath,
-      remoteUrl,
+      remoteUrl: safeRemoteUrl,
       repository,
     };
   });
@@ -224,10 +277,15 @@ export const make = Effect.gen(function* () {
         operation: "publishRepository",
         provider: input.provider,
       });
+      const repository = yield* ensureSafeRepositoryIdentifier({
+        operation: "publishRepository",
+        provider: providerKind,
+        repository: input.repository,
+      });
       const provider = yield* providers.get(providerKind);
       const urls = yield* provider.createRepository({
         cwd: input.cwd,
-        repository: input.repository.trim(),
+        repository,
         visibility: input.visibility,
       });
       const remoteUrl = selectRemoteUrl(urls, input.protocol);

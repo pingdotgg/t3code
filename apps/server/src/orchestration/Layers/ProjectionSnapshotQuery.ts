@@ -111,6 +111,9 @@ const ProjectionCountsRowSchema = Schema.Struct({
 const WorkspaceRootLookupInput = Schema.Struct({
   workspaceRoot: Schema.String,
 });
+const ProjectionWorkspaceRootRowSchema = Schema.Struct({
+  workspaceRoot: Schema.String,
+});
 const ProjectIdLookupInput = Schema.Struct({
   projectId: ProjectId,
 });
@@ -667,6 +670,25 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           (SELECT COUNT(*) FROM projection_projects) AS "projectCount",
           (SELECT COUNT(*) FROM projection_threads) AS "threadCount"
+      `,
+  });
+
+  const listWorkspaceRootRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionWorkspaceRootRowSchema,
+    execute: () =>
+      sql`
+        SELECT workspace_root AS "workspaceRoot"
+        FROM projection_projects
+        WHERE deleted_at IS NULL
+        UNION
+        SELECT threads.worktree_path AS "workspaceRoot"
+        FROM projection_threads AS threads
+        INNER JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+        WHERE threads.worktree_path IS NOT NULL
+          AND threads.deleted_at IS NULL
+          AND projects.deleted_at IS NULL
       `,
   });
 
@@ -1737,6 +1759,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
     );
 
+  const listWorkspaceRoots: ProjectionSnapshotQueryShape["listWorkspaceRoots"] = () =>
+    listWorkspaceRootRows(undefined).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listWorkspaceRoots:query",
+          "ProjectionSnapshotQuery.listWorkspaceRoots:decodeRows",
+        ),
+      ),
+      Effect.map((rows) => rows.map((row) => row.workspaceRoot)),
+    );
+
   const getActiveProjectByWorkspaceRoot: ProjectionSnapshotQueryShape["getActiveProjectByWorkspaceRoot"] =
     (workspaceRoot) =>
       getActiveProjectRowByWorkspaceRoot({ workspaceRoot }).pipe(
@@ -2110,6 +2143,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getArchivedShellSnapshot,
     getSnapshotSequence,
     getCounts,
+    listWorkspaceRoots,
     getActiveProjectByWorkspaceRoot,
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,

@@ -207,9 +207,16 @@ export const AuthPairingCredentialResult = Schema.Struct({
 });
 export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Type;
 
+/**
+ * A pending pairing link as seen by management clients.
+ *
+ * Deliberately metadata-only: the redeemable token is returned once, from the
+ * endpoint that mints it (`AuthPairingCredentialResult`). Listing or streaming
+ * it would let any `access:read` client redeem a link for scopes it does not
+ * hold.
+ */
 export const AuthPairingLink = Schema.Struct({
   id: TrimmedNonEmptyString,
-  credential: TrimmedNonEmptyString,
   scopes: AuthEnvironmentScopes,
   subject: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),

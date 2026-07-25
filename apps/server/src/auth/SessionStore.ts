@@ -387,6 +387,21 @@ export class SessionStore extends Context.Service<
       ReadonlyArray<AuthClientSession>,
       SessionCredentialInternalError
     >;
+    /**
+     * Whether the session may still be used: it exists, is unrevoked, and has
+     * not expired.
+     *
+     * Long-lived connections authenticate once at the upgrade, so anything
+     * served over them has to re-ask.
+     */
+    readonly isLive: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<boolean, SessionCredentialInternalError>;
+    /**
+     * Complete once the session has been revoked, so a caller holding an open
+     * connection can tear it down.
+     */
+    readonly awaitRevoked: (sessionId: AuthSessionId) => Effect.Effect<void>;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
     readonly revoke: (
       sessionId: AuthSessionId,
@@ -840,6 +855,49 @@ export const make = Effect.gen(function* () {
     Effect.mapError((cause) => new ActiveSessionsListError({ cause })),
   );
 
+  const isLive: SessionStore["Service"]["isLive"] = Effect.fn("SessionStore.isLive")(
+    function* (sessionId) {
+      const row = yield* authSessions
+        .getById({ sessionId })
+        .pipe(
+          Effect.mapError((cause) => new SessionCredentialVerificationError({ sessionId, cause })),
+        );
+      if (Option.isNone(row) || row.value.revokedAt !== null) {
+        return false;
+      }
+      const now = yield* DateTime.now;
+      return row.value.expiresAt.epochMilliseconds > now.epochMilliseconds;
+    },
+  );
+
+  const awaitRevoked: SessionStore["Service"]["awaitRevoked"] = Effect.fn(
+    "SessionStore.awaitRevoked",
+  )(function* (sessionId) {
+    // Subscribe before the liveness probe so a revocation racing this call is
+    // either already visible in the store or still queued for us.
+    const subscription = yield* PubSub.subscribe(changesPubSub);
+    const stillLive = yield* isLive(sessionId).pipe(
+      // A store read that fails is not evidence of revocation; leave the
+      // connection to the per-request authorization check, which fails closed.
+      Effect.tapError((cause) =>
+        Effect.logWarning("Failed to probe session liveness for revocation watch.").pipe(
+          Effect.annotateLogs({ sessionId, cause }),
+        ),
+      ),
+      Effect.orElseSucceed(() => true),
+    );
+    if (!stillLive) {
+      return;
+    }
+
+    while (true) {
+      const change = yield* PubSub.take(subscription);
+      if (change.type === "clientRemoved" && change.sessionId === sessionId) {
+        return;
+      }
+    }
+  }, Effect.scoped);
+
   const revoke: SessionStore["Service"]["revoke"] = Effect.fn("SessionStore.revoke")(
     function* (sessionId) {
       const revokedAt = yield* DateTime.now;
@@ -902,6 +960,8 @@ export const make = Effect.gen(function* () {
     issueWebSocketToken,
     verifyWebSocketToken,
     listActive,
+    isLive,
+    awaitRevoked,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },

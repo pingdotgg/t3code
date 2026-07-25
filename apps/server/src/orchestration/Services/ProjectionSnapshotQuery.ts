@@ -109,6 +109,18 @@ export interface ProjectionSnapshotQueryShape {
   readonly getCounts: () => Effect.Effect<ProjectionSnapshotCounts, ProjectionRepositoryError>;
 
   /**
+   * Read every workspace root a client is allowed to address.
+   *
+   * This is the allowlist backing workspace file RPCs: the roots of active
+   * projects plus the worktree paths of their threads. Paths are returned as
+   * they were registered, so callers must still canonicalize before comparing.
+   */
+  readonly listWorkspaceRoots: () => Effect.Effect<
+    ReadonlyArray<string>,
+    ProjectionRepositoryError
+  >;
+
+  /**
    * Read the active project for an exact workspace root match.
    */
   readonly getActiveProjectByWorkspaceRoot: (

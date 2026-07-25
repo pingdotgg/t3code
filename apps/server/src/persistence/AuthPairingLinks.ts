@@ -17,7 +17,7 @@ import {
 
 export const AuthPairingLinkRecord = Schema.Struct({
   id: Schema.String,
-  credential: Schema.String,
+  credentialHash: Schema.String,
   method: Schema.Literals(["desktop-bootstrap", "one-time-token"]),
   scopes: Schema.fromJsonString(AuthEnvironmentScopes),
   subject: Schema.String,
@@ -32,7 +32,7 @@ export type AuthPairingLinkRecord = typeof AuthPairingLinkRecord.Type;
 
 export const CreateAuthPairingLinkInput = Schema.Struct({
   id: Schema.String,
-  credential: Schema.String,
+  credentialHash: Schema.String,
   method: Schema.Literals(["desktop-bootstrap", "one-time-token"]),
   scopes: AuthEnvironmentScopes,
   subject: Schema.String,
@@ -44,7 +44,7 @@ export const CreateAuthPairingLinkInput = Schema.Struct({
 export type CreateAuthPairingLinkInput = typeof CreateAuthPairingLinkInput.Type;
 
 export const ConsumeAuthPairingLinkInput = Schema.Struct({
-  credential: Schema.String,
+  credentialHash: Schema.String,
   proofKeyThumbprint: Schema.NullOr(Schema.String),
   consumedAt: Schema.DateTimeUtcFromString,
   now: Schema.DateTimeUtcFromString,
@@ -62,14 +62,15 @@ export const RevokeAuthPairingLinkInput = Schema.Struct({
 });
 export type RevokeAuthPairingLinkInput = typeof RevokeAuthPairingLinkInput.Type;
 
-export const GetAuthPairingLinkByCredentialInput = Schema.Struct({
-  credential: Schema.String,
+export const GetAuthPairingLinkByCredentialHashInput = Schema.Struct({
+  credentialHash: Schema.String,
 });
-export type GetAuthPairingLinkByCredentialInput = typeof GetAuthPairingLinkByCredentialInput.Type;
+export type GetAuthPairingLinkByCredentialHashInput =
+  typeof GetAuthPairingLinkByCredentialHashInput.Type;
 
 const AuthPairingLinkRawDbRow = Schema.Struct({
   id: Schema.String,
-  credential: Schema.Unknown,
+  credentialHash: Schema.Unknown,
   method: Schema.Unknown,
   scopes: Schema.Unknown,
   subject: Schema.Unknown,
@@ -98,8 +99,8 @@ export class AuthPairingLinkRepository extends Context.Service<
     readonly revoke: (
       input: RevokeAuthPairingLinkInput,
     ) => Effect.Effect<boolean, AuthPairingLinkRepositoryError>;
-    readonly getByCredential: (
-      input: GetAuthPairingLinkByCredentialInput,
+    readonly getByCredentialHash: (
+      input: GetAuthPairingLinkByCredentialHashInput,
     ) => Effect.Effect<Option.Option<AuthPairingLinkRecord>, AuthPairingLinkRepositoryError>;
   }
 >()("t3/persistence/AuthPairingLinks/AuthPairingLinkRepository") {}
@@ -128,7 +129,7 @@ export const make = Effect.gen(function* () {
       sql`
         INSERT INTO auth_pairing_links (
           id,
-          credential,
+          credential_hash,
           method,
           scopes,
           subject,
@@ -141,7 +142,7 @@ export const make = Effect.gen(function* () {
         )
         VALUES (
           ${input.id},
-          ${input.credential},
+          ${input.credentialHash},
           ${input.method},
           ${JSON.stringify(input.scopes)},
           ${input.subject},
@@ -158,11 +159,11 @@ export const make = Effect.gen(function* () {
   const consumeAvailablePairingLinkRow = SqlSchema.findOneOption({
     Request: ConsumeAuthPairingLinkInput,
     Result: AuthPairingLinkRawDbRow,
-    execute: ({ credential, proofKeyThumbprint, consumedAt, now }) =>
+    execute: ({ credentialHash, proofKeyThumbprint, consumedAt, now }) =>
       sql`
         UPDATE auth_pairing_links
         SET consumed_at = ${consumedAt}
-        WHERE credential = ${credential}
+        WHERE credential_hash = ${credentialHash}
           AND revoked_at IS NULL
           AND consumed_at IS NULL
           AND expires_at > ${now}
@@ -172,7 +173,7 @@ export const make = Effect.gen(function* () {
           )
         RETURNING
           id AS "id",
-          credential AS "credential",
+          credential_hash AS "credentialHash",
           method AS "method",
           scopes AS "scopes",
           subject AS "subject",
@@ -192,7 +193,7 @@ export const make = Effect.gen(function* () {
       sql`
         SELECT
           id AS "id",
-          credential AS "credential",
+          credential_hash AS "credentialHash",
           method AS "method",
           scopes AS "scopes",
           subject AS "subject",
@@ -224,14 +225,14 @@ export const make = Effect.gen(function* () {
       `,
   });
 
-  const getPairingLinkRowByCredential = SqlSchema.findOneOption({
-    Request: GetAuthPairingLinkByCredentialInput,
+  const getPairingLinkRowByCredentialHash = SqlSchema.findOneOption({
+    Request: GetAuthPairingLinkByCredentialHashInput,
     Result: AuthPairingLinkRawDbRow,
-    execute: ({ credential }) =>
+    execute: ({ credentialHash }) =>
       sql`
         SELECT
           id AS "id",
-          credential AS "credential",
+          credential_hash AS "credentialHash",
           method AS "method",
           scopes AS "scopes",
           subject AS "subject",
@@ -242,7 +243,7 @@ export const make = Effect.gen(function* () {
           consumed_at AS "consumedAt",
           revoked_at AS "revokedAt"
         FROM auth_pairing_links
-        WHERE credential = ${credential}
+        WHERE credential_hash = ${credentialHash}
       `,
   });
 
@@ -318,12 +319,14 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.length > 0),
     );
 
-  const getByCredential: AuthPairingLinkRepository["Service"]["getByCredential"] = (input) =>
-    getPairingLinkRowByCredential(input).pipe(
+  const getByCredentialHash: AuthPairingLinkRepository["Service"]["getByCredentialHash"] = (
+    input,
+  ) =>
+    getPairingLinkRowByCredentialHash(input).pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
-          "AuthPairingLinkRepository.getByCredential:query",
-          "AuthPairingLinkRepository.getByCredential:decodeRow",
+          "AuthPairingLinkRepository.getByCredentialHash:query",
+          "AuthPairingLinkRepository.getByCredentialHash:decodeRow",
         ),
       ),
       Effect.flatMap((rowOption) =>
@@ -333,7 +336,7 @@ export const make = Effect.gen(function* () {
             decodeAuthPairingLinkDbRow(row).pipe(
               Effect.mapError((cause) =>
                 PersistenceDecodeError.fromSchemaError(
-                  "AuthPairingLinkRepository.getByCredential:decodeRow",
+                  "AuthPairingLinkRepository.getByCredentialHash:decodeRow",
                   cause,
                   { pairingLinkId: row.id },
                 ),
@@ -349,7 +352,7 @@ export const make = Effect.gen(function* () {
     consumeAvailable,
     listActive,
     revoke,
-    getByCredential,
+    getByCredentialHash,
   } satisfies AuthPairingLinkRepository["Service"];
 });
 

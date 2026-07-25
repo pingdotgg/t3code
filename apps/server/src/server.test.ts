@@ -318,6 +318,16 @@ const makeBrowserOtlpPayload = (spanName: string) =>
     return JSON.parse(request.body) as OtlpTracer.TraceData;
   });
 
+/**
+ * Workspace file RPCs are bound to the roots the projection knows about, so a
+ * test that pokes at a temp directory has to register it first.
+ */
+const registeredWorkspaceRoots = (...roots: ReadonlyArray<string>) => ({
+  projectionSnapshotQuery: {
+    listWorkspaceRoots: () => Effect.succeed(roots),
+  },
+});
+
 const buildAppUnderTest = (options?: {
   config?: Partial<ServerConfig.ServerConfig["Service"]>;
   layers?: {
@@ -714,6 +724,7 @@ const buildAppUnderTest = (options?: {
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+          listWorkspaceRoots: () => Effect.succeed([]),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
@@ -3149,6 +3160,55 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("stops serving rpcs on a live websocket once its session is revoked", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { body: adminToken } = yield* exchangeAccessToken(defaultDesktopBootstrapToken);
+      const { body: victimToken } = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        clientMetadata: { label: "Revoked client" },
+      });
+      const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${victimToken.access_token ?? ""}` },
+      });
+      const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+
+      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: { authorization: `Bearer ${adminToken.access_token ?? ""}` },
+      });
+      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+        readonly sessionId: string;
+        readonly client: { readonly label?: string };
+      }>;
+      const victimSessionId = clients.find(
+        (entry) => entry.client.label === "Revoked client",
+      )?.sessionId;
+      assert.isDefined(victimSessionId);
+
+      const afterRevoke = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            yield* client[WS_METHODS.serverProbe]({});
+
+            const revokeResponse = yield* HttpClient.post("/api/auth/clients/revoke", {
+              headers: { authorization: `Bearer ${adminToken.access_token ?? ""}` },
+              body: yield* HttpBody.json({ sessionId: victimSessionId }),
+            });
+            assert.equal(revokeResponse.status, 200);
+
+            return yield* client[WS_METHODS.serverProbe]({}).pipe(Effect.result);
+          }),
+        ),
+      );
+
+      // The socket is torn down on revocation, so the follow-up call fails
+      // either as an authorization error or as a dead transport; both mean the
+      // revoked client no longer has access.
+      assert.equal(afterRevoke._tag, "Failure");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("includes CORS headers on remote auth success responses", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -3408,7 +3468,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       const listedLinks = (yield* listResponse.json) as ReadonlyArray<{
         readonly id: string;
-        readonly credential: string;
+        readonly credential?: string;
       }>;
 
       const revokeResponse = yield* HttpClient.post("/api/auth/pairing-links/revoke", {
@@ -3423,6 +3483,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(createdResponse.status, 200);
       assert.equal(listResponse.status, 200);
       assert.isTrue(listedLinks.some((entry) => entry.id === createdBody.id));
+      // Listing is metadata only: an access:read client must not be able to
+      // read a pending link back and redeem it.
+      for (const entry of listedLinks) {
+        assert.notProperty(entry, "credential");
+      }
       assert.equal(revokeResponse.status, 200);
       assert.equal(revokedBootstrap.response.status, 401);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -4401,7 +4466,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "export const needle = 1;",
       );
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(workspaceDir) });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const response = yield* Effect.scoped(
@@ -4431,7 +4496,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "export const answer = 42;\n",
       );
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(workspaceDir) });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const response = yield* Effect.scoped(
@@ -4477,6 +4542,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       yield* buildAppUnderTest({
         layers: {
+          ...registeredWorkspaceRoots(workspaceDir),
           vcsDriver: {
             isInsideWorkTree: () => Effect.succeed(true),
             listWorkspaceFiles: () =>
@@ -4513,6 +4579,58 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
+  it.effect("refuses workspace file rpcs for directories outside registered projects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const projectDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-registered-" });
+      const secretsDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-unregistered-" });
+      yield* fs.writeFileString(path.join(secretsDir, "id_rsa"), "PRIVATE KEY");
+
+      yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(projectDir) });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const results = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.all({
+            read: client[WS_METHODS.projectsReadFile]({
+              cwd: secretsDir,
+              relativePath: "id_rsa",
+            }).pipe(Effect.result),
+            list: client[WS_METHODS.projectsListEntries]({ cwd: secretsDir }).pipe(Effect.result),
+            write: client[WS_METHODS.projectsWriteFile]({
+              cwd: secretsDir,
+              relativePath: "authorized_keys",
+              contents: "attacker",
+            }).pipe(Effect.result),
+          }),
+        ),
+      );
+
+      if (results.read._tag !== "Failure" || results.read.failure._tag !== "ProjectReadFileError") {
+        assert.fail("Expected a ProjectReadFileError");
+      }
+      assert.equal(results.read.failure.failure, "workspace_root_not_registered");
+
+      if (
+        results.list._tag !== "Failure" ||
+        results.list.failure._tag !== "ProjectListEntriesError"
+      ) {
+        assert.fail("Expected a ProjectListEntriesError");
+      }
+      assert.equal(results.list.failure.failure, "workspace_root_not_registered");
+
+      if (
+        results.write._tag !== "Failure" ||
+        results.write.failure._tag !== "ProjectWriteFileError"
+      ) {
+        assert.fail("Expected a ProjectWriteFileError");
+      }
+      assert.equal(results.write.failure.failure, "workspace_root_not_registered");
+      assert.isFalse(yield* fs.exists(path.join(secretsDir, "authorized_keys")));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("preserves structured workspace rpc failures", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -4528,7 +4646,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* fs.symlink(outsideFile, path.join(workspaceDir, "linked-outside.txt"));
       const resolvedOutsideFile = yield* fs.realPath(outsideFile);
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(workspaceDir) });
 
       const invalidWorkspace = path.join(workspaceDir, "missing-workspace");
       const missingBrowseParent = path.join(workspaceDir, "missing-browse");
@@ -4638,7 +4756,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* fs.chmod(blockedRoot, 0o000);
 
       const result = yield* Effect.gen(function* () {
-        yield* buildAppUnderTest();
+        yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(workspaceRoot) });
         const wsUrl = yield* getWsServerUrl("/ws");
         return yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
@@ -4663,7 +4781,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const path = yield* Path.Path;
       const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-write-" });
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(workspaceDir) });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const response = yield* Effect.scoped(
@@ -4721,7 +4839,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-write-" });
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({ layers: registeredWorkspaceRoots(workspaceDir) });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const result = yield* Effect.scoped(
