@@ -14,6 +14,17 @@ public struct ChatScreen: View {
         self.scenery = scenery
     }
 
+    /// Whether the selected thread has a live run — drives the plan-strip
+    /// mount/dismount animation. Computed out of `body`: the inline
+    /// `selectedThread.map { ... } ?? false` closure was the expression that
+    /// tipped the Swift 6.2 (Xcode 26.x) type checker over its limit in
+    /// release builds (`circular reference` / type-check timeout on CI).
+    private var selectedThreadIsActive: Bool {
+        model.selectedThread.map {
+            $0.status == .running || $0.status == .backgroundWork
+        } ?? false
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             if let thread = model.selectedThread {
@@ -91,12 +102,7 @@ public struct ChatScreen: View {
         .animation(Motion.structure, value: model.selectedVcsStatus()?.isRepo ?? false)
         // The plan strip mounts/dismounts on run start/end; ease the flip so
         // the composer glides instead of jumping.
-        .animation(
-            Motion.structure,
-            value: model.selectedThread.map {
-                $0.status == .running || $0.status == .backgroundWork
-            } ?? false
-        )
+        .animation(Motion.structure, value: selectedThreadIsActive)
         .background {
             // The thread's scene as a full chat wallpaper; the wash inside
             // keeps timeline text readable (see SceneryChatBackground).
