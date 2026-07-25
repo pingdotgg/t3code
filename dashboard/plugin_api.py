@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -16,19 +17,12 @@ from integrations.hermes_plugin.config import load_config
 from integrations.hermes_plugin import service
 
 router = APIRouter()
-_ACTION_LOCK: asyncio.Lock | None = None
-_ACTION_LOCK_LOOP: asyncio.AbstractEventLoop | None = None
+_ACTION_LOCK = threading.Lock()
 
 
-def _action_lock() -> asyncio.Lock:
-    """Return a lock bound to the active dashboard event loop."""
-    global _ACTION_LOCK, _ACTION_LOCK_LOOP
-
-    loop = asyncio.get_running_loop()
-    if _ACTION_LOCK is None or _ACTION_LOCK_LOOP is not loop:
-        _ACTION_LOCK = asyncio.Lock()
-        _ACTION_LOCK_LOOP = loop
-    return _ACTION_LOCK
+async def _acquire_action_lock() -> None:
+    while not _ACTION_LOCK.acquire(blocking=False):
+        await asyncio.sleep(0.05)
 
 
 def _public_url(request: Request) -> str:
@@ -69,10 +63,13 @@ async def _run_action(action: str, request: Request) -> dict[str, object]:
         "uninstall": service.uninstall,
     }[action]
     try:
-        async with _action_lock():
+        await _acquire_action_lock()
+        try:
             result = await asyncio.to_thread(handler, config)
             result["status"] = _response(request)
             return result
+        finally:
+            _ACTION_LOCK.release()
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
 
