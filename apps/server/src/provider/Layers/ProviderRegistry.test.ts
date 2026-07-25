@@ -1966,6 +1966,66 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }).pipe(Effect.provide(recorded.layer));
       });
 
+      it.effect("keeps successful Claude usage when live identity is unavailable", () => {
+        const spawner = mockSpawnerLayer((args) => {
+          const joined = args.join(" ");
+          if (joined === "--version") return { stdout: "2.1.218\n", stderr: "", code: 0 };
+          if (joined.startsWith("--print /usage --output-format json")) {
+            return {
+              stdout: JSON.stringify({
+                result: "Current session: 30% used \u00b7 resets Jul 23, 1:30am (America/Chicago)",
+              }),
+              stderr: "",
+              code: 0,
+            };
+          }
+          if (joined === "auth status --json") {
+            return { stdout: "", stderr: "temporary auth status failure", code: 1 };
+          }
+          throw new Error(`Unexpected args: ${joined}`);
+        });
+
+        return Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({ email: "claude@example.com" }),
+          );
+          assert.strictEqual(status.usageLimits?.windows[0]?.usedPercent, 30);
+        }).pipe(Effect.provide(spawner));
+      });
+
+      it.effect("omits Claude usage when live identity mismatches capabilities", () => {
+        const spawner = mockSpawnerLayer((args) => {
+          const joined = args.join(" ");
+          if (joined === "--version") return { stdout: "2.1.218\n", stderr: "", code: 0 };
+          if (joined.startsWith("--print /usage --output-format json")) {
+            return {
+              stdout: JSON.stringify({
+                result: "Current session: 30% used \u00b7 resets Jul 23, 1:30am (America/Chicago)",
+              }),
+              stderr: "",
+              code: 0,
+            };
+          }
+          if (joined === "auth status --json") {
+            return {
+              stdout: JSON.stringify({ email: "second@example.com" }),
+              stderr: "",
+              code: 0,
+            };
+          }
+          throw new Error(`Unexpected args: ${joined}`);
+        });
+
+        return Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({ email: "first@example.com" }),
+          );
+          assert.strictEqual(status.usageLimits, undefined);
+        }).pipe(Effect.provide(spawner));
+      });
+
       it.effect("returns ready and labels Bedrock-backed Claude as authenticated", () =>
         Effect.gen(function* () {
           // Bedrock authenticates via external AWS credentials, so the SDK init

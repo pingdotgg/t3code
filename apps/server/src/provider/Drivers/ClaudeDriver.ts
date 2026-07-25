@@ -192,11 +192,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             usageProbeCache,
             `${capabilitiesCacheKey}:${accountIdentity ?? "unknown"}`,
           ).pipe(
-            Effect.map((result) =>
-              result?.accountIdentity && result.accountIdentity === accountIdentity
-                ? result.usageLimits
-                : undefined,
-            ),
+            Effect.map((result) => {
+              if (!result) return undefined;
+              return result.accountIdentity &&
+                accountIdentity &&
+                result.accountIdentity !== accountIdentity
+                ? undefined
+                : result.usageLimits;
+            }),
           ),
       ).pipe(
         Effect.map(stampIdentity),

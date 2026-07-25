@@ -1026,11 +1026,15 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
               Effect.catchCause(() => Effect.void),
             )
           : probeClaudeUsageLimits(claudeSettings, resolvedEnvironment, cwd).pipe(
-              Effect.map((result) =>
-                result?.accountIdentity && result.accountIdentity === capabilities.email?.trim()
-                  ? result.usageLimits
-                  : undefined,
-              ),
+              Effect.map((result) => {
+                if (!result) return undefined;
+                const expectedIdentity = capabilities.email?.trim();
+                return result.accountIdentity &&
+                  expectedIdentity &&
+                  result.accountIdentity !== expectedIdentity
+                  ? undefined
+                  : result.usageLimits;
+              }),
             );
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
