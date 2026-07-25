@@ -109,6 +109,45 @@ describe("followNetworkStatus", () => {
     ),
   );
 
+  it.effect("keeps a resumed read that only a repeated status raced", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const readStarted = yield* Deferred.make<void>();
+        const releaseRead = yield* Deferred.make<void>();
+        const harness = yield* makeHarness({
+          initialStatus: "offline",
+          status: Deferred.succeed(readStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseRead)),
+            Effect.as("online" as const),
+          ),
+        });
+        yield* Connectivity.followNetworkStatus({
+          connectivity: harness.connectivity,
+          wakeups: harness.wakeups,
+          apply: harness.apply,
+        });
+
+        // Apply "offline" first so the listener's later repeat of it is genuinely
+        // redundant rather than a new status.
+        yield* untilApplied(harness.report("offline"), harness.applied, 1);
+        yield* harness.resume.pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.repeat({ until: () => Deferred.isDone(readStarted) }),
+        );
+
+        // A repeat of the status already in effect carries nothing newer, so the
+        // resumed read still has to land.
+        yield* harness.report("offline");
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseRead, undefined);
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+
+        expect(yield* Ref.get(harness.applied)).toEqual(["offline", "online"]);
+      }),
+    ),
+  );
+
   it.effect("discards a resumed read that a newer reported change superseded", () =>
     Effect.scoped(
       Effect.gen(function* () {

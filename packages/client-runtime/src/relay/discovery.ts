@@ -309,9 +309,15 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
     ),
   );
 
-  yield* connectivity.changes.pipe(
-    Stream.changes,
-    Stream.runForEach((networkStatus) =>
+  // Follow resumes too: a transition dropped while the app was suspended would
+  // otherwise leave `offline` set, so the environment list stayed stale until
+  // another network event or a manual refresh. `followNetworkStatus` only
+  // reports actual changes, so a resume that reads the current status does not
+  // trigger a refresh.
+  yield* Connectivity.followNetworkStatus({
+    connectivity,
+    wakeups,
+    apply: (networkStatus) =>
       networkStatus === "offline"
         ? SubscriptionRef.update(state, (current) => ({
             ...current,
@@ -321,9 +327,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
         : Ref.get(hasRefreshed).pipe(
             Effect.flatMap((shouldRefresh) => (shouldRefresh ? refresh : Effect.void)),
           ),
-    ),
-    Effect.forkScoped,
-  );
+  });
   yield* wakeups.changes.pipe(
     Stream.runForEach((reason) =>
       reason === "credentials-changed"
