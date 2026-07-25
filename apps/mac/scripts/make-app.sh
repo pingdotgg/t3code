@@ -26,12 +26,6 @@ if [[ "$CONFIG" == "release" ]]; then
   # open$NOCANCEL with zero CPU progress), hanging the build forever.
   SWIFT_FLAGS+=(-debug-info-format none)
 fi
-# SERGE_CODE_SWIFT_JOBS caps SwiftPM's job count. The CI runner sets it to
-# keep memory headroom — a cold full-parallelism compile gets frontends
-# jetsam-killed there (see release-mac.yml). Unset locally: full speed.
-if [[ -n "${SERGE_CODE_SWIFT_JOBS:-}" ]]; then
-  SWIFT_FLAGS+=(-j "$SERGE_CODE_SWIFT_JOBS")
-fi
 # ${arr[@]+...} guard: bash 3.2 (macOS default) treats expanding an empty
 # array as an unbound variable under `set -u`, which would break --debug.
 swift build --package-path "$MAC_DIR" -c "$CONFIG" ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]}"}
