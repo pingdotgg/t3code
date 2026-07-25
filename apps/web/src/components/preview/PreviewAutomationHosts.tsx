@@ -51,6 +51,7 @@ import { previewBridge } from "./previewBridge";
 import {
   isPreviewAutomationTabPresented,
   revealPreviewAutomationTab,
+  waitForPreviewAutomationBackgroundPresentation,
 } from "./previewAutomationPresentation";
 import {
   PreviewAutomationNavigationTimeoutError,
@@ -135,30 +136,11 @@ const waitForBrowserSurfaceVisibility = async (
   });
 };
 
-const waitForBackgroundCapturePresentation = async (tabId: string): Promise<void> => {
-  const deadline = Date.now() + 1_000;
-  while (Date.now() <= deadline) {
-    const wrapper = Array.from(
-      document.querySelectorAll<HTMLElement>("[data-preview-viewport]"),
-    ).find(
-      (candidate) =>
-        candidate.dataset["previewViewport"] === tabId &&
-        candidate.dataset["previewBackgroundCapture"] === "true",
-    );
-    if (wrapper) {
-      // Force the staged wrapper through layout, then allow Chromium two
-      // compositor frames before asking the guest WebContents for pixels.
-      void wrapper.offsetWidth;
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-      return;
-    }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
-  }
-};
-
 const withBackgroundAutomationPresentation = async <A,>(
+  threadRef: ScopedThreadRef,
+  requestId: string,
   tabId: string,
+  timeoutMs: number,
   use: (background: boolean) => Promise<A>,
 ): Promise<A> => {
   const background = !(useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false);
@@ -166,7 +148,12 @@ const withBackgroundAutomationPresentation = async <A,>(
 
   const releaseCapture = acquireBrowserSurfaceBackgroundCapture(tabId);
   try {
-    await waitForBackgroundCapturePresentation(tabId);
+    await waitForPreviewAutomationBackgroundPresentation({
+      threadRef,
+      requestId,
+      tabId,
+      timeoutMs,
+    });
     return await use(true);
   } finally {
     releaseCapture();
@@ -523,7 +510,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             );
             await ready.bridge.navigate(ready.tabId, resolution.resolvedUrl);
             await withBackgroundAutomationPresentation(
+              threadRef,
+              request.requestId,
               ready.tabId,
+              remainingOperationBudget(),
               async () =>
                 await waitForNavigationReadiness(
                   threadRef,
@@ -571,7 +561,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             const ready = await requireReadyTab();
             const input = request.input as PreviewAutomationSetColorSchemeInput;
             await withBackgroundAutomationPresentation(
+              threadRef,
+              request.requestId,
               ready.tabId,
+              remainingOperationBudget(),
               async () => await ready.bridge.setColorScheme(ready.tabId, input.colorScheme),
             );
             return {
@@ -582,14 +575,20 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "snapshot": {
             const ready = await requireReadyTab();
             return await withBackgroundAutomationPresentation(
+              threadRef,
+              request.requestId,
               ready.tabId,
+              remainingOperationBudget(),
               async (background) => await ready.bridge.automation.snapshot(ready.tabId, background),
             );
           }
           case "click": {
             const ready = await requireReadyTab();
             return await withBackgroundAutomationPresentation(
+              threadRef,
+              request.requestId,
               ready.tabId,
+              remainingOperationBudget(),
               async () =>
                 await ready.bridge.automation.click(
                   ready.tabId,
@@ -600,7 +599,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "type": {
             const ready = await requireReadyTab();
             return await withBackgroundAutomationPresentation(
+              threadRef,
+              request.requestId,
               ready.tabId,
+              remainingOperationBudget(),
               async () =>
                 await ready.bridge.automation.type(
                   ready.tabId,
@@ -611,7 +613,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "press": {
             const ready = await requireReadyTab();
             return await withBackgroundAutomationPresentation(
+              threadRef,
+              request.requestId,
               ready.tabId,
+              remainingOperationBudget(),
               async () =>
                 await ready.bridge.automation.press(
                   ready.tabId,
@@ -622,7 +627,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "scroll": {
             const ready = await requireReadyTab();
             return await withBackgroundAutomationPresentation(
+              threadRef,
+              request.requestId,
               ready.tabId,
+              remainingOperationBudget(),
               async () =>
                 await ready.bridge.automation.scroll(
                   ready.tabId,
@@ -633,7 +641,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "evaluate": {
             const ready = await requireReadyTab();
             return await withBackgroundAutomationPresentation(
+              threadRef,
+              request.requestId,
               ready.tabId,
+              remainingOperationBudget(),
               async () =>
                 await ready.bridge.automation.evaluate(
                   ready.tabId,
@@ -644,7 +655,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "waitFor": {
             const ready = await requireReadyTab();
             return await withBackgroundAutomationPresentation(
+              threadRef,
+              request.requestId,
               ready.tabId,
+              remainingOperationBudget(),
               async () =>
                 await ready.bridge.automation.waitFor(
                   ready.tabId,

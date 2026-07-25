@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, type PreviewSessionSnapshot, ThreadId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { acquireBrowserSurface, useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import {
@@ -13,6 +13,7 @@ import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelSto
 import {
   isPreviewAutomationTabPresented,
   revealPreviewAutomationTab,
+  waitForPreviewAutomationBackgroundPresentation,
 } from "./previewAutomationPresentation";
 
 const threadRef = scopeThreadRef(EnvironmentId.make("environment-1"), ThreadId.make("thread-1"));
@@ -56,5 +57,35 @@ describe("preview automation presentation", () => {
     useRightPanelStore.getState().openBrowser(threadRef, "tab-2");
     expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(false);
     surface.release();
+  });
+
+  it("uses the operation budget when background staging does not render", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("document", {
+      querySelectorAll: () => [],
+    });
+    vi.stubGlobal("window", {
+      setTimeout,
+    });
+    try {
+      const presentation = waitForPreviewAutomationBackgroundPresentation({
+        threadRef,
+        requestId: "request-background",
+        tabId: "tab-background",
+        timeoutMs: 40,
+      });
+      const rejection = expect(presentation).rejects.toMatchObject({
+        _tag: "PreviewAutomationBackgroundPresentationTimeoutError",
+        requestId: "request-background",
+        tabId: "tab-background",
+        timeoutMs: 40,
+      });
+
+      await vi.advanceTimersByTimeAsync(40);
+      await rejection;
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
   });
 });

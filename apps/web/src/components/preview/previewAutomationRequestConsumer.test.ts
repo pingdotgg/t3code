@@ -10,6 +10,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  PreviewAutomationBackgroundPresentationTimeoutError,
   PreviewAutomationHostDeadlineExceededError,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetUnavailableError,
@@ -324,6 +325,29 @@ describe("previewAutomationRequestConsumer", () => {
         surfaceRegistered: true,
         presentationRectAvailable: false,
       },
+    });
+  });
+
+  it("preserves background presentation timeouts as timeout responses", () => {
+    const error = new PreviewAutomationBackgroundPresentationTimeoutError({
+      requestId: "request-background",
+      environmentId,
+      threadId,
+      tabId,
+      timeoutMs: 1_500,
+    });
+
+    expect(
+      serializePreviewAutomationError(error, {
+        requestId: "request-background",
+        operation: "snapshot",
+        environmentId,
+        threadId,
+        tabId,
+      }),
+    ).toMatchObject({
+      _tag: "PreviewAutomationTimeoutError",
+      detail: { tabId: "tab-1", timeoutMs: 1_500 },
     });
   });
 
