@@ -52,6 +52,10 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "../orchestration-v2/ProviderAdapter.ts";
 import { makeLayer as makeProviderAdapterRegistryLayer } from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import {
+  type ProviderContinuationRequest,
+  ProviderContinuationRequests,
+} from "../orchestration-v2/ProviderContinuationRequests.ts";
 import { checkpointWorkspace } from "../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
@@ -411,6 +415,38 @@ describe("orchestrator MCP toolkit", () => {
                   : `Claude completed: ${turn.message.text}`,
             }),
           ]);
+          // Captures parent-wake offers made when a delegated child
+          // terminalizes after the parent run settled.
+          const continuationOffers = yield* Ref.make<ReadonlyArray<ProviderContinuationRequest>>(
+            [],
+          );
+          const continuationProbeLayer = Layer.succeed(ProviderContinuationRequests, {
+            offer: (request) =>
+              Ref.update(continuationOffers, (existing) => [...existing, request]),
+            take: Effect.never,
+          });
+          // Offers land after the finalize projection writes, so poll briefly
+          // instead of asserting counts immediately.
+          const waitForContinuationOffers = (count: number) =>
+            Effect.gen(function* () {
+              for (let attempt = 0; attempt < 1_000; attempt += 1) {
+                const current = yield* Ref.get(continuationOffers);
+                if (current.length >= count) {
+                  return current;
+                }
+                yield* Effect.sleep("5 millis");
+              }
+              return yield* Ref.get(continuationOffers);
+            });
+          // Absence has no event to await, so sample repeatedly instead of
+          // trusting a single sleep to outlast a late offer.
+          const expectOffersToStay = (count: number) =>
+            Effect.gen(function* () {
+              for (let sample = 0; sample < 4; sample += 1) {
+                yield* Effect.sleep("50 millis");
+                expect(yield* Ref.get(continuationOffers)).toHaveLength(count);
+              }
+            });
           const orchestratorLayer = makeOrchestratorV2ReplayLayerWithRegistry(
             {
               name: "orchestrator-mcp-toolkit",
@@ -425,7 +461,7 @@ describe("orchestrator MCP toolkit", () => {
               },
             },
             registryLayer,
-          );
+          ).pipe(Layer.provide(continuationProbeLayer));
           const orchestrationLayer = Layer.merge(
             orchestratorLayer,
             threadManagementServiceLayer.pipe(Layer.provide(orchestratorLayer)),
@@ -781,6 +817,11 @@ describe("orchestrator MCP toolkit", () => {
             expect(delegatedStatus.status).toBe("completed");
             expect(delegatedStatus.resultContextTransferId).not.toBeNull();
 
+            // A wait-mode child (completionWake settled_only) that completes
+            // while the parent run is live does not offer a wake: the
+            // blocking delegate_task call above already returned the result.
+            yield* expectOffersToStay(0);
+
             const repeatedDelegatedCall = yield* invoke("delegate_task", {
               task: delegatedPrompt,
               target: {
@@ -885,6 +926,18 @@ describe("orchestrator MCP toolkit", () => {
               cancelledStatusCall.structuredContent,
             ).pipe(Effect.orDie);
             expect(cancelledStatus.status).toBe("interrupted");
+
+            // The cancelled async child carries completionWake "always", so
+            // its terminal offers a wake even though the parent run is live;
+            // queue_after_active sequences the continuation behind it.
+            const offersAfterCancel = yield* waitForContinuationOffers(1);
+            expect(offersAfterCancel).toHaveLength(1);
+            expect(offersAfterCancel[0]).toMatchObject({
+              threadId: parentThreadId,
+              delivery: "message_text",
+            });
+            expect(offersAfterCancel[0]?.detail).toContain(cancellable.taskId);
+            expect(offersAfterCancel[0]?.detail).toContain("interrupted");
 
             const createInput = {
               clientRequestId: "create-thread-batch-1",
@@ -1232,6 +1285,178 @@ describe("orchestrator MCP toolkit", () => {
             expect(
               listed.threads.some((thread) => thread.relationshipToParent === "subagent"),
             ).toBe(false);
+
+            // A wait-mode delegation whose blocking wait times out no longer
+            // owns delivery, so delegate_task upgrades the task to "always".
+            // Its terminal then wakes the parent even mid-turn.
+            const upgradedCall = yield* invoke("delegate_task", {
+              task: cancellationPrompt,
+              target: {
+                providerInstanceId: codexInstanceId,
+                model: codexModel,
+              },
+              mode: "wait",
+              timeoutMs: 1,
+              clientRequestId: "delegate-wait-upgrade-1",
+            });
+            const upgradedDelegated = yield* decodeDelegateTaskResult(
+              upgradedCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(upgradedDelegated.status).toBe("running");
+            yield* waitForProjection(orchestrator, upgradedDelegated.childThreadId, (projection) =>
+              projection.providerTurns.some((turn) => turn.status === "running"),
+            );
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+                (task) => task.id === upgradedDelegated.taskId,
+              )?.completionWake,
+            ).toBe("always");
+            const upgradeCancelCall = yield* invoke("task_cancel", {
+              taskId: upgradedDelegated.taskId,
+              reason: "Terminalize while the parent run is live.",
+              clientRequestId: "cancel-wait-upgrade-1",
+            });
+            expect(upgradeCancelCall.isError).toBe(false);
+            yield* waitForProjection(orchestrator, parentThreadId, (projection) =>
+              projection.subagents.some(
+                (task) => task.id === upgradedDelegated.taskId && task.status === "interrupted",
+              ),
+            );
+            const offersAfterUpgrade = yield* waitForContinuationOffers(2);
+            expect(offersAfterUpgrade).toHaveLength(2);
+            expect(offersAfterUpgrade[1]).toMatchObject({
+              threadId: parentThreadId,
+              delivery: "message_text",
+            });
+            expect(offersAfterUpgrade[1]?.detail).toContain(upgradedDelegated.taskId);
+
+            // The MCP tool cannot force the reverse interleaving (child
+            // terminal before the upgrade lands), so dispatch the command
+            // directly. The first wait-mode delegation completed while the
+            // parent run was live, so finalize skipped its offer under
+            // settled_only; the upgrade must accept, persist the policy, and
+            // deliver the wake finalize declined.
+            const terminalUpgrade = yield* orchestrator.dispatch({
+              type: "delegated_task.wake-policy",
+              commandId: CommandId.make("command:mcp-parent:wake-policy-terminal"),
+              parentThreadId,
+              taskId: delegated.taskId,
+              completionWake: "always",
+            });
+            expect(
+              terminalUpgrade.storedEvents.some(
+                (stored) =>
+                  stored.event.type === "subagent.updated" &&
+                  stored.event.payload.id === delegated.taskId &&
+                  stored.event.payload.completionWake === "always",
+              ),
+            ).toBe(true);
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+                (task) => task.id === delegated.taskId,
+              )?.completionWake,
+            ).toBe("always");
+            const offersAfterTerminalUpgrade = yield* waitForContinuationOffers(3);
+            expect(offersAfterTerminalUpgrade).toHaveLength(3);
+            expect(offersAfterTerminalUpgrade[2]).toMatchObject({
+              threadId: parentThreadId,
+              delivery: "message_text",
+            });
+            expect(offersAfterTerminalUpgrade[2]?.detail).toContain(delegated.taskId);
+
+            // Legacy records omit completionWake and stay settled_only. The
+            // MCP service always sets the field now, so dispatch the request
+            // directly to cover the legacy shape.
+            if (parentRun === undefined || parentRun.rootNodeId === null) {
+              return yield* Effect.die(new Error("Parent run missing."));
+            }
+            const legacyDispatch = yield* orchestrator.dispatch({
+              type: "delegated_task.request",
+              createdBy: "agent",
+              creationSource: "mcp",
+              commandId: CommandId.make("command:mcp-parent:delegate-legacy"),
+              parentThreadId,
+              parentRunId: parentRun.id,
+              parentNodeId: parentRun.rootNodeId,
+              task: cancellationPrompt,
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            });
+            const legacyTaskEvent = legacyDispatch.storedEvents.find(
+              (stored) =>
+                stored.event.type === "subagent.updated" &&
+                stored.event.payload.origin === "app_owned",
+            );
+            if (legacyTaskEvent?.event.type !== "subagent.updated") {
+              return yield* Effect.die(new Error("Legacy delegated task projection missing."));
+            }
+            const legacyTask = legacyTaskEvent.event.payload;
+            expect(legacyTask.completionWake).toBeUndefined();
+            if (legacyTask.childThreadId === null) {
+              return yield* Effect.die(new Error("Legacy delegated task child thread missing."));
+            }
+            const legacyChildThreadId = legacyTask.childThreadId;
+            yield* waitForProjection(orchestrator, legacyChildThreadId, (projection) =>
+              projection.providerTurns.some((turn) => turn.status === "running"),
+            );
+            // Nothing terminalized here, so the offer count must hold.
+            yield* expectOffersToStay(3);
+
+            yield* orchestrator.dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make("command:mcp-parent:interrupt-wake"),
+              threadId: parentThreadId,
+              runId: parentRun.id,
+              reason: "Settle the parent before the legacy child terminalizes.",
+            });
+            yield* waitForProjection(orchestrator, parentThreadId, (projection) =>
+              projection.runs.every(
+                (run) =>
+                  run.status !== "preparing" &&
+                  run.status !== "starting" &&
+                  run.status !== "running",
+              ),
+            );
+            const legacyCancelCall = yield* invoke("task_cancel", {
+              taskId: legacyTask.id,
+              reason: "Terminalize the legacy child after the parent settled.",
+              clientRequestId: "cancel-legacy-1",
+            });
+            expect(legacyCancelCall.isError).toBe(false);
+            yield* waitForProjection(orchestrator, legacyChildThreadId, (projection) =>
+              projection.runs.some((run) => run.status === "interrupted"),
+            );
+            const offers = yield* waitForContinuationOffers(4);
+            expect(offers).toHaveLength(4);
+            expect(offers[3]).toMatchObject({ threadId: parentThreadId, delivery: "message_text" });
+            expect(offers[3]?.detail).toContain(legacyTask.id);
+            expect(offers[3]?.detail).toContain("task_status");
+
+            // Same command against a terminal task whose finalize already
+            // offered (the parent was settled then, and still is): the policy
+            // must persist without a second offer, or the parent wakes twice.
+            const settledUpgrade = yield* orchestrator.dispatch({
+              type: "delegated_task.wake-policy",
+              commandId: CommandId.make("command:mcp-parent:wake-policy-settled"),
+              parentThreadId,
+              taskId: legacyTask.id,
+              completionWake: "always",
+            });
+            expect(
+              settledUpgrade.storedEvents.some(
+                (stored) =>
+                  stored.event.type === "subagent.updated" &&
+                  stored.event.payload.id === legacyTask.id &&
+                  stored.event.payload.completionWake === "always",
+              ),
+            ).toBe(true);
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+                (task) => task.id === legacyTask.id,
+              )?.completionWake,
+            ).toBe("always");
+            yield* expectOffersToStay(4);
           }).pipe(Effect.provide(testLayer));
         }),
       ),
