@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -39,9 +40,12 @@ const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const emitModelConfigUpdate = process.env.T3_ACP_EMIT_MODEL_CONFIG_UPDATE === "1";
-const modelConfigUpdateDelayMs = Number(process.env.T3_ACP_MODEL_CONFIG_UPDATE_DELAY_MS ?? "0");
+const gateModelConfigUpdate = process.env.T3_ACP_GATE_MODEL_CONFIG_UPDATE === "1";
+const emptyModelConfigUpdate = process.env.T3_ACP_EMPTY_MODEL_CONFIG_UPDATE === "1";
 const modelScopedConfigOptions = process.env.T3_ACP_MODEL_SCOPED_CONFIG_OPTIONS === "1";
 const omitSessionConfigOptions = process.env.T3_ACP_OMIT_SESSION_CONFIG_OPTIONS === "1";
+const nullSessionConfigOptions = process.env.T3_ACP_NULL_SESSION_CONFIG_OPTIONS === "1";
+const emptySessionConfigOptions = process.env.T3_ACP_EMPTY_SESSION_CONFIG_OPTIONS === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const permissionOptionIds = {
@@ -60,6 +64,10 @@ let currentFast = false;
 let promptCount = 0;
 let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
+const pendingModelConfigUpdates = new Map<string, Deferred.Deferred<void>>();
+
+const releaseModelConfigUpdateMethod = "x/t3-test/release-model-config-update";
+const modelConfigUpdateAcknowledgedMethod = "x/t3-test/model-config-update-acknowledged";
 
 function promptIdFromRequestMeta(
   request: Pick<AcpSchema.PromptRequest, "_meta">,
@@ -266,6 +274,18 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
   ];
 }
 
+function sessionConfigOptions() {
+  if (omitSessionConfigOptions) {
+    return {};
+  }
+  if (nullSessionConfigOptions) {
+    return { configOptions: null };
+  }
+  return {
+    configOptions: emptySessionConfigOptions ? [] : configOptions(),
+  };
+}
+
 function modelConfigOptionsFor(modelId: string): ReadonlyArray<AcpSchema.SessionConfigOption> {
   const previousModelId = currentModelId;
   try {
@@ -356,7 +376,7 @@ const program = Effect.gen(function* () {
       sessionId,
       modes: modeState(),
       models: modelState(),
-      ...(omitSessionConfigOptions ? {} : { configOptions: configOptions() }),
+      ...sessionConfigOptions(),
     }),
   );
 
@@ -401,7 +421,7 @@ const program = Effect.gen(function* () {
         return {
           modes: modeState(),
           models: modelState(),
-          ...(omitSessionConfigOptions ? {} : { configOptions: configOptions() }),
+          ...sessionConfigOptions(),
         };
       }
       if (emitLoadReplay) {
@@ -417,8 +437,26 @@ const program = Effect.gen(function* () {
       return {
         modes: modeState(),
         models: modelState(),
-        ...(omitSessionConfigOptions ? {} : { configOptions: configOptions() }),
+        ...sessionConfigOptions(),
       };
+    }),
+  );
+
+  yield* agent.handleUnknownExtNotification((method, params) =>
+    Effect.gen(function* () {
+      if (
+        method !== releaseModelConfigUpdateMethod ||
+        typeof params !== "object" ||
+        params === null ||
+        !("modelId" in params) ||
+        typeof params.modelId !== "string"
+      ) {
+        return;
+      }
+      const pending = pendingModelConfigUpdates.get(params.modelId);
+      if (pending) {
+        yield* Deferred.succeed(pending, undefined).pipe(Effect.ignore);
+      }
     }),
   );
 
@@ -435,17 +473,32 @@ const program = Effect.gen(function* () {
       }
       currentModelId = request.modelId;
       if (emitModelConfigUpdate) {
-        const update = agent.client.sessionUpdate({
-          sessionId: request.sessionId,
-          update: {
-            sessionUpdate: "config_option_update",
-            configOptions: configOptions(),
-          },
-        });
-        if (modelConfigUpdateDelayMs > 0) {
-          yield* update.pipe(Effect.delay(modelConfigUpdateDelayMs), Effect.forkDetach);
+        const configOptionsForModel = emptyModelConfigUpdate ? [] : configOptions();
+        if (gateModelConfigUpdate) {
+          const release = yield* Deferred.make<void>();
+          pendingModelConfigUpdates.set(request.modelId, release);
+          yield* Effect.gen(function* () {
+            yield* Deferred.await(release);
+            pendingModelConfigUpdates.delete(request.modelId);
+            yield* agent.client.sessionUpdate({
+              sessionId: request.sessionId,
+              update: {
+                sessionUpdate: "config_option_update",
+                configOptions: configOptionsForModel,
+              },
+            });
+            yield* agent.client.extNotification(modelConfigUpdateAcknowledgedMethod, {
+              modelId: request.modelId,
+            });
+          }).pipe(Effect.forkDetach);
         } else {
-          yield* update;
+          yield* agent.client.sessionUpdate({
+            sessionId: request.sessionId,
+            update: {
+              sessionUpdate: "config_option_update",
+              configOptions: configOptionsForModel,
+            },
+          });
         }
       }
       return {};
