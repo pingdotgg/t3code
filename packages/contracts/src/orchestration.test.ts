@@ -11,6 +11,7 @@ import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
+  OrchestrationCliCreateRequest,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
@@ -37,6 +38,9 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
+const decodeOrchestrationCliCreateRequest = Schema.decodeUnknownEffect(
+  OrchestrationCliCreateRequest,
+);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
@@ -53,6 +57,26 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+
+it.effect("validates the bounded server-authoritative CLI create request", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCliCreateRequest({
+      project: "project-1",
+      message: "create this",
+      idempotencyKey: "delivery-1",
+    });
+    assert.strictEqual(parsed.project, "project-1");
+
+    const invalid = yield* Effect.exit(
+      decodeOrchestrationCliCreateRequest({
+        project: "project-1",
+        message: "create this",
+        idempotencyKey: " ",
+      }),
+    );
+    assert.strictEqual(invalid._tag, "Failure");
+  }),
+);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {

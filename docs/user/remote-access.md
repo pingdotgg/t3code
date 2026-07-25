@@ -205,6 +205,48 @@ Use `t3 auth --help` and the nested subcommand help pages for the full reference
 
 ## Headless Pending Interactions
 
+The orchestration command surface is the same for a local live server and a remote server:
+
+```bash
+# Discover the live server recorded under this base directory.
+t3 session --base-dir /path/to/t3-state
+t3 shell --base-dir /path/to/t3-state
+t3 pending --base-dir /path/to/t3-state
+
+# Target an explicit compatible remote server.
+t3 remote session --host https://backend.example.com
+t3 remote shell --host https://backend.example.com
+t3 remote pending --host https://backend.example.com
+```
+
+The top-level `create`, `send`, `watch`, `pending`, `answer`, `approve`, `reject`, `thread`,
+`shell`, `session`, and `snapshot` commands discover a live local server from its runtime state.
+Discovery verifies the process, environment identity, and orchestration CLI API version before
+loading or issuing the stable local CLI bearer session. They never fall back to offline project
+mutation. `snapshot` is an advanced/debug view; prefer `shell`, `thread`, or `pending` for normal
+automation.
+
+`t3 remote <operation> --host ...` uses the same command specification and HTTP/WebSocket
+operations. Remote credentials remain managed only by `t3 remote auth`; top-level `t3 auth`
+continues to manage the local server. Both paths send bearer authorization headers and do not fall
+back to browser cookies.
+
+Thread creation is server-authoritative. The server resolves the registered project, project model
+default, runtime/interaction defaults, branch policy, worktree, setup script, and first turn as one
+rollback-capable operation:
+
+```bash
+t3 create project-id "Implement the change" \
+  --yes \
+  --confirm-create \
+  --idempotency-key automation-job-42
+```
+
+Use `--branch`, `--base-branch`, `--runtime-mode`, `--interaction-mode`, or
+`--start-from-origin` only when overriding server defaults. A path must already identify a
+registered project; create never enrolls a project automatically. Reusing the same idempotency key
+with the same authenticated CLI principal safely replays the accepted result.
+
 The standalone remote CLI can read and respond to provider interactions without exposing provider
 activity envelopes. A compatible server advertises
 `capabilities.orchestration.pendingInteractions: true` in its environment descriptor.

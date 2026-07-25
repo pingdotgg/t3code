@@ -9,7 +9,7 @@ import { Command } from "effect/unstable/cli";
 import * as NetService from "@t3tools/shared/Net";
 import packageJson from "../package.json" with { type: "json" };
 import { cli } from "./cli/root.ts";
-import { formatRemoteCliDiagnostic } from "./cli/remote.ts";
+import { formatRemoteCliDiagnostic, isOrchestrationCliInvocation } from "./cli/remote.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(BunServices.layer, NetService.layer);
 
@@ -31,7 +31,9 @@ if (import.meta.main) {
     Effect.scoped,
     Effect.provide(CliRuntimeLayer),
     Effect.catch((error) =>
-      process.argv.slice(2).includes("remote") ? reportRemoteCliFailure(error) : Effect.fail(error),
+      isOrchestrationCliInvocation(process.argv.slice(2))
+        ? reportRemoteCliFailure(error)
+        : Effect.fail(error),
     ),
     BunRuntime.runMain,
   );

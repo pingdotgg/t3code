@@ -1,15 +1,27 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
   EnvironmentHttpApi,
+  MessageId,
+  ProjectId,
+  ThreadId,
   type EnvironmentInternalError,
   type EnvironmentRequestInvalidError,
   type EnvironmentResourceNotFoundError,
 } from "@t3tools/contracts";
+import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import * as NodeCrypto from "node:crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { normalizeDispatchCommand } from "./Normalizer.ts";
 import {
   annotateEnvironmentRequest,
@@ -61,6 +73,9 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationCommandDispatcher = yield* makeOrchestrationCommandDispatcher;
+    const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+    const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
 
     return handlers
       .handle(
@@ -107,6 +122,143 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             return yield* failEnvironmentNotFound("thread_not_found");
           }
           return snapshot.value;
+        }),
+      )
+      .handle(
+        "create",
+        Effect.fn("environment.orchestration.create")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const principal = yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const identity = NodeCrypto.createHash("sha256")
+            .update(`${principal.sessionId}\0${args.payload.idempotencyKey}`, "utf8")
+            .digest("hex");
+          const commandId = CommandId.make(`cli-create:${identity}`);
+          const threadId = ThreadId.make(`cli-thread:${identity}`);
+          const existingReceipt = yield* orchestrationEngine
+            .getCommandReceipt(commandId)
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_dispatch_failed", cause),
+              ),
+            );
+          if (Option.isSome(existingReceipt)) {
+            if (
+              existingReceipt.value.status !== "accepted" ||
+              existingReceipt.value.aggregateId !== threadId
+            ) {
+              return yield* failEnvironmentInvalidRequest("invalid_command");
+            }
+            return {
+              threadId,
+              commandId,
+              sequence: existingReceipt.value.resultSequence,
+              replayed: true,
+            };
+          }
+
+          const shell = yield* projectionSnapshotQuery
+            .getShellSnapshot()
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_snapshot_failed", cause),
+              ),
+            );
+          const project = shell.projects.find(
+            (candidate) =>
+              candidate.id === args.payload.project ||
+              candidate.workspaceRoot === args.payload.project,
+          );
+          if (project === undefined) {
+            return yield* failEnvironmentInvalidRequest("invalid_command");
+          }
+          if (project.defaultModelSelection === null) {
+            return yield* failEnvironmentInvalidRequest("invalid_command");
+          }
+
+          const refs =
+            args.payload.baseBranch === undefined
+              ? yield* gitWorkflow
+                  .listRefs({
+                    cwd: project.workspaceRoot,
+                    refKind: "local",
+                    limit: 250,
+                  })
+                  .pipe(
+                    Effect.catch((cause) =>
+                      failEnvironmentInvalidRequest("invalid_command", cause),
+                    ),
+                  )
+              : null;
+          const status =
+            args.payload.baseBranch === undefined &&
+            refs?.refs.find((ref) => ref.isDefault && !ref.isRemote) === undefined
+              ? yield* gitWorkflow
+                  .localStatus({ cwd: project.workspaceRoot })
+                  .pipe(
+                    Effect.catch((cause) =>
+                      failEnvironmentInvalidRequest("invalid_command", cause),
+                    ),
+                  )
+              : null;
+          const baseBranch =
+            args.payload.baseBranch ??
+            refs?.refs.find((ref) => ref.isDefault && !ref.isRemote)?.name ??
+            status?.refName;
+          if (baseBranch === undefined || baseBranch === null) {
+            return yield* failEnvironmentInvalidRequest("invalid_command");
+          }
+
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)),
+          );
+          const createdAt = DateTime.formatIso(yield* DateTime.now);
+          const branch =
+            args.payload.branch ?? buildTemporaryWorktreeBranchName(() => identity.slice(0, 8));
+          const result = yield* orchestrationCommandDispatcher
+            .dispatch({
+              type: "thread.turn.start",
+              commandId,
+              threadId,
+              message: {
+                messageId: MessageId.make(commandId),
+                role: "user",
+                text: args.payload.message,
+                attachments: [],
+              },
+              modelSelection: project.defaultModelSelection,
+              titleSeed: args.payload.title ?? args.payload.message.slice(0, 80),
+              runtimeMode: args.payload.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+              interactionMode: args.payload.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+              bootstrap: {
+                createThread: {
+                  projectId: ProjectId.make(project.id),
+                  title: args.payload.title ?? args.payload.message.slice(0, 80),
+                  modelSelection: project.defaultModelSelection,
+                  runtimeMode: args.payload.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+                  interactionMode:
+                    args.payload.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+                  branch: null,
+                  worktreePath: null,
+                  createdAt,
+                },
+                prepareWorktree: {
+                  projectCwd: project.workspaceRoot,
+                  baseBranch,
+                  branch,
+                  startFromOrigin:
+                    args.payload.startFromOrigin ?? settings.newWorktreesStartFromOrigin,
+                },
+                runSetupScript: project.scripts.some((script) => script.runOnWorktreeCreate),
+              },
+              createdAt,
+            })
+            .pipe(Effect.catch(failEnvironmentDispatch));
+          return {
+            threadId,
+            commandId,
+            sequence: result.sequence,
+            replayed: false,
+          };
         }),
       )
       .handle(

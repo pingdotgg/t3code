@@ -41,6 +41,19 @@ describe("remote CLI token storage", () => {
         expect(NodeFS.statSync(stateDirectory).mode & 0o777).toBe(0o700);
         expect(NodeFS.statSync(tokenPath).mode & 0o777).toBe(0o600);
         expect(yield* loadRemoteCliToken(input)).toEqual(input.token);
+
+        const stableInput = {
+          ...input,
+          httpBaseUrl: "http://127.0.0.1:1234/",
+          tokenStorageKey: "environment:stable-local",
+        };
+        yield* storeRemoteCliToken(stableInput);
+        expect(
+          yield* loadRemoteCliToken({
+            ...stableInput,
+            httpBaseUrl: "http://127.0.0.1:5678/",
+          }),
+        ).toEqual(input.token);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))),
   );

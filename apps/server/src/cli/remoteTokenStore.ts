@@ -64,9 +64,19 @@ export const remoteCliTokenPath = (stateDirectory: string, httpBaseUrl: string):
   return `${stateDirectory}/tokens/${originKey}.json`;
 };
 
+const cliTokenPath = (input: {
+  readonly stateDirectory: string;
+  readonly httpBaseUrl: string;
+  readonly tokenStorageKey?: string;
+}) =>
+  input.tokenStorageKey === undefined
+    ? remoteCliTokenPath(input.stateDirectory, input.httpBaseUrl)
+    : `${input.stateDirectory}/tokens/${encodeURIComponent(input.tokenStorageKey)}.json`;
+
 export const storeRemoteCliToken = Effect.fn("remoteCli.tokenStore.store")(function* (input: {
   readonly stateDirectory: string;
   readonly httpBaseUrl: string;
+  readonly tokenStorageKey?: string;
   readonly token: RemoteCliStoredToken;
 }): Effect.fn.Return<
   void,
@@ -76,7 +86,7 @@ export const storeRemoteCliToken = Effect.fn("remoteCli.tokenStore.store")(funct
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
-  const tokenPath = remoteCliTokenPath(input.stateDirectory, input.httpBaseUrl);
+  const tokenPath = cliTokenPath(input);
   const tokenDirectory = path.dirname(tokenPath);
   const encoded = yield* encodeStoredToken(input.token).pipe(
     Effect.mapError(() => new RemoteCliTokenStoreError({ operation: "write" })),
@@ -116,13 +126,14 @@ export const storeRemoteCliToken = Effect.fn("remoteCli.tokenStore.store")(funct
 export const loadRemoteCliToken = Effect.fn("remoteCli.tokenStore.load")(function* (input: {
   readonly stateDirectory: string;
   readonly httpBaseUrl: string;
+  readonly tokenStorageKey?: string;
 }): Effect.fn.Return<
   RemoteCliStoredToken,
   RemoteCliTokenStoreError | RemoteCliTokenMissingError | RemoteCliTokenExpiredError,
   FileSystem.FileSystem
 > {
   const fs = yield* FileSystem.FileSystem;
-  const tokenPath = remoteCliTokenPath(input.stateDirectory, input.httpBaseUrl);
+  const tokenPath = cliTokenPath(input);
   const raw = yield* fs.readFileString(tokenPath).pipe(
     Effect.map(Option.some),
     Effect.catch((cause) =>

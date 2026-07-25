@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import {
+  createRemoteOrchestrationThread,
   dispatchRemoteOrchestrationCommand,
   fetchRemoteOrchestrationShell,
   fetchRemoteOrchestrationSnapshot,
@@ -38,7 +39,7 @@ const emptySnapshot = {
 };
 
 describe("remote orchestration HTTP operations", () => {
-  it.effect("uses only the native shell, snapshot, thread, and dispatch contracts", () =>
+  it.effect("uses only bearer headers for shell, snapshot, thread, create, and dispatch", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-http");
       const thread = {
@@ -65,6 +66,12 @@ describe("remote orchestration HTTP operations", () => {
         Response.json(emptySnapshot),
         Response.json(emptySnapshot),
         Response.json({ snapshotSequence: 0, thread }),
+        Response.json({
+          threadId: "thread-created",
+          commandId: "command-created",
+          sequence: 1,
+          replayed: false,
+        }),
         Response.json({ sequence: 1 }),
       );
       const authorization = { accessToken: "secret-token" };
@@ -96,6 +103,15 @@ describe("remote orchestration HTTP operations", () => {
         authorization,
         threadId,
       }).pipe(Effect.provide(remoteHttpClientLayer(fetch.fetchFn)));
+      yield* createRemoteOrchestrationThread({
+        httpBaseUrl: "https://remote.example/base",
+        authorization,
+        payload: {
+          project: "project-http",
+          message: "create this",
+          idempotencyKey: "create-1",
+        },
+      }).pipe(Effect.provide(remoteHttpClientLayer(fetch.fetchFn)));
       yield* dispatchRemoteOrchestrationCommand({
         httpBaseUrl: "https://remote.example/base",
         authorization,
@@ -106,6 +122,7 @@ describe("remote orchestration HTTP operations", () => {
         "https://remote.example/api/orchestration/shell",
         "https://remote.example/api/orchestration/snapshot",
         "https://remote.example/api/orchestration/threads/thread-http",
+        "https://remote.example/api/orchestration/create",
         "https://remote.example/api/orchestration/dispatch",
       ]);
       for (const [, init] of fetch.calls) {
@@ -113,7 +130,9 @@ describe("remote orchestration HTTP operations", () => {
           expect.objectContaining({ authorization: "Bearer secret-token" }),
         );
       }
-      const body = fetch.calls[3]?.[1].body;
+      const createHeaders = fetch.calls[3]?.[1].headers;
+      expect(createHeaders).not.toEqual(expect.objectContaining({ cookie: expect.anything() }));
+      const body = fetch.calls[4]?.[1].body;
       const decodedBody =
         typeof body === "string"
           ? body

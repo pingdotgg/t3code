@@ -3,6 +3,8 @@ import {
   type CommandId,
   type DispatchResult,
   type OrchestrationReadModel,
+  type OrchestrationCliCreateRequest,
+  type OrchestrationCliCreateResult,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadDetailSnapshot,
   type ThreadId,
@@ -113,6 +115,30 @@ export const dispatchRemoteOrchestrationCommand = Effect.fn(
       headers: bearerHeaders(input.authorization),
       payload: input.command,
     } as Parameters<typeof client.orchestration.dispatch>[0]),
+  );
+});
+
+export const createRemoteOrchestrationThread = Effect.fn(
+  "clientRuntime.operations.createRemoteOrchestrationThread",
+)(function* (input: {
+  readonly httpBaseUrl: string;
+  readonly authorization: RemoteBearerAuthorization;
+  readonly payload: OrchestrationCliCreateRequest;
+  readonly timeoutMs?: number;
+}): Effect.fn.Return<
+  OrchestrationCliCreateResult,
+  RemoteEnvironmentRequestError,
+  HttpClient.HttpClient
+> {
+  const requestUrl = environmentEndpointUrl(input.httpBaseUrl, "/api/orchestration/create");
+  const client = yield* makeEnvironmentHttpApiClient(input.httpBaseUrl);
+  return yield* executeEnvironmentHttpRequest(
+    requestUrl,
+    input.timeoutMs ?? DEFAULT_REMOTE_ORCHESTRATION_TIMEOUT_MS,
+    client.orchestration.create({
+      headers: bearerHeaders(input.authorization),
+      payload: input.payload,
+    }),
   );
 });
 
