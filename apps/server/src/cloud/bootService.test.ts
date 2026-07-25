@@ -179,8 +179,10 @@ it("renders a classic s6 run script with supervisor markers and shell-safe paths
   );
   assert.include(script, "export T3_S6_SERVICE_USER='theo'");
   assert.include(script, "export T3_S6_SERVICE_GROUP='staff'");
+  assert.include(script, "service_home=$(getent passwd 'theo' | cut -d: -f6)");
+  assert.include(script, 'export HOME="$service_home"');
   assert.include(script, "'s6-envuidgid' '-nB' 'theo:staff' '/bin/sh' '-c'");
-  assert.include(script, `'exec s6-applyuidgid -Uz -G "$GID" "$@"'`);
+  assert.include(script, `'exec s6-applyuidgid -z -u "$UID" -g "$GID" -G "$GID" "$@"'`);
   assert.include(script, "s6-svperms -G 'staff' '/etc/s6-overlay/s6-rc.d/user/contents.d/t3code'");
   assert.include(script, "'/home/me/T3'\\''s bin/t3' 'serve'");
   assert.include(script, 'exec "$@" >>');

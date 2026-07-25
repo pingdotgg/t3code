@@ -80,6 +80,9 @@ describe.runIf(integrationEnabled)("s6-overlay service integration", () => {
       }
       expect(runtimeUserId.trim()).toBe("10001");
       expect(runtimeUserId.trim()).not.toBe("0");
+      expect((await NodeFSP.readFile(NodePath.join(stateDir, "runtime-home"), "utf8")).trim()).toBe(
+        "/home/t3",
+      );
       expect((await NodeFSP.stat(NodePath.join(stateDir, "boot-service.log"))).uid).toBe(10001);
 
       const restart = docker([

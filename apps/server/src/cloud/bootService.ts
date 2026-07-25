@@ -224,7 +224,7 @@ export function renderS6RunScript(plan: BootServicePlan): string {
           `${plan.serviceUser}:${plan.serviceGroup}`,
           "/bin/sh",
           "-c",
-          'exec s6-applyuidgid -Uz -G "$GID" "$@"',
+          'exec s6-applyuidgid -z -u "$UID" -g "$GID" -G "$GID" "$@"',
           "t3code-applyuidgid",
         ];
   return [
@@ -240,6 +240,9 @@ export function renderS6RunScript(plan: BootServicePlan): string {
     ...(plan.serviceLauncherPath === undefined
       ? []
       : [`export ${S6_SERVICE_LAUNCHER_ENV}=${quoteShellValue(plan.serviceLauncherPath)}`]),
+    `service_home=$(getent passwd ${quoteShellValue(plan.serviceUser)} | cut -d: -f6)`,
+    'if [ -z "$service_home" ]; then echo "Could not resolve s6 service user home." >&2; exit 1; fi',
+    'export HOME="$service_home"',
     ...(plan.serviceGroup === undefined
       ? [
           `service_group=$(id -g ${quoteShellValue(plan.serviceUser)})`,
