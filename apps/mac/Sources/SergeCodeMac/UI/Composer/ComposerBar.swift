@@ -46,6 +46,11 @@ public struct ComposerBar: View {
     @UIState private var showDictationDownloadPrompt = false
     @FocusState private var editorFocused: Bool
 
+    /// Composer-level "create PR when done" toggle (see `AutoPRToggle` in
+    /// ComposerControls.swift). When on, outgoing messages get
+    /// `CreatePRPrompt.messageSuffix` appended before dispatch.
+    @AppStorage(CreatePRPrompt.autoCreateDefaultsKey) private var autoCreatePR = false
+
     // `nonisolated` so the background encode helpers (which run off the main
     // actor) can read these caps without hopping back to MainActor.
     nonisolated private static let maxAttachments = 8
@@ -601,10 +606,18 @@ public struct ComposerBar: View {
 
     // MARK: - Sending
 
+    /// The text actually dispatched for a draft: the user's words plus, when
+    /// the auto-PR toggle is on, the instruction to open a PR once the work
+    /// is finished. Never appended to an empty (attachment-only) message.
+    private func outgoingText(for trimmedDraft: String) -> String {
+        guard autoCreatePR, !trimmedDraft.isEmpty else { return trimmedDraft }
+        return trimmedDraft + CreatePRPrompt.messageSuffix
+    }
+
     private func send() {
         guard canSend, let threadID = model.selectedThreadID else { return }
         let submittedDraft = ComposerDraft(text: draft, attachments: attachments)
-        let outgoingText = trimmedDraft
+        let outgoingText = outgoingText(for: trimmedDraft)
         let replacingID = editedMessageID
         let replacingThreadID = editedMessageThreadID
         model.clearComposerDraft(for: threadID)
@@ -628,7 +641,7 @@ public struct ComposerBar: View {
 
     private func queue() {
         guard canQueue else { return }
-        let text = trimmedDraft
+        let text = outgoingText(for: trimmedDraft)
         let outgoing = attachments
         // Queued sends are deferred; an edit-resend must not silently become
         // an append later — drop the edit identity when queueing.

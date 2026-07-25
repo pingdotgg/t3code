@@ -15,20 +15,6 @@ import SwiftUI
 struct ChatFollowUpBar: View {
     let model: AppModel
 
-    /// The turn the agent is asked to run when the user clicks "Create PR".
-    /// Plain user-message text, so it works identically across providers.
-    private static let createPRPrompt = """
-        Please create a pull request for the work in this session.
-
-        Guidelines:
-        - Review the full diff of this branch before writing anything.
-        - Commit any uncommitted changes with clear, conventional commit messages.
-        - Push the branch and open the PR against the repository's default branch.
-        - Use a concise, imperative PR title.
-        - In the PR body, summarize what changed and why, and note how it was verified.
-        - Follow the repository's PR template and contribution guidelines if present.
-        """
-
     var body: some View {
         Group {
             if let thread = model.selectedThread, thread.status != .archived {
@@ -163,7 +149,7 @@ struct ChatFollowUpBar: View {
         HStack {
             Spacer()
             Button {
-                Task { await model.send(text: Self.createPRPrompt) }
+                Task { await model.send(text: CreatePRPrompt.standalone) }
             } label: {
                 Label("Create PR", systemImage: "arrow.triangle.pull")
             }
