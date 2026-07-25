@@ -182,6 +182,21 @@ const getLegacyProviderSettings = (
   (settings.providers as Record<string, LegacyProviderSettings | undefined>)[provider];
 
 /**
+ * True when the given instance id refers to an enabled provider instance
+ * (explicit config or a legacy per-driver entry).
+ */
+function isProviderInstanceEnabled(settings: ServerSettings, instanceId: string): boolean {
+  const instanceConfig = settings.providerInstances[instanceId as ProviderInstanceId];
+  if (instanceConfig !== undefined) {
+    return instanceConfig.enabled ?? true;
+  }
+  return (
+    isProviderDriverKind(instanceId) &&
+    getLegacyProviderSettings(settings, instanceId)?.enabled === true
+  );
+}
+
+/**
  * Ensure the `textGenerationModelSelection` points to an enabled provider.
  * If the selected provider is disabled, fall back to the first enabled
  * provider with its default model.  This is applied at read-time so the
@@ -222,6 +237,34 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
     } satisfies ModelSelection,
   };
 }
+
+/**
+ * Ensure the auto-review model selection points to an enabled provider. When
+ * it does not (e.g. the persisted default references a provider the user
+ * never enabled), fall back to the resolved text-generation selection, which
+ * is itself guaranteed to target an enabled provider when one exists.
+ * Applied at read-time so the persisted preference is preserved.
+ */
+function resolveAutoReviewProvider(settings: ServerSettings): ServerSettings {
+  const selection = settings.autoReview.modelSelection;
+  if (isProviderInstanceEnabled(settings, selection.instanceId)) {
+    return settings;
+  }
+  const fallback = settings.textGenerationModelSelection;
+  if (fallback.instanceId === selection.instanceId && fallback.model === selection.model) {
+    return settings;
+  }
+  return {
+    ...settings,
+    autoReview: {
+      ...settings.autoReview,
+      modelSelection: fallback,
+    },
+  };
+}
+
+const resolveClientFacingModelSelections = (settings: ServerSettings): ServerSettings =>
+  resolveAutoReviewProvider(resolveTextGenerationProvider(settings));
 
 // Values under these keys are compared as a whole — never stripped field-by-field.
 const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
@@ -668,7 +711,7 @@ const make = Effect.gen(function* () {
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeEnvironmentSecrets),
-      Effect.map(resolveTextGenerationProvider),
+      Effect.map(resolveClientFacingModelSelections),
     ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
@@ -683,7 +726,7 @@ const make = Effect.gen(function* () {
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
           const materialized = yield* materializeEnvironmentSecrets(next);
-          return resolveTextGenerationProvider(materialized);
+          return resolveClientFacingModelSelections(materialized);
         }),
       ),
     get streamChanges() {
@@ -700,7 +743,7 @@ const make = Effect.gen(function* () {
             ),
           ),
         ),
-        Stream.map(resolveTextGenerationProvider),
+        Stream.map(resolveClientFacingModelSelections),
       );
     },
   } satisfies ServerSettingsService["Service"];

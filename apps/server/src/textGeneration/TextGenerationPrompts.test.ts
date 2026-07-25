@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  LenientAutoReviewFindingsSchema,
+  sanitizeAutoReviewFindingsJson,
 } from "./TextGenerationPrompts.ts";
 import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
@@ -143,6 +146,77 @@ describe("sanitizeThreadTitle", () => {
         '  "Reconnect failures after restart because the session state does not recover"  ',
       ),
     ).toBe("Reconnect failures after restart because the se...");
+  });
+});
+
+describe("sanitizeAutoReviewFindingsJson", () => {
+  it("passes through a well-formed payload", () => {
+    const sanitized = sanitizeAutoReviewFindingsJson({
+      summary: "Solid change.",
+      decision: "comment",
+      comments: [{ path: "a.ts", line: 3, side: "RIGHT", severity: "nit", body: "Rename this." }],
+    });
+    expect(sanitized?.decision).toBe("comment");
+    expect(sanitized?.comments[0]?.line).toBe(3);
+  });
+
+  it("coerces near-miss output instead of failing", () => {
+    const sanitized = sanitizeAutoReviewFindingsJson({
+      summary: "Found issues.",
+      decision: "REQUEST_CHANGES",
+      comments: [
+        { path: "a.ts", line: "12", side: "right", severity: "BLOCKING", body: "Fix this." },
+        { path: "b.ts", line: "not-a-number", side: "middle", severity: "weird", body: "Meh." },
+        { path: "", body: "no path, dropped" },
+        "garbage",
+      ],
+      extra: "ignored",
+    });
+    expect(sanitized).toEqual({
+      summary: "Found issues.",
+      decision: "request_changes",
+      comments: [
+        { path: "a.ts", line: 12, side: "RIGHT", severity: "blocking", body: "Fix this." },
+        { path: "b.ts", line: null, side: null, severity: "info", body: "Meh." },
+      ],
+    });
+  });
+
+  it("rejects payloads with no usable review content", () => {
+    expect(sanitizeAutoReviewFindingsJson("not json object")).toBeUndefined();
+    expect(sanitizeAutoReviewFindingsJson({ summary: "  ", comments: [] })).toBeUndefined();
+    expect(sanitizeAutoReviewFindingsJson({})).toBeUndefined();
+  });
+
+  it("defaults a missing decision to comment", () => {
+    const sanitized = sanitizeAutoReviewFindingsJson({ summary: "LGTM" });
+    expect(sanitized).toEqual({ summary: "LGTM", decision: "comment", comments: [] });
+  });
+});
+
+describe("LenientAutoReviewFindingsSchema", () => {
+  const decode = Schema.decodeUnknownSync(Schema.fromJsonString(LenientAutoReviewFindingsSchema));
+
+  it("decodes messy model JSON into the strict findings shape", () => {
+    const findings = decode(
+      JSON.stringify({
+        summary: "One real issue.",
+        comments: [{ path: "src/x.ts", line: "7", severity: "Important", body: "Handle nil." }],
+      }),
+    );
+    expect(findings.decision).toBe("comment");
+    expect(findings.comments[0]).toEqual({
+      path: "src/x.ts",
+      line: 7,
+      side: null,
+      severity: "important",
+      body: "Handle nil.",
+    });
+  });
+
+  it("still fails on output with no usable review content", () => {
+    expect(() => decode(JSON.stringify({ hello: "world" }))).toThrow();
+    expect(() => decode("not json at all")).toThrow();
   });
 });
 

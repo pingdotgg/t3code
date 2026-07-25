@@ -6,7 +6,11 @@
  *
  * @module textGenerationPrompts
  */
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import type { ChatAttachment } from "@t3tools/contracts";
 
 import { limitSection } from "./TextGenerationUtils.ts";
@@ -180,6 +184,131 @@ export function buildAutoReviewFindingsPrompt(input: AutoReviewFindingsPromptInp
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Lenient auto-review findings decoding
+//
+// Agent-CLI providers that stream freeform text (Grok, Kimi) often return
+// near-miss JSON: uppercase severities, string line numbers, extra keys, or
+// a few malformed comments. Hard-failing the whole payload on the first
+// schema mismatch burns retries, so decode leniently instead: coerce what we
+// can, drop malformed comments, and only fail when nothing usable remains.
+// Providers with API-side structured output (Codex, Claude) keep the strict
+// schema above, since their CLI enforces it during generation.
+// ---------------------------------------------------------------------------
+
+const AUTO_REVIEW_DECISIONS: ReadonlySet<string> = new Set([
+  "comment",
+  "request_changes",
+  "approve",
+]);
+const AUTO_REVIEW_SEVERITIES: ReadonlySet<string> = new Set([
+  "blocking",
+  "important",
+  "nit",
+  "info",
+]);
+
+const StrictAutoReviewFindingsSchema = Schema.Struct({
+  summary: Schema.String,
+  decision: Schema.Literals(["comment", "request_changes", "approve"]),
+  comments: Schema.Array(
+    Schema.Struct({
+      path: Schema.String,
+      line: Schema.NullOr(Schema.Number),
+      side: Schema.NullOr(Schema.Literals(["LEFT", "RIGHT"])),
+      severity: Schema.Literals(["blocking", "important", "nit", "info"]),
+      body: Schema.String,
+    }),
+  ),
+});
+
+type AutoReviewFindingsOutput = typeof StrictAutoReviewFindingsSchema.Type;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function coerceLineNumber(value: unknown): number | null {
+  const parsed =
+    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+/**
+ * Best-effort sanitize of raw model JSON into the auto-review findings shape.
+ * Returns `undefined` when the payload carries no usable review content.
+ */
+export function sanitizeAutoReviewFindingsJson(raw: unknown): AutoReviewFindingsOutput | undefined {
+  const record = asRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+
+  const summary = typeof record.summary === "string" ? record.summary : "";
+  const decisionRaw =
+    typeof record.decision === "string" ? record.decision.trim().toLowerCase() : "";
+  const decision = (
+    AUTO_REVIEW_DECISIONS.has(decisionRaw) ? decisionRaw : "comment"
+  ) as AutoReviewFindingsOutput["decision"];
+
+  const comments: AutoReviewFindingsOutput["comments"][number][] = [];
+  for (const item of Array.isArray(record.comments) ? record.comments : []) {
+    const comment = asRecord(item);
+    if (!comment) {
+      continue;
+    }
+    const path = typeof comment.path === "string" ? comment.path.trim() : "";
+    const body = typeof comment.body === "string" ? comment.body.trim() : "";
+    if (!path || !body) {
+      continue;
+    }
+    const severityRaw =
+      typeof comment.severity === "string" ? comment.severity.trim().toLowerCase() : "";
+    const sideRaw = typeof comment.side === "string" ? comment.side.trim().toUpperCase() : "";
+    comments.push({
+      path,
+      body,
+      line: coerceLineNumber(comment.line),
+      side: sideRaw === "LEFT" || sideRaw === "RIGHT" ? (sideRaw as "LEFT" | "RIGHT") : null,
+      severity: (AUTO_REVIEW_SEVERITIES.has(severityRaw)
+        ? severityRaw
+        : "info") as AutoReviewFindingsOutput["comments"][number]["severity"],
+    });
+  }
+
+  if (!summary.trim() && comments.length === 0) {
+    return undefined;
+  }
+  return { summary, decision, comments };
+}
+
+/**
+ * Decode-side schema for freeform-text providers. Sanitizes near-miss model
+ * output before strict validation so a single malformed field does not fail
+ * the whole review.
+ */
+export const LenientAutoReviewFindingsSchema = Schema.Unknown.pipe(
+  Schema.decodeTo(
+    StrictAutoReviewFindingsSchema,
+    SchemaTransformation.transformOrFail<AutoReviewFindingsOutput, unknown>({
+      decode: (raw) => {
+        const sanitized = sanitizeAutoReviewFindingsJson(raw);
+        return sanitized
+          ? Effect.succeed(sanitized)
+          : Effect.fail(
+              new SchemaIssue.InvalidValue(Option.some(raw), {
+                message:
+                  "Expected an auto-review findings object with a non-empty summary or at least one comment.",
+              }),
+            );
+      },
+      encode: (value) => Effect.succeed(value),
+    }),
+  ),
+);
 
 // ---------------------------------------------------------------------------
 // Branch name

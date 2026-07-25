@@ -97,6 +97,7 @@ export const make = (deps: AutoReviewPollerDeps) =>
               headSha,
               trigger: "open_or_push",
               modelSelection: policy.modelSelection as ModelSelection,
+              maxAttempts: policy.maxAttempts,
             });
             continue;
           }
@@ -127,6 +128,7 @@ export const make = (deps: AutoReviewPollerDeps) =>
                   trigger: "mention",
                   commentId: comment.id,
                   modelSelection: policy.modelSelection as ModelSelection,
+                  maxAttempts: policy.maxAttempts,
                 });
               }
             }

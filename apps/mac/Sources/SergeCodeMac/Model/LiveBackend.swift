@@ -2507,6 +2507,7 @@ public actor LiveBackend: BackendService {
             mentionHandle: settings.autoReview.mentionHandle,
             pollInterval: settings.autoReview.pollIntervalSeconds * 1000,
             autoFixOriginThread: settings.autoReview.autoFixOriginThread,
+            maxAttempts: settings.autoReview.maxAttempts,
             projects: projectPatches)
         let patch = ServerSettingsPatch(
             enableAssistantStreaming: settings.assistantStreaming,
@@ -2533,6 +2534,7 @@ public actor LiveBackend: BackendService {
                 headSha: job.headSha,
                 status: job.status,
                 trigger: job.trigger,
+                attempt: job.attempt,
                 findingsCount: job.findingsCount,
                 reviewURL: job.reviewUrl,
                 error: job.error,
@@ -2585,6 +2587,7 @@ public actor LiveBackend: BackendService {
                 mentionHandle: ar.mentionHandle,
                 pollIntervalSeconds: max(15, ar.pollIntervalMs / 1000),
                 autoFixOriginThread: ar.autoFixOriginThread,
+                maxAttempts: ar.maxAttempts,
                 projectOverrides: overrides),
             autoArchiveSettledAfterMs: settings.autoArchiveSettledAfterMs)
     }

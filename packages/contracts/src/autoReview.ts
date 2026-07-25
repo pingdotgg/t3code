@@ -29,6 +29,12 @@ export type AutoReviewProjectOverride = typeof AutoReviewProjectOverride.Type;
 
 export const DEFAULT_AUTO_REVIEW_POLL_INTERVAL = Duration.seconds(60);
 export const DEFAULT_AUTO_REVIEW_MAX_DIFF_BYTES = 400_000;
+/**
+ * Total attempts (initial run + retries) for a single PR head SHA before the
+ * auto-reviewer gives up. Guards against models that keep failing (e.g.
+ * invalid structured output) burning tokens on every poll tick.
+ */
+export const DEFAULT_AUTO_REVIEW_MAX_ATTEMPTS = 2;
 
 export const AutoReviewSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -50,6 +56,9 @@ export const AutoReviewSettings = Schema.Struct({
     ),
   ),
   autoFixOriginThread: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  maxAttempts: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AUTO_REVIEW_MAX_ATTEMPTS)),
+  ),
   maxDiffBytes: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_AUTO_REVIEW_MAX_DIFF_BYTES)),
   ),
@@ -71,6 +80,7 @@ export const AutoReviewSettingsPatch = Schema.Struct({
   mentionHandle: Schema.optionalKey(TrimmedNonEmptyString),
   pollInterval: Schema.optionalKey(Schema.DurationFromMillis),
   autoFixOriginThread: Schema.optionalKey(Schema.Boolean),
+  maxAttempts: Schema.optionalKey(PositiveInt),
   maxDiffBytes: Schema.optionalKey(PositiveInt),
   concurrency: Schema.optionalKey(PositiveInt),
   // Whole-map replacement for per-project overrides.
@@ -126,6 +136,8 @@ export const AutoReviewJob = Schema.Struct({
   trigger: AutoReviewTrigger,
   commentId: Schema.optional(Schema.NullOr(TrimmedString)),
   status: AutoReviewJobStatus,
+  /** 1-based attempt number for this (project, PR, headSha) review chain. */
+  attempt: NonNegativeInt,
   modelSelection: ModelSelection,
   findingsCount: Schema.optional(Schema.NullOr(NonNegativeInt)),
   reviewUrl: Schema.optional(Schema.NullOr(Schema.String)),

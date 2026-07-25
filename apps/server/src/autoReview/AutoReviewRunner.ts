@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { AutoReviewFindings, ModelSelection, ThreadId } from "@t3tools/contracts";
@@ -187,7 +188,7 @@ export const make = Effect.gen(function* () {
         store
           .update(jobId, {
             status: "failed",
-            error: String(cause),
+            error: Cause.pretty(cause),
           })
           .pipe(Effect.asVoid),
       ),

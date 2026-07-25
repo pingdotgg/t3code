@@ -8,8 +8,6 @@ struct AutoReviewSettingsTab: View {
     @UIState private var jobs: [AppAutoReviewJob] = []
     @UIState private var isRefreshingJobs = false
     @FocusState private var mentionFocused: Bool
-    @FocusState private var modelInstanceFocused: Bool
-    @FocusState private var modelIDFocused: Bool
 
     var body: some View {
         Form {
@@ -49,19 +47,18 @@ struct AutoReviewSettingsTab: View {
                 }
 
                 Section("Model") {
-                    TextField(
-                        "Provider instance ID",
-                        text: textBinding(settings, \.autoReview.modelInstanceID))
-                        .focused($modelInstanceFocused)
-                        .disabled(!settings.autoReview.enabled)
-                        .help("Configured provider instance, e.g. codex, claudeAgent, grok")
-                    TextField(
-                        "Model ID",
-                        text: textBinding(settings, \.autoReview.modelID))
-                        .focused($modelIDFocused)
-                        .disabled(!settings.autoReview.enabled)
-                    if !model.providers.isEmpty {
-                        modelQuickPick(settings)
+                    if model.models.isEmpty {
+                        HStack {
+                            Text("Model")
+                            Spacer()
+                            Text(
+                                "\(settings.autoReview.modelInstanceID)/\(settings.autoReview.modelID)"
+                            )
+                            .foregroundStyle(.secondary)
+                        }
+                        .disabled(true)
+                    } else {
+                        modelPairPicker(settings)
                     }
                 }
 
@@ -89,6 +86,15 @@ struct AutoReviewSettingsTab: View {
                             .foregroundStyle(.secondary)
                     }
                     Text("Clamped to 15–600 seconds on the server.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Stepper(
+                        "Max attempts: \(settings.autoReview.maxAttempts)",
+                        value: binding(settings, \.autoReview.maxAttempts),
+                        in: 1...5)
+                        .disabled(!settings.autoReview.enabled)
+                    Text("Failed reviews retry up to this many times per PR head, then stop.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -155,37 +161,71 @@ struct AutoReviewSettingsTab: View {
         .onChange(of: mentionFocused) { wasFocused, isFocused in
             if wasFocused && !isFocused { commitTextFields() }
         }
-        .onChange(of: modelInstanceFocused) { wasFocused, isFocused in
-            if wasFocused && !isFocused { commitTextFields() }
-        }
-        .onChange(of: modelIDFocused) { wasFocused, isFocused in
-            if wasFocused && !isFocused { commitTextFields() }
-        }
         .onDisappear { commitTextFields() }
     }
 
+    /// Grouped `.menu` picker over `model.models`; selecting a row sets both
+    /// `modelInstanceID` and `modelID` and saves immediately.
     @ViewBuilder
-    private func modelQuickPick(_ settings: AppSettings) -> some View {
-        let instances = model.providers
-        if !instances.isEmpty {
-            Picker(
-                "Quick pick instance",
-                selection: Binding(
-                    get: { (draft ?? settings).autoReview.modelInstanceID },
-                    set: { newInstance in
-                        var next = draft ?? settings
-                        next.autoReview.modelInstanceID = newInstance
-                        draft = next
-                        Task { await model.saveSettings(next) }
-                    })
-            ) {
-                ForEach(instances) { provider in
-                    Text("\(provider.kind.displayName) (\(provider.id))")
-                        .tag(provider.id)
+    private func modelPairPicker(_ settings: AppSettings) -> some View {
+        let options = model.models
+        let currentPairID =
+            "\((draft ?? settings).autoReview.modelInstanceID)/\((draft ?? settings).autoReview.modelID)"
+        Picker(
+            "Model",
+            selection: Binding(
+                get: { currentPairID },
+                set: { pairID in
+                    guard let option = options.first(where: { $0.id == pairID }) else { return }
+                    var next = draft ?? settings
+                    next.autoReview.modelInstanceID = option.instanceID
+                    next.autoReview.modelID = option.modelID
+                    draft = next
+                    Task { await model.saveSettings(next) }
+                })
+        ) {
+            // Keep the current selection visible (and selectable) even when it
+            // no longer resolves to an enabled provider instance.
+            if !options.contains(where: { $0.id == currentPairID }) {
+                Text("\(currentPairID) (unavailable)")
+                    .tag(currentPairID)
+            }
+            ForEach(groupedModelOptions(options), id: \.kind) { group in
+                Section(group.kind.displayName) {
+                    ForEach(group.options) { option in
+                        Text(optionLabel(option, in: group.options))
+                            .tag(option.id)
+                    }
                 }
             }
-            .disabled(!settings.autoReview.enabled)
         }
+        .pickerStyle(.menu)
+        .disabled(!settings.autoReview.enabled)
+    }
+
+    /// Models grouped by provider kind, preserving first-appearance order.
+    private func groupedModelOptions(
+        _ options: [ModelOption]
+    ) -> [(kind: ProviderKind, options: [ModelOption])] {
+        var order: [ProviderKind] = []
+        var byKind: [ProviderKind: [ModelOption]] = [:]
+        for option in options {
+            if byKind[option.provider] == nil {
+                order.append(option.provider)
+            }
+            byKind[option.provider, default: []].append(option)
+        }
+        return order.map { kind in (kind, byKind[kind] ?? []) }
+    }
+
+    /// `displayName` + `modelID`; appends the instance id only when several
+    /// instances of the same provider kind offer models.
+    private func optionLabel(_ option: ModelOption, in group: [ModelOption]) -> String {
+        var label = "\(option.displayName) (\(option.modelID))"
+        if Set(group.map(\.instanceID)).count > 1 {
+            label += " — \(option.instanceID)"
+        }
+        return label
     }
 
     @ViewBuilder
@@ -254,6 +294,9 @@ struct AutoReviewSettingsTab: View {
             }
             HStack(spacing: 8) {
                 Text(job.trigger)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("attempt \(job.attempt)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let count = job.findingsCount {

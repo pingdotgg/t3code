@@ -1364,6 +1364,8 @@ public struct AppAutoReviewSettings: Hashable, Sendable {
     public var mentionHandle: String
     public var pollIntervalSeconds: Double
     public var autoFixOriginThread: Bool
+    /// Max review attempts per PR head before the server stops retrying (1–10).
+    public var maxAttempts: Int
     public var projectOverrides: [AppAutoReviewProjectOverride]
 
     public init(
@@ -1374,6 +1376,7 @@ public struct AppAutoReviewSettings: Hashable, Sendable {
         mentionHandle: String = "surgecode",
         pollIntervalSeconds: Double = 60,
         autoFixOriginThread: Bool = true,
+        maxAttempts: Int = 2,
         projectOverrides: [AppAutoReviewProjectOverride] = []
     ) {
         self.enabled = enabled
@@ -1383,6 +1386,7 @@ public struct AppAutoReviewSettings: Hashable, Sendable {
         self.mentionHandle = mentionHandle
         self.pollIntervalSeconds = pollIntervalSeconds
         self.autoFixOriginThread = autoFixOriginThread
+        self.maxAttempts = maxAttempts
         self.projectOverrides = projectOverrides
     }
 }
@@ -1395,6 +1399,8 @@ public struct AppAutoReviewJob: Hashable, Sendable, Identifiable {
     public var headSha: String
     public var status: String
     public var trigger: String
+    /// 1-based attempt number within a PR-head review chain.
+    public var attempt: Int
     public var findingsCount: Int?
     public var reviewURL: String?
     public var error: String?
@@ -1403,7 +1409,7 @@ public struct AppAutoReviewJob: Hashable, Sendable, Identifiable {
 
     public init(
         id: String, projectID: String, prNumber: Int, headSha: String, status: String,
-        trigger: String, findingsCount: Int?, reviewURL: String?, error: String?,
+        trigger: String, attempt: Int = 1, findingsCount: Int?, reviewURL: String?, error: String?,
         autoFixEnqueued: Bool, updatedAt: String
     ) {
         self.id = id
@@ -1412,6 +1418,7 @@ public struct AppAutoReviewJob: Hashable, Sendable, Identifiable {
         self.headSha = headSha
         self.status = status
         self.trigger = trigger
+        self.attempt = attempt
         self.findingsCount = findingsCount
         self.reviewURL = reviewURL
         self.error = error
