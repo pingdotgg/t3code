@@ -213,6 +213,11 @@ public struct ComposerBar: View {
                     .transition(Motion.rise)
             }
 
+            if dictationOverlayVisible {
+                DictationLiveOverlay(dictation: model.dictation)
+                    .transition(Motion.banner)
+            }
+
             if let lastError = model.lastError {
                 HStack(alignment: .top, spacing: 6) {
                     Text(lastError)
@@ -385,12 +390,16 @@ public struct ComposerBar: View {
         .animation(Motion.reveal, value: model.selectedQueuedMessages.map(\.id))
         .animation(Motion.reveal, value: attachmentError)
         .animation(Motion.reveal, value: model.dictation.lastError)
+        .animation(Motion.reveal, value: dictationOverlayVisible)
         .animation(Motion.reveal, value: model.lastError)
         .animation(Motion.feedback, value: isThreadRunning)
         .task {
             defersSuggestionWork = ComposerPerformancePolicy.shouldDeferSuggestions(for: draft)
             model.dictation.insertHandler = { threadID, text in
-                appendDictated(text, to: threadID)
+                insertDictated(text, into: threadID)
+            }
+            model.dictation.replaceHandler = { threadID, original, replacement in
+                replaceDictated(original, with: replacement, in: threadID)
             }
         }
         .onPasteCommand(of: [.image], perform: handlePasteProviders)
@@ -569,7 +578,7 @@ public struct ComposerBar: View {
     private var dictationHelp: String {
         switch (model.dictation.state, model.dictation.modelStatus) {
         case (.recording, _): "Stop dictating"
-        case (.processing, _): "Transcribing…"
+        case (.processing, _): "Finishing dictation…"
         case (_, .downloading): "Downloading the dictation model…"
         case (_, .notDownloaded): "Dictate (downloads the on-device speech model first)"
         default: "Dictate (on-device)"
@@ -588,19 +597,29 @@ public struct ComposerBar: View {
         NSWorkspace.shared.open(url)
     }
 
-    /// Appends a finished dictation transcript to `threadID`'s draft — the
+    /// Whether the live dictation surface is showing: recording, finalizing,
+    /// or polishing already-inserted text.
+    private var dictationOverlayVisible: Bool {
+        model.dictation.state != .idle || model.dictation.isPolishing
+    }
+
+    /// Inserts a finished dictation transcript into `threadID`'s draft — the
     /// thread selected when recording *started*, which may not be the
     /// currently selected thread anymore (see `DictationController`).
-    private func appendDictated(_ text: String, to threadID: String) {
+    private func insertDictated(_ text: String, into threadID: String) {
         let current = model.composerDraft(for: threadID).text
-        let updated: String
-        if current.isEmpty {
-            updated = text
-        } else if current.hasSuffix(" ") || current.hasSuffix("\n") {
-            updated = current + text
-        } else {
-            updated = current + " " + text
-        }
+        model.setComposerDraftText(DictationDraft.appending(text, to: current), for: threadID)
+    }
+
+    /// Swaps the raw transcript for the polished one in place. A miss — the
+    /// user edited or sent the raw text in the meantime — is a no-op by
+    /// design (see `DictationDraft.replacingLastOccurrence`).
+    private func replaceDictated(_ original: String, with replacement: String, in threadID: String) {
+        let current = model.composerDraft(for: threadID).text
+        guard
+            let updated = DictationDraft.replacingLastOccurrence(
+                of: original, with: replacement, in: current)
+        else { return }
         model.setComposerDraftText(updated, for: threadID)
     }
 

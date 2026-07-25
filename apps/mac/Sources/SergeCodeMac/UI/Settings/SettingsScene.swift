@@ -334,7 +334,7 @@ struct DictationSettingsTab: View {
                     .disabled(!dictation.cleanupAvailable)
                 Text(
                     dictation.cleanupAvailable
-                        ? "Fixes punctuation and removes filler words with the built-in Apple Intelligence model. Nothing leaves this Mac."
+                        ? "Fixes punctuation and removes filler words with the built-in Apple Intelligence model. The raw transcript is inserted first, then polished in place. Nothing leaves this Mac."
                         : "Requires Apple Intelligence. Until it's enabled, dictation inserts the raw transcript."
                 )
                 .font(.caption)

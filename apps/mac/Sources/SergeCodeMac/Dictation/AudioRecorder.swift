@@ -1,21 +1,29 @@
 import AVFoundation
 
 /// Captures microphone audio via AVAudioEngine, mixing down to mono Float32
-/// at the input node's native sample rate. Resampling to the 16 kHz the ASR
-/// model expects happens once at transcription time via FluidAudio's own
-/// converter — a single pass over the finished utterance avoids the edge
-/// artifacts of converting tap buffers independently.
+/// at the input node's native sample rate. Every tap buffer is also forwarded
+/// to `onBuffer` as it arrives so the streaming transcriber can produce live
+/// partials; the full utterance is kept for the final batch pass, which
+/// resamples to the 16 kHz the ASR model expects in a single conversion —
+/// avoiding the edge artifacts of converting tap buffers independently.
 final class AudioRecorder: @unchecked Sendable {
     enum RecorderError: Error {
         case noInputAvailable
     }
 
+    /// Called from the realtime audio thread with each captured tap buffer
+    /// (native input format) and a smoothed peak level in 0...1 for UI
+    /// metering. Must be cheap and non-blocking.
+    var onBuffer: (@Sendable (AVAudioPCMBuffer, Float) -> Void)?
+
     private let engine = AVAudioEngine()
-    // Guards `samples`/`sampleRate`: the tap block appends from a realtime
-    // audio thread while start/stop run on the caller's executor.
+    // Guards `samples`/`sampleRate`/`smoothedLevel`: the tap block appends
+    // from a realtime audio thread while start/stop run on the caller's
+    // executor.
     private let lock = NSLock()
     private var samples: [Float] = []
     private var sampleRate: Double = 0
+    private var smoothedLevel: Float = 0
 
     static func requestPermission() async -> Bool {
         switch AVAudioApplication.shared.recordPermission {
@@ -37,6 +45,7 @@ final class AudioRecorder: @unchecked Sendable {
         lock.withLock {
             samples.removeAll()
             sampleRate = format.sampleRate
+            smoothedLevel = 0
         }
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             self?.append(buffer)
@@ -78,10 +87,14 @@ final class AudioRecorder: @unchecked Sendable {
         guard frames > 0 else { return }
         let channelCount = Int(buffer.format.channelCount)
         var mono = [Float](repeating: 0, count: frames)
+        var peak: Float = 0
         for channel in 0..<channelCount {
             let data = channels[channel]
             for frame in 0..<frames {
-                mono[frame] += data[frame]
+                let sample = data[frame]
+                mono[frame] += sample
+                let magnitude = abs(sample)
+                if magnitude > peak { peak = magnitude }
             }
         }
         if channelCount > 1 {
@@ -90,6 +103,13 @@ final class AudioRecorder: @unchecked Sendable {
                 mono[frame] *= scale
             }
         }
-        lock.withLock { samples.append(contentsOf: mono) }
+        // Peak-hold with decay so the meter feels responsive on attack but
+        // doesn't strobe between tap buffers.
+        let level = lock.withLock {
+            smoothedLevel = max(peak, smoothedLevel * 0.72)
+            samples.append(contentsOf: mono)
+            return smoothedLevel
+        }
+        onBuffer?(buffer, level)
     }
 }
