@@ -65,8 +65,6 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
             aria-label={`Dismiss ${providerName} provider ${status.status}`}
             onClick={onDismiss}
           >
-            {/* Ghost buttons force svgs to muted-foreground unless the icon
-                sets its own text colour, which would drop the alert's tint. */}
             <XIcon
               aria-hidden
               className={cn(
