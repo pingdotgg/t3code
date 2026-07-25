@@ -131,5 +131,6 @@ class HermesPluginContractTest(unittest.TestCase):
             patch.object(module, "_response", return_value={}),
         ):
             asyncio.run(invoke_concurrently())
+            asyncio.run(invoke_concurrently())
 
         self.assertEqual(peak, 1)

@@ -16,7 +16,19 @@ from integrations.hermes_plugin.config import load_config
 from integrations.hermes_plugin import service
 
 router = APIRouter()
-_ACTION_LOCK = asyncio.Lock()
+_ACTION_LOCK: asyncio.Lock | None = None
+_ACTION_LOCK_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+def _action_lock() -> asyncio.Lock:
+    """Return a lock bound to the active dashboard event loop."""
+    global _ACTION_LOCK, _ACTION_LOCK_LOOP
+
+    loop = asyncio.get_running_loop()
+    if _ACTION_LOCK is None or _ACTION_LOCK_LOOP is not loop:
+        _ACTION_LOCK = asyncio.Lock()
+        _ACTION_LOCK_LOOP = loop
+    return _ACTION_LOCK
 
 
 def _public_url(request: Request) -> str:
@@ -57,7 +69,7 @@ async def _run_action(action: str, request: Request) -> dict[str, object]:
         "uninstall": service.uninstall,
     }[action]
     try:
-        async with _ACTION_LOCK:
+        async with _action_lock():
             result = await asyncio.to_thread(handler, config)
             result["status"] = _response(request)
             return result
