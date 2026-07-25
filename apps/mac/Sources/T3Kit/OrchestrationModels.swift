@@ -211,9 +211,12 @@ public struct ProjectScript: Codable, Sendable, Hashable {
     }
 }
 
-// MARK: - Chat attachments (image-only union for v1; ChatAttachment is a
-// Schema.Union([ChatImageAttachment]) today, so the Swift type is a struct
-// with a fixed `type` discriminator rather than a speculative enum).
+// MARK: - Chat attachments
+//
+// `ChatAttachment` is `Schema.Union([ChatImageAttachment, ChatTextAttachment])`
+// on the wire, discriminated by `type` ("image" | "text"). Each variant's
+// `type` property is encode-only (a `let` with an initial value is encoded but
+// never decoded), so the union decoder reads the discriminator itself.
 
 public struct ChatImageAttachment: Codable, Sendable, Hashable {
     public let type: String = "image"
@@ -230,7 +233,86 @@ public struct ChatImageAttachment: Codable, Sendable, Hashable {
     }
 }
 
-public typealias ChatAttachment = ChatImageAttachment
+public struct ChatTextAttachment: Codable, Sendable, Hashable {
+    public let type: String = "text"
+    public var id: String
+    public var name: String
+    public var mimeType: String
+    public var sizeBytes: Int
+    public var preview: String
+
+    public init(id: String, name: String, mimeType: String, sizeBytes: Int, preview: String) {
+        self.id = id
+        self.name = name
+        self.mimeType = mimeType
+        self.sizeBytes = sizeBytes
+        self.preview = preview
+    }
+}
+
+public enum ChatAttachment: Codable, Sendable, Hashable {
+    case image(ChatImageAttachment)
+    case text(ChatTextAttachment)
+
+    public var id: String {
+        switch self {
+        case .image(let attachment): attachment.id
+        case .text(let attachment): attachment.id
+        }
+    }
+
+    public var name: String {
+        switch self {
+        case .image(let attachment): attachment.name
+        case .text(let attachment): attachment.name
+        }
+    }
+
+    public var mimeType: String {
+        switch self {
+        case .image(let attachment): attachment.mimeType
+        case .text(let attachment): attachment.mimeType
+        }
+    }
+
+    public var sizeBytes: Int {
+        switch self {
+        case .image(let attachment): attachment.sizeBytes
+        case .text(let attachment): attachment.sizeBytes
+        }
+    }
+
+    /// Text attachments carry an inline `preview`; images resolve their bytes
+    /// via `assets.createUrl` instead.
+    public var preview: String? {
+        switch self {
+        case .image: nil
+        case .text(let attachment): attachment.preview
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey { case type }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(String.self, forKey: .type) {
+        case "image":
+            self = .image(try ChatImageAttachment(from: decoder))
+        case "text":
+            self = .text(try ChatTextAttachment(from: decoder))
+        case let other:
+            throw DecodingError.dataCorruptedError(
+                forKey: .type, in: c, debugDescription: "Unknown ChatAttachment type: \(other)")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .image(let attachment): try attachment.encode(to: encoder)
+        case .text(let attachment): try attachment.encode(to: encoder)
+        }
+    }
+}
 
 public struct UploadChatImageAttachment: Codable, Sendable, Hashable {
     public let type: String = "image"
@@ -749,9 +831,12 @@ extension OrchestrationShellStreamEvent: Codable {
     }
 }
 
-/// `orchestration.subscribeShell` stream item: `{kind:"snapshot",snapshot}` |
-/// `OrchestrationShellStreamEvent`.
+/// `orchestration.subscribeShell` stream item: `{kind:"synchronized"}` |
+/// `{kind:"snapshot",snapshot}` | `OrchestrationShellStreamEvent`.
 public enum OrchestrationShellStreamItem: Sendable {
+    /// Emitted when the subscription has caught up with the requested replay
+    /// point (only when the input sets `requestCompletionMarker`).
+    case synchronized
     case snapshot(OrchestrationShellSnapshot)
     case event(OrchestrationShellStreamEvent)
 }
@@ -761,15 +846,21 @@ extension OrchestrationShellStreamItem: Codable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        if try c.decode(String.self, forKey: .kind) == "snapshot" {
+        switch try c.decode(String.self, forKey: .kind) {
+        case "synchronized":
+            self = .synchronized
+        case "snapshot":
             self = .snapshot(try c.decode(OrchestrationShellSnapshot.self, forKey: .snapshot))
-        } else {
+        default:
             self = .event(try OrchestrationShellStreamEvent(from: decoder))
         }
     }
 
     public func encode(to encoder: Encoder) throws {
         switch self {
+        case .synchronized:
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode("synchronized", forKey: .kind)
         case .snapshot(let snapshot):
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode("snapshot", forKey: .kind)
@@ -1857,13 +1948,18 @@ public struct OrchestrationEvent: Decodable, Sendable {
             payload = .threadActivityAppended(
                 try c.decode(ThreadActivityAppendedPayload.self, forKey: .payload))
         default:
-            payload = .other(type: eventType, payload: try c.decode(JSONValue.self, forKey: .payload))
+            payload = .other(
+                type: eventType,
+                payload: try c.decodeIfPresent(JSONValue.self, forKey: .payload) ?? .null)
         }
     }
 }
 
 /// `orchestration.subscribeThread` stream item.
 public enum OrchestrationThreadStreamItem: Decodable, Sendable {
+    /// Emitted when the subscription has caught up with the requested replay
+    /// point (only when the input sets `requestCompletionMarker`).
+    case synchronized
     case snapshot(OrchestrationThreadDetailSnapshot)
     case event(OrchestrationEvent)
 
@@ -1872,6 +1968,8 @@ public enum OrchestrationThreadStreamItem: Decodable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .kind) {
+        case "synchronized":
+            self = .synchronized
         case "snapshot":
             self = .snapshot(try c.decode(OrchestrationThreadDetailSnapshot.self, forKey: .snapshot))
         case "event":
