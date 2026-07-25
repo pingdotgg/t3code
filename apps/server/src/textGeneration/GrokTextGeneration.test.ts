@@ -233,4 +233,48 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
         }),
     ),
   );
+
+  it.effect(
+    "auto-approves permission requests so tool turns still produce structured output",
+    () => {
+      const requestLogDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-log-"),
+      );
+      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+
+      return withFakeAcpGrok(
+        {
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+          T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+            subject: "Add Grok provider",
+            body: "Approved tool use and returned structured output.",
+          }),
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generateCommitMessage({
+              cwd: process.cwd(),
+              branch: "feature/grok",
+              stagedSummary: "M apps/server/src/provider/Drivers/GrokDriver.ts",
+              stagedPatch: "diff --git a/.../GrokDriver.ts b/.../GrokDriver.ts",
+              modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-4.5"),
+            });
+
+            expect(generated.subject).toBe("Add Grok provider");
+
+            const permissionResponse = NodeFS.readFileSync(requestLogPath, "utf8")
+              .trim()
+              .split("\n")
+              .filter((line) => line.length > 0)
+              .map((line) => JSON.parse(line) as { result?: { outcome?: unknown } })
+              .find((entry) => entry.result?.outcome !== undefined);
+            expect(permissionResponse?.result?.outcome).toEqual({
+              outcome: "selected",
+              optionId: "allow-always",
+            });
+          }),
+      );
+    },
+  );
 });
