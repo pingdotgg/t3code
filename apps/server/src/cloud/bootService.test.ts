@@ -4,6 +4,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -501,6 +502,67 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         yield* fs.readFileString(unitPath),
         "#!/bin/sh\nexec /previous/launcher serve\n",
       );
+    }),
+  );
+
+  it.effect("restores prior s6 state ownership when activation fails", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const serviceDir = path.join(dirs.home, "service", "t3code");
+      const launcherPath = path.join(dirs.baseDir, "runtime", "s6-service-launcher");
+      const unitPath = path.join(serviceDir, "run");
+      yield* fs.makeDirectory(path.dirname(launcherPath), { recursive: true });
+      yield* fs.makeDirectory(dirs.logsDir, { recursive: true });
+      yield* fs.makeDirectory(serviceDir, { recursive: true });
+      yield* fs.writeFileString(launcherPath, '#!/bin/sh\nexec /previous/t3 "$@"\n');
+      yield* fs.writeFileString(unitPath, "#!/bin/sh\nexec /previous/launcher serve\n");
+      const previousBaseInfo = yield* fs.stat(dirs.baseDir);
+      const previousLogsInfo = yield* fs.stat(dirs.logsDir);
+      let activationFailed = false;
+
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(
+          makeRecordingRunnerLayer(commands, {
+            failWhen: (command, args) => {
+              if (command !== "s6-svc" || args[0] !== "-r" || activationFailed) return false;
+              activationFailed = true;
+              return true;
+            },
+          }),
+        ),
+        provideHostRefs(""),
+      );
+
+      const error = yield* service.install.pipe(Effect.flip);
+      assert.isTrue(isCommandError(error));
+      assert.includeDeepMembers(commands, [
+        {
+          command: "chown",
+          args: [
+            "-R",
+            "--",
+            `${Option.getOrThrow(previousBaseInfo.uid)}:${Option.getOrThrow(previousBaseInfo.gid)}`,
+            dirs.baseDir,
+          ],
+        },
+        {
+          command: "chown",
+          args: [
+            "-R",
+            "--",
+            `${Option.getOrThrow(previousLogsInfo.uid)}:${Option.getOrThrow(previousLogsInfo.gid)}`,
+            dirs.logsDir,
+          ],
+        },
+      ]);
     }),
   );
 

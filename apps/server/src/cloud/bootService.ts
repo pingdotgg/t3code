@@ -589,6 +589,23 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
             Effect.mapError((cause) => new BootServiceInstallError({ cause })),
           )
         : Option.none<string>();
+    const ownershipTargets = [...new Set([input.baseDir, input.logsDir])];
+    const previousOwnership =
+      supervisor === "s6"
+        ? yield* Effect.forEach(ownershipTargets, (target) =>
+            fs.stat(target).pipe(
+              Effect.map((info) =>
+                Option.all([info.uid, info.gid]).pipe(
+                  Option.map(([userId, groupId]) => ({
+                    target,
+                    owner: `${String(userId)}:${String(groupId)}`,
+                  })),
+                ),
+              ),
+              Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+            ),
+          )
+        : [];
 
     yield* Effect.gen(function* () {
       if (supervisor === "s6" && serviceLauncherPath !== undefined) {
@@ -608,7 +625,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           "-R",
           "--",
           owner,
-          ...new Set([input.baseDir, input.logsDir]),
+          ...ownershipTargets,
         ]);
       }
 
@@ -647,7 +664,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           [Option.isSome(previousUnit) ? "-r" : "-u", unitDir],
         );
       }
-    }).pipe(Effect.tapError(() => rollbackFailedInstall(previousUnit, previousLauncher)));
+    }).pipe(
+      Effect.tapError(() =>
+        rollbackFailedInstall(previousUnit, previousLauncher, previousOwnership),
+      ),
+    );
 
     return plan;
   }).pipe(Effect.withSpan("cloud.boot_service.install"));
@@ -660,6 +681,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const rollbackFailedInstall = Effect.fn("cloud.boot_service.rollback_failed_install")(function* (
     previousUnit: Option.Option<string>,
     previousLauncher: Option.Option<string>,
+    previousOwnership: ReadonlyArray<
+      Option.Option<{ readonly target: string; readonly owner: string }>
+    >,
   ) {
     if (supervisor === "s6" && serviceLauncherPath !== undefined) {
       if (Option.isSome(previousLauncher)) {
@@ -684,6 +708,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         yield* runStep("cleaning up the s6 service", "s6-svc", ["-d", unitDir]).pipe(Effect.ignore);
       }
       yield* fs.remove(definitionPath).pipe(Effect.ignore);
+    }
+    if (supervisor === "s6") {
+      for (const ownership of previousOwnership) {
+        if (Option.isSome(ownership)) {
+          yield* runStep("restoring s6 service state ownership", "chown", [
+            "-R",
+            "--",
+            ownership.value.owner,
+            ownership.value.target,
+          ]).pipe(Effect.ignore);
+        }
+      }
     }
     if (supervisor === "systemd") {
       yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]).pipe(
