@@ -134,10 +134,7 @@ export const makeInMemory = Effect.gen(function* () {
       ) {
         return { job: existing, created: false };
       }
-      if (
-        existing?.status === "succeeded" &&
-        input.trigger === "open_or_push"
-      ) {
+      if (existing?.status === "succeeded" && input.trigger === "open_or_push") {
         return { job: existing, created: false };
       }
       if (

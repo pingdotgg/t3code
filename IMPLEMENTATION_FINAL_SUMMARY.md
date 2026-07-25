@@ -5,19 +5,24 @@
 ### Phase 1: Backend Foundation - COMPLETE ✅
 
 #### 1. API Contracts (packages/contracts/src/orchestration.ts)
+
 ✅ **Command Schemas**
+
 - `ThreadSettleCommand` - User-initiated settle action
 - `ThreadUnsettleCommand` - User-initiated unsettle with "user" reason
 
 ✅ **Event Payload Schemas**
+
 - `ThreadSettledPayload` - Records settled timestamp and updates
 - `ThreadUnsettledPayload` - Records reason ("user" | "activity") and updates
 
 ✅ **Event Schemas**
+
 - `thread.settled` event with payload
 - `thread.unsettled` event with payload
 
 ✅ **Thread Model Updates**
+
 - `OrchestrationThread` includes:
   - `settledOverride?: "settled" | "active" | null`
   - `settledAt?: string | null`
@@ -26,12 +31,14 @@
   - `settledAt?: string | null`
 
 ✅ **Command Unions**
+
 - Added to `DispatchableClientOrchestrationCommand`
 - Added to `ClientOrchestrationCommand`
 
 #### 2. Server Orchestration (apps/server/src/orchestration/)
 
 ✅ **Decider (decider.ts)**
+
 - Helper functions:
   - `QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1000` (2 minute grace window)
   - `isStaleRequestFailureDetail()` - Detects stale approval/input failures
@@ -52,6 +59,7 @@
   - ✅ Emits `thread.unsettled` event
 
 ✅ **Projector (projector.ts)**
+
 - `thread.settled` event reducer:
   - Sets `settledOverride = "settled"`
   - Sets `settledAt` timestamp
@@ -63,16 +71,19 @@
   - Updates `updatedAt`
 
 ✅ **Schemas (Schemas.ts)**
+
 - Exports `ThreadSettledPayload`
 - Exports `ThreadUnsettledPayload`
 
 #### 3. Database Migration
 
 ✅ **Migration 037_ProjectionThreadsSettled.ts**
+
 ```sql
 ALTER TABLE projection_threads ADD COLUMN settled_override TEXT;
 ALTER TABLE projection_threads ADD COLUMN settled_at TEXT;
 ```
+
 - ✅ Created migration file
 - ✅ Registered in Migrations.ts as #37
 - ✅ Uses safe column existence checks
@@ -114,10 +125,12 @@ ALTER TABLE projection_threads ADD COLUMN settled_at TEXT;
 #### 2. Command Dispatchers (packages/client-runtime/src/operations/commands.ts)
 
 ✅ **Type Definitions**
+
 - `SettleThreadInput = CommandInput<"thread.settle">`
 - `UnsettleThreadInput = CommandInput<"thread.unsettle">`
 
 ✅ **Command Functions**
+
 - `settleThread(input)` - Dispatches settle command with generated commandId
 - `unsettleThread(input)` - Dispatches unsettle command with generated commandId
 - Both use Effect.fn for proper effect handling
@@ -129,6 +142,7 @@ ALTER TABLE projection_threads ADD COLUMN settled_at TEXT;
 ## 📋 REMAINING: Phase 3 - macOS Native UI
 
 ### Overview
+
 The macOS app needs UI components and state management for the settled lifecycle. SergeCode uses a Swift/SwiftUI frontend that communicates with the Node.js server via RPC (T3Kit).
 
 ### Required Changes
@@ -136,6 +150,7 @@ The macOS app needs UI components and state management for the settled lifecycle
 #### 1. T3Kit RPC Layer (apps/mac/Sources/T3Kit/)
 
 **ThreadStatusProjection.swift**
+
 - [ ] Add settled state to `T3ProjectedThreadStatus` enum:
   ```swift
   case idle, running, waiting, waitingApproval, error, archived, backgroundWork, settled
@@ -144,10 +159,12 @@ The macOS app needs UI components and state management for the settled lifecycle
 - [ ] Add settled parameter to projection function signature
 
 **ProjectRpc.swift / ServerModels.swift**
+
 - [ ] Add `settledOverride` and `settledAt` fields to thread models
 - [ ] Ensure wire protocol decoding handles settled fields
 
 **New: ThreadCommands.swift** (or extend existing RPC commands)
+
 - [ ] Create `settleThread(threadId:)` RPC method
 - [ ] Create `unsettleThread(threadId:)` RPC method
 - [ ] Both should dispatch commands via orchestration.dispatchCommand
@@ -155,6 +172,7 @@ The macOS app needs UI components and state management for the settled lifecycle
 #### 2. SwiftUI Components (apps/mac/Sources/SergeCodeMac/UI/)
 
 **SidebarView.swift**
+
 - [ ] Add segmented control for Active/Settled filter
   ```swift
   Picker("", selection: $filter) {
@@ -167,12 +185,14 @@ The macOS app needs UI components and state management for the settled lifecycle
 - [ ] Maintain Alpine glass chrome styling
 
 **ThreadRowView.swift** (new or extend existing)
+
 - [ ] Add settled state indicator (SF Symbol badge)
 - [ ] Show settled timestamp when settled
 - [ ] Dim settled threads slightly
 - [ ] Apply SergeCode color scheme
 
 **ThreadContextMenu.swift** (new or extend existing)
+
 - [ ] Add "Settle Thread" menu item (when `canSettle`)
 - [ ] Add "Mark as Active" menu item (when settled)
 - [ ] Wire to T3Kit RPC commands
@@ -181,29 +201,34 @@ The macOS app needs UI components and state management for the settled lifecycle
 #### 3. State Management (apps/mac/Sources/SergeCodeMac/Model/)
 
 **AppModel.swift** (or equivalent)
+
 - [ ] Subscribe to settled state changes from server
 - [ ] Update thread list when settled state changes
 - [ ] Handle settle/unsettle command results
 - [ ] Manage filter state (Active/Settled selection)
 
 **ThreadState.swift**
+
 - [ ] May need to track settled-related UI state
 - [ ] Handle optimistic updates for settle/unsettle
 
 #### 4. UI/UX Design
 
 **Visual Design**
+
 - [ ] SF Symbol for settled state (checkmark.circle.fill?)
 - [ ] Color scheme matching SergeCode Alpine glass
 - [ ] Subtle settled thread dimming (0.7 opacity?)
 - [ ] Smooth animations for state transitions
 
 **Keyboard Shortcuts**
+
 - [ ] Cmd+Shift+S to settle selected thread?
 - [ ] Cmd+Shift+A to activate (unsettle)?
 - [ ] Register shortcuts in keybinding system
 
 **Interactions**
+
 - [ ] Right-click context menu
 - [ ] Keyboard shortcuts
 - [ ] Toolbar buttons (optional)
@@ -214,6 +239,7 @@ The macOS app needs UI components and state management for the settled lifecycle
 ## 📋 REMAINING: Phase 4 - Testing & Polish
 
 ### Integration Testing
+
 - [ ] Test settle/unsettle RPC flow end-to-end
 - [ ] Test thread list filtering switches between Active/Settled
 - [ ] Test settled state persists across app restarts
@@ -221,6 +247,7 @@ The macOS app needs UI components and state management for the settled lifecycle
 - [ ] Test multiple clients: settled state syncs across devices
 
 ### Unit Testing
+
 - [ ] Test `effectiveSettled()` logic with various scenarios
 - [ ] Test `canSettle()` validation edge cases
 - [ ] Test queued turn start detection
@@ -228,18 +255,21 @@ The macOS app needs UI components and state management for the settled lifecycle
 - [ ] Test settled event reducers
 
 ### Performance Testing
+
 - [ ] Benchmark thread list rendering with 100+ threads
 - [ ] Verify no memory leaks in settled state subscriptions
 - [ ] Test database query performance with settled filters
 - [ ] Measure settle command latency
 
 ### User Acceptance Testing
+
 - [ ] Validate settled workflow feels intuitive
 - [ ] Ensure visual design matches SergeCode identity
 - [ ] Test with real user workflows
 - [ ] Gather feedback on auto-settle timing
 
 ### Accessibility
+
 - [ ] VoiceOver announces settled state
 - [ ] Keyboard navigation works for settle/unsettle
 - [ ] Color contrast meets accessibility guidelines
@@ -250,6 +280,7 @@ The macOS app needs UI components and state management for the settled lifecycle
 ## 🎯 Architecture Summary
 
 ### Settled State Model
+
 ```typescript
 type SettledOverride = "settled" | "active" | null;
 
@@ -259,6 +290,7 @@ type SettledOverride = "settled" | "active" | null;
 ```
 
 ### Settled State Priority (Waterfall)
+
 1. **Blocking work** (pending approvals/input, active/starting session, queued turns) → Always active
 2. **User override** (`settledOverride === "settled"`) → Settled
 3. **User pin active** (`settledOverride === "active"`) → Active
@@ -267,6 +299,7 @@ type SettledOverride = "settled" | "active" | null;
 6. **Default** → Active
 
 ### State Transitions
+
 ```
 Active → [User settles] → Settled
 Settled → [User unsettles] → Active (pinned)
@@ -279,6 +312,7 @@ Active → [Auto-settle rules] → Settled (if no pin)
 ## 📊 Files Modified Summary
 
 ### Backend (10 files)
+
 1. `packages/contracts/src/orchestration.ts` - Commands, events, types
 2. `apps/server/src/orchestration/decider.ts` - Command handlers
 3. `apps/server/src/orchestration/projector.ts` - Event reducers
@@ -287,10 +321,12 @@ Active → [Auto-settle rules] → Settled (if no pin)
 6. `apps/server/src/persistence/Migrations/037_ProjectionThreadsSettled.ts` - Migration
 
 ### Client Runtime (2 files)
+
 7. `packages/client-runtime/src/state/threadSettled.ts` - Settled logic (NEW)
 8. `packages/client-runtime/src/operations/commands.ts` - Command dispatchers
 
 ### macOS App (TBD - Phase 3)
+
 9-15. T3Kit RPC, SwiftUI components, state management
 
 ---
@@ -298,6 +334,7 @@ Active → [Auto-settle rules] → Settled (if no pin)
 ## 🚀 Next Steps
 
 ### Immediate: Complete Phase 3 (macOS UI)
+
 1. Add settled fields to Swift models and RPC layer
 2. Create settle/unsettle RPC command methods
 3. Build SwiftUI sidebar with Active/Settled segmented control
@@ -305,6 +342,7 @@ Active → [Auto-settle rules] → Settled (if no pin)
 5. Implement settled state indicators and styling
 
 ### Then: Phase 4 (Testing & Polish)
+
 1. Write integration tests for full lifecycle
 2. Performance benchmarks
 3. User acceptance testing
@@ -328,12 +366,14 @@ Active → [Auto-settle rules] → Settled (if no pin)
 ## 🎓 Implementation Learnings
 
 ### What Worked Well
+
 - Following t3code's implementation patterns closely
 - Using Effect.fn for command handlers
 - Database migration with existence checks
 - Comprehensive settled state validation logic
 
 ### Considerations for Phase 3
+
 - Swift/SwiftUI patterns differ from React/TypeScript
 - RPC layer needs careful type mapping
 - macOS native controls for better UX
@@ -344,11 +384,13 @@ Active → [Auto-settle rules] → Settled (if no pin)
 ## 📈 Estimated Effort Remaining
 
 **Phase 3 (macOS UI)**: ~8-12 hours
+
 - T3Kit RPC layer: 2-3 hours
 - SwiftUI components: 4-6 hours
 - State management: 2-3 hours
 
 **Phase 4 (Testing & Polish)**: ~6-8 hours
+
 - Integration tests: 2-3 hours
 - Performance testing: 1-2 hours
 - UAT & accessibility: 2-3 hours
@@ -361,6 +403,7 @@ Active → [Auto-settle rules] → Settled (if no pin)
 ## ✨ What This Enables
 
 Once complete, SergeCode will have:
+
 - ✅ **Inbox Workflow** - Completed threads can be "settled" to clear active view
 - ✅ **Manual Control** - Users explicitly settle/unsettle threads
 - ✅ **Auto-Settle** - Closed PRs and inactive threads auto-settle

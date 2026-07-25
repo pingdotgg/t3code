@@ -51,17 +51,17 @@ local server without public webhooks.
 
 ## Key Decisions
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| Architecture | Structured server pipeline (Approach B) | Deterministic post path, idempotency, cost control; reuses text-generation patterns |
-| Discovery | Local poll via `gh` CLI/API | Local server usually has no public URL; matches existing GitHub integration |
-| Eligible PRs | All open PRs on project repos (incl. drafts) | External and agent-created PRs both matter |
-| Re-run policy | On open + each new head SHA | Keep review current without concurrent jobs on same SHA |
-| Manual trigger | Poll PR issue comments for `@mentionHandle` | Matches product ask without webhooks |
-| Preferences | Global defaults + per-project overrides | Multi-repo machines need opt-out and different models |
-| Review artifact | GitHub PR review + optional origin-thread fix | Human-visible on GitHub; closes loop with existing Fix Reviews UX |
-| Missing origin thread | Post review only | Avoid inventing threads users did not open |
-| Default enabled | `false` | Avoid surprise token spend and GitHub noise |
+| Decision              | Choice                                        | Rationale                                                                           |
+| --------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Architecture          | Structured server pipeline (Approach B)       | Deterministic post path, idempotency, cost control; reuses text-generation patterns |
+| Discovery             | Local poll via `gh` CLI/API                   | Local server usually has no public URL; matches existing GitHub integration         |
+| Eligible PRs          | All open PRs on project repos (incl. drafts)  | External and agent-created PRs both matter                                          |
+| Re-run policy         | On open + each new head SHA                   | Keep review current without concurrent jobs on same SHA                             |
+| Manual trigger        | Poll PR issue comments for `@mentionHandle`   | Matches product ask without webhooks                                                |
+| Preferences           | Global defaults + per-project overrides       | Multi-repo machines need opt-out and different models                               |
+| Review artifact       | GitHub PR review + optional origin-thread fix | Human-visible on GitHub; closes loop with existing Fix Reviews UX                   |
+| Missing origin thread | Post review only                              | Avoid inventing threads users did not open                                          |
+| Default enabled       | `false`                                       | Avoid surprise token spend and GitHub noise                                         |
 
 ## Architecture Overview
 
@@ -100,15 +100,15 @@ local server without public webhooks.
 
 ### Core modules
 
-| Module | Responsibility |
-|---|---|
-| `AutoReviewSettings` (contracts) | Global + per-project prefs |
-| `AutoReviewPoller` | Periodic scan of enabled projects |
-| `AutoReviewJobStore` | Durable jobs + idempotency |
-| `AutoReviewRunner` | Diff → model → post → optional fix prompt |
-| `GitHubCli` extensions | List repo open PRs, issue comments, submit review |
-| Text generation | `generateAutoReviewFindings` |
-| macOS UI | Preferences + lightweight job status |
+| Module                           | Responsibility                                    |
+| -------------------------------- | ------------------------------------------------- |
+| `AutoReviewSettings` (contracts) | Global + per-project prefs                        |
+| `AutoReviewPoller`               | Periodic scan of enabled projects                 |
+| `AutoReviewJobStore`             | Durable jobs + idempotency                        |
+| `AutoReviewRunner`               | Diff → model → post → optional fix prompt         |
+| `GitHubCli` extensions           | List repo open PRs, issue comments, submit review |
+| Text generation                  | `generateAutoReviewFindings`                      |
+| macOS UI                         | Preferences + lightweight job status              |
 
 **Invariant:** the server owns posting and orchestration. The model only
 produces structured findings; it never has to “remember” to call `gh`.
@@ -117,16 +117,16 @@ produces structured findings; it never has to “remember” to call `gh`.
 
 ### Global defaults (`ServerSettings.autoReview`)
 
-| Field | Default | Meaning |
-|---|---|---|
-| `enabled` | `false` | Master switch; poller no-ops when false |
-| `mode` | `"auto"` | `"auto"` \| `"mention"` when enabled |
-| `modelSelection` | same default as `textGenerationModelSelection` | Provider instance + model |
-| `mentionHandle` | `"surgecode"` | Case-insensitive `@handle` match in PR issue comments |
-| `pollInterval` | `60s` | Bounds: min 15s, max 10m |
-| `autoFixOriginThread` | `true` | After successful review with high-signal findings, prompt origin thread |
-| `maxDiffBytes` | `400_000` | Truncate oversized diffs with disclosure |
-| `concurrency` | `1` | Global in-flight review jobs |
+| Field                 | Default                                        | Meaning                                                                 |
+| --------------------- | ---------------------------------------------- | ----------------------------------------------------------------------- |
+| `enabled`             | `false`                                        | Master switch; poller no-ops when false                                 |
+| `mode`                | `"auto"`                                       | `"auto"` \| `"mention"` when enabled                                    |
+| `modelSelection`      | same default as `textGenerationModelSelection` | Provider instance + model                                               |
+| `mentionHandle`       | `"surgecode"`                                  | Case-insensitive `@handle` match in PR issue comments                   |
+| `pollInterval`        | `60s`                                          | Bounds: min 15s, max 10m                                                |
+| `autoFixOriginThread` | `true`                                         | After successful review with high-signal findings, prompt origin thread |
+| `maxDiffBytes`        | `400_000`                                      | Truncate oversized diffs with disclosure                                |
+| `concurrency`         | `1`                                            | Global in-flight review jobs                                            |
 
 ### Per-project overrides
 
@@ -211,29 +211,29 @@ For each project with resolved `enabled === true` and GitHub source control:
 
 ### Trigger matrix
 
-| Event | `auto` | `mention` |
-|---|---|---|
-| New PR / new head SHA | enqueue | no (unless mention on that SHA) |
-| `@surgecode` comment | no-op for enqueue (SHA already covered) | enqueue |
-| Closed/merged PR | ignore | ignore |
+| Event                 | `auto`                                  | `mention`                       |
+| --------------------- | --------------------------------------- | ------------------------------- |
+| New PR / new head SHA | enqueue                                 | no (unless mention on that SHA) |
+| `@surgecode` comment  | no-op for enqueue (SHA already covered) | enqueue                         |
+| Closed/merged PR      | ignore                                  | ignore                          |
 
 ## Job model and pipeline
 
 ### Job record (durable)
 
-| Field | Notes |
-|---|---|
-| `id` | Job id |
-| `projectId`, `prNumber`, `headSha` | Idempotency key |
-| `trigger` | `"open_or_push"` \| `"mention"` (+ optional `commentId`) |
-| `status` | `queued` → `running` → `succeeded` \| `failed` \| `skipped` |
-| `modelSelection` | Snapshot at enqueue |
-| `findingsCount` | After model step |
-| `reviewUrl` / `githubReviewId` | After successful post |
-| `originThreadId` | If linked |
-| `autoFixEnqueued` | bool |
-| `error` | Last failure detail |
-| `createdAt` / `updatedAt` | |
+| Field                              | Notes                                                       |
+| ---------------------------------- | ----------------------------------------------------------- |
+| `id`                               | Job id                                                      |
+| `projectId`, `prNumber`, `headSha` | Idempotency key                                             |
+| `trigger`                          | `"open_or_push"` \| `"mention"` (+ optional `commentId`)    |
+| `status`                           | `queued` → `running` → `succeeded` \| `failed` \| `skipped` |
+| `modelSelection`                   | Snapshot at enqueue                                         |
+| `findingsCount`                    | After model step                                            |
+| `reviewUrl` / `githubReviewId`     | After successful post                                       |
+| `originThreadId`                   | If linked                                                   |
+| `autoFixEnqueued`                  | bool                                                        |
+| `error`                            | Last failure detail                                         |
+| `createdAt` / `updatedAt`          |                                                             |
 
 Persistence follows existing SQLite / projection patterns under
 `apps/server/src/persistence`. Prefer a dedicated table over stuffing into
@@ -344,21 +344,21 @@ Identity: posts as the authenticated `gh` user. No GitHub App in v1.
 
 ### Failure and edge states
 
-| Situation | Behavior |
-|---|---|
-| Feature disabled | no poll side effects |
-| Non-GitHub project | skipped |
-| Duplicate head SHA | one successful job |
-| New push (new SHA) | new job |
-| Mention on already-reviewed SHA | re-review once per distinct comment id |
-| `gh` not authed / network error | job `failed`; backoff; other projects continue |
-| Rate limit | requeue with exponential backoff |
-| Model unavailable | `failed`; no GitHub post |
-| Inline position invalid | fold into summary; post rest |
-| Server restart mid-job | `running` → requeue on startup (or failed + retry) |
-| PR closed while running | abort post; `skipped` |
-| Concurrent pushes mid-run | finish against original SHA; new SHA gets its own job |
-| Oversized diff | truncated review with disclosure |
+| Situation                       | Behavior                                              |
+| ------------------------------- | ----------------------------------------------------- |
+| Feature disabled                | no poll side effects                                  |
+| Non-GitHub project              | skipped                                               |
+| Duplicate head SHA              | one successful job                                    |
+| New push (new SHA)              | new job                                               |
+| Mention on already-reviewed SHA | re-review once per distinct comment id                |
+| `gh` not authed / network error | job `failed`; backoff; other projects continue        |
+| Rate limit                      | requeue with exponential backoff                      |
+| Model unavailable               | `failed`; no GitHub post                              |
+| Inline position invalid         | fold into summary; post rest                          |
+| Server restart mid-job          | `running` → requeue on startup (or failed + retry)    |
+| PR closed while running         | abort post; `skipped`                                 |
+| Concurrent pushes mid-run       | finish against original SHA; new SHA gets its own job |
+| Oversized diff                  | truncated review with disclosure                      |
 
 ### Observability
 

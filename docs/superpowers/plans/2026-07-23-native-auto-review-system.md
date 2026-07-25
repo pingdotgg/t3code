@@ -25,25 +25,26 @@
 
 ## File map
 
-| Path | Role |
-|---|---|
-| `packages/contracts/src/autoReview.ts` | Settings, findings, job schemas + types |
-| `packages/contracts/src/settings.ts` | Wire `autoReview` into `ServerSettings` / patch |
-| `packages/contracts/src/rpc.ts` | `autoReview.listJobs` / `autoReview.getJob` methods |
-| `packages/shared/src/autoReview.ts` | Pure resolve policy, eligibility, decision mapping, footer, mention match |
-| `apps/server/src/sourceControl/GitHubCli.ts` | List repo open PRs (with head SHA), comments, submit review, PR diff |
-| `apps/server/src/textGeneration/*` | `generateAutoReviewFindings` + prompts across providers |
-| `apps/server/src/autoReview/*` | Job store, runner, poller, origin linker, RPC handlers |
-| `apps/server/src/persistence/Migrations/038_AutoReviewJobs.ts` | Durable job + watermark tables |
-| `apps/mac/Sources/T3Kit/ServerModels.swift` | Decode `autoReview` settings |
-| `apps/mac/Sources/T3Kit/ServerMetaRpc.swift` | Patch encoding for autoReview |
-| `apps/mac/Sources/SergeCodeMac/**` | Settings UI + lightweight job status |
+| Path                                                           | Role                                                                      |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `packages/contracts/src/autoReview.ts`                         | Settings, findings, job schemas + types                                   |
+| `packages/contracts/src/settings.ts`                           | Wire `autoReview` into `ServerSettings` / patch                           |
+| `packages/contracts/src/rpc.ts`                                | `autoReview.listJobs` / `autoReview.getJob` methods                       |
+| `packages/shared/src/autoReview.ts`                            | Pure resolve policy, eligibility, decision mapping, footer, mention match |
+| `apps/server/src/sourceControl/GitHubCli.ts`                   | List repo open PRs (with head SHA), comments, submit review, PR diff      |
+| `apps/server/src/textGeneration/*`                             | `generateAutoReviewFindings` + prompts across providers                   |
+| `apps/server/src/autoReview/*`                                 | Job store, runner, poller, origin linker, RPC handlers                    |
+| `apps/server/src/persistence/Migrations/038_AutoReviewJobs.ts` | Durable job + watermark tables                                            |
+| `apps/mac/Sources/T3Kit/ServerModels.swift`                    | Decode `autoReview` settings                                              |
+| `apps/mac/Sources/T3Kit/ServerMetaRpc.swift`                   | Patch encoding for autoReview                                             |
+| `apps/mac/Sources/SergeCodeMac/**`                             | Settings UI + lightweight job status                                      |
 
 ---
 
 ### Task 1: Contracts — AutoReview settings, findings, jobs
 
 **Files:**
+
 - Create: `packages/contracts/src/autoReview.ts`
 - Modify: `packages/contracts/src/settings.ts`
 - Modify: `packages/contracts/src/rpc.ts` (method name constants only if group is wired later; prefer defining schemas here and RPC in Task 6)
@@ -52,6 +53,7 @@
 - Test: `packages/contracts/src/settings.test.ts` (extend)
 
 **Interfaces:**
+
 - Produces: `AutoReviewMode`, `AutoReviewSettings`, `AutoReviewProjectOverride`, `AutoReviewFindings`, `AutoReviewJob`, `AutoReviewJobStatus`, `DEFAULT_AUTO_REVIEW_SETTINGS`
 
 - [ ] **Step 1: Write failing settings decode tests**
@@ -283,11 +285,13 @@ git commit -m "feat(contracts): add auto-review settings and findings schemas"
 ### Task 2: Pure policy helpers (shared)
 
 **Files:**
+
 - Create: `packages/shared/src/autoReview.ts`
 - Create: `packages/shared/src/autoReview.test.ts`
 - Modify: `packages/shared/package.json` exports if needed (`@t3tools/shared/autoReview`)
 
 **Interfaces:**
+
 - Consumes: contract types from Task 1
 - Produces:
   - `resolveAutoReviewPolicy(global, projectId) → ResolvedAutoReviewPolicy`
@@ -323,7 +327,7 @@ describe("resolveAutoReviewPolicy", () => {
         ...DEFAULT_AUTO_REVIEW_SETTINGS,
         enabled: true,
         projects: {
-          "proj_1": { enabled: false },
+          proj_1: { enabled: false },
         },
       },
       "proj_1",
@@ -350,9 +354,9 @@ describe("matchAutoReviewMention", () => {
 
 describe("mapFindingsToDecision", () => {
   it("maps blocking to request_changes", () => {
-    expect(
-      mapFindingsToDecision([{ severity: "blocking" }, { severity: "nit" }]),
-    ).toBe("request_changes");
+    expect(mapFindingsToDecision([{ severity: "blocking" }, { severity: "nit" }])).toBe(
+      "request_changes",
+    );
   });
   it("maps only nits to comment", () => {
     expect(mapFindingsToDecision([{ severity: "nit" }])).toBe("comment");
@@ -454,11 +458,13 @@ git commit -m "feat(shared): add auto-review policy helpers"
 ### Task 3: GitHub CLI — list open PRs, comments, diff, submit review
 
 **Files:**
+
 - Modify: `apps/server/src/sourceControl/GitHubCli.ts`
 - Modify: `apps/server/src/sourceControl/GitHubCli.test.ts`
 - Optionally extend: `GitHubSourceControlProvider.ts` if provider facade should expose submit (runner may call `GitHubCli` directly for v1)
 
 **Interfaces:**
+
 - Produces:
   - `listRepositoryOpenPullRequests({ cwd, limit? }) → ReadonlyArray<GitHubPullRequestSummary & { headRefOid: string }>`
   - `listPullRequestIssueComments({ cwd, reference, limit? }) → ReadonlyArray<{ id: string; body: string; createdAt: string; authorLogin: string }>`
@@ -469,6 +475,7 @@ git commit -m "feat(shared): add auto-review policy helpers"
 - [ ] **Step 1: Write failing CLI unit tests** with mocked `execute` (follow existing `GitHubCli.test.ts` patterns)
 
 Cover:
+
 1. `listRepositoryOpenPullRequests` calls `gh pr list --state open --json number,title,url,baseRefName,headRefName,headRefOid,state,isDraft,...` **without** `--head`.
 2. `listPullRequestIssueComments` parses issue comments for a PR number.
 3. `submitPullRequestReview` builds the GraphQL or `gh api` payload for summary + inline comments; invalid comments can still be tested at mapping layer in Task 5.
@@ -484,7 +491,7 @@ cd apps/server && vp test src/sourceControl/GitHubCli.test.ts
 Preferred submit path (stable, scriptable):
 
 ```bash
-gh api graphql -f query='...' 
+gh api graphql -f query='...'
 # or multi-step:
 # 1) create pending review
 # 2) add comments
@@ -535,6 +542,7 @@ git commit -m "feat(server): github CLI support for auto-review list and submit"
 ### Task 4: Text generation — structured auto-review findings
 
 **Files:**
+
 - Modify: `apps/server/src/textGeneration/TextGeneration.ts`
 - Modify: `apps/server/src/textGeneration/TextGenerationPrompts.ts`
 - Modify: `apps/server/src/textGeneration/TextGenerationPrompts.test.ts`
@@ -545,6 +553,7 @@ git commit -m "feat(server): github CLI support for auto-review list and submit"
 - Any other providers that implement `TextGeneration["Service"]` (search for `generatePrContent:` and update all)
 
 **Interfaces:**
+
 - Produces:
 
 ```ts
@@ -587,6 +596,7 @@ it("buildAutoReviewFindingsPrompt asks for JSON findings and severity rules", ()
 - [ ] **Step 2: Implement `buildAutoReviewFindingsPrompt`** in `TextGenerationPrompts.ts`
 
 Rules in prompt (must match spec):
+
 - Focus on correctness, security, regressions, missing tests, API breaks
 - Few high-signal comments
 - Paths relative to repo root; lines on RIGHT side of new file when possible
@@ -623,6 +633,7 @@ git commit -m "feat(server): structured auto-review findings generation"
 ### Task 5: Job store, origin linker, and runner
 
 **Files:**
+
 - Create: `apps/server/src/persistence/Migrations/038_AutoReviewJobs.ts`
 - Modify: `apps/server/src/persistence/Migrations.ts` (register migration 38)
 - Create: `apps/server/src/autoReview/AutoReviewJobStore.ts`
@@ -635,6 +646,7 @@ git commit -m "feat(server): structured auto-review findings generation"
 - Create: `apps/server/src/autoReview/reviewPayload.test.ts`
 
 **Interfaces:**
+
 - Consumes: GitHubCli (Task 3), TextGeneration (Task 4), shared policy (Task 2), orchestration dispatch
 - Produces:
   - `AutoReviewJobStore.enqueue|claimNext|update|list|get|requeueRunning`
@@ -705,7 +717,7 @@ linkOriginThread({
   prNumber,
   headBranch,
   candidates,
-}) // first: matching prNumber+open; else matching branch; prefer newest; prefer idle
+}); // first: matching prNumber+open; else matching branch; prefer newest; prefer idle
 ```
 
 - [ ] **Step 4: Implement linker**
@@ -715,6 +727,7 @@ In production, load candidates from projection threads + latest VCS status the s
 - [ ] **Step 5: Write runner tests with fakes**
 
 Cases:
+
 1. Happy path: diff → findings → submit → auto-fix enqueued when important finding + origin linked.
 2. Model failure → status `failed`, **submit not called**.
 3. Empty diff → `skipped` / `empty_diff`.
@@ -779,6 +792,7 @@ git commit -m "feat(server): auto-review job store and runner"
 ### Task 6: Poller, server wiring, and listJobs RPC
 
 **Files:**
+
 - Create: `apps/server/src/autoReview/AutoReviewPoller.ts`
 - Create: `apps/server/src/autoReview/AutoReviewPoller.test.ts`
 - Create: `apps/server/src/autoReview/AutoReviewRpc.ts` (or handlers colocated)
@@ -788,11 +802,13 @@ git commit -m "feat(server): auto-review job store and runner"
 - Wire layers next to other long-running services (similar to VCS status broadcaster / provider maintenance)
 
 **Interfaces:**
+
 - Produces: poller fiber that ticks every `pollInterval`; RPC `autoReview.listJobs`, `autoReview.getJob`
 
 - [ ] **Step 1: Write poller unit tests with fake clock / manual `tick()`**
 
 Cases:
+
 1. Global disabled → no list calls.
 2. Mode auto + new head SHA → enqueue once; second tick no duplicate.
 3. Mode mention + new comment body `@surgecode` → enqueue; watermark advances; same comment no re-enqueue.
@@ -871,6 +887,7 @@ git commit -m "feat(server): auto-review poller and job RPC"
 ### Task 7: macOS settings UI + job status
 
 **Files:**
+
 - Modify: `apps/mac/Sources/T3Kit/ServerModels.swift` — decode `autoReview`
 - Modify: `apps/mac/Sources/T3Kit/ServerMetaRpc.swift` — `ServerSettingsPatch` fields for autoReview
 - Modify: `apps/mac/Sources/SergeCodeMac/Model/LiveBackend.swift` — map settings into app model
@@ -879,6 +896,7 @@ git commit -m "feat(server): auto-review poller and job RPC"
 - Test: Swift tests for decode defaults if patterns exist; otherwise logic tests for view model mapping
 
 **Interfaces:**
+
 - Consumes: `ServerSettings.autoReview`, `autoReview.listJobs`
 - Produces: user can enable/mode/model/auto-fix/per-project override; sees “Reviewing PR #N…”
 
@@ -905,6 +923,7 @@ Defaults must match contracts when keys missing (`enabled = false`, etc.).
 - [ ] **Step 3: UI**
 
 Add an “Auto Review” section in the existing server/settings surface:
+
 - Toggle: Enabled
 - Picker: Mode (Auto on open/push / Only when @mentioned)
 - Model picker: reuse existing provider/model controls if available; otherwise show current `modelSelection` text + note to set via same control as text generation for v1
@@ -936,12 +955,14 @@ git commit -m "feat(mac): auto-review settings and status"
 ### Task 8: End-to-end hardening and verification
 
 **Files:**
+
 - Any gaps found in Tasks 1–7
 - Optional: `docs/integrations/` short note that auto-review exists (only if project docs already cover GitHub features; keep brief)
 
 - [ ] **Step 1: Spec coverage pass**
 
 Manually check design acceptance criteria against code:
+
 - [ ] enable global + per-project
 - [ ] auto mode on open/push
 - [ ] mention mode
@@ -980,18 +1001,18 @@ git commit -m "fix(auto-review): hardening from verification pass"
 
 ## Self-review (plan vs spec)
 
-| Spec requirement | Task |
-|---|---|
-| Settings global + per-project | 1, 2, 7 |
-| Poll discovery via gh | 3, 6 |
-| Mode auto / mention | 2, 6 |
-| Structured findings + model selection | 1, 4 |
-| Server-owned GitHub post | 3, 5 |
-| Origin thread auto-fix | 2, 5 |
-| Idempotency by head SHA | 2, 5, 6 |
-| Job status for clients | 1, 5, 6, 7 |
-| Default off | 1 |
-| Tests + vp check | each task + 8 |
+| Spec requirement                             | Task            |
+| -------------------------------------------- | --------------- |
+| Settings global + per-project                | 1, 2, 7         |
+| Poll discovery via gh                        | 3, 6            |
+| Mode auto / mention                          | 2, 6            |
+| Structured findings + model selection        | 1, 4            |
+| Server-owned GitHub post                     | 3, 5            |
+| Origin thread auto-fix                       | 2, 5            |
+| Idempotency by head SHA                      | 2, 5, 6         |
+| Job status for clients                       | 1, 5, 6, 7      |
+| Default off                                  | 1               |
+| Tests + vp check                             | each task + 8   |
 | No webhooks / GitHub-only / no invent thread | enforced in 5–6 |
 
 **Out of plan (explicit non-goals):** webhooks, multi-SCM, GitHub App identity, mobile settings UI, create-fix-thread-when-missing, manual enqueue button (optional follow-up).

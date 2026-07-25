@@ -9,6 +9,7 @@
 This plan outlines the integration of backend improvements and the new SidebarV2 workflow/inbox system from t3code into SergeCode while preserving SergeCode's unique design language and macOS-native architecture.
 
 **Key Integration Areas**:
+
 1. **Backend: Thread Settled Lifecycle** - Server-backed thread state management
 2. **Backend: Orchestration Engine Improvements** - Enhanced reliability and performance
 3. **Backend: Provider Session Lifecycle** - Stabilized PR status and connection management
@@ -29,6 +30,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 **Changes Required**:
 
 #### Server (apps/server/)
+
 - [ ] **Orchestration Decider** (`src/orchestration/decider.ts`)
   - Add `thread.settle` command handler
   - Add `thread.unsettle` command handler
@@ -57,6 +59,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
   - Add `ThreadUnsettledEvent` schema
 
 #### Client Runtime (packages/client-runtime/)
+
 - [ ] **Thread Settled State** (`src/state/threadSettled.ts`)
   - Create `effectiveSettled()` atom function
   - Implement `canSettle()` validation logic
@@ -69,6 +72,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
   - Wire to orchestration API
 
 **Testing Requirements**:
+
 - Unit tests for settle/unsettle invariants
 - Test cases for blocked settling (active session, pending approvals, queued turns)
 - Integration tests for settled state projection
@@ -78,6 +82,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 ### 1.2 Orchestration Engine Stability
 
 **Key Improvements**:
+
 - Clear stale active turns when session becomes inactive
 - Handle all SDK stream messages properly
 - Improved error handling for provider sessions
@@ -99,6 +104,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
   - Add better error messages for failed operations
 
 **Testing Requirements**:
+
 - Test session state transitions
 - Test stale turn cleanup
 - Test error recovery scenarios
@@ -124,6 +130,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
   - Speed up new-chat propagation and offline catch-up
 
 **Testing Requirements**:
+
 - Test connection probe reliability
 - Test offline mode functionality
 - Test remote environment cleanup
@@ -137,6 +144,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 **Purpose**: Replace traditional sidebar with flat thread list using settled lifecycle for inbox paradigm.
 
 **Key Files**:
+
 - `apps/web/src/components/SidebarV2.tsx` - Main sidebar component
 - `apps/web/src/components/Sidebar.logic.ts` - Business logic
 - `apps/web/src/sidebarProjectGrouping.ts` - Thread grouping
@@ -169,6 +177,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
   - Arrow key navigation
 
 **Design Adaptation for SergeCode**:
+
 - Maintain SergeCode's glass/alpine chrome aesthetic
 - Use SergeCode color palette and typography
 - Keep macOS-native controls where applicable
@@ -181,6 +190,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 **Purpose**: Adapt SidebarV2 concepts to SergeCode's Swift/macOS architecture.
 
 **Current SergeCode Architecture**:
+
 - Swift-based UI (`apps/mac/Sources/`)
 - T3Kit for server communication
 - Native macOS controls
@@ -211,6 +221,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
   - Use native macOS list/outline views
 
 **Testing Requirements**:
+
 - Test thread list rendering performance
 - Test keyboard shortcuts
 - Test context menu actions
@@ -246,6 +257,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 ### 3.1 State Synchronization Optimization
 
 **Key Improvements**:
+
 - Defer active thread cache writes (commit `765e1b5fc`)
 - Speed up new-chat propagation (commit `db4b2d8a0`)
 - Normalize sidebar thread state for faster updates (commit `ae6f9715c`)
@@ -267,6 +279,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 ### 3.2 UI Polish & Animations
 
 **Key Improvements**:
+
 - Stabilize sidebar settling animations (commit `18b468871`)
 - Glass surface opacity controls
 - Dark mode refinements
@@ -290,6 +303,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 ### 4.1 Enhanced Git & VCS
 
 **Improvements**:
+
 - Prevent silent thread branch drift (commit `2d31cb022`)
 - Stabilize PR status lookups (commit `376c149ea`)
 - Preserve worktree metadata during branch sync (commit `3201e00ad`)
@@ -306,6 +320,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 ### 4.2 Provider & Model Improvements
 
 **Key Changes**:
+
 - Better defaults: Claude 1M context, Codex gpt-5.6 (commit `62cf46175`)
 - Worktrees from origin main by default
 - Preserve custom model slugs (commit `fa69f05b6`)
@@ -324,6 +339,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 ### Approach
 
 **Hybrid Parallel + Sequential**:
+
 1. Backend changes can proceed in parallel with frontend exploration
 2. Frontend implementation depends on backend APIs being available
 3. Testing happens continuously throughout
@@ -331,24 +347,28 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 ### Recommended Execution
 
 **Stage 1: Backend Foundation** (Week 1-2)
+
 - Implement thread settled lifecycle (server + client-runtime)
 - Add database migrations
 - Deploy and test API contracts
 - Run full integration tests
 
 **Stage 2: Client Runtime Integration** (Week 2-3)
+
 - Integrate settled state tracking
 - Add thread action commands
 - Test with web app first (faster iteration)
 - Validate state management
 
 **Stage 3: macOS UI Adaptation** (Week 3-4)
+
 - Design Swift UI components
 - Implement thread list view
 - Add context menus and shortcuts
 - Apply SergeCode design language
 
 **Stage 4: Polish & Performance** (Week 4-5)
+
 - Optimize rendering performance
 - Add animations
 - Test edge cases
@@ -425,24 +445,28 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 ## Testing Strategy
 
 ### Unit Tests
+
 - [ ] Thread settled state logic
 - [ ] Command invariants (settle/unsettle)
 - [ ] Thread sorting algorithms
 - [ ] Status indicator resolution
 
 ### Integration Tests
+
 - [ ] Settled lifecycle end-to-end
 - [ ] Thread list updates on state changes
 - [ ] RPC communication (Swift ↔ Node)
 - [ ] Offline mode behavior
 
 ### UI Tests
+
 - [ ] Thread list rendering
 - [ ] Context menu actions
 - [ ] Keyboard navigation
 - [ ] Animation smoothness
 
 ### Manual Testing
+
 - [ ] Settle/unsettle workflow
 - [ ] Thread filtering (active vs settled)
 - [ ] Multi-window behavior (macOS)
@@ -454,24 +478,28 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 ## Success Criteria
 
 ### Backend Integration
+
 - ✅ All settled lifecycle tests passing
 - ✅ Zero data loss in migration
 - ✅ API response time < 100ms
 - ✅ Offline mode working reliably
 
 ### Frontend Integration
+
 - ✅ Thread list renders in < 50ms
 - ✅ Smooth animations (60fps)
 - ✅ All keyboard shortcuts working
 - ✅ Context menus fully functional
 
 ### Design Language
+
 - ✅ Maintains SergeCode visual identity
 - ✅ Passes accessibility audit
 - ✅ Consistent with macOS HIG
 - ✅ User feedback score > 4/5
 
 ### Performance
+
 - ✅ No regressions vs current version
 - ✅ Memory usage stable
 - ✅ CPU usage < 5% idle
@@ -482,22 +510,26 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 ## Rollout Plan
 
 ### Phase 1: Internal Testing
+
 - Deploy to development environment
 - Team dogfooding (1 week)
 - Fix critical bugs
 
 ### Phase 2: Beta Testing
+
 - Deploy behind feature flag
 - Invite beta users (50-100)
 - Collect feedback (2 weeks)
 
 ### Phase 3: Gradual Rollout
+
 - Enable for 10% of users
 - Monitor metrics (1 week)
 - Increase to 50% (1 week)
 - Full rollout (1 week)
 
 ### Phase 4: Cleanup
+
 - Remove old code paths
 - Remove feature flags
 - Update documentation
@@ -535,6 +567,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 - **Week 6**: Gradual rollout & monitoring
 
 **Team Allocation**:
+
 - 1 Backend Engineer (orchestration, database)
 - 1 Frontend Engineer (client-runtime, state management)
 - 1 macOS Engineer (Swift UI, native integration)
@@ -556,16 +589,16 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 
 ## Appendix: Key Commits Reference
 
-| Commit | Description | Priority |
-|--------|-------------|----------|
+| Commit      | Description                                              | Priority |
+| ----------- | -------------------------------------------------------- | -------- |
 | `32c6012da` | Sidebar v2 beta: flat thread list with settled lifecycle | Critical |
-| `ab4a88386` | Remote server updates and standalone service management | High |
-| `db4b2d8a0` | Speed up new-chat propagation and offline catch-up | High |
-| `62cf46175` | Better defaults: Claude 1M context, Codex gpt-5.6 | Medium |
-| `2d31cb022` | Prevent silent thread branch drift and PR fetching | Medium |
-| `765e1b5fc` | Defer active thread cache writes | Medium |
-| `18b468871` | Stabilize sidebar settling animations | Low |
-| `593289c3c` | Refine light-mode sidebar surfaces | Low |
+| `ab4a88386` | Remote server updates and standalone service management  | High     |
+| `db4b2d8a0` | Speed up new-chat propagation and offline catch-up       | High     |
+| `62cf46175` | Better defaults: Claude 1M context, Codex gpt-5.6        | Medium   |
+| `2d31cb022` | Prevent silent thread branch drift and PR fetching       | Medium   |
+| `765e1b5fc` | Defer active thread cache writes                         | Medium   |
+| `18b468871` | Stabilize sidebar settling animations                    | Low      |
+| `593289c3c` | Refine light-mode sidebar surfaces                       | Low      |
 
 ---
 
@@ -576,6 +609,7 @@ This plan outlines the integration of backend improvements and the new SidebarV2
 **Build Commit**: `b44ed835c`
 
 **Key Documentation**:
+
 - t3code API contracts: `packages/contracts/src/orchestration.ts`
 - Thread settled logic: `packages/client-runtime/src/state/threadSettled.ts`
 - SidebarV2 component: `apps/web/src/components/SidebarV2.tsx`

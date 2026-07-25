@@ -62,9 +62,7 @@ export function mapFindingsToDecision(
   return "comment";
 }
 
-export function shouldAutoFixOriginThread(
-  findings: Pick<AutoReviewFindings, "comments">,
-): boolean {
+export function shouldAutoFixOriginThread(findings: Pick<AutoReviewFindings, "comments">): boolean {
   return findings.comments.some(
     (comment) => comment.severity === "blocking" || comment.severity === "important",
   );
@@ -187,9 +185,7 @@ export function linkOriginThread(input: {
   readonly candidates: ReadonlyArray<ThreadLinkCandidate>;
 }): string | null {
   const active = input.candidates.filter(
-    (candidate) =>
-      candidate.projectId === input.projectId &&
-      candidate.deletedAt == null,
+    (candidate) => candidate.projectId === input.projectId && candidate.deletedAt == null,
   );
 
   const byPr = active.filter(
@@ -198,9 +194,7 @@ export function linkOriginThread(input: {
       (candidate.prState === "open" || candidate.prState == null),
   );
   const byBranch = active.filter(
-    (candidate) =>
-      candidate.branch != null &&
-      candidate.branch === input.headBranch,
+    (candidate) => candidate.branch != null && candidate.branch === input.headBranch,
   );
 
   const pool = byPr.length > 0 ? byPr : byBranch;
