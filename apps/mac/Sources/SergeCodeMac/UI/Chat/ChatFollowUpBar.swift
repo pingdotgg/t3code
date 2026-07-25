@@ -3,7 +3,6 @@ import SwiftUI
 
 /// Contextual next-step strip between the timeline and the composer. Shows
 /// at most one suggestion:
-/// - the branch's PR merged → offer to archive the finished chat;
 /// - the branch has an open PR whose review is mid-cycle → report where the
 ///   review stands (bot reviewing, our fix turn running), offer to fix the
 ///   actionable comments when there are any, and plain link to the PR when the
@@ -19,10 +18,7 @@ struct ChatFollowUpBar: View {
         Group {
             if let thread = model.selectedThread, thread.status != .archived {
                 let vcs = model.selectedVcsStatus()
-                if let vcs, vcs.prState == .merged {
-                    archiveSuggestion(thread: thread, vcs: vcs)
-                        .transition(Motion.banner)
-                } else if let vcs {
+                if let vcs, vcs.prState != .merged {
                     reviewFollowUp(thread: thread, vcs: vcs)
                 }
             }
@@ -103,28 +99,6 @@ struct ChatFollowUpBar: View {
             return number
         }
         return "\(number) · \(title)"
-    }
-
-    // MARK: - PR merged → archive
-
-    private func archiveSuggestion(thread: ChatThread, vcs: VcsStatus) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checkmark.seal.fill")
-                .foregroundStyle(AlpineTheme.lavender)
-            Text(vcs.prNumber.map { "PR #\($0) merged" } ?? "PR merged")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Button {
-                Task { await model.archiveThread(thread) }
-            } label: {
-                Label("Archive Chat", systemImage: "archivebox")
-                    .font(.callout)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(.quaternary.opacity(0.3))
     }
 
     // MARK: - Turn done → create PR
