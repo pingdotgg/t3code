@@ -685,7 +685,9 @@ private actor MockState {
 
     private(set) var settings = AppSettings(
         assistantStreaming: true, providerUpdateChecks: true, defaultEnvMode: .local,
-        newWorktreesStartFromOrigin: false, addProjectBaseDirectory: "~/Documents/Dev")
+        newWorktreesStartFromOrigin: false, addProjectBaseDirectory: "~/Documents/Dev",
+        autoReview: AppAutoReviewSettings(
+            modelInstanceID: "provider-codex", modelID: "gpt-5.2-codex"))
 
     func updateSettings(_ new: AppSettings) -> AppSettings {
         settings = new

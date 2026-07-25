@@ -31,13 +31,16 @@ public struct AutoReviewSettingsPatch: Encodable, Sendable {
     /// Milliseconds (DurationFromMillis on the wire).
     public var pollInterval: Double?
     public var autoFixOriginThread: Bool?
+    /// Max review attempts per PR head (1–10).
+    public var maxAttempts: Int?
     /// Whole-map replacement of per-project overrides.
     public var projects: [String: AutoReviewProjectOverridePatch]?
 
     public init(
         enabled: Bool? = nil, mode: String? = nil, modelSelection: ModelSelection? = nil,
         mentionHandle: String? = nil, pollInterval: Double? = nil,
-        autoFixOriginThread: Bool? = nil, projects: [String: AutoReviewProjectOverridePatch]? = nil
+        autoFixOriginThread: Bool? = nil, maxAttempts: Int? = nil,
+        projects: [String: AutoReviewProjectOverridePatch]? = nil
     ) {
         self.enabled = enabled
         self.mode = mode
@@ -45,6 +48,7 @@ public struct AutoReviewSettingsPatch: Encodable, Sendable {
         self.mentionHandle = mentionHandle
         self.pollInterval = pollInterval
         self.autoFixOriginThread = autoFixOriginThread
+        self.maxAttempts = maxAttempts
         self.projects = projects
     }
 }
@@ -162,9 +166,32 @@ public struct AutoReviewJobWire: Decodable, Sendable, Identifiable {
     public var headSha: String
     public var trigger: String
     public var status: String
+    /// 1-based attempt number within a PR-head review chain.
+    public var attempt: Int
     public var findingsCount: Int?
     public var reviewUrl: String?
     public var autoFixEnqueued: Bool
     public var error: String?
     public var updatedAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id, projectId, prNumber, headSha, trigger, status, attempt, findingsCount,
+            reviewUrl, autoFixEnqueued, error, updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        projectId = try c.decode(String.self, forKey: .projectId)
+        prNumber = try c.decode(Int.self, forKey: .prNumber)
+        headSha = try c.decode(String.self, forKey: .headSha)
+        trigger = try c.decode(String.self, forKey: .trigger)
+        status = try c.decode(String.self, forKey: .status)
+        attempt = try c.decode(Int.self, forKey: .attempt, default: 1)
+        findingsCount = try c.decodeIfPresent(Int.self, forKey: .findingsCount)
+        reviewUrl = try c.decodeIfPresent(String.self, forKey: .reviewUrl)
+        autoFixEnqueued = try c.decode(Bool.self, forKey: .autoFixEnqueued)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        updatedAt = try c.decode(String.self, forKey: .updatedAt)
+    }
 }

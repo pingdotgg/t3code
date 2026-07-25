@@ -381,6 +381,8 @@ public struct AutoReviewSettings: Decodable, Sendable {
     public var autoFixOriginThread: Bool
     public var maxDiffBytes: Int
     public var concurrency: Int
+    /// Max review attempts per PR head before the server stops retrying (1–10).
+    public var maxAttempts: Int
     /// Per-project overrides — opaque for v1; full UI can refine later.
     public var projects: JSONValue
 
@@ -393,6 +395,7 @@ public struct AutoReviewSettings: Decodable, Sendable {
         autoFixOriginThread: true,
         maxDiffBytes: 400_000,
         concurrency: 1,
+        maxAttempts: 2,
         projects: .object([:])
     )
 
@@ -405,6 +408,7 @@ public struct AutoReviewSettings: Decodable, Sendable {
         autoFixOriginThread: Bool,
         maxDiffBytes: Int,
         concurrency: Int,
+        maxAttempts: Int,
         projects: JSONValue
     ) {
         self.enabled = enabled
@@ -415,12 +419,13 @@ public struct AutoReviewSettings: Decodable, Sendable {
         self.autoFixOriginThread = autoFixOriginThread
         self.maxDiffBytes = maxDiffBytes
         self.concurrency = concurrency
+        self.maxAttempts = maxAttempts
         self.projects = projects
     }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, mode, modelSelection, mentionHandle, pollInterval, autoFixOriginThread,
-            maxDiffBytes, concurrency, projects
+            maxDiffBytes, concurrency, maxAttempts, projects
     }
 
     public init(from decoder: Decoder) throws {
@@ -434,6 +439,7 @@ public struct AutoReviewSettings: Decodable, Sendable {
         autoFixOriginThread = try c.decode(Bool.self, forKey: .autoFixOriginThread, default: true)
         maxDiffBytes = try c.decode(Int.self, forKey: .maxDiffBytes, default: 400_000)
         concurrency = try c.decode(Int.self, forKey: .concurrency, default: 1)
+        maxAttempts = try c.decode(Int.self, forKey: .maxAttempts, default: 2)
         projects = try c.decode(JSONValue.self, forKey: .projects, default: .object([:]))
     }
 }
