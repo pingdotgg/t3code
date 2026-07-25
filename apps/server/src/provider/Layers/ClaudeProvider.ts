@@ -39,6 +39,12 @@ import {
 } from "../providerSnapshot.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { getClaudexModelCapabilities, withClaudexModelCapabilities } from "../claudexModels.ts";
+import {
+  getClaudeDiscoveredModelCapabilities,
+  mergeClaudeDiscoveredModels,
+  parseClaudeSdkDiscoveredModels,
+  registerClaudeDiscoveredModels,
+} from "../claudeModelDiscovery.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -324,8 +330,14 @@ function supportsClaudeOpus47(version: string | null | undefined): boolean {
 
 function getBuiltInClaudeModelsForVersion(
   version: string | null | undefined,
+  additionalSlugs?: ReadonlySet<string>,
 ): ReadonlyArray<ServerProviderModel> {
   return BUILT_IN_MODELS.filter((model) => {
+    // Models the CLI itself reported via SDK discovery are supported
+    // regardless of the curated version gates below.
+    if (additionalSlugs?.has(model.slug)) {
+      return true;
+    }
     if (model.slug === "claude-fable-5") {
       return supportsClaudeFable5(version);
     }
@@ -359,6 +371,7 @@ export function getClaudeModelCapabilities(model: string | null | undefined): Mo
   return (
     BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
     getClaudexModelCapabilities(slug) ??
+    getClaudeDiscoveredModelCapabilities(slug) ??
     DEFAULT_CLAUDE_MODEL_CAPABILITIES
   );
 }
@@ -538,6 +551,12 @@ type ClaudeCapabilitiesProbe = {
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  /**
+   * Models the installed Claude Code CLI reports as supported, parsed from
+   * the SDK initialization result. May be empty or absent when the CLI does
+   * not expose a model list.
+   */
+  readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
 };
 
 function parseClaudeInitializationCommands(
@@ -663,6 +682,9 @@ const probeClaudeCapabilities = (
         subscriptionType: account?.subscriptionType,
         tokenSource: account?.tokenSource,
         slashCommands: parseClaudeInitializationCommands(init.commands),
+        discoveredModels: parseClaudeSdkDiscoveredModels(
+          (init as { readonly models?: unknown }).models,
+        ),
       } satisfies ClaudeCapabilitiesProbe;
     });
   }).pipe(
@@ -842,12 +864,40 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
+  // Models the CLI reported via SDK discovery are merged over the version-gated
+  // built-ins: discovered-only models (e.g. a newly released Opus) are appended,
+  // and a built-in the CLI reports is included even if its curated version gate
+  // has not caught up yet. Registering the discovered capabilities keeps the
+  // synchronous runtime lookup (`getClaudeModelCapabilities`) in sync with the
+  // options the UI offered for these models.
+  const discoveredModels = capabilities?.discoveredModels ?? [];
+  if (discoveredModels.length > 0) {
+    yield* Effect.sync(() => registerClaudeDiscoveredModels(discoveredModels));
+  }
+  const resolvedModels =
+    discoveredModels.length > 0
+      ? withClaudexModelCapabilities(
+          providerModelsFromSettings(
+            mergeClaudeDiscoveredModels(
+              getBuiltInClaudeModelsForVersion(
+                parsedVersion,
+                new Set(discoveredModels.map((model) => model.slug)),
+              ),
+              discoveredModels,
+            ),
+            identity.provider,
+            claudeSettings.customModels,
+            DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+          ),
+        )
+      : models;
+
   if (!capabilities) {
     return buildServerProvider({
       presentation: presentationFromIdentity(identity),
       enabled: claudeSettings.enabled,
       checkedAt,
-      models,
+      models: resolvedModels,
       slashCommands: dedupedSlashCommands,
       probe: {
         installed: true,
@@ -869,7 +919,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     presentation: presentationFromIdentity(identity),
     enabled: claudeSettings.enabled,
     checkedAt,
-    models,
+    models: resolvedModels,
     slashCommands: dedupedSlashCommands,
     probe: {
       installed: true,
