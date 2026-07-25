@@ -19,6 +19,51 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+interface PullRequestRepositoryContext {
+  readonly baseRepository: string;
+  readonly headRepository: string;
+}
+
+interface GitHubRepositoryCoordinate {
+  readonly host: string;
+  readonly owner: string;
+  readonly name: string;
+}
+
+function parseGitHubRepositoryCoordinate(
+  repository: string,
+): GitHubRepositoryCoordinate | undefined {
+  const parts = repository.split("/").filter((part) => part.length > 0);
+  if (parts.length === 2) {
+    const [owner, name] = parts;
+    return owner && name ? { host: "github.com", owner, name } : undefined;
+  }
+  if (parts.length === 3) {
+    const [host, owner, name] = parts;
+    return host && owner && name ? { host, owner, name } : undefined;
+  }
+  return undefined;
+}
+
+function formatGitHubRepositoryCoordinate(coordinate: GitHubRepositoryCoordinate): string {
+  return `${coordinate.host}/${coordinate.owner}/${coordinate.name}`;
+}
+
+function qualifyPullRequestHead(
+  context: PullRequestRepositoryContext,
+  headSelector: string,
+): string {
+  if (
+    context.baseRepository.toLowerCase() === context.headRepository.toLowerCase() ||
+    /^[^:/\s]+:.+$/u.test(headSelector)
+  ) {
+    return headSelector;
+  }
+
+  const head = parseGitHubRepositoryCoordinate(context.headRepository);
+  return head ? `${head.owner}:${headSelector}` : headSelector;
+}
+
 const gitHubCliFailureFields = {
   command: Schema.Literal("gh"),
   cwd: Schema.String,
@@ -74,6 +119,22 @@ export class GitHubCliCommandError extends Schema.TaggedErrorClass<GitHubCliComm
 
   override get message(): string {
     return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
+export class GitHubRepositoryContextDecodeError extends Schema.TaggedErrorClass<GitHubRepositoryContextDecodeError>()(
+  "GitHubRepositoryContextDecodeError",
+  {
+    command: Schema.Literal("gh"),
+    cwd: Schema.String,
+  },
+) {
+  get detail(): string {
+    return "GitHub CLI returned invalid pull request repository context.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in resolvePullRequestRepositoryContext: ${this.detail}`;
   }
 }
 
@@ -140,6 +201,7 @@ export const GitHubCliError = Schema.Union([
   GitHubCliAuthenticationError,
   GitHubPullRequestNotFoundError,
   GitHubCliCommandError,
+  GitHubRepositoryContextDecodeError,
   GitHubPullRequestListDecodeError,
   GitHubChangeRequestListDecodeError,
   GitHubPullRequestDecodeError,
@@ -236,6 +298,7 @@ export class GitHubCli extends Context.Service<
       readonly title: string;
       readonly bodyFile: string;
       readonly repository?: string;
+      readonly headRepository?: string;
     }) => Effect.Effect<void, GitHubCliError>;
 
     readonly getDefaultBranch: (input: {
@@ -321,6 +384,62 @@ export const make = Effect.gen(function* () {
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       })
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+
+  const resolvePullRequestRepositoryContext = Effect.fn(
+    "GitHubCli.resolvePullRequestRepositoryContext",
+  )(function* (input: {
+    readonly cwd: string;
+    readonly repository?: string;
+    readonly headRepository?: string;
+  }) {
+    const explicitBase = input.repository
+      ? parseGitHubRepositoryCoordinate(input.repository)
+      : undefined;
+    const explicitHead = input.headRepository
+      ? parseGitHubRepositoryCoordinate(input.headRepository)
+      : undefined;
+
+    if (explicitBase && explicitHead) {
+      return {
+        baseRepository: formatGitHubRepositoryCoordinate(explicitBase),
+        headRepository: formatGitHubRepositoryCoordinate(explicitHead),
+      };
+    }
+
+    const result = yield* execute({
+      cwd: input.cwd,
+      args: [
+        "repo",
+        "view",
+        ...(input.headRepository ? [input.headRepository] : []),
+        "--json",
+        "nameWithOwner,parent,url",
+        "--jq",
+        '. as $repo | (.url | capture("^https?://(?<host>[^/]+)").host) as $host | [if $repo.parent then "\\($host)/\\($repo.parent.owner.login)/\\($repo.parent.name)" else "\\($host)/\\($repo.nameWithOwner)" end, "\\($host)/\\($repo.nameWithOwner)"] | @tsv',
+      ],
+    });
+    const [resolvedBaseValue, resolvedHeadValue] = result.stdout.trim().split("\t");
+    const resolvedBase = resolvedBaseValue
+      ? parseGitHubRepositoryCoordinate(resolvedBaseValue)
+      : undefined;
+    const resolvedHead = resolvedHeadValue
+      ? parseGitHubRepositoryCoordinate(resolvedHeadValue)
+      : undefined;
+    const base = explicitBase ?? resolvedBase;
+    const head = explicitHead ?? resolvedHead;
+
+    if (!base || !head) {
+      return yield* new GitHubRepositoryContextDecodeError({
+        command: "gh",
+        cwd: input.cwd,
+      });
+    }
+
+    return {
+      baseRepository: formatGitHubRepositoryCoordinate(base),
+      headRepository: formatGitHubRepositoryCoordinate(head),
+    };
+  });
 
   return GitHubCli.of({
     execute,
@@ -427,22 +546,63 @@ export const make = Effect.gen(function* () {
         ),
       ),
     createPullRequest: (input) =>
-      execute({
-        cwd: input.cwd,
-        args: [
-          "pr",
-          "create",
-          "--base",
-          input.baseBranch,
-          "--head",
-          input.headSelector,
-          "--title",
-          input.title,
-          "--body-file",
-          input.bodyFile,
-          ...(input.repository ? ["--repo", input.repository] : []),
-        ],
-      }).pipe(Effect.asVoid),
+      resolvePullRequestRepositoryContext(input).pipe(
+        Effect.flatMap((context) => {
+          const base = parseGitHubRepositoryCoordinate(context.baseRepository);
+          const head = parseGitHubRepositoryCoordinate(context.headRepository);
+          if (
+            base &&
+            head &&
+            context.baseRepository.toLowerCase() !== context.headRepository.toLowerCase()
+          ) {
+            const qualifiedHead = qualifyPullRequestHead(context, input.headSelector);
+            const qualifiedHeadMatch = /^([^:/\s]+):(.+)$/u.exec(qualifiedHead);
+            const headOwner = qualifiedHeadMatch?.[1] ?? head.owner;
+            const headBranch = qualifiedHeadMatch?.[2] ?? qualifiedHead;
+            return execute({
+              cwd: input.cwd,
+              args: [
+                "api",
+                "--hostname",
+                base.host,
+                `repos/${base.owner}/${base.name}/pulls`,
+                "--method",
+                "POST",
+                "-f",
+                `title=${input.title}`,
+                "-f",
+                `head=${headOwner}:${headBranch}`,
+                "-f",
+                `head_repo=${head.name}`,
+                "-f",
+                `base=${input.baseBranch}`,
+                "-F",
+                `body=@${input.bodyFile}`,
+                "--silent",
+              ],
+            });
+          }
+
+          return execute({
+            cwd: input.cwd,
+            args: [
+              "pr",
+              "create",
+              "--base",
+              input.baseBranch,
+              "--head",
+              qualifyPullRequestHead(context, input.headSelector),
+              "--title",
+              input.title,
+              "--body-file",
+              input.bodyFile,
+              "--repo",
+              context.baseRepository,
+            ],
+          });
+        }),
+        Effect.asVoid,
+      ),
     getDefaultBranch: (input) =>
       execute({
         cwd: input.cwd,
