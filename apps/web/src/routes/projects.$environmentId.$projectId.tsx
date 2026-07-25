@@ -967,13 +967,10 @@ function ProjectRouteView() {
             ) : projectDetails.data ? (
               <>
                 <section className="px-4 sm:px-5">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                    <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">
+                  <div className="flex min-w-0 items-center justify-between gap-4">
+                    <h1 className="min-w-0 flex-1 truncate text-2xl font-semibold tracking-tight">
                       {title}
                     </h1>
-                    <span className="text-xl text-muted-foreground/45" aria-hidden="true">
-                      /
-                    </span>
                     {projectLocations.length > 1 ? (
                       <Select
                         value={`${project.environmentId}:${project.id}`}
@@ -1023,7 +1020,7 @@ function ProjectRouteView() {
                         </SelectPopup>
                       </Select>
                     ) : (
-                      <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                      <div className="flex min-w-0 shrink-0 items-center gap-1.5 text-sm font-medium text-muted-foreground">
                         <ServerIcon className="size-3.5 shrink-0" />
                         <span className="truncate">{currentEnvironmentLabel}</span>
                       </div>
