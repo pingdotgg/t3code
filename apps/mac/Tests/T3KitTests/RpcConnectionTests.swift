@@ -260,3 +260,34 @@ struct RpcConnectionOrderingTests {
         await conn.disconnect()
     }
 }
+
+@Suite("RpcConnection lifecycle")
+struct RpcConnectionLifecycleTests {
+
+    @Test("dropping a connected connection without disconnect() reaches deinit")
+    func dropWithoutDisconnectDeinitializes() async throws {
+        let mock = MockWebSocket()
+        weak var weakConnection: RpcConnection?
+        do {
+            let conn = RpcConnection(url: dummyURL)
+            weakConnection = conn
+            await conn.connect(socket: mock)
+            // Let the loop tasks start; they must not retain the actor.
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        // Previously the loop tasks' `await self?.receiveLoop()`-style calls
+        // promoted the weak capture for each loop's indefinite lifetime, so
+        // the actor leaked and deinit never ran. With static loop bodies and
+        // weak per-message hops, deallocation follows as soon as the
+        // do-scope's `conn` goes away; poll rather than sleep a fixed
+        // interval to avoid wall-clock flakiness.
+        var deallocated = false
+        for _ in 0..<30 where !deallocated {
+            if weakConnection == nil { deallocated = true; break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(deallocated)
+        mock.cancel(with: .goingAway, reason: nil)
+    }
+}
