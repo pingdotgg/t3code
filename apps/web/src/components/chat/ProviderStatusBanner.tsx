@@ -1,6 +1,7 @@
 import { type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
+import { cn } from "~/lib/utils";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -32,6 +33,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   }
 
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
+  const variant = status.status === "warning" ? "warning" : "error";
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
   const title = isUnauthenticated
     ? `${providerName} is unauthenticated`
@@ -45,12 +47,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
-      {/*
-       * This banner is an overlay painted on top of the message timeline, so it
-       * needs `alert-glass` — the alert variants alone are a 4% tint with no
-       * surface behind them, which lets the transcript read through the copy.
-       */}
-      <Alert variant={status.status === "warning" ? "warning" : "error"} className="alert-glass">
+      <Alert variant={variant} className="alert-glass">
         <InfoIcon aria-hidden />
         <AlertTitle>{title}</AlertTitle>
         <AlertDescription>
@@ -68,7 +65,15 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
             aria-label={`Dismiss ${providerName} provider ${status.status}`}
             onClick={onDismiss}
           >
-            <XIcon aria-hidden className="size-3.5" />
+            {/* Ghost buttons force svgs to muted-foreground unless the icon
+                sets its own text colour, which would drop the alert's tint. */}
+            <XIcon
+              aria-hidden
+              className={cn(
+                "size-3.5",
+                variant === "warning" ? "text-warning" : "text-destructive",
+              )}
+            />
           </Button>
         </AlertAction>
       </Alert>
