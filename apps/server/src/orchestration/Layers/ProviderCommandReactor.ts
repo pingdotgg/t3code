@@ -2,8 +2,10 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  type MessageId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationMessage,
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
@@ -12,7 +14,14 @@ import {
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
+import {
+  type AutoEffortState,
+  autoEffortAllowedChoices,
+  resolveAutoEffortSelection,
+  resolveAutoEffortState,
+} from "@t3tools/shared/autoEffort";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import { createModelSelection } from "@t3tools/shared/model";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -29,11 +38,15 @@ import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
-import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
+import {
+  type ReasoningEffortConversationEntry,
+  TextGeneration,
+} from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { TurnResponder } from "../Services/TurnResponder.ts";
 import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
@@ -85,6 +98,14 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
+/**
+ * The auto-effort reviewer runs before the turn starts, so a stuck CLI would
+ * stall the whole turn. Give up well before the provider's own timeout and use
+ * the clamped default effort instead.
+ */
+const AUTO_EFFORT_REVIEW_TIMEOUT = Duration.seconds(45);
+/** How many earlier messages the reviewer sees as thread context. */
+const AUTO_EFFORT_CONTEXT_MESSAGES = 6;
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
 
@@ -100,6 +121,27 @@ export function providerErrorLabelFromInstanceHint(input: {
 }): string {
   return providerErrorLabel(
     input.instanceId ?? input.modelSelectionInstanceId ?? input.sessionProvider,
+  );
+}
+
+/**
+ * Model selection for the auto-effort reviewer.
+ *
+ * The reviewer runs on the thread's own provider instance and model, so a thread
+ * that works can always be reviewed — pointing it at the configured
+ * text-generation provider instead would fail whenever that CLI is not
+ * installed. It runs at the cheapest effort the model offers because sizing one
+ * request is a classification, not the work itself.
+ */
+export function buildAutoEffortReviewerSelection(
+  modelSelection: ModelSelection,
+  state: Pick<AutoEffortState, "descriptorId" | "ladder">,
+): ModelSelection {
+  const cheapest = state.ladder[0]?.id;
+  return createModelSelection(
+    modelSelection.instanceId,
+    modelSelection.model,
+    cheapest !== undefined ? [{ id: state.descriptorId, value: cheapest }] : [],
   );
 }
 
@@ -163,6 +205,27 @@ function stalePendingRequestDetail(
   return `Stale pending ${requestKind} request: ${requestId}. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.`;
 }
 
+/**
+ * Thread context handed to the auto-effort reviewer: the turns before the new
+ * request, oldest last-first trimmed to the most recent few, so the reviewer can
+ * judge the incremental work rather than re-reading the whole thread.
+ */
+export function buildAutoEffortConversationContext(input: {
+  readonly messages: ReadonlyArray<OrchestrationMessage>;
+  readonly currentMessageId: MessageId;
+  readonly limit?: number;
+}): ReadonlyArray<ReasoningEffortConversationEntry> {
+  const currentIndex = input.messages.findIndex((entry) => entry.id === input.currentMessageId);
+  const earlier = currentIndex >= 0 ? input.messages.slice(0, currentIndex) : input.messages;
+  return earlier
+    .filter(
+      (entry): entry is OrchestrationMessage & { role: "user" | "assistant" } =>
+        (entry.role === "user" || entry.role === "assistant") && entry.text.trim().length > 0,
+    )
+    .slice(-(input.limit ?? AUTO_EFFORT_CONTEXT_MESSAGES))
+    .map((entry) => ({ role: entry.role, text: entry.text }));
+}
+
 function buildGeneratedWorktreeBranchName(raw: string): string {
   const normalized = raw
     .trim()
@@ -195,6 +258,7 @@ const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
+  const turnResponder = yield* TurnResponder;
   const serverSettingsService = yield* ServerSettingsService;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
@@ -768,6 +832,109 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const resolveModelCapabilities = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
+    const providers = yield* providerRegistry.getProviders;
+    return (
+      providers
+        .find((candidate) => candidate.instanceId === modelSelection.instanceId)
+        ?.models.find((model) => model.slug === modelSelection.model)?.capabilities ?? null
+    );
+  });
+
+  const reviewReasoningEffort = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly cwd: string;
+    readonly messageText: string;
+    readonly attachments?: ReadonlyArray<ChatAttachment>;
+    readonly conversation: ReadonlyArray<ReasoningEffortConversationEntry>;
+    readonly allowedEfforts: ReadonlyArray<{ readonly id: string; readonly label: string }>;
+    readonly modelSelection: ModelSelection;
+  }) {
+    return yield* textGeneration
+      .selectReasoningEffort({
+        cwd: input.cwd,
+        message: input.messageText,
+        ...(input.conversation.length > 0 ? { conversation: input.conversation } : {}),
+        ...(input.attachments !== undefined && input.attachments.length > 0
+          ? { attachments: input.attachments }
+          : {}),
+        allowedEfforts: input.allowedEfforts,
+        modelSelection: input.modelSelection,
+      })
+      .pipe(
+        Effect.timeoutOption(AUTO_EFFORT_REVIEW_TIMEOUT),
+        Effect.map(Option.getOrNull),
+        // A missing or broken reviewer must never block a turn: the caller
+        // falls back to the clamped default effort.
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider command reactor failed to review reasoning effort", {
+            threadId: input.threadId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(null)),
+        ),
+      );
+  });
+
+  /**
+   * Replace an `auto` reasoning effort with a concrete one for this turn.
+   *
+   * Returns `undefined` when the thread is not on auto effort, which tells the
+   * caller to leave the requested model selection untouched.
+   */
+  const resolveAutoEffortForTurn = Effect.fn("resolveAutoEffortForTurn")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly modelSelection: ModelSelection;
+    readonly cwd: string;
+    readonly messageText: string;
+    readonly attachments?: ReadonlyArray<ChatAttachment>;
+    readonly conversation: ReadonlyArray<ReasoningEffortConversationEntry>;
+  }) {
+    const caps = yield* resolveModelCapabilities(input.modelSelection);
+    const state = resolveAutoEffortState({ caps, selections: input.modelSelection.options });
+    if (!state?.active) {
+      return undefined;
+    }
+
+    const allowedEfforts = autoEffortAllowedChoices(state).map((option) => ({
+      id: option.id,
+      label: option.label,
+    }));
+    // A one-rung window has nothing to decide, so skip the reviewer spend.
+    const reviewed =
+      allowedEfforts.length < 2
+        ? null
+        : yield* reviewReasoningEffort({
+            threadId: input.threadId,
+            cwd: input.cwd,
+            messageText: input.messageText,
+            ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
+            conversation: input.conversation,
+            allowedEfforts,
+            modelSelection: buildAutoEffortReviewerSelection(input.modelSelection, state),
+          });
+
+    const resolved = resolveAutoEffortSelection({
+      modelSelection: input.modelSelection,
+      caps,
+      requestedEffort: reviewed?.effort ?? null,
+    });
+    if (!resolved) {
+      return undefined;
+    }
+
+    yield* Effect.logDebug("auto effort resolved for turn", {
+      threadId: input.threadId,
+      effort: resolved.effort,
+      ceiling: resolved.ceiling,
+      floor: resolved.floor,
+      requestedEffort: resolved.requested,
+      clampedToLimit: resolved.clamped,
+      reason: reviewed?.reason ?? null,
+    });
+
+    return resolved.modelSelection;
+  });
+
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
@@ -794,15 +961,16 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const project = yield* resolveProject(thread.projectId);
+    const generationCwd =
+      resolveThreadWorkspaceCwd({
+        thread,
+        projects: project ? [project] : [],
+      }) ?? process.cwd();
+
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
     if (isFirstUserMessageTurn) {
-      const project = yield* resolveProject(thread.projectId);
-      const generationCwd =
-        resolveThreadWorkspaceCwd({
-          thread,
-          projects: project ? [project] : [],
-        }) ?? process.cwd();
       const generationInput = {
         messageText: message.text,
         ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
@@ -861,13 +1029,26 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    // Auto effort resolves before the session is configured so both the session
+    // and the turn agree on the effort the reviewer picked.
+    const autoEffortModelSelection = yield* resolveAutoEffortForTurn({
+      threadId: event.payload.threadId,
+      modelSelection: event.payload.modelSelection ?? thread.modelSelection,
+      cwd: generationCwd,
+      messageText: message.text,
+      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+      conversation: buildAutoEffortConversationContext({
+        messages: thread.messages,
+        currentMessageId: event.payload.messageId,
+      }),
+    });
+    const modelSelectionForTurn = autoEffortModelSelection ?? event.payload.modelSelection;
+
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-      ...(event.payload.modelSelection !== undefined
-        ? { modelSelection: event.payload.modelSelection }
-        : {}),
+      ...(modelSelectionForTurn !== undefined ? { modelSelection: modelSelectionForTurn } : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
     }).pipe(
@@ -878,6 +1059,16 @@ const make = Effect.gen(function* () {
     if (Option.isNone(sendTurnRequest)) {
       return;
     }
+
+    // Label the messages this turn produces: the composer can change model or
+    // effort between turns, and auto effort is only resolved here.
+    yield* turnResponder.record({
+      threadId: event.payload.threadId,
+      responder: {
+        modelSelection: sendTurnRequest.value.modelSelection ?? thread.modelSelection,
+        ...(autoEffortModelSelection !== undefined ? { autoEffort: true } : {}),
+      },
+    });
 
     yield* providerService
       .sendTurn(sendTurnRequest.value)

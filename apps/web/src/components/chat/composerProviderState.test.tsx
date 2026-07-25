@@ -89,6 +89,25 @@ describe("getComposerProviderState", () => {
     });
   });
 
+  it("carries an auto effort selection and its limits through dispatch", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("effort", [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High", isDefault: true },
+        ]),
+      ]),
+      modelOptions: selections(["effort", "auto"], ["effortAutoCeiling", "medium"]),
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(
+      selections(["effort", "auto"], ["effortAutoFloor", "low"], ["effortAutoCeiling", "medium"]),
+    );
+  });
+
   it("lets selections override defaults and propagates them through dispatch", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,

@@ -5,10 +5,16 @@ import type {
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import {
+  AUTO_EFFORT_VALUE,
+  getAutoEffortAwareDescriptors,
+  isAutoEffortBoundDescriptor,
+  isEffortOptionDescriptor,
+  reconcileAutoEffortLimitDescriptors,
+} from "@t3tools/shared/autoEffort";
+import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
-  getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 
 const PROVIDER_OPTION_EVENT_PREFIX = "provider-option:";
@@ -52,16 +58,29 @@ export function resolveProviderOptionDescriptors(input: {
   if (!input.capabilities) {
     return [];
   }
-  return getProviderOptionDescriptors({
+  return getAutoEffortAwareDescriptors({
     caps: input.capabilities,
     selections: input.selections,
   });
 }
 
+function isAutoEffortSelected(descriptors: ReadonlyArray<ProviderOptionDescriptor>): boolean {
+  const effortDescriptor = descriptors.find(isEffortOptionDescriptor);
+  return (
+    effortDescriptor !== undefined &&
+    getProviderOptionCurrentValue(effortDescriptor) === AUTO_EFFORT_VALUE
+  );
+}
+
 export function buildProviderOptionMenuActions(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
 ): ReadonlyArray<MenuAction> {
-  return descriptors.map((descriptor) => {
+  // The limits only mean something while Auto is picked, so they stay out of the
+  // menu otherwise even when previously configured limits are still stored.
+  const visible = isAutoEffortSelected(descriptors)
+    ? descriptors
+    : descriptors.filter((descriptor) => !isAutoEffortBoundDescriptor(descriptor));
+  return visible.map((descriptor) => {
     const currentValue =
       descriptor.type === "boolean"
         ? (descriptor.currentValue ?? false)
@@ -100,6 +119,10 @@ export function providerOptionsConfigurationLabel(
     if (descriptor.type === "boolean") {
       return descriptor.currentValue ? [descriptor.label] : [];
     }
+    // The auto limits are configuration for Auto, not traits of their own.
+    if (isAutoEffortBoundDescriptor(descriptor)) {
+      return [];
+    }
     const label = getProviderOptionCurrentLabel(descriptor);
     return label ? [label] : [];
   });
@@ -137,5 +160,9 @@ export function applyProviderOptionMenuEvent(
       : candidate,
   ) as ReadonlyArray<ProviderOptionDescriptor>;
 
-  return buildProviderOptionSelectionsFromDescriptors(nextDescriptors) ?? [];
+  return (
+    buildProviderOptionSelectionsFromDescriptors(
+      reconcileAutoEffortLimitDescriptors(nextDescriptors, descriptor.id),
+    ) ?? []
+  );
 }

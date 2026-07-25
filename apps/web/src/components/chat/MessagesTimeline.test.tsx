@@ -1,4 +1,10 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  EnvironmentId,
+  MessageId,
+  ProviderInstanceId,
+  TurnId,
+} from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -120,6 +126,40 @@ function MockFileDiff(props: {
 
 vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
+});
+
+// Assistant rows read the thread environment's provider snapshot to label the
+// model behind a response.
+vi.mock("../../state/server", async () => {
+  const { Atom } = await import("effect/unstable/reactivity");
+  const configAtom = Atom.make(() => ({
+    providers: [
+      {
+        instanceId: "codex",
+        models: [
+          {
+            slug: "gpt-5-codex",
+            name: "GPT-5 Codex",
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "reasoningEffort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low" },
+                    { id: "high", label: "High", isDefault: true },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  }));
+  return { serverEnvironment: { configValueAtom: () => configAtom } };
 });
 
 function matchMedia() {
@@ -294,6 +334,80 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Collapse all folders"');
     expect(markup).toContain('aria-label="Open diff"');
     expect(markup).toContain("1 changed file");
+  });
+
+  it("names the model and resolved auto effort behind an assistant response", () => {
+    const turnId = TurnId.make("turn-responder");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-assistant-responder",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: MessageId.make("message-assistant-responder"),
+              role: "assistant",
+              text: "Shipped it.",
+              turnId,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+              responder: {
+                modelSelection: {
+                  instanceId: ProviderInstanceId.make("codex"),
+                  model: "gpt-5-codex",
+                  options: [{ id: "reasoningEffort", value: "high" }],
+                },
+                autoEffort: true,
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("GPT-5 Codex");
+    expect(markup).toContain("Auto (High)");
+  });
+
+  it("names the model and effort behind an assistant response", () => {
+    const turnId = TurnId.make("turn-responder");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-assistant-responder",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: MessageId.make("message-assistant-responder"),
+              role: "assistant",
+              text: "Done.",
+              turnId,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+              responder: {
+                modelSelection: {
+                  instanceId: ProviderInstanceId.make("claudeAgent"),
+                  model: "claude-opus-5",
+                  options: [{ id: "effort", value: "low" }],
+                },
+                autoEffort: true,
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    // The provider snapshot is unavailable in this render, so the slug and raw
+    // effort value stand in for their labels.
+    expect(markup).toContain("claude-opus-5");
+    expect(markup).toContain("Auto");
   });
 
   it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {

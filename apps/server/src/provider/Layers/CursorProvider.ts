@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { withoutAutoEffortValue } from "@t3tools/shared/autoEffort";
 import {
   createModelCapabilities,
   getProviderOptionBooleanSelectionValue,
@@ -494,7 +495,7 @@ export function resolveCursorAcpConfigUpdates(
 
   const reasoningOption = findCursorEffortConfigOption(configOptions);
   const requestedReasoning = normalizeCursorReasoningValue(
-    getProviderOptionStringSelectionValue(selections, "reasoning"),
+    withoutAutoEffortValue(getProviderOptionStringSelectionValue(selections, "reasoning")),
   );
   if (reasoningOption && requestedReasoning) {
     const value = findCursorSelectOptionValue(reasoningOption, (option) => {

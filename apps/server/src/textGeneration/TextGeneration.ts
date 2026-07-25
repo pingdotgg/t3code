@@ -67,6 +67,33 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface ReasoningEffortConversationEntry {
+  readonly role: "user" | "assistant";
+  readonly text: string;
+}
+
+export interface ReasoningEffortSelectionInput {
+  cwd: string;
+  /** The prompt whose difficulty is being judged. */
+  message: string;
+  /** Earlier turns of the same thread, oldest first. */
+  conversation?: ReadonlyArray<ReasoningEffortConversationEntry> | undefined;
+  attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  /**
+   * Efforts the reviewer may pick, cheapest first. Callers pass the window
+   * allowed by the user's auto-effort limits, so the reviewer never sees an
+   * option it is not permitted to choose.
+   */
+  allowedEfforts: ReadonlyArray<{ readonly id: string; readonly label: string }>;
+  /** What model and provider to use for the review. */
+  modelSelection: ModelSelection;
+}
+
+export interface ReasoningEffortSelectionResult {
+  effort: string;
+  reason: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -74,6 +101,9 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  selectReasoningEffort(
+    input: ReasoningEffortSelectionInput,
+  ): Promise<ReasoningEffortSelectionResult>;
 }
 
 /**
@@ -109,6 +139,14 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /**
+     * Judge how much reasoning effort a prompt deserves, choosing from the
+     * efforts the caller allows. Backs the composer's auto effort mode.
+     */
+    readonly selectReasoningEffort: (
+      input: ReasoningEffortSelectionInput,
+    ) => Effect.Effect<ReasoningEffortSelectionResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -119,7 +157,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "selectReasoningEffort";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -158,6 +197,10 @@ export const makeTextGenerationFromRegistry = (
     generateThreadTitle: (input) =>
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+      ),
+    selectReasoningEffort: (input) =>
+      resolveInstance(registry, "selectReasoningEffort", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.selectReasoningEffort(input)),
       ),
   });
 

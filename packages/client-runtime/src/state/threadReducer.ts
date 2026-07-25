@@ -235,6 +235,7 @@ export function applyThreadDetailEvent(
           : {}),
         turnId: event.payload.turnId,
         streaming: event.payload.streaming,
+        ...(event.payload.responder !== undefined ? { responder: event.payload.responder } : {}),
         createdAt: event.payload.createdAt,
         updatedAt: event.payload.updatedAt,
       };
@@ -257,6 +258,7 @@ export function applyThreadDetailEvent(
                   ...(message.attachments !== undefined
                     ? { attachments: message.attachments }
                     : {}),
+                  ...(message.responder !== undefined ? { responder: message.responder } : {}),
                 },
           )
         : Arr.append(thread.messages, message);

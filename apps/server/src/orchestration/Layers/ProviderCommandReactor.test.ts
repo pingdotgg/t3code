@@ -10,7 +10,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import type { ServerProviderModel } from "@t3tools/contracts";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import {
   ApprovalRequestId,
   CommandId,
@@ -53,6 +54,8 @@ import {
   providerErrorLabelFromInstanceHint,
   ProviderCommandReactorLive,
 } from "./ProviderCommandReactor.ts";
+import { TurnResponderLive } from "./TurnResponder.ts";
+import { TurnResponder } from "../Services/TurnResponder.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -91,7 +94,7 @@ async function waitFor(
 
 describe("ProviderCommandReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderCommandReactor | ProjectionSnapshotQuery,
+    OrchestrationEngineService | ProviderCommandReactor | ProjectionSnapshotQuery | TurnResponder,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -144,6 +147,7 @@ describe("ProviderCommandReactor", () => {
   async function createHarness(input?: {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
+    readonly providerModels?: ReadonlyArray<ServerProviderModel>;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
     readonly startSessionEffect?: (
@@ -294,9 +298,18 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
+    const selectReasoningEffort = vi.fn<TextGenerationShape["selectReasoningEffort"]>((_) =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "selectReasoningEffort",
+          detail: "disabled in test harness",
+        }),
+      ),
+    );
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
+        models: input?.providerModels ?? [],
         ...(input?.requiresNewThreadForModelChange === true
           ? { requiresNewThreadForModelChange: true }
           : {}),
@@ -376,8 +389,10 @@ describe("ProviderCommandReactor", () => {
         Layer.mock(TextGeneration, {
           generateBranchName,
           generateThreadTitle,
+          selectReasoningEffort,
         }),
       ),
+      Layer.provideMerge(TurnResponderLive),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -387,6 +402,7 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const turnResponder = await runtime.runPromise(Effect.service(TurnResponder));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
@@ -431,6 +447,8 @@ describe("ProviderCommandReactor", () => {
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
+      selectReasoningEffort,
+      recordedResponder: () => turnResponder.get(ThreadId.make("thread-1")),
       runtimeSessions,
       stateDir,
       drain,
@@ -475,6 +493,201 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  describe("auto reasoning effort", () => {
+    const AUTO_EFFORT_MODEL: ServerProviderModel = {
+      slug: "gpt-5-codex",
+      name: "GPT-5 Codex",
+      isCustom: false,
+      capabilities: createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium" },
+              { id: "high", label: "High", isDefault: true },
+              { id: "xhigh", label: "Extra High" },
+            ],
+          },
+        ],
+      }),
+    };
+
+    const autoModelSelection = (
+      options: ReadonlyArray<{ id: string; value: string }>,
+    ): ModelSelection =>
+      createModelSelection(ProviderInstanceId.make("codex"), "gpt-5-codex", options);
+
+    const createAutoEffortHarness = (
+      options: ReadonlyArray<{ id: string; value: string }> = [
+        { id: "reasoningEffort", value: "auto" },
+        { id: "reasoningEffortAutoCeiling", value: "xhigh" },
+        { id: "reasoningEffortAutoFloor", value: "low" },
+      ],
+    ) =>
+      Effect.promise(() =>
+        createHarness({
+          threadModelSelection: autoModelSelection(options),
+          providerModels: [AUTO_EFFORT_MODEL],
+        }),
+      );
+
+    const startAutoTurn = (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      input: { readonly commandId: string; readonly messageId: string; readonly text: string },
+    ) =>
+      Effect.gen(function* () {
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(input.commandId),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId(input.messageId),
+            role: "user",
+            text: input.text,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+        return harness.sendTurn.mock.calls[0]?.[0] as { modelSelection?: ModelSelection };
+      });
+
+    effectIt.effect("sends the effort the reviewer picked instead of auto", () =>
+      Effect.gen(function* () {
+        const harness = yield* createAutoEffortHarness();
+        harness.selectReasoningEffort.mockReturnValue(
+          Effect.succeed({ effort: "low", reason: "Single-line rename." }),
+        );
+
+        const request = yield* startAutoTurn(harness, {
+          commandId: "cmd-turn-start-auto-effort",
+          messageId: "user-message-auto-effort",
+          text: "rename this variable",
+        });
+
+        expect(harness.selectReasoningEffort.mock.calls[0]?.[0]).toMatchObject({
+          message: "rename this variable",
+          allowedEfforts: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+            { id: "xhigh", label: "Extra High" },
+          ],
+          // The reviewer runs on the thread's own provider at its cheapest
+          // effort, not on the configured text-generation provider.
+          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5-codex", [
+            { id: "reasoningEffort", value: "low" },
+          ]),
+        });
+        expect(request.modelSelection?.options).toEqual([
+          { id: "reasoningEffort", value: "low" },
+          { id: "reasoningEffortAutoCeiling", value: "xhigh" },
+          { id: "reasoningEffortAutoFloor", value: "low" },
+        ]);
+        // Messages this turn produces are labeled with the resolved effort.
+        const responder = yield* harness.recordedResponder();
+        expect(responder?.autoEffort).toBe(true);
+        expect(responder?.modelSelection.options).toContainEqual({
+          id: "reasoningEffort",
+          value: "low",
+        });
+      }),
+    );
+
+    effectIt.effect("caps the reviewer at the configured limit", () =>
+      Effect.gen(function* () {
+        const harness = yield* createAutoEffortHarness([
+          { id: "reasoningEffort", value: "auto" },
+          { id: "reasoningEffortAutoCeiling", value: "medium" },
+        ]);
+        harness.selectReasoningEffort.mockReturnValue(
+          Effect.succeed({ effort: "xhigh", reason: "Looks like a big refactor." }),
+        );
+
+        const request = yield* startAutoTurn(harness, {
+          commandId: "cmd-turn-start-auto-effort-clamped",
+          messageId: "user-message-auto-effort-clamped",
+          text: "refactor the world",
+        });
+
+        expect(harness.selectReasoningEffort.mock.calls[0]?.[0]?.allowedEfforts).toEqual([
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium" },
+        ]);
+        expect(request.modelSelection?.options).toEqual([
+          { id: "reasoningEffort", value: "medium" },
+          { id: "reasoningEffortAutoCeiling", value: "medium" },
+        ]);
+      }),
+    );
+
+    effectIt.effect("starts the turn with the default effort when the reviewer fails", () =>
+      Effect.gen(function* () {
+        const harness = yield* createAutoEffortHarness();
+
+        const request = yield* startAutoTurn(harness, {
+          commandId: "cmd-turn-start-auto-effort-failure",
+          messageId: "user-message-auto-effort-failure",
+          text: "do the thing",
+        });
+
+        expect(harness.selectReasoningEffort).toHaveBeenCalledTimes(1);
+        expect(request.modelSelection?.options).toEqual([
+          { id: "reasoningEffort", value: "high" },
+          { id: "reasoningEffortAutoCeiling", value: "xhigh" },
+          { id: "reasoningEffortAutoFloor", value: "low" },
+        ]);
+      }),
+    );
+
+    effectIt.effect("skips the reviewer when the limits pin auto to one effort", () =>
+      Effect.gen(function* () {
+        const harness = yield* createAutoEffortHarness([
+          { id: "reasoningEffort", value: "auto" },
+          { id: "reasoningEffortAutoCeiling", value: "medium" },
+          { id: "reasoningEffortAutoFloor", value: "medium" },
+        ]);
+
+        const request = yield* startAutoTurn(harness, {
+          commandId: "cmd-turn-start-auto-effort-pinned",
+          messageId: "user-message-auto-effort-pinned",
+          text: "do the thing",
+        });
+
+        expect(harness.selectReasoningEffort).not.toHaveBeenCalled();
+        expect(request.modelSelection?.options).toContainEqual({
+          id: "reasoningEffort",
+          value: "medium",
+        });
+      }),
+    );
+
+    effectIt.effect("leaves manual effort selections alone", () =>
+      Effect.gen(function* () {
+        const harness = yield* createAutoEffortHarness([{ id: "reasoningEffort", value: "high" }]);
+
+        const request = yield* startAutoTurn(harness, {
+          commandId: "cmd-turn-start-manual-effort",
+          messageId: "user-message-manual-effort",
+          text: "do the thing",
+        });
+
+        expect(harness.selectReasoningEffort).not.toHaveBeenCalled();
+        expect(request.modelSelection).toBeUndefined();
+        const responder = yield* harness.recordedResponder();
+        expect(responder?.autoEffort).toBeUndefined();
+        expect(responder?.modelSelection.options).toEqual([
+          { id: "reasoningEffort", value: "high" },
+        ]);
+      }),
+    );
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>

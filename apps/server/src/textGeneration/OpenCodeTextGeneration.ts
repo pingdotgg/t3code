@@ -22,12 +22,14 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildReasoningEffortPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
+  sanitizeReasoningEffort,
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
@@ -39,6 +41,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generatePrContent",
   "generateBranchName",
   "generateThreadTitle",
+  "selectReasoningEffort",
 ]);
 
 type OpenCodeTextGenerationOperation = typeof OpenCodeTextGenerationOperation.Type;
@@ -253,7 +256,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "selectReasoningEffort";
   }) =>
     sharedServerMutex.withPermit(
       Effect.gen(function* () {
@@ -611,10 +615,34 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       };
     });
 
+  const selectReasoningEffort: TextGeneration.TextGeneration["Service"]["selectReasoningEffort"] =
+    Effect.fn("OpenCodeTextGeneration.selectReasoningEffort")(function* (input) {
+      const { prompt, outputSchema } = buildReasoningEffortPrompt({
+        message: input.message,
+        conversation: input.conversation,
+        allowedEfforts: input.allowedEfforts,
+        attachments: input.attachments,
+      });
+      const generated = yield* runOpenCodeJson({
+        operation: "selectReasoningEffort",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+        attachments: input.attachments,
+      });
+
+      return {
+        effort: sanitizeReasoningEffort(generated.effort),
+        reason: generated.reason.trim(),
+      };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    selectReasoningEffort,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

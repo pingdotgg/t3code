@@ -365,6 +365,13 @@ function createTextGeneration(
             }),
         ),
       ),
+    selectReasoningEffort: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "selectReasoningEffort",
+          detail: "git tests never review reasoning effort",
+        }),
+      ),
   };
 }
 

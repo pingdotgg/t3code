@@ -196,6 +196,99 @@ export interface ThreadTitlePromptInput {
   policy?: TextGenerationPolicy | undefined;
 }
 
+// ---------------------------------------------------------------------------
+// Reasoning effort
+// ---------------------------------------------------------------------------
+
+export interface ReasoningEffortChoicePromptInput {
+  readonly id: string;
+  readonly label: string;
+}
+
+export interface ReasoningEffortConversationEntry {
+  readonly role: "user" | "assistant";
+  readonly text: string;
+}
+
+export interface ReasoningEffortPromptInput {
+  /** The prompt whose difficulty is being judged. */
+  message: string;
+  /** Earlier turns of the same thread, oldest first. */
+  conversation?: ReadonlyArray<ReasoningEffortConversationEntry> | undefined;
+  /** Efforts the reviewer may pick, cheapest first, already clamped to the user's limits. */
+  allowedEfforts: ReadonlyArray<ReasoningEffortChoicePromptInput>;
+  attachments?: ReadonlyArray<ChatAttachment> | undefined;
+}
+
+/** Cap per-message context so a long thread cannot dominate the reviewer prompt. */
+const REASONING_EFFORT_MESSAGE_LIMIT = 1_200;
+
+function formatConversationEntry(entry: ReasoningEffortConversationEntry): string {
+  const speaker = entry.role === "user" ? "User" : "Assistant";
+  return `${speaker}: ${limitSection(entry.text.trim(), REASONING_EFFORT_MESSAGE_LIMIT)}`;
+}
+
+export function buildReasoningEffortPrompt(input: ReasoningEffortPromptInput) {
+  const allowed = input.allowedEfforts;
+  const cheapest = allowed[0];
+  const costliest = allowed.at(-1);
+  const conversation = input.conversation ?? [];
+  const attachmentLines = (input.attachments ?? []).map(
+    (attachment) => `- ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)`,
+  );
+
+  const promptSections = [
+    "You size the reasoning effort a coding agent should spend on one request.",
+    "Return a JSON object with keys: effort, reason.",
+    "Rules:",
+    `- effort must be exactly one of: ${allowed.map((option) => option.id).join(", ")}`,
+    ...(cheapest
+      ? [
+          `- pick ${cheapest.id} for trivial work: reading a file, a one-line edit, a factual question, a rename, a restated instruction`,
+        ]
+      : []),
+    ...(costliest && costliest.id !== cheapest?.id
+      ? [
+          `- pick ${costliest.id} only for genuinely hard work: cross-cutting refactors, debugging with unclear root cause, concurrency or protocol design, ambiguous requirements needing exploration`,
+        ]
+      : []),
+    "- judge the work the request implies, not how politely or verbosely it is written",
+    "- a long message that only pastes logs or context is not automatically hard",
+    "- when the thread already established the context, weigh only the incremental work the new request adds",
+    "- prefer the cheaper option when two are defensible",
+    "- reason must be one short sentence naming the deciding factor",
+    "",
+    "Effort levels, cheapest first:",
+    ...allowed.map((option) => `- ${option.id} (${option.label})`),
+  ];
+
+  if (conversation.length > 0) {
+    promptSections.push(
+      "",
+      "Earlier messages in this thread (oldest first):",
+      conversation.map(formatConversationEntry).join("\n"),
+    );
+  }
+
+  promptSections.push("", "New request:", limitSection(input.message, 8_000));
+
+  if (attachmentLines.length > 0) {
+    promptSections.push(
+      "",
+      "Attachment metadata:",
+      limitSection(attachmentLines.join("\n"), 4_000),
+    );
+  }
+
+  return {
+    prompt: promptSections.join("\n"),
+    outputSchema: Schema.Struct({
+      effort: Schema.String,
+      reason: Schema.String,
+    }),
+  };
+}
+
 export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
   const prompt = buildPromptFromMessage({
     instruction: "You write concise thread titles for coding conversations.",

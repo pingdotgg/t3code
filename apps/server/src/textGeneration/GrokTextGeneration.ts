@@ -16,11 +16,13 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildReasoningEffortPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
+  sanitizeReasoningEffort,
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
 import {
@@ -52,7 +54,8 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "selectReasoningEffort";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -247,10 +250,34 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const selectReasoningEffort: TextGeneration.TextGeneration["Service"]["selectReasoningEffort"] =
+    Effect.fn("GrokTextGeneration.selectReasoningEffort")(function* (input) {
+      const { prompt, outputSchema } = buildReasoningEffortPrompt({
+        message: input.message,
+        conversation: input.conversation,
+        allowedEfforts: input.allowedEfforts,
+        attachments: input.attachments,
+      });
+
+      const generated = yield* runGrokJson({
+        operation: "selectReasoningEffort",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        effort: sanitizeReasoningEffort(generated.effort),
+        reason: generated.reason.trim(),
+      } satisfies TextGeneration.ReasoningEffortSelectionResult;
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    selectReasoningEffort,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

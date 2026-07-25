@@ -15,11 +15,13 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildReasoningEffortPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
+  sanitizeReasoningEffort,
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
 import {
@@ -54,7 +56,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "selectReasoningEffort";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -255,10 +258,34 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const selectReasoningEffort: TextGeneration.TextGeneration["Service"]["selectReasoningEffort"] =
+    Effect.fn("CursorTextGeneration.selectReasoningEffort")(function* (input) {
+      const { prompt, outputSchema } = buildReasoningEffortPrompt({
+        message: input.message,
+        conversation: input.conversation,
+        allowedEfforts: input.allowedEfforts,
+        attachments: input.attachments,
+      });
+
+      const generated = yield* runCursorJson({
+        operation: "selectReasoningEffort",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      return {
+        effort: sanitizeReasoningEffort(generated.effort),
+        reason: generated.reason.trim(),
+      } satisfies TextGeneration.ReasoningEffortSelectionResult;
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    selectReasoningEffort,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

@@ -16,6 +16,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
+  type OrchestrationMessageResponder,
   ProjectId,
   ProviderItemId,
   type ServerSettings,
@@ -45,6 +46,8 @@ import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import { TurnResponderLive } from "./TurnResponder.ts";
+import { TurnResponder } from "../Services/TurnResponder.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -192,7 +195,10 @@ async function waitForThread(
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderRuntimeIngestionService
+    | ProjectionSnapshotQuery
+    | TurnResponder,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -240,6 +246,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
+      Layer.provideMerge(TurnResponderLive),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -315,6 +322,14 @@ describe("ProviderRuntimeIngestion", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      recordResponder: (responder: OrchestrationMessageResponder) =>
+        runtime!.runPromise(
+          Effect.service(TurnResponder).pipe(
+            Effect.flatMap((service) =>
+              service.record({ threadId: ThreadId.make("thread-1"), responder }),
+            ),
+          ),
+        ),
       drain,
     };
   }
@@ -944,6 +959,61 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(message?.text).toBe("hello world");
     expect(message?.streaming).toBe(false);
+  });
+
+  it("labels a finalized assistant message with the model the turn ran on", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    await harness.recordResponder({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+        options: [{ id: "reasoningEffort", value: "xhigh" }],
+      },
+      autoEffort: true,
+    });
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-responder-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-responder"),
+      itemId: asItemId("item-responder"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "done",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-responder-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-responder"),
+      itemId: asItemId("item-responder"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-responder" && !message.streaming,
+      ),
+    );
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-responder",
+    );
+    expect(message?.responder?.modelSelection.model).toBe("gpt-5-codex");
+    expect(message?.responder?.autoEffort).toBe(true);
+    expect(message?.responder?.modelSelection.options).toEqual([
+      { id: "reasoningEffort", value: "xhigh" },
+    ]);
   });
 
   it("uses assistant item completion detail when no assistant deltas were streamed", async () => {

@@ -63,6 +63,22 @@ export function sanitizeThreadTitle(raw: string): string {
   return `${normalized.slice(0, 47).trimEnd()}...`;
 }
 
+/**
+ * Normalise a reviewer's raw effort choice to a bare option id.
+ *
+ * Models answer with things like `"High"` or `"effort: xhigh"`; callers still
+ * clamp the result, so this only has to strip the decoration.
+ */
+export function sanitizeReasoningEffort(raw: string): string {
+  return (
+    raw
+      .trim()
+      .toLowerCase()
+      .replace(/^effort\s*[:=]\s*/, "")
+      .replace(/[^a-z0-9_-]/g, "") || ""
+  );
+}
+
 /** CLI name to human-readable label, e.g. "codex" → "Codex CLI (`codex`)" */
 function cliLabel(cliName: string): string {
   const capitalized = cliName.charAt(0).toUpperCase() + cliName.slice(1);

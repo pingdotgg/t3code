@@ -1,12 +1,16 @@
 import {
   type EnvironmentId,
   type MessageId,
+  type OrchestrationMessageResponder,
   type ScopedThreadRef,
+  type ServerProvider,
   type ServerProviderSkill,
   type TurnId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { describeMessageResponder } from "@t3tools/shared/messageResponder";
+import { useAtomValue } from "@effect/atom-react";
 import {
   createContext,
   Fragment,
@@ -64,6 +68,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -96,6 +101,7 @@ import {
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
+import { serverEnvironment } from "../../state/server";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
@@ -150,6 +156,7 @@ const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_TIMELINE_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -1036,19 +1043,22 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
         {row.showAssistantMeta ? (
-          <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
+          <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
             <AssistantCopyButton row={row} />
             {!row.message.streaming && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={<p className="text-muted-foreground text-xs tabular-nums" />}
-                >
-                  {formatShortTimestamp(row.message.updatedAt, ctx.timestampFormat)}
-                </TooltipTrigger>
-                <TooltipPopup>
-                  {formatChatTimestampTooltip(row.message.updatedAt, ctx.timestampFormat)}
-                </TooltipPopup>
-              </Tooltip>
+              <>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<p className="text-muted-foreground text-xs tabular-nums" />}
+                  >
+                    {formatShortTimestamp(row.message.updatedAt, ctx.timestampFormat)}
+                  </TooltipTrigger>
+                  <TooltipPopup>
+                    {formatChatTimestampTooltip(row.message.updatedAt, ctx.timestampFormat)}
+                  </TooltipPopup>
+                </Tooltip>
+                <AssistantResponderMeta responder={row.message.responder} />
+              </>
             )}
           </div>
         ) : null}
@@ -1069,6 +1079,44 @@ function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "messa
   }
 
   return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+}
+
+/** Which model and effort produced this response, revealed with the hover row. */
+function AssistantResponderMeta({
+  responder,
+}: {
+  responder: OrchestrationMessageResponder | undefined;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const serverConfig = useAtomValue(
+    serverEnvironment.configValueAtom(ctx.activeThreadEnvironmentId),
+  );
+  const display = describeMessageResponder({
+    responder,
+    providers: serverConfig?.providers ?? EMPTY_TIMELINE_PROVIDERS,
+  });
+
+  if (!display) {
+    return null;
+  }
+
+  return (
+    <p className="flex min-w-0 items-center gap-1.5 text-muted-foreground text-xs">
+      <span aria-hidden="true">·</span>
+      {display.driver !== null ? (
+        <ProviderInstanceIcon
+          driverKind={display.driver}
+          displayName={display.providerName}
+          accentColor={display.accentColor}
+          className="size-3.5"
+          iconClassName="size-3.5"
+        />
+      ) : null}
+      <span className="truncate">
+        {display.effort !== null ? `${display.model} ${display.effort}` : display.model}
+      </span>
+    </p>
+  );
 }
 
 function ProposedPlanTimelineRow({

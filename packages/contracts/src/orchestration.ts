@@ -225,6 +225,17 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
+/**
+ * Which model produced an assistant message, recorded per message because a
+ * thread can switch model or effort between turns.
+ */
+export const OrchestrationMessageResponder = Schema.Struct({
+  modelSelection: ModelSelection,
+  /** True when the effort in `modelSelection` was picked by the auto reviewer. */
+  autoEffort: Schema.optional(Schema.Boolean),
+});
+export type OrchestrationMessageResponder = typeof OrchestrationMessageResponder.Type;
+
 export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
   role: OrchestrationMessageRole,
@@ -232,6 +243,7 @@ export const OrchestrationMessage = Schema.Struct({
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
+  responder: Schema.optional(OrchestrationMessageResponder),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -819,6 +831,7 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   turnId: Schema.optional(TurnId),
+  responder: Schema.optional(OrchestrationMessageResponder),
   createdAt: IsoDateTime,
 });
 
@@ -1028,6 +1041,9 @@ export const ThreadMessageSentPayload = Schema.Struct({
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
+  // Only set when an assistant message completes: streaming deltas would repeat
+  // it on every event for no gain.
+  responder: Schema.optional(OrchestrationMessageResponder),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

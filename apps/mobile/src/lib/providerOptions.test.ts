@@ -46,6 +46,7 @@ describe("mobile provider options", () => {
         title: "Reasoning",
         subtitle: "Medium",
         subactions: [
+          { title: "Auto", state: undefined },
           { title: "Medium (default)", state: "on" },
           { title: "High", state: undefined },
         ],
@@ -75,6 +76,69 @@ describe("mobile provider options", () => {
       { id: "reasoningEffort", value: "medium" },
       { id: "serviceTier", value: "priority" },
     ]);
+  });
+
+  it("reveals the auto effort limits only once auto is selected", () => {
+    const manual = resolveProviderOptionDescriptors({
+      capabilities: CODEX_CAPABILITIES,
+      selections: [{ id: "reasoningEffort", value: "high" }],
+    });
+    expect(buildProviderOptionMenuActions(manual).map((action) => action.title)).toEqual([
+      "Reasoning",
+      "Service Tier",
+    ]);
+
+    const auto = resolveProviderOptionDescriptors({
+      capabilities: CODEX_CAPABILITIES,
+      selections: [{ id: "reasoningEffort", value: "auto" }],
+    });
+    expect(buildProviderOptionMenuActions(auto).map((action) => action.title)).toEqual([
+      "Reasoning",
+      "Minimum",
+      "Maximum",
+      "Service Tier",
+    ]);
+    expect(providerOptionsConfigurationLabel(auto)).toBe("Auto · Standard");
+  });
+
+  it("keeps the auto limits from contradicting each other", () => {
+    const descriptors = resolveProviderOptionDescriptors({
+      capabilities: CODEX_CAPABILITIES,
+      selections: [
+        { id: "reasoningEffort", value: "auto" },
+        { id: "reasoningEffortAutoCeiling", value: "medium" },
+        { id: "reasoningEffortAutoFloor", value: "medium" },
+      ],
+    });
+    const minimumHigh = buildProviderOptionMenuActions(descriptors)
+      .find((action) => action.title === "Minimum")
+      ?.subactions?.find((subaction) => subaction.title === "High");
+
+    expect(minimumHigh?.id).toBeDefined();
+    expect(applyProviderOptionMenuEvent(descriptors, minimumHigh!.id!)).toEqual([
+      { id: "reasoningEffort", value: "auto" },
+      { id: "reasoningEffortAutoFloor", value: "high" },
+      { id: "reasoningEffortAutoCeiling", value: "high" },
+      { id: "serviceTier", value: "default" },
+    ]);
+  });
+
+  it("keeps stored auto limits out of the menu after switching back to a manual effort", () => {
+    const descriptors = resolveProviderOptionDescriptors({
+      capabilities: CODEX_CAPABILITIES,
+      selections: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "reasoningEffortAutoCeiling", value: "high" },
+      ],
+    });
+
+    expect(buildProviderOptionMenuActions(descriptors).map((action) => action.title)).toEqual([
+      "Reasoning",
+      "Service Tier",
+    ]);
+    // The stored limit still round-trips so re-enabling Auto keeps the choice.
+    expect(applyProviderOptionMenuEvent(descriptors, "provider-option:bogus")).toBeNull();
+    expect(providerOptionsConfigurationLabel(descriptors)).toBe("High · Standard");
   });
 
   it("treats an unspecified boolean capability as off", () => {

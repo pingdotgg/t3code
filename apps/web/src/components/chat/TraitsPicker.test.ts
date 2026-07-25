@@ -97,6 +97,32 @@ describe("buildTraitsTriggerDisplay", () => {
     expect(display([unresolved], false)).toEqual({ label: "", showFastModeIcon: false });
   });
 
+  it("labels auto effort as Auto and keeps the other traits alongside it", () => {
+    const autoEffort = selectDescriptor(
+      "effort",
+      [
+        { id: "auto", label: "Auto" },
+        { id: "high", label: "High" },
+        { id: "max", label: "Max" },
+      ],
+      "auto",
+    );
+    const ceiling = selectDescriptor(
+      "effortAutoCeiling",
+      [
+        { id: "high", label: "High" },
+        { id: "max", label: "Max" },
+      ],
+      "high",
+    );
+    const floor = selectDescriptor("effortAutoFloor", [{ id: "high", label: "High" }], "high");
+
+    expect(display([autoEffort, floor, ceiling, CONTEXT_WINDOW], false)).toEqual({
+      label: "Auto · 1M",
+      showFastModeIcon: false,
+    });
+  });
+
   it("still renders the prompt-controlled ultrathink label alongside the bolt", () => {
     expect(
       buildTraitsTriggerDisplay({

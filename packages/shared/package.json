@@ -11,6 +11,14 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./autoEffort": {
+      "types": "./src/autoEffort.ts",
+      "import": "./src/autoEffort.ts"
+    },
+    "./messageResponder": {
+      "types": "./src/messageResponder.ts",
+      "import": "./src/messageResponder.ts"
+    },
     "./advertisedEndpoint": {
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"

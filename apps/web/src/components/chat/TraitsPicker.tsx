@@ -7,11 +7,21 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
+  AUTO_EFFORT_LABEL,
+  AUTO_EFFORT_VALUE,
+  autoEffortCeilingOptionId,
+  autoEffortFloorOptionId,
+  autoEffortManualDefault,
+  getAutoEffortAwareDescriptors,
+  isAutoEffortBoundDescriptor,
+  isEffortOptionDescriptor,
+  reconcileAutoEffortLimitDescriptors,
+} from "@t3tools/shared/autoEffort";
+import {
   applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
-  getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
@@ -20,11 +30,15 @@ import { ChevronDownIcon, ZapIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuGroup,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
   MenuSeparator as MenuDivider,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
@@ -55,6 +69,66 @@ function DefaultBadge() {
     >
       Default
     </Badge>
+  );
+}
+
+/**
+ * Chevron next to the Auto switch that opens the auto-effort window settings.
+ * These live in a submenu because they are second-order controls: the common
+ * action is picking Auto, not retuning its bounds.
+ */
+function AutoEffortSettingsSubmenu({
+  descriptors,
+  onChange,
+}: {
+  descriptors: ReadonlyArray<Extract<ProviderOptionDescriptor, { type: "select" }>>;
+  onChange: (
+    descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
+    value: string,
+  ) => void;
+}) {
+  return (
+    <MenuSub>
+      <MenuSubTrigger
+        aria-label="Auto effort settings"
+        className="min-h-8 shrink-0 gap-0 px-1 sm:min-h-7"
+      />
+      <MenuSubPopup align="start" className="min-w-40">
+        {descriptors.map((descriptor, index) => (
+          <div key={descriptor.id}>
+            {index > 0 ? <MenuDivider /> : null}
+            <MenuGroup>
+              <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
+                {descriptor.label}
+              </div>
+              {descriptor.description ? (
+                <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
+                  {descriptor.description}
+                </div>
+              ) : null}
+              <MenuRadioGroup
+                value={getDescriptorStringValue(descriptor) ?? ""}
+                onValueChange={(value) => onChange(descriptor, value)}
+              >
+                {descriptor.options.map((option) => (
+                  <MenuRadioItem key={option.id} value={option.id} hideIndicator>
+                    <span className="min-w-0 truncate">
+                      {option.label}
+                      {option.isDefault ? (
+                        <>
+                          {" "}
+                          <DefaultBadge />
+                        </>
+                      ) : null}
+                    </span>
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuGroup>
+          </div>
+        ))}
+      </MenuSubPopup>
+    </MenuSub>
   );
 }
 
@@ -97,14 +171,30 @@ function getSelectedTraits(
   allowPromptInjectedEffort: boolean,
 ) {
   const caps = getProviderModelCapabilities(models, model, provider);
-  const descriptors = getProviderOptionDescriptors({
+  const descriptors = getAutoEffortAwareDescriptors({
     caps,
     selections: modelOptions,
   });
+  // The auto ceiling/floor selects belong under the effort group, not in the
+  // flat list of provider options.
   const selectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
-      descriptor.type === "select",
+      descriptor.type === "select" && !isAutoEffortBoundDescriptor(descriptor),
   );
+  const effortDescriptor = descriptors.find(isEffortOptionDescriptor) ?? null;
+  const autoEffortActive =
+    effortDescriptor !== null &&
+    getProviderOptionCurrentValue(effortDescriptor) === AUTO_EFFORT_VALUE;
+  // Ordered so the limits submenu always reads minimum then maximum.
+  const autoEffortBoundDescriptors = effortDescriptor
+    ? [
+        autoEffortFloorOptionId(effortDescriptor.id),
+        autoEffortCeilingOptionId(effortDescriptor.id),
+      ].flatMap((boundId) => {
+        const descriptor = descriptors.find((candidate) => candidate.id === boundId);
+        return descriptor?.type === "select" ? [descriptor] : [];
+      })
+    : [];
   const booleanDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "boolean" }> =>
       descriptor.type === "boolean",
@@ -146,6 +236,9 @@ function getSelectedTraits(
     descriptors,
     selectDescriptors,
     booleanDescriptors,
+    effortDescriptor,
+    autoEffortActive,
+    autoEffortBoundDescriptors,
     primarySelectDescriptor,
     contextWindowDescriptor,
     agentDescriptor,
@@ -254,6 +347,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     descriptors,
     selectDescriptors,
     booleanDescriptors,
+    effortDescriptor,
+    autoEffortActive,
+    autoEffortBoundDescriptors,
     primarySelectDescriptor,
     ultrathinkPromptControlled,
     ultrathinkInBodyText,
@@ -288,7 +384,21 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
       const stripped = prompt.replace(/^Ultrathink:\s*/i, "");
       onPromptChange(stripped);
     }
-    updateDescriptors(replaceDescriptorCurrentValue(descriptors, descriptor.id, value));
+    updateDescriptors(
+      reconcileAutoEffortLimitDescriptors(
+        replaceDescriptorCurrentValue(descriptors, descriptor.id, value),
+        descriptor.id,
+      ),
+    );
+  };
+
+  const handleAutoEffortToggle = (enabled: boolean) => {
+    if (!effortDescriptor) return;
+    const nextValue = enabled
+      ? AUTO_EFFORT_VALUE
+      : (autoEffortManualDefault(effortDescriptor) ?? effortDescriptor.options[1]?.id);
+    if (!nextValue) return;
+    handleSelectChange(effortDescriptor, nextValue);
   };
 
   if (!hasAnyControls) {
@@ -302,6 +412,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
             ? "ultrathink"
             : (getDescriptorStringValue(descriptor) ?? "");
+        const isEffortGroup =
+          descriptor.id === effortDescriptor?.id &&
+          descriptor.options.some((option) => option.id === AUTO_EFFORT_VALUE);
 
         return (
           <div key={descriptor.id}>
@@ -316,31 +429,61 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                   option.
                 </div>
               ) : null}
-              <MenuRadioGroup
-                value={selectedValue}
-                onValueChange={(value) => handleSelectChange(descriptor, value)}
-              >
-                {descriptor.options.map((option) => (
-                  <MenuRadioItem
-                    key={option.id}
-                    value={option.id}
-                    hideIndicator
-                    disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
-                  >
-                    <span className="flex w-full min-w-0 items-center justify-between gap-3">
-                      <span className="min-w-0 truncate">
-                        {option.label}
-                        {option.isDefault ? (
-                          <>
-                            {" "}
-                            <DefaultBadge />
-                          </>
-                        ) : null}
-                      </span>
-                    </span>
-                  </MenuRadioItem>
-                ))}
-              </MenuRadioGroup>
+              {isEffortGroup ? (
+                <div className="flex items-center gap-0.5">
+                  <span className="min-w-0 flex-1">
+                    <MenuCheckboxItem
+                      variant="switch"
+                      checked={autoEffortActive}
+                      closeOnClick={false}
+                      onCheckedChange={handleAutoEffortToggle}
+                      disabled={ultrathinkInBodyText}
+                    >
+                      <span className="min-w-0 truncate">{AUTO_EFFORT_LABEL}</span>
+                    </MenuCheckboxItem>
+                  </span>
+                  {autoEffortActive && autoEffortBoundDescriptors.length > 0 ? (
+                    <AutoEffortSettingsSubmenu
+                      descriptors={autoEffortBoundDescriptors}
+                      onChange={handleSelectChange}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
+              {/* Auto owns the whole group while it is on: the manual rungs are
+                  what Auto is choosing between, so showing them would imply a
+                  second, competing selection. */}
+              {autoEffortActive && isEffortGroup ? null : (
+                <MenuRadioGroup
+                  value={selectedValue}
+                  onValueChange={(value) => handleSelectChange(descriptor, value)}
+                >
+                  {descriptor.options
+                    .filter((option) => option.id !== AUTO_EFFORT_VALUE)
+                    .map((option) => (
+                      <MenuRadioItem
+                        key={option.id}
+                        value={option.id}
+                        hideIndicator
+                        disabled={
+                          ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id
+                        }
+                      >
+                        <span className="flex w-full min-w-0 items-center justify-between gap-3">
+                          <span className="min-w-0 truncate">
+                            {option.label}
+                            {option.isDefault ? (
+                              <>
+                                {" "}
+                                <DefaultBadge />
+                              </>
+                            ) : null}
+                          </span>
+                        </span>
+                      </MenuRadioItem>
+                    ))}
+                </MenuRadioGroup>
+              )}
             </MenuGroup>
           </div>
         );
@@ -397,6 +540,10 @@ export function buildTraitsTriggerDisplay(input: {
   for (const descriptor of input.descriptors) {
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       hasFastMode = true;
+      continue;
+    }
+    // The auto limits are configuration for Auto, not traits of their own.
+    if (isAutoEffortBoundDescriptor(descriptor)) {
       continue;
     }
     const label =
