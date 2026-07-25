@@ -107,5 +107,7 @@ private func isHTTPToken(at matchRange: Range<String.Index>, in text: String) ->
     let prefix = text[tokenStart..<matchRange.upperBound]
         .drop(while: { "([<\"'".contains($0) })
         .lowercased()
-    return prefix.hasPrefix("http")
+    // Only skip real URLs — repo paths like `httpserver/config.ts` or
+    // `http-client/main.go` merely start with "http".
+    return prefix.hasPrefix("http://") || prefix.hasPrefix("https://")
 }

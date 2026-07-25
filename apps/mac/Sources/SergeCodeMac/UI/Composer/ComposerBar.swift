@@ -631,9 +631,9 @@ public struct ComposerBar: View {
                 attachments: submittedDraft.attachments,
                 replacingMessageID: replacingID,
                 replacingMessageThreadID: replacingThreadID)
-            if sent {
-                model.lastError = nil
-            } else {
+            // `send` only sets `lastError` on failure, so a success must not
+            // clear it — an unrelated error could have landed meanwhile.
+            if !sent {
                 model.restoreComposerDraft(submittedDraft, for: threadID)
             }
         }
@@ -805,7 +805,11 @@ public struct ComposerBar: View {
             if let error { attachmentError = error }
             guard !encoded.isEmpty else { return }
             let current = model.composerDraft(for: threadID).attachments
-            model.setComposerDraftAttachments(current + encoded, for: threadID)
+            // Re-check cap against any concurrent attach (paste monitor).
+            let room = max(0, Self.maxAttachments - current.count)
+            guard room > 0 else { return }
+            model.setComposerDraftAttachments(
+                current + Array(encoded.prefix(room)), for: threadID)
         }
     }
 
@@ -848,7 +852,11 @@ public struct ComposerBar: View {
             attachmentError = loadError
             guard !encodedAttachments.isEmpty else { return }
             let current = model.composerDraft(for: threadID).attachments
-            model.setComposerDraftAttachments(current + encodedAttachments, for: threadID)
+            // Re-check cap against any concurrent attach (paste monitor).
+            let room = max(0, Self.maxAttachments - current.count)
+            guard room > 0 else { return }
+            model.setComposerDraftAttachments(
+                current + Array(encodedAttachments.prefix(room)), for: threadID)
         }
     }
 
@@ -948,11 +956,13 @@ public struct ComposerBar: View {
 
     /// Cmd+V while the draft editor is focused: claim image pasteboards so
     /// they become attachments instead of no-ops (or accidental text pastes).
-    /// Captures only the class-bound `AppModel` — View struct state is not
-    /// shared with the escaping monitor closure.
+    /// Captures only the class-bound `AppModel` and the attachment-error
+    /// `Binding` (shared `State` storage, not the View struct) — the View
+    /// struct itself is not shared with the escaping monitor closure.
     private func installPasteMonitor() {
         removePasteMonitor()
         let model = self.model
+        let attachmentError = $attachmentError
         pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
             guard flags == .command,
@@ -964,10 +974,13 @@ public struct ComposerBar: View {
             let existingCount = model.composerDraft(for: threadID).attachments.count
             guard existingCount < ComposerBar.maxAttachments else { return event }
             Task { @MainActor in
-                let (encoded, _) = await AttachmentFileEncoder.encodeFromData(
+                let (encoded, encodeError) = await AttachmentFileEncoder.encodeFromData(
                     images, existingCount: existingCount,
                     maxAttachments: ComposerBar.maxAttachments,
                     maxAttachmentBytes: ComposerBar.maxAttachmentBytes)
+                // Surface encoder failures (oversized/undecodable images) the
+                // same way the file/drop attach paths do.
+                attachmentError.wrappedValue = encodeError
                 guard !encoded.isEmpty else { return }
                 let current = model.composerDraft(for: threadID).attachments
                 // Re-check cap against any concurrent attach (paperclip/drop).

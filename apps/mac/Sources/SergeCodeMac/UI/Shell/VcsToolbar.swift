@@ -149,7 +149,10 @@ struct VcsToolbar: View {
                 let name = newBranchName.trimmingCharacters(in: .whitespaces)
                 newBranchName = ""
                 guard !name.isEmpty else { return }
-                Task { await model.createBranch(name) }
+                Task {
+                    await model.createBranch(name)
+                    await refreshBranches()
+                }
             }
             Button("Cancel", role: .cancel) { newBranchName = "" }
         }
@@ -215,8 +218,15 @@ struct VcsToolbar: View {
         // list refreshes for the repo this toolbar instance now belongs to,
         // and cancels cleanly if the thread changes mid-fetch.
         .task(id: threadID) {
-            branches = await model.listBranches(query: nil)
+            await refreshBranches()
         }
+    }
+
+    /// Re-fetches the popover's branch list. Called on mount and after a
+    /// branch create/switch so the list and its `isCurrent` markers don't
+    /// go stale while the toolbar stays mounted.
+    private func refreshBranches() async {
+        branches = await model.listBranches(query: nil)
     }
 
     private func branchPopover(_ status: VcsStatus) -> some View {
@@ -236,7 +246,10 @@ struct VcsToolbar: View {
                                 isSelected: branch.isCurrent
                             ) {
                                 showBranchMenu = false
-                                Task { await model.switchBranch(branch.name) }
+                                Task {
+                                    await model.switchBranch(branch.name)
+                                    await refreshBranches()
+                                }
                             }
                             .disabled(branch.isCurrent)
                         }

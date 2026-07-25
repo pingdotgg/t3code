@@ -599,20 +599,34 @@ private func inlineAttributed(children: MarkupChildren) -> AttributedString {
     return linkifyFilePaths(in: result)
 }
 
+/// Unions an intent into every run of an already-rendered inline fragment.
+/// Assigning `inlinePresentationIntent` over the whole string would *replace*
+/// nested intents — `*code*` would drop `.code` and lose the mono treatment —
+/// so merge per run, matching how `AttributedString(markdown:)` unions these.
+private func addingInlinePresentationIntent(
+    _ intent: InlinePresentationIntent,
+    to fragment: AttributedString
+) -> AttributedString {
+    var result = fragment
+    let runs = fragment.runs.map { ($0.range, $0.inlinePresentationIntent ?? []) }
+    for (range, existing) in runs {
+        result[range].inlinePresentationIntent = existing.union(intent)
+    }
+    return result
+}
+
 private func inlineAttributed(markup: Markup) -> AttributedString {
     switch markup {
     case let text as Markdown.Text:
         return AttributedString(text.string)
 
     case let emphasis as Markdown.Emphasis:
-        var result = inlineAttributed(children: emphasis.children)
-        result.inlinePresentationIntent = .emphasized
-        return result
+        return addingInlinePresentationIntent(
+            .emphasized, to: inlineAttributed(children: emphasis.children))
 
     case let strong as Markdown.Strong:
-        var result = inlineAttributed(children: strong.children)
-        result.inlinePresentationIntent = .stronglyEmphasized
-        return result
+        return addingInlinePresentationIntent(
+            .stronglyEmphasized, to: inlineAttributed(children: strong.children))
 
     case let inlineCode as Markdown.InlineCode:
         var result = AttributedString(inlineCode.code)
