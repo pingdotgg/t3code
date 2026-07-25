@@ -75,6 +75,45 @@ export class PreviewAutomationViewportTimeoutError extends Schema.TaggedErrorCla
   }
 }
 
+export class PreviewAutomationVisibilityTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationVisibilityTimeoutError>()(
+  "PreviewAutomationVisibilityTimeoutError",
+  {
+    requestId: TrimmedNonEmptyString,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    tabId: PreviewTabId,
+    timeoutMs: Schema.Int,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationTimeoutError" as const;
+  }
+
+  override get message(): string {
+    return `Preview browser surface for request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} tab ${this.tabId} did not become visible within ${this.timeoutMs}ms.`;
+  }
+}
+
+export class PreviewAutomationHostDeadlineExceededError extends Schema.TaggedErrorClass<PreviewAutomationHostDeadlineExceededError>()(
+  "PreviewAutomationHostDeadlineExceededError",
+  {
+    requestId: TrimmedNonEmptyString,
+    operation: PreviewAutomationOperation,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    tabId: Schema.NullOr(PreviewTabId),
+    timeoutMs: Schema.Int,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationTimeoutError" as const;
+  }
+
+  override get message(): string {
+    return `Preview automation ${this.operation} request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} (tab ${this.tabId ?? "unassigned"}) did not complete within the ${this.timeoutMs}ms host response budget.`;
+  }
+}
+
 export class PreviewAutomationTargetUnavailableError extends Schema.TaggedErrorClass<PreviewAutomationTargetUnavailableError>()(
   "PreviewAutomationTargetUnavailableError",
   {
@@ -209,6 +248,8 @@ export const PreviewAutomationHostError = Schema.Union([
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationNavigationTimeoutError,
   PreviewAutomationViewportTimeoutError,
+  PreviewAutomationVisibilityTimeoutError,
+  PreviewAutomationHostDeadlineExceededError,
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetNotEditableHostError,

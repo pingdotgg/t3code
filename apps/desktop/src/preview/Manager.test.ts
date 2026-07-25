@@ -20,6 +20,7 @@ import * as BrowserSession from "./BrowserSession.ts";
 import * as PreviewManager from "./Manager.ts";
 
 const {
+  createFromBuffer,
   createFromPath,
   fromId,
   getFocusedWebContents,
@@ -29,6 +30,7 @@ const {
   writeFile,
   writeImage,
 } = vi.hoisted(() => ({
+  createFromBuffer: vi.fn(),
   createFromPath: vi.fn((): { readonly isEmpty: () => boolean } => ({ isEmpty: () => false })),
   fromId: vi.fn(() => null),
   getFocusedWebContents: vi.fn(() => null),
@@ -44,6 +46,7 @@ vi.mock("electron", () => ({
     writeImage,
   },
   nativeImage: {
+    createFromBuffer,
     createFromPath,
   },
   shell: {
@@ -116,6 +119,7 @@ describe("PreviewManager", () => {
     showItemInFolder.mockClear();
     writeImage.mockClear();
     createFromPath.mockClear();
+    createFromBuffer.mockReset();
     webviewSend.mockClear();
   });
 
@@ -142,6 +146,193 @@ describe("PreviewManager", () => {
           loading: false,
         });
         expect(fromId).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect(
+    "captures automation screenshots through CDP and recovers when capture is unavailable",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const png = Buffer.from("automation-preview-png");
+          const image = {
+            isEmpty: () => false,
+            getSize: () => ({ width: 640, height: 360 }),
+            resize: vi.fn(),
+            toPNG: () => png,
+          };
+          createFromBuffer.mockReturnValue(image);
+          let attached = false;
+          let captureAvailable = true;
+          const attach = vi.fn(() => {
+            attached = true;
+          });
+          const detach = vi.fn(() => {
+            attached = false;
+          });
+          const capturePage = vi.fn();
+          const sendCommand = vi.fn(
+            async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
+              if (method === "Runtime.evaluate") {
+                return {
+                  result: {
+                    value: {
+                      url: "https://example.com/",
+                      title: "Example",
+                      loading: false,
+                      visibleText: "Example body",
+                      interactiveElements: [],
+                    },
+                  },
+                };
+              }
+              if (method === "Accessibility.getFullAXTree") {
+                return { nodes: [] };
+              }
+              if (method === "Page.captureScreenshot") {
+                if (!captureAvailable) throw new Error("UnknownVizError");
+                expect(params).toEqual({
+                  format: "png",
+                  fromSurface: true,
+                  captureBeyondViewport: false,
+                });
+                return { data: png.toString("base64") };
+              }
+              return undefined;
+            },
+          );
+          fromId.mockReturnValue({
+            id: 42,
+            isDestroyed: () => false,
+            getType: () => "webview",
+            getURL: () => "https://example.com/",
+            getTitle: () => "Example",
+            isLoading: () => false,
+            isDevToolsOpened: () => false,
+            getZoomFactor: () => 1,
+            setZoomFactor: vi.fn(),
+            on: vi.fn(),
+            off: vi.fn(),
+            ipc: { on: vi.fn(), off: vi.fn() },
+            send: webviewSend,
+            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+            setWindowOpenHandler: vi.fn(),
+            capturePage,
+            debugger: {
+              isAttached: () => attached,
+              attach,
+              detach,
+              sendCommand,
+              on: vi.fn(),
+              off: vi.fn(),
+            },
+          } as never);
+
+          yield* manager.createTab("tab_snapshot");
+          yield* manager.registerWebview("tab_snapshot", 42);
+          yield* Effect.yieldNow;
+
+          const captured = yield* manager.automationSnapshot("tab_snapshot");
+
+          expect(captured).toMatchObject({
+            url: "https://example.com/",
+            title: "Example",
+            visibleText: "Example body",
+            accessibilityTree: { nodes: [] },
+            screenshot: {
+              mimeType: "image/png",
+              data: png.toString("base64"),
+              width: 640,
+              height: 360,
+            },
+          });
+          expect(capturePage).not.toHaveBeenCalled();
+
+          captureAvailable = false;
+          const degraded = yield* manager.automationSnapshot("tab_snapshot");
+          expect(degraded.screenshot).toBeNull();
+          expect(detach).toHaveBeenCalledOnce();
+
+          captureAvailable = true;
+          const recovered = yield* manager.automationSnapshot("tab_snapshot");
+          expect(recovered.screenshot).toMatchObject({ width: 640, height: 360 });
+          expect(attach).toHaveBeenCalledTimes(2);
+        }),
+      ),
+  );
+
+  effectIt.effect("releases and resets timed-out automation control sessions", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let attached = false;
+        let firstEvaluation = true;
+        const attach = vi.fn(() => {
+          attached = true;
+        });
+        const detach = vi.fn(() => {
+          attached = false;
+        });
+        const sendCommand = vi.fn(async (method: string): Promise<unknown> => {
+          if (method !== "Runtime.evaluate") return undefined;
+          if (firstEvaluation) {
+            firstEvaluation = false;
+            return await new Promise<never>(() => undefined);
+          }
+          return { result: { value: "recovered" } };
+        });
+        fromId.mockReturnValue({
+          id: 43,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com/",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => attached,
+            attach,
+            detach,
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_timeout");
+        yield* manager.registerWebview("tab_timeout", 43);
+        yield* Effect.yieldNow;
+
+        const evaluation = yield* manager
+          .automationEvaluate("tab_timeout", { expression: "document.title" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(15_000);
+        const timedOut = yield* Effect.exit(Fiber.join(evaluation));
+
+        expect(Exit.isFailure(timedOut)).toBe(true);
+        if (Exit.isFailure(timedOut)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(timedOut.cause))).toMatchObject({
+            _tag: "PreviewAutomationTimeoutError",
+            tabId: "tab_timeout",
+          });
+        }
+        expect(detach).toHaveBeenCalledOnce();
+
+        expect(
+          yield* manager.automationEvaluate("tab_timeout", {
+            expression: "document.title",
+          }),
+        ).toBe("recovered");
+        expect(attach).toHaveBeenCalledTimes(2);
       }),
     ),
   );

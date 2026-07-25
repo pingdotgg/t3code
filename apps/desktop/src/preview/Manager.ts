@@ -101,6 +101,9 @@ const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_INTERACTIVE_ELEMENTS = 200;
 const MAX_SCREENSHOT_WIDTH = 1280;
+const DEFAULT_AUTOMATION_TIMEOUT_MS = 15_000;
+const AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS = 250;
+const AUTOMATION_SCREENSHOT_TIMEOUT_MS = 5_000;
 const DIAGNOSTIC_BUFFER_LIMIT = 200;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
 const AGENT_CURSOR_MOVE_MS = 160;
@@ -877,6 +880,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     wc: Electron.WebContents,
     action: string,
     use: (send: SendCommand, sendCleanup: SendCommand) => Effect.Effect<A, PreviewManagerError>,
+    timeoutMs = DEFAULT_AUTOMATION_TIMEOUT_MS,
   ) {
     const sequence = yield* nextCounter(actionSequenceRef);
     const startedAt = yield* currentIso;
@@ -966,7 +970,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const tabs = yield* SynchronizedRef.get(tabsRef);
       if (tabs.has(tabId)) yield* update(tabId, { controller: "none" });
     });
-    return yield* control.semaphore.withPermit(execute().pipe(Effect.onExit(finalize)));
+    const boundedExecution = Effect.gen(function* () {
+      const result = yield* control.semaphore
+        .withPermit(execute())
+        .pipe(Effect.timeoutOption(Math.max(1, timeoutMs - AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS)));
+      if (Option.isNone(result)) {
+        return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
+      }
+      return result.value;
+    });
+    return yield* boundedExecution.pipe(
+      Effect.onExit(finalize),
+      Effect.tapError((error) =>
+        isPreviewAutomationTimeoutError(error) ? detachControlSession(wc.id) : Effect.void,
+      ),
+    );
   });
 
   const evaluateWithDebugger = <A = unknown>(
@@ -1911,6 +1929,60 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         };
   });
 
+  const captureAutomationScreenshot = Effect.fn("PreviewManager.captureAutomationScreenshot")(
+    function* (tabId: string, wc: Electron.WebContents, send: SendCommand) {
+      const response = yield* send("Page.captureScreenshot", {
+        format: "png",
+        fromSurface: true,
+        captureBeyondViewport: false,
+      });
+      const data =
+        typeof response === "object" &&
+        response !== null &&
+        "data" in response &&
+        typeof response.data === "string" &&
+        response.data.length > 0
+          ? response.data
+          : null;
+      if (data === null) {
+        return yield* new PreviewOperationError({
+          operation: "automationSnapshot.decodeScreenshot",
+          tabId,
+          webContentsId: wc.id,
+          cause: new Error("Page.captureScreenshot returned no PNG data"),
+        });
+      }
+      const sourceImage = yield* attempt(
+        {
+          operation: "automationSnapshot.createImage",
+          tabId,
+          webContentsId: wc.id,
+        },
+        () => nativeImage.createFromBuffer(Buffer.from(data, "base64")),
+      );
+      if (sourceImage.isEmpty()) {
+        return yield* new PreviewOperationError({
+          operation: "automationSnapshot.createImage",
+          tabId,
+          webContentsId: wc.id,
+          cause: new Error("Page.captureScreenshot returned an invalid PNG"),
+        });
+      }
+      const sourceSize = sourceImage.getSize();
+      const image =
+        sourceSize.width > MAX_SCREENSHOT_WIDTH
+          ? sourceImage.resize({ width: MAX_SCREENSHOT_WIDTH })
+          : sourceImage;
+      const size = image.getSize();
+      return {
+        mimeType: "image/png" as const,
+        data: image.toPNG().toString("base64"),
+        width: size.width,
+        height: size.height,
+      };
+    },
+  );
+
   const captureAutomationSnapshot = Effect.fn("PreviewManager.captureAutomationSnapshot")(
     function* (tabId: string, wc: Electron.WebContents, send: SendCommand) {
       yield* Effect.all([send("Runtime.enable"), send("Accessibility.enable")], {
@@ -1979,25 +2051,36 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         })()`,
         true,
       );
-      const [accessibility, sourceImage, diagnostics, timelines] = yield* Effect.all([
+      const [accessibility, diagnostics, timelines] = yield* Effect.all([
         send("Accessibility.getFullAXTree"),
-        attemptPromise(
-          {
-            operation: "automationSnapshot.capturePage",
-            tabId,
-            webContentsId: wc.id,
-          },
-          () => wc.capturePage(),
-        ),
         Ref.get(diagnosticsRef),
         Ref.get(actionTimelineRef),
       ]);
-      const sourceSize = sourceImage.getSize();
-      const image =
-        sourceSize.width > MAX_SCREENSHOT_WIDTH
-          ? sourceImage.resize({ width: MAX_SCREENSHOT_WIDTH })
-          : sourceImage;
-      const size = image.getSize();
+      const screenshotResult = yield* captureAutomationScreenshot(tabId, wc, send).pipe(
+        Effect.timeoutOption(AUTOMATION_SCREENSHOT_TIMEOUT_MS),
+        Effect.exit,
+      );
+      const screenshot =
+        Exit.isSuccess(screenshotResult) && Option.isSome(screenshotResult.value)
+          ? screenshotResult.value.value
+          : null;
+      if (screenshot === null) {
+        const failure = Exit.isFailure(screenshotResult)
+          ? screenshotResult.cause
+          : new PreviewAutomationTimeoutError({
+              tabId,
+              timeoutMs: AUTOMATION_SCREENSHOT_TIMEOUT_MS,
+            });
+        yield* Effect.logWarning("Preview automation screenshot capture was unavailable.", {
+          tabId,
+          webContentsId: wc.id,
+          cause: failure,
+        });
+        // A timed-out debugger command may still settle after its Effect has
+        // been interrupted. Detach the session so later automation starts
+        // from a fresh CDP connection instead of inheriting that command.
+        yield* detachControlSession(wc.id);
+      }
       const browserDiagnostics = diagnostics.get(wc.id);
       return {
         ...page,
@@ -2005,12 +2088,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         consoleEntries: [...(browserDiagnostics?.consoleEntries ?? [])],
         networkEntries: [...(browserDiagnostics?.networkEntries ?? [])],
         actionTimeline: [...(timelines.get(tabId) ?? [])],
-        screenshot: {
-          mimeType: "image/png" as const,
-          data: image.toPNG().toString("base64"),
-          width: size.width,
-          height: size.height,
-        },
+        screenshot,
       };
     },
   );
@@ -2153,8 +2231,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationClickInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "click", (send) =>
-      performAutomationClick(tabId, input, send),
+    yield* withControlSession(
+      tabId,
+      wc,
+      "click",
+      (send) => performAutomationClick(tabId, input, send),
+      input.timeoutMs,
     );
   });
 
@@ -2279,8 +2361,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationTypeInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "type", (send) =>
-      performAutomationType(tabId, input, send),
+    yield* withControlSession(
+      tabId,
+      wc,
+      "type",
+      (send) => performAutomationType(tabId, input, send),
+      input.timeoutMs,
     );
   });
 
@@ -2504,8 +2590,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationWaitForInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "waitFor", (send) =>
-      performAutomationWaitFor(tabId, input, send),
+    yield* withControlSession(
+      tabId,
+      wc,
+      "waitFor",
+      (send) => performAutomationWaitFor(tabId, input, send),
+      input.timeoutMs,
     );
   });
 
@@ -2874,6 +2964,7 @@ export const isPreviewAutomationEvaluationError = Schema.is(PreviewAutomationEva
 export const isPreviewAutomationInvalidSelectorError = Schema.is(
   PreviewAutomationInvalidSelectorError,
 );
+export const isPreviewAutomationTimeoutError = Schema.is(PreviewAutomationTimeoutError);
 
 export class PreviewManager extends Context.Service<
   PreviewManager,

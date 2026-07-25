@@ -10,8 +10,10 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  PreviewAutomationHostDeadlineExceededError,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetUnavailableError,
+  PreviewAutomationVisibilityTimeoutError,
   PreviewAutomationViewportTimeoutError,
 } from "./previewAutomationErrors";
 import {
@@ -289,6 +291,101 @@ describe("previewAutomationRequestConsumer", () => {
       _tag: "PreviewAutomationTimeoutError",
       detail: { tabId: "tab-1", timeoutMs: 2_500 },
     });
+  });
+
+  it("preserves browser visibility timeouts as timeout responses", () => {
+    const error = new PreviewAutomationVisibilityTimeoutError({
+      requestId: "request-open",
+      environmentId,
+      threadId,
+      tabId,
+      timeoutMs: 2_000,
+    });
+
+    expect(
+      serializePreviewAutomationError(error, {
+        requestId: "request-open",
+        operation: "open",
+        environmentId,
+        threadId,
+        tabId,
+      }),
+    ).toMatchObject({
+      _tag: "PreviewAutomationTimeoutError",
+      detail: { tabId: "tab-1", timeoutMs: 2_000 },
+    });
+  });
+
+  it("preserves host response deadline errors as timeout responses", () => {
+    const error = new PreviewAutomationHostDeadlineExceededError({
+      requestId: "request-snapshot",
+      operation: "snapshot",
+      environmentId,
+      threadId,
+      tabId,
+      timeoutMs: 14_750,
+    });
+
+    expect(
+      serializePreviewAutomationError(error, {
+        requestId: "request-snapshot",
+        operation: "snapshot",
+        environmentId,
+        threadId,
+        tabId,
+      }),
+    ).toMatchObject({
+      _tag: "PreviewAutomationTimeoutError",
+      detail: { tabId: "tab-1", timeoutMs: 14_750 },
+    });
+  });
+
+  it("responds before the broker deadline when the host operation stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationStreamEvent, Error>>(
+        AsyncResult.initial<PreviewAutomationStreamEvent, Error>(false),
+      );
+      const respond = vi.fn(async (_response: PreviewAutomationResponse) => undefined);
+      const state = consumerState(() => new Promise(() => undefined));
+      const consumerAtom = createPreviewAutomationRequestConsumerAtom({
+        requestsAtom,
+        clientId,
+        connectionAtom: state.connectionAtom,
+        environmentId,
+        requestHandlerAtom: state.requestHandlerAtom,
+        respond,
+        label: "test:preview-automation-host-deadline",
+      });
+      const registry = AtomRegistry.make();
+      registry.mount(consumerAtom);
+      registry.set(
+        requestsAtom,
+        AsyncResult.success(
+          requestEvent("request-stalled", {
+            operation: "snapshot",
+            tabId,
+            timeoutMs: 1_000,
+          }),
+        ),
+      );
+
+      await vi.advanceTimersByTimeAsync(750);
+
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestId: "request-stalled",
+          ok: false,
+          error: expect.objectContaining({
+            _tag: "PreviewAutomationTimeoutError",
+            detail: expect.objectContaining({ timeoutMs: 750 }),
+          }),
+        }),
+      );
+      registry.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("maps desktop non-editable targets to the public typed response", () => {

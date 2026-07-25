@@ -51,6 +51,7 @@ import {
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetUnavailableError,
+  PreviewAutomationVisibilityTimeoutError,
   PreviewAutomationViewportTimeoutError,
 } from "./previewAutomationErrors";
 import { previewAutomationOpenNeedsOverlay } from "./previewAutomationOpenReadiness";
@@ -82,6 +83,27 @@ const waitForDesktopOverlay = async (
     requestId,
     environmentId: threadRef.environmentId,
     threadId: threadRef.threadId,
+    timeoutMs,
+  });
+};
+
+const waitForBrowserSurfaceVisibility = async (
+  threadRef: ScopedThreadRef,
+  requestId: string,
+  tabId: string,
+  requestTimeoutMs: number,
+): Promise<void> => {
+  const timeoutMs = Math.max(1, Math.min(2_000, requestTimeoutMs - 250));
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    if (useBrowserSurfaceStore.getState().byTabId[tabId]?.visible) return;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+  }
+  throw new PreviewAutomationVisibilityTimeoutError({
+    requestId,
+    environmentId: threadRef.environmentId,
+    threadId: threadRef.threadId,
+    tabId,
     timeoutMs,
   });
 };
@@ -396,6 +418,14 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 request.requestId,
                 activeTabId,
                 "load",
+                request.timeoutMs,
+              );
+            }
+            if (input.show ?? true) {
+              await waitForBrowserSurfaceVisibility(
+                threadRef,
+                request.requestId,
+                activeTabId,
                 request.timeoutMs,
               );
             }
