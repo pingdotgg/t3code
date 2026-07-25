@@ -5,7 +5,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from subprocess import CompletedProcess
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from integrations.hermes_plugin.config import load_config
 from integrations.hermes_plugin.releases import ReleaseAsset
@@ -14,6 +14,7 @@ from integrations.hermes_plugin.service import (
     _render_watchdog_run,
     _t3_service_args,
     install,
+    update,
 )
 
 
@@ -98,3 +99,58 @@ class ServiceDefinitionTest(unittest.TestCase):
         watchdog.assert_called_once_with(config)
         self.assertEqual(result["release"], "1.2.3")
         self.assertEqual(result["status"]["port"], config.port)
+
+    def test_update_restarts_the_process_after_replacing_the_binary(self) -> None:
+        root = Path(self.temporary.name)
+        config = replace(
+            self.config,
+            service_dir=root / "service" / "t3code",
+            watchdog_service_dir=root / "service" / "t3code-plugin-watchdog",
+        )
+        release = ReleaseAsset(
+            version="1.2.4",
+            tag="v1.2.4",
+            binary_url="https://example.test/t3",
+            checksum_url="https://example.test/t3.sha256",
+        )
+        current = ServiceStatus(
+            binary_installed=True,
+            binary_version="1.2.4",
+            service_installed=True,
+            service_running=True,
+            watchdog_installed=True,
+            watchdog_running=True,
+            reachable=True,
+            host=config.host,
+            port=config.port,
+            service_dir=str(config.service_dir),
+            data_dir=str(config.data_dir),
+        )
+        completed = CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service.install_release",
+                return_value=release,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._command",
+                return_value=completed,
+            ) as command,
+            patch("integrations.hermes_plugin.service._install_watchdog") as watchdog,
+            patch(
+                "integrations.hermes_plugin.service.status",
+                return_value=current,
+            ),
+        ):
+            result = update(config)
+
+        self.assertEqual(
+            command.call_args_list,
+            [
+                call(_t3_service_args(config, "update"), timeout=45),
+                call(["s6-svc", "-r", str(config.service_dir)], timeout=5),
+            ],
+        )
+        watchdog.assert_called_once_with(config)
+        self.assertEqual(result["release"], "1.2.4")
