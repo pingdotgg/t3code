@@ -415,6 +415,21 @@ final class NewSessionWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
 
     func show(multi: MultiDeviceModel, scenery: SceneryStore) {
+        // Defer one runloop turn: callers reach this from popover rows (the
+        // sidebar "Choose Target…" item), and creating the window
+        // synchronously lands its first layout pass inside the still-open
+        // CATransaction from the popover dismissal. On macOS 26/27 the
+        // `.fullSizeContentView` hosting view then invalidates safe area
+        // insets mid-pass, which trips AppKit's layout-feedback-loop guard
+        // (NSInternalInconsistency in _postWindowNeedsUpdateConstraints →
+        // hard crash). Same deferral pattern as the toolbar buttons in
+        // ContentView.
+        DispatchQueue.main.async { [self] in
+            present(multi: multi, scenery: scenery)
+        }
+    }
+
+    private func present(multi: MultiDeviceModel, scenery: SceneryStore) {
         // Always mint a fresh sheet — reusing a cached window would leak the
         // previous invocation's typed path/selected provider into this one.
         window?.close()
