@@ -20,6 +20,14 @@ const FAILURE_THRESHOLD = 3;
 const BASE_COOLDOWN_MS = 5 * 60_000;
 const MAX_COOLDOWN_MS = 60 * 60_000;
 
+/**
+ * Only a workspace that later succeeds clears its own record, so a workspace
+ * that fails once and is then abandoned would otherwise be retained for the
+ * lifetime of the server. Bound the tracked set and evict least-recently
+ * touched entries; dropping one only costs a workspace its failure history.
+ */
+const MAX_TRACKED_WORKSPACES = 256;
+
 export interface CaptureBackoffDecision<E> {
   readonly skip: boolean;
   /** Milliseconds left in the cooldown, for logging. Zero when not skipping. */
@@ -75,11 +83,21 @@ export function makeCaptureBackoff<E>() {
     recordFailure(cwd: string, nowMs: number, error: E): number {
       const consecutiveFailures = (recordByCwd.get(cwd)?.consecutiveFailures ?? 0) + 1;
       const cooldownMs = cooldownForFailureCount(consecutiveFailures);
+      // Re-insert so Map iteration order tracks recency, keeping the
+      // workspaces actually in use ahead of stale ones during eviction.
+      recordByCwd.delete(cwd);
       recordByCwd.set(cwd, {
         consecutiveFailures,
         skipUntilMs: cooldownMs === 0 ? 0 : nowMs + cooldownMs,
         lastError: error,
       });
+
+      while (recordByCwd.size > MAX_TRACKED_WORKSPACES) {
+        const oldestCwd = recordByCwd.keys().next().value;
+        if (oldestCwd === undefined) break;
+        recordByCwd.delete(oldestCwd);
+      }
+
       return consecutiveFailures;
     },
 

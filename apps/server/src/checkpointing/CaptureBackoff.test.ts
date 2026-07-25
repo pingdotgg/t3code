@@ -83,6 +83,33 @@ describe("makeCaptureBackoff", () => {
     expect(backoff.evaluate(healthy, 1_000).skip).toBe(false);
   });
 
+  it("bounds how many workspaces it retains", () => {
+    const backoff = makeCaptureBackoff<string>();
+
+    for (let index = 0; index < 400; index += 1) {
+      backoff.recordFailure(`/repo/workspace-${index}`, index, "timeout");
+    }
+
+    expect(backoff.trackedWorkspaceCount).toBe(256);
+    // The oldest entries are the ones dropped: an evicted workspace starts
+    // counting again from one, a retained one continues.
+    expect(backoff.recordFailure("/repo/workspace-0", 1_000, "timeout")).toBe(1);
+    expect(backoff.recordFailure("/repo/workspace-399", 1_000, "timeout")).toBe(2);
+  });
+
+  it("keeps a repeatedly failing workspace alive through eviction pressure", () => {
+    const backoff = makeCaptureBackoff<string>();
+
+    // A workspace in active use fails on every turn while many one-off
+    // workspaces churn past it.
+    for (let index = 0; index < 400; index += 1) {
+      backoff.recordFailure(CWD, index, "timeout");
+      backoff.recordFailure(`/repo/other-${index}`, index, "timeout");
+    }
+
+    expect(backoff.evaluate(CWD, 400).skip).toBe(true);
+  });
+
   it("keeps extending the cooldown while failures continue", () => {
     const backoff = makeCaptureBackoff<string>();
 
