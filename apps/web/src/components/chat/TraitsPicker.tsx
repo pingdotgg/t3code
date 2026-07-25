@@ -392,9 +392,11 @@ export function buildTraitsTriggerDisplay(input: {
   ultrathinkPromptControlled: boolean;
   fastModeEnabled: boolean;
 }): { label: string; showFastModeIcon: boolean } {
+  let hasFastMode = false;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
+      hasFastMode = true;
       continue;
     }
     const label =
@@ -408,7 +410,10 @@ export function buildTraitsTriggerDisplay(input: {
     }
   }
 
-  if (labels.length === 0) {
+  // Only fall back to text when fast mode is genuinely the sole trait. Keying
+  // off an empty label list alone would also catch descriptors that resolved to
+  // no label at all, printing a bogus "Normal" for a model without fast mode.
+  if (labels.length === 0 && hasFastMode) {
     return { label: input.fastModeEnabled ? "Fast" : "Normal", showFastModeIcon: false };
   }
   return { label: labels.join(" · "), showFastModeIcon: input.fastModeEnabled };
