@@ -87,6 +87,22 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
   };
 }
 
+export function hasQueuedHermesFollowUp(
+  thread: Pick<Thread, "latestTurn" | "messages" | "session"> | null | undefined,
+): boolean {
+  if (
+    thread?.session?.providerName !== "hermes" ||
+    thread.session.status !== "running" ||
+    thread.latestTurn?.state !== "running"
+  ) {
+    return false;
+  }
+  const latestUserMessage = thread.messages.findLast((message) => message.role === "user");
+  return (
+    latestUserMessage !== undefined && latestUserMessage.createdAt > thread.latestTurn.requestedAt
+  );
+}
+
 export function reconcileMountedTerminalThreadIds(input: {
   currentThreadIds: ReadonlyArray<string>;
   openThreadIds: ReadonlyArray<string>;

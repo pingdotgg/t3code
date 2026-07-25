@@ -172,6 +172,7 @@ export function makeHermesAdapter(
 
     const sessions = new Map<ThreadId, HermesSessionContext>();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
+    const turnQueueLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
@@ -220,6 +221,23 @@ export function makeHermesAdapter(
       });
     const withThreadLock = <A, E, R>(threadId: string, effect: Effect.Effect<A, E, R>) =>
       Effect.flatMap(getThreadSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
+    const getTurnQueueSemaphore = (threadId: string) =>
+      SynchronizedRef.modifyEffect(turnQueueLocksRef, (current) => {
+        const existing = Option.fromNullishOr(current.get(threadId));
+        return Option.match(existing, {
+          onNone: () =>
+            Semaphore.make(1).pipe(
+              Effect.map((semaphore) => {
+                const next = new Map(current);
+                next.set(threadId, semaphore);
+                return [semaphore, next] as const;
+              }),
+            ),
+          onSome: (semaphore) => Effect.succeed([semaphore, current] as const),
+        });
+      });
+    const withTurnQueueLock = <A, E, R>(threadId: string, effect: Effect.Effect<A, E, R>) =>
+      Effect.flatMap(getTurnQueueSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
 
     const requireSession = (
       threadId: ThreadId,
@@ -232,7 +250,7 @@ export function makeHermesAdapter(
 
     const settlePendingApprovals = (context: HermesSessionContext) =>
       Effect.forEach(
-        context.pendingApprovals.values(),
+        Array.from(context.pendingApprovals.values()),
         (pending) => Deferred.succeed(pending.decision, "cancel").pipe(Effect.ignore),
         { discard: true },
       );
@@ -569,7 +587,7 @@ export function makeHermesAdapter(
         }).pipe(Effect.scoped),
       );
 
-    const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
+    const sendTurnUnqueued: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const prepared = yield* withThreadLock(
           input.threadId,
@@ -741,6 +759,9 @@ export function makeHermesAdapter(
         );
       });
 
+    const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
+      withTurnQueueLock(input.threadId, sendTurnUnqueued(input));
+
     const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (
       threadId,
       turnId,
@@ -750,13 +771,13 @@ export function makeHermesAdapter(
         if (turnId !== undefined && context.activeTurnId !== turnId) {
           return;
         }
-        yield* settlePendingApprovals(context);
         yield* context.acp.cancel.pipe(
           Effect.mapError((error) =>
             mapAcpToAdapterError(PROVIDER, threadId, "session/cancel", error),
           ),
           Effect.ignore,
         );
+        yield* settlePendingApprovals(context);
       });
 
     const respondToRequest: ProviderAdapterShape<ProviderAdapterError>["respondToRequest"] = (

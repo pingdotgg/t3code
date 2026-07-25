@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
@@ -72,6 +73,21 @@ function decodeRequestParams<A>(
   decode: (input: unknown) => Option.Option<A>,
 ): A | undefined {
   return Option.getOrUndefined(decode(request?.params));
+}
+
+function waitForRequestCount(filePath: string, method: string, count: number) {
+  return Effect.gen(function* () {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const requests = yield* Effect.promise(() =>
+        readJsonLines(filePath).catch(() => [] as AcpRequestLogEntry[]),
+      );
+      if (requests.filter((request) => request.method === method).length >= count) {
+        return;
+      }
+      yield* Effect.sleep("10 millis");
+    }
+    throw new Error(`Timed out waiting for ${count} '${method}' requests.`);
+  });
 }
 
 const testLayer = ServerConfig.layerTest(process.cwd(), {
@@ -272,5 +288,83 @@ it.layer(testLayer)("HermesAdapter ACP", (it) => {
       yield* Fiber.join(turnFiber);
       yield* Fiber.interrupt(eventFiber);
     }),
+  );
+
+  it.effect("queues a follow-up turn and starts it after interrupting the active turn", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hermes-acp-queued-turn-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockHermesWrapper({
+          T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const instanceId = ProviderInstanceId.make("hermes");
+      const adapter = yield* makeHermesAdapter(decodeSettings({ binaryPath: wrapperPath }), {
+        instanceId,
+      });
+      const threadId = ThreadId.make("hermes-queued-follow-up-thread");
+      const secondTurnStarted = yield* Deferred.make<void>();
+      const events: ProviderRuntimeEvent[] = [];
+      const eventFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          events.push(event);
+          return events.filter((candidate) => candidate.type === "turn.started").length;
+        }).pipe(
+          Effect.flatMap((turnStartedCount) =>
+            event.type === "turn.started" && turnStartedCount === 2
+              ? Deferred.succeed(secondTurnStarted, undefined).pipe(Effect.ignore)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+        modelSelection: { instanceId, model: "grok-build" },
+      });
+
+      const firstTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "keep working", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* waitForRequestCount(requestLogPath, "session/prompt", 1).pipe(
+        Effect.timeout("2 seconds"),
+      );
+
+      const queuedTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "use this follow-up instead", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      assert.equal(
+        events.filter((event) => event.type === "turn.started").length,
+        1,
+        "the follow-up must remain queued while the first turn is active",
+      );
+
+      yield* adapter.interruptTurn(threadId).pipe(Effect.timeout("2 seconds"));
+      yield* Deferred.await(secondTurnStarted).pipe(Effect.timeout("2 seconds"));
+
+      const firstTurn = yield* Fiber.join(firstTurnFiber).pipe(Effect.timeout("2 seconds"));
+      const queuedTurn = yield* Fiber.join(queuedTurnFiber).pipe(Effect.timeout("2 seconds"));
+
+      assert.notEqual(String(firstTurn.turnId), String(queuedTurn.turnId));
+      assert.deepEqual(
+        events
+          .filter(
+            (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+              event.type === "turn.completed",
+          )
+          .map((event) => event.payload.state),
+        ["cancelled", "completed"],
+      );
+
+      yield* Fiber.interrupt(eventFiber);
+    }).pipe(TestClock.withLive),
   );
 });

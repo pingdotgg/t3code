@@ -17,6 +17,7 @@ import {
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   getStartedThreadModelChangeBlockReason,
+  hasQueuedHermesFollowUp,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
@@ -100,6 +101,78 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+});
+
+describe("hasQueuedHermesFollowUp", () => {
+  const runningTurn = {
+    ...completedTurn,
+    state: "running" as const,
+    completedAt: null,
+  };
+  const runningHermesSession = {
+    ...readySession,
+    providerName: "hermes",
+    status: "running" as const,
+    activeTurnId: runningTurn.turnId,
+  };
+
+  it("detects a Hermes user message sent after the active turn began", () => {
+    expect(
+      hasQueuedHermesFollowUp(
+        makeThread({
+          latestTurn: runningTurn,
+          session: runningHermesSession,
+          messages: [
+            {
+              id: MessageId.make("message-queued"),
+              role: "user",
+              text: "Follow up",
+              turnId: null,
+              createdAt: "2026-03-29T00:00:05.000Z",
+              updatedAt: "2026-03-29T00:00:05.000Z",
+              streaming: false,
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag the active prompt or another provider as queued", () => {
+    const activePrompt = {
+      id: MessageId.make("message-active"),
+      role: "user" as const,
+      text: "Initial prompt",
+      turnId: null,
+      createdAt: runningTurn.requestedAt,
+      updatedAt: runningTurn.requestedAt,
+      streaming: false,
+    };
+    expect(
+      hasQueuedHermesFollowUp(
+        makeThread({
+          latestTurn: runningTurn,
+          session: runningHermesSession,
+          messages: [activePrompt],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasQueuedHermesFollowUp(
+        makeThread({
+          latestTurn: runningTurn,
+          session: { ...runningHermesSession, providerName: "codex" },
+          messages: [
+            {
+              ...activePrompt,
+              createdAt: "2026-03-29T00:00:05.000Z",
+              updatedAt: "2026-03-29T00:00:05.000Z",
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
   });
 });
 
