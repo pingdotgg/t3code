@@ -959,7 +959,7 @@ function ProjectRouteView() {
         {project && projectDetails.isPending && !projectDetails.data ? (
           <ProjectSettingsLoading />
         ) : (
-          <SettingsPageContainer compact className="max-w-7xl gap-5">
+          <SettingsPageContainer compact className="min-h-full max-w-7xl gap-5">
             {!project ? (
               <ProjectNotice title="Project not found" description="This project is not loaded." />
             ) : projectDetails.error !== null ? (
@@ -1028,10 +1028,13 @@ function ProjectRouteView() {
                   </div>
                 </section>
 
-                <div className="grid min-w-0 gap-6 xl:grid-cols-2 xl:items-start">
-                  <div className="grid min-w-0 content-start gap-6">
-                    <SettingsSection title="General" className="space-y-1.5">
-                      <div className="rounded-xl bg-muted/15 p-1">
+                <div className="grid min-w-0 gap-6 xl:min-h-0 xl:flex-1 xl:grid-cols-2 xl:grid-rows-[auto_minmax(0,1fr)_auto] xl:items-stretch">
+                  <div className="grid min-w-0 content-start gap-6 xl:contents">
+                    <SettingsSection
+                      title="General"
+                      className="space-y-1.5 xl:col-start-1 xl:row-start-1"
+                    >
+                      <div className="mx-3 rounded-xl bg-muted/15 p-1 sm:mx-4">
                         <ProjectSettingRow
                           title="Name"
                           control={
@@ -1142,8 +1145,11 @@ function ProjectRouteView() {
                       </div>
                     </SettingsSection>
 
-                    <SettingsSection title="Providers" className="space-y-1.5">
-                      <div className="grid gap-1 rounded-xl bg-muted/15 p-1 sm:grid-cols-2">
+                    <SettingsSection
+                      title="Providers"
+                      className="space-y-1.5 xl:col-start-1 xl:row-start-2 xl:flex xl:min-h-0 xl:flex-col"
+                    >
+                      <div className="mx-3 grid gap-1 rounded-xl bg-muted/15 p-1 sm:mx-4 sm:grid-cols-2 xl:flex-1 xl:content-start">
                         {globallyEnabledProviderInstanceEntries.map((entry) => {
                           const allowed = !disabledProviderInstanceIds.includes(entry.instanceId);
                           const isLastAllowedProvider =
@@ -1196,9 +1202,12 @@ function ProjectRouteView() {
                     </SettingsSection>
                   </div>
 
-                  <div className="grid min-w-0 content-start gap-6">
-                    <SettingsSection title="Git info" className="space-y-1.5">
-                      <div className="rounded-xl bg-muted/15 p-1">
+                  <div className="grid min-w-0 content-start gap-6 xl:contents">
+                    <SettingsSection
+                      title="Git info"
+                      className="space-y-1.5 xl:col-start-2 xl:row-start-1"
+                    >
+                      <div className="mx-3 rounded-xl bg-muted/15 p-1 sm:mx-4">
                         <ProjectSettingRow
                           title="Remote"
                           description={
@@ -1390,8 +1399,11 @@ function ProjectRouteView() {
                       </div>
                     </SettingsSection>
 
-                    <SettingsSection title="Automation" className="space-y-1.5">
-                      <div className="rounded-xl bg-muted/15 p-1">
+                    <SettingsSection
+                      title="Automation"
+                      className="space-y-1.5 xl:col-start-2 xl:row-start-2 xl:flex xl:min-h-0 xl:flex-col"
+                    >
+                      <div className="mx-3 rounded-xl bg-muted/15 p-1 sm:mx-4 xl:flex-1">
                         <ProjectScriptsControl
                           variant="settings"
                           scripts={projectDetails.data.scripts}
@@ -1413,8 +1425,11 @@ function ProjectRouteView() {
                       </div>
                     </SettingsSection>
 
-                    <SettingsSection title="Danger zone" className="space-y-1.5">
-                      <div className="rounded-xl bg-destructive/4 p-1">
+                    <SettingsSection
+                      title="Danger zone"
+                      className="space-y-1.5 xl:col-span-2 xl:row-start-3"
+                    >
+                      <div className="mx-3 rounded-xl bg-destructive/4 p-1 sm:mx-4">
                         <ProjectSettingRow
                           title="Remove project"
                           description={
