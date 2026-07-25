@@ -109,16 +109,17 @@ describe("followNetworkStatus", () => {
     ),
   );
 
-  it.effect("keeps a resumed read that only a repeated status raced", () =>
+  it.effect("discards a resumed read that a repeated report raced", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const readStarted = yield* Deferred.make<void>();
         const releaseRead = yield* Deferred.make<void>();
         const harness = yield* makeHarness({
-          initialStatus: "offline",
+          initialStatus: "online",
+          // The resume samples a brief opposite state.
           status: Deferred.succeed(readStarted, undefined).pipe(
             Effect.andThen(Deferred.await(releaseRead)),
-            Effect.as("online" as const),
+            Effect.as("offline" as const),
           ),
         });
         yield* Connectivity.followNetworkStatus({
@@ -127,22 +128,50 @@ describe("followNetworkStatus", () => {
           apply: harness.apply,
         });
 
-        // Apply "offline" first so the listener's later repeat of it is genuinely
+        // Apply "online" first so the listener's later repeat of it is genuinely
         // redundant rather than a new status.
-        yield* untilApplied(harness.report("offline"), harness.applied, 1);
+        yield* untilApplied(harness.report("online"), harness.applied, 1);
         yield* harness.resume.pipe(
           Effect.andThen(Effect.yieldNow),
           Effect.repeat({ until: () => Deferred.isDone(readStarted) }),
         );
 
-        // A repeat of the status already in effect carries nothing newer, so the
-        // resumed read still has to land.
-        yield* harness.report("offline");
+        // The repeat carries no new status, but it proves the listener spoke
+        // after this read began, so the read is stale even though the status it
+        // returns differs. Applying it would strand consumers on "offline" while
+        // the platform reports "online" — the very failure this helper exists to
+        // prevent.
+        yield* harness.report("online");
         yield* Effect.yieldNow;
         yield* Deferred.succeed(releaseRead, undefined);
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
 
+        expect(yield* Ref.get(harness.applied)).toEqual(["online"]);
+      }),
+    ),
+  );
+
+  it.effect("still deduplicates a repeated report before it reaches consumers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ initialStatus: "online" });
+        yield* Connectivity.followNetworkStatus({
+          connectivity: harness.connectivity,
+          wakeups: harness.wakeups,
+          apply: harness.apply,
+        });
+
+        yield* untilApplied(harness.report("offline"), harness.applied, 1);
+        // Counting the repeat for staleness must not turn it into a redundant
+        // consumer update.
+        yield* harness.report("offline");
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        expect(yield* Ref.get(harness.applied)).toEqual(["offline"]);
+
+        // A genuine transition after the repeat still lands.
+        yield* untilApplied(harness.report("online"), harness.applied, 2);
         expect(yield* Ref.get(harness.applied)).toEqual(["offline", "online"]);
       }),
     ),
