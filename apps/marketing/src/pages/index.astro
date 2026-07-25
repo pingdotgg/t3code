@@ -393,11 +393,10 @@ const mobileEndorsementRows = [
         if (uad?.getHighEntropyValues) {
           const values = await uad.getHighEntropyValues(["architecture"]);
           if (values.architecture === "x86") arch = "x64";
-        } else if (/Intel|i\d86/i.test(ua)) {
-          arch = "x64";
         }
       } catch {
-        if (/Intel|i\d86/i.test(ua)) arch = "x64";
+        // UA-based fallback is unreliable — all macOS UAs report "Intel Mac OS X",
+        // even on Apple Silicon. Default to arm64 (majority of modern Macs).
       }
       return { os: "mac", label: "Download for macOS", arch };
     }
