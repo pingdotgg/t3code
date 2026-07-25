@@ -169,6 +169,7 @@ it("renders a classic s6 run script with supervisor markers and shell-safe paths
     nodePath: "/home/me/T3's bin/t3",
     t3EntryPath: "",
     baseDir: "/home/me/T3 Data",
+    cliVersion: "0.0.27",
     serverHost: "0.0.0.0",
     serverPort: 3773,
     logPath: "/home/me/T3 Data/logs/service.log",
@@ -418,11 +419,33 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         yield* fs.readFileString(plan.serviceLauncherPath ?? ""),
         `exec '${dirs.stableEntry}' "$@"`,
       );
+      assert.include(
+        yield* fs.readFileString(plan.serviceLauncherPath ?? ""),
+        "export T3_SERVICE_VERSION='0.0.27'",
+      );
       assert.isTrue((yield* fs.stat(plan.unitPath)).mode % 2 === 1);
       assert.isTrue((yield* service.status).current);
 
-      yield* service.install;
-      assert.deepEqual(commands.at(-1), {
+      const updateCommands: Array<RecordedCommand> = [];
+      const updatedService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.28",
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+        host: {
+          execPath: dirs.stableEntry,
+          cliEntryPath: "",
+          standalone: true,
+        },
+      }).pipe(Effect.provide(makeRecordingRunnerLayer(updateCommands)), provideHostRefs(""));
+      assert.isFalse((yield* updatedService.status).current);
+
+      const update = yield* reconcileService().pipe(
+        Effect.provideService(BootService.BootService, updatedService),
+      );
+      assert.isTrue(update.changed);
+      assert.deepEqual(updateCommands.at(-1), {
         command: "s6-svc",
         args: ["-r", serviceDir],
       });

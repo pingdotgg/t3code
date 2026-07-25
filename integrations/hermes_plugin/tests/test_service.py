@@ -5,7 +5,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from subprocess import CompletedProcess
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 from integrations.hermes_plugin.config import load_config
 from integrations.hermes_plugin.releases import ReleaseAsset
@@ -100,7 +100,7 @@ class ServiceDefinitionTest(unittest.TestCase):
         self.assertEqual(result["release"], "1.2.3")
         self.assertEqual(result["status"]["port"], config.port)
 
-    def test_update_restarts_the_process_after_replacing_the_binary(self) -> None:
+    def test_update_delegates_restart_to_the_native_service_command(self) -> None:
         root = Path(self.temporary.name)
         config = replace(
             self.config,
@@ -145,12 +145,6 @@ class ServiceDefinitionTest(unittest.TestCase):
         ):
             result = update(config)
 
-        self.assertEqual(
-            command.call_args_list,
-            [
-                call(_t3_service_args(config, "update"), timeout=45),
-                call(["s6-svc", "-r", str(config.service_dir)], timeout=5),
-            ],
-        )
+        command.assert_called_once_with(_t3_service_args(config, "update"), timeout=45)
         watchdog.assert_called_once_with(config)
         self.assertEqual(result["release"], "1.2.4")

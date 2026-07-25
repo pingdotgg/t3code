@@ -229,7 +229,6 @@ def update(config: PluginConfig) -> dict[str, object]:
     release = install_release(config)
     _prepare_service_dir(config.service_dir)
     _command(_t3_service_args(config, "update"), timeout=45)
-    _command(["s6-svc", "-r", str(config.service_dir)], timeout=5)
     _install_watchdog(config)
     return {
         "ok": True,
