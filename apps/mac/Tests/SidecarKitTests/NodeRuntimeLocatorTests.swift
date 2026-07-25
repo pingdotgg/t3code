@@ -6,7 +6,7 @@ import Testing
 @Suite("Node runtime locator")
 struct NodeRuntimeLocatorTests {
     @Test("a valid cached path skips the login-shell probe and persistence")
-    func cachedValidShortCircuits() throws {
+    func cachedValidShortCircuits() async throws {
         let cachedPath = try makeExecutableNodeFile()
         defer { try? FileManager.default.removeItem(atPath: cachedPath) }
 
@@ -24,7 +24,7 @@ struct NodeRuntimeLocatorTests {
             }
         )
 
-        let located = try locator.locate()
+        let located = try await locator.locate()
 
         #expect(located.path == cachedPath)
         #expect(recorder.versionProbePaths == [cachedPath])
@@ -33,7 +33,7 @@ struct NodeRuntimeLocatorTests {
     }
 
     @Test("a stale cached path falls through and refreshes the cache")
-    func cachedStaleFallsThrough() throws {
+    func cachedStaleFallsThrough() async throws {
         let cachedPath = try makeExecutableNodeFile()
         let fallbackPath = try makeExecutableNodeFile()
         defer {
@@ -56,7 +56,7 @@ struct NodeRuntimeLocatorTests {
             }
         )
 
-        let located = try locator.locate()
+        let located = try await locator.locate()
 
         #expect(located.path == fallbackPath)
         #expect(recorder.versionProbePaths == [cachedPath, fallbackPath])
@@ -65,7 +65,7 @@ struct NodeRuntimeLocatorTests {
     }
 
     @Test("without a cache, normal discovery still persists the located path")
-    func noCacheUsesNormalDiscovery() throws {
+    func noCacheUsesNormalDiscovery() async throws {
         let discoveredPath = try makeExecutableNodeFile()
         defer { try? FileManager.default.removeItem(atPath: discoveredPath) }
 
@@ -83,7 +83,7 @@ struct NodeRuntimeLocatorTests {
             }
         )
 
-        let located = try locator.locate()
+        let located = try await locator.locate()
 
         #expect(located.path == discoveredPath)
         #expect(recorder.versionProbePaths == [discoveredPath])

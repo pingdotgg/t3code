@@ -180,6 +180,19 @@ struct FileLinkDetectionTests {
         #expect(fileLinkTargets(in: bareURL).isEmpty)
     }
 
+    @Test("repo paths beginning with \"http\" are still file-linked")
+    func httpPrefixedRepoPaths() {
+        let server = linkifyFilePaths(in: AttributedString("edit httpserver/config.ts first"))
+        let serverLinks = fileLinkTargets(in: server)
+        #expect(serverLinks.count == 1)
+        #expect(serverLinks[0].target.path == "httpserver/config.ts")
+
+        let client = linkifyFilePaths(in: AttributedString("edit http-client/main.go first"))
+        let clientLinks = fileLinkTargets(in: client)
+        #expect(clientLinks.count == 1)
+        #expect(clientLinks[0].target.path == "http-client/main.go")
+    }
+
     // MARK: - Multiple matches (index stability)
 
     @Test("two plain-text paths in one run both get distinct links")

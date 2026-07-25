@@ -126,6 +126,40 @@ struct TimelineGroupingCacheTests {
         #expect(initial[1] == refreshed[1])
     }
 
+    @Test("content refresh recomputes a changed tool group's summary")
+    func contentRefreshRecomputesChangedToolGroupSummary() {
+        let date = Date(timeIntervalSince1970: 1)
+        func timeline(secondToolStatus: ToolEventStatus) -> [TimelineItem] {
+            [
+                tool(id: "tool-1", at: date),
+                .toolEvent(
+                    id: "tool-2", name: "Bash", detail: "pwd", kind: .command,
+                    status: secondToolStatus, at: date.addingTimeInterval(1),
+                    output: nil, outputIsError: false),
+                .assistantMessage(id: "assistant-1", markdown: "done", isStreaming: true, at: date),
+            ]
+        }
+
+        let initial = grouped(
+            timeline(secondToolStatus: .succeeded), threadID: "tool-group-summary-refresh-thread",
+            timelineVersion: 1, structureVersion: 1)
+        let refreshed = grouped(
+            timeline(secondToolStatus: .failed), threadID: "tool-group-summary-refresh-thread",
+            timelineVersion: 2, structureVersion: 1)
+
+        guard case .toolGroup(_, _, let initialSummary) = initial[0],
+            case .toolGroup(_, _, let refreshedSummary) = refreshed[0]
+        else {
+            Issue.record("expected tool groups, got \(refreshed)")
+            return
+        }
+        // A succeeded→failed flip inside the cached group must refresh the
+        // headline numbers, not reuse the stale summary.
+        #expect(initialSummary.failedCount == 0)
+        #expect(refreshedSummary.failedCount == 1)
+        #expect(refreshedSummary.toolCount == initialSummary.toolCount)
+    }
+
     @Test("tool group identity stays stable across content refresh")
     func toolGroupIdentityStaysStable() {
         TimelineDisplayCache.resetForTesting()

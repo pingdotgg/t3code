@@ -156,14 +156,23 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
         order.compactMap { tasksByID[$0] }
     }
 
-    public mutating func clearActiveTasks() {
-        for taskId in activeTaskIDsStorage {
+    /// Transitions every active task to `.stopped` and returns the items that
+    /// changed (in spawn order), so callers can re-emit their timeline rows —
+    /// rows read `state` from the emitted timeline item, not from this
+    /// aggregate, so a clear without re-emission leaves them rendering
+    /// "running" forever.
+    @discardableResult
+    public mutating func clearActiveTasks() -> [T3SubagentTaskItem] {
+        var stopped: [T3SubagentTaskItem] = []
+        for taskId in order where activeTaskIDsStorage.contains(taskId) {
             guard var item = tasksByID[taskId] else { continue }
             item.state = .stopped
             item.completedAt = item.completedAt ?? Date()
             tasksByID[taskId] = item
+            stopped.append(item)
         }
         activeTaskIDsStorage.removeAll()
+        return stopped
     }
 
     @discardableResult

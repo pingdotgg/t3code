@@ -105,9 +105,13 @@ struct SidebarView: View {
         .onAppear {
             loadCollapsedProjects()
             validateMachineScope()
+            validateProjectScope()
         }
         .onChange(of: multi.remoteSessions.map(\.id)) {
             validateMachineScope()
+        }
+        .onChange(of: allProjectGroups.map(\.id)) {
+            validateProjectScope()
         }
         .alert(
             "Rename Project",
@@ -449,6 +453,17 @@ struct SidebarView: View {
             !locations.contains(where: { $0.id == id })
         else { return }
         setMachineScope(.all)
+    }
+
+    /// Drops a persisted project scope whose group is gone (project deleted,
+    /// machine disconnected). Skips empty group lists so the scope survives
+    /// the pre-connect window on cold start, before projects have loaded.
+    private func validateProjectScope() {
+        guard projectScopeID != "all",
+            !allProjectGroups.isEmpty,
+            !allProjectGroups.contains(where: { $0.id == projectScopeID })
+        else { return }
+        projectScopeID = "all"
     }
 
     private func loadCollapsedProjects() {

@@ -238,9 +238,12 @@ enum SidebarProjection {
                 now: now,
                 changeRequestState: $0.vcs?.prState)
         }
+        // Duplicate thread IDs can appear when the same backend is paired as
+        // both the local server and a remote device; keep the first offset.
         let order = Dictionary(
-            uniqueKeysWithValues: ThreadInboxSemantics.sortActive(items.map(\.thread))
-                .enumerated().map { ($0.element.id, $0.offset) })
+            ThreadInboxSemantics.sortActive(items.map(\.thread))
+                .enumerated().map { ($0.element.id, $0.offset) },
+            uniquingKeysWith: { first, _ in first })
         return items.sorted { (order[$0.thread.id] ?? .max) < (order[$1.thread.id] ?? .max) }
     }
 
@@ -265,9 +268,11 @@ enum SidebarProjection {
             }
         }
 
+        // Same duplicate-ID hazard as `activeThreads` above.
         let settledOrder = Dictionary(
-            uniqueKeysWithValues: ThreadInboxSemantics.sortSettled(settled.map(\.thread))
-                .enumerated().map { ($0.element.id, $0.offset) })
+            ThreadInboxSemantics.sortSettled(settled.map(\.thread))
+                .enumerated().map { ($0.element.id, $0.offset) },
+            uniquingKeysWith: { first, _ in first })
         settled.sort {
             (settledOrder[$0.thread.id] ?? .max) < (settledOrder[$1.thread.id] ?? .max)
         }

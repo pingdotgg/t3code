@@ -759,12 +759,16 @@ public final class AppModel {
             if pinnedThreadIDs.remove(id) != nil {
                 persistPinnedThreadIDs()
             }
+            // Cancel usage-limit resume tasks BEFORE dropping the thread's
+            // state: cancellation discovers the pending notice ids from
+            // `threadStates[id].timeline`, so after the clear it would find
+            // nothing and the scheduled resume would fire on a deleted thread.
+            cancelUsageLimitResumeTasks(threadID: id)
             // ThreadState owns the in-memory composer draft, so removing the
             // child also drops that thread's text and staged attachments.
             threadStates[id] = nil
             effectiveUpdatedAt[id] = nil
             recentlySelected.removeAll { $0 == id }
-            cancelUsageLimitResumeTasks(threadID: id)
             queuedMessagesByThread[id] = nil
             queuedSendInFlightThreadIDs.remove(id)
             queuedRetryTokensByThread[id] = nil
@@ -1030,6 +1034,10 @@ public final class AppModel {
             for item in filtered {
                 recordInteraction(item, threadID: threadID)
             }
+        } catch LiveBackendError.timelineClosed {
+            // Evicted by the LRU prune (or the thread was removed) while the
+            // first snapshot was in flight — ordinary navigation, not a
+            // failure worth a global error banner.
         } catch {
             lastError = String(describing: error)
         }

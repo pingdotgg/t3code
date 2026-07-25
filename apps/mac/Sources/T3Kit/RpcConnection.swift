@@ -248,8 +248,16 @@ public actor RpcConnection {
         await teardown(state: .closed(reason: reason), error: T3Error.connectionClosed(reason: reason))
     }
 
-    deinit {
+    isolated deinit {
         stateContinuation.finish()
+        // The loop tasks are `[weak self]`, so if the last strong reference
+        // drops without `disconnect()`, no teardown ever runs: in-flight unary
+        // awaiters (whose continuations live in `pending`) would be stranded
+        // forever. Cancel the tasks and fail everything still pending.
+        receiveLoopTask?.cancel()
+        pingLoopTask?.cancel()
+        writerTask?.cancel()
+        failAllPending(with: T3Error.connectionClosed(reason: nil))
     }
 
     // MARK: Public RPC surface

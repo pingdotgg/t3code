@@ -17,6 +17,9 @@ struct NewSessionSheet: View {
     @UIState private var newProjectPath: String = ""
     @UIState private var isBusy = false
     @UIState private var errorMessage: String?
+    /// Preview of the scene the created thread will be named after. Sampled
+    /// in `.task` (never in body — `peekNextScene()` mutates the store).
+    @UIState private var nextScene: SceneryPhoto?
 
     private enum Mode: String, CaseIterable, Identifiable {
         case existing = "Existing Project"
@@ -28,9 +31,9 @@ struct NewSessionSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             // The scene the created thread will be named after — a frosted
             // preview band so the sheet carries the scenery identity too.
-            // peekNextScene() returns the pending random pick, so this strip
-            // and the eventual commit always agree.
-            let nextScene = scenery.peekNextScene()
+            // Populated in `.task`: `peekNextScene()` samples and writes
+            // `SceneryStore.pendingScene` on the first call, so calling it
+            // here would mutate observable state during a view update.
             VStack(alignment: .leading, spacing: 10) {
                 FrostedSceneryBackdrop(
                     scenery: scenery,
@@ -182,6 +185,13 @@ struct NewSessionSheet: View {
             }
             syncProviderSelection()
             selectDefaultProject()
+            // Sample the scene preview outside body evaluation; start() is
+            // idempotent and waits for the initial pool fetch, so the first
+            // peek can't lose the cold-start race and come back nil.
+            await scenery.start()
+            if nextScene == nil {
+                nextScene = scenery.peekNextScene()
+            }
         }
         .onChange(of: model.configuredProviderKinds) {
             syncProviderSelection()
@@ -282,7 +292,11 @@ struct NewSessionSheet: View {
             let path = newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !path.isEmpty else { return }
             await model.addProject(path: path)
-            if let project = model.projects.first(where: { $0.path == path }) {
+            // The server normalizes added paths (~ expansion, standardization),
+            // so compare normalized forms — a typed path rarely matches verbatim.
+            if let project = model.projects.first(where: {
+                GeneralWorkspace.pathsMatch($0.path, path)
+            }) {
                 createdThread = await model.createSceneThread(
                     projectID: project.id,
                     provider: provider,

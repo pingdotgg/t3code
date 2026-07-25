@@ -173,11 +173,12 @@ public actor LiveBackend: BackendService {
     private var assistantTextByMessage: [String: [String: String]] = [:]
     /// Dedup sets for the non-message timeline kinds, seeded from each
     /// snapshot. The server's subscribeThread live tail is not filtered by
-    /// snapshot sequence (unlike subscribeShell), so an activity/checkpoint/
-    /// plan present in the snapshot can also arrive on the live tail.
+    /// snapshot sequence (unlike subscribeShell), so an activity/checkpoint
+    /// present in the snapshot can also arrive on the live tail. Plans are
+    /// NOT deduped this way: their upserts legitimately reuse an id for
+    /// content updates and collapse in place via the upsert path instead.
     private var seenActivityIDs: [String: Set<String>] = [:]
     private var seenCheckpointRefs: [String: Set<String>] = [:]
-    private var seenPlanIDs: [String: Set<String>] = [:]
 
     /// Wire assistant deltas arrive per chunk; buffer them here and emit a
     /// merged `.assistantDelta` at ~30Hz so AppModel's intake (also ~30Hz)
@@ -334,7 +335,7 @@ public actor LiveBackend: BackendService {
             do {
                 let nodePathCacheKey = Self.nodePathCacheKey
                 let cachedNodePath = UserDefaults.standard.string(forKey: nodePathCacheKey)
-                nodePath = try NodeRuntimeLocator(
+                nodePath = try await NodeRuntimeLocator(
                     cachedPath: cachedNodePath,
                     onLocated: { path in
                         UserDefaults.standard.set(path, forKey: nodePathCacheKey)
@@ -601,6 +602,10 @@ public actor LiveBackend: BackendService {
 
     private func handleShellItem(_ item: OrchestrationShellStreamItem) {
         switch item {
+        case .synchronized:
+            // Completion marker for replay-resume subscriptions; we never set
+            // `requestCompletionMarker`, so this is a forward-compat no-op.
+            break
         case .snapshot(let snapshot):
             // The snapshot is the authoritative current state, so reconcile
             // rather than merge: anything deleted while the socket was down
@@ -623,6 +628,10 @@ public actor LiveBackend: BackendService {
                 modelSelectionsByThread[thread.id] = shell.modelSelection
                 threadEnvByThread[thread.id] = ThreadEnvState(
                     worktreePath: shell.worktreePath, hasTurns: shell.latestTurn != nil)
+                // Same stale-watch repair as the .threadUpserted path: a
+                // worktree created while we were disconnected leaves the VCS
+                // watch on the old cwd.
+                restartVcsWatchIfStale(threadID: thread.id)
                 emitOrdered(threadID: thread.id, event: .threadUpserted(thread))
                 reconcileRunningLiveness(for: shell)
             }
@@ -831,6 +840,10 @@ public actor LiveBackend: BackendService {
 
     private func handleThreadItem(threadID: String, item: OrchestrationThreadStreamItem) {
         switch item {
+        case .synchronized:
+            // Completion marker for replay-resume subscriptions; we never set
+            // `requestCompletionMarker`, so this is a forward-compat no-op.
+            break
         case .snapshot(let snapshot):
             applyThreadSnapshot(threadID: threadID, thread: snapshot.thread)
         case .event(let event):
@@ -850,7 +863,6 @@ public actor LiveBackend: BackendService {
         assistantTextByMessage[threadID] = assistantText
         seenActivityIDs[threadID] = Set(thread.activities.map(\.id))
         seenCheckpointRefs[threadID] = Set(thread.checkpoints.map(\.checkpointRef))
-        seenPlanIDs[threadID] = Set(thread.proposedPlans.map(\.id))
 
         // Only `approval.requested` is actionable; the server records
         // resolutions as separate `approval.resolved` activities with the same
@@ -1034,8 +1046,11 @@ public actor LiveBackend: BackendService {
 
         case .threadProposedPlanUpserted(let payload):
             let plan = payload.proposedPlan
-            guard !(seenPlanIDs[threadID]?.contains(plan.id) ?? false) else { return }
-            seenPlanIDs[threadID, default: []].insert(plan.id)
+            // No id dedup here: the server re-emits this event under the SAME
+            // plan id when the plan is implemented or its markdown is revised
+            // (markSourceProposedPlanImplemented), and both the local cache
+            // and AppModel upsert same-id rows in place, so a true
+            // snapshot/live-tail replay collapses without dropping updates.
             let at = WireDate.parse(plan.createdAt) ?? Date()
             emitOrdered(
                 threadID: threadID,
@@ -1086,7 +1101,6 @@ public actor LiveBackend: BackendService {
             // event for a dropped message can reappear cleanly after resend.
             var retainedMessageIDs: Set<String> = []
             var retainedActivityIDs: Set<String> = []
-            var retainedPlanIDs: Set<String> = []
             var retainedCheckpointRefs: Set<String> = []
             for item in retained {
                 switch item {
@@ -1099,8 +1113,10 @@ public actor LiveBackend: BackendService {
                     retainedActivityIDs.insert(id)
                 case .subagentTask(let task):
                     retainedActivityIDs.insert(task.id)
-                case .plan(let plan):
-                    retainedPlanIDs.insert(plan.id)
+                case .plan:
+                    // Plans are not id-deduped (upserts reuse ids for updates),
+                    // so there is no dedup set to rebuild.
+                    break
                 case .checkpoint(let checkpoint):
                     retainedCheckpointRefs.insert(checkpoint.id)
                 case .approval(let request):
@@ -1115,7 +1131,6 @@ public actor LiveBackend: BackendService {
             }
             seenMessageIDs[threadID] = retainedMessageIDs
             seenActivityIDs[threadID] = retainedActivityIDs
-            seenPlanIDs[threadID] = retainedPlanIDs
             seenCheckpointRefs[threadID] = retainedCheckpointRefs
             if var assistantText = assistantTextByMessage[threadID] {
                 assistantText = assistantText.filter { retainedMessageIDs.contains($0.key) }
@@ -1316,7 +1331,7 @@ public actor LiveBackend: BackendService {
     private static func mapAttachment(_ attachment: ChatAttachment) -> MessageAttachment {
         MessageAttachment(
             id: attachment.id, name: attachment.name, mimeType: attachment.mimeType,
-            sizeBytes: attachment.sizeBytes)
+            sizeBytes: attachment.sizeBytes, preview: attachment.preview)
     }
 
     private func applyMessageSent(threadID: String, payload: ThreadMessageSentPayload) {
@@ -1454,12 +1469,14 @@ public actor LiveBackend: BackendService {
         assistantTextByMessage[threadID] = nil
         seenActivityIDs[threadID] = nil
         seenCheckpointRefs[threadID] = nil
-        seenPlanIDs[threadID] = nil
         pendingAssistantDeltas[threadID] = nil
 
         // Fail any waiter still blocked on the first snapshot or a pending
-        // checkpoint revert for this thread.
-        failSnapshotWaiters(threadID: threadID, error: LiveBackendError.notConnected)
+        // checkpoint revert for this thread. The snapshot waiters get the
+        // distinct `timelineClosed` — this teardown is local eviction/removal,
+        // not a connectivity failure, so loadTimelineIfNeeded must not surface
+        // it as a global error banner.
+        failSnapshotWaiters(threadID: threadID, error: LiveBackendError.timelineClosed)
         failRevertWaiters(threadID: threadID, error: LiveBackendError.notConnected)
 
         // Tear down VCS watch so watchVcsStatus can re-establish after prune
@@ -2185,7 +2202,15 @@ public actor LiveBackend: BackendService {
                 // Stream ended (socket drop or non-repo error): forget the
                 // subscription so the next watch call re-establishes it.
             }
-            await self.clearVcsSubscription(threadID: threadID)
+            // Only forget the registration when the stream died on its own.
+            // Every replacement/teardown path (restartVcsWatchIfStale,
+            // dropLiveTimelineState, cancelAllVcsSubscriptions) cancels this
+            // task BEFORE touching the registry, so a cancelled task means the
+            // registry is already owned elsewhere — clearing here could nil a
+            // NEWER watch's live registration and orphan its task.
+            if !Task.isCancelled {
+                await self.clearVcsSubscription(threadID: threadID)
+            }
         }
         vcsSubscriptions[threadID] = task
     }
@@ -2717,7 +2742,15 @@ public actor LiveBackend: BackendService {
         if shell.archivedAt != nil || shell.session?.status == .error
             || shell.latestTurn?.state == .error
         {
-            subagentTasksByThread[shell.id]?.clearActiveTasks()
+            // Marking the tasks stopped in the aggregate is not enough: the
+            // transcript cards read `state` from the timeline item, so re-emit
+            // each transitioned row or they spin "running" until thread reopen.
+            let stoppedTasks = subagentTasksByThread[shell.id]?.clearActiveTasks() ?? []
+            for task in stoppedTasks {
+                emitOrdered(
+                    threadID: shell.id,
+                    event: .timelineAppended(threadID: shell.id, item: mapSubagentTask(task)))
+            }
         }
         let activeSubagentCount = subagentTasksByThread[shell.id]?.activeTaskCount ?? 0
         let status = mapStatus(
@@ -3266,6 +3299,10 @@ public actor LiveBackend: BackendService {
 
 public enum LiveBackendError: Error, Sendable {
     case notConnected
+    /// The thread's live timeline was closed locally (LRU eviction or thread
+    /// removal) while a first-snapshot waiter was still in flight. Not a real
+    /// failure — callers should swallow it rather than surface an error.
+    case timelineClosed
     case unresolvedApproval(String)
     case unresolvedUserInput(String)
     case unresolvedCheckpoint(String)
