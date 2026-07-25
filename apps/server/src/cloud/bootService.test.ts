@@ -519,8 +519,12 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       yield* fs.makeDirectory(serviceDir, { recursive: true });
       yield* fs.writeFileString(launcherPath, '#!/bin/sh\nexec /previous/t3 "$@"\n');
       yield* fs.writeFileString(unitPath, "#!/bin/sh\nexec /previous/launcher serve\n");
+      const nestedStatePath = path.join(dirs.baseDir, "userdata", "state.json");
+      yield* fs.makeDirectory(path.dirname(nestedStatePath), { recursive: true });
+      yield* fs.writeFileString(nestedStatePath, "{}");
       const previousBaseInfo = yield* fs.stat(dirs.baseDir);
       const previousLogsInfo = yield* fs.stat(dirs.logsDir);
+      const previousNestedInfo = yield* fs.stat(nestedStatePath);
       let activationFailed = false;
 
       const service = yield* BootService.make({
@@ -549,7 +553,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         {
           command: "chown",
           args: [
-            "-R",
+            "-h",
             "--",
             `${Option.getOrThrow(previousBaseInfo.uid)}:${Option.getOrThrow(previousBaseInfo.gid)}`,
             dirs.baseDir,
@@ -558,10 +562,19 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         {
           command: "chown",
           args: [
-            "-R",
+            "-h",
             "--",
             `${Option.getOrThrow(previousLogsInfo.uid)}:${Option.getOrThrow(previousLogsInfo.gid)}`,
             dirs.logsDir,
+          ],
+        },
+        {
+          command: "chown",
+          args: [
+            "-h",
+            "--",
+            `${Option.getOrThrow(previousNestedInfo.uid)}:${Option.getOrThrow(previousNestedInfo.gid)}`,
+            nestedStatePath,
           ],
         },
       ]);

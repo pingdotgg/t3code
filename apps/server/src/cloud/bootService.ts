@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as NodeFSP from "node:fs/promises";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -366,6 +367,11 @@ export interface BootServiceHost {
   readonly standalone?: boolean;
 }
 
+interface S6OwnershipSnapshot {
+  readonly target: string;
+  readonly owner: string;
+}
+
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly baseDir: string;
   readonly logsDir: string;
@@ -598,19 +604,28 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const ownershipTargets = [...new Set([input.baseDir, input.logsDir])];
     const previousOwnership =
       supervisor === "s6"
-        ? yield* Effect.forEach(ownershipTargets, (target) =>
-            fs.stat(target).pipe(
-              Effect.map((info) =>
-                Option.all([info.uid, info.gid]).pipe(
-                  Option.map(([userId, groupId]) => ({
-                    target,
-                    owner: `${String(userId)}:${String(groupId)}`,
-                  })),
-                ),
-              ),
-              Effect.mapError((cause) => new BootServiceInstallError({ cause })),
-            ),
-          )
+        ? yield* Effect.tryPromise({
+            try: async () => {
+              const snapshot: Array<S6OwnershipSnapshot> = [];
+              const visit = async (target: string): Promise<void> => {
+                const info = await NodeFSP.lstat(target);
+                snapshot.push({
+                  target,
+                  owner: `${String(info.uid)}:${String(info.gid)}`,
+                });
+                if (info.isDirectory()) {
+                  for (const entry of await NodeFSP.readdir(target)) {
+                    await visit(path.join(target, entry));
+                  }
+                }
+              };
+              for (const target of ownershipTargets) {
+                await visit(target);
+              }
+              return snapshot;
+            },
+            catch: (cause) => new BootServiceInstallError({ cause }),
+          })
         : [];
 
     yield* Effect.gen(function* () {
@@ -687,9 +702,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const rollbackFailedInstall = Effect.fn("cloud.boot_service.rollback_failed_install")(function* (
     previousUnit: Option.Option<string>,
     previousLauncher: Option.Option<string>,
-    previousOwnership: ReadonlyArray<
-      Option.Option<{ readonly target: string; readonly owner: string }>
-    >,
+    previousOwnership: ReadonlyArray<S6OwnershipSnapshot>,
   ) {
     if (supervisor === "s6" && serviceLauncherPath !== undefined) {
       if (Option.isSome(previousLauncher)) {
@@ -716,15 +729,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* fs.remove(definitionPath).pipe(Effect.ignore);
     }
     if (supervisor === "s6") {
-      for (const ownership of previousOwnership) {
-        if (Option.isSome(ownership)) {
-          yield* runStep("restoring s6 service state ownership", "chown", [
-            "-R",
-            "--",
-            ownership.value.owner,
-            ownership.value.target,
-          ]).pipe(Effect.ignore);
-        }
+      for (let index = previousOwnership.length - 1; index >= 0; index -= 1) {
+        const ownership = previousOwnership[index];
+        if (ownership === undefined) continue;
+        yield* runStep("restoring s6 service state ownership", "chown", [
+          "-h",
+          "--",
+          ownership.owner,
+          ownership.target,
+        ]).pipe(Effect.ignore);
       }
     }
     if (supervisor === "systemd") {
