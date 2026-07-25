@@ -1,6 +1,7 @@
 /**
  * Boots the auto-archive janitor against live server services.
- * Feature stays default-off via ServerSettings.autoArchiveSettledAfter = null.
+ * Archives settled threads after ServerSettings.autoArchiveSettledAfter
+ * (three days by default); the janitor idles while that setting is null.
  *
  * Mounted from `makeServerLayer`'s application layer so RuntimeServicesLive
  * already provides settings, snapshots, and orchestration.

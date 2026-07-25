@@ -1,7 +1,7 @@
 /**
  * Periodically archives threads that have been settled longer than
- * `ServerSettings.autoArchiveSettledAfter`. Disabled when that setting is
- * `null` (the default).
+ * `ServerSettings.autoArchiveSettledAfter` (three days by default).
+ * Disabled when that setting is `null`.
  *
  * "Settled" here means the server-observable subset of the client's
  * `effectiveSettled` classification: an explicit `thread.settle` override

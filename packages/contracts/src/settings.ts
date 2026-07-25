@@ -618,6 +618,8 @@ const TokenEfficiencySettingsPatch = Schema.Struct({
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
+export const DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER = Duration.days(3);
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -628,9 +630,12 @@ export const ServerSettings = Schema.Struct({
   ),
   // How long a settled thread (explicitly settled, or simply idle) may sit
   // before the server archives it automatically. `null` disables the
-  // auto-archive janitor entirely.
+  // auto-archive janitor entirely; when the key is missing (legacy
+  // settings.json files) it defaults to three days.
   autoArchiveSettledAfter: Schema.NullOr(Schema.DurationFromMillis).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
+    Schema.withDecodingDefault(
+      Effect.succeed(Duration.toMillis(DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER)),
+    ),
   ),
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),

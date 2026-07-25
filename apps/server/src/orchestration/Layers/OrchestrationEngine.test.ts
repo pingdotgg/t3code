@@ -191,6 +191,8 @@ describe("OrchestrationEngine", () => {
               projects: [],
               threads: [],
               updatedAt: projectionSnapshot.updatedAt,
+              archivedTotal: 0,
+              nextCursor: null,
             }),
           getSnapshotSequence: () =>
             Effect.succeed({ snapshotSequence: projectionSnapshot.snapshotSequence }),

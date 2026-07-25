@@ -8,7 +8,9 @@
  */
 import type {
   CheckpointRef,
+  OrchestrationArchivedShellPage,
   OrchestrationCheckpointSummary,
+  OrchestrationGetArchivedShellSnapshotInput,
   OrchestrationProject,
   OrchestrationProjectShell,
   OrchestrationReadModel,
@@ -89,11 +91,15 @@ export interface ProjectionSnapshotQueryShape {
    *
    * This query is separate from the main shell snapshot so archived threads
    * are never bootstrapped into normal navigation state.
+   *
+   * Ordered most-recently-archived first. When `input.limit` is omitted the
+   * full archived set is returned (`nextCursor: null`); otherwise the result
+   * is one offset-based page with `archivedTotal`/`nextCursor` for
+   * continuation.
    */
-  readonly getArchivedShellSnapshot: () => Effect.Effect<
-    OrchestrationShellSnapshot,
-    ProjectionRepositoryError
-  >;
+  readonly getArchivedShellSnapshot: (
+    input?: OrchestrationGetArchivedShellSnapshotInput,
+  ) => Effect.Effect<OrchestrationArchivedShellPage, ProjectionRepositoryError>;
 
   /**
    * Read the latest projection snapshot sequence without hydrating read-model
