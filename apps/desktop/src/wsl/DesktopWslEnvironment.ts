@@ -123,11 +123,11 @@ export const formatWslShellTransportFailureReason = (
 ): string | null => {
   switch (failure) {
     case "timeout":
-      return "WSL backend preflight timed out while probing for Node.js. WSL may be slow to start; retry, or check that the distro is healthy.";
+      return "WSL environment preflight timed out while probing for Node.js. WSL may be slow to start; retry, or check that the distro is healthy.";
     case "spawn":
-      return "WSL backend preflight could not start wsl.exe to probe for Node.js. Check that WSL is installed and the distro is accessible.";
+      return "WSL environment preflight could not start wsl.exe to probe for Node.js. Check that WSL is installed and the distro is accessible.";
     case "process":
-      return "WSL backend preflight lost communication with wsl.exe while probing for Node.js. Retry, or check that the distro is healthy.";
+      return "WSL environment preflight lost communication with wsl.exe while probing for Node.js. Retry, or check that the distro is healthy.";
     case null:
       return null;
   }
@@ -542,7 +542,7 @@ const ensureNodePtyImpl = (
         ok: false,
         reason:
           nodeOnlyReason ??
-          "The bundled WSL backend binary (node-pty) could not be loaded in this distro. This usually means an unsupported CPU architecture or incompatible system libraries (glibc). Use a glibc-based x64/arm64 WSL distro such as Ubuntu; if you already are, please report this with your distro and the output of `uname -m`.",
+          "The bundled WSL environment binary (node-pty) could not be loaded in this distro. This usually means an unsupported CPU architecture or incompatible system libraries (glibc). Use a glibc-based x64/arm64 WSL distro such as Ubuntu; if you already are, please report this with your distro and the output of `uname -m`.",
         fatal: true,
       } as const;
     }
