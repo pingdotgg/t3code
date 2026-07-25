@@ -521,7 +521,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   return (
     <TooltipProvider delay={0}>
       <div
-        className="relative flex h-screen max-h-96 w-screen max-w-100 flex-row overflow-hidden rounded-lg border bg-popover not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:border-transparent dark:shadow-none dark:inset-ring-1 dark:inset-ring-white/5 dark:before:shadow-none"
+        className="dropdown-glass model-picker-surface relative flex h-screen max-h-96 w-screen max-w-100 flex-row overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
         data-model-picker-content="true"
       >
         {/* Sidebar */}
@@ -580,11 +580,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 <ComboboxInput
                   ref={searchInputRef}
                   className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
-                  inputClassName="rounded-none bg-transparent text-sm placeholder:text-muted-foreground/80"
+                  inputClassName="rounded-none bg-transparent text-sm"
                   placeholder="Search models..."
                   showTrigger={false}
                   startAddon={
-                    <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground/80" />
+                    <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground/55" />
                   }
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}

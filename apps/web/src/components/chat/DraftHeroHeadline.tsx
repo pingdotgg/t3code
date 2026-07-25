@@ -5,8 +5,15 @@ import { useCallback, useMemo } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { useClientSettings } from "~/hooks/useSettings";
+import { selectProjectGroupingSettings } from "~/logicalProject";
+import {
+  buildSidebarProjectPickerEntries,
+  buildSidebarProjectSnapshots,
+} from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
-import { sortScopedProjectsForSidebar } from "../Sidebar.logic";
+import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Menu,
   MenuItem,
@@ -28,29 +35,66 @@ export function DraftHeroHeadline({
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
   const threads = useThreadShells();
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const handleNewThread = useNewThreadHandler();
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
 
-  const orderedProjects = useMemo(
-    () => sortScopedProjectsForSidebar(projects, threads, "updated_at"),
-    [projects, threads],
-  );
-  const projectByKey = useMemo(
+  const environmentLabelById = useMemo(
     () =>
       new Map(
-        orderedProjects.map(
-          (project) =>
-            [
-              scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
-              project,
-            ] as const,
-        ),
+        environments.map((environment) => [environment.environmentId, environment.label] as const),
       ),
-    [orderedProjects],
+    [environments],
   );
-  const activeProjectKey = activeProjectRef === null ? "" : scopedProjectKey(activeProjectRef);
+  const projectGroups = useMemo(
+    () =>
+      sortLogicalProjectsForSidebar(
+        buildSidebarProjectSnapshots({
+          projects,
+          settings: projectGroupingSettings,
+          primaryEnvironmentId,
+          resolveEnvironmentLabel: (environmentId) =>
+            environmentLabelById.get(environmentId) ?? null,
+        }),
+        threads,
+        projectSortOrder,
+      ),
+    [
+      environmentLabelById,
+      primaryEnvironmentId,
+      projectGroupingSettings,
+      projectSortOrder,
+      projects,
+      threads,
+    ],
+  );
+  const projectPickerEntries = useMemo(
+    () =>
+      buildSidebarProjectPickerEntries({
+        groups: projectGroups,
+        preferredProjectRef: activeProjectRef,
+      }),
+    [activeProjectRef, projectGroups],
+  );
+  const projectEntryByKey = useMemo(
+    () => new Map(projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const)),
+    [projectPickerEntries],
+  );
+  const activeProjectGroup =
+    activeProjectRef === null
+      ? null
+      : (projectGroups.find((group) =>
+          group.memberProjectRefs.some(
+            (projectRef) => scopedProjectKey(projectRef) === scopedProjectKey(activeProjectRef),
+          ),
+        ) ?? null);
+  const activeProjectKey = activeProjectGroup?.projectKey ?? "";
+  const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
   const hasResolvedProject = activeProjectTitle !== null;
-  const canChooseProject = orderedProjects.length > 0;
+  const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
 
   const projectSelector = shouldShowProjectMenu ? (
@@ -59,26 +103,26 @@ export function DraftHeroHeadline({
         aria-label={hasResolvedProject ? "Change project" : "Choose a project"}
         className="pointer-events-auto inline cursor-pointer border-current border-b border-dotted text-foreground underline-offset-8 transition-opacity hover:opacity-75 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {activeProjectTitle ?? "Choose a project"}
+        {activeProjectDisplayName ?? "Choose a project"}
       </MenuTrigger>
       <MenuPopup align="center" className="max-h-80 w-64 overflow-y-auto">
         <MenuRadioGroup
           value={activeProjectKey}
           onValueChange={(value) => {
-            const project = projectByKey.get(value as string);
-            if (!project || value === activeProjectKey) {
+            const entry = projectEntryByKey.get(value as string);
+            if (!entry || value === activeProjectKey) {
               return;
             }
+            const project = entry.targetProject;
             void handleNewThread(scopeProjectRef(project.environmentId, project.id), {
               replace: true,
             });
           }}
         >
-          {orderedProjects.map((project) => {
-            const key = scopedProjectKey(scopeProjectRef(project.environmentId, project.id));
+          {projectPickerEntries.map(({ group }) => {
             return (
-              <MenuRadioItem key={key} value={key} closeOnClick>
-                <span className="min-w-0 truncate">{project.title}</span>
+              <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
+                <span className="min-w-0 truncate">{group.displayName}</span>
               </MenuRadioItem>
             );
           })}

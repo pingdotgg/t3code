@@ -15,17 +15,16 @@ describe("buildHomeListFilterMenu", () => {
       selectedProjectKey: "environment-1:project-1",
       projectSortOrder: "updated_at",
       threadSortOrder: "updated_at",
-      projectGroupingMode: "repository",
       onEnvironmentChange: vi.fn(),
       onProjectChange,
       onProjectSortOrderChange: vi.fn(),
       onThreadSortOrderChange: vi.fn(),
-      onProjectGroupingModeChange: vi.fn(),
     });
 
     const projectMenu = menu.items.find(
       (item) => item.type === "submenu" && item.title === "Project",
     );
+    expect(menu.items.some((item) => item.title === "Settings")).toBe(false);
     expect(projectMenu).toMatchObject({
       type: "submenu",
       items: [

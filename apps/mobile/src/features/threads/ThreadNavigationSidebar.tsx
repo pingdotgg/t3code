@@ -33,7 +33,6 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import {
   hasCustomHomeListOptions,
-  PROJECT_GROUPING_OPTIONS,
   PROJECT_SORT_OPTIONS,
   THREAD_SORT_OPTIONS,
   useHomeListOptions,
@@ -48,7 +47,7 @@ import {
   type HomeGroupDisplayState,
   type HomeListItem,
 } from "../home/homeListItems";
-import { buildHomeThreadGroups } from "../home/homeThreadList";
+import { buildHomeProjectScopes, buildHomeThreadGroups } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -217,36 +216,47 @@ function ThreadNavigationSidebarPane(
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
   );
-  const {
-    options,
-    setSelectedEnvironmentId,
-    setProjectGroupingMode,
-    setProjectSortOrder,
-    setThreadSortOrder,
-  } = useHomeListOptions(availableEnvironmentIds);
+  const { options, setSelectedEnvironmentId, setProjectSortOrder, setThreadSortOrder } =
+    useHomeListOptions(availableEnvironmentIds);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  const projectScopes = useMemo(
+    () =>
+      buildHomeProjectScopes({
+        projects,
+        environmentId: options.selectedEnvironmentId,
+        projectGroupingMode: options.projectGroupingMode,
+      }),
+    [options.projectGroupingMode, options.selectedEnvironmentId, projects],
+  );
   const projectFilterOptions = useMemo(
     () =>
-      projects
-        .filter(
-          (project) =>
-            options.selectedEnvironmentId === null ||
-            project.environmentId === options.selectedEnvironmentId,
-        )
-        .map((project) => ({
-          key: scopedProjectKey(project.environmentId, project.id),
-          label: project.title,
-        })),
-    [options.selectedEnvironmentId, projects],
+      projectScopes.map((scope) => ({
+        key: scope.key,
+        label: scope.title,
+      })),
+    [projectScopes],
   );
-  const selectedProject = useMemo(
+  const projectTitleByProjectKey = useMemo(
+    () =>
+      new Map(
+        projectScopes.flatMap((scope) =>
+          scope.projectRefs.map(
+            (projectRef) =>
+              [
+                scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+                scope.title,
+              ] as const,
+          ),
+        ),
+      ),
+    [projectScopes],
+  );
+  const selectedProjectScope = useMemo(
     () =>
       selectedProjectKey === null
         ? null
-        : (projects.find(
-            (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
-          ) ?? null),
-    [projects, selectedProjectKey],
+        : (projectScopes.find((scope) => scope.key === selectedProjectKey) ?? null),
+    [projectScopes, selectedProjectKey],
   );
   useEffect(() => {
     if (
@@ -256,31 +266,45 @@ function ThreadNavigationSidebarPane(
       setSelectedProjectKey(null);
     }
   }, [projectFilterOptions, selectedProjectKey]);
+  const selectedProjectRefs = useMemo(
+    () =>
+      selectedProjectScope === null
+        ? null
+        : new Set(
+            selectedProjectScope.projectRefs.map((projectRef) =>
+              scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+            ),
+          ),
+    [selectedProjectScope],
+  );
   const scopedProjects = useMemo(
-    () => (selectedProject === null ? projects : [selectedProject]),
-    [projects, selectedProject],
+    () =>
+      selectedProjectRefs === null
+        ? projects
+        : projects.filter((project) =>
+            selectedProjectRefs.has(scopedProjectKey(project.environmentId, project.id)),
+          ),
+    [projects, selectedProjectRefs],
   );
   const scopedThreads = useMemo(
     () =>
-      selectedProject === null
+      selectedProjectRefs === null
         ? threads
-        : threads.filter(
-            (thread) =>
-              thread.environmentId === selectedProject.environmentId &&
-              thread.projectId === selectedProject.id,
+        : threads.filter((thread) =>
+            selectedProjectRefs.has(scopedProjectKey(thread.environmentId, thread.projectId)),
           ),
-    [selectedProject, threads],
+    [selectedProjectRefs, threads],
   );
   const scopedPendingTasks = useMemo(
     () =>
-      selectedProject === null
+      selectedProjectRefs === null
         ? pendingTasks
-        : pendingTasks.filter(
-            (pendingTask) =>
-              pendingTask.message.environmentId === selectedProject.environmentId &&
-              pendingTask.creation.projectId === selectedProject.id,
+        : pendingTasks.filter((pendingTask) =>
+            selectedProjectRefs.has(
+              scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+            ),
           ),
-    [pendingTasks, selectedProject],
+    [pendingTasks, selectedProjectRefs],
   );
   const groups = useMemo(
     () =>
@@ -375,6 +399,10 @@ function ThreadNavigationSidebarPane(
   // crossed while the pane stays open; without a clock dependency the
   // partition memoizes a frozen "now".
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
+  // Snooze wake times are second-precise; a counter bumped exactly at the
+  // next wake boundary re-runs the partition with a fresh clock so a woken
+  // thread reappears immediately instead of on the next minute tick.
+  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   useEffect(() => {
     if (!threadListV2Enabled) return;
     // Refresh immediately on enable: the mount-time value can be hours old
@@ -396,35 +424,57 @@ function ThreadNavigationSidebarPane(
     }
     return supported;
   }, [serverConfigs]);
+  const snoozeEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadSnooze === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
   const threadListV2Layout = useMemo(() => {
-    if (!threadListV2Enabled) return { items: [], hiddenSettledCount: 0 };
+    if (!threadListV2Enabled)
+      return { items: [], hiddenSettledCount: 0, snoozedCount: 0, nextSnoozeWakeAt: null };
     return buildThreadListV2Items({
       threads: threads.filter((thread) => thread.archivedAt === null),
       environmentId: options.selectedEnvironmentId,
-      projectRef:
-        selectedProject === null
-          ? null
-          : {
-              environmentId: selectedProject.environmentId,
-              projectId: selectedProject.id,
-            },
+      projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
       searchQuery: props.searchQuery,
       changeRequestStateByKey,
       settlementEnvironmentIds,
+      snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
+      snoozeNow: new Date().toISOString(),
     });
   }, [
     changeRequestStateByKey,
     nowMinute,
+    snoozeWakeTick,
     options.selectedEnvironmentId,
     props.searchQuery,
     settledVisibleCount,
     settlementEnvironmentIds,
+    snoozeEnvironmentIds,
     threadListV2Enabled,
     threads,
-    selectedProject,
+    selectedProjectScope,
   ]);
+  // Re-partition the moment the earliest snooze expires (clamped to the
+  // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
+  const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
+  useEffect(() => {
+    if (nextSnoozeWakeAt === null) return;
+    const wakeAtMs = Date.parse(nextSnoozeWakeAt);
+    if (Number.isNaN(wakeAtMs)) return;
+    const delayMs = Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647);
+    const id = setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
+    return () => clearTimeout(id);
+    // snoozeWakeTick must re-arm the timer even when nextSnoozeWakeAt is
+    // unchanged: after a clamped fire (wake beyond the 32-bit setTimeout
+    // range) the boundary string is identical and the chain would die.
+  }, [nextSnoozeWakeAt, snoozeWakeTick]);
   const listItems = useMemo<readonly SidebarListItem[]>(() => {
     if (!threadListV2Enabled) return listLayout.items;
     // Queued offline tasks render above the thread rows (mirrors the
@@ -437,9 +487,10 @@ function ThreadNavigationSidebarPane(
       (pendingTask) =>
         (options.selectedEnvironmentId === null ||
           pendingTask.message.environmentId === options.selectedEnvironmentId) &&
-        (selectedProject === null ||
-          (pendingTask.message.environmentId === selectedProject.environmentId &&
-            pendingTask.creation.projectId === selectedProject.id)) &&
+        (selectedProjectRefs === null ||
+          selectedProjectRefs.has(
+            scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+          )) &&
         (v2SearchQuery.length === 0 ||
           pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
     );
@@ -469,7 +520,7 @@ function ThreadNavigationSidebarPane(
     options.selectedEnvironmentId,
     pendingTasks,
     props.searchQuery,
-    selectedProject,
+    selectedProjectRefs,
     threadListV2Enabled,
     threadListV2Layout,
   ]);
@@ -541,16 +592,6 @@ function ThreadNavigationSidebarPane(
                 state: options.threadSortOrder === option.value ? "on" : "off",
               })),
             },
-            {
-              id: "project-grouping",
-              title: "Group projects",
-              subactions: PROJECT_GROUPING_OPTIONS.map((option) => ({
-                id: `project-grouping:${option.value}`,
-                title: option.label,
-                subtitle: option.subtitle,
-                state: options.projectGroupingMode === option.value ? "on" : "off",
-              })),
-            },
           ] satisfies MenuAction[])),
     ],
     [environments, options, projectFilterOptions, selectedProjectKey, threadListV2Enabled],
@@ -594,15 +635,10 @@ function ThreadNavigationSidebarPane(
         setThreadSortOrder(threadSort.value);
         return;
       }
-      const grouping = PROJECT_GROUPING_OPTIONS.find(
-        (option) => `project-grouping:${option.value}` === event,
-      );
-      if (grouping) setProjectGroupingMode(grouping.value);
     },
     [
       environments,
       projectFilterOptions,
-      setProjectGroupingMode,
       setProjectSortOrder,
       setSelectedEnvironmentId,
       setThreadSortOrder,
@@ -739,6 +775,7 @@ function ThreadNavigationSidebarPane(
               variant={item.item.variant}
               showSettledDivider={item.item.showSettledDivider}
               project={projectByKey.get(scopeKey) ?? null}
+              projectTitle={projectTitleByProjectKey.get(scopeKey)}
               providerDriver={
                 serverConfigs
                   .get(thread.environmentId)
@@ -868,6 +905,7 @@ function ThreadNavigationSidebarPane(
       openPendingTask,
       projectByKey,
       projectCwdByKey,
+      projectTitleByProjectKey,
       props.onNewThreadInProject,
       props.selectedThreadKey,
       props.width,
@@ -898,12 +936,10 @@ function ThreadNavigationSidebarPane(
         selectedProjectKey,
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
-        projectGroupingMode: options.projectGroupingMode,
         onEnvironmentChange: setSelectedEnvironmentId,
         onProjectChange: setSelectedProjectKey,
         onProjectSortOrderChange: setProjectSortOrder,
         onThreadSortOrderChange: setThreadSortOrder,
-        onProjectGroupingModeChange: setProjectGroupingMode,
         listOrganization: !threadListV2Enabled,
       }),
     [
@@ -911,7 +947,6 @@ function ThreadNavigationSidebarPane(
       options,
       projectFilterOptions,
       selectedProjectKey,
-      setProjectGroupingMode,
       setProjectSortOrder,
       setSelectedEnvironmentId,
       setThreadSortOrder,
@@ -927,15 +962,28 @@ function ThreadNavigationSidebarPane(
       }),
     [filterIcon, filterMenu, props.onOpenSettings],
   );
+  // "No threads yet" over an inbox that is merely all-snoozed reads as
+  // data loss; name the snoozed threads instead.
+  const snoozedCount = threadListV2Layout.snoozedCount;
   const listEmpty = (
     <Text className="px-2 py-4 text-sm text-foreground-muted">
       {catalogState.isLoadingConnections
         ? "Loading threads…"
         : props.searchQuery.trim().length > 0
-          ? "No matching threads"
-          : selectedProject !== null
-            ? `No threads in ${selectedProject.title}`
-            : "No threads yet"}
+          ? snoozedCount > 0
+            ? // Snoozed matches passed this same search filter — "No
+              // matching threads" would misreport them as nonexistent.
+              snoozedCount === 1
+              ? "1 matching thread snoozed"
+              : "All matching threads snoozed"
+            : "No matching threads"
+          : snoozedCount > 0
+            ? snoozedCount === 1
+              ? "1 thread snoozed"
+              : `${snoozedCount} threads snoozed`
+            : selectedProjectScope !== null
+              ? `No threads in ${selectedProjectScope.title}`
+              : "No threads yet"}
     </Text>
   );
 
