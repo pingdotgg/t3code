@@ -20,26 +20,26 @@
 // (Kept as comments-to-self so future edits don't silently regress them.)
 //
 // A. Outbound frame ordering (§2 wire order == call order).
-//    Every C→S frame flows through a single actor-owned FIFO `outboundQueue`
-//    drained by ONE long-lived `writerTask`. Callers *enqueue synchronously*
+//    Every C→S frame flows through a single FIFO `AsyncStream` drained by
+//    ONE long-lived `writerTask`. Callers *enqueue synchronously*
 //    at call time (no suspension between id allocation / pending registration
 //    and enqueue), so the wire order a single writer produces is exactly the
 //    order calls reached the actor. Two back-to-back `dispatchCommand`s
 //    (turn.start → turn.interrupt → approval.respond) can no longer race onto
 //    the wire out of order the way per-call `Task { send }` allowed.
 //
-// B. No lost responses. `pending[id]` is registered *before* the request
+// B. No lost responses. `teardownState.pending[id]` is registered *before* the request
 //    frame is ever enqueued, and both happen with no suspension point in
 //    between — so a reentrant `Exit`/`Chunk` can never arrive before its
 //    pending entry exists.
 //
 // C. Atomic completion, no double-resume. Unary completions do
 //    check-then-remove on `pending`. Stream completions funnel through a
-//    per-request `StreamState` whose terminal transition removes `pending[id]`
+//    per-request `StreamState` whose terminal transition removes `teardownState.pending[id]`
 //    exactly once. On teardown, `failAllPending` runs *before* the outbound
-//    queue is drained, so a queued request frame's `.failPending` handler is a
-//    no-op (its pending entry is already gone) — no continuation is resumed
-//    twice.
+//    stream is finished, so a residual request frame's `.failPending`
+//    handler is a no-op (its pending entry is already gone) — no
+//    continuation is resumed twice.
 //
 // D. Real backpressure (§2.3). A chunk's `Ack` is sent only when the consumer
 //    has *drained that whole chunk* out of `StreamState` (see
@@ -50,12 +50,17 @@
 //    buffer, so it is never double-Acked).
 //
 // E. Teardown / drop / cancellation never hang or double-resume. Queued-but-
-//    unsent frames fail their awaiters/pending on teardown; a consumer parked
-//    inside `nextStreamValue` is woken (via `StreamState.termination` or task
-//    cancellation) and throws rather than hanging; the sole abandonment signal
-//    for an `unfolding` stream is task cancellation, which `T3Client.streamCall`
-//    guarantees by converting its outer stream's termination into a
-//    `task.cancel()`.
+//    unsent frames fail their awaiters/pending on teardown (the writer task
+//    drains the finished outbound stream; sends fail on the cancelled
+//    socket); a consumer parked inside `nextStreamValue` is woken (via
+//    `StreamState.termination` or task cancellation) and throws rather than
+//    hanging; the sole abandonment signal for an `unfolding` stream is task
+//    cancellation, which `T3Client.streamCall` guarantees by converting its
+//    outer stream's termination into a `task.cancel()`. The loop tasks hold
+//    no actor reference (static bodies + weak hops), so dropping the actor
+//    without `disconnect()` reaches `deinit`, which cancels the loops, fails
+//    the pending registry, and finishes the outbound stream for the writer
+//    to drain.
 
 import Foundation
 
@@ -146,6 +151,48 @@ public actor RpcConnection {
         case stream(StreamState)
     }
 
+    /// Teardown-critical state lifted out of the actor's isolated storage so
+    /// a plain `deinit` can drain it: the Swift 6.2 toolchain (Xcode 26.x on
+    /// the CI runners) miscompiles SE-0371 `isolated deinit` — dependent
+    /// modules then fail release builds with `<unknown>:0: error: circular
+    /// reference` — so the isolated form is off-limits until CI ships
+    /// Swift >= 6.4. Touched only on the actor (plus `deinit`, which races
+    /// nothing by definition), so `@unchecked Sendable` is sound — the same
+    /// argument as `StreamState`.
+    private final class TeardownState: @unchecked Sendable {
+        var receiveLoopTask: Task<Void, Never>?
+        var pingLoopTask: Task<Void, Never>?
+        var writerTask: Task<Void, Never>?
+        var pending: [String: PendingRequest] = [:]
+
+        func failPending(id: String, with error: Error) {
+            guard let entry = pending.removeValue(forKey: id) else { return }
+            switch entry {
+            case .unary(let continuation):
+                continuation.resume(throwing: error)
+            case .stream(let state):
+                state.discardBuffer()
+                state.termination = .failure(error)
+                state.wake()
+            }
+        }
+
+        func failAllPending(with error: Error) {
+            let entries = pending
+            pending.removeAll()
+            for entry in entries.values {
+                switch entry {
+                case .unary(let continuation):
+                    continuation.resume(throwing: error)
+                case .stream(let state):
+                    state.discardBuffer()
+                    state.termination = .failure(error)
+                    state.wake()
+                }
+            }
+        }
+    }
+
     /// Incoming WS message cap (64 MiB). See `connect()`.
     static let maxIncomingMessageBytes = 64 * 1024 * 1024
 
@@ -153,12 +200,13 @@ public actor RpcConnection {
     private let urlSession: URLSession
 
     private var socket: (any RpcWebSocket)?
-    private var receiveLoopTask: Task<Void, Never>?
-    private var pingLoopTask: Task<Void, Never>?
-    private var writerTask: Task<Void, Never>?
 
     private var nextRequestId: Int = 0
-    private var pending: [String: PendingRequest] = [:]
+
+    /// Loop tasks and the in-flight registry; nonisolated so `deinit` can
+    /// drain them (see `TeardownState`). All the `pending` invariants in the
+    /// header notes are unchanged — accesses stay synchronous on the actor.
+    private nonisolated let teardownState = TeardownState()
 
     // MARK: Outbound FIFO (frame-ordering fix, §note A)
 
@@ -176,9 +224,14 @@ public actor RpcConnection {
         let onResult: OutboundResult
     }
 
-    private var outboundQueue: [OutboundItem] = []
-    /// The single writer parked because the queue is empty.
-    private var writerWaiter: CheckedContinuation<Void, Never>?
+    /// FIFO of outbound frames drained by the single writer task. A stream
+    /// rather than an array + parked waiter: parking inside an actor method
+    /// retains the actor for the whole suspension, which made `deinit`
+    /// unreachable while connected. `for await` ends on cancellation and
+    /// delivers buffered items after `finish()`, so teardown and `deinit`
+    /// need no manual waiter resume (§note E).
+    private nonisolated let outboundStream: AsyncStream<OutboundItem>
+    private nonisolated let outboundContinuation: AsyncStream<OutboundItem>.Continuation
 
     /// Whether the most recently sent `Ping` has not yet been answered by a
     /// `Pong`. If still true the *next* time the 5s ping tick fires, the
@@ -202,6 +255,9 @@ public actor RpcConnection {
         self.stateUpdates = stream
         self.stateContinuation = continuation
         continuation.yield(.disconnected)
+        let (outbound, outboundContinuation) = AsyncStream<OutboundItem>.makeStream()
+        self.outboundStream = outbound
+        self.outboundContinuation = outboundContinuation
     }
 
     // MARK: Lifecycle
@@ -231,15 +287,38 @@ public actor RpcConnection {
         start(socket: socket)
     }
 
+    /// A weak actor reference that can cross a task boundary: passing `self`
+    /// from a `[weak self]` capture as a plain function argument evaluates
+    /// to a *strong* reference held for the callee's entire (indefinite)
+    /// lifetime — the same leak as `await self?.someLoop()`.
+    private struct WeakOwner: Sendable {
+        weak var connection: RpcConnection?
+    }
+
     private func start(socket: any RpcWebSocket) {
         currentState = .connecting
         self.socket = socket
         socket.resume()
         awaitingPong = false
         currentState = .connected
-        receiveLoopTask = Task { [weak self] in await self?.receiveLoop() }
-        pingLoopTask = Task { [weak self] in await self?.pingLoop() }
-        writerTask = Task { [weak self] in await self?.runWriter() }
+        // The loop tasks hold the socket/box/stream but capture the actor
+        // only weakly: `Task { [weak self] in await self?.someLoop() }`
+        // promotes the weak reference for the called method's entire
+        // (indefinite) lifetime, so the actor could never deallocate while
+        // connected and `deinit` was unreachable. The loop bodies are
+        // therefore static functions that make short actor hops per
+        // message/tick, with the owner crossing the task boundary inside a
+        // weak box (see `WeakOwner`).
+        teardownState.receiveLoopTask = Task { [weak self, socket] in
+            await Self.receiveLoop(socket: socket, owner: WeakOwner(connection: self))
+        }
+        teardownState.pingLoopTask = Task { [weak self] in
+            await Self.pingLoop(owner: WeakOwner(connection: self))
+        }
+        teardownState.writerTask = Task { [socket, outboundStream, teardownState] in
+            await Self.writerLoop(
+                socket: socket, outbound: outboundStream, teardownState: teardownState)
+        }
     }
 
     /// Tears down the socket, fails every in-flight request/stream, and
@@ -248,16 +327,21 @@ public actor RpcConnection {
         await teardown(state: .closed(reason: reason), error: T3Error.connectionClosed(reason: reason))
     }
 
-    isolated deinit {
+    deinit {
         stateContinuation.finish()
-        // The loop tasks are `[weak self]`, so if the last strong reference
-        // drops without `disconnect()`, no teardown ever runs: in-flight unary
-        // awaiters (whose continuations live in `pending`) would be stranded
-        // forever. Cancel the tasks and fail everything still pending.
-        receiveLoopTask?.cancel()
-        pingLoopTask?.cancel()
-        writerTask?.cancel()
-        failAllPending(with: T3Error.connectionClosed(reason: nil))
+        // The loop tasks hold no actor reference, so once the last strong
+        // reference drops without `disconnect()` this deinit is actually
+        // reachable: cancel the receive/ping loops, fail everything pending
+        // (in-flight unary awaiters would otherwise be stranded forever),
+        // and finish the outbound stream — the writer task (also free of
+        // actor references) drains residual items, failing their awaiters as
+        // each send fails on the released socket, then exits on its own.
+        // Plain `deinit`, not SE-0371 `isolated deinit` — see
+        // `TeardownState` for the Swift 6.2 compiler bug that rules it out.
+        teardownState.receiveLoopTask?.cancel()
+        teardownState.pingLoopTask?.cancel()
+        teardownState.failAllPending(with: T3Error.connectionClosed(reason: nil))
+        outboundContinuation.finish()
     }
 
     // MARK: Public RPC surface
@@ -278,7 +362,7 @@ public actor RpcConnection {
             // `Exit`/`Chunk` always finds its pending entry (§note B). Both
             // steps are synchronous — no suspension in between — and the
             // synchronous enqueue pins wire order to call order (§note A).
-            pending[id] = .unary(continuation)
+            teardownState.pending[id] = .unary(continuation)
             enqueue(.request(id: id, tag: tag, payload: payload, headers: headers, traceId: traceId),
                     onResult: .failPending(id: id))
         }
@@ -302,14 +386,14 @@ public actor RpcConnection {
         let id = allocateRequestId()
         let state = StreamState()
         // Registered before the initial `Request` is enqueued (§note B).
-        pending[id] = .stream(state)
+        teardownState.pending[id] = .stream(state)
         do {
             // Await the initial send so a send failure throws synchronously to
             // the caller (§2.4) rather than only surfacing on first iteration.
             // The enqueue itself is synchronous, preserving wire order.
             try await sendAwaiting(.request(id: id, tag: tag, payload: payload, headers: headers, traceId: traceId))
         } catch {
-            pending.removeValue(forKey: id)
+            teardownState.pending.removeValue(forKey: id)
             throw error
         }
         // `unfolding` gives us the consumer-pull hook that makes deferred,
@@ -327,7 +411,7 @@ public actor RpcConnection {
     /// locally and notifies the server; a no-op if `requestId` is unknown
     /// (already completed or already interrupted).
     public func interrupt(requestId: String) async {
-        guard let entry = pending.removeValue(forKey: requestId) else { return }
+        guard let entry = teardownState.pending.removeValue(forKey: requestId) else { return }
         switch entry {
         case .unary(let continuation):
             continuation.resume(throwing: CancellationError())
@@ -354,14 +438,10 @@ public actor RpcConnection {
     private func enqueue(_ frame: ClientFrame, onResult: OutboundResult) {
         let item = OutboundItem(frame: frame, onResult: onResult)
         guard socket != nil else {
-            complete(item, error: T3Error.notConnected)
+            Self.complete(item, error: T3Error.notConnected, teardownState: teardownState)
             return
         }
-        outboundQueue.append(item)
-        if let waiter = writerWaiter {
-            writerWaiter = nil
-            waiter.resume()
-        }
+        outboundContinuation.yield(item)
     }
 
     /// Enqueue a frame and await its actual send (success or failure).
@@ -371,46 +451,51 @@ public actor RpcConnection {
         }
     }
 
-    private func runWriter() async {
-        while !Task.isCancelled {
-            guard !outboundQueue.isEmpty else {
-                // Park until `enqueue` (or teardown) resumes us. No enqueue can
-                // interleave between the emptiness check and parking: both run
-                // on the actor with no suspension in between.
-                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    writerWaiter = continuation
-                }
-                continue
-            }
-            let item = outboundQueue.removeFirst()
-            await deliver(item)
+    /// Writer task body — deliberately a static function, not an actor
+    /// method (see `start`). Holds only the socket, the outbound stream, and
+    /// the teardown box; no actor reference is retained while it runs.
+    private static func writerLoop(
+        socket: any RpcWebSocket,
+        outbound: AsyncStream<OutboundItem>,
+        teardownState: TeardownState
+    ) async {
+        // `finish()` (teardown/deinit) lets the loop drain residual items
+        // before terminating — each send then fails on the cancelled socket
+        // and the item's awaiter is failed instead of stranded (§note C).
+        // Task cancellation ends the iteration immediately.
+        for await item in outbound {
+            await deliver(item, socket: socket, teardownState: teardownState)
         }
-        // Exit only happens via teardown, which owns draining any residual
-        // queue — nothing left to do here.
     }
 
-    private func deliver(_ item: OutboundItem) async {
-        guard let socket else {
-            complete(item, error: T3Error.notConnected)
-            return
-        }
+    private static func deliver(
+        _ item: OutboundItem,
+        socket: any RpcWebSocket,
+        teardownState: TeardownState
+    ) async {
         let text: String
         do {
             text = try WireCoding.encodeFrameString(item.frame)
         } catch {
-            complete(item, error: T3Error.decoding("Failed to encode outgoing frame: \(error)"))
+            complete(
+                item, error: T3Error.decoding("Failed to encode outgoing frame: \(error)"),
+                teardownState: teardownState)
             return
         }
         do {
             try await socket.send(.string(text))
         } catch {
-            complete(item, error: T3Error.transport("WebSocket send failed: \(error)"))
+            complete(
+                item, error: T3Error.transport("WebSocket send failed: \(error)"),
+                teardownState: teardownState)
             return
         }
-        complete(item, error: nil)
+        complete(item, error: nil, teardownState: teardownState)
     }
 
-    private func complete(_ item: OutboundItem, error: Error?) {
+    private static func complete(
+        _ item: OutboundItem, error: Error?, teardownState: TeardownState
+    ) {
         switch item.onResult {
         case .ignore:
             break
@@ -421,21 +506,26 @@ public actor RpcConnection {
                 continuation.resume(returning: ())
             }
         case .failPending(let id):
-            if let error { failPending(id: id, with: error) }
+            if let error { teardownState.failPending(id: id, with: error) }
         }
     }
 
     // MARK: Receive loop
 
-    private func receiveLoop() async {
-        guard let socket else { return }
+    /// Receive task body — a static function for the same reason as
+    /// `writerLoop`. Message decode happens off-actor; only the per-frame
+    /// dispatch and failure handling hop onto the (weakly held) actor.
+    private static func receiveLoop(
+        socket: any RpcWebSocket,
+        owner: WeakOwner
+    ) async {
         while !Task.isCancelled {
             let message: URLSessionWebSocketTask.Message
             do {
                 message = try await socket.receive()
             } catch {
                 if Task.isCancelled { return }
-                await teardown(state: .closed(reason: "\(error)"), error: T3Error.transport("WebSocket receive failed: \(error)"))
+                await owner.connection?.receiveDidFail(error)
                 return
             }
 
@@ -469,13 +559,18 @@ public actor RpcConnection {
                 // keep moving, even though this batch of values is lost. A
                 // chunk that never decoded never entered a `StreamState`
                 // buffer, so it is never double-Acked by the drain path.
-                ackLeniently(text)
+                await owner.connection?.ackLeniently(text)
                 continue
             }
             for frame in frames {
-                await handle(frame)
+                guard let connection = owner.connection else { return }
+                await connection.handle(frame)
             }
         }
+    }
+
+    private func receiveDidFail(_ error: Error) async {
+        await teardown(state: .closed(reason: "\(error)"), error: T3Error.transport("WebSocket receive failed: \(error)"))
     }
 
     /// Best-effort recovery for a WS text frame (or one element of a batch)
@@ -520,11 +615,11 @@ public actor RpcConnection {
     }
 
     private func handleChunk(requestId: String, values: [JSONValue]) {
-        guard case .stream(let state)? = pending[requestId] else {
+        guard case .stream(let state)? = teardownState.pending[requestId] else {
             // A non-streaming RPC should never receive a Chunk; surface it as
             // a protocol violation rather than silently dropping the values.
-            if case .unary(let continuation)? = pending[requestId] {
-                pending.removeValue(forKey: requestId)
+            if case .unary(let continuation)? = teardownState.pending[requestId] {
+                teardownState.pending.removeValue(forKey: requestId)
                 continuation.resume(throwing: T3Error.unexpectedFrame("Received Chunk for non-streaming request \(requestId)"))
             }
             // No (or no longer any) stream consumer for this id — still must
@@ -546,10 +641,10 @@ public actor RpcConnection {
     }
 
     private func handleExit(requestId: String, exit: ExitResult) {
-        guard let entry = pending[requestId] else { return }
+        guard let entry = teardownState.pending[requestId] else { return }
         switch entry {
         case .unary(let continuation):
-            pending.removeValue(forKey: requestId)
+            teardownState.pending.removeValue(forKey: requestId)
             switch exit {
             case let .success(value):
                 continuation.resume(returning: value)
@@ -582,7 +677,7 @@ public actor RpcConnection {
         }
         while true {
             if let ackFailure = state.ackFailure {
-                pending.removeValue(forKey: id)
+                teardownState.pending.removeValue(forKey: id)
                 throw ackFailure
             }
             if let (value, didCompleteChunk) = state.popValue() {
@@ -599,7 +694,7 @@ public actor RpcConnection {
                 return value
             }
             if let termination = state.termination {
-                pending.removeValue(forKey: id)
+                teardownState.pending.removeValue(forKey: id)
                 switch termination {
                 case .success: return nil
                 case .failure(let error): throw error
@@ -630,13 +725,15 @@ public actor RpcConnection {
     /// tracked as pending — i.e. no terminal `Exit` was fully consumed yet
     /// (§2.4). Mirrors the pre-refactor `onTermination` behaviour.
     private func abandonStream(id: String) async {
-        guard pending.removeValue(forKey: id) != nil else { return }
+        guard teardownState.pending.removeValue(forKey: id) != nil else { return }
         enqueue(.interrupt(requestId: id), onResult: .ignore)
     }
 
     // MARK: Heartbeat (§1.4)
 
-    private func pingLoop() async {
+    /// Ping task body — static like the other loops. Only the per-tick work
+    /// hops onto the actor; the 5s sleep holds no actor reference.
+    private static func pingLoop(owner: WeakOwner) async {
         while !Task.isCancelled {
             do {
                 try await Task.sleep(for: .seconds(5))
@@ -644,65 +741,36 @@ public actor RpcConnection {
                 return
             }
             guard !Task.isCancelled else { return }
+            guard let keepGoing = await owner.connection?.pingTick(), keepGoing else { return }
+        }
+    }
 
-            if awaitingPong {
-                // Previous Ping went unanswered through this whole tick:
-                // ~5-10s of silence, treat as dead (§1.4, §risk3).
-                await teardown(state: .closed(reason: "ping timeout"), error: T3Error.pingTimeout)
-                return
-            }
-            awaitingPong = true
-            do {
-                try await sendAwaiting(.ping)
-            } catch {
-                // A teardown in progress fails the queued Ping's awaiter; don't
-                // re-enter teardown in that case (§note E — no double-teardown).
-                if Task.isCancelled { return }
-                await teardown(state: .closed(reason: "\(error)"), error: T3Error.transport("Failed to send Ping: \(error)"))
-                return
-            }
+    /// One heartbeat iteration. Returns false when the loop should stop
+    /// (teardown ran, or the task was cancelled mid-send).
+    private func pingTick() async -> Bool {
+        if awaitingPong {
+            // Previous Ping went unanswered through this whole tick:
+            // ~5-10s of silence, treat as dead (§1.4, §risk3).
+            await teardown(state: .closed(reason: "ping timeout"), error: T3Error.pingTimeout)
+            return false
+        }
+        awaitingPong = true
+        do {
+            try await sendAwaiting(.ping)
+            return true
+        } catch {
+            // A teardown in progress fails the queued Ping's awaiter; don't
+            // re-enter teardown in that case (§note E — no double-teardown).
+            if Task.isCancelled { return false }
+            await teardown(state: .closed(reason: "\(error)"), error: T3Error.transport("Failed to send Ping: \(error)"))
+            return false
         }
     }
 
     // MARK: Teardown helpers
 
-    private func failPending(id: String, with error: Error) {
-        guard let entry = pending.removeValue(forKey: id) else { return }
-        switch entry {
-        case .unary(let continuation):
-            continuation.resume(throwing: error)
-        case .stream(let state):
-            state.discardBuffer()
-            state.termination = .failure(error)
-            state.wake()
-        }
-    }
-
     private func failAllPending(with error: Error) {
-        let entries = pending
-        pending.removeAll()
-        for entry in entries.values {
-            switch entry {
-            case .unary(let continuation):
-                continuation.resume(throwing: error)
-            case .stream(let state):
-                state.discardBuffer()
-                state.termination = .failure(error)
-                state.wake()
-            }
-        }
-    }
-
-    /// Drains the residual outbound queue on teardown, failing every awaiter.
-    /// Runs *after* `failAllPending`, so a queued request frame's
-    /// `.failPending` handler is a no-op (its pending entry is already gone) —
-    /// no continuation is resumed twice (§note C).
-    private func drainOutboundQueue(with error: Error) {
-        let residual = outboundQueue
-        outboundQueue.removeAll()
-        for item in residual {
-            complete(item, error: error)
-        }
+        teardownState.failAllPending(with: error)
     }
 
     private func teardown(state: ConnectionState, error: Error) async {
@@ -712,22 +780,23 @@ public actor RpcConnection {
             if currentState != state { currentState = state }
             return
         }
-        receiveLoopTask?.cancel()
-        pingLoopTask?.cancel()
-        writerTask?.cancel()
-        receiveLoopTask = nil
-        pingLoopTask = nil
-        writerTask = nil
-        // Wake the writer if it is parked so its Task observes cancellation and
-        // exits (a `Never` continuation is never auto-resumed by cancellation).
-        if let waiter = writerWaiter {
-            writerWaiter = nil
-            waiter.resume()
-        }
+        teardownState.receiveLoopTask?.cancel()
+        teardownState.pingLoopTask?.cancel()
+        teardownState.receiveLoopTask = nil
+        teardownState.pingLoopTask = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         failAllPending(with: error)
-        drainOutboundQueue(with: error)
+        // Finish the outbound stream and let the writer task drain residual
+        // items: each send fails on the cancelled socket, so every residual
+        // awaiter is failed rather than stranded — after `failAllPending`, a
+        // residual request frame's `.failPending` handler is a no-op and no
+        // continuation is resumed twice (§note C). Awaiting the drain keeps
+        // teardown's completion semantics identical to the old synchronous
+        // queue drain.
+        outboundContinuation.finish()
+        await teardownState.writerTask?.value
+        teardownState.writerTask = nil
         currentState = state
     }
 
