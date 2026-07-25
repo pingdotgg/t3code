@@ -350,7 +350,7 @@ const makeDelegateCoordinator = Effect.gen(function* () {
         return {
           taskId: record.taskId,
           threadId: childThreadId,
-          status: "error",
+          status: "error" as const,
           result: "The delegated thread no longer exists (it may have been deleted).",
           truncated: false,
         };
@@ -389,7 +389,7 @@ const makeDelegateCoordinator = Effect.gen(function* () {
         return {
           taskId: record.taskId,
           threadId: childThreadId,
-          status: "running",
+          status: "running" as const,
           result:
             "The delegated agent is still running in the background. Its progress is visible in this thread; delegate another task only after it settles.",
           truncated: false,

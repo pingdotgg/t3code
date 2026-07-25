@@ -448,7 +448,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
       ctx: KimiSessionContext,
       turnId: TurnId | undefined,
       summary: string,
-    ): Effect.Effect<void> =>
+    ) =>
       Effect.gen(function* () {
         if (ctx.openSubagentTasks.size === 0) {
           return;

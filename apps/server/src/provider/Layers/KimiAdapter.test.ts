@@ -671,7 +671,9 @@ it.layer(kimiAdapterTestLayer)("KimiAdapterLive", (it) => {
           String(event.itemId) === "subagent-tool-call-1",
       );
       const regularItems = threadEvents.filter(
-        (event) =>
+        (
+          event,
+        ): event is Extract<ProviderRuntimeEvent, { type: "item.updated" | "item.completed" }> =>
           (event.type === "item.updated" || event.type === "item.completed") &&
           String(event.itemId) === "regular-tool-call-1",
       );
