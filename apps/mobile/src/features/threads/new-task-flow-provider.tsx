@@ -19,6 +19,7 @@ import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
 import { appSceneryStore } from "../scenery/scenery-store";
+import { occupiedSceneryThreadKeys } from "../scenery/scenery-occupancy";
 import { useEnvironmentServerConfig, useProjects, useThreadShells } from "../../state/entities";
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
@@ -39,6 +40,7 @@ import {
   useComposerDraft,
 } from "../../state/use-composer-drafts";
 import { useBranches } from "../../state/queries";
+import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import {
   flattenQueuedThreadMessages,
   threadOutboxManager,
@@ -169,6 +171,7 @@ const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(n
 export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const projects = useProjects();
   const threads = useThreadShells();
+  const pendingTasks = usePendingNewTasks();
   const { savedConnectionsById } = useSavedRemoteConnections();
 
   const repositoryGroups = useMemo(
@@ -639,7 +642,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       const reservedScene = existingCreation?.sceneTitle
         ? { title: existingCreation.sceneTitle, photoId: existingCreation.scenePhotoId ?? null }
         : (() => {
-            const next = appSceneryStore.peekNextScene();
+            // Skip scenes already bound to open/unsettled threads (and other
+            // queued tasks) so two active threads don't share a location.
+            const next = appSceneryStore.peekNextScene({
+              excludingThreadKeys: occupiedSceneryThreadKeys({
+                threads,
+                pendingTasks,
+              }),
+            });
             return next ? { title: appSceneryStore.threadTitle(next), photoId: next.id } : null;
           })();
       return {
@@ -669,9 +679,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [
       editingPendingProject,
       editingPendingTask,
+      pendingTasks,
       selectedModel,
       selectedProject,
       selectedProjectDraftKey,
+      threads,
     ],
   );
 

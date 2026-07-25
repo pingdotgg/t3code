@@ -216,6 +216,60 @@ struct SceneryStoreWorldPoolTests {
         #expect(worldPool().map(\.id).contains(next.id))
     }
 
+    @Test("peekNextScene skips scenes occupied by excluded thread keys")
+    func peekNextSceneSkipsOccupiedScenes() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        store.installSetForTesting(ScenerySet.makeBuiltinWorldSet(), pool: worldPool())
+
+        // w1 and w2 are bound to open threads: every pick must land on w3.
+        store.assign(photoID: "w1", name: "Kyoto, Japan", to: "thread-1")
+        store.assign(photoID: "w2", name: "Petra, Jordan", to: "thread-2")
+        for attempt in 0..<5 {
+            let pick = try #require(
+                store.peekNextScene(excludingThreadKeys: ["thread-1", "thread-2"]))
+            #expect(pick.id == "w3")
+            // Clear the pending pick so the next iteration re-samples.
+            store.assign(photoID: pick.id, name: pick.name, to: "thread-new-\(attempt)")
+        }
+    }
+
+    @Test("peekNextScene treats an excluded thread's stable-hash scene as occupied")
+    func peekNextSceneSkipsHashFallbackScenes() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        let pool = worldPool()
+        store.installSetForTesting(ScenerySet.makeBuiltinWorldSet(), pool: pool)
+
+        // No explicit assignment: the thread still displays (and therefore
+        // occupies) its stable-hash scene.
+        let hashed = try #require(store.photo(for: "thread-busy"))
+        let pick = try #require(store.peekNextScene(excludingThreadKeys: ["thread-busy"]))
+        #expect(pick.id != hashed.id)
+        #expect(pool.map(\.id).contains(pick.id))
+    }
+
+    @Test("peekNextScene allows duplicates only once every pool photo is occupied")
+    func peekNextSceneFallsBackToDuplicatesWhenExhausted() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        store.installSetForTesting(
+            ScenerySet.makeBuiltinWorldSet(), pool: [worldPool()[0]])
+
+        store.assign(photoID: "w1", name: "Kyoto, Japan", to: "thread-1")
+        let pick = try #require(store.peekNextScene(excludingThreadKeys: ["thread-1"]))
+        #expect(pick.id == "w1")
+    }
+
     @Test("photo(for:) falls back to a world-pool pick when the assigned photo is missing")
     func photoFallsBackToWorldPool() throws {
         let root = try tempRoot()

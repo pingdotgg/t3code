@@ -211,19 +211,31 @@ export class SceneryStore {
 
   /**
    * The scene the next created thread will get: a uniformly random pool
-   * photo. Preview/commit consistency matters — mobile queues drafts and
-   * peeks before committing — so the first pick is remembered as a pending
-   * pick and returned by every subsequent peek until `assign` commits it (or
-   * a pool refresh drops it, in which case a new pick is sampled).
+   * photo, skipping photos already bound to the given (open/unsettled)
+   * thread keys so two active threads don't share a location. Duplicates
+   * are allowed only once every pool photo is in use. Preview/commit
+   * consistency matters — mobile queues drafts and peeks before committing —
+   * so the first pick is remembered as a pending pick and returned by every
+   * subsequent peek until `assign` commits it, a pool refresh drops it, or an
+   * exclusion now covers it (in which case a new pick is sampled).
    */
-  peekNextScene(): SceneryPhoto | null {
+  peekNextScene(options?: {
+    readonly excludingThreadKeys?: ReadonlySet<string>;
+  }): SceneryPhoto | null {
     if (this.pool.length === 0) return null;
+    const occupied = new Set<string>();
+    for (const threadKey of options?.excludingThreadKeys ?? []) {
+      const photo = this.photoFor(threadKey);
+      if (photo !== null) occupied.add(photo.id);
+    }
     if (this.pendingPickId !== null) {
       const pending = this.pool.find((photo) => photo.id === this.pendingPickId);
-      if (pending) return pending;
+      if (pending !== undefined && !occupied.has(pending.id)) return pending;
       this.pendingPickId = null;
     }
-    const pick = this.pool[Math.floor(Math.random() * this.pool.length)] ?? null;
+    const available = this.pool.filter((photo) => !occupied.has(photo.id));
+    const candidates = available.length > 0 ? available : this.pool;
+    const pick = candidates[Math.floor(Math.random() * candidates.length)] ?? null;
     this.pendingPickId = pick?.id ?? null;
     return pick;
   }

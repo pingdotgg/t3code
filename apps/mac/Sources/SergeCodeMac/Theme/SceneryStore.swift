@@ -291,18 +291,32 @@ public final class SceneryStore {
     }
 
     /// The scene the next created thread will get: a uniformly random photo
-    /// from the World pool. The first call samples and remembers the pick in
-    /// `pendingScene`, so the preview (`NewSessionSheet`) and the actual
-    /// commit (`AppModel.createSceneThread`, which calls this once and reuses
-    /// the returned `SceneryPhoto` for both the title and the `assign` call)
+    /// from the World pool, skipping photos already bound to the given
+    /// (open/unsettled) thread keys so two active threads don't share a
+    /// location. Duplicates are allowed only once every pool photo is in use.
+    /// The first call samples and remembers the pick in `pendingScene`, so
+    /// the preview (`NewSessionSheet`) and the actual commit
+    /// (`AppModel.createSceneThread`, which calls this once and reuses the
+    /// returned `SceneryPhoto` for both the title and the `assign` call)
     /// always agree. `assign(...)` clears the pending pick; a pool refresh
-    /// that no longer contains it re-samples on the next call.
-    public func peekNextScene() -> SceneryPhoto? {
+    /// that no longer contains it — or an exclusion that now covers it —
+    /// re-samples on the next call.
+    public func peekNextScene(excludingThreadKeys: Set<String> = []) -> SceneryPhoto? {
         let worldPool = pools[ScenerySet.worldID] ?? []
-        if let pendingScene, worldPool.contains(where: { $0.id == pendingScene.id }) {
+        var occupied: Set<String> = []
+        for threadKey in excludingThreadKeys {
+            if let photo = photo(for: threadKey) {
+                occupied.insert(photo.id)
+            }
+        }
+        if let pendingScene,
+            worldPool.contains(where: { $0.id == pendingScene.id }),
+            !occupied.contains(pendingScene.id)
+        {
             return pendingScene
         }
-        let pick = worldPool.randomElement()
+        let available = worldPool.filter { !occupied.contains($0.id) }
+        let pick = (available.isEmpty ? worldPool : available).randomElement()
         pendingScene = pick
         return pick
     }
@@ -1161,6 +1175,16 @@ public final class SceneryStore {
 }
 
 extension AppModel {
+    /// Scoped keys of threads whose scene counts as in use for next-scene
+    /// picking: open (unarchived) and not yet settled. Settled and archived
+    /// threads release their location for reuse.
+    public var activeSceneThreadKeys: Set<String> {
+        Set(
+            threads
+                .filter { $0.status != .archived && !ThreadInboxSemantics.effectiveSettled($0) }
+                .map { scopedThreadKey($0.id) })
+    }
+
     /// Scene-aware thread creation: reserves the pending World-pool photo,
     /// names the thread after it, and commits the assignment once the backend
     /// confirms.
@@ -1173,7 +1197,7 @@ extension AppModel {
         // First launch races the initial pool fetch; start() is idempotent and
         // waits for it, so early threads still get a scene name + assignment.
         await scenery.start()
-        let scene = scenery.peekNextScene()
+        let scene = scenery.peekNextScene(excludingThreadKeys: activeSceneThreadKeys)
         let sceneTitle = scene.map { scenery.threadTitle(for: $0) }
         let thread = await createThread(
             projectID: projectID, provider: provider, title: sceneTitle)

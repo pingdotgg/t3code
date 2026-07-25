@@ -14,11 +14,14 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { threadEnvironment } from "../../state/threads";
+import { useThreadShells } from "../../state/entities";
+import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { makeTurnCommandMetadata, type TurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { randomHex } from "../../lib/uuid";
+import { occupiedSceneryThreadKeys } from "../scenery/scenery-occupancy";
 import { appSceneryStore } from "../scenery/scenery-store";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
@@ -32,6 +35,8 @@ export interface ThreadSceneSelection {
 
 export function useCreateProjectThread() {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const threadShells = useThreadShells();
+  const pendingTasks = usePendingNewTasks();
 
   return useCallback(
     async (input: {
@@ -63,7 +68,14 @@ export function useCreateProjectThread() {
       let scene = input.scene ?? null;
       if (input.scene === undefined) {
         await appSceneryStore.whenCachedPoolLoaded();
-        const next = appSceneryStore.peekNextScene();
+        // Skip scenes already bound to open/unsettled threads (and queued
+        // pending tasks) so two active threads don't share a location.
+        const next = appSceneryStore.peekNextScene({
+          excludingThreadKeys: occupiedSceneryThreadKeys({
+            threads: threadShells,
+            pendingTasks,
+          }),
+        });
         scene = next ? { title: appSceneryStore.threadTitle(next), photoId: next.id } : null;
       }
 
@@ -120,6 +132,6 @@ export function useCreateProjectThread() {
         scopeThreadRef(input.project.environmentId, threadId),
       );
     },
-    [startTurn],
+    [startTurn, threadShells, pendingTasks],
   );
 }

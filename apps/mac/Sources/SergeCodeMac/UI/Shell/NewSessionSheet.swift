@@ -190,7 +190,7 @@ struct NewSessionSheet: View {
             // peek can't lose the cold-start race and come back nil.
             await scenery.start()
             if nextScene == nil {
-                nextScene = scenery.peekNextScene()
+                nextScene = scenery.peekNextScene(excludingThreadKeys: model.activeSceneThreadKeys)
             }
         }
         .onChange(of: model.configuredProviderKinds) {
