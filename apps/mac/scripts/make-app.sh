@@ -13,13 +13,14 @@ if [[ "${1:-}" == "--debug" ]]; then
   CONFIG="debug"
 fi
 
-# Cross-module optimization lets the app target inline/specialize across
-# T3Kit/SidecarKit (hot JSON decode + diff paths cross those boundaries).
-# LTO was evaluated and rejected: flaky with CLT-only linking. If a beta-SDK
-# compiler chokes on CMO, drop the flag — it is an optimization only.
+# CMO was dropped after the Swift 6.2 toolchain on the CI runner (CLT 26.x)
+# failed the merged release build with `<unknown>:0: error: circular
+# reference` — a compiler bug the flag's own escape hatch anticipated; it is
+# an optimization only. Local Swift 6.4 builds the same sources fine with
+# CMO, so re-enable once CI ships a Swift >= 6.4 toolchain.
+# LTO was evaluated and rejected: flaky with CLT-only linking.
 SWIFT_FLAGS=()
 if [[ "$CONFIG" == "release" ]]; then
-  SWIFT_FLAGS+=(-Xswiftc -cross-module-optimization)
   # Skip dSYM generation: on some machines the post-link dsymutil step
   # deadlocks inside CFBundleCreate (stuck in _CFIterateDirectory ->
   # open$NOCANCEL with zero CPU progress), hanging the build forever.
