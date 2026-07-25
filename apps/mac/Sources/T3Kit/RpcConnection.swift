@@ -28,14 +28,14 @@
 //    (turn.start → turn.interrupt → approval.respond) can no longer race onto
 //    the wire out of order the way per-call `Task { send }` allowed.
 //
-// B. No lost responses. `pending[id]` is registered *before* the request
+// B. No lost responses. `teardownState.pending[id]` is registered *before* the request
 //    frame is ever enqueued, and both happen with no suspension point in
 //    between — so a reentrant `Exit`/`Chunk` can never arrive before its
 //    pending entry exists.
 //
 // C. Atomic completion, no double-resume. Unary completions do
 //    check-then-remove on `pending`. Stream completions funnel through a
-//    per-request `StreamState` whose terminal transition removes `pending[id]`
+//    per-request `StreamState` whose terminal transition removes `teardownState.pending[id]`
 //    exactly once. On teardown, `failAllPending` runs *before* the outbound
 //    queue is drained, so a queued request frame's `.failPending` handler is a
 //    no-op (its pending entry is already gone) — no continuation is resumed
@@ -146,6 +146,36 @@ public actor RpcConnection {
         case stream(StreamState)
     }
 
+    /// Teardown-critical state lifted out of the actor's isolated storage so
+    /// a plain `deinit` can drain it: the Swift 6.2 toolchain (Xcode 26.x on
+    /// the CI runners) miscompiles SE-0371 `isolated deinit` — dependent
+    /// modules then fail release builds with `<unknown>:0: error: circular
+    /// reference` — so the isolated form is off-limits until CI ships
+    /// Swift >= 6.4. Touched only on the actor (plus `deinit`, which races
+    /// nothing by definition), so `@unchecked Sendable` is sound — the same
+    /// argument as `StreamState`.
+    private final class TeardownState: @unchecked Sendable {
+        var receiveLoopTask: Task<Void, Never>?
+        var pingLoopTask: Task<Void, Never>?
+        var writerTask: Task<Void, Never>?
+        var pending: [String: PendingRequest] = [:]
+
+        func failAllPending(with error: Error) {
+            let entries = pending
+            pending.removeAll()
+            for entry in entries.values {
+                switch entry {
+                case .unary(let continuation):
+                    continuation.resume(throwing: error)
+                case .stream(let state):
+                    state.discardBuffer()
+                    state.termination = .failure(error)
+                    state.wake()
+                }
+            }
+        }
+    }
+
     /// Incoming WS message cap (64 MiB). See `connect()`.
     static let maxIncomingMessageBytes = 64 * 1024 * 1024
 
@@ -153,12 +183,13 @@ public actor RpcConnection {
     private let urlSession: URLSession
 
     private var socket: (any RpcWebSocket)?
-    private var receiveLoopTask: Task<Void, Never>?
-    private var pingLoopTask: Task<Void, Never>?
-    private var writerTask: Task<Void, Never>?
 
     private var nextRequestId: Int = 0
-    private var pending: [String: PendingRequest] = [:]
+
+    /// Loop tasks and the in-flight registry; nonisolated so `deinit` can
+    /// drain them (see `TeardownState`). All the `pending` invariants in the
+    /// header notes are unchanged — accesses stay synchronous on the actor.
+    private nonisolated let teardownState = TeardownState()
 
     // MARK: Outbound FIFO (frame-ordering fix, §note A)
 
@@ -237,9 +268,9 @@ public actor RpcConnection {
         socket.resume()
         awaitingPong = false
         currentState = .connected
-        receiveLoopTask = Task { [weak self] in await self?.receiveLoop() }
-        pingLoopTask = Task { [weak self] in await self?.pingLoop() }
-        writerTask = Task { [weak self] in await self?.runWriter() }
+        teardownState.receiveLoopTask = Task { [weak self] in await self?.receiveLoop() }
+        teardownState.pingLoopTask = Task { [weak self] in await self?.pingLoop() }
+        teardownState.writerTask = Task { [weak self] in await self?.runWriter() }
     }
 
     /// Tears down the socket, fails every in-flight request/stream, and
@@ -248,16 +279,18 @@ public actor RpcConnection {
         await teardown(state: .closed(reason: reason), error: T3Error.connectionClosed(reason: reason))
     }
 
-    isolated deinit {
+    deinit {
         stateContinuation.finish()
         // The loop tasks are `[weak self]`, so if the last strong reference
         // drops without `disconnect()`, no teardown ever runs: in-flight unary
-        // awaiters (whose continuations live in `pending`) would be stranded
-        // forever. Cancel the tasks and fail everything still pending.
-        receiveLoopTask?.cancel()
-        pingLoopTask?.cancel()
-        writerTask?.cancel()
-        failAllPending(with: T3Error.connectionClosed(reason: nil))
+        // awaiters (whose continuations live in `teardownState.pending`)
+        // would be stranded forever. Cancel the tasks and fail everything
+        // still pending. Plain `deinit`, not SE-0371 `isolated deinit` — see
+        // `TeardownState` for the Swift 6.2 compiler bug that rules it out.
+        teardownState.receiveLoopTask?.cancel()
+        teardownState.pingLoopTask?.cancel()
+        teardownState.writerTask?.cancel()
+        teardownState.failAllPending(with: T3Error.connectionClosed(reason: nil))
     }
 
     // MARK: Public RPC surface
@@ -278,7 +311,7 @@ public actor RpcConnection {
             // `Exit`/`Chunk` always finds its pending entry (§note B). Both
             // steps are synchronous — no suspension in between — and the
             // synchronous enqueue pins wire order to call order (§note A).
-            pending[id] = .unary(continuation)
+            teardownState.pending[id] = .unary(continuation)
             enqueue(.request(id: id, tag: tag, payload: payload, headers: headers, traceId: traceId),
                     onResult: .failPending(id: id))
         }
@@ -302,14 +335,14 @@ public actor RpcConnection {
         let id = allocateRequestId()
         let state = StreamState()
         // Registered before the initial `Request` is enqueued (§note B).
-        pending[id] = .stream(state)
+        teardownState.pending[id] = .stream(state)
         do {
             // Await the initial send so a send failure throws synchronously to
             // the caller (§2.4) rather than only surfacing on first iteration.
             // The enqueue itself is synchronous, preserving wire order.
             try await sendAwaiting(.request(id: id, tag: tag, payload: payload, headers: headers, traceId: traceId))
         } catch {
-            pending.removeValue(forKey: id)
+            teardownState.pending.removeValue(forKey: id)
             throw error
         }
         // `unfolding` gives us the consumer-pull hook that makes deferred,
@@ -327,7 +360,7 @@ public actor RpcConnection {
     /// locally and notifies the server; a no-op if `requestId` is unknown
     /// (already completed or already interrupted).
     public func interrupt(requestId: String) async {
-        guard let entry = pending.removeValue(forKey: requestId) else { return }
+        guard let entry = teardownState.pending.removeValue(forKey: requestId) else { return }
         switch entry {
         case .unary(let continuation):
             continuation.resume(throwing: CancellationError())
@@ -520,11 +553,11 @@ public actor RpcConnection {
     }
 
     private func handleChunk(requestId: String, values: [JSONValue]) {
-        guard case .stream(let state)? = pending[requestId] else {
+        guard case .stream(let state)? = teardownState.pending[requestId] else {
             // A non-streaming RPC should never receive a Chunk; surface it as
             // a protocol violation rather than silently dropping the values.
-            if case .unary(let continuation)? = pending[requestId] {
-                pending.removeValue(forKey: requestId)
+            if case .unary(let continuation)? = teardownState.pending[requestId] {
+                teardownState.pending.removeValue(forKey: requestId)
                 continuation.resume(throwing: T3Error.unexpectedFrame("Received Chunk for non-streaming request \(requestId)"))
             }
             // No (or no longer any) stream consumer for this id — still must
@@ -546,10 +579,10 @@ public actor RpcConnection {
     }
 
     private func handleExit(requestId: String, exit: ExitResult) {
-        guard let entry = pending[requestId] else { return }
+        guard let entry = teardownState.pending[requestId] else { return }
         switch entry {
         case .unary(let continuation):
-            pending.removeValue(forKey: requestId)
+            teardownState.pending.removeValue(forKey: requestId)
             switch exit {
             case let .success(value):
                 continuation.resume(returning: value)
@@ -582,7 +615,7 @@ public actor RpcConnection {
         }
         while true {
             if let ackFailure = state.ackFailure {
-                pending.removeValue(forKey: id)
+                teardownState.pending.removeValue(forKey: id)
                 throw ackFailure
             }
             if let (value, didCompleteChunk) = state.popValue() {
@@ -599,7 +632,7 @@ public actor RpcConnection {
                 return value
             }
             if let termination = state.termination {
-                pending.removeValue(forKey: id)
+                teardownState.pending.removeValue(forKey: id)
                 switch termination {
                 case .success: return nil
                 case .failure(let error): throw error
@@ -630,7 +663,7 @@ public actor RpcConnection {
     /// tracked as pending — i.e. no terminal `Exit` was fully consumed yet
     /// (§2.4). Mirrors the pre-refactor `onTermination` behaviour.
     private func abandonStream(id: String) async {
-        guard pending.removeValue(forKey: id) != nil else { return }
+        guard teardownState.pending.removeValue(forKey: id) != nil else { return }
         enqueue(.interrupt(requestId: id), onResult: .ignore)
     }
 
@@ -667,7 +700,7 @@ public actor RpcConnection {
     // MARK: Teardown helpers
 
     private func failPending(id: String, with error: Error) {
-        guard let entry = pending.removeValue(forKey: id) else { return }
+        guard let entry = teardownState.pending.removeValue(forKey: id) else { return }
         switch entry {
         case .unary(let continuation):
             continuation.resume(throwing: error)
@@ -679,18 +712,7 @@ public actor RpcConnection {
     }
 
     private func failAllPending(with error: Error) {
-        let entries = pending
-        pending.removeAll()
-        for entry in entries.values {
-            switch entry {
-            case .unary(let continuation):
-                continuation.resume(throwing: error)
-            case .stream(let state):
-                state.discardBuffer()
-                state.termination = .failure(error)
-                state.wake()
-            }
-        }
+        teardownState.failAllPending(with: error)
     }
 
     /// Drains the residual outbound queue on teardown, failing every awaiter.
@@ -712,12 +734,12 @@ public actor RpcConnection {
             if currentState != state { currentState = state }
             return
         }
-        receiveLoopTask?.cancel()
-        pingLoopTask?.cancel()
-        writerTask?.cancel()
-        receiveLoopTask = nil
-        pingLoopTask = nil
-        writerTask = nil
+        teardownState.receiveLoopTask?.cancel()
+        teardownState.pingLoopTask?.cancel()
+        teardownState.writerTask?.cancel()
+        teardownState.receiveLoopTask = nil
+        teardownState.pingLoopTask = nil
+        teardownState.writerTask = nil
         // Wake the writer if it is parked so its Task observes cancellation and
         // exits (a `Never` continuation is never auto-resumed by cancellation).
         if let waiter = writerWaiter {
