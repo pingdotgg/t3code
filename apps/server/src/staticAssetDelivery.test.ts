@@ -83,6 +83,53 @@ describe("makeStaticCompressionCache", () => {
     expect(compressCalls).toBe(1);
   });
 
+  it("compresses once for a burst of concurrent requests", async () => {
+    let compressCalls = 0;
+    let release = () => {};
+    const started = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const cache = makeStaticCompressionCache(async (data) => {
+      compressCalls += 1;
+      await started;
+      return data.subarray(0, 64);
+    });
+
+    const requests = [
+      cache.get({ cacheKey: "bundle.js 1 100", data: bundle, encoding: "br" }),
+      cache.get({ cacheKey: "bundle.js 1 100", data: bundle, encoding: "br" }),
+      cache.get({ cacheKey: "bundle.js 1 100", data: bundle, encoding: "br" }),
+    ];
+    release();
+    const results = await Promise.all(requests);
+
+    expect(compressCalls).toBe(1);
+    expect(results[1]).toBe(results[0]);
+    expect(results[2]).toBe(results[0]);
+  });
+
+  it("retries after a failed compression instead of caching the failure", async () => {
+    let compressCalls = 0;
+    const cache = makeStaticCompressionCache(async (data) => {
+      compressCalls += 1;
+      if (compressCalls === 1) throw new Error("zlib buffer error");
+      return data.subarray(0, 64);
+    });
+
+    await expect(
+      cache.get({ cacheKey: "bundle.js 1 100", data: bundle, encoding: "gzip" }),
+    ).rejects.toThrow("zlib buffer error");
+
+    const retried = await cache.get({
+      cacheKey: "bundle.js 1 100",
+      data: bundle,
+      encoding: "gzip",
+    });
+
+    expect(compressCalls).toBe(2);
+    expect(retried).not.toBeNull();
+  });
+
   it("recompresses when the file changes underneath the same path", async () => {
     let compressCalls = 0;
     const cache = makeStaticCompressionCache(async (data) => {

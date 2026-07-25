@@ -275,9 +275,10 @@ export const staticAndDevRouteLayer = HttpRouter.add(
     const fileInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
     if (!fileInfo || fileInfo.type !== "File") {
       const indexPath = path.resolve(staticRoot, "index.html");
-      const indexData = yield* fileSystem
-        .readFile(indexPath)
-        .pipe(Effect.orElseSucceed(() => null));
+      const [indexInfo, indexData] = yield* Effect.all([
+        fileSystem.stat(indexPath).pipe(Effect.orElseSucceed(() => null)),
+        fileSystem.readFile(indexPath).pipe(Effect.orElseSucceed(() => null)),
+      ]);
       if (!indexData) {
         return HttpServerResponse.text("Not Found", { status: 404 });
       }
@@ -286,7 +287,10 @@ export const staticAndDevRouteLayer = HttpRouter.add(
         contentType: "text/html; charset=utf-8",
         // The SPA fallback always revalidates so a new build is picked up.
         cacheControl: resolveStaticCacheControl("index.html"),
-        cacheKey: null,
+        // Every deep link lands here, so the document is worth compressing
+        // too; without a stat to key on, serve it as-is rather than risk
+        // returning a stale compression.
+        cacheKey: indexInfo ? staticCacheKey(indexPath, indexInfo) : null,
         acceptEncoding: request.headers["accept-encoding"],
       });
     }
@@ -301,14 +305,24 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       data,
       contentType,
       cacheControl: resolveStaticCacheControl(staticRelativePath),
-      cacheKey: `${filePath} ${fileInfo.mtime.pipe(
-        Option.map((mtime) => mtime.getTime()),
-        Option.getOrElse(() => 0),
-      )} ${fileInfo.size}`,
+      cacheKey: staticCacheKey(filePath, fileInfo),
       acceptEncoding: request.headers["accept-encoding"],
     });
   }),
 );
+
+/**
+ * Identifies a file's exact contents for the compression cache. Mtime and
+ * size together mean a dev-server rebuild is recompressed rather than served
+ * from the previous build's entry.
+ */
+function staticCacheKey(filePath: string, info: FileSystem.File.Info): string {
+  const mtimeMs = info.mtime.pipe(
+    Option.map((mtime) => mtime.getTime()),
+    Option.getOrElse(() => 0),
+  );
+  return `${filePath} ${mtimeMs} ${info.size}`;
+}
 
 const respondWithStaticFile = Effect.fn("staticAndDevRoute.respond")(function* (input: {
   readonly data: Uint8Array;
