@@ -640,8 +640,13 @@ export const ServerSettings = Schema.Struct({
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
   ),
+  // When enabled (the default), new thread worktrees branch off the freshly
+  // fetched `origin/<base>` ref instead of the local base branch, so threads
+  // never start from stale local state. The server fetches the remote base
+  // right before creating the worktree and falls back to the local ref when
+  // the fetch fails (e.g. offline).
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(false)),
+    Schema.withDecodingDefault(Effect.succeed(true)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
