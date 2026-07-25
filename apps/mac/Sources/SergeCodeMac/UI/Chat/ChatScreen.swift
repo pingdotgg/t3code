@@ -39,7 +39,6 @@ public struct ChatScreen: View {
                         thread: thread, model: model, scenery: scenery, threadKey: threadKey)
                     Divider()
                     VStack(spacing: 0) {
-                        VcsToolbar(model: model, threadID: thread.id).id(thread.id)
                         // A LazyVStack keeps substantial layout/realization state. Give
                         // every thread its own scroll-view identity so a selection never
                         // inherits an empty/stale realized viewport from the prior chat.
@@ -98,7 +97,8 @@ public struct ChatScreen: View {
             Motion.structure,
             value: model.selectedThreadID.flatMap { model.threadState($0)?.isReviewing } ?? false
         )
-        // The VCS strip unfolds when repo status first arrives for a thread.
+        // The header's git controls unfold when repo status first arrives
+        // for a thread.
         .animation(Motion.structure, value: model.selectedVcsStatus()?.isRepo ?? false)
         // The plan strip mounts/dismounts on run start/end; ease the flip so
         // the composer glides instead of jumping.
