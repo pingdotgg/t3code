@@ -10,35 +10,56 @@ struct AutoReviewSettingsTab: View {
     @FocusState private var mentionFocused: Bool
 
     var body: some View {
-        Form {
+        VStack(spacing: 18) {
             if let settings = draft {
-                Section {
-                    Toggle("Enable auto-review", isOn: binding(settings, \.autoReview.enabled))
-                    Text(
-                        "When enabled, SurgeCode polls open GitHub PRs for your projects, posts a review with your selected model, and can auto-prompt the origin thread to fix blocking/important findings."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                SettingsSection {
+                    SettingsToggleRow(
+                        title: "Enable auto-review",
+                        description:
+                            "When enabled, SurgeCode polls open GitHub PRs for your projects, posts a review with your selected model, and can auto-prompt the origin thread to fix blocking/important findings.",
+                        isOn: binding(settings, \.autoReview.enabled))
                 }
 
-                Section("When to run") {
-                    Picker("Mode", selection: binding(settings, \.autoReview.mode)) {
-                        Text("Auto on open / push").tag("auto")
-                        Text("Only when @mentioned").tag("mention")
+                SettingsSection(header: "When to run") {
+                    SettingsCardRow {
+                        HStack {
+                            Text("Mode")
+                                .font(.callout)
+                            Spacer()
+                            AlpineSegmentedControl(
+                                segments: [
+                                    AlpineSegmentedControl<String>.Segment(
+                                        value: "auto", title: "Auto on open / push"),
+                                    AlpineSegmentedControl<String>.Segment(
+                                        value: "mention", title: "Only when @mentioned"),
+                                ],
+                                selection: binding(settings, \.autoReview.mode),
+                                height: 26
+                            )
+                            .frame(width: 300)
+                            .disabled(!settings.autoReview.enabled)
+                        }
                     }
-                    .pickerStyle(.segmented)
-                    .disabled(!settings.autoReview.enabled)
-
-                    TextField(
-                        "Mention handle",
-                        text: textBinding(settings, \.autoReview.mentionHandle))
-                        .focused($mentionFocused)
-                        .disabled(!settings.autoReview.enabled || settings.autoReview.mode != "mention")
-                        .help("GitHub comment trigger, without the @ (default: surgecode)")
-
-                    Toggle(
-                        "Auto-fix origin thread",
+                    SettingsDivider()
+                    SettingsCardRow {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Mention handle")
+                                .font(.callout)
+                            TextField(
+                                "Mention handle",
+                                text: textBinding(settings, \.autoReview.mentionHandle))
+                                .textFieldStyle(.settings)
+                                .focused($mentionFocused)
+                                .disabled(
+                                    !settings.autoReview.enabled
+                                        || settings.autoReview.mode != "mention")
+                                .help(
+                                    "GitHub comment trigger, without the @ (default: surgecode)")
+                        }
+                    }
+                    SettingsDivider()
+                    SettingsToggleRow(
+                        title: "Auto-fix origin thread",
                         isOn: binding(settings, \.autoReview.autoFixOriginThread))
                         .disabled(!settings.autoReview.enabled)
                         .help(
@@ -46,105 +67,129 @@ struct AutoReviewSettingsTab: View {
                         )
                 }
 
-                Section("Model") {
+                SettingsSection(header: "Model") {
                     if model.models.isEmpty {
-                        HStack {
-                            Text("Model")
-                            Spacer()
-                            Text(
-                                "\(settings.autoReview.modelInstanceID)/\(settings.autoReview.modelID)"
-                            )
-                            .foregroundStyle(.secondary)
+                        SettingsCardRow {
+                            HStack {
+                                Text("Model")
+                                    .font(.callout)
+                                Spacer()
+                                Text(
+                                    "\(settings.autoReview.modelInstanceID)/\(settings.autoReview.modelID)"
+                                )
+                                .font(SurgeTypography.technicalMetadata)
+                                .foregroundStyle(.secondary)
+                            }
+                            .disabled(true)
                         }
-                        .disabled(true)
                     } else {
                         modelPairPicker(settings)
                     }
                 }
 
-                Section("Polling") {
-                    HStack {
-                        Text("Interval")
-                        Spacer()
-                        TextField(
-                            "seconds",
-                            value: Binding(
-                                get: {
-                                    (draft ?? settings).autoReview.pollIntervalSeconds
-                                },
-                                set: { newValue in
-                                    var next = draft ?? settings
-                                    next.autoReview.pollIntervalSeconds = min(
-                                        600, max(15, newValue))
-                                    draft = next
-                                }),
-                            format: .number)
-                            .frame(width: 72)
-                            .multilineTextAlignment(.trailing)
-                            .disabled(!settings.autoReview.enabled)
-                        Text("sec")
-                            .foregroundStyle(.secondary)
+                SettingsSection(header: "Polling") {
+                    SettingsCardRow {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Interval")
+                                    .font(.callout)
+                                Spacer()
+                                TextField(
+                                    "seconds",
+                                    value: Binding(
+                                        get: {
+                                            (draft ?? settings).autoReview.pollIntervalSeconds
+                                        },
+                                        set: { newValue in
+                                            var next = draft ?? settings
+                                            next.autoReview.pollIntervalSeconds = min(
+                                                600, max(15, newValue))
+                                            draft = next
+                                        }),
+                                    format: .number)
+                                    .textFieldStyle(.settings)
+                                    .frame(width: 72)
+                                    .multilineTextAlignment(.trailing)
+                                    .disabled(!settings.autoReview.enabled)
+                                Text("sec")
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text("Clamped to 15–600 seconds on the server.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    Text("Clamped to 15–600 seconds on the server.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Stepper(
-                        "Max attempts: \(settings.autoReview.maxAttempts)",
-                        value: binding(settings, \.autoReview.maxAttempts),
-                        in: 1...5)
-                        .disabled(!settings.autoReview.enabled)
-                    Text("Failed reviews retry up to this many times per PR head, then stop.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    SettingsDivider()
+                    SettingsCardRow {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Stepper(
+                                "Max attempts: \(settings.autoReview.maxAttempts)",
+                                value: binding(settings, \.autoReview.maxAttempts),
+                                in: 1...5)
+                                .disabled(!settings.autoReview.enabled)
+                            Text("Failed reviews retry up to this many times per PR head, then stop.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
 
                 if !settings.autoReview.projectOverrides.isEmpty {
-                    Section("Projects") {
+                    SettingsSection(header: "Projects") {
                         ForEach(
                             Array(settings.autoReview.projectOverrides.enumerated()),
                             id: \.element.id
                         ) { index, override in
+                            if index > 0 { SettingsDivider() }
                             projectOverrideRow(settings, index: index, override: override)
                         }
                     }
                 }
 
-                Section("Recent jobs") {
+                SettingsSection(header: "Recent jobs") {
                     if isRefreshingJobs && jobs.isEmpty {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
+                        SettingsCardRow {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        }
                     } else if jobs.isEmpty {
-                        Text(
-                            settings.autoReview.enabled
-                                ? "No auto-review jobs yet. Open or update a PR on a project repo."
-                                : "Enable auto-review to start polling."
-                        )
-                        .foregroundStyle(.secondary)
+                        SettingsCardRow {
+                            Text(
+                                settings.autoReview.enabled
+                                    ? "No auto-review jobs yet. Open or update a PR on a project repo."
+                                    : "Enable auto-review to start polling."
+                            )
+                            .foregroundStyle(.secondary)
+                        }
                     } else {
-                        ForEach(jobs) { job in
+                        ForEach(Array(jobs.enumerated()), id: \.element.id) { index, job in
+                            if index > 0 { SettingsDivider() }
                             jobRow(job)
                         }
                     }
-                    Button("Refresh jobs") {
-                        Task { await refreshJobs() }
+                    SettingsDivider()
+                    SettingsCardRow {
+                        Button("Refresh jobs") {
+                            Task { await refreshJobs() }
+                        }
+                        .controlSize(.small)
+                        .disabled(model.connection != .ready)
                     }
-                    .disabled(model.connection != .ready)
                 }
             } else {
-                Section {
-                    if model.connection == .ready {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        Text("Connect to the server to edit auto-review settings.")
-                            .foregroundStyle(.secondary)
+                SettingsSection {
+                    SettingsCardRow {
+                        if model.connection == .ready {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Connect to the server to edit auto-review settings.")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
         }
-        .formStyle(.grouped)
-        .padding()
         .animation(Motion.reveal, value: draft == nil)
         .task {
             await model.loadSettings()
@@ -171,7 +216,7 @@ struct AutoReviewSettingsTab: View {
         let options = model.models
         let currentPairID =
             "\((draft ?? settings).autoReview.modelInstanceID)/\((draft ?? settings).autoReview.modelID)"
-        Picker(
+        SettingsPickerRow(
             "Model",
             selection: Binding(
                 get: { currentPairID },
@@ -199,7 +244,6 @@ struct AutoReviewSettingsTab: View {
                 }
             }
         }
-        .pickerStyle(.menu)
         .disabled(!settings.autoReview.enabled)
     }
 
@@ -232,46 +276,50 @@ struct AutoReviewSettingsTab: View {
     private func projectOverrideRow(
         _ settings: AppSettings, index: Int, override: AppAutoReviewProjectOverride
     ) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(override.projectTitle)
-                Text(override.projectID)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        SettingsCardRow {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(override.projectTitle)
+                        .font(.callout)
+                    Text(override.projectID)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                Picker(
+                    "Enabled",
+                    selection: Binding(
+                        get: {
+                            let current =
+                                (draft ?? settings).autoReview.projectOverrides[safe: index]?.enabled
+                            if current == nil { return "inherit" as String }
+                            return current == true ? "on" : "off"
+                        },
+                        set: { choice in
+                            var next = draft ?? settings
+                            guard next.autoReview.projectOverrides.indices.contains(index) else {
+                                return
+                            }
+                            switch choice {
+                            case "on": next.autoReview.projectOverrides[index].enabled = true
+                            case "off": next.autoReview.projectOverrides[index].enabled = false
+                            default: next.autoReview.projectOverrides[index].enabled = nil
+                            }
+                            draft = next
+                            Task { await model.saveSettings(next) }
+                        })
+                ) {
+                    Text("Inherit").tag("inherit")
+                    Text("On").tag("on")
+                    Text("Off").tag("off")
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                .disabled(!settings.autoReview.enabled)
             }
-            Spacer()
-            Picker(
-                "Enabled",
-                selection: Binding(
-                    get: {
-                        let current =
-                            (draft ?? settings).autoReview.projectOverrides[safe: index]?.enabled
-                        if current == nil { return "inherit" as String }
-                        return current == true ? "on" : "off"
-                    },
-                    set: { choice in
-                        var next = draft ?? settings
-                        guard next.autoReview.projectOverrides.indices.contains(index) else {
-                            return
-                        }
-                        switch choice {
-                        case "on": next.autoReview.projectOverrides[index].enabled = true
-                        case "off": next.autoReview.projectOverrides[index].enabled = false
-                        default: next.autoReview.projectOverrides[index].enabled = nil
-                        }
-                        draft = next
-                        Task { await model.saveSettings(next) }
-                    })
-            ) {
-                Text("Inherit").tag("inherit")
-                Text("On").tag("on")
-                Text("Off").tag("off")
-            }
-            .labelsHidden()
-            .frame(width: 110)
-            .disabled(!settings.autoReview.enabled)
         }
     }
 
@@ -321,7 +369,8 @@ struct AutoReviewSettingsTab: View {
                     .font(.caption)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 7)
     }
 
     private func statusColor(_ status: String) -> Color {
