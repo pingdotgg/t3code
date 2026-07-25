@@ -1082,6 +1082,7 @@ const makeWsRpcLayer = (
                 command.type === "thread.fork" || command.type === "thread.merge_back"
                   ? command.targetThreadId
                   : command.type === "delegated_task.request" ||
+                      command.type === "delegated_task.wake-policy" ||
                       command.type === "thread.created.record"
                     ? command.parentThreadId
                     : command.threadId,
