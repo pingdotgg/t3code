@@ -31,14 +31,20 @@ extension Bundle {
     /// errors, placeholder icons).
     static var appResources: Bundle? {
         let bundleName = "SergeCodeMac_SergeCodeMac.bundle"
+        let finderBundle = Bundle(for: AppResourceBundleFinder.self)
         let candidates = [
             // Packaged app: Contents/Resources. `swift run`: the
             // executable's directory, where SwiftPM drops the bundle.
             Bundle.main.resourceURL,
-            // Test runner: the .xctest bundle's Contents/Resources, via the
-            // bundle this module was linked into (Bundle.main is the bare
-            // swiftpm-testing-helper there).
-            Bundle(for: AppResourceBundleFinder.self).resourceURL,
+            // Test runner (swiftbuild backend): the .xctest bundle's
+            // Contents/Resources, via the bundle this module was linked
+            // into (Bundle.main is the bare swiftpm-testing-helper there).
+            finderBundle.resourceURL,
+            // Test runner (classic SwiftPM backend): the products directory
+            // next to the .xctest (e.g. .build/debug), where the resource
+            // bundle is emitted instead of being copied into the test
+            // bundle.
+            finderBundle.bundleURL.deletingLastPathComponent(),
         ]
         for candidate in candidates {
             guard let candidate else { continue }
