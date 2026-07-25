@@ -28,6 +28,16 @@ const MAX_COOLDOWN_MS = 60 * 60_000;
  */
 const MAX_TRACKED_WORKSPACES = 256;
 
+/**
+ * How long the first caller past an expired cooldown holds the retry to
+ * itself. Threads sharing a workspace complete turns independently, so
+ * without this they would all be released at once and launch the same
+ * expensive capture together. Comfortably longer than the VCS process
+ * timeout that kills a stuck capture, and it lapses on its own, so an
+ * attempt that never reports back cannot wedge the workspace.
+ */
+const ATTEMPT_RESERVATION_MS = 60_000;
+
 export interface CaptureBackoffDecision<E> {
   readonly skip: boolean;
   /** Milliseconds left in the cooldown, for logging. Zero when not skipping. */
@@ -49,6 +59,12 @@ export function cooldownForFailureCount(consecutiveFailures: number): number {
   return Math.min(BASE_COOLDOWN_MS * scale, MAX_COOLDOWN_MS);
 }
 
+export interface CaptureFailureOutcome {
+  readonly consecutiveFailures: number;
+  /** Zero while the workspace is still under the failure threshold. */
+  readonly cooldownMs: number;
+}
+
 interface WorkspaceRecord<E> {
   consecutiveFailures: number;
   skipUntilMs: number;
@@ -62,31 +78,46 @@ interface WorkspaceRecord<E> {
 export function makeCaptureBackoff<E>() {
   const recordByCwd = new Map<string, WorkspaceRecord<E>>();
 
+  /** Move a record to the most-recent position so eviction sees real usage. */
+  const touch = (cwd: string, record: WorkspaceRecord<E>) => {
+    recordByCwd.delete(cwd);
+    recordByCwd.set(cwd, record);
+  };
+
   return {
-    evaluate(cwd: string, nowMs: number): CaptureBackoffDecision<E> {
+    /**
+     * Decide whether this caller should run a capture. Mutating: a caller
+     * released past an expired cooldown reserves the attempt, and any read
+     * refreshes eviction recency so a workspace being actively skipped is not
+     * evicted by churn from unrelated workspaces.
+     */
+    beginAttempt(cwd: string, nowMs: number): CaptureBackoffDecision<E> {
       const record = recordByCwd.get(cwd);
-      if (!record || nowMs >= record.skipUntilMs) {
+      if (!record) {
         return { skip: false, remainingMs: 0, lastError: null };
       }
-      return {
-        skip: true,
-        remainingMs: record.skipUntilMs - nowMs,
-        lastError: record.lastError,
-      };
+
+      touch(cwd, record);
+      if (nowMs < record.skipUntilMs) {
+        return {
+          skip: true,
+          remainingMs: record.skipUntilMs - nowMs,
+          lastError: record.lastError,
+        };
+      }
+
+      record.skipUntilMs = nowMs + ATTEMPT_RESERVATION_MS;
+      return { skip: false, remainingMs: 0, lastError: null };
     },
 
     recordSuccess(cwd: string): void {
       recordByCwd.delete(cwd);
     },
 
-    /** Returns the resulting consecutive failure count for this workspace. */
-    recordFailure(cwd: string, nowMs: number, error: E): number {
+    recordFailure(cwd: string, nowMs: number, error: E): CaptureFailureOutcome {
       const consecutiveFailures = (recordByCwd.get(cwd)?.consecutiveFailures ?? 0) + 1;
       const cooldownMs = cooldownForFailureCount(consecutiveFailures);
-      // Re-insert so Map iteration order tracks recency, keeping the
-      // workspaces actually in use ahead of stale ones during eviction.
-      recordByCwd.delete(cwd);
-      recordByCwd.set(cwd, {
+      touch(cwd, {
         consecutiveFailures,
         skipUntilMs: cooldownMs === 0 ? 0 : nowMs + cooldownMs,
         lastError: error,
@@ -98,7 +129,7 @@ export function makeCaptureBackoff<E>() {
         recordByCwd.delete(oldestCwd);
       }
 
-      return consecutiveFailures;
+      return { consecutiveFailures, cooldownMs };
     },
 
     get trackedWorkspaceCount(): number {

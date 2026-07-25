@@ -126,7 +126,7 @@ export const make = Effect.gen(function* () {
     "captureCheckpoint",
   )(function* (input) {
     const startedAt = yield* Clock.currentTimeMillis;
-    const decision = captureBackoff.evaluate(input.cwd, startedAt);
+    const decision = captureBackoff.beginAttempt(input.cwd, startedAt);
     if (decision.skip && decision.lastError) {
       // Spawning git here would repeat a capture that cannot succeed, so
       // replay the failure the caller already handles instead of burning a
@@ -144,11 +144,11 @@ export const make = Effect.gen(function* () {
       Effect.tapError((error) =>
         Effect.gen(function* () {
           const failedAt = yield* Clock.currentTimeMillis;
-          const consecutiveFailures = captureBackoff.recordFailure(input.cwd, failedAt, error);
+          const outcome = captureBackoff.recordFailure(input.cwd, failedAt, error);
           yield* Effect.logWarning("Checkpoint capture failed", {
             cwdLength: input.cwd.length,
-            consecutiveFailures,
-            cooldownMs: captureBackoff.evaluate(input.cwd, failedAt).remainingMs,
+            consecutiveFailures: outcome.consecutiveFailures,
+            cooldownMs: outcome.cooldownMs,
             error,
           });
         }),

@@ -30,7 +30,7 @@ describe("makeCaptureBackoff", () => {
     backoff.recordFailure(CWD, 0, "timeout");
     backoff.recordFailure(CWD, 1_000, "timeout");
 
-    expect(backoff.evaluate(CWD, 2_000).skip).toBe(false);
+    expect(backoff.beginAttempt(CWD, 2_000).skip).toBe(false);
   });
 
   it("skips and replays the recorded failure once capture keeps failing", () => {
@@ -40,7 +40,7 @@ describe("makeCaptureBackoff", () => {
       backoff.recordFailure(CWD, at, "git add timed out");
     }
 
-    const decision = backoff.evaluate(CWD, 3_000);
+    const decision = backoff.beginAttempt(CWD, 3_000);
     expect(decision.skip).toBe(true);
     expect(decision.lastError).toBe("git add timed out");
     expect(decision.remainingMs).toBeGreaterThan(0);
@@ -53,8 +53,8 @@ describe("makeCaptureBackoff", () => {
       backoff.recordFailure(CWD, at, "timeout");
     }
 
-    expect(backoff.evaluate(CWD, 5 * MINUTE - 1).skip).toBe(true);
-    expect(backoff.evaluate(CWD, 5 * MINUTE).skip).toBe(false);
+    expect(backoff.beginAttempt(CWD, 5 * MINUTE - 1).skip).toBe(true);
+    expect(backoff.beginAttempt(CWD, 5 * MINUTE).skip).toBe(false);
   });
 
   it("clears the record after a capture succeeds", () => {
@@ -63,11 +63,11 @@ describe("makeCaptureBackoff", () => {
     for (const at of [0, 0, 0]) {
       backoff.recordFailure(CWD, at, "timeout");
     }
-    expect(backoff.evaluate(CWD, 1_000).skip).toBe(true);
+    expect(backoff.beginAttempt(CWD, 1_000).skip).toBe(true);
 
     backoff.recordSuccess(CWD);
 
-    expect(backoff.evaluate(CWD, 1_000).skip).toBe(false);
+    expect(backoff.beginAttempt(CWD, 1_000).skip).toBe(false);
     expect(backoff.trackedWorkspaceCount).toBe(0);
   });
 
@@ -79,8 +79,8 @@ describe("makeCaptureBackoff", () => {
       backoff.recordFailure(CWD, at, "timeout");
     }
 
-    expect(backoff.evaluate(CWD, 1_000).skip).toBe(true);
-    expect(backoff.evaluate(healthy, 1_000).skip).toBe(false);
+    expect(backoff.beginAttempt(CWD, 1_000).skip).toBe(true);
+    expect(backoff.beginAttempt(healthy, 1_000).skip).toBe(false);
   });
 
   it("bounds how many workspaces it retains", () => {
@@ -93,8 +93,12 @@ describe("makeCaptureBackoff", () => {
     expect(backoff.trackedWorkspaceCount).toBe(256);
     // The oldest entries are the ones dropped: an evicted workspace starts
     // counting again from one, a retained one continues.
-    expect(backoff.recordFailure("/repo/workspace-0", 1_000, "timeout")).toBe(1);
-    expect(backoff.recordFailure("/repo/workspace-399", 1_000, "timeout")).toBe(2);
+    expect(backoff.recordFailure("/repo/workspace-0", 1_000, "timeout").consecutiveFailures).toBe(
+      1,
+    );
+    expect(backoff.recordFailure("/repo/workspace-399", 1_000, "timeout").consecutiveFailures).toBe(
+      2,
+    );
   });
 
   it("keeps a repeatedly failing workspace alive through eviction pressure", () => {
@@ -107,7 +111,56 @@ describe("makeCaptureBackoff", () => {
       backoff.recordFailure(`/repo/other-${index}`, index, "timeout");
     }
 
-    expect(backoff.evaluate(CWD, 400).skip).toBe(true);
+    expect(backoff.beginAttempt(CWD, 400).skip).toBe(true);
+  });
+
+  it("keeps a workspace that is only being skipped safe from eviction", () => {
+    const backoff = makeCaptureBackoff<string>();
+
+    for (const at of [0, 0, 0]) {
+      backoff.recordFailure(CWD, at, "timeout");
+    }
+
+    // A skipped workspace never calls recordFailure again, so only the skip
+    // itself can keep it ahead of churn from unrelated workspaces.
+    for (let index = 0; index < 400; index += 1) {
+      expect(backoff.beginAttempt(CWD, 1_000).skip).toBe(true);
+      backoff.recordFailure(`/repo/other-${index}`, index, "timeout");
+    }
+
+    expect(backoff.beginAttempt(CWD, 1_000).skip).toBe(true);
+  });
+
+  it("releases only one caller when the cooldown expires", () => {
+    const backoff = makeCaptureBackoff<string>();
+
+    for (const at of [0, 0, 0]) {
+      backoff.recordFailure(CWD, at, "timeout");
+    }
+
+    // Threads sharing a workspace can complete turns together, and only the
+    // first past the cooldown should pay for the capture.
+    const released = [
+      backoff.beginAttempt(CWD, 5 * MINUTE),
+      backoff.beginAttempt(CWD, 5 * MINUTE),
+      backoff.beginAttempt(CWD, 5 * MINUTE),
+    ].filter((decision) => !decision.skip);
+
+    expect(released).toHaveLength(1);
+  });
+
+  it("lets the reservation lapse when an attempt never reports back", () => {
+    const backoff = makeCaptureBackoff<string>();
+
+    for (const at of [0, 0, 0]) {
+      backoff.recordFailure(CWD, at, "timeout");
+    }
+    backoff.beginAttempt(CWD, 5 * MINUTE);
+
+    // An interrupted capture reports neither success nor failure, so the
+    // reservation must expire on its own rather than wedge the workspace.
+    expect(backoff.beginAttempt(CWD, 5 * MINUTE + 30_000).skip).toBe(true);
+    expect(backoff.beginAttempt(CWD, 6 * MINUTE + 1).skip).toBe(false);
   });
 
   it("keeps extending the cooldown while failures continue", () => {
@@ -116,11 +169,11 @@ describe("makeCaptureBackoff", () => {
     for (const at of [0, 0, 0]) {
       backoff.recordFailure(CWD, at, "timeout");
     }
-    const firstRemaining = backoff.evaluate(CWD, 0).remainingMs;
+    const firstRemaining = backoff.beginAttempt(CWD, 0).remainingMs;
 
     // The next attempt after the cooldown fails again, so the wait grows.
     backoff.recordFailure(CWD, 5 * MINUTE, "timeout");
-    const secondRemaining = backoff.evaluate(CWD, 5 * MINUTE).remainingMs;
+    const secondRemaining = backoff.beginAttempt(CWD, 5 * MINUTE).remainingMs;
 
     expect(secondRemaining).toBeGreaterThan(firstRemaining);
   });
