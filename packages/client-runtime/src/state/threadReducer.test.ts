@@ -498,6 +498,49 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.proposedPlans[0]?.id).toBe("plan-1");
       }
     });
+
+    it("keeps plans sorted by createdAt so the latest plan is last", () => {
+      const upsertPlan = (
+        thread: OrchestrationThread,
+        id: string,
+        createdAt: string,
+        sequence: number,
+      ) =>
+        applyThreadDetailEvent(thread, {
+          ...baseEventFields,
+          sequence,
+          occurredAt: createdAt,
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.proposed-plan-upserted",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            proposedPlan: {
+              id,
+              turnId: TurnId.make("turn-1"),
+              planMarkdown: "## Plan",
+              implementedAt: null,
+              implementationThreadId: null,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          },
+        });
+
+      const newer = upsertPlan(baseThread, "plan-newer", "2026-04-01T11:00:00.000Z", 11);
+      expect(newer.kind).toBe("updated");
+      if (newer.kind !== "updated") return;
+
+      const older = upsertPlan(newer.thread, "plan-older", "2026-04-01T10:00:00.000Z", 12);
+      expect(older.kind).toBe("updated");
+      if (older.kind === "updated") {
+        expect(older.thread.proposedPlans.map((plan) => plan.id)).toEqual([
+          "plan-older",
+          "plan-newer",
+        ]);
+        expect(older.thread.proposedPlans.at(-1)?.id).toBe("plan-newer");
+      }
+    });
   });
 
   describe("thread.activity-appended", () => {

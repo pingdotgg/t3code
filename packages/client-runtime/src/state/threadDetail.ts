@@ -144,6 +144,16 @@ export function createEnvironmentThreadDetailAtoms<E>(
     ),
   );
 
+  const threadLatestProposedPlanAtomFamily = Atom.family((key: string) =>
+    Atom.make(
+      (get): OrchestrationProposedPlan | null =>
+        get(threadProposedPlansAtomFamily(key)).at(-1) ?? null,
+    ).pipe(
+      Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),
+      Atom.withLabel(`environment-thread-latest-proposed-plan:${key}`),
+    ),
+  );
+
   const threadCheckpointsAtomFamily = Atom.family((key: string) =>
     Atom.make(
       (get): ReadonlyArray<OrchestrationCheckpointSummary> =>
@@ -180,6 +190,8 @@ export function createEnvironmentThreadDetailAtoms<E>(
     messagesAtom: (ref: ScopedThreadRef) => threadMessagesAtomFamily(threadKey(ref)),
     activitiesAtom: (ref: ScopedThreadRef) => threadActivitiesAtomFamily(threadKey(ref)),
     proposedPlansAtom: (ref: ScopedThreadRef) => threadProposedPlansAtomFamily(threadKey(ref)),
+    latestProposedPlanAtom: (ref: ScopedThreadRef) =>
+      threadLatestProposedPlanAtomFamily(threadKey(ref)),
     checkpointsAtom: (ref: ScopedThreadRef) => threadCheckpointsAtomFamily(threadKey(ref)),
     sessionAtom: (ref: ScopedThreadRef) => threadSessionAtomFamily(threadKey(ref)),
     latestTurnAtom: (ref: ScopedThreadRef) => threadLatestTurnAtomFamily(threadKey(ref)),
