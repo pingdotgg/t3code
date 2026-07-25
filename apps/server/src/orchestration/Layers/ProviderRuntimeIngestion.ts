@@ -181,6 +181,29 @@ function sameId(left: string | null | undefined, right: string | null | undefine
   return left === right;
 }
 
+const TURN_SCOPED_PROGRESS_EVENT_PREFIXES = [
+  "turn.",
+  "content.",
+  "item.",
+  "tool.",
+  "task.",
+] as const;
+
+/**
+ * Events that only occur while a turn is genuinely producing work. Turn
+ * lifecycle edges are excluded — they drive the session status directly.
+ */
+function isTurnScopedProgressEvent(event: ProviderRuntimeEvent): boolean {
+  if (
+    event.type === "turn.started" ||
+    event.type === "turn.completed" ||
+    event.type === "turn.aborted"
+  ) {
+    return false;
+  }
+  return TURN_SCOPED_PROGRESS_EVENT_PREFIXES.some((prefix) => event.type.startsWith(prefix));
+}
+
 function hasAssistantMessageForTurn(
   messages: ReadonlyArray<OrchestrationMessage>,
   turnId: TurnId,
@@ -1997,20 +2020,17 @@ const make = Effect.gen(function* () {
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
       const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
 
-      // A turn.started that conflicts with the active turn is legitimate when
-      // the server itself has a turn start pending for this thread AND the
-      // provider session already tracks the event's turn as its active turn:
-      // steering a running turn makes some providers open a new turn without
-      // ever completing the superseded one. A stale
-      // turn.started for some other turn id still gets rejected.
-      const conflictingTurnStartIsPendingTurnStart =
+      // A turn.started that conflicts with the tracked active turn is
+      // legitimate when the provider session itself already tracks the
+      // event's turn as its active turn: steering a running turn — or a
+      // provider opening a follow-up turn on its own (queued messages,
+      // continuations) — makes providers open a new turn without ever
+      // completing the superseded one. A stale turn.started for some other
+      // turn id still gets rejected, because the provider no longer reports
+      // that turn as active.
+      const conflictingTurnStartIsProviderActive =
         event.type === "turn.started" && conflictsWithActiveTurn
-          ? sameId(yield* getExpectedProviderTurnIdForThread(thread.id), eventTurnId) &&
-            Option.isSome(
-              yield* projectionTurnRepository.getPendingTurnStartByThreadId({
-                threadId: thread.id,
-              }),
-            )
+          ? sameId(yield* getExpectedProviderTurnIdForThread(thread.id), eventTurnId)
           : false;
 
       const shouldApplyThreadLifecycle = (() => {
@@ -2024,7 +2044,7 @@ const make = Effect.gen(function* () {
           case "thread.started":
             return true;
           case "turn.started":
-            return !conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart;
+            return !conflictsWithActiveTurn || conflictingTurnStartIsProviderActive;
           case "turn.completed":
             if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
               return false;
@@ -2138,6 +2158,39 @@ const make = Effect.gen(function* () {
             createdAt: now,
           });
         }
+      }
+
+      // When the provider streams progress for a turn the projection no
+      // longer tracks as active (e.g. its turn.started was rejected by the
+      // lifecycle guard, or a premature turn.completed flipped the session to
+      // ready while work continued), restore the running status — but only
+      // when the provider session itself still reports that turn as active,
+      // so late flushes from settled turns cannot resurrect stale work.
+      if (
+        eventTurnId !== undefined &&
+        activeTurnId === null &&
+        isTurnScopedProgressEvent(event) &&
+        (thread.session?.status === "idle" || thread.session?.status === "ready") &&
+        sameId(yield* getExpectedProviderTurnIdForThread(thread.id), eventTurnId)
+      ) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.session.set",
+          commandId: yield* providerCommandId(event, "thread-session-restore-running"),
+          threadId: thread.id,
+          session: {
+            threadId: thread.id,
+            status: "running",
+            providerName: event.provider,
+            ...(event.providerInstanceId !== undefined
+              ? { providerInstanceId: event.providerInstanceId }
+              : {}),
+            runtimeMode: thread.session?.runtimeMode ?? "full-access",
+            activeTurnId: eventTurnId,
+            lastError: thread.session?.lastError ?? null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
       }
 
       const assistantDelta =

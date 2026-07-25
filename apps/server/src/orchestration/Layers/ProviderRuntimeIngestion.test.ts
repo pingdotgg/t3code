@@ -1494,6 +1494,226 @@ describe("ProviderRuntimeIngestion", () => {
     expect(threadAfterSteer.latestTurn?.state).toBe("running");
   });
 
+  it("accepts a conflicting turn.started the provider tracks without a pending server turn start", async () => {
+    // Providers can open a follow-up turn on their own (queued messages,
+    // continuations) while the projection still tracks the superseded turn.
+    // When the provider session itself reports the new turn as active, its
+    // turn.started must be accepted even though the server never requested a
+    // turn start — otherwise the thread reads idle while the agent works.
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const oldTurnId = asTurnId("turn-superseded");
+    const newTurnId = asTurnId("turn-provider-initiated");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: oldTurnId,
+    });
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-superseded"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: oldTurnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === oldTurnId,
+      2_000,
+      threadId,
+    );
+
+    // No thread.turn.start command: the provider opened the new turn itself.
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: newTurnId,
+    });
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-provider-initiated"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: newTurnId,
+    });
+
+    const threadAfterSwitch = await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === newTurnId,
+      2_000,
+      threadId,
+    );
+    expect(threadAfterSwitch.latestTurn?.turnId).toBe(newTurnId);
+    expect(threadAfterSwitch.latestTurn?.state).toBe("running");
+  });
+
+  it("restores running when turn-scoped progress arrives for the provider's active turn", async () => {
+    // A premature turn.completed flips the session to ready while the provider
+    // keeps streaming. Progress for the turn the provider session still
+    // reports as active must restore the running status.
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const completedTurnId = asTurnId("turn-completed-early");
+    const liveTurnId = asTurnId("turn-still-streaming");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: completedTurnId,
+    });
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-completed-early"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: completedTurnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running",
+      2_000,
+      threadId,
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-early"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: completedTurnId,
+      payload: { state: "completed" },
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+      2_000,
+      threadId,
+    );
+
+    // The provider session still tracks the streaming turn as active.
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: liveTurnId,
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-content-delta-still-streaming"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: liveTurnId,
+      payload: { delta: "still working", streamKind: "assistant_text" },
+    });
+
+    const restored = await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === liveTurnId,
+      2_000,
+      threadId,
+    );
+    expect(restored.session?.status).toBe("running");
+  });
+
+  it("ignores turn-scoped progress for turns the provider no longer tracks", async () => {
+    // Late flushes from a settled turn must not resurrect a finished thread:
+    // the provider session no longer reports that turn as active.
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const completedTurnId = asTurnId("turn-flushed");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: completedTurnId,
+    });
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-flushed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: completedTurnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running",
+      2_000,
+      threadId,
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-flushed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: completedTurnId,
+      payload: { state: "completed" },
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+      2_000,
+      threadId,
+    );
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "ready",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-content-delta-late-flush"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: completedTurnId,
+      payload: { delta: "late flush", streamKind: "assistant_text" },
+    });
+    await harness.drain();
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === threadId);
+    expect(thread?.session?.status).toBe("ready");
+    expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
   it("does not mark the source proposed plan implemented for an unrelated turn.started when no thread active turn is tracked", async () => {
     const harness = await createHarness();
     const sourceThreadId = asThreadId("thread-plan");

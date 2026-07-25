@@ -151,6 +151,21 @@ export function resolveThreadStatus(
     };
   }
 
+  // Session status is edge-driven and can miss a turn the projection still
+  // considers live (macOS parity: ThreadStatusProjection falls back to
+  // latestTurn.state == .running before declaring a thread idle).
+  if (thread.latestTurn?.state === "running") {
+    return {
+      kind: "working",
+      label: "Working",
+      pillClassName: "bg-accent-soft",
+      textClassName: "text-accent",
+      iconColor: "#5c8c6e",
+      iconBackground: "rgba(92,140,110,0.22)",
+      pulse: true,
+    };
+  }
+
   const hasPlanReadyPrompt =
     thread.interactionMode === "plan" &&
     isLatestTurnSettled(thread.latestTurn, thread.session) &&
