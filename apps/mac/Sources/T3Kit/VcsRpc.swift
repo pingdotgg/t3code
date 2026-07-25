@@ -53,6 +53,18 @@ public struct VcsStatusLocal: Decodable, Sendable {
     public var refName: String?
     public var hasWorkingTreeChanges: Bool
     public var workingTree: VcsWorkingTree
+
+    public init(
+        isRepo: Bool, hasPrimaryRemote: Bool, isDefaultRef: Bool, refName: String?,
+        hasWorkingTreeChanges: Bool, workingTree: VcsWorkingTree
+    ) {
+        self.isRepo = isRepo
+        self.hasPrimaryRemote = hasPrimaryRemote
+        self.isDefaultRef = isDefaultRef
+        self.refName = refName
+        self.hasWorkingTreeChanges = hasWorkingTreeChanges
+        self.workingTree = workingTree
+    }
 }
 
 /// `VcsStatusRemoteResult` — upstream/PR status (may be stale-cached).
@@ -62,6 +74,17 @@ public struct VcsStatusRemote: Decodable, Sendable {
     public var behindCount: Int
     public var aheadOfDefaultCount: Int?
     public var pr: VcsStatusChangeRequest?
+
+    public init(
+        hasUpstream: Bool, aheadCount: Int, behindCount: Int,
+        aheadOfDefaultCount: Int? = nil, pr: VcsStatusChangeRequest? = nil
+    ) {
+        self.hasUpstream = hasUpstream
+        self.aheadCount = aheadCount
+        self.behindCount = behindCount
+        self.aheadOfDefaultCount = aheadOfDefaultCount
+        self.pr = pr
+    }
 }
 
 /// `vcs.refreshStatus` result: local + remote flattened into one struct.

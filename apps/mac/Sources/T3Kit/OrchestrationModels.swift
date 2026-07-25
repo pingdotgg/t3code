@@ -772,6 +772,40 @@ public struct OrchestrationShellSnapshot: Codable, Sendable {
     public var projects: [OrchestrationProjectShell]
     public var threads: [OrchestrationThreadShell]
     public var updatedAt: String
+    /// `orchestration.getArchivedShellSnapshot` pagination metadata: total
+    /// archived thread count. Absent on older servers (and meaningless for
+    /// `subscribeShell` snapshots) — then it mirrors the returned page size.
+    public var archivedTotal: Int
+    /// Offset to pass as `cursor` for the next page; nil when this page is
+    /// the last. Absent (nil) on older servers, which always return everything.
+    public var nextCursor: Int?
+
+    public init(
+        snapshotSequence: Int, projects: [OrchestrationProjectShell],
+        threads: [OrchestrationThreadShell], updatedAt: String,
+        archivedTotal: Int? = nil, nextCursor: Int? = nil
+    ) {
+        self.snapshotSequence = snapshotSequence
+        self.projects = projects
+        self.threads = threads
+        self.updatedAt = updatedAt
+        self.archivedTotal = archivedTotal ?? threads.count
+        self.nextCursor = nextCursor
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case snapshotSequence, projects, threads, updatedAt, archivedTotal, nextCursor
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        snapshotSequence = try c.decode(Int.self, forKey: .snapshotSequence)
+        projects = try c.decode([OrchestrationProjectShell].self, forKey: .projects)
+        threads = try c.decode([OrchestrationThreadShell].self, forKey: .threads)
+        updatedAt = try c.decode(String.self, forKey: .updatedAt)
+        archivedTotal = try c.decode(Int.self, forKey: .archivedTotal, default: threads.count)
+        nextCursor = try c.decode(Int?.self, forKey: .nextCursor, default: nil)
+    }
 }
 
 /// `OrchestrationShellStreamEvent` union, discriminated by `kind`.

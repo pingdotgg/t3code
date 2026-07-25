@@ -47,8 +47,8 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.threads()
     }
 
-    public func archivedThreads() async throws -> [ChatThread] {
-        await state.threads().filter { $0.status == .archived }
+    public func archivedThreadsPage(cursor: Int?, limit: Int) async throws -> ArchivedThreadsPage {
+        await state.archivedThreadsPage(cursor: cursor, limit: limit)
     }
 
     public func timeline(threadID: String) async throws -> [TimelineItem] {
@@ -94,6 +94,23 @@ public final class MockBackend: BackendService, @unchecked Sendable {
 
     public func settleThread(id: String) async throws {
         await state.settleThread(id: id)
+    }
+
+    /// Test seam: the VCS status `refreshVcsStatus(threadID:)` should emit
+    /// for this thread (mimics a one-shot `vcs.refreshStatus` result).
+    public func injectVcsStatus(threadID: String, status: VcsStatus) async {
+        await state.injectVcsStatus(threadID: threadID, status: status)
+    }
+
+    /// Test seam: thread IDs passed to `settleThread(id:)`, in call order.
+    public func recordedSettleThreadIDs() async -> [String] {
+        await state.recordedSettleThreadIDs
+    }
+
+    /// Test seam: insert extra threads (e.g. archived fixtures) directly,
+    /// without emitting upserts.
+    public func insertThreads(_ threads: [ChatThread]) async {
+        await state.insertThreads(threads)
     }
 
     public func unsettleThread(id: String) async throws {
@@ -154,6 +171,12 @@ public final class MockBackend: BackendService, @unchecked Sendable {
 
     public func watchVcsStatus(threadID: String) async throws {
         await state.emitVcsStatus(threadID: threadID)
+    }
+
+    /// Emits the injected status for the thread (see `injectVcsStatus`), or
+    /// the same default status as `watchVcsStatus` when none was injected.
+    public func refreshVcsStatus(threadID: String) async throws {
+        await state.emitRefreshedVcsStatus(threadID: threadID)
     }
 
     public func pullRequestReview(threadID: String, reference: String) async throws
@@ -365,6 +388,11 @@ private actor MockState {
     private var backgroundAgentsByThread: [String: Int] = [:]
     /// Task IDs stopped via `stopTask`, grouped by thread so deletion can prune them.
     private var cancelledTaskIDsByThread: [String: Set<String>] = [:]
+    /// Statuses injected via `injectVcsStatus`, emitted by the one-shot
+    /// `refreshVcsStatus` path (tests for the merged-PR settle sweep).
+    private var injectedVcsStatusByThread: [String: VcsStatus] = [:]
+    /// Thread IDs passed to `settleThread(id:)`, in call order (test seam).
+    private(set) var recordedSettleThreadIDs: [String] = []
 
     private struct StreamingKey: Hashable {
         let threadID: String
@@ -530,6 +558,30 @@ private actor MockState {
         Array(threadsByID.values)
     }
 
+    /// Archived threads, most-recently-archived first (updatedAt desc mirrors
+    /// the live backend's page ordering), paginated by offset cursor.
+    func archivedThreadsPage(cursor: Int?, limit: Int) -> ArchivedThreadsPage {
+        let archived = threadsByID.values
+            .filter { $0.status == .archived }
+            .sorted { $0.updatedAt > $1.updatedAt }
+        let offset = min(cursor ?? 0, archived.count)
+        let page = Array(archived.dropFirst(offset).prefix(limit))
+        let next = offset + page.count
+        return ArchivedThreadsPage(
+            threads: page, total: archived.count,
+            nextCursor: next < archived.count ? next : nil)
+    }
+
+    func injectVcsStatus(threadID: String, status: VcsStatus) {
+        injectedVcsStatusByThread[threadID] = status
+    }
+
+    func insertThreads(_ threads: [ChatThread]) {
+        for thread in threads {
+            threadsByID[thread.id] = thread
+        }
+    }
+
     func timeline(threadID: String) -> [TimelineItem] {
         timelinesByThread[threadID] ?? []
     }
@@ -601,8 +653,13 @@ private actor MockState {
     }
 
     func settleThread(id: String) {
+        recordedSettleThreadIDs.append(id)
         guard var thread = threadsByID[id], thread.status != .archived else { return }
         thread.status = .settled
+        // Mirror the server: explicit settles persist as an override, so the
+        // upsert lets clients stop re-deriving the placement client-side.
+        thread.settledOverride = "settled"
+        thread.settledAt = Date()
         thread.updatedAt = Date()
         threadsByID[id] = thread
         emit(.threadUpserted(thread))
@@ -908,6 +965,17 @@ private actor MockState {
                     EffortChoice(id: "max", label: "Max", isDefault: false),
                 ]),
         ]
+    }
+
+    /// Emits the injected status when present, else the same default as
+    /// `emitVcsStatus` — mirrors LiveBackend.refreshVcsStatus emitting
+    /// whatever `vcs.refreshStatus` returns for the thread's cwd.
+    func emitRefreshedVcsStatus(threadID: String) {
+        if let injected = injectedVcsStatusByThread[threadID] {
+            emit(.vcsStatusChanged(threadID: threadID, status: injected))
+        } else {
+            emitVcsStatus(threadID: threadID)
+        }
     }
 
     func emitVcsStatus(

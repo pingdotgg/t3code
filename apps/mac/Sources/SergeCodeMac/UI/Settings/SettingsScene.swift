@@ -500,6 +500,28 @@ private struct ArchiveSettingsTab: View {
                         .padding(.vertical, 2)
                         .transition(Motion.rise)
                     }
+
+                    Text(
+                        "Showing \(model.archivedThreads.count) of \(model.archivedThreadsTotal) archived threads"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    if model.archivedThreadsNextCursor != nil {
+                        Button {
+                            Task { await model.loadMoreArchivedThreads() }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text("Load more")
+                                if model.archivedThreadsLoading && !model.archivedThreads.isEmpty {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                }
+                            }
+                        }
+                        .disabled(model.archivedThreadsLoading)
+                        .transition(Motion.rise)
+                    }
                 }
             }
         }
