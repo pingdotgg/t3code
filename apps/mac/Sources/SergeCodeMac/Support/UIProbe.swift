@@ -56,7 +56,8 @@
             try? await Task.sleep(for: .seconds(2))
             snapshot("1-inspector-timeline", dir: dir)
 
-            // Changes panel segmented control: Files (default) then Activity.
+            // Unified activity panel: scroll to the checkpoint history, then
+            // back up to the changed-files section (legacy section keys).
             toggleSection("activity")
             try? await Task.sleep(for: .seconds(1))
             snapshot("1b-changes-activity", dir: dir)

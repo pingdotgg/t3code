@@ -126,7 +126,7 @@ struct AlpineSegmentedControl<Value: Hashable>: View {
 }
 
 extension AlpineSegmentedControl {
-    /// Convenience for string-raw `CaseIterable` enums (e.g. Files | Activity).
+    /// Convenience for string-raw `CaseIterable` enums (e.g. Unified | Side-by-Side).
     init(
         selection: Binding<Value>,
         height: CGFloat = 26
