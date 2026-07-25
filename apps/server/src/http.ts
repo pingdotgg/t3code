@@ -37,6 +37,12 @@ import {
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
+import {
+  isCompressibleContentType,
+  makeStaticCompressionCache,
+  negotiateStaticEncoding,
+  resolveStaticCacheControl,
+} from "./staticAssetDelivery.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -204,6 +210,8 @@ export const assetRouteLayer = HttpRouter.add(
   }),
 );
 
+const staticCompressionCache = makeStaticCompressionCache();
+
 export const staticAndDevRouteLayer = HttpRouter.add(
   "GET",
   "*",
@@ -273,9 +281,13 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       if (!indexData) {
         return HttpServerResponse.text("Not Found", { status: 404 });
       }
-      return HttpServerResponse.uint8Array(indexData, {
-        status: 200,
+      return yield* respondWithStaticFile({
+        data: indexData,
         contentType: "text/html; charset=utf-8",
+        // The SPA fallback always revalidates so a new build is picked up.
+        cacheControl: resolveStaticCacheControl("index.html"),
+        cacheKey: null,
+        acceptEncoding: request.headers["accept-encoding"],
       });
     }
 
@@ -285,9 +297,56 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Internal Server Error", { status: 500 });
     }
 
-    return HttpServerResponse.uint8Array(data, {
-      status: 200,
+    return yield* respondWithStaticFile({
+      data,
       contentType,
+      cacheControl: resolveStaticCacheControl(staticRelativePath),
+      cacheKey: `${filePath} ${fileInfo.mtime.pipe(
+        Option.map((mtime) => mtime.getTime()),
+        Option.getOrElse(() => 0),
+      )} ${fileInfo.size}`,
+      acceptEncoding: request.headers["accept-encoding"],
     });
   }),
 );
+
+const respondWithStaticFile = Effect.fn("staticAndDevRoute.respond")(function* (input: {
+  readonly data: Uint8Array;
+  readonly contentType: string;
+  readonly cacheControl: string;
+  /** Null for the SPA fallback, whose bytes are re-read on every request. */
+  readonly cacheKey: string | null;
+  readonly acceptEncoding: string | undefined;
+}) {
+  const headers: Record<string, string> = {
+    "Cache-Control": input.cacheControl,
+  };
+
+  const encoding = isCompressibleContentType(input.contentType)
+    ? negotiateStaticEncoding(input.acceptEncoding)
+    : null;
+  if (isCompressibleContentType(input.contentType)) {
+    // Announce negotiation even when this client took the identity encoding,
+    // so shared caches do not hand a compressed body to a client that
+    // cannot read it.
+    headers["Vary"] = "Accept-Encoding";
+  }
+
+  const cacheKey = input.cacheKey;
+  const compressed =
+    encoding && cacheKey !== null
+      ? yield* Effect.tryPromise(() =>
+          staticCompressionCache.get({ cacheKey, data: input.data, encoding }),
+        ).pipe(Effect.orElseSucceed(() => null))
+      : null;
+
+  if (compressed && encoding) {
+    headers["Content-Encoding"] = encoding;
+  }
+
+  return HttpServerResponse.uint8Array(compressed ?? input.data, {
+    status: 200,
+    contentType: input.contentType,
+    headers,
+  });
+});
