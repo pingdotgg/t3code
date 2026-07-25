@@ -69,6 +69,7 @@ import {
   acpClaimNativeTransportRequest,
   acpNativeUserInputRequestMatches,
   acpPostSettleContinuationOfferEvidence,
+  acpIsAppOwnedWakeTurn,
   acpPostSettleMonitorPromptShouldSuppress,
   acpPostSettleWakeEvidence,
   acpPostSettleWakeShouldBuffer,
@@ -14206,6 +14207,20 @@ describe("acpPostSettleWakeShouldBuffer", () => {
 
     assert.isTrue(acpPostSettleWakeShouldBuffer(toolUpdate, true));
     assert.isTrue(acpPostSettleWakeShouldBuffer(agentMessage, false));
+  });
+});
+
+describe("acpIsAppOwnedWakeTurn", () => {
+  it("recognizes only the orchestrator-injected app-owned wake", () => {
+    // Delegated-child wake: must preserve this session's own wake frames.
+    assert.isTrue(acpIsAppOwnedWakeTurn({ createdBy: "agent", creationSource: "server" }));
+    // Provider-native continuation: handled by the continuation branch instead.
+    assert.isFalse(acpIsAppOwnedWakeTurn({ createdBy: "agent", creationSource: "provider" }));
+    // Real user turns still clear stale wake residue.
+    assert.isFalse(acpIsAppOwnedWakeTurn({ createdBy: "user", creationSource: "web" }));
+    assert.isFalse(acpIsAppOwnedWakeTurn({ createdBy: "user", creationSource: "mcp" }));
+    // A user-authored message never counts, whatever its surface.
+    assert.isFalse(acpIsAppOwnedWakeTurn({ createdBy: "user", creationSource: "server" }));
   });
 });
 
