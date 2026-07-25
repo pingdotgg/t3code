@@ -15,15 +15,22 @@ The panel is intentionally an overview and high-level workflow surface. It focus
 Primary implementation files:
 
 - `apps/web/src/components/source-control/SourceControlPanel.tsx`
-- `apps/web/src/components/source-control/SourceControlPanel.logic.ts`
+- `apps/web/src/components/source-control/SourceControlEnvironmentPanel.tsx`
+- `apps/web/src/components/source-control/useSourceControlPanelController.ts`, `useSourceControlPanelState.tsx`, `useSourceControlPanelRefresh.ts`, `useSourceControlPanelActions.tsx`, and `useSourceControlPanelExpansion.tsx` for the per-environment controller lifecycle
+- `apps/web/src/components/source-control/SourceControlPanelView.tsx`, `SourceControlPanelWorkingTree.tsx`, `SourceControlPanelBranches.tsx`, and `SourceControlPanelRepositories.tsx` for focused panel surfaces
+- `apps/web/src/components/source-control/SourceControlPanelPrimitives.tsx` and `SourceControlPanelRows.tsx` for shared presentation
+- `apps/web/src/components/source-control/SourceControlPanelCache.ts`, `SourceControlPanelModel.ts`, and `SourceControlPanel.logic.ts` for cache and pure behavior
 - `apps/web/src/state/sourceControlPanel.ts`
 - `apps/mobile/src/features/version-control/VersionControlRouteScreen.tsx`
+- `apps/mobile/src/features/version-control/VersionControlRouteView.tsx` and `VersionControlRouteComponents.tsx`
 - `apps/mobile/src/features/version-control/versionControlModel.ts`
 - `apps/mobile/src/features/version-control/useVersionControlPanelApi.ts`
 - `apps/web/src/components/ChatView.tsx`
 - `apps/web/src/components/ChatView.sourceControl.ts`, which exports source-control right-panel availability/surface helpers and `useSourceControlThreadMetadataRouting` for server and draft thread metadata routing
 - `apps/web/src/components/RightPanelTabs.tsx`
 - `apps/server/src/sourceControl/SourceControlPanelService.ts`
+- `apps/server/src/sourceControl/SourceControlPanelReaders.ts` and `SourceControlPanelActions.ts`
+- `apps/server/src/sourceControl/SourceControlPanelParsers.ts` and `SourceControlPanelStatusParsers.ts`
 - `apps/server/src/vcs/VcsStatusBroadcaster.ts`
 - `apps/server/src/vcs/VcsLocalWatch.ts`
 - `apps/server/src/ws.ts`
