@@ -37,7 +37,7 @@ import {
   updateComposerDraftSettings,
   useComposerDraft,
 } from "../../state/use-composer-drafts";
-import { useBranches } from "../../state/queries";
+import { useBranches, useProviderSkills } from "../../state/queries";
 import {
   flattenQueuedThreadMessages,
   threadOutboxManager,
@@ -54,7 +54,13 @@ import {
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import {
+  type CachedComposerProviderSkills,
+  getComposerProviderSkillsCacheEntry,
+  resolveComposerProviderSkills,
+} from "@t3tools/client-runtime/state/projects";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
+import { detectComposerTrigger } from "@t3tools/shared/composerTrigger";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -391,13 +397,47 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
-  const selectedProviderSkills = useMemo(
+  const selectedProviderSnapshotSkills = useMemo(
     () =>
       selectedEnvironmentServerConfig?.providers.find(
         (provider) => provider.instanceId === selectedModel?.instanceId,
       )?.skills ?? [],
     [selectedEnvironmentServerConfig, selectedModel?.instanceId],
   );
+  const providerSkillsCwd = selectedWorktreePath ?? selectedProject?.workspaceRoot ?? null;
+  const providerSkillsEnvironmentId = selectedProject?.environmentId ?? selectedEnvironmentId;
+  const providerSkills = useProviderSkills({
+    environmentId: providerSkillsEnvironmentId,
+    instanceId: selectedModel?.instanceId ?? null,
+    cwd: providerSkillsCwd,
+    enabled: detectComposerTrigger(prompt, prompt.length)?.kind === "skill",
+  });
+  const providerSkillsTargetKey = `${providerSkillsEnvironmentId ?? ""}\0${selectedModel?.instanceId ?? ""}\0${providerSkillsCwd ?? ""}`;
+  const [cachedProviderSkills, setCachedProviderSkills] =
+    useState<CachedComposerProviderSkills | null>(null);
+  useEffect(() => {
+    const cacheEntry = getComposerProviderSkillsCacheEntry({
+      targetKey: providerSkillsTargetKey,
+      discoveredSkills: providerSkills.data?.skills ?? null,
+      snapshotSkills: selectedProviderSnapshotSkills,
+      discoveryUnsupported: providerSkills.isUnsupported,
+    });
+    if (cacheEntry !== null) {
+      setCachedProviderSkills(cacheEntry);
+    }
+  }, [
+    providerSkills.data,
+    providerSkills.isUnsupported,
+    providerSkillsTargetKey,
+    selectedProviderSnapshotSkills,
+  ]);
+  const selectedProviderSkills = resolveComposerProviderSkills({
+    targetKey: providerSkillsTargetKey,
+    discoveredSkills: providerSkills.data?.skills ?? null,
+    cachedSkills: cachedProviderSkills,
+    snapshotSkills: selectedProviderSnapshotSkills,
+    discoveryUnsupported: providerSkills.isUnsupported,
+  });
   const setSelectedModelKey = useCallback(
     (key: string | null) => {
       if (!key || !selectedProjectDraftKey) {

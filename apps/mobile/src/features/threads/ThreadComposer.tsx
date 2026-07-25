@@ -68,7 +68,13 @@ import {
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
+import { useProviderSkills } from "../../state/queries";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import {
+  type CachedComposerProviderSkills,
+  getComposerProviderSkillsCacheEntry,
+  resolveComposerProviderSkills,
+} from "@t3tools/client-runtime/state/projects";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -365,6 +371,38 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     cwd: composerTrigger?.kind === "path" ? props.projectCwd : null,
     query: composerTrigger?.kind === "path" ? composerTrigger.query : null,
   });
+  const providerSkills = useProviderSkills({
+    environmentId: props.environmentId,
+    instanceId: selectedProviderStatus?.instanceId ?? null,
+    cwd: props.projectCwd,
+    enabled: composerTrigger?.kind === "skill",
+  });
+  const providerSkillsTargetKey = `${props.environmentId}\0${selectedProviderStatus?.instanceId ?? ""}\0${props.projectCwd ?? ""}`;
+  const [cachedProviderSkills, setCachedProviderSkills] =
+    useState<CachedComposerProviderSkills | null>(null);
+  useEffect(() => {
+    const cacheEntry = getComposerProviderSkillsCacheEntry({
+      targetKey: providerSkillsTargetKey,
+      discoveredSkills: providerSkills.data?.skills ?? null,
+      snapshotSkills: selectedProviderStatus?.skills,
+      discoveryUnsupported: providerSkills.isUnsupported,
+    });
+    if (cacheEntry !== null) {
+      setCachedProviderSkills(cacheEntry);
+    }
+  }, [
+    providerSkills.data,
+    providerSkills.isUnsupported,
+    providerSkillsTargetKey,
+    selectedProviderStatus?.skills,
+  ]);
+  const composerProviderSkills = resolveComposerProviderSkills({
+    targetKey: providerSkillsTargetKey,
+    discoveredSkills: providerSkills.data?.skills ?? null,
+    cachedSkills: cachedProviderSkills,
+    snapshotSkills: selectedProviderStatus?.skills,
+    discoveryUnsupported: providerSkills.isUnsupported,
+  });
 
   const composerMenuItems: ComposerCommandItem[] = useMemo(() => {
     if (!composerTrigger) return [];
@@ -412,7 +450,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     if (composerTrigger.kind === "skill") {
-      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((s) => s.enabled);
+      const enabledSkills = composerProviderSkills.filter((skill) => skill.enabled);
       const normalizedQuery = normalizeSearchQuery(composerTrigger.query, {
         trimLeadingPattern: /^\$+/,
       });
@@ -509,7 +547,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
+  }, [composerProviderSkills, composerTrigger, pathSearch.entries, selectedProviderStatus]);
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
@@ -724,12 +762,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         layout={COMPOSER_LAYOUT_TRANSITION}
         style={{ maxWidth: props.contentMaxWidth }}
       >
-        {composerTrigger && composerMenuItems.length > 0 ? (
+        {composerTrigger &&
+        (composerTrigger.kind === "skill" ||
+          composerMenuItems.length > 0 ||
+          pathSearch.isPending ||
+          providerSkills.isPending) ? (
           <View className="absolute inset-x-0 bottom-full z-10 mb-2">
             <ComposerCommandPopover
               items={composerMenuItems}
               triggerKind={composerTrigger.kind}
-              isLoading={pathSearch.isPending}
+              isLoading={pathSearch.isPending || providerSkills.isPending}
               onSelect={handleCommandSelect}
             />
           </View>
@@ -783,7 +825,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               ref={inputRef}
               multiline
               value={props.draftMessage}
-              skills={selectedProviderStatus?.skills ?? []}
+              skills={composerProviderSkills}
               selection={composerSelection}
               onChangeText={props.onChangeDraftMessage}
               onSelectionChange={handleSelectionChange}

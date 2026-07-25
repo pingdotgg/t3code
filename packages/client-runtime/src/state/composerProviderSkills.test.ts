@@ -4,7 +4,7 @@ import type { ServerProviderSkill } from "@t3tools/contracts";
 import {
   getComposerProviderSkillsCacheEntry,
   resolveComposerProviderSkills,
-} from "./composerProviderSkills";
+} from "./composerProviderSkills.ts";
 
 const skill = (name: string): ServerProviderSkill => ({
   name,

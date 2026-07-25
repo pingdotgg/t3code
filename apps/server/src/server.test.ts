@@ -4175,6 +4175,75 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes cwd-aware provider skill discovery over websocket rpc", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("grok");
+      const cwd = "/tmp/mobile-project";
+      const requests: Array<{ readonly instanceId: ProviderInstanceId; readonly cwd: string }> = [];
+      const skills = [
+        {
+          name: "project-review",
+          path: `${cwd}/.grok/skills/project-review/SKILL.md`,
+          enabled: true,
+          scope: "project",
+        },
+      ] as const;
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerRegistry: {
+            listSkills: (input) =>
+              Effect.sync(() => {
+                requests.push(input);
+                return skills;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverListProviderSkills]({ instanceId, cwd }),
+        ),
+      );
+
+      assert.deepEqual(requests, [{ instanceId, cwd }]);
+      assert.deepEqual(response, { skills });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("reports unsupported provider skill discovery over websocket rpc", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("unsupported");
+      const cwd = "/tmp/mobile-project";
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerRegistry: {
+            listSkills: () => Effect.sync((): undefined => undefined),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverListProviderSkills]({ instanceId, cwd }),
+        ).pipe(Effect.result),
+      );
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        if (result.failure._tag !== "ServerProviderSkillsUnsupportedError") {
+          return assert.fail(`Unexpected failure: ${result.failure._tag}`);
+        }
+        assert.equal(result.failure.instanceId, instanceId);
+        assert.equal(result.failure.cwd, cwd);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect(
     "stores browser OTLP trace exports locally when no upstream collector is configured",
     () =>

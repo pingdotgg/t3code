@@ -1,5 +1,12 @@
-import type { EnvironmentId, OrchestrationThread, ThreadId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type OrchestrationThread,
+  type ProviderInstanceId,
+  ServerProviderSkillsUnsupportedError,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useState } from "react";
 
 import { orchestrationEnvironment } from "./orchestration";
@@ -16,6 +23,7 @@ import {
 const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 200;
 const COMPOSER_PATH_SEARCH_LIMIT = 20;
 const VCS_REF_LIST_LIMIT = 100;
+const isProviderSkillsUnsupportedError = Schema.is(ServerProviderSkillsUnsupportedError);
 
 export interface ThreadDetailView {
   readonly data: OrchestrationThread | null;
@@ -108,6 +116,29 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
     error: result.error,
     isPending: normalizedTarget.query !== debouncedTarget.query || result.isPending,
     refresh: result.refresh,
+  };
+}
+
+export function useProviderSkills(target: {
+  readonly environmentId: EnvironmentId | null;
+  readonly instanceId: ProviderInstanceId | null;
+  readonly cwd: string | null;
+  readonly enabled: boolean;
+}) {
+  const result = useEnvironmentQuery(
+    target.enabled &&
+      target.environmentId !== null &&
+      target.instanceId !== null &&
+      target.cwd !== null
+      ? projectEnvironment.listProviderSkills({
+          environmentId: target.environmentId,
+          input: { instanceId: target.instanceId, cwd: target.cwd },
+        })
+      : null,
+  );
+  return {
+    ...result,
+    isUnsupported: result.failure !== null && isProviderSkillsUnsupportedError(result.failure),
   };
 }
 
