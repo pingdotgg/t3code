@@ -16,13 +16,11 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
-  buildScenerySetPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
-  sanitizeScenerySetResult,
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
 import {
@@ -54,7 +52,6 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle"
-      | "generateScenerySet"
       | "generateAutoReviewFindings";
     cwd: string;
     prompt: string;
@@ -251,35 +248,6 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
-  const generateScenerySet: TextGeneration.TextGeneration["Service"]["generateScenerySet"] =
-    Effect.fn("GrokTextGeneration.generateScenerySet")(function* (input) {
-      const location = input.location.trim();
-      if (location.length === 0) {
-        return yield* new TextGenerationError({
-          operation: "generateScenerySet",
-          detail: "Location must not be empty.",
-        });
-      }
-
-      const { prompt, outputSchema } = buildScenerySetPrompt({ location });
-      const generated = yield* runGrokJson({
-        operation: "generateScenerySet",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        modelSelection: input.modelSelection,
-      });
-
-      const sanitized = sanitizeScenerySetResult(generated);
-      if (sanitized.sceneNames.length === 0 || sanitized.queries.length === 0) {
-        return yield* new TextGenerationError({
-          operation: "generateScenerySet",
-          detail: "Grok returned an empty scenery set.",
-        });
-      }
-      return sanitized;
-    });
-
   const generateAutoReviewFindings: TextGeneration.TextGeneration["Service"]["generateAutoReviewFindings"] =
     Effect.fn("GrokTextGeneration.generateAutoReviewFindings")(function* (input) {
       const { prompt, outputSchema } = buildAutoReviewFindingsPrompt({
@@ -322,7 +290,6 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-    generateScenerySet,
     generateAutoReviewFindings,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

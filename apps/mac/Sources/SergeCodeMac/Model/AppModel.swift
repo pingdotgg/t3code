@@ -180,8 +180,9 @@ public final class AppModel {
     /// the sidebar array is left alone so rows don't jump, but new-thread
     /// insertion still sorts against the real latest activity time.
     @ObservationIgnored private var effectiveUpdatedAt: [String: Date] = [:]
-    /// Direct lookup used by scenery resolution. Keys are local thread ids or
-    /// device-scoped remote thread ids, matching `scopedThreadKey(_:)`.
+    /// Direct lookup used by timeline row context (project root for file
+    /// links). Keys are local thread ids or device-scoped remote thread ids,
+    /// matching `scopedThreadKey(_:)`.
     @ObservationIgnored private var projectPathByThreadKey: [String: String] = [:]
 
     public init(
@@ -993,7 +994,7 @@ public final class AppModel {
         }
     }
 
-    /// Returns the project path for a scenery lookup key in O(1) time.
+    /// Returns the project path for a scoped thread key in O(1) time.
     public func projectPath(forScopedThreadKey threadKey: String) -> String? {
         projectPathByThreadKey[threadKey]
     }

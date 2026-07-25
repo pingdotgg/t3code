@@ -632,7 +632,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       const projectCwd = usingPendingSnapshot
         ? editingPendingTask?.creation?.projectCwd
         : selectedProject.workspaceRoot;
-      // Reserve a Dolomites scene at queue time so the pending row, the
+      // Reserve a world scenery location at queue time so the pending row, the
       // drained creation, and an online resend all keep the same title.
       // Editing an existing task keeps its original scene.
       const existingCreation = editingPendingTask?.creation;

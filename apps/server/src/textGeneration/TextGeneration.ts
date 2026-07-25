@@ -72,41 +72,6 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
-export type SceneryTimeOfDay = "dawn" | "day" | "dusk" | "night";
-export type ScenerySeason = "spring" | "summer" | "autumn" | "winter";
-
-export interface ScenerySetQueryGeneration {
-  text: string;
-  timeOfDay?: SceneryTimeOfDay | undefined;
-  season?: ScenerySeason | undefined;
-}
-
-export interface ScenerySetLocationGeneration {
-  /** Authentic place name, e.g. "Kirkjufell". */
-  name: string;
-  /** Unsplash search that finds photos of that place. */
-  query: string;
-  timeOfDay?: SceneryTimeOfDay | undefined;
-  season?: ScenerySeason | undefined;
-}
-
-export interface ScenerySetGenerationInput {
-  cwd: string;
-  /** User-typed location name, e.g. "Kyoto" or "Norwegian Fjords". */
-  location: string;
-  /** What model and provider to use for generation. */
-  modelSelection: ModelSelection;
-}
-
-export interface ScenerySetGenerationResult {
-  /** Authentic place names (derived from `locations` when present). */
-  sceneNames: string[];
-  /** General Unsplash search queries for variety top-up. */
-  queries: ScenerySetQueryGeneration[];
-  /** Per-location name + place-specific query (preferred client fetch path). */
-  locations?: ScenerySetLocationGeneration[] | undefined;
-}
-
 export interface AutoReviewFindingsGenerationInput {
   cwd: string;
   prNumber: number;
@@ -129,7 +94,6 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
-  generateScenerySet(input: ScenerySetGenerationInput): Promise<ScenerySetGenerationResult>;
   generateAutoReviewFindings(
     input: AutoReviewFindingsGenerationInput,
   ): Promise<AutoReviewFindingsGenerationResult>;
@@ -170,14 +134,6 @@ export class TextGeneration extends Context.Service<
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
 
     /**
-     * Generate curated scene names + Unsplash search queries for a location
-     * photo set (mac scenery personalization).
-     */
-    readonly generateScenerySet: (
-      input: ScenerySetGenerationInput,
-    ) => Effect.Effect<ScenerySetGenerationResult, TextGenerationError>;
-
-    /**
      * Produce structured PR review findings for the native auto-reviewer.
      */
     readonly generateAutoReviewFindings: (
@@ -194,7 +150,6 @@ type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateScenerySet"
   | "generateAutoReviewFindings";
 
 const resolveInstance = (
@@ -234,10 +189,6 @@ export const makeTextGenerationFromRegistry = (
     generateThreadTitle: (input) =>
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
-      ),
-    generateScenerySet: (input) =>
-      resolveInstance(registry, "generateScenerySet", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateScenerySet(input)),
       ),
     generateAutoReviewFindings: (input) =>
       resolveInstance(registry, "generateAutoReviewFindings", input.modelSelection.instanceId).pipe(

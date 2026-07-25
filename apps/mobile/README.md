@@ -97,12 +97,14 @@ developer profile on the phone (Settings → General → VPN & Device Management
 on first launch. The mode refuses to run for any `APP_VARIANT` other than
 `development`.
 
-## Alpine scenery (Unsplash)
+## World scenery (Unsplash)
 
-The app's Dolomites scenery (thread thumbnails, chat wallpaper, daily hero) is
-fetched from Unsplash at runtime using a public read-only access key delivered
-at build time. Without a key everything degrades to the deterministic gradient
-washes — nothing breaks.
+The app's scenery (thread thumbnails, chat wallpaper, daily hero) is a curated
+pool of 24 world locations — one iconic place per country, from Santorini to
+Arenal — fetched from Unsplash at runtime using a public read-only access key
+delivered at build time. Each new thread gets a random location from the pool,
+and the pool refreshes every 14 days. Without a key everything degrades to the
+deterministic gradient washes — nothing breaks.
 
 - Local builds: set `EXPO_PUBLIC_UNSPLASH_ACCESS_KEY` in the repository-root
   `.env.local` (never commit it; see `../../.env.example`).

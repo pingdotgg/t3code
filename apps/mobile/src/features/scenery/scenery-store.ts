@@ -9,14 +9,13 @@ import { makeUnsplashClient, sizedImageURL } from "./unsplash";
 import { appAtomRegistry } from "../../state/atom-registry";
 
 /**
- * Owns the app's alpine identity photos, the mobile port of the mac app's
- * SceneryStore: a small pool of Dolomites photographs fetched once from
- * Unsplash (metadata cached on disk; image bytes live in expo-image's disk
- * cache, keyed by the URLs persisted verbatim in the pool), a stable
- * thread → photo assignment, and scene names used as thread titles — each
- * photo's own Unsplash location metadata when it yields a real place, the
- * curated `SCENE_NAMES` cycle otherwise. Never machine captions
- * (description/alt text).
+ * Owns the app's scenery identity photos, the mobile port of the mac app's
+ * SceneryStore: a small pool of photographs of curated world locations (one
+ * iconic place per country) fetched once from Unsplash (metadata cached on
+ * disk; image bytes live in expo-image's disk cache, keyed by the URLs
+ * persisted verbatim in the pool), a stable thread → photo assignment, and
+ * the curated "Location, Country" names used as thread titles. Never machine
+ * captions (description/alt text).
  *
  * Everything degrades gracefully without a key or network: `photoFor`
  * returns null and views fall back to `washGradientStyle(seed)`.
@@ -46,168 +45,45 @@ export const sceneryStateAtom = Atom.make<SceneryState>(INITIAL_STATE).pipe(
   Atom.withLabel("mobile:scenery:state"),
 );
 
-/** Search queries the pool is built from, most-wanted first. */
-const POOL_QUERIES: ReadonlyArray<readonly [query: string, take: number]> = [
-  ["dolomites italy mountains", 12],
-  ["alpine meadow dolomites", 8],
-  ["italian alps grass field", 6],
+/**
+ * Curated world locations the pool is built from — one iconic place per
+ * country. `name` is stored verbatim on the photo and surfaces as the thread
+ * title; `query` is the Unsplash search text used to fetch it.
+ */
+export const WORLD_LOCATIONS: ReadonlyArray<{ readonly name: string; readonly query: string }> = [
+  { name: "Santorini, Greece", query: "santorini greece caldera" },
+  { name: "Kyoto, Japan", query: "kyoto japan temple" },
+  { name: "Moraine Lake, Canada", query: "moraine lake banff canada" },
+  { name: "Tre Cime, Italy", query: "tre cime dolomites italy" },
+  { name: "Lofoten, Norway", query: "lofoten islands norway" },
+  { name: "Milford Sound, New Zealand", query: "milford sound new zealand" },
+  { name: "Zermatt, Switzerland", query: "matterhorn zermatt switzerland" },
+  { name: "Torres del Paine, Chile", query: "torres del paine patagonia chile" },
+  { name: "Skógafoss, Iceland", query: "skogafoss waterfall iceland" },
+  { name: "Cappadocia, Türkiye", query: "cappadocia turkey balloons" },
+  { name: "Petra, Jordan", query: "petra jordan treasury" },
+  { name: "Sossusvlei, Namibia", query: "sossusvlei namibia dunes" },
+  { name: "Zhangjiajie, China", query: "zhangjiajie china mountains" },
+  { name: "Ha Long Bay, Vietnam", query: "ha long bay vietnam" },
+  { name: "El Nido, Philippines", query: "el nido palawan philippines" },
+  { name: "Ubud, Indonesia", query: "tegalalang rice terrace bali indonesia" },
+  { name: "Machu Picchu, Peru", query: "machu picchu peru" },
+  { name: "Iguazu Falls, Argentina", query: "iguazu falls argentina" },
+  { name: "Merzouga, Morocco", query: "merzouga sahara morocco dunes" },
+  { name: "Plitvice Lakes, Croatia", query: "plitvice lakes croatia" },
+  { name: "Isle of Skye, United Kingdom", query: "isle of skye scotland" },
+  { name: "Lake Bled, Slovenia", query: "lake bled slovenia" },
+  { name: "Sete Cidades, Portugal", query: "sete cidades azores portugal" },
+  { name: "Arenal, Costa Rica", query: "arenal volcano costa rica" },
 ];
 const POOL_CAP = 24;
 const POOL_MAX_AGE_MS = 14 * 24 * 3600 * 1000;
 
 /**
- * Dolomites place names paired with pool photos in fetch order. Curated
- * because Unsplash alt text ("green grass field near mountain…") makes a
- * poor thread title. Mirrors the mac app's list.
- */
-export const SCENE_NAMES: ReadonlyArray<string> = [
-  "Tre Cime",
-  "Seceda",
-  "Alpe di Siusi",
-  "Lago di Braies",
-  "Marmolada",
-  "Sassolungo",
-  "Cadini di Misurina",
-  "Passo Giau",
-  "Cinque Torri",
-  "Val Gardena",
-  "Croda da Lago",
-  "Odle Ridge",
-  "Fanes Meadow",
-  "Puez Alm",
-  "Sciliar",
-  "Latemar",
-  "Catinaccio",
-  "Passo Pordoi",
-  "Sella Towers",
-  "Passo Falzarego",
-  "Val di Funes",
-  "Monte Paterno",
-  "Croda Rossa",
-  "Piz Boè",
-  "Sass de Putia",
-  "Vajolet Towers",
-  "Passo Rolle",
-  "Pale di San Martino",
-  "Brenta Ridge",
-  "Piz Duleda",
-];
-
-/**
- * Bare pool title, mirroring `ScenerySet.makeBuiltinDolomites().title` on
- * mac. New-thread naming must never surface this literally (it reads as a
- * region, not a place) — see `distinctlyNamedCandidates`.
- */
-const SET_TITLE = "Dolomites";
-/** Upper bound on pool-index numbering ("Tre Cime 2" … "Tre Cime N"). */
-const MAX_POOL_LAP = POOL_CAP;
-
-/**
- * Canonical comparison key for scene names: trimmed, whitespace-collapsed,
- * lowercased. Mirrors `SceneryStore.sceneNameComparisonKey` on mac so
- * case/whitespace variants aren't treated as distinct place names.
- */
-function sceneNameComparisonKey(name: string): string {
-  return name.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-/**
- * Pool-builder labels ("Tre Cime 2" … "Tre Cime N", the curated-name cycling
- * fallback used when a photo has no real Unsplash location). Never a
- * legitimate thread/photo display name. Mirrors
- * `SceneryStore.isPoolNumberedSceneName` on mac.
- */
-function isPoolNumberedSceneName(name: string, base: string): boolean {
-  if (base.length === 0) return false;
-  const prefix = `${base} `;
-  if (!name.startsWith(prefix)) return false;
-  const suffix = name.slice(prefix.length);
-  const index = Number(suffix);
-  return Number.isInteger(index) && String(index) === suffix && index >= 1 && index <= MAX_POOL_LAP;
-}
-
-/**
- * Legacy lap-numbered thread titles ("Seceda · 2") produced by this store's
- * old reuse-numbering `threadTitle`. Recognizing them lets `displayNames`
- * treat an old, still-numbered title as "no description generated yet", the
- * same as a bare scene name. Mirrors `SceneryStore.isLegacyNumberedSceneTitle`
- * on mac (capped at one digit there to avoid hiding AI titles ending in
- * years/large numbers; mobile never produced laps past `SCENE_NAMES.length`
- * repeats within a pool refresh window, so the same one-digit cap applies).
- */
-function isLegacyNumberedSceneTitle(title: string, base: string): boolean {
-  const separator = " · ";
-  if (!title.startsWith(base + separator)) return false;
-  const suffix = title.slice(base.length + separator.length);
-  if (suffix.length !== 1) return false;
-  const lap = Number(suffix);
-  return Number.isInteger(lap) && lap >= 2 && lap <= 9;
-}
-
-// Polluted SCENE_NAMES entries that are themselves pool-index labels of the
-// set title, so an exact match on "Dolomites 5" cannot win (SCENE_NAMES
-// never legitimately contains such entries today, but this keeps the guard
-// future-proof if the curated list changes). Longest-first so a longer base
-// name wins over a shorter one that happens to be a prefix. Hoisted to
-// module scope: inputs are only the module-level SCENE_NAMES constant, and
-// `baseSceneName` runs per-row per-render.
-const AUTHENTIC_BASES: ReadonlyArray<string> = SCENE_NAMES.filter(
-  (candidate) => !isPoolNumberedSceneName(candidate, SET_TITLE),
-)
-  .slice()
-  .sort((a, b) => b.length - a.length);
-
-/**
- * Normalizes a possibly-polluted photo/thread name back to its canonical
- * base place name: the set title (if the name is exactly that or a
- * pool-index label of it) or a curated `SCENE_NAMES` entry (if the name is
- * exactly that entry, that entry's own pool-index lap label — mobile's
- * `refreshPool` cycling fallback, e.g. "Tre Cime 2" — or a legacy
- * " · "-numbered variant of it). A genuine location-derived place name (not
- * in `SCENE_NAMES`) passes through unchanged. Mirrors
- * `SceneryStore.baseSceneName` on mac, extended to also strip mobile's own
- * curated-name-keyed lap pollution (mac's pool builder numbers against the
- * bare set title instead; mobile has no per-photo Unsplash query per curated
- * name, so it cycles the curated list and numbers laps against each name).
- */
-function baseSceneName(name: string): string {
-  if (name === SET_TITLE || isPoolNumberedSceneName(name, SET_TITLE)) {
-    return SET_TITLE;
-  }
-  for (const base of AUTHENTIC_BASES) {
-    if (
-      name === base ||
-      isPoolNumberedSceneName(name, base) ||
-      isLegacyNumberedSceneTitle(name, base)
-    ) {
-      return base;
-    }
-  }
-  return name;
-}
-
-/**
- * New threads should be named after a distinct place, not the bare pool
- * title ("Dolomites"). Filters `pool` down to photos whose resolved name
- * differs from the set title, falling back to the full pool when no
- * distinctly-named candidate exists. Never returns an empty array when
- * `pool` is non-empty. Mirrors `SceneryStore.distinctlyNamedCandidates` on
- * mac.
- */
-function distinctlyNamedCandidates(pool: ReadonlyArray<SceneryPhoto>): ReadonlyArray<SceneryPhoto> {
-  const titleKey = sceneNameComparisonKey(SET_TITLE);
-  const named = pool.filter(
-    (candidate) => sceneNameComparisonKey(baseSceneName(candidate.name)) !== titleKey,
-  );
-  return named.length === 0 ? pool : named;
-}
-
-/**
  * Pure resolution of a thread key's stable scene name from published
- * `SceneryState`, mirroring `SceneryStore.sceneName` above but without an
+ * `SceneryState`, mirroring `SceneryStore.sceneName` below but without an
  * instance — duplicated here (rather than reusing `photoFromState` in
- * use-scenery.ts) because it needs the private `baseSceneName` normalizer.
- * Used by `displayNamesFromState`.
+ * use-scenery.ts) because it is also needed by `displayNamesFromState`.
  */
 function sceneNameFromState(state: SceneryState, threadKey: string): string | null {
   if (state.pool.length === 0) return null;
@@ -215,7 +91,7 @@ function sceneNameFromState(state: SceneryState, threadKey: string): string | nu
   const assigned =
     assignedId !== undefined ? state.pool.find((photo) => photo.id === assignedId) : undefined;
   const photo = assigned ?? state.pool[stableIndex(threadKey, state.pool.length)];
-  return photo ? baseSceneName(photo.name) : null;
+  return photo ? photo.name : null;
 }
 
 /**
@@ -233,12 +109,7 @@ export function displayNamesFromState(
   const trimmedTitle = title.trim();
   const scene = sceneNameFromState(state, threadKey);
   if (scene === null) return { primary: trimmedTitle, description: null };
-  if (trimmedTitle.length === 0) return { primary: scene, description: null };
-  if (
-    trimmedTitle === scene ||
-    isLegacyNumberedSceneTitle(trimmedTitle, scene) ||
-    isPoolNumberedSceneName(trimmedTitle, scene)
-  ) {
+  if (trimmedTitle.length === 0 || trimmedTitle === scene) {
     return { primary: scene, description: null };
   }
   return { primary: scene, description: trimmedTitle };
@@ -274,6 +145,8 @@ export class SceneryStore {
   private poolFetchedAt: Date | null = null;
   private startPromise: Promise<void> | null = null;
   private diskLoadPromise: Promise<void> | null = null;
+  /** Random scene sampled by `peekNextScene`, held until `assign` commits it. */
+  private pendingPickId: string | null = null;
 
   constructor(options: SceneryStoreOptions = {}) {
     this.registry = options.registry ?? appAtomRegistry;
@@ -337,52 +210,44 @@ export class SceneryStore {
   }
 
   /**
-   * The scene the next created thread will get: the least-used photo among
-   * the distinctly-named candidates (pool order breaks ties), so scenes
-   * spread out before repeating and new threads prefer a photo with a real
-   * place name over one still carrying the bare "Dolomites" label. Pure —
-   * safe to call for previews; `assign` commits it.
+   * The scene the next created thread will get: a uniformly random pool
+   * photo. Preview/commit consistency matters — mobile queues drafts and
+   * peeks before committing — so the first pick is remembered as a pending
+   * pick and returned by every subsequent peek until `assign` commits it (or
+   * a pool refresh drops it, in which case a new pick is sampled).
    */
   peekNextScene(): SceneryPhoto | null {
     if (this.pool.length === 0) return null;
-    const candidates = distinctlyNamedCandidates(this.pool);
-    const useCount = new Map<string, number>();
-    for (const photoId of Object.values(this.assignments)) {
-      useCount.set(photoId, (useCount.get(photoId) ?? 0) + 1);
+    if (this.pendingPickId !== null) {
+      const pending = this.pool.find((photo) => photo.id === this.pendingPickId);
+      if (pending) return pending;
+      this.pendingPickId = null;
     }
-    let best: SceneryPhoto | null = null;
-    let bestCount = Number.POSITIVE_INFINITY;
-    for (const photo of candidates) {
-      const count = useCount.get(photo.id) ?? 0;
-      if (count < bestCount) {
-        best = photo;
-        bestCount = count;
-      }
-    }
-    return best;
+    const pick = this.pool[Math.floor(Math.random() * this.pool.length)] ?? null;
+    this.pendingPickId = pick?.id ?? null;
+    return pick;
   }
 
   /**
-   * Thread title for a scene: the plain place name, even when reused —
-   * duplicate primary titles across threads are expected; `displayNames`
-   * differentiates them with the server-generated description once one
-   * exists. Mirrors `SceneryStore.threadTitle(for:)` on mac.
+   * Thread title for a scene: the curated "Location, Country" name verbatim,
+   * even when reused — duplicate primary titles across threads are expected;
+   * `displayNames` differentiates them with the server-generated description
+   * once one exists. Mirrors `SceneryStore.threadTitle(for:)` on mac.
    */
   threadTitle(photo: SceneryPhoto): string {
-    return baseSceneName(photo.name);
+    return photo.name;
   }
 
   /**
-   * Stable scene name for a thread key ("Seceda"), or null when the thread
-   * has no resolvable scene (empty pool). Mirrors `SceneryStore.sceneName`
-   * on mac; unlike mac, mobile keeps no separate assignment-time name map
-   * (a photo's `name` is set once at pool build and carried over verbatim by
-   * `refreshPool`'s "kept" path), so this just normalizes the current photo's
-   * name.
+   * Stable scene name for a thread key ("Kyoto, Japan"), or null when the
+   * thread has no resolvable scene (empty pool). Mirrors
+   * `SceneryStore.sceneName` on mac; unlike mac, mobile keeps no separate
+   * assignment-time name map (a photo's `name` is set once at pool build and
+   * carried over verbatim by `refreshPool`'s "kept" path).
    */
   sceneName(threadKey: string): string | null {
     const photo = this.photoFor(threadKey);
-    return photo ? baseSceneName(photo.name) : null;
+    return photo ? photo.name : null;
   }
 
   /**
@@ -398,19 +263,21 @@ export class SceneryStore {
     const trimmedTitle = title.trim();
     const scene = this.sceneName(threadKey);
     if (scene === null) return { primary: trimmedTitle, description: null };
-    if (trimmedTitle.length === 0) return { primary: scene, description: null };
-    if (
-      trimmedTitle === scene ||
-      isLegacyNumberedSceneTitle(trimmedTitle, scene) ||
-      isPoolNumberedSceneName(trimmedTitle, scene)
-    ) {
+    if (trimmedTitle.length === 0 || trimmedTitle === scene) {
       return { primary: scene, description: null };
     }
     return { primary: scene, description: trimmedTitle };
   }
 
-  /** Commit a thread → photo binding (after the create was dispatched). */
+  /**
+   * Commit a thread → photo binding (after the create was dispatched).
+   * Committing the pending pick clears it, so the next `peekNextScene`
+   * samples a fresh random scene for the following thread.
+   */
   assign(photoId: string, threadKey: string): void {
+    if (this.pendingPickId === photoId) {
+      this.pendingPickId = null;
+    }
     this.assignments = { ...this.assignments, [threadKey]: photoId };
     void this.storage.saveAssignments(this.assignments);
     this.publish();
@@ -418,8 +285,7 @@ export class SceneryStore {
 
   /**
    * Drop a reservation whose thread never materialized (a deleted pending
-   * task), so phantom uses stop skewing least-used spread. Delivered threads
-   * keep their assignment.
+   * task). Delivered threads keep their assignment.
    */
   unassign(threadKey: string): void {
     if (!(threadKey in this.assignments)) return;
@@ -497,46 +363,37 @@ export class SceneryStore {
 
   private async refreshPool(): Promise<void> {
     if (this.client === null) return;
+    // One search per curated location; two results requested so a duplicate
+    // of an earlier location's photo can be skipped in favor of the runner-up,
+    // then one photo kept per location, named with the curated name verbatim.
     const fetched: SceneryPhoto[] = [];
-    for (const [query, take] of POOL_QUERIES) {
+    const seen = new Set<string>();
+    for (const location of WORLD_LOCATIONS) {
+      if (fetched.length >= POOL_CAP) break;
       try {
-        fetched.push(...(await this.client.searchPhotos(query, take)));
+        const results = await this.client.searchPhotos(location.query, 2);
+        const pick = results.find((photo) => !seen.has(photo.id));
+        if (pick !== undefined) {
+          seen.add(pick.id);
+          fetched.push({ ...pick, name: location.name });
+        }
       } catch {
-        // Partial pools are fine; stale/empty pools retry next launch.
+        // A location that fails to search just drops out of this refresh;
+        // partial pools are fine and retry next launch.
       }
     }
-    const seen = new Set<string>();
-    const unique = fetched.filter((photo) => {
-      if (seen.has(photo.id)) return false;
-      seen.add(photo.id);
-      return true;
-    });
-    const capped = unique.slice(0, POOL_CAP);
-    if (capped.length === 0) return;
+    if (fetched.length === 0) return;
 
-    const titleKey = sceneNameComparisonKey(SET_TITLE);
     const assignedIds = new Set(Object.values(this.assignments));
     const priorById = new Map(this.pool.map((photo) => [photo.id, photo]));
-    const refreshed = capped.map((photo, index) => {
-      const base = SCENE_NAMES[index % SCENE_NAMES.length]!;
-      const lap = Math.floor(index / SCENE_NAMES.length);
-      const fallbackName = lap === 0 ? base : `${base} ${lap + 1}`;
-      // Prefer the photo's own real Unsplash location name over the curated
-      // cycling fallback — never the generic set title itself ("Dolomites"
-      // reads as a region, not a place). Mirrors mac's preference for
-      // location-derived names over the built-in `sceneNames` list.
-      const placeName = photo.placeName;
-      const computedName =
-        placeName !== null && sceneNameComparisonKey(placeName) !== titleKey
-          ? placeName
-          : fallbackName;
+    const refreshed = fetched.map((photo) => {
       const prior = priorById.get(photo.id);
       // A photo still assigned to a thread that reappears in the refreshed
-      // results keeps its prior name — recomputing it here (index-based
-      // fallback shifts with pool position, and `placeName` can differ
-      // between fetches) would silently rename that thread's scene out from
-      // under it. Other metadata (URLs, placeName, ...) still refreshes.
-      const name = prior && assignedIds.has(photo.id) ? prior.name : computedName;
+      // results keeps its prior name — it could resurface under a different
+      // location's query, and recomputing the name would silently rename
+      // that thread's scene out from under it. Other metadata (URLs, ...)
+      // still refreshes.
+      const name = prior && assignedIds.has(photo.id) ? prior.name : photo.name;
       return { ...photo, name };
     });
     // Carry over photos still assigned to threads but missing from the new

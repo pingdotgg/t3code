@@ -113,7 +113,8 @@ enum SceneryPhotoSelection {
     }
 }
 
-/// Whether a set ships with the app or was created by the user.
+/// Whether a set ships with the app or was created by the user. Legacy
+/// manifests on disk may still say `.custom`; new sets are always `.builtin`.
 public enum ScenerySetOrigin: String, Codable, Hashable, Sendable {
     case builtin, custom
 }
@@ -219,29 +220,50 @@ public struct ScenerySet: Codable, Hashable, Sendable, Identifiable {
         self.palette = palette
     }
 
-    public static let dolomitesID = "dolomites"
+    public static let worldID = "world"
 
-    /// Builtin Dolomites set — queries and names match the pre-multi-set pool.
-    public static func makeBuiltinDolomites() -> ScenerySet {
+    /// Builtin World set — 24 curated locations; every new thread draws one
+    /// random photo from this pool. Names are stored verbatim as
+    /// `"Location, Country"`; queries are the Unsplash search text.
+    public static func makeBuiltinWorldSet() -> ScenerySet {
         ScenerySet(
-            id: dolomitesID,
-            title: "Dolomites",
+            id: worldID,
+            title: "World",
             origin: .builtin,
             // Stable epoch so synthesized manifests don't churn on every launch.
             createdAt: Date(timeIntervalSince1970: 0),
-            queries: [
-                SceneryQuery(text: "dolomites italy mountains", take: 12),
-                SceneryQuery(text: "alpine meadow dolomites", take: 8),
-                SceneryQuery(text: "italian alps grass field", take: 6),
-            ],
-            sceneNames: [
-                "Tre Cime", "Seceda", "Alpe di Siusi", "Lago di Braies", "Marmolada",
-                "Sassolungo", "Cadini di Misurina", "Passo Giau", "Cinque Torri",
-                "Val Gardena", "Croda da Lago", "Odle Ridge", "Fanes Meadow",
-                "Puez Alm", "Sciliar", "Latemar", "Catinaccio", "Passo Pordoi",
-                "Sella Towers", "Passo Falzarego", "Val di Funes", "Monte Paterno",
-                "Croda Rossa", "Piz Boè", "Sass de Putia", "Vajolet Towers",
-                "Passo Rolle", "Pale di San Martino", "Brenta Ridge", "Piz Duleda",
+            queries: [],
+            sceneNames: [],
+            locations: [
+                SceneryLocation(name: "Santorini, Greece", query: "santorini greece caldera"),
+                SceneryLocation(name: "Kyoto, Japan", query: "kyoto japan temple"),
+                SceneryLocation(name: "Moraine Lake, Canada", query: "moraine lake banff canada"),
+                SceneryLocation(name: "Tre Cime, Italy", query: "tre cime dolomites italy"),
+                SceneryLocation(name: "Lofoten, Norway", query: "lofoten islands norway"),
+                SceneryLocation(
+                    name: "Milford Sound, New Zealand", query: "milford sound new zealand"),
+                SceneryLocation(name: "Zermatt, Switzerland", query: "matterhorn zermatt switzerland"),
+                SceneryLocation(
+                    name: "Torres del Paine, Chile", query: "torres del paine patagonia chile"),
+                SceneryLocation(name: "Skógafoss, Iceland", query: "skogafoss waterfall iceland"),
+                SceneryLocation(name: "Cappadocia, Türkiye", query: "cappadocia turkey balloons"),
+                SceneryLocation(name: "Petra, Jordan", query: "petra jordan treasury"),
+                SceneryLocation(name: "Sossusvlei, Namibia", query: "sossusvlei namibia dunes"),
+                SceneryLocation(name: "Zhangjiajie, China", query: "zhangjiajie china mountains"),
+                SceneryLocation(name: "Ha Long Bay, Vietnam", query: "ha long bay vietnam"),
+                SceneryLocation(
+                    name: "El Nido, Philippines", query: "el nido palawan philippines"),
+                SceneryLocation(
+                    name: "Ubud, Indonesia", query: "tegalalang rice terrace bali indonesia"),
+                SceneryLocation(name: "Machu Picchu, Peru", query: "machu picchu peru"),
+                SceneryLocation(name: "Iguazu Falls, Argentina", query: "iguazu falls argentina"),
+                SceneryLocation(name: "Merzouga, Morocco", query: "merzouga sahara morocco dunes"),
+                SceneryLocation(name: "Plitvice Lakes, Croatia", query: "plitvice lakes croatia"),
+                SceneryLocation(name: "Isle of Skye, United Kingdom", query: "isle of skye scotland"),
+                SceneryLocation(name: "Lake Bled, Slovenia", query: "lake bled slovenia"),
+                SceneryLocation(
+                    name: "Sete Cidades, Portugal", query: "sete cidades azores portugal"),
+                SceneryLocation(name: "Arenal, Costa Rica", query: "arenal volcano costa rica"),
             ],
             palette: nil)
     }
@@ -249,7 +271,6 @@ public struct ScenerySet: Codable, Hashable, Sendable, Identifiable {
 
 /// Global scenery settings (`scenery/settings.json`).
 public struct ScenerySettingsFile: Codable, Hashable, Sendable {
-    public var defaultSetId: String
     /// How much of the window the app paints over the blurred desktop: `1.0`
     /// = fully solid (historical look), `0.5` = half the desktop reads
     /// through the scene. `GlassLayering` splits it across the photo, the
@@ -260,18 +281,13 @@ public struct ScenerySettingsFile: Codable, Hashable, Sendable {
     public static let translucencyRange: ClosedRange<Double> = 0.5...1.0
 
     public init(
-        defaultSetId: String = ScenerySet.dolomitesID,
         sceneryTranslucency: Double = Self.defaultTranslucency
     ) {
-        self.defaultSetId = defaultSetId
         self.sceneryTranslucency = Self.clampTranslucency(sceneryTranslucency)
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        defaultSetId =
-            try container.decodeIfPresent(String.self, forKey: .defaultSetId)
-            ?? ScenerySet.dolomitesID
         let raw =
             try container.decodeIfPresent(Double.self, forKey: .sceneryTranslucency)
             ?? Self.defaultTranslucency
@@ -280,12 +296,11 @@ public struct ScenerySettingsFile: Codable, Hashable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(defaultSetId, forKey: .defaultSetId)
         try container.encode(sceneryTranslucency, forKey: .sceneryTranslucency)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case defaultSetId
+        // Legacy `defaultSetId` keys on disk are simply ignored.
         case sceneryTranslucency
     }
 
@@ -297,13 +312,12 @@ public struct ScenerySettingsFile: Codable, Hashable, Sendable {
 
 /// Per-project scenery preferences (`scenery/project-prefs.json` values).
 /// `accentHex` / `sfSymbol` drive the optional project badges in app chrome.
+/// Legacy files may carry a `setId` key; it is ignored on decode.
 public struct ProjectSceneryPrefs: Codable, Hashable, Sendable {
-    public var setId: String?
     public var accentHex: String?
     public var sfSymbol: String?
 
-    public init(setId: String? = nil, accentHex: String? = nil, sfSymbol: String? = nil) {
-        self.setId = setId
+    public init(accentHex: String? = nil, sfSymbol: String? = nil) {
         self.accentHex = accentHex
         self.sfSymbol = sfSymbol
     }
@@ -311,7 +325,7 @@ public struct ProjectSceneryPrefs: Codable, Hashable, Sendable {
 
 /// Thread → photo assignment record. Legacy assignments were bare photo-id
 /// strings; the multi-set format is an object with optional `setId`
-/// (absent = dolomites).
+/// (absent = world).
 public struct SceneryAssignment: Codable, Hashable, Sendable {
     public var photoID: String
     public var setId: String?
@@ -355,46 +369,22 @@ public struct SceneryAssignment: Codable, Hashable, Sendable {
         case setId
     }
 
-    /// Effective set for this assignment (legacy records without setId → dolomites).
+    /// Effective set for this assignment (records without setId → world).
     public var resolvedSetId: String {
-        setId ?? ScenerySet.dolomitesID
-    }
-}
-
-// MARK: - Set resolution (pure)
-
-/// Resolves which scenery set applies for a project path.
-/// Precedence: project-prefs setId → defaultSetId → dolomites.
-public enum ScenerySetResolution {
-    public static func resolveSetId(
-        projectPath: String?,
-        projectPrefs: [String: ProjectSceneryPrefs],
-        defaultSetId: String,
-        knownSetIds: Set<String>
-    ) -> String {
-        if let projectPath,
-            let preferred = projectPrefs[projectPath]?.setId,
-            !preferred.isEmpty,
-            knownSetIds.contains(preferred)
-        {
-            return preferred
-        }
-        if !defaultSetId.isEmpty, knownSetIds.contains(defaultSetId) {
-            return defaultSetId
-        }
-        if knownSetIds.contains(ScenerySet.dolomitesID) {
-            return ScenerySet.dolomitesID
-        }
-        // Last resort even if the registry is empty mid-boot.
-        return ScenerySet.dolomitesID
+        setId ?? ScenerySet.worldID
     }
 }
 
 // MARK: - On-disk migration
 
 /// Moves legacy flat `scenery/` layout into `scenery/sets/dolomites/`.
-/// Idempotent: safe to call on every launch.
+/// Idempotent: safe to call on every launch. Only relevant to ancient
+/// installs; the dolomites set directory it produces is still loaded so
+/// legacy thread assignments keep rendering.
 public enum SceneryLayoutMigration {
+    /// Legacy builtin set id the flat layout is migrated into.
+    public static let legacyBuiltinSetID = "dolomites"
+
     public static let legacyFileNames = [
         "pool.json", "names.json", "registered-downloads.json",
     ]
@@ -407,7 +397,7 @@ public enum SceneryLayoutMigration {
     {
         var didChange = false
         let setsDir = root.appendingPathComponent("sets", isDirectory: true)
-        let dolomitesDir = setsDir.appendingPathComponent(ScenerySet.dolomitesID, isDirectory: true)
+        let dolomitesDir = setsDir.appendingPathComponent(legacyBuiltinSetID, isDirectory: true)
 
         try fm.createDirectory(at: dolomitesDir, withIntermediateDirectories: true)
 
@@ -448,7 +438,15 @@ public enum SceneryLayoutMigration {
 
         let manifestURL = dolomitesDir.appendingPathComponent("manifest.json")
         if !fm.fileExists(atPath: manifestURL.path) {
-            let manifest = ScenerySet.makeBuiltinDolomites()
+            // Minimal legacy manifest: the migrated pool.json keeps rendering,
+            // and with no queries/locations a refresh is a harmless no-op.
+            let manifest = ScenerySet(
+                id: legacyBuiltinSetID,
+                title: "Dolomites",
+                origin: .builtin,
+                createdAt: Date(timeIntervalSince1970: 0),
+                queries: [],
+                sceneNames: [])
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             encoder.dateEncodingStrategy = .iso8601

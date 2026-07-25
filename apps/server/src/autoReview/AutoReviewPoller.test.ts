@@ -66,7 +66,6 @@ function makeText() {
     generatePrContent: () => Effect.die("unused"),
     generateBranchName: () => Effect.die("unused"),
     generateThreadTitle: () => Effect.die("unused"),
-    generateScenerySet: () => Effect.die("unused"),
     generateAutoReviewFindings: () =>
       Effect.succeed({
         summary: "ok",

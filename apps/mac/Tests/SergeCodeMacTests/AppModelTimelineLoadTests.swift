@@ -251,7 +251,4 @@ private final class BlockingTimelineBackend: BackendService, @unchecked Sendable
     func listAutoReviewJobs(projectID: String?, limit: Int?) async throws -> [AppAutoReviewJob] { [] }
     func refreshProviders() async throws {}
     func updateProvider(instanceID: String) async throws {}
-    func generateScenerySet(location: String) async throws -> GeneratedScenerySet {
-        fatalError("unused")
-    }
 }

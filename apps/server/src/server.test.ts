@@ -576,11 +576,6 @@ const buildAppUnderTest = (options?: {
               Effect.die("TextGeneration.generateBranchName not stubbed in this test"),
             generateThreadTitle: () =>
               Effect.die("TextGeneration.generateThreadTitle not stubbed in this test"),
-            generateScenerySet: () =>
-              Effect.succeed({
-                sceneNames: ["Test Peak"],
-                queries: [{ text: "test landscape" }],
-              }),
             generateAutoReviewFindings: () =>
               Effect.succeed({
                 summary: "Looks fine.",

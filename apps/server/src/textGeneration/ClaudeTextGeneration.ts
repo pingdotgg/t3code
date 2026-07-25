@@ -28,14 +28,12 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
-  buildScenerySetPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
   sanitizeCommitSubject,
   sanitizePrTitle,
-  sanitizeScenerySetResult,
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
@@ -102,7 +100,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     | "generatePrContent"
     | "generateBranchName"
     | "generateThreadTitle"
-    | "generateScenerySet"
     | "generateAutoReviewFindings";
 
   const encodeJsonForOperation = (
@@ -377,35 +374,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       };
     });
 
-  const generateScenerySet: TextGeneration.TextGeneration["Service"]["generateScenerySet"] =
-    Effect.fn("ClaudeTextGeneration.generateScenerySet")(function* (input) {
-      const location = input.location.trim();
-      if (location.length === 0) {
-        return yield* new TextGenerationError({
-          operation: "generateScenerySet",
-          detail: "Location must not be empty.",
-        });
-      }
-
-      const { prompt, outputSchema } = buildScenerySetPrompt({ location });
-      const generated = yield* runClaudeJson({
-        operation: "generateScenerySet",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        modelSelection: input.modelSelection,
-      });
-
-      const sanitized = sanitizeScenerySetResult(generated);
-      if (sanitized.sceneNames.length === 0 || sanitized.queries.length === 0) {
-        return yield* new TextGenerationError({
-          operation: "generateScenerySet",
-          detail: "Claude returned an empty scenery set.",
-        });
-      }
-      return sanitized;
-    });
-
   const generateAutoReviewFindings: TextGeneration.TextGeneration["Service"]["generateAutoReviewFindings"] =
     Effect.fn("ClaudeTextGeneration.generateAutoReviewFindings")(function* (input) {
       const { prompt, outputSchema } = buildAutoReviewFindingsPrompt({
@@ -448,7 +416,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-    generateScenerySet,
     generateAutoReviewFindings,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

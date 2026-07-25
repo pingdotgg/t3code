@@ -239,11 +239,6 @@ export const ClaudexDriver: ProviderDriver<ClaudexSettingsType, ClaudexDriverEnv
             ...input,
             modelSelection: normalizeRequiredClaudexModelSelection(input.modelSelection),
           }),
-        generateScenerySet: (input) =>
-          rawTextGeneration.generateScenerySet({
-            ...input,
-            modelSelection: normalizeRequiredClaudexModelSelection(input.modelSelection),
-          }),
         generateAutoReviewFindings: (input) =>
           rawTextGeneration.generateAutoReviewFindings({
             ...input,

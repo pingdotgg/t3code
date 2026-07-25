@@ -117,16 +117,6 @@ struct SergeCodeApp: App {
                 // Punch the NSWindow so container glass can sample the desktop.
                 .background(TransparentWindowConfigurator())
                 .onAppear {
-                    // Thread → project path so scenery set resolution can read
-                    // per-project prefs (Phase 1 multi-set).
-                    scenery.projectPathForThread = { [multi] threadKey in
-                        for model in multi.allModels {
-                            if let path = model.projectPath(forScopedThreadKey: threadKey) {
-                                return path
-                            }
-                        }
-                        return nil
-                    }
                     multi.start()
                     appDelegate.multi = multi
                     if !Self.shouldUseMock {
@@ -207,7 +197,6 @@ struct SergeCodeApp: App {
             SettingsScene(
                 model: multi.local,
                 scenery: scenery,
-                backend: SergeCodeApp.backend,
                 multi: multi)
                 .environment(\.colorScheme, .dark)
                 .preferredColorScheme(.dark)

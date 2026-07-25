@@ -94,7 +94,7 @@ struct SceneryPaletteManifestTests {
     @Test("absent palette uses the pixel-identical Dolomites pair")
     func absentPaletteFallsBack() {
         let seed = "stable-thread"
-        let manifest = ScenerySet.makeBuiltinDolomites()
+        let manifest = ScenerySet.makeBuiltinWorldSet()
         let resolved = AlpineTheme.gradientPair(seed: seed, palette: manifest.palette)
         let expected = AlpineTheme.dolomitesGradientPairs[
             AlpineTheme.stableIndex(seed, AlpineTheme.dolomitesGradientPairs.count)
@@ -160,7 +160,7 @@ struct SceneryPaletteManifestTests {
 @Suite("Scenery palette backfill")
 @MainActor
 struct SceneryPaletteBackfillTests {
-    @Test("startup extracts a missing custom palette from downloaded images")
+    @Test("startup extracts a missing palette from downloaded images")
     func startupBackfill() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("scenery-palette-\(UUID().uuidString)", isDirectory: true)
@@ -186,7 +186,7 @@ struct SceneryPaletteBackfillTests {
             sceneNames: ["Headland"])
         let writer = SceneryStore(client: nil, root: root)
         writer.reloadFromDiskForTesting()
-        writer.registerSet(manifest, pool: [photo])
+        writer.installSetForTesting(manifest, pool: [photo])
 
         let imageURL = root.appendingPathComponent("sets/coast-test/images/coast-1-thumb.jpg")
         let image = try solidImage()
@@ -203,7 +203,9 @@ struct SceneryPaletteBackfillTests {
             contentsOf: root.appendingPathComponent("sets/coast-test/manifest.json"))
         let persisted = try decoder.decode(ScenerySet.self, from: data)
         #expect(persisted.palette == palette)
-        #expect(reader.set(id: ScenerySet.dolomitesID)?.palette == nil)
+        // The world set has no images on disk in this fixture, so its palette
+        // stays nil even though extraction is no longer custom-gated.
+        #expect(reader.set(id: ScenerySet.worldID)?.palette == nil)
     }
 
     private func solidImage() throws -> NSImage {

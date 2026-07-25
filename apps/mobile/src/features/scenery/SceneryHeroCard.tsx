@@ -7,7 +7,7 @@ import { SceneryImage } from "./SceneryImage";
 import type { SceneryPhoto } from "./unsplash";
 
 /**
- * Daily-featured Dolomites hero for empty states: full-width photo card with
+ * Daily-featured world scenery hero for empty states: full-width photo card with
  * the scene name and the required Unsplash attribution over a bottom scrim.
  * Renders the gradient wash alone while the pool is empty (no key/offline).
  */

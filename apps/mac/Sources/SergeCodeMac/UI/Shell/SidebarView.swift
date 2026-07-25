@@ -848,9 +848,6 @@ private struct ProjectSectionHeader: View {
     @ViewBuilder
     private var projectMenuContent: some View {
         memberActionButtons(title: "Rename…", action: onRename)
-        Menu("Scenery Set") {
-            sceneryMenuContent
-        }
         Divider()
         memberActionButtons(title: "Delete Project…", destructive: true, action: onDelete)
     }
@@ -913,7 +910,7 @@ private struct ProjectSectionHeader: View {
                     ComposerPickerChoiceRow(
                         icon: "slider.horizontal.3",
                         title: "Choose Target…",
-                        detail: "Pick device, project, provider, and scenery",
+                        detail: "Pick device, project, and provider",
                         isSelected: false
                     ) {
                         isNewTaskPresented = false
@@ -956,39 +953,8 @@ private struct ProjectSectionHeader: View {
         }
     }
 
-    @ViewBuilder
-    private var sceneryMenuContent: some View {
-        Button("Default") { setScenerySet(nil) }
-        Divider()
-        if scenery.availableSets.isEmpty {
-            Text("No scenery sets available")
-        }
-        ForEach(scenery.availableSets) { set in
-            Button {
-                setScenerySet(set.id)
-            } label: {
-                if set.id == resolvedSetID {
-                    Label(set.title, systemImage: "checkmark")
-                } else {
-                    Text(set.title)
-                }
-            }
-        }
-    }
-
     private var projectPrefs: ProjectSceneryPrefs? {
         scenery.projectPrefs(for: group.preferredMember.project.path)
-    }
-
-    private var resolvedSetID: String {
-        scenery.resolvedSetId(projectPath: group.preferredMember.project.path)
-    }
-
-    private func setScenerySet(_ setID: String?) {
-        let project = group.preferredMember.project
-        var next = projectPrefs ?? ProjectSceneryPrefs()
-        next.setId = setID
-        scenery.setProjectPrefs(next, forProjectPath: project.path)
     }
 }
 

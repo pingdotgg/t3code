@@ -24,7 +24,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
 
-/** A reserved Dolomites scene carried by a queued task being resent. */
+/** A reserved world scenery location carried by a queued task being resent. */
 export interface ThreadSceneSelection {
   readonly title: string;
   readonly photoId: string | null;

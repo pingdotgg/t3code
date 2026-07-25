@@ -11,7 +11,7 @@ struct SceneryAssignmentDecodingTests {
         let assignment = try JSONDecoder().decode(SceneryAssignment.self, from: json)
         #expect(assignment.photoID == "photo-abc")
         #expect(assignment.setId == nil)
-        #expect(assignment.resolvedSetId == ScenerySet.dolomitesID)
+        #expect(assignment.resolvedSetId == ScenerySet.worldID)
     }
 
     @Test("object form with setId decodes")
@@ -23,13 +23,13 @@ struct SceneryAssignmentDecodingTests {
         #expect(assignment.resolvedSetId == "kyoto-3f2a")
     }
 
-    @Test("object form without setId defaults resolvedSetId to dolomites")
+    @Test("object form without setId defaults resolvedSetId to world")
     func objectWithoutSetId() throws {
         let json = Data(#"{"photoID":"p2"}"#.utf8)
         let assignment = try JSONDecoder().decode(SceneryAssignment.self, from: json)
         #expect(assignment.photoID == "p2")
         #expect(assignment.setId == nil)
-        #expect(assignment.resolvedSetId == ScenerySet.dolomitesID)
+        #expect(assignment.resolvedSetId == ScenerySet.worldID)
     }
 
     @Test("assignments map mixes legacy strings and objects")
@@ -49,67 +49,26 @@ struct SceneryAssignmentDecodingTests {
     }
 }
 
-@Suite("Scenery set resolution")
-struct ScenerySetResolutionTests {
-    @Test("project prefs win over default and dolomites fallback")
-    func projectPrefsPrecedence() {
-        let prefs: [String: ProjectSceneryPrefs] = [
-            "/Users/me/proj-a": ProjectSceneryPrefs(setId: "kyoto")
-        ]
-        let known: Set<String> = [ScenerySet.dolomitesID, "kyoto", "patagonia"]
-        let resolved = ScenerySetResolution.resolveSetId(
-            projectPath: "/Users/me/proj-a",
-            projectPrefs: prefs,
-            defaultSetId: "patagonia",
-            knownSetIds: known)
-        #expect(resolved == "kyoto")
-    }
+@Suite("Scenery builtin world set")
+struct SceneryWorldSetTests {
+    @Test("world set curates 24 locations with verbatim names and no queries")
+    func worldSetShape() {
+        let set = ScenerySet.makeBuiltinWorldSet()
+        #expect(set.id == "world")
+        #expect(set.title == "World")
+        #expect(set.origin == .builtin)
+        #expect(set.queries.isEmpty)
+        #expect(set.sceneNames.isEmpty)
 
-    @Test("defaultSetId used when project has no prefs")
-    func defaultWhenNoProjectPrefs() {
-        let known: Set<String> = [ScenerySet.dolomitesID, "patagonia"]
-        let resolved = ScenerySetResolution.resolveSetId(
-            projectPath: "/Users/me/other",
-            projectPrefs: [:],
-            defaultSetId: "patagonia",
-            knownSetIds: known)
-        #expect(resolved == "patagonia")
-    }
-
-    @Test("unknown project prefs setId falls through to default")
-    func unknownProjectSetFallsThrough() {
-        let prefs: [String: ProjectSceneryPrefs] = [
-            "/p": ProjectSceneryPrefs(setId: "missing-set")
-        ]
-        let known: Set<String> = [ScenerySet.dolomitesID, "patagonia"]
-        let resolved = ScenerySetResolution.resolveSetId(
-            projectPath: "/p",
-            projectPrefs: prefs,
-            defaultSetId: "patagonia",
-            knownSetIds: known)
-        #expect(resolved == "patagonia")
-    }
-
-    @Test("unknown default falls through to dolomites")
-    func unknownDefaultFallsToDolomites() {
-        let known: Set<String> = [ScenerySet.dolomitesID]
-        let resolved = ScenerySetResolution.resolveSetId(
-            projectPath: nil,
-            projectPrefs: [:],
-            defaultSetId: "gone",
-            knownSetIds: known)
-        #expect(resolved == ScenerySet.dolomitesID)
-    }
-
-    @Test("nil project path uses default then dolomites")
-    func nilProjectPath() {
-        let known: Set<String> = [ScenerySet.dolomitesID, "patagonia"]
-        #expect(
-            ScenerySetResolution.resolveSetId(
-                projectPath: nil,
-                projectPrefs: [" /x": ProjectSceneryPrefs(setId: "patagonia")],
-                defaultSetId: "patagonia",
-                knownSetIds: known) == "patagonia")
+        let locations = try? #require(set.locations)
+        #expect(locations?.count == 24)
+        #expect(locations?.first?.name == "Santorini, Greece")
+        #expect(locations?.first?.query == "santorini greece caldera")
+        #expect(locations?.last?.name == "Arenal, Costa Rica")
+        #expect(locations?.last?.query == "arenal volcano costa rica")
+        // Every curated entry carries both a display name and a search query.
+        #expect(locations?.allSatisfy { !$0.name.isEmpty && !$0.query.isEmpty } == true)
+        #expect(Set(locations?.map(\.name) ?? []).count == 24)
     }
 }
 
@@ -173,10 +132,8 @@ struct SceneryLayoutMigrationTests {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let manifest = try decoder.decode(ScenerySet.self, from: manifestData)
-        #expect(manifest.id == ScenerySet.dolomitesID)
+        #expect(manifest.id == SceneryLayoutMigration.legacyBuiltinSetID)
         #expect(manifest.origin == .builtin)
-        #expect(manifest.queries.count == 3)
-        #expect(manifest.sceneNames.contains("Seceda"))
 
         // Second run: no legacy left, manifest already present → still safe
         let second = try SceneryLayoutMigration.migrateIfNeeded(root: root)
@@ -203,9 +160,9 @@ struct SceneryLayoutMigrationTests {
     }
 }
 
-@Suite("SceneryStore multi-set")
+@Suite("SceneryStore world pool")
 @MainActor
-struct SceneryStoreMultiSetTests {
+struct SceneryStoreWorldPoolTests {
     private func tempRoot() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("scenery-store-\(UUID().uuidString)", isDirectory: true)
@@ -226,98 +183,109 @@ struct SceneryStoreMultiSetTests {
             photographerProfileURL: nil)
     }
 
-    @Test("store resolves set from project prefs via projectPathForThread")
-    func storeResolvesViaProjectPath() throws {
+    private func worldPool() -> [SceneryPhoto] {
+        [
+            samplePhoto(id: "w1", name: "Kyoto, Japan"),
+            samplePhoto(id: "w2", name: "Petra, Jordan"),
+            samplePhoto(id: "w3", name: "Lake Bled, Slovenia"),
+        ]
+    }
+
+    @Test("peekNextScene returns the pending pick until assign commits, then re-samples")
+    func pendingScenePreviewCommitConsistency() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        // No Unsplash client — stay offline.
         let store = SceneryStore(client: nil, root: root)
         store.reloadFromDiskForTesting()
+        store.installSetForTesting(ScenerySet.makeBuiltinWorldSet(), pool: worldPool())
 
-        let kyoto = ScenerySet(
-            id: "kyoto",
+        let first = try #require(store.peekNextScene())
+        // Repeated peeks return the same pending photo — the New Session
+        // preview and the eventual commit always agree.
+        #expect(store.peekNextScene()?.id == first.id)
+        #expect(store.peekNextScene()?.id == first.id)
+        #expect(store.pendingSceneIDForTesting == first.id)
+        #expect(worldPool().map(\.id).contains(first.id))
+
+        // Committing clears the pending pick; the next peek re-samples.
+        store.assign(photoID: first.id, name: first.name, to: "thread-1")
+        #expect(store.pendingSceneIDForTesting == nil)
+        let next = try #require(store.peekNextScene())
+        #expect(store.pendingSceneIDForTesting == next.id)
+        #expect(worldPool().map(\.id).contains(next.id))
+    }
+
+    @Test("photo(for:) falls back to a world-pool pick when the assigned photo is missing")
+    func photoFallsBackToWorldPool() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        let pool = worldPool()
+        store.installSetForTesting(ScenerySet.makeBuiltinWorldSet(), pool: pool)
+
+        // Assignment points at a photo that exists in no pool (deleted/missing
+        // legacy set): stable-hash pick from the world pool, never nil.
+        store.assign(photoID: "ghost-photo", name: "Ghost", to: "thread-ghost")
+        let resolved = try #require(store.photo(for: "thread-ghost"))
+        let expected = pool[AlpineTheme.stableIndex("thread-ghost", pool.count)]
+        #expect(resolved.id == expected.id)
+
+        // Unassigned threads get the same stable-hash world fallback.
+        let unassigned = try #require(store.photo(for: "thread-new"))
+        #expect(unassigned.id == pool[AlpineTheme.stableIndex("thread-new", pool.count)].id)
+    }
+
+    @Test("new assignments resolve to the world set")
+    func newAssignmentsResolveToWorld() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        let photo = worldPool()[0]
+        store.installSetForTesting(ScenerySet.makeBuiltinWorldSet(), pool: worldPool())
+
+        #expect(store.resolvedSetId(forThread: "thread-unassigned") == ScenerySet.worldID)
+
+        store.assign(photoID: photo.id, name: photo.name, to: "thread-1")
+        #expect(store.resolvedSetId(forThread: "thread-1") == ScenerySet.worldID)
+        #expect(store.photo(for: "thread-1")?.id == photo.id)
+        #expect(store.sceneName(for: "thread-1") == photo.name)
+        #expect(store.threadTitle(for: photo) == photo.name)
+
+        // Assignment survives a disk round-trip.
+        let reader = SceneryStore(client: nil, root: root)
+        reader.reloadFromDiskForTesting()
+        #expect(reader.resolvedSetId(forThread: "thread-1") == ScenerySet.worldID)
+        #expect(reader.photo(for: "thread-1")?.id == photo.id)
+        #expect(reader.sceneName(for: "thread-1") == photo.name)
+    }
+
+    @Test("legacy set pools still render their assigned photos")
+    func legacyAssignmentsKeepRendering() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        store.installSetForTesting(ScenerySet.makeBuiltinWorldSet(), pool: worldPool())
+        let legacySet = ScenerySet(
+            id: "kyoto-3f2a",
             title: "Kyoto",
             origin: .custom,
             createdAt: Date(timeIntervalSince1970: 1),
             queries: [SceneryQuery(text: "kyoto temples", take: 4)],
-            sceneNames: ["Fushimi Inari", "Arashiyama"])
-        let kyotoPhoto = samplePhoto(id: "k1", name: "Fushimi Inari")
-        let doloPhoto = samplePhoto(id: "d1", name: "Seceda")
+            sceneNames: ["Fushimi Inari"])
+        let legacyPhoto = samplePhoto(id: "legacy-1", name: "Fushimi Inari")
+        store.installSetForTesting(legacySet, pool: [legacyPhoto])
 
-        store.registerSetForTesting(ScenerySet.makeBuiltinDolomites(), pool: [doloPhoto])
-        store.registerSetForTesting(kyoto, pool: [kyotoPhoto])
-        store.setProjectPrefs(ProjectSceneryPrefs(setId: "kyoto"), forProjectPath: "/proj/kyoto")
-        store.setDefaultSetId(ScenerySet.dolomitesID)
-
-        store.projectPathForThread = { id in
-            id == "thread-kyoto" ? "/proj/kyoto" : "/proj/other"
-        }
-
-        #expect(store.resolvedSetId(projectPath: "/proj/kyoto") == "kyoto")
-        #expect(store.resolvedSetId(forThread: "thread-kyoto") == "kyoto")
-        #expect(store.resolvedSetId(forThread: "thread-other") == ScenerySet.dolomitesID)
-        #expect(store.effectiveSetId(projectPath: "/proj/kyoto") == "kyoto")
-
-        let nextKyoto = store.peekNextScene(projectPath: "/proj/kyoto")
-        #expect(nextKyoto?.id == "k1")
-        let nextDefault = store.peekNextScene()
-        #expect(nextDefault?.id == "d1")
-
-        let overridden = try #require(
-            store.peekNextScene(
-                projectPath: "/proj/kyoto",
-                setIdOverride: ScenerySet.dolomitesID))
-        #expect(overridden.id == "d1")
-        #expect(
-            store.effectiveSetId(
-                projectPath: "/proj/kyoto",
-                setIdOverride: ScenerySet.dolomitesID) == ScenerySet.dolomitesID)
-        #expect(store.projectPrefs(for: "/proj/kyoto")?.setId == "kyoto")
-        #expect(
-            store.peekNextScene(projectPath: "/proj/kyoto", setIdOverride: "missing")?.id
-                == "k1")
-
-        store.assign(
-            photoID: overridden.id,
-            name: overridden.name,
-            to: "thread-overridden",
-            projectPath: "/proj/kyoto",
-            setIdOverride: ScenerySet.dolomitesID)
-        #expect(store.resolvedSetId(forThread: "thread-overridden") == ScenerySet.dolomitesID)
-        #expect(store.projectPrefs(for: "/proj/kyoto")?.setId == "kyoto")
-    }
-
-    @Test("assignment override disambiguates photo ids shared across sets")
-    func assignmentOverrideDisambiguatesSharedPhoto() throws {
-        let root = try tempRoot()
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let store = SceneryStore(client: nil, root: root)
-        store.reloadFromDiskForTesting()
-        let sharedDolomitesPhoto = samplePhoto(id: "shared", name: "Seceda")
-        let sharedKyotoPhoto = samplePhoto(id: "shared", name: "Arashiyama")
-        let kyoto = ScenerySet(
-            id: "kyoto",
-            title: "Kyoto",
-            origin: .custom,
-            createdAt: Date(timeIntervalSince1970: 1),
-            queries: [SceneryQuery(text: "kyoto")],
-            sceneNames: ["Arashiyama"])
-        store.registerSetForTesting(
-            ScenerySet.makeBuiltinDolomites(), pool: [sharedDolomitesPhoto])
-        store.registerSetForTesting(kyoto, pool: [sharedKyotoPhoto])
-
-        store.assign(
-            photoID: sharedKyotoPhoto.id,
-            name: sharedKyotoPhoto.name,
-            to: "thread-shared",
-            projectPath: nil,
-            setIdOverride: kyoto.id)
-
-        #expect(store.resolvedSetId(forThread: "thread-shared") == kyoto.id)
-        #expect(store.photo(for: "thread-shared")?.name == "Arashiyama")
-        #expect(store.threadTitle(for: sharedKyotoPhoto, setId: kyoto.id) == "Arashiyama")
+        store.assign(photoID: legacyPhoto.id, name: legacyPhoto.name, to: "thread-legacy")
+        #expect(store.resolvedSetId(forThread: "thread-legacy") == "kyoto-3f2a")
+        #expect(store.photo(for: "thread-legacy")?.id == legacyPhoto.id)
+        #expect(store.sceneName(for: "thread-legacy") == "Fushimi Inari")
     }
 
     @Test("migration then store load keeps legacy assignment photo ids")
@@ -342,7 +310,8 @@ struct SceneryStoreMultiSetTests {
         let store = SceneryStore(client: nil, root: root)
         store.reloadFromDiskForTesting()
 
-        #expect(store.set(id: ScenerySet.dolomitesID) != nil)
+        #expect(store.set(id: SceneryLayoutMigration.legacyBuiltinSetID) != nil)
+        #expect(store.set(id: ScenerySet.worldID) != nil)
         #expect(store.photo(for: "thread-legacy")?.id == "legacy-photo")
         #expect(store.sceneName(for: "thread-legacy") == "Tre Cime")
 
@@ -371,9 +340,9 @@ struct SceneryStoreDownloadRegistrationTests {
 
         let store = SceneryStore(client: nil, root: root)
         store.reloadFromDiskForTesting()
-        store.registerSetForTesting(ScenerySet.makeBuiltinDolomites(), pool: [])
+        store.installSetForTesting(ScenerySet.makeBuiltinWorldSet(), pool: [])
 
-        let setId = ScenerySet.dolomitesID
+        let setId = ScenerySet.worldID
         let photoId = "photo-fail"
         let ping = URL(string: "https://api.unsplash.com/photos/photo-fail/download")!
 
@@ -398,9 +367,9 @@ struct SceneryStoreDownloadRegistrationTests {
 
         let store = SceneryStore(client: nil, root: root)
         store.reloadFromDiskForTesting()
-        store.registerSetForTesting(ScenerySet.makeBuiltinDolomites(), pool: [])
+        store.installSetForTesting(ScenerySet.makeBuiltinWorldSet(), pool: [])
 
-        let setId = ScenerySet.dolomitesID
+        let setId = ScenerySet.worldID
         let photoId = "photo-ok"
         let ping = URL(string: "https://api.unsplash.com/photos/photo-ok/download")!
         var pingCalls = 0
@@ -431,9 +400,9 @@ struct SceneryStoreDownloadRegistrationTests {
 
         let store = SceneryStore(client: nil, root: root)
         store.reloadFromDiskForTesting()
-        store.registerSetForTesting(ScenerySet.makeBuiltinDolomites(), pool: [])
+        store.installSetForTesting(ScenerySet.makeBuiltinWorldSet(), pool: [])
 
-        let setId = ScenerySet.dolomitesID
+        let setId = ScenerySet.worldID
         let photoId = "photo-once"
         let ping = URL(string: "https://api.unsplash.com/photos/photo-once/download")!
         var pingCalls = 0
@@ -457,16 +426,16 @@ struct SceneryStoreDownloadRegistrationTests {
 
         let store = SceneryStore(client: nil, root: root)
         store.reloadFromDiskForTesting()
-        store.registerSetForTesting(ScenerySet.makeBuiltinDolomites(), pool: [])
+        store.installSetForTesting(ScenerySet.makeBuiltinWorldSet(), pool: [])
 
         var pingCalls = 0
         await store.registerDownloadIfNeeded(
-            setId: ScenerySet.dolomitesID,
+            setId: ScenerySet.worldID,
             photoId: "x",
             downloadLocationURL: nil
         ) { _ in pingCalls += 1 }
 
         #expect(pingCalls == 0)
-        #expect(store.registeredDownloadIDsForTesting(setId: ScenerySet.dolomitesID).isEmpty)
+        #expect(store.registeredDownloadIDsForTesting(setId: ScenerySet.worldID).isEmpty)
     }
 }

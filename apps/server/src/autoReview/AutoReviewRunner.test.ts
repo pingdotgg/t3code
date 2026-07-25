@@ -54,7 +54,6 @@ const makeText = (overrides: Partial<TextGeneration.TextGeneration["Service"]> =
     generatePrContent: () => Effect.die("unused"),
     generateBranchName: () => Effect.die("unused"),
     generateThreadTitle: () => Effect.die("unused"),
-    generateScenerySet: () => Effect.die("unused"),
     generateAutoReviewFindings: () =>
       Effect.succeed({
         summary: "Found issues",

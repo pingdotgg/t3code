@@ -5,41 +5,6 @@ import Testing
 
 @testable import SergeCodeMac
 
-@Suite("SceneSetComposer user messages")
-struct SceneSetComposerUserMessageTests {
-    @Test("invalid location")
-    func invalidLocation() {
-        let message = SceneSetComposerUserMessage.message(for: .invalidLocation)
-        #expect(message.contains("location"))
-    }
-
-    @Test("missing Unsplash key names file path and env var")
-    func missingKey() {
-        let message = SceneSetComposerUserMessage.message(for: .missingUnsplashKey)
-        #expect(message.contains("SERGECODE_UNSPLASH_KEY"))
-        #expect(message.contains("unsplash-access-key"))
-        #expect(message.contains("Application Support/SergeCode"))
-    }
-
-    @Test("backend failure prefers detail")
-    func backendFailure() {
-        let withDetail = SceneSetComposerUserMessage.message(for: .backendFailure("RPC down"))
-        #expect(withDetail == "RPC down")
-        let empty = SceneSetComposerUserMessage.message(for: .backendFailure(""))
-        #expect(empty.contains("provider") || empty.contains("generate"))
-    }
-
-    @Test("no photos and cancelled")
-    func otherErrors() {
-        #expect(
-            SceneSetComposerUserMessage.message(for: .noPhotosFound)
-                .localizedCaseInsensitiveContains("photo"))
-        #expect(
-            SceneSetComposerUserMessage.message(for: .cancelled)
-                .localizedCaseInsensitiveContains("cancel"))
-    }
-}
-
 @Suite("Scenery accent color codec")
 struct SceneryAccentColorCodecTests {
     @Test("hex round-trip")
@@ -125,9 +90,9 @@ struct SceneryTranslucencySettingsTests {
     @Test("decode missing translucency uses default; out-of-range is clamped")
     func decode() throws {
         let decoder = JSONDecoder()
+        // Legacy files carried a defaultSetId key; it is ignored on decode.
         let legacy = Data(#"{"defaultSetId":"dolomites"}"#.utf8)
         let fromLegacy = try decoder.decode(ScenerySettingsFile.self, from: legacy)
-        #expect(fromLegacy.defaultSetId == "dolomites")
         #expect(fromLegacy.sceneryTranslucency == ScenerySettingsFile.defaultTranslucency)
 
         let high = Data(#"{"defaultSetId":"dolomites","sceneryTranslucency":1.4}"#.utf8)
@@ -141,8 +106,7 @@ struct SceneryTranslucencySettingsTests {
 
     @Test("encode/decode round-trip")
     func roundTrip() throws {
-        let original = ScenerySettingsFile(
-            defaultSetId: "patagonia", sceneryTranslucency: 0.62)
+        let original = ScenerySettingsFile(sceneryTranslucency: 0.62)
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(ScenerySettingsFile.self, from: data)
         #expect(decoded == original)
@@ -224,7 +188,7 @@ struct SceneryStorePhotosForSetTests {
             createdAt: Date(),
             queries: [SceneryQuery(text: "kyoto")],
             sceneNames: ["Ridge"])
-        store.registerSetForTesting(set, pool: [photo])
+        store.installSetForTesting(set, pool: [photo])
 
         #expect(store.photos(forSetId: "kyoto-test").map(\.id) == ["p1"])
         #expect(store.photos(forSetId: "missing").isEmpty)

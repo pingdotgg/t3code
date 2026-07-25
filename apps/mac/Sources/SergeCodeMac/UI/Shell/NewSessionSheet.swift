@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 /// Glass sheet for starting a new session: pick an existing project or add
-/// a new one via a native folder picker (or typed path), choose a provider
-/// and scenery set, then create the thread.
+/// a new one via a native folder picker (or typed path), choose a provider,
+/// then create the thread.
 struct NewSessionSheet: View {
     let multi: MultiDeviceModel
     let scenery: SceneryStore
@@ -15,7 +15,6 @@ struct NewSessionSheet: View {
     @UIState private var projectSearch = ""
     @UIState private var provider: ProviderKind = .claude
     @UIState private var newProjectPath: String = ""
-    @UIState private var scenerySetOverride: String?
     @UIState private var isBusy = false
     @UIState private var errorMessage: String?
 
@@ -28,22 +27,16 @@ struct NewSessionSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // The scene the created thread will be named after — a frosted
-            // preview band so the sheet carries the alpine identity too.
-            // peekNextScene() reads rotationBucket via @Observable, so
-            // App.onReceive bucket reevaluation repaints this strip.
-            let previewSetId = selectedScenerySetId
-            let nextScene = scenery.peekNextScene(
-                projectPath: selectedProjectPath,
-                setIdOverride: previewSetId)
+            // preview band so the sheet carries the scenery identity too.
+            // peekNextScene() returns the pending random pick, so this strip
+            // and the eventual commit always agree.
+            let nextScene = scenery.peekNextScene()
             VStack(alignment: .leading, spacing: 10) {
                 FrostedSceneryBackdrop(
                     scenery: scenery,
                     photo: nextScene,
-                    setId: previewSetId,
                     fallbackSeed: "new-session")
-                    .id(
-                        "\(previewSetId)/\(nextScene?.id ?? "next")/\(scenery.rotationBucket.timeOfDay.rawValue)"
-                    )
+                    .id(nextScene?.id ?? "next")
                     .frame(height: 68)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
 
@@ -52,7 +45,7 @@ struct NewSessionSheet: View {
                         .font(.title2.bold())
                     Spacer()
                     if let nextScene {
-                        Text(scenery.threadTitle(for: nextScene, setId: previewSetId))
+                        Text(scenery.threadTitle(for: nextScene))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -71,7 +64,6 @@ struct NewSessionSheet: View {
                     selectDefaultProject()
                     syncProviderSelection()
                     projectSearch = ""
-                    scenerySetOverride = nil
                     clearError()
                 }
             }
@@ -91,7 +83,6 @@ struct NewSessionSheet: View {
                         selectedProjectID = nil
                     }
                     projectSearch = ""
-                    scenerySetOverride = nil
                     clearError()
                 }
             }
@@ -116,7 +107,6 @@ struct NewSessionSheet: View {
                             selectedProjectID: $selectedProjectID,
                             searchText: $projectSearch)
                         .onChange(of: selectedProjectID) {
-                            scenerySetOverride = nil
                             clearError()
                         }
                     }
@@ -132,7 +122,6 @@ struct NewSessionSheet: View {
                         .buttonStyle(.glass)
                     }
                     .onChange(of: newProjectPath) {
-                        scenerySetOverride = nil
                         clearError()
                     }
                 }
@@ -150,22 +139,6 @@ struct NewSessionSheet: View {
             }
             .onChange(of: provider) {
                 clearError()
-            }
-
-            HStack(spacing: 8) {
-                Label("Scenery", systemImage: "photo.on.rectangle.angled")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Picker("Scenery", selection: scenerySetBinding) {
-                    ForEach(scenery.availableSets) { set in
-                        Text(set.title).tag(set.id)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
-                .disabled(scenery.availableSets.isEmpty)
-                .accessibilityLabel("Scenery set for new session")
             }
 
             if let errorMessage {
@@ -255,36 +228,6 @@ struct NewSessionSheet: View {
         multi.model(for: selectedDeviceID) ?? multi.local
     }
 
-    private var selectedProjectPath: String? {
-        switch mode {
-        case .existing:
-            guard let selectedProjectID else { return nil }
-            return model.projects.first(where: { $0.id == selectedProjectID })?.path
-        case .new:
-            let path = newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines)
-            return path.isEmpty ? nil : path
-        }
-    }
-
-    private var validScenerySetOverride: String? {
-        guard let scenerySetOverride, scenery.set(id: scenerySetOverride) != nil else {
-            return nil
-        }
-        return scenerySetOverride
-    }
-
-    private var selectedScenerySetId: String {
-        scenery.effectiveSetId(
-            projectPath: selectedProjectPath,
-            setIdOverride: validScenerySetOverride)
-    }
-
-    private var scenerySetBinding: Binding<String> {
-        Binding(
-            get: { selectedScenerySetId },
-            set: { scenerySetOverride = $0 })
-    }
-
     private var providerReadinessMessage: String? {
         guard !configuredProviderKinds.isEmpty else {
             return "No providers are ready. Open Settings ▸ Providers and refresh."
@@ -334,8 +277,7 @@ struct NewSessionSheet: View {
             createdThread = await model.createSceneThread(
                 projectID: projectID,
                 provider: provider,
-                scenery: scenery,
-                scenerySetId: validScenerySetOverride)
+                scenery: scenery)
         case .new:
             let path = newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !path.isEmpty else { return }
@@ -344,8 +286,7 @@ struct NewSessionSheet: View {
                 createdThread = await model.createSceneThread(
                     projectID: project.id,
                     provider: provider,
-                    scenery: scenery,
-                    scenerySetId: validScenerySetOverride)
+                    scenery: scenery)
             }
         }
         if createdThread != nil {
