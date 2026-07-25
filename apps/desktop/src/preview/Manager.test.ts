@@ -452,12 +452,12 @@ describe("PreviewManager", () => {
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Effect.yieldNow;
 
-        yield* TestClock.adjust(1_250);
+        yield* TestClock.adjust(750);
         expect(Exit.isFailure(yield* Effect.exit(Fiber.join(queued)))).toBe(true);
         expect(detach).not.toHaveBeenCalled();
         expect(latestController).toBe("agent");
 
-        yield* TestClock.adjust(13_500);
+        yield* TestClock.adjust(14_000);
         expect(Exit.isFailure(yield* Effect.exit(Fiber.join(active)))).toBe(true);
         expect(detach).toHaveBeenCalledOnce();
         expect(latestController).toBe("none");

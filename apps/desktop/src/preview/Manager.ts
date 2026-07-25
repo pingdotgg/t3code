@@ -2760,7 +2760,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       wc,
       "waitFor",
       (send) => performAutomationWaitFor(tabId, input, send),
-      (input.timeoutMs ?? DEFAULT_AUTOMATION_TIMEOUT_MS) + AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS * 2,
+      input.timeoutMs ?? DEFAULT_AUTOMATION_TIMEOUT_MS,
     );
   });
 

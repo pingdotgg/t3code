@@ -82,27 +82,28 @@ export async function withPreviewAutomationBackgroundPresentation<A>(
       timeoutMs,
     });
   const releaseCapture = acquireBrowserSurfaceBackgroundCapture(tabId);
+  let timedOut = false;
   let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
     timer = globalThis.setTimeout(() => {
+      timedOut = true;
       reject(timeoutError());
     }, timeoutMs);
   });
-  const staging = waitForPreviewAutomationBackgroundPresentation({
-    threadRef,
-    requestId,
-    tabId,
-    timeoutMs,
-  });
-
-  try {
-    await Promise.race([staging, deadline]);
-    if (timer !== undefined) {
-      globalThis.clearTimeout(timer);
-      timer = undefined;
-    }
+  const operation = (async () => {
+    await waitForPreviewAutomationBackgroundPresentation({
+      threadRef,
+      requestId,
+      tabId,
+      timeoutMs,
+    });
+    if (timedOut) throw timeoutError();
     const stillBackground = !(useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false);
     return await use(stillBackground);
+  })();
+
+  try {
+    return await Promise.race([operation, deadline]);
   } finally {
     if (timer !== undefined) globalThis.clearTimeout(timer);
     releaseCapture();
