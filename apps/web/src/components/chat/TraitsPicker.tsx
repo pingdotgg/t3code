@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, ZapIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,
@@ -379,6 +379,46 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   );
 });
 
+/**
+ * Build the traits trigger's text label plus whether the fast-mode bolt should
+ * render. Fast mode is a lightning bolt when on and nothing at all when off —
+ * "Normal" is the near-universal case and isn't worth the horizontal space. The
+ * one exception is when fast mode is the only trait, where a bare bolt (or bare
+ * chevron) would leave the trigger unreadable.
+ */
+export function buildTraitsTriggerDisplay(input: {
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  primarySelectDescriptorId: string | null;
+  ultrathinkPromptControlled: boolean;
+  fastModeEnabled: boolean;
+}): { label: string; showFastModeIcon: boolean } {
+  let hasFastMode = false;
+  const labels: Array<string> = [];
+  for (const descriptor of input.descriptors) {
+    if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
+      hasFastMode = true;
+      continue;
+    }
+    const label =
+      input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
+        ? "Ultrathink"
+        : descriptor.type === "boolean"
+          ? `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
+          : getProviderOptionCurrentLabel(descriptor);
+    if (typeof label === "string" && label.length > 0) {
+      labels.push(label);
+    }
+  }
+
+  // Only fall back to text when fast mode is genuinely the sole trait. Keying
+  // off an empty label list alone would also catch descriptors that resolved to
+  // no label at all, printing a bogus "Normal" for a model without fast mode.
+  if (labels.length === 0 && hasFastMode) {
+    return { label: input.fastModeEnabled ? "Fast" : "Normal", showFastModeIcon: false };
+  }
+  return { label: labels.join(" · "), showFastModeIcon: input.fastModeEnabled };
+}
+
 export const TraitsPicker = memo(function TraitsPicker({
   provider,
   instanceId,
@@ -393,7 +433,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
+  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled, fastModeEnabled } =
     getTraitsSectionVisibility({
       provider,
       models,
@@ -415,23 +455,18 @@ export const TraitsPicker = memo(function TraitsPicker({
     return null;
   }
 
-  const triggerLabels: Array<string> = [];
-  for (const descriptor of descriptors) {
-    const label =
-      ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
-        ? "Ultrathink"
-        : descriptor.type === "boolean"
-          ? descriptor.id === "fastMode"
-            ? descriptor.currentValue === true
-              ? "Fast"
-              : "Normal"
-            : `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
-          : getProviderOptionCurrentLabel(descriptor);
-    if (typeof label === "string" && label.length > 0) {
-      triggerLabels.push(label);
-    }
-  }
-  const triggerLabel = triggerLabels.join(" · ");
+  const { label: triggerLabel, showFastModeIcon } = buildTraitsTriggerDisplay({
+    descriptors,
+    primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
+    ultrathinkPromptControlled,
+    fastModeEnabled,
+  });
+  const fastModeIcon = showFastModeIcon ? (
+    <>
+      <ZapIcon aria-hidden="true" className="size-3 shrink-0 text-foreground/80 opacity-100" />
+      <span className="sr-only">Fast mode on</span>
+    </>
+  ) : null;
 
   const isCodexStyle = provider === "codex";
 
@@ -457,12 +492,14 @@ export const TraitsPicker = memo(function TraitsPicker({
         }
       >
         {isCodexStyle ? (
-          <span className="flex min-w-0 w-full items-center gap-2 overflow-hidden">
-            {triggerLabel}
+          <span className="flex min-w-0 w-full items-center gap-1.5 overflow-hidden">
+            {fastModeIcon}
+            <span className="min-w-0 truncate">{triggerLabel}</span>
             <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
           </span>
         ) : (
           <>
+            {fastModeIcon}
             <span>{triggerLabel}</span>
             <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
           </>
