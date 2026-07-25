@@ -56,17 +56,14 @@ export function HostedBrowserWebview(props: {
     useShallow((state) => {
       const current = state.byTabId[tabId];
       const backgroundCapture = (state.backgroundCaptureCountByTabId[tabId] ?? 0) > 0;
-      const panelRect = resolveBrowserSurfacePanelRect(state.byTabId, tabId);
       return {
         backgroundCapture,
-        rect:
-          panelRect ??
-          (backgroundCapture
-            ? resolveBrowserSurfaceBackgroundCaptureRect(state.byTabId, tabId, {
-                width: window.innerWidth,
-                height: window.innerHeight,
-              })
-            : null),
+        rect: backgroundCapture
+          ? resolveBrowserSurfaceBackgroundCaptureRect(state.byTabId, tabId, {
+              width: window.innerWidth,
+              height: window.innerHeight,
+            })
+          : resolveBrowserSurfacePanelRect(state.byTabId, tabId),
         visible: current?.visible ?? false,
       };
     }),

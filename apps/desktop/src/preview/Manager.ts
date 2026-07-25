@@ -106,6 +106,10 @@ const AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS = 250;
 const AUTOMATION_SCREENSHOT_TIMEOUT_MS = 5_000;
 const AUTOMATION_BACKGROUND_CDP_SCREENSHOT_TIMEOUT_MS = 2_000;
 const AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS = 3_000;
+const automationExecutionBudget = (timeoutMs: number): number =>
+  timeoutMs > AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS * 2
+    ? timeoutMs - AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS
+    : timeoutMs;
 const DIAGNOSTIC_BUFFER_LIMIT = 200;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
 const AGENT_CURSOR_MOVE_MS = 160;
@@ -945,6 +949,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }
       return yield* use(send, sendCleanup);
     });
+    let detachOnTimeout = true;
+    let permitAcquired = false;
     const finalize = Effect.fn("PreviewManager.finalizeControlAction")(function* (
       exit: Exit.Exit<A, PreviewManagerError>,
     ) {
@@ -974,10 +980,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           error: errorMessage,
         });
       }
-      const tabs = yield* SynchronizedRef.get(tabsRef);
-      if (tabs.has(tabId)) yield* update(tabId, { controller: "none" });
+      if (permitAcquired) {
+        const tabs = yield* SynchronizedRef.get(tabsRef);
+        if (tabs.has(tabId)) yield* update(tabId, { controller: "none" });
+      }
     });
-    let detachOnTimeout = true;
     const boundedExecution = Effect.gen(function* () {
       // Session initialization itself sends CDP commands. Keep it inside the
       // operation deadline so an offscreen or suspended guest cannot retain
@@ -987,10 +994,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return yield* control.semaphore.withPermit(
         Effect.sync(() => {
           detachOnTimeout = true;
+          permitAcquired = true;
         }).pipe(Effect.andThen(execute())),
       );
     }).pipe(
-      Effect.timeoutOption(Math.max(1, timeoutMs - AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS)),
+      Effect.timeoutOption(automationExecutionBudget(timeoutMs)),
       Effect.flatMap((result) =>
         Option.isNone(result)
           ? Effect.fail(new PreviewAutomationTimeoutError({ tabId, timeoutMs }))
@@ -1269,6 +1277,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
       runFork(forwardShortcut(event, input));
     };
+    const devtoolsClosed = (): void => {
+      runFork(
+        Effect.gen(function* () {
+          const current = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+          if (
+            current?.webContentsId !== wc.id ||
+            current.colorScheme === "system" ||
+            wc.isDestroyed()
+          ) {
+            return;
+          }
+          yield* restoreControlSession(tabId, wc);
+        }),
+      );
+    };
     yield* Scope.addFinalizer(
       scope,
       attempt({ operation: "detachListeners", tabId, webContentsId: wc.id }, () => {
@@ -1279,6 +1302,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("did-stop-loading", sync);
         wc.off("did-fail-load", failed as never);
         wc.off("before-input-event", beforeInput);
+        wc.off("devtools-closed", devtoolsClosed);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
       }).pipe(Effect.ignore),
     );
@@ -1290,6 +1314,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("did-start-loading", sync);
         wc.on("did-stop-loading", sync);
         wc.on("did-fail-load", failed as never);
+        wc.on("devtools-closed", devtoolsClosed);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.setWindowOpenHandler(({ url }) => {
           runFork(
@@ -1765,7 +1790,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Math.max(1, DEFAULT_AUTOMATION_TIMEOUT_MS - AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS),
       ),
       Effect.flatMap((result) =>
-        Option.isSome(result) ? Effect.void : detachControlSession(wc.id),
+        Option.isSome(result)
+          ? Effect.void
+          : Effect.logWarning("Timed out restoring the preview control session.", {
+              tabId,
+              webContentsId: wc.id,
+            }).pipe(Effect.andThen(detachControlSession(wc.id))),
       ),
       Effect.ignore,
     );
@@ -1976,6 +2006,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         sourceSize.width > MAX_SCREENSHOT_WIDTH
           ? sourceImage.resize({ width: MAX_SCREENSHOT_WIDTH })
           : sourceImage;
+      if (image.isEmpty()) {
+        return yield* new PreviewOperationError({
+          operation,
+          tabId,
+          webContentsId: wc.id,
+          cause: new Error("Screenshot resize returned an invalid PNG"),
+        });
+      }
       const size = image.getSize();
       return {
         mimeType: "image/png" as const,
@@ -2130,6 +2168,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Exit.isSuccess(cdpScreenshotResult) && Option.isSome(cdpScreenshotResult.value)
           ? cdpScreenshotResult.value.value
           : null;
+      const detachAfterCapture =
+        Exit.isSuccess(cdpScreenshotResult) && Option.isNone(cdpScreenshotResult.value);
       if (screenshot === null) {
         const cdpFailure = Exit.isFailure(cdpScreenshotResult)
           ? cdpScreenshotResult.cause
@@ -2137,32 +2177,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               tabId,
               timeoutMs: cdpScreenshotTimeoutMs,
             });
-        // A timed-out debugger command may still settle after its Effect has
-        // been interrupted. Detach the session so later automation starts
-        // from a fresh CDP connection instead of inheriting that command.
-        yield* detachControlSession(wc.id);
-        const backgroundScreenshotResult = background
-          ? yield* captureBackgroundPage(tabId, wc).pipe(
-              Effect.timeoutOption(AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS),
-              Effect.exit,
-            )
-          : null;
+        const backgroundScreenshotResult = yield* captureBackgroundPage(tabId, wc).pipe(
+          Effect.timeoutOption(AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS),
+          Effect.exit,
+        );
         screenshot =
-          backgroundScreenshotResult !== null &&
           Exit.isSuccess(backgroundScreenshotResult) &&
           Option.isSome(backgroundScreenshotResult.value)
             ? backgroundScreenshotResult.value.value
             : null;
         if (screenshot === null) {
-          const backgroundFailure =
-            backgroundScreenshotResult === null
-              ? null
-              : Exit.isFailure(backgroundScreenshotResult)
-                ? backgroundScreenshotResult.cause
-                : new PreviewAutomationTimeoutError({
-                    tabId,
-                    timeoutMs: AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS,
-                  });
+          const backgroundFailure = Exit.isFailure(backgroundScreenshotResult)
+            ? backgroundScreenshotResult.cause
+            : new PreviewAutomationTimeoutError({
+                tabId,
+                timeoutMs: AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS,
+              });
           yield* Effect.logWarning("Preview automation screenshot capture was unavailable.", {
             tabId,
             webContentsId: wc.id,
@@ -2180,6 +2210,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         networkEntries: [...(browserDiagnostics?.networkEntries ?? [])],
         actionTimeline: [...(timelines.get(tabId) ?? [])],
         screenshot,
+        detachAfterCapture,
       };
     },
   );
@@ -2190,15 +2221,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     const wc = yield* requireWebContents(tabId);
     if (!background) {
-      return yield* withControlSession(tabId, wc, "snapshot", (send) =>
+      const result = yield* withControlSession(tabId, wc, "snapshot", (send) =>
         captureAutomationSnapshot(tabId, wc, send, false),
       );
+      if (result.detachAfterCapture) yield* detachControlSession(wc.id);
+      const { detachAfterCapture: _, ...snapshot } = result;
+      return snapshot;
     }
 
     const previouslyFocused = yield* attempt(
       { operation: "automationSnapshot.getFocusedWebContents", tabId, webContentsId: wc.id },
       () => webContents.getFocusedWebContents(),
-    );
+    ).pipe(Effect.orElseSucceed(() => null));
     const restoreFocus =
       previouslyFocused && previouslyFocused.id !== wc.id
         ? attempt(
@@ -2218,18 +2252,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // The renderer stages it transparently while this short capture lease
     // activates the guest itself. Restoring the prior WebContents preserves
     // both application focus and the user-visible preview selection.
-    return yield* Effect.gen(function* () {
-      yield* attempt(
-        { operation: "automationSnapshot.focusWebContents", tabId, webContentsId: wc.id },
-        () => wc.focus(),
-      );
-      return yield* withControlSession(tabId, wc, "snapshot", (send) =>
-        Effect.gen(function* () {
-          yield* send("Page.bringToFront");
-          return yield* captureAutomationSnapshot(tabId, wc, send, true);
-        }),
-      );
-    }).pipe(Effect.ensuring(restoreFocus));
+    const result = yield* withControlSession(tabId, wc, "snapshot", (send) =>
+      Effect.gen(function* () {
+        yield* attempt(
+          { operation: "automationSnapshot.focusWebContents", tabId, webContentsId: wc.id },
+          () => wc.focus(),
+        );
+        yield* send("Page.bringToFront");
+        return yield* captureAutomationSnapshot(tabId, wc, send, true);
+      }),
+    ).pipe(Effect.ensuring(restoreFocus));
+    if (result.detachAfterCapture) yield* detachControlSession(wc.id);
+    const { detachAfterCapture: _, ...snapshot } = result;
+    return snapshot;
   });
 
   const resolveClickPoint = Effect.fn("PreviewManager.resolveClickPoint")(function* (
@@ -2725,7 +2760,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       wc,
       "waitFor",
       (send) => performAutomationWaitFor(tabId, input, send),
-      input.timeoutMs,
+      (input.timeoutMs ?? DEFAULT_AUTOMATION_TIMEOUT_MS) + AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS * 2,
     );
   });
 

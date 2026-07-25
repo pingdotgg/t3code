@@ -26,7 +26,7 @@ describe("resolveHostedBrowserWebviewWrapperStyle", () => {
     });
   });
 
-  it("places a background capture target beneath the active browser surface", () => {
+  it("places a nearly transparent background target above the active surface", () => {
     expect(
       resolveHostedBrowserWebviewWrapperStyle({
         active: false,

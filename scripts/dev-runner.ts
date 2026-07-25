@@ -304,7 +304,7 @@ export function createDevRunnerEnv({
       delete output.T3CODE_DESKTOP_WS_URL;
     }
 
-    if (mode !== "dev:server") {
+    if (mode === "dev" || mode === "dev:web" || mode === "dev:desktop") {
       output.HOST = DEV_LOOPBACK_HOST;
     }
 

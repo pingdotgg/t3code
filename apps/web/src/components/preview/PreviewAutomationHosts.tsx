@@ -104,6 +104,7 @@ const waitForBrowserSurfaceVisibility = async (
   timeoutMs: number,
 ): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
+  const requiredStableMs = Math.min(100, Math.max(0, timeoutMs - 50));
   let presentedSince: number | null = null;
   while (Date.now() <= deadline) {
     const now = Date.now();
@@ -112,7 +113,7 @@ const waitForBrowserSurfaceVisibility = async (
       // Require the selection to survive multiple presentation updates. A
       // single transient `visible` frame can otherwise make open acknowledge
       // just before routing or panel reconciliation unmounts the surface.
-      if (now - presentedSince >= 100) return;
+      if (now - presentedSince >= requiredStableMs) return;
     } else {
       presentedSince = null;
       // Session reconciliation and route hydration can race a cold open.

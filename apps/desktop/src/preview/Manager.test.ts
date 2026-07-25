@@ -164,7 +164,7 @@ describe("PreviewManager", () => {
           };
           createFromBuffer.mockReturnValue(image);
           let attached = false;
-          let captureAvailable = true;
+          let captureMode: "available" | "failure" | "timeout" = "available";
           const attach = vi.fn(() => {
             attached = true;
           });
@@ -192,7 +192,8 @@ describe("PreviewManager", () => {
               return { nodes: [] };
             }
             if (method === "Page.captureScreenshot") {
-              if (!captureAvailable) throw new Error("UnknownVizError");
+              if (captureMode === "failure") throw new Error("UnknownVizError");
+              if (captureMode === "timeout") return await new Promise<never>(() => undefined);
               return { data: png.toString("base64") };
             }
             return undefined;
@@ -254,6 +255,8 @@ describe("PreviewManager", () => {
             fromSurface: true,
             captureBeyondViewport: false,
           });
+          expect(sendCommand).not.toHaveBeenCalledWith("Page.bringToFront", undefined);
+          expect(focus).not.toHaveBeenCalled();
 
           const backgroundCdpCaptured = yield* manager.automationSnapshot("tab_snapshot", true);
           expect(backgroundCdpCaptured.screenshot).toMatchObject({ width: 640, height: 360 });
@@ -267,7 +270,7 @@ describe("PreviewManager", () => {
           expect(restoreFocus).toHaveBeenCalledOnce();
           expect(capturePage).not.toHaveBeenCalled();
 
-          captureAvailable = false;
+          captureMode = "failure";
           const backgroundFallbackCaptured = yield* manager.automationSnapshot(
             "tab_snapshot",
             true,
@@ -279,15 +282,37 @@ describe("PreviewManager", () => {
           expect(capturePage).toHaveBeenCalledWith(undefined, { stayHidden: false });
 
           capturePage.mockClear();
+          const foregroundFallbackCaptured = yield* manager.automationSnapshot("tab_snapshot");
+          expect(foregroundFallbackCaptured.screenshot).toMatchObject({
+            width: 640,
+            height: 360,
+          });
+          expect(capturePage).toHaveBeenCalledOnce();
+
+          capturePage.mockClear();
+          capturePage.mockResolvedValueOnce({ ...image, isEmpty: () => true });
           const degraded = yield* manager.automationSnapshot("tab_snapshot");
           expect(degraded.screenshot).toBeNull();
-          expect(capturePage).not.toHaveBeenCalled();
-          expect(detach).toHaveBeenCalledTimes(2);
+          expect(capturePage).toHaveBeenCalledOnce();
+          expect(detach).not.toHaveBeenCalled();
 
-          captureAvailable = true;
+          capturePage.mockClear();
+          captureMode = "timeout";
+          const timedOutCapture = yield* manager
+            .automationSnapshot("tab_snapshot")
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* TestClock.adjust(5_000);
+          expect((yield* Fiber.join(timedOutCapture)).screenshot).toMatchObject({
+            width: 640,
+            height: 360,
+          });
+          expect(capturePage).toHaveBeenCalledOnce();
+          expect(detach).toHaveBeenCalledOnce();
+
+          captureMode = "available";
           const recovered = yield* manager.automationSnapshot("tab_snapshot");
           expect(recovered.screenshot).toMatchObject({ width: 640, height: 360 });
-          expect(attach).toHaveBeenCalledTimes(3);
+          expect(attach).toHaveBeenCalledTimes(2);
         }),
       ),
   );
@@ -412,6 +437,12 @@ describe("PreviewManager", () => {
 
         yield* manager.createTab("tab_queued_timeout");
         yield* manager.registerWebview("tab_queued_timeout", 44);
+        let latestController: string | undefined;
+        yield* manager.subscribeStateChanges((tabId, state) =>
+          Effect.sync(() => {
+            if (tabId === "tab_queued_timeout") latestController = state.controller;
+          }),
+        );
         const active = yield* manager
           .automationEvaluate("tab_queued_timeout", { expression: "document.title" })
           .pipe(Effect.forkChild({ startImmediately: true }));
@@ -421,13 +452,15 @@ describe("PreviewManager", () => {
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Effect.yieldNow;
 
-        yield* TestClock.adjust(1_000);
+        yield* TestClock.adjust(1_250);
         expect(Exit.isFailure(yield* Effect.exit(Fiber.join(queued)))).toBe(true);
         expect(detach).not.toHaveBeenCalled();
+        expect(latestController).toBe("agent");
 
-        yield* TestClock.adjust(14_000);
+        yield* TestClock.adjust(13_500);
         expect(Exit.isFailure(yield* Effect.exit(Fiber.join(active)))).toBe(true);
         expect(detach).toHaveBeenCalledOnce();
+        expect(latestController).toBe("none");
 
         expect(
           yield* manager.automationEvaluate("tab_queued_timeout", {

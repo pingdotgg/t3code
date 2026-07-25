@@ -58,6 +58,7 @@ import type {
   TerminalWriteInput,
 } from "./terminal.ts";
 import type { ServerRemoveKeybindingInput, ServerUpsertKeybindingInput } from "./server.ts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type {
   DiscoveredLocalServerList,
@@ -911,7 +912,7 @@ export const DesktopPreviewTabInputSchema = Schema.Struct({
 
 export const DesktopPreviewAutomationSnapshotInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
-  background: Schema.Boolean,
+  background: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 
 export const DesktopPreviewRegisterWebviewInputSchema = Schema.Struct({

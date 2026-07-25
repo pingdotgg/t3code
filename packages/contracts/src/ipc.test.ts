@@ -1,7 +1,10 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+import {
+  DesktopEnvironmentBootstrapSchema,
+  DesktopPreviewAutomationSnapshotInputSchema,
+} from "./ipc.ts";
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);
@@ -34,5 +37,17 @@ describe("DesktopEnvironmentBootstrapSchema", () => {
         wsBaseUrl: null,
       }).runningDistro,
     ).toBeNull();
+  });
+});
+
+describe("DesktopPreviewAutomationSnapshotInputSchema", () => {
+  const decode = Schema.decodeUnknownSync(DesktopPreviewAutomationSnapshotInputSchema);
+
+  it("defaults omitted and undefined background flags to foreground capture", () => {
+    expect(decode({ tabId: "tab-1" })).toEqual({ tabId: "tab-1", background: false });
+    expect(decode({ tabId: "tab-1", background: undefined })).toEqual({
+      tabId: "tab-1",
+      background: false,
+    });
   });
 });
