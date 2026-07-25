@@ -196,6 +196,15 @@ struct ChatTimelineScrollView: View {
                     // the way past. Entrance is for content arriving, not for
                     // content being revealed by scrolling.
                     .entranceSuppressed(isUserScrolling)
+                    // Swaps the stock NSScroller for the slim capsule knob.
+                    // Lives inside the scrolled content so the installer can
+                    // walk up to the enclosing NSScrollView; zero-size, so it
+                    // takes no part in layout.
+                    .background(alignment: .top) {
+                        ModernScrollbarInstaller()
+                            .frame(width: 0, height: 0)
+                            .accessibilityHidden(true)
+                    }
                 }
                 // Intentionally no `.defaultScrollAnchor(.bottom)`. That modifier
                 // re-applies on content-size changes independently of pin state
