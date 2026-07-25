@@ -8,6 +8,7 @@ import { ChevronDownIcon, ChevronsUpDownIcon, ChevronUpIcon } from "lucide-react
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { useRightPanelFocusScope } from "../rightPanelFocusScope";
 
 const Select = SelectPrimitive.Root;
 
@@ -125,6 +126,7 @@ function SelectPopup({
   matchTriggerWidth?: boolean;
   anchor?: SelectPrimitive.Positioner.Props["anchor"];
 }) {
+  const inRightPanelFocusScope = useRightPanelFocusScope();
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Positioner
@@ -140,6 +142,7 @@ function SelectPopup({
         <SelectPrimitive.Popup
           className="origin-(--transform-origin) rounded-lg text-foreground outline-none"
           data-slot="select-popup"
+          data-right-panel-control={inRightPanelFocusScope ? "" : undefined}
           {...props}
         >
           <SelectPrimitive.ScrollUpArrow

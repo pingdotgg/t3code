@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as Electron from "electron";
+import { CLOSE_WINDOW_OR_FOCUSED_REGION_MENU_ACTION } from "@t3tools/contracts";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", async (importOriginal) => ({
@@ -105,10 +106,12 @@ function makeFakeBrowserWindow() {
 
   return {
     window: window as unknown as Electron.BrowserWindow,
+    close: window.close,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
     isDestroyed: window.isDestroyed,
     isFullScreen: window.isFullScreen,
+    isLoadingMainFrame: webContents.isLoadingMainFrame,
     isMaximized: window.isMaximized,
     isMinimized: window.isMinimized,
     loadURL: window.loadURL,
@@ -884,6 +887,83 @@ describe("DesktopWindow", () => {
           [WINDOW_FULLSCREEN_STATE_CHANNEL, true],
           [WINDOW_FULLSCREEN_STATE_CHANNEL, false],
         ]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("routes macOS Cmd+W before Electron closes the main window", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const beforeInput = fakeWindow.webContentsListeners.get("before-input-event");
+        if (!beforeInput) {
+          return yield* Effect.die("before-input-event listener was not registered");
+        }
+        const preventDefault = vi.fn();
+        beforeInput(
+          { preventDefault },
+          {
+            type: "keyDown",
+            key: "w",
+            code: "KeyW",
+            meta: true,
+            control: false,
+            shift: false,
+            alt: false,
+          },
+        );
+
+        assert.equal(preventDefault.mock.calls.length, 1);
+        assert.deepEqual(fakeWindow.send.mock.calls, [
+          [MENU_ACTION_CHANNEL, CLOSE_WINDOW_OR_FOCUSED_REGION_MENU_ACTION],
+        ]);
+
+        fakeWindow.send.mockClear();
+        fakeWindow.isLoadingMainFrame.mockReturnValue(true);
+        beforeInput(
+          { preventDefault },
+          {
+            type: "keyDown",
+            key: "w",
+            code: "KeyW",
+            meta: true,
+            control: false,
+            shift: false,
+            alt: false,
+          },
+        );
+
+        assert.equal(fakeWindow.close.mock.calls.length, 1);
+        assert.equal(fakeWindow.send.mock.calls.length, 0);
+
+        fakeWindow.isLoadingMainFrame.mockReturnValue(false);
+        preventDefault.mockClear();
+        beforeInput(
+          { preventDefault },
+          {
+            type: "keyDown",
+            key: "w",
+            code: "KeyW",
+            meta: true,
+            control: false,
+            shift: true,
+            alt: false,
+          },
+        );
+
+        assert.equal(preventDefault.mock.calls.length, 0);
+        assert.equal(fakeWindow.send.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );

@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import { TestClock } from "effect/testing";
+import type * as Electron from "electron";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -96,6 +97,153 @@ const layer = PreviewManager.layer.pipe(
 );
 const encodePreviewManagerError = Schema.encodeSync(PreviewManager.PreviewManagerError);
 
+describe("preview shortcut routing", () => {
+  const cmdW = {
+    type: "keyDown",
+    key: "w",
+    code: "KeyW",
+    meta: true,
+    control: false,
+    shift: false,
+    alt: false,
+  };
+  const configuredCmdW = [
+    {
+      key: "w",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: true,
+    },
+  ];
+
+  it("recognizes native macOS Cmd+W independently of configured preview shortcuts", () => {
+    expect(PreviewManager.resolveNativeWindowCloseShortcutKey(cmdW, "darwin")).toBe("w");
+    expect(
+      PreviewManager.resolveNativeWindowCloseShortcutKey({ ...cmdW, key: "z" }, "darwin"),
+    ).toBe("w");
+    expect(
+      PreviewManager.resolveNativeWindowCloseShortcutKey(
+        {
+          ...cmdW,
+          meta: false,
+          control: true,
+        },
+        "linux",
+      ),
+    ).toBeNull();
+    expect(
+      PreviewManager.resolveNativeWindowCloseShortcutKey({ ...cmdW, shift: true }, "darwin"),
+    ).toBeNull();
+  });
+
+  it("does not infer a configurable preview close shortcut when none is supplied", () => {
+    expect(PreviewManager.resolveForwardedPreviewShortcutKey(cmdW, "darwin")).toBeNull();
+  });
+
+  it("prioritizes the configured close binding when logical and physical keys disagree", () => {
+    expect(
+      PreviewManager.resolveForwardedPreviewShortcutKey(
+        { ...cmdW, key: ",", code: "KeyW" },
+        "darwin",
+        configuredCmdW,
+      ),
+    ).toBe("w");
+  });
+
+  it("preserves the existing Meta-based app shortcut forwarding", () => {
+    const cmdK = { ...cmdW, key: "k", code: "KeyK" };
+    expect(PreviewManager.resolveForwardedPreviewShortcutKey(cmdK, "linux", [])).toBe("k");
+    expect(
+      PreviewManager.resolveForwardedPreviewShortcutKey(
+        { ...cmdK, meta: false, control: true },
+        "linux",
+        [],
+      ),
+    ).toBeNull();
+    expect(
+      PreviewManager.resolveForwardedPreviewShortcutKey({ ...cmdK, alt: true }, "darwin", []),
+    ).toBe("k");
+  });
+
+  it("forwards configured right-panel close shortcuts instead of assuming Mod+W", () => {
+    const modP = [
+      {
+        key: "p",
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        modKey: true,
+      },
+    ];
+    expect(
+      PreviewManager.resolveForwardedPreviewShortcutKey(
+        { ...cmdW, key: "z", code: "KeyP" },
+        "darwin",
+        modP,
+      ),
+    ).toBe("p");
+    expect(PreviewManager.resolveForwardedPreviewShortcutKey(cmdW, "darwin", modP)).toBeNull();
+    expect(
+      PreviewManager.resolveForwardedPreviewShortcutKey(
+        { ...cmdW, key: "{", code: "BracketLeft", shift: true },
+        "darwin",
+        [{ ...modP[0]!, key: "[", shiftKey: true }],
+      ),
+    ).toBe("[");
+  });
+
+  it.each([
+    ["ArrowLeft", "ArrowLeft", "arrowleft", "Left"],
+    ["ArrowRight", "ArrowRight", "arrowright", "Right"],
+    ["ArrowUp", "ArrowUp", "arrowup", "Up"],
+    ["ArrowDown", "ArrowDown", "arrowdown", "Down"],
+    [" ", "Space", " ", "Space"],
+    ["Escape", "Escape", "escape", "Escape"],
+    ["PageDown", "PageDown", "pagedown", "PageDown"],
+    ["Insert", "Insert", "insert", "Insert"],
+    ["ContextMenu", "ContextMenu", "contextmenu", "ContextMenu"],
+    ["PrintScreen", "PrintScreen", "printscreen", "PrintScreen"],
+    ["MediaPlayPause", "MediaPlayPause", "mediaplaypause", "MediaPlayPause"],
+    ["Pause", "Pause", "pause", "Pause"],
+    ["F12", "F12", "f12", "F12"],
+  ])("encodes the %s shortcut for Electron input", (key, code, shortcutKey, expected) => {
+    expect(
+      PreviewManager.resolveForwardedPreviewShortcutKey({ ...cmdW, key, code }, "darwin", [
+        {
+          key: shortcutKey,
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      ]),
+    ).toBe(expected);
+  });
+
+  it("does not consume modified or non-app shortcuts", () => {
+    expect(
+      PreviewManager.resolveForwardedPreviewShortcutKey({ ...cmdW, alt: true }, "darwin"),
+    ).toBeNull();
+    expect(
+      PreviewManager.resolveForwardedPreviewShortcutKey(
+        { ...cmdW, meta: false, control: true },
+        "darwin",
+      ),
+    ).toBeNull();
+    expect(PreviewManager.resolveForwardedPreviewShortcutKey(cmdW, "linux")).toBeNull();
+    expect(
+      PreviewManager.resolveForwardedPreviewShortcutKey(
+        { ...cmdW, key: "x", code: "KeyX" },
+        "darwin",
+      ),
+    ).toBeNull();
+  });
+});
+
 const withManager = <A>(
   use: (
     manager: PreviewManager.PreviewManager["Service"],
@@ -144,6 +292,96 @@ describe("PreviewManager", () => {
         expect(fromId).not.toHaveBeenCalled();
       }),
     ),
+  );
+
+  effectIt.effect(
+    "forwards only renderer-supplied close shortcuts for embedded Browser input",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          let beforeInput:
+            | ((event: { preventDefault: () => void }, input: Electron.Input) => void)
+            | undefined;
+          const sendInputEvent = vi.fn();
+          fromId.mockReturnValue({
+            id: 42,
+            isDestroyed: () => false,
+            getType: () => "webview",
+            getURL: () => "https://example.com",
+            getTitle: () => "Example",
+            isLoading: () => false,
+            getZoomFactor: () => 1,
+            setZoomFactor: vi.fn(),
+            on: vi.fn((event: string, listener: typeof beforeInput) => {
+              if (event === "before-input-event") beforeInput = listener;
+            }),
+            off: vi.fn(),
+            ipc: { on: vi.fn(), off: vi.fn() },
+            send: webviewSend,
+            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+            setWindowOpenHandler: vi.fn(),
+            debugger: {
+              isAttached: () => false,
+              attach: vi.fn(),
+              sendCommand: vi.fn(async () => undefined),
+              on: vi.fn(),
+              off: vi.fn(),
+            },
+          } as never);
+
+          yield* manager.createTab("tab_shortcut");
+          yield* manager.registerWebview("tab_shortcut", 42);
+          yield* manager.setMainWindow({
+            isDestroyed: () => false,
+            webContents: { sendInputEvent },
+          } as never);
+
+          const unconfiguredPreventDefault = vi.fn();
+          beforeInput?.({ preventDefault: unconfiguredPreventDefault }, {
+            type: "keyDown",
+            key: "w",
+            code: "KeyW",
+            meta: false,
+            control: true,
+            shift: false,
+            alt: false,
+          } as Electron.Input);
+          yield* Effect.yieldNow;
+
+          expect(unconfiguredPreventDefault).not.toHaveBeenCalled();
+          expect(sendInputEvent).not.toHaveBeenCalled();
+
+          yield* manager.setRightPanelCloseShortcuts([
+            {
+              key: "arrowleft",
+              metaKey: false,
+              ctrlKey: false,
+              shiftKey: false,
+              altKey: false,
+              modKey: true,
+            },
+          ]);
+
+          const preventDefault = vi.fn();
+          beforeInput?.({ preventDefault }, {
+            type: "keyDown",
+            key: "ArrowLeft",
+            code: "ArrowLeft",
+            meta: false,
+            control: true,
+            shift: false,
+            alt: false,
+          } as Electron.Input);
+          yield* Effect.yieldNow;
+
+          expect(preventDefault).toHaveBeenCalledOnce();
+          expect(sendInputEvent).toHaveBeenCalledWith({
+            type: "keyDown",
+            keyCode: "Left",
+            modifiers: ["control"],
+          });
+        }),
+      ),
   );
 
   effectIt.effect("isolates failed state listeners and continues delivery", () => {

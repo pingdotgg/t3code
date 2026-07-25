@@ -12,6 +12,7 @@ import {
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
+  DesktopPreviewRightPanelCloseShortcutsInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetColorSchemeInputSchema,
   DesktopPreviewTabInputSchema,
@@ -73,6 +74,16 @@ export const registerWebview = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.registerWebview")(function* ({ tabId, webContentsId }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.registerWebview(tabId, webContentsId);
+  }),
+});
+
+export const setRightPanelCloseShortcuts = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_RIGHT_PANEL_CLOSE_SHORTCUTS_CHANNEL,
+  payload: DesktopPreviewRightPanelCloseShortcutsInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setRightPanelCloseShortcuts")(function* ({ shortcuts }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setRightPanelCloseShortcuts(shortcuts);
   }),
 });
 
@@ -348,6 +359,7 @@ export const methods = [
   createTab,
   closeTab,
   registerWebview,
+  setRightPanelCloseShortcuts,
   navigate,
   goBack,
   goForward,

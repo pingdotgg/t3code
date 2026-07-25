@@ -1,4 +1,5 @@
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 
@@ -12,12 +13,12 @@ import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { isPreviewFocused } from "../lib/previewFocus";
-import { isTerminalFocused } from "../lib/terminalFocus";
+import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { sharedCloseFocusTracker } from "../lib/closeFocus";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
-import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -47,23 +48,37 @@ function ChatRouteGlobalShortcuts() {
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
       : false,
   );
-  // The `previewOpen` shortcut-context flag here uses the store-only value;
-  // the URL-aware arbitration lives inside ChatView's `onTogglePreview`,
-  // which we invoke via the action bus to avoid duplicating the rule.
-  const previewOpen = useRightPanelStore((state) =>
-    routeThreadRef
-      ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
-      : false,
+  const rightPanelState = useRightPanelStore((state) =>
+    selectThreadRightPanelState(state.byThreadKey, routeThreadRef),
   );
+  const activeRightPanelSurface = rightPanelState.surfaces.find(
+    (surface) => surface.id === rightPanelState.activeSurfaceId,
+  );
+  const previewOpen = rightPanelState.isOpen && activeRightPanelSurface?.kind === "preview";
+  const rightPanelPreviewTabIds = useMemo(
+    () =>
+      rightPanelState.surfaces.flatMap((surface) =>
+        surface.kind === "preview" && surface.resourceId !== null ? [surface.resourceId] : [],
+      ),
+    [rightPanelState.surfaces],
+  );
+  const rightPanelScopeKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
+      const closeFocusOwner = sharedCloseFocusTracker.current({
+        rightPanelOpen: rightPanelState.isOpen,
+        rightPanelPreviewTabIds,
+        rightPanelScopeKey,
+      });
+      const terminalFocusOwner = getTerminalFocusOwner();
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
-          terminalFocus: isTerminalFocused(),
+          terminalFocus: terminalFocusOwner !== null || closeFocusOwner === "drawer-terminal",
           terminalOpen,
-          previewFocus: isPreviewFocused(),
+          previewFocus: previewOpen && closeFocusOwner === "right-panel",
           previewOpen,
+          rightPanelFocus: closeFocusOwner === "right-panel",
         },
       });
 
@@ -165,6 +180,9 @@ function ChatRouteGlobalShortcuts() {
     defaultProjectRef,
     previewOpen,
     projectGroupCount,
+    rightPanelPreviewTabIds,
+    rightPanelScopeKey,
+    rightPanelState.isOpen,
     routeThreadRef,
     selectedThreadKeysSize,
     sidebarV2Enabled,

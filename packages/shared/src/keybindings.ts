@@ -25,7 +25,16 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+shift+d", command: "terminal.splitVertical", when: "terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
-  { key: "mod+w", command: "terminal.close", when: "terminalFocus" },
+  {
+    key: "mod+w",
+    command: "terminal.close",
+    when: "terminalFocus && !rightPanelFocus",
+  },
+  {
+    key: "mod+w",
+    command: "rightPanel.closeActiveSurface",
+    when: "rightPanelFocus",
+  },
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
   { key: "mod+shift+j", command: "preview.toggle" },
   { key: "mod+r", command: "preview.refresh", when: "previewFocus" },
@@ -52,6 +61,101 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
     when: "modelPickerOpen",
   })),
 ];
+
+export interface KeybindingInputLike {
+  readonly code?: string;
+  readonly key: string;
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly shiftKey: boolean;
+  readonly altKey: boolean;
+}
+
+export type KeybindingModifierStateLike = Pick<
+  KeybindingInputLike,
+  "metaKey" | "ctrlKey" | "shiftKey" | "altKey"
+>;
+
+const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  BracketLeft: ["["],
+  BracketRight: ["]"],
+  Digit0: ["0"],
+  Digit1: ["1"],
+  Digit2: ["2"],
+  Digit3: ["3"],
+  Digit4: ["4"],
+  Digit5: ["5"],
+  Digit6: ["6"],
+  Digit7: ["7"],
+  Digit8: ["8"],
+  Digit9: ["9"],
+};
+
+function isMacKeybindingPlatform(platform: string): boolean {
+  return platform === "darwin" || /mac|iphone|ipad|ipod/i.test(platform);
+}
+
+export function normalizeKeybindingEventKey(key: string): string {
+  const normalized = key.toLowerCase();
+  return normalized === "esc" ? "escape" : normalized;
+}
+
+function resolveEventKeys(event: Pick<KeybindingInputLike, "key" | "code">): Set<string> {
+  const keys = new Set([normalizeKeybindingEventKey(event.key)]);
+  const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1];
+  if (letterCode) keys.add(letterCode.toLowerCase());
+
+  const aliases = event.code ? EVENT_CODE_KEY_ALIASES[event.code] : undefined;
+  if (aliases) {
+    for (const alias of aliases) keys.add(alias);
+  }
+  return keys;
+}
+
+export function matchesKeybindingShortcutKey(
+  event: Pick<KeybindingInputLike, "key" | "code">,
+  shortcutKey: string,
+): boolean {
+  return resolveEventKeys(event).has(shortcutKey);
+}
+
+export function resolveKeybindingShortcutModifiers(
+  shortcut: KeybindingShortcut,
+  platform: string,
+): KeybindingModifierStateLike {
+  const useMetaForMod = isMacKeybindingPlatform(platform);
+  return {
+    metaKey: shortcut.metaKey || (shortcut.modKey && useMetaForMod),
+    ctrlKey: shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod),
+    shiftKey: shortcut.shiftKey,
+    altKey: shortcut.altKey,
+  };
+}
+
+export function matchesKeybindingShortcutModifiers(
+  event: KeybindingModifierStateLike,
+  shortcut: KeybindingShortcut,
+  platform: string,
+): boolean {
+  const expected = resolveKeybindingShortcutModifiers(shortcut, platform);
+  return (
+    event.metaKey === expected.metaKey &&
+    event.ctrlKey === expected.ctrlKey &&
+    event.shiftKey === expected.shiftKey &&
+    event.altKey === expected.altKey
+  );
+}
+
+export function matchesKeybindingShortcut(
+  event: KeybindingInputLike,
+  shortcut: KeybindingShortcut,
+  platform: string,
+): boolean {
+  return (
+    matchesKeybindingShortcutModifiers(event, shortcut, platform) &&
+    matchesKeybindingShortcutKey(event, shortcut.key)
+  );
+}
 
 function normalizeKeyToken(token: string): string {
   if (token === "space") return " ";

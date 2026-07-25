@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { CLOSE_WINDOW_OR_FOCUSED_REGION_MENU_ACTION } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -6,6 +7,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { isElectron } from "../env";
 import { getLocalStorageItem } from "../hooks/useLocalStorage";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { requestCloseFocusedRegion } from "../lib/rightPanelCloseRequest";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useClientSettings } from "../hooks/useSettings";
@@ -151,6 +153,13 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         const isSettingsRoute = /^\/settings(\/|$)/.test(pathname);
         if (!isSettingsRoute) {
           void navigate({ to: "/settings" });
+        }
+        return;
+      }
+
+      if (action === CLOSE_WINDOW_OR_FOCUSED_REGION_MENU_ACTION) {
+        if (!requestCloseFocusedRegion()) {
+          window.close();
         }
       }
     });

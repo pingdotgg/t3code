@@ -7,6 +7,7 @@ import { useEffect, useMemo } from "react";
 import { isElectron } from "~/env";
 import { useTheme } from "~/hooks/useTheme";
 import { useActivePreviewSessions } from "~/previewStateStore";
+import { RightPanelFocusProvider } from "~/components/RightPanelFocusProvider";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserPointerStore } from "./browserPointerStore";
@@ -72,7 +73,7 @@ export function ElectronBrowserHost() {
   }, []);
 
   if (!isElectron) return null;
-  return (
+  const host = (
     <div className="contents" data-electron-browser-host>
       {sessions.map(({ threadRef, snapshot, zoomFactor }) => {
         const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
@@ -89,4 +90,6 @@ export function ElectronBrowserHost() {
       })}
     </div>
   );
+
+  return <RightPanelFocusProvider>{host}</RightPanelFocusProvider>;
 }

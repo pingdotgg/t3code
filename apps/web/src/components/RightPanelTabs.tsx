@@ -24,6 +24,7 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import { RightPanelFocusProvider } from "./RightPanelFocusProvider";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -350,7 +351,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [props.activeSurfaceId]);
 
-  return (
+  const panel = (
     <PreviewPanelShell
       mode={props.mode}
       {...(props.maximized !== undefined ? { maximized: props.maximized } : {})}
@@ -358,8 +359,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div
         className={cn(
           "workspace-topbar gap-1 pl-2",
-          props.mode === "inline" ? "pr-28" : "pr-3",
-          ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
+          props.mode === "inline" ? "pr-36" : "pr-3",
+          ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+8rem)]",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
@@ -369,6 +370,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           hideScrollbars
           scrollFade
           className={cn("min-w-0 flex-1 rounded-none", ownsDesktopTitleBar && "drag-region")}
+          data-right-panel-drag-region={ownsDesktopTitleBar ? "" : undefined}
           data-right-panel-tab-list
         >
           <div className="flex h-full w-max min-w-full items-center gap-1">
@@ -380,11 +382,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 <div
                   key={surface.id}
                   data-active-tab={active}
+                  data-right-panel-tab
                   onMouseDown={handleTabMouseDown}
                   onAuxClick={(event) => handleTabAuxClick(event, surface)}
                   onContextMenu={(event) => void handleTabContextMenu(event, surface)}
                   className={cn(
-                    "group flex h-7 min-w-25 max-w-44 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm",
+                    "group flex h-7 min-w-25 max-w-44 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm [-webkit-app-region:no-drag]",
                     active
                       ? "bg-accent text-foreground"
                       : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
@@ -494,4 +497,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       </div>
     </PreviewPanelShell>
   );
+
+  return <RightPanelFocusProvider>{panel}</RightPanelFocusProvider>;
 }

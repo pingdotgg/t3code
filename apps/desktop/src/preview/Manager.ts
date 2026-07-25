@@ -14,6 +14,7 @@ import type {
   DesktopPreviewRecordingArtifact,
   DesktopPreviewRecordingFrame,
   DesktopPreviewScreenshotArtifact,
+  KeybindingShortcut,
   PreviewAutomationClickInput,
   PreviewAutomationActionEvent,
   PreviewAutomationConsoleEntry,
@@ -27,6 +28,11 @@ import type {
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  matchesKeybindingShortcut,
+  matchesKeybindingShortcutKey,
+  normalizeKeybindingEventKey,
+} from "@t3tools/shared/keybindings";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import {
   type BrowserWindow,
@@ -324,21 +330,123 @@ interface ExpectedAgentInput {
   readonly expiresAt: number;
 }
 
-const APP_FORWARDED_SHORTCUTS: ReadonlyArray<{
-  key: string;
-  meta: boolean;
-  shift: boolean;
-  control: boolean;
-}> = Object.freeze([
-  // mod+shift+J → preview.toggle
-  { key: "j", meta: true, shift: true, control: false },
-  // mod+K → command palette
-  { key: "k", meta: true, shift: false, control: false },
-  // mod+, → settings (macOS convention)
-  { key: ",", meta: true, shift: false, control: false },
-  // mod+W → close tab/panel
-  { key: "w", meta: true, shift: false, control: false },
+const modShortcut = (key: string, shiftKey = false): KeybindingShortcut => ({
+  key,
+  metaKey: false,
+  ctrlKey: false,
+  shiftKey,
+  altKey: false,
+  modKey: true,
+});
+
+const APP_FORWARDED_SHORTCUTS = Object.freeze([
+  // Meta+shift+J → preview.toggle
+  { key: "j", shiftKey: true },
+  // Meta+K → command palette
+  { key: "k", shiftKey: false },
+  // Meta+, → settings (macOS convention)
+  { key: ",", shiftKey: false },
 ]);
+const NATIVE_WINDOW_CLOSE_SHORTCUT = modShortcut("w");
+const ELECTRON_KEY_CODES: Readonly<Record<string, string>> = {
+  " ": "Space",
+  arrowdown: "Down",
+  arrowleft: "Left",
+  arrowright: "Right",
+  arrowup: "Up",
+  backspace: "Backspace",
+  capslock: "Capslock",
+  contextmenu: "ContextMenu",
+  delete: "Delete",
+  end: "End",
+  enter: "Enter",
+  escape: "Escape",
+  home: "Home",
+  insert: "Insert",
+  medianexttrack: "MediaNextTrack",
+  mediaplaypause: "MediaPlayPause",
+  mediaprevioustrack: "MediaPreviousTrack",
+  mediastop: "MediaStop",
+  numlock: "Numlock",
+  pagedown: "PageDown",
+  pageup: "PageUp",
+  printscreen: "PrintScreen",
+  scrolllock: "Scrolllock",
+  tab: "Tab",
+  volumedown: "VolumeDown",
+  volumemute: "VolumeMute",
+  volumeup: "VolumeUp",
+};
+
+type ForwardedPreviewShortcutInput = Pick<
+  Electron.Input,
+  "type" | "key" | "code" | "meta" | "shift" | "control" | "alt"
+>;
+
+function electronKeyCodeForShortcut(key: string, inputKey: string): string | null {
+  const namedKeyCode = ELECTRON_KEY_CODES[key];
+  if (namedKeyCode) return namedKeyCode;
+  if (/^f(?:[1-9]|1\d|2[0-4])$/.test(key)) return key.toUpperCase();
+  if (key.length === 1) return key;
+  return normalizeKeybindingEventKey(inputKey) === key ? inputKey : null;
+}
+
+export function resolveNativeWindowCloseShortcutKey(
+  input: ForwardedPreviewShortcutInput,
+  platform: NodeJS.Platform,
+): string | null {
+  if (platform !== "darwin" || input.type !== "keyDown") return null;
+  if (
+    !matchesKeybindingShortcut(
+      {
+        key: input.key,
+        code: input.code,
+        metaKey: input.meta,
+        ctrlKey: input.control,
+        shiftKey: input.shift,
+        altKey: input.alt,
+      },
+      NATIVE_WINDOW_CLOSE_SHORTCUT,
+      platform,
+    )
+  ) {
+    return null;
+  }
+  return electronKeyCodeForShortcut(NATIVE_WINDOW_CLOSE_SHORTCUT.key, input.key);
+}
+
+export function resolveForwardedPreviewShortcutKey(
+  input: ForwardedPreviewShortcutInput,
+  platform: NodeJS.Platform,
+  rightPanelCloseShortcuts: ReadonlyArray<KeybindingShortcut> = [],
+): string | null {
+  if (input.type !== "keyDown") return null;
+  const shortcutInput = {
+    key: input.key,
+    code: input.code,
+    metaKey: input.meta,
+    ctrlKey: input.control,
+    shiftKey: input.shift,
+    altKey: input.alt,
+  };
+
+  for (const shortcut of rightPanelCloseShortcuts) {
+    if (matchesKeybindingShortcut(shortcutInput, shortcut, platform)) {
+      return electronKeyCodeForShortcut(shortcut.key, input.key);
+    }
+  }
+  for (const shortcut of APP_FORWARDED_SHORTCUTS) {
+    if (
+      input.meta &&
+      !input.control &&
+      input.shift === shortcut.shiftKey &&
+      matchesKeybindingShortcutKey(shortcutInput, shortcut.key)
+    ) {
+      return electronKeyCodeForShortcut(shortcut.key, input.key);
+    }
+  }
+  return null;
+}
 
 const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
   if (typeof value !== "object" || value === null || !("kind" in value)) return false;
@@ -416,6 +524,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const actionSequenceRef = yield* Ref.make(0);
   const pointerSequenceRef = yield* Ref.make(0);
   const recordingTabIdRef = yield* Ref.make<Option.Option<string>>(Option.none());
+  const rightPanelCloseShortcutsRef = yield* Ref.make<ReadonlyArray<KeybindingShortcut>>([]);
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -1063,16 +1172,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (managed) yield* Scope.close(managed.scope, Exit.void).pipe(Effect.ignore);
   });
 
-  const isAppShortcut = (input: Electron.Input): boolean =>
-    input.type === "keyDown" &&
-    APP_FORWARDED_SHORTCUTS.some(
-      (shortcut) =>
-        shortcut.key.toLowerCase() === input.key.toLowerCase() &&
-        shortcut.meta === input.meta &&
-        shortcut.shift === input.shift &&
-        shortcut.control === input.control,
-    );
-
   const computeNavStatus = (wc: Electron.WebContents): PreviewNavStatus => {
     const url = wc.getURL();
     const title = wc.getTitle();
@@ -1213,13 +1312,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       input: Electron.Input,
     ) {
       const mainWindow = yield* Ref.get(mainWindowRef);
-      if (!isAppShortcut(input) || Option.isNone(mainWindow) || mainWindow.value.isDestroyed()) {
+      const rightPanelCloseShortcuts = yield* Ref.get(rightPanelCloseShortcutsRef);
+      const forwardedKey = resolveForwardedPreviewShortcutKey(
+        input,
+        hostPlatform,
+        rightPanelCloseShortcuts,
+      );
+      if (forwardedKey === null || Option.isNone(mainWindow) || mainWindow.value.isDestroyed()) {
         return;
       }
       event.preventDefault();
       mainWindow.value.webContents.sendInputEvent({
         type: "keyDown",
-        keyCode: input.key,
+        keyCode: forwardedKey,
         modifiers: [
           ...(input.meta ? (["meta"] as const) : []),
           ...(input.shift ? (["shift"] as const) : []),
@@ -1560,6 +1665,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       { discard: true },
     );
   });
+
+  const setRightPanelCloseShortcuts = (shortcuts: ReadonlyArray<KeybindingShortcut>) =>
+    Ref.set(rightPanelCloseShortcutsRef, [...shortcuts]);
 
   const pickElement = Effect.fn("PreviewManager.pickElement")(function* (tabId: string) {
     const wc = yield* requireWebContents(tabId);
@@ -2590,6 +2698,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     revealArtifact,
     saveRecording,
     setAnnotationTheme,
+    setRightPanelCloseShortcuts,
     setColorScheme,
     setMainWindow,
     startRecording,
@@ -2906,6 +3015,9 @@ export class PreviewManager extends Context.Service<
     readonly setAnnotationTheme: (
       theme: DesktopPreviewAnnotationTheme,
     ) => Effect.Effect<void, PreviewManagerError>;
+    readonly setRightPanelCloseShortcuts: (
+      shortcuts: ReadonlyArray<KeybindingShortcut>,
+    ) => Effect.Effect<void>;
     readonly pickElement: (
       tabId: string,
     ) => Effect.Effect<PreviewAnnotationPayload | null, PreviewManagerError>;
@@ -3018,6 +3130,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
         );
     }),
     setAnnotationTheme: operations.setAnnotationTheme,
+    setRightPanelCloseShortcuts: operations.setRightPanelCloseShortcuts,
     pickElement: operations.pickElement,
     cancelPickElement: operations.cancelPickElement,
     captureScreenshot: operations.captureScreenshot,
