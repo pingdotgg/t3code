@@ -65,6 +65,28 @@ cp -R "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/"
 # resolves after Sparkle is embedded in Contents/Frameworks.
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/SergeCodeMac"
 
+# Embed the standalone sidecar (Node runtime + built server bundle with its
+# production node_modules) when a staging directory is present. Release builds
+# assemble it via scripts/stage-sidecar.sh; SidecarKit prefers these bundled
+# resources at runtime and only falls back to dev-checkout resolution
+# (system node + apps/server/dist) when they are absent — which is the case
+# for local dev builds that never run stage-sidecar.sh.
+SIDECAR_STAGING="${SERGE_CODE_SIDECAR_STAGING:-$MAC_DIR/dist/sidecar}"
+if [[ -x "$SIDECAR_STAGING/SergeCodeNode/node" && -f "$SIDECAR_STAGING/SergeCodeServer/bin.mjs" ]]; then
+  echo "Embedding standalone sidecar from $SIDECAR_STAGING"
+  mkdir -p "$APP/Contents/Resources/SergeCodeNode"
+  cp "$SIDECAR_STAGING/SergeCodeNode/node" "$APP/Contents/Resources/SergeCodeNode/node"
+  chmod +x "$APP/Contents/Resources/SergeCodeNode/node"
+  cp -R "$SIDECAR_STAGING/SergeCodeServer" "$APP/Contents/Resources/"
+elif [[ -e "$SIDECAR_STAGING/SergeCodeNode/node" || -e "$SIDECAR_STAGING/SergeCodeServer" ]]; then
+  echo "error: incomplete sidecar staging at $SIDECAR_STAGING" >&2
+  echo "       expected both SergeCodeNode/node (executable) and SergeCodeServer/bin.mjs;" >&2
+  echo "       re-run scripts/stage-sidecar.sh or remove the staging directory" >&2
+  exit 1
+else
+  echo "note: no staged sidecar at $SIDECAR_STAGING; building without the embedded Node/server" >&2
+fi
+
 # Prefer a stable signing identity when present: TCC permissions (Documents
 # -folder access for the node sidecar, and the macOS 15+ Local Network
 # privacy grant used by desktop-to-desktop pairing) are keyed to the code

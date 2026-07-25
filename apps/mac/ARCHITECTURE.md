@@ -59,9 +59,14 @@ a supervised child process.
 - Data dir: pass explicit `--base-dir` under
   `~/Library/Application Support/SergeCode/`.
 - PATH repair is the server's job (`os-jank.ts fixPath()`); the app just
-  spawns node. Dev builds locate node via `/usr/bin/env node` (engines:
-  ^22.16 || ^23.11 || >=24.10); bundling a Node runtime into the .app is a
-  post-v1 packaging task.
+  spawns node. Release builds embed a standalone sidecar — a pinned
+  darwin-arm64 Node runtime at `Contents/Resources/SergeCodeNode/node` and
+  the server bundle plus its production `node_modules` at
+  `Contents/Resources/SergeCodeServer/` — staged by
+  `scripts/stage-sidecar.sh` and copied in by `scripts/make-app.sh`.
+  SidecarKit prefers those bundled resources; dev builds (no staging dir)
+  fall back to locating node via `/usr/bin/env node` (engines:
+  ^22.16 || ^23.11 || >=24.10) and the checkout's `apps/server/dist`.
 
 ### Retired local data
 

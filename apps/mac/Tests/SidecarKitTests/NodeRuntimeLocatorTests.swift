@@ -90,6 +90,43 @@ struct NodeRuntimeLocatorTests {
         #expect(recorder.loginShellProbeCount == 1)
         #expect(recorder.locatedPaths == [discoveredPath])
     }
+
+    @Test("bundled node path resolves an executable SergeCodeNode/node under the bundle resources")
+    func bundledNodePath() throws {
+        let resourceDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sergecode-bundled-node-\(UUID().uuidString)")
+        let nodeDir = resourceDir.appendingPathComponent("SergeCodeNode")
+        try FileManager.default.createDirectory(at: nodeDir, withIntermediateDirectories: true)
+        let node = nodeDir.appendingPathComponent("node")
+        guard FileManager.default.createFile(atPath: node.path, contents: Data()) else {
+            throw NSError(domain: "NodeRuntimeLocatorTests", code: 1)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: node.path)
+        defer { try? FileManager.default.removeItem(at: resourceDir) }
+
+        #expect(NodeRuntimeLocator.bundledNodePath(resourceURL: resourceDir) == node.path)
+    }
+
+    @Test("bundled node path is nil when the runtime is missing or not executable")
+    func bundledNodePathMissingOrNotExecutable() throws {
+        let resourceDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sergecode-bundled-node-\(UUID().uuidString)")
+        let nodeDir = resourceDir.appendingPathComponent("SergeCodeNode")
+        try FileManager.default.createDirectory(at: nodeDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: resourceDir) }
+
+        // Missing entirely.
+        #expect(NodeRuntimeLocator.bundledNodePath(resourceURL: resourceDir) == nil)
+        #expect(NodeRuntimeLocator.bundledNodePath(resourceURL: nil) == nil)
+
+        // Present but not executable (e.g. lost exec bit during packaging).
+        let node = nodeDir.appendingPathComponent("node")
+        guard FileManager.default.createFile(atPath: node.path, contents: Data()) else {
+            throw NSError(domain: "NodeRuntimeLocatorTests", code: 1)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: node.path)
+        #expect(NodeRuntimeLocator.bundledNodePath(resourceURL: resourceDir) == nil)
+    }
 }
 
 private final class ProbeRecorder: @unchecked Sendable {

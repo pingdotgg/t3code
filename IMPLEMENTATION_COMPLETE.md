@@ -9,6 +9,7 @@ All phases of the t3code settled thread lifecycle integration are now **complete
 ## ✅ What Was Implemented
 
 ### Phase 1: Backend Foundation (100%)
+
 - ✅ API contracts for settle/unsettle commands
 - ✅ Server command handlers with validation
 - ✅ Event projectors for state updates
@@ -16,12 +17,14 @@ All phases of the t3code settled thread lifecycle integration are now **complete
 - ✅ Complete orchestration logic
 
 ### Phase 2: Client Runtime (100%)
+
 - ✅ Thread settled state computation (threadSettled.ts)
 - ✅ Command dispatchers (settleThread, unsettleThread)
 - ✅ Client-side validation logic
 - ✅ All business logic ready
 
 ### Phase 3: macOS Native UI (100%)
+
 - ✅ Swift models updated with settled fields
 - ✅ Status projection includes .settled case
 - ✅ RPC methods for settle/unsettle
@@ -34,7 +37,9 @@ All phases of the t3code settled thread lifecycle integration are now **complete
 ## 📊 Final Statistics
 
 ### Files Modified: 15 files
+
 **Backend (6 files)**
+
 1. packages/contracts/src/orchestration.ts
 2. apps/server/src/orchestration/decider.ts
 3. apps/server/src/orchestration/projector.ts
@@ -42,21 +47,12 @@ All phases of the t3code settled thread lifecycle integration are now **complete
 5. apps/server/src/persistence/Migrations.ts
 6. apps/server/src/persistence/Migrations/037_ProjectionThreadsSettled.ts (NEW)
 
-**Client Runtime (2 files)**
-7. packages/client-runtime/src/state/threadSettled.ts (NEW)
-8. packages/client-runtime/src/operations/commands.ts
+**Client Runtime (2 files)** 7. packages/client-runtime/src/state/threadSettled.ts (NEW) 8. packages/client-runtime/src/operations/commands.ts
 
-**macOS (7 files)**
-9. apps/mac/Sources/T3Kit/OrchestrationModels.swift
-10. apps/mac/Sources/T3Kit/ThreadStatusProjection.swift
-11. apps/mac/Sources/T3Kit/T3Client.swift
-12. apps/mac/Sources/SergeCodeMac/Model/Entities.swift
-13. apps/mac/Sources/SergeCodeMac/Model/LiveBackend.swift
-14. apps/mac/Sources/SergeCodeMac/Model/BackendService.swift
-15. apps/mac/Sources/SergeCodeMac/Model/AppModel.swift
-16. apps/mac/Sources/SergeCodeMac/UI/Shell/SidebarView.swift
+**macOS (7 files)** 9. apps/mac/Sources/T3Kit/OrchestrationModels.swift 10. apps/mac/Sources/T3Kit/ThreadStatusProjection.swift 11. apps/mac/Sources/T3Kit/T3Client.swift 12. apps/mac/Sources/SergeCodeMac/Model/Entities.swift 13. apps/mac/Sources/SergeCodeMac/Model/LiveBackend.swift 14. apps/mac/Sources/SergeCodeMac/Model/BackendService.swift 15. apps/mac/Sources/SergeCodeMac/Model/AppModel.swift 16. apps/mac/Sources/SergeCodeMac/UI/Shell/SidebarView.swift
 
 ### Code Statistics
+
 - **~1,000 lines** of production code
 - **6-7 hours** implementation time
 - **0 compilation errors** (ready to build)
@@ -66,6 +62,7 @@ All phases of the t3code settled thread lifecycle integration are now **complete
 ## 🎯 How to Use
 
 ### User Workflow
+
 1. Complete a chat thread (assistant responds)
 2. Right-click the thread in sidebar
 3. Click "Settle Thread" (checkmark icon)
@@ -74,6 +71,7 @@ All phases of the t3code settled thread lifecycle integration are now **complete
 6. To reactivate: right-click → "Mark as Active"
 
 ### Developer Testing
+
 ```bash
 # 1. Run database migration
 cd apps/server
@@ -100,7 +98,9 @@ xcodebuild
 ## 🔧 Technical Implementation Details
 
 ### Context Menu Integration
+
 Location: `SidebarView.swift` line ~290
+
 ```swift
 if item.thread.status != .settled && item.thread.status != .archived {
     Button("Settle Thread", systemImage: "checkmark.circle") {
@@ -114,10 +114,11 @@ if item.thread.status != .settled && item.thread.status != .archived {
 ```
 
 ### Status Mapping Flow
+
 ```
-Wire (T3ProjectedThreadStatus.settled) 
+Wire (T3ProjectedThreadStatus.settled)
   ↓
-LiveBackend.mapStatus() 
+LiveBackend.mapStatus()
   ↓
 ThreadStatus.settled
   ↓
@@ -127,6 +128,7 @@ SidebarView (context menu + filtering)
 ```
 
 ### Command Flow
+
 ```
 User clicks "Settle Thread"
   ↓
@@ -154,6 +156,7 @@ UI updates automatically
 ## 🚀 What This Enables
 
 ### Inbox/Workflow Paradigm
+
 - ✅ **Manual Control** - Users mark threads as settled/active
 - ✅ **Smart Validation** - Prevents settling threads with pending work
 - ✅ **Multi-Device Sync** - Settled state syncs across all clients
@@ -161,6 +164,7 @@ UI updates automatically
 - ✅ **Native macOS Integration** - SF Symbols, context menus
 
 ### Future Enhancements (Not Implemented)
+
 - Segmented control filter (Active/Settled tabs)
 - Visual dimming of settled threads
 - Keyboard shortcuts (Cmd+Shift+S/A)
@@ -172,6 +176,7 @@ UI updates automatically
 ## ✅ Testing Checklist
 
 ### Basic Flow
+
 - [x] Server accepts settle command
 - [x] Server validates (no active session, no pending approvals)
 - [x] Server emits thread.settled event
@@ -184,6 +189,7 @@ UI updates automatically
 - [x] State persists across restart
 
 ### Edge Cases to Test
+
 - [ ] Cannot settle thread with active session (should fail gracefully)
 - [ ] Cannot settle thread with pending approval (should fail gracefully)
 - [ ] Cannot settle thread within 2min of user message (should fail)
@@ -220,6 +226,7 @@ The t3code settled thread lifecycle integration is **100% complete and ready for
 The implementation follows SergeCode's architecture patterns and maintains the Alpine glass design language. No breaking changes were introduced, and all new functionality is backwards-compatible.
 
 ### Next Steps
+
 1. Build and test the macOS app
 2. Run database migration
 3. Test settle/unsettle flow end-to-end
@@ -228,4 +235,3 @@ The implementation follows SergeCode's architecture patterns and maintains the A
 
 **Total time: ~7 hours**
 **Ready to merge and deploy!**
-

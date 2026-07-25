@@ -97,7 +97,9 @@ function normalizeGitHubPullRequestRecord(
       : {}),
     ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
-    ...(trimOptionalString(raw.headRefOid) ? { headRefOid: trimOptionalString(raw.headRefOid) } : {}),
+    ...(trimOptionalString(raw.headRefOid)
+      ? { headRefOid: trimOptionalString(raw.headRefOid) }
+      : {}),
   };
 }
 

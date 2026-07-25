@@ -30,11 +30,11 @@ Linear: [SER-139](https://linear.app/sergedev/issue/SER-139/need-a-quick-chatopt
 
 ## Workspace
 
-| Field | Value |
-|--------|--------|
-| Path | `~/Documents/SergeCode/General` (tilde-expanded) |
-| Project title | `General` |
-| Create missing dir | `createWorkspaceRootIfMissing: true` |
+| Field              | Value                                            |
+| ------------------ | ------------------------------------------------ |
+| Path               | `~/Documents/SergeCode/General` (tilde-expanded) |
+| Project title      | `General`                                        |
+| Create missing dir | `createWorkspaceRootIfMissing: true`             |
 
 Match an existing project by **normalized workspace path** (expand `~`,
 standardize, strip trailing slashes). Reuse it; do not create a second project
@@ -57,10 +57,10 @@ Worktree mode is unchanged: non-git workspaces already skip worktree creation.
 
 ## UI (macOS)
 
-| Surface | Control |
-|---------|---------|
-| Empty state | **Quick Chat** (primary) + **New Session** |
-| Toolbar `+` menu | **Quick Chat** above **Choose Target…** |
+| Surface                | Control                                                  |
+| ---------------------- | -------------------------------------------------------- |
+| Empty state            | **Quick Chat** (primary) + **New Session**               |
+| Toolbar `+` menu       | **Quick Chat** above **Choose Target…**                  |
 | File menu (`.newItem`) | **Quick Chat** (`⌘⇧N`) + existing **New Session** (`⌘N`) |
 
 New Session sheet is unchanged.

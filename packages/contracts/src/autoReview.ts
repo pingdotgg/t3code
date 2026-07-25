@@ -60,8 +60,9 @@ export const AutoReviewSettings = Schema.Struct({
 });
 export type AutoReviewSettings = typeof AutoReviewSettings.Type;
 
-export const DEFAULT_AUTO_REVIEW_SETTINGS: AutoReviewSettings =
-  Schema.decodeSync(AutoReviewSettings)({});
+export const DEFAULT_AUTO_REVIEW_SETTINGS: AutoReviewSettings = Schema.decodeSync(
+  AutoReviewSettings,
+)({});
 
 export const AutoReviewSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),

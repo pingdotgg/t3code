@@ -1,11 +1,35 @@
 import Darwin
 import Foundation
 
-/// Resolves the dev-build default location of the t3 server entry point,
-/// mirroring ARCHITECTURE.md's `<repoRoot>/apps/server/dist/bin.mjs`.
-/// Packaged builds must inject an explicit `entryPath` instead (bundling a
-/// Node runtime + server into the .app is a post-v1 packaging task).
+/// Resolves the t3 server entry point. Packaged builds embed the server
+/// bundle at `Contents/Resources/SergeCodeServer/bin.mjs` (assembled by
+/// `apps/mac/scripts/stage-sidecar.sh`) and prefer it; dev builds fall back
+/// to `<repoRoot>/apps/server/dist/bin.mjs`, mirroring ARCHITECTURE.md.
 public enum SidecarEntryPathResolver {
+    /// Path of the bundled server entry relative to the bundle's resource
+    /// directory. Kept in sync with `apps/mac/scripts/make-app.sh`.
+    public static let bundledEntryResourcePath = "SergeCodeServer/bin.mjs"
+
+    /// The bundled server entry inside the app bundle, or `nil` when the
+    /// bundle does not embed one (dev builds). Pass an explicit
+    /// `resourceURL` in tests; production callers use the `bundle:` overload.
+    public static func bundledEntryPath(
+        resourceURL: URL?,
+        fileManager: FileManager = .default
+    ) -> String? {
+        guard let resourceURL else { return nil }
+        let candidate = resourceURL.appendingPathComponent(bundledEntryResourcePath)
+        return fileManager.fileExists(atPath: candidate.path) ? candidate.path : nil
+    }
+
+    /// `Bundle.main` overload of `bundledEntryPath(resourceURL:fileManager:)`.
+    public static func bundledEntryPath(
+        bundle: Bundle = .main,
+        fileManager: FileManager = .default
+    ) -> String? {
+        bundledEntryPath(resourceURL: bundle.resourceURL, fileManager: fileManager)
+    }
+
     /// Walks up from this source file's on-disk location
     /// (`apps/mac/Sources/SidecarKit/SidecarConfig.swift`) to the repo root,
     /// then appends `apps/server/dist/bin.mjs`. Only meaningful for local
@@ -96,9 +120,10 @@ public struct SidecarConfig: Sendable {
 
     /// - Parameters:
     ///   - nodePath: Absolute path to a `node` binary, typically from
-    ///     `NodeRuntimeLocator.locate()`.
+    ///     `NodeRuntimeLocator.locate()` or `NodeRuntimeLocator.bundledNodePath()`.
     ///   - entryPath: Path to `dist/bin.mjs`. Defaults to the dev-checkout
-    ///     location; packaged builds must override this.
+    ///     location; packaged builds pass the bundled resource from
+    ///     `SidecarEntryPathResolver.bundledEntryPath()` instead.
     ///   - port: Loopback port to bind. Defaults to `FreePortPicker.pick()`;
     ///     pass a fixed value to override.
     ///   - baseDir: Server state directory. Defaults to

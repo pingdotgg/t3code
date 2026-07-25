@@ -3,6 +3,7 @@
 ## Completed: Phase 1 - Backend Foundation (Partial)
 
 ### ✅ Contracts Layer (packages/contracts/src/orchestration.ts)
+
 - Added `ThreadSettleCommand` schema
 - Added `ThreadUnsettleCommand` schema with "user" reason
 - Added `ThreadSettledPayload` schema (threadId, settledAt, updatedAt)
@@ -12,6 +13,7 @@
 - Added commands to ClientOrchestrationCommand union
 
 ### ✅ Server Orchestration Decider (apps/server/src/orchestration/decider.ts)
+
 - Added helper constants:
   - `QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000` (2 minutes)
 - Added helper functions:
@@ -29,6 +31,7 @@
   - Emits `thread.unsettled` event with reason
 
 ### ✅ Server Orchestration Projector (apps/server/src/orchestration/projector.ts)
+
 - Added `ThreadSettledPayload` and `ThreadUnsettledPayload` imports
 - Implemented `thread.settled` event reducer:
   - Sets `settledOverride = "settled"`
@@ -40,10 +43,12 @@
   - Updates `updatedAt`
 
 ### ✅ Server Orchestration Schemas (apps/server/src/orchestration/Schemas.ts)
+
 - Added `ThreadSettledPayload` export
 - Added `ThreadUnsettledPayload` export
 
 ### ✅ Database Migration (apps/server/src/persistence/Migrations/)
+
 - Created `037_ProjectionThreadsSettled.ts` migration
 - Adds `settled_override TEXT` column (nullable)
 - Adds `settled_at TEXT` column (nullable ISO timestamp)
@@ -54,6 +59,7 @@
 ## TODO: Phase 1 - Backend Foundation (Remaining)
 
 ### ⏳ Thread Model Schema Updates
+
 - [ ] Update `OrchestrationThread` type in contracts to include:
   - `settledOverride?: "settled" | "active" | null`
   - `settledAt?: string | null`
@@ -61,11 +67,13 @@
 - [ ] Update thread shell snapshots to include settled state
 
 ### ⏳ Projection Pipeline Updates
+
 - [ ] Add settled state computation logic
 - [ ] Implement automatic unsettle on new activity
 - [ ] Handle settled state in thread lifecycle transitions
 
 ### ⏳ Testing
+
 - [ ] Unit tests for settle/unsettle command handlers
 - [ ] Unit tests for settled event reducers
 - [ ] Integration tests for settled lifecycle
@@ -80,6 +88,7 @@
 ## TODO: Phase 2 - Client Runtime Integration
 
 ### ⏳ Thread Settled State (packages/client-runtime/)
+
 - [ ] Create `src/state/threadSettled.ts`:
   - `effectiveSettled()` atom function
   - `canSettle()` validation logic
@@ -91,6 +100,7 @@
 - [ ] Wire commands to orchestration RPC API
 
 ### ⏳ Thread Shell Updates
+
 - [ ] Subscribe to settled state changes
 - [ ] Update thread list filtering for settled threads
 - [ ] Handle settled state in thread status projection
@@ -100,18 +110,21 @@
 ## TODO: Phase 3 - macOS Native UI
 
 ### ⏳ Swift UI Components (apps/mac/Sources/)
+
 - [ ] Create `ThreadListView.swift` - Main flat thread list
 - [ ] Create `ThreadRowView.swift` - Individual thread row with settled indicator
 - [ ] Create `ThreadContextMenu.swift` - Right-click actions (settle/unsettle)
 - [ ] Create `ThreadStatusBadge.swift` - Visual status indicators
 
 ### ⏳ T3Kit RPC Extensions (apps/mac/Sources/T3Kit/)
+
 - [ ] Add `settleThread()` RPC method
 - [ ] Add `unsettleThread()` RPC method
 - [ ] Extend `ThreadStatusProjection` with settled fields
 - [ ] Update `ServerModels.swift` with settled state types
 
 ### ⏳ UI/UX Design
+
 - [ ] Design segmented control (Active | Settled) for sidebar
 - [ ] Apply Alpine glass chrome styling
 - [ ] Add SF Symbols for settled state icons
@@ -123,17 +136,20 @@
 ## TODO: Phase 4 - Testing & Polish
 
 ### ⏳ Integration Testing
+
 - [ ] Test settle/unsettle RPC flow end-to-end
 - [ ] Test thread list filtering (active vs settled)
 - [ ] Test offline mode behavior with settled state
 - [ ] Test settled state persistence across restarts
 
 ### ⏳ Performance Testing
+
 - [ ] Benchmark thread list rendering with 100+ threads
 - [ ] Verify no memory leaks in settled state subscriptions
 - [ ] Test database query performance with settled filters
 
 ### ⏳ User Acceptance Testing
+
 - [ ] Validate settled workflow feels intuitive
 - [ ] Ensure visual design matches SergeCode identity
 - [ ] Test accessibility (VoiceOver, keyboard navigation)
@@ -143,20 +159,23 @@
 ## Architecture Notes
 
 ### Settled State Model
+
 ```typescript
 type SettledOverride = "settled" | "active" | null;
 
 // "settled" - User explicitly settled, stays settled
-// "active"  - User explicitly unsettled, stays active  
+// "active"  - User explicitly unsettled, stays active
 // null      - No override, use computed settled state
 ```
 
 ### Settled State Priority
+
 1. User override (`settledOverride`) takes precedence
 2. Fallback to computed state based on session/turn status
 3. Auto-unsettle on new user message or activity
 
 ### Database Schema
+
 ```sql
 ALTER TABLE projection_threads ADD COLUMN settled_override TEXT;
 ALTER TABLE projection_threads ADD COLUMN settled_at TEXT;
@@ -180,12 +199,12 @@ ALTER TABLE projection_threads ADD COLUMN settled_at TEXT;
 3. Begin macOS UI prototyping with flat thread list
 4. Create integration tests for full settled lifecycle
 
-
 ---
 
 ## ✅ COMPLETED: Phase 2 - Client Runtime Integration
 
 ### Thread Settled State (packages/client-runtime/src/state/threadSettled.ts)
+
 - ✅ Created complete module with all settled state logic
 - ✅ `effectiveSettled()` - Computes effective settled state
 - ✅ `canSettle()` - Client-side validation
@@ -194,14 +213,15 @@ ALTER TABLE projection_threads ADD COLUMN settled_at TEXT;
 - ✅ `QUEUED_TURN_START_GRACE_MS` constant
 
 ### Contract Schema Updates
+
 - ✅ Added `settledOverride` and `settledAt` to `OrchestrationThreadShell`
 - ✅ Added `settledOverride` and `settledAt` to `OrchestrationThread`
 - ✅ Both fields properly typed with default values
 
 ### Command Dispatchers (packages/client-runtime/src/operations/commands.ts)
+
 - ✅ Added `SettleThreadInput` type
 - ✅ Added `UnsettleThreadInput` type
 - ✅ Implemented `settleThread()` command dispatcher
 - ✅ Implemented `unsettleThread()` command dispatcher
 - ✅ Both commands generate command IDs and dispatch to server
-

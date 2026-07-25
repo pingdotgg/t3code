@@ -2,9 +2,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  MessageId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationCommand,
   type OrchestrationThread,
   type OrchestrationThreadShell,
@@ -123,19 +125,20 @@ const makeThreadDetail = (
 const completedChildDetail = (threadId: ThreadId): OrchestrationThread =>
   makeThreadDetail(threadId, {
     latestTurn: {
-      turnId: "turn-1",
+      turnId: TurnId.make("turn-1"),
       state: "completed",
       requestedAt: "2026-04-12T00:00:00.000Z",
       startedAt: "2026-04-12T00:00:00.000Z",
       completedAt: "2026-04-12T00:01:00.000Z",
-      assistantMessageId: "assistant-1",
+      assistantMessageId: MessageId.make("assistant-1"),
     },
     messages: [
       {
-        id: "assistant-1",
+        id: MessageId.make("assistant-1"),
         role: "assistant",
         text: "All done.",
-        turnId: "turn-1",
+        turnId: TurnId.make("turn-1"),
+        streaming: false,
         createdAt: "2026-04-12T00:01:00.000Z",
         updatedAt: "2026-04-12T00:01:00.000Z",
       },
@@ -151,11 +154,7 @@ interface Harness {
 
 const makeCoordinator = (options?: {
   readonly parentShell?: (threadId: ThreadId) => OrchestrationThreadShell;
-}): Effect.Effect<
-  readonly [DelegateCoordinator["Service"], Harness],
-  never,
-  NodeServices.NodeServices
-> => {
+}): Effect.Effect<readonly [DelegateCoordinator["Service"], Harness], never, never> => {
   const dispatched: Array<OrchestrationCommand> = [];
   let threadDetailLookup: (threadId: ThreadId) => Option.Option<OrchestrationThread> = () =>
     Option.none();

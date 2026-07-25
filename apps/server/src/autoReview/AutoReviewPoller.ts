@@ -3,7 +3,12 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import type { AutoReviewSettings, ModelSelection, ProjectId, ServerSettings } from "@t3tools/contracts";
+import type {
+  AutoReviewSettings,
+  ModelSelection,
+  ProjectId,
+  ServerSettings,
+} from "@t3tools/contracts";
 import {
   clampAutoReviewPollIntervalMs,
   matchAutoReviewMention,
@@ -33,13 +38,11 @@ export interface AutoReviewPollerDeps {
   readonly getSettings: Effect.Effect<Pick<ServerSettings, "autoReview">, unknown>;
   readonly listProjects: Effect.Effect<ReadonlyArray<AutoReviewProjectSnapshot>, unknown>;
   readonly isGitHubProject: (cwd: string) => Effect.Effect<boolean, unknown>;
-  readonly contextForJob: (
-    job: {
-      readonly projectId: string;
-      readonly prNumber: number;
-      readonly headSha: string;
-    },
-  ) => Effect.Effect<AutoReviewRunner.AutoReviewOriginContext, unknown>;
+  readonly contextForJob: (job: {
+    readonly projectId: string;
+    readonly prNumber: number;
+    readonly headSha: string;
+  }) => Effect.Effect<AutoReviewRunner.AutoReviewOriginContext, unknown>;
 }
 
 export const make = (deps: AutoReviewPollerDeps) =>
@@ -144,11 +147,15 @@ export const make = (deps: AutoReviewPollerDeps) =>
 
       yield* runner
         .drain(
-          (job) => deps.contextForJob(job).pipe(Effect.orElseSucceed(() => ({ cwd: "", candidates: [] }))),
+          (job) =>
+            deps.contextForJob(job).pipe(Effect.orElseSucceed(() => ({ cwd: "", candidates: [] }))),
           settings.autoReview.concurrency,
         )
         .pipe(Effect.orElseSucceed(() => 0));
-    }).pipe(Effect.orElseSucceed(() => undefined), Effect.asVoid);
+    }).pipe(
+      Effect.orElseSucceed(() => undefined),
+      Effect.asVoid,
+    );
 
     const start: AutoReviewPoller["Service"]["start"] = Effect.gen(function* () {
       yield* store.requeueRunning();
@@ -156,7 +163,9 @@ export const make = (deps: AutoReviewPollerDeps) =>
         return;
       }
       const settings = yield* deps.getSettings.pipe(
-        Effect.orElseSucceed(() => ({ autoReview: { pollInterval: Duration.seconds(60) } as AutoReviewSettings })),
+        Effect.orElseSucceed(() => ({
+          autoReview: { pollInterval: Duration.seconds(60) } as AutoReviewSettings,
+        })),
       );
       const pollMs = clampAutoReviewPollIntervalMs(
         Duration.toMillis(settings.autoReview.pollInterval ?? Duration.seconds(60)),
@@ -171,7 +180,10 @@ export const make = (deps: AutoReviewPollerDeps) =>
       if (!fiberRef.current) {
         return;
       }
-      yield* Fiber.interrupt(fiberRef.current).pipe(Effect.asVoid, Effect.orElseSucceed(() => undefined));
+      yield* Fiber.interrupt(fiberRef.current).pipe(
+        Effect.asVoid,
+        Effect.orElseSucceed(() => undefined),
+      );
       fiberRef.current = null;
     });
 

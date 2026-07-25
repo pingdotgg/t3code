@@ -35,10 +35,7 @@ export interface AutoReviewOriginContext {
 export class AutoReviewRunner extends Context.Service<
   AutoReviewRunner,
   {
-    readonly runJob: (
-      jobId: string,
-      context: AutoReviewOriginContext,
-    ) => Effect.Effect<void>;
+    readonly runJob: (jobId: string, context: AutoReviewOriginContext) => Effect.Effect<void>;
     readonly drain: (
       contextForJob: (job: {
         readonly projectId: string;
@@ -82,12 +79,12 @@ export const make = Effect.gen(function* () {
 
       const prReference = String(job.prNumber);
 
-      const diff = yield* github.getPullRequestDiff({
-        cwd: context.cwd,
-        reference: prReference,
-      }).pipe(
-        Effect.mapError((error) => error),
-      );
+      const diff = yield* github
+        .getPullRequestDiff({
+          cwd: context.cwd,
+          reference: prReference,
+        })
+        .pipe(Effect.mapError((error) => error));
 
       if (!diff.trim()) {
         yield* store.update(job.id, {
@@ -161,20 +158,17 @@ export const make = Effect.gen(function* () {
       });
 
       let autoFixEnqueued = false;
-      if (
-        originThreadId &&
-        shouldAutoFixOriginThread(findings) &&
-        context.dispatchFixPrompt
-      ) {
+      if (originThreadId && shouldAutoFixOriginThread(findings) && context.dispatchFixPrompt) {
         const prompt = buildOriginFixPrompt({
           prNumber: job.prNumber,
           prUrl: prMeta.url,
           headSha: job.headSha,
           findings,
         });
-        yield* context
-          .dispatchFixPrompt({ threadId: originThreadId, prompt })
-          .pipe(Effect.asVoid, Effect.orElseSucceed(() => undefined));
+        yield* context.dispatchFixPrompt({ threadId: originThreadId, prompt }).pipe(
+          Effect.asVoid,
+          Effect.orElseSucceed(() => undefined),
+        );
         autoFixEnqueued = true;
       }
 
@@ -238,4 +232,3 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(AutoReviewRunner, make);
-

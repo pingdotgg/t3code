@@ -3,14 +3,16 @@
 ## ✅ Backend Verification
 
 ### Contracts
+
 - [x] ThreadSettleCommand defined
-- [x] ThreadUnsettleCommand defined  
+- [x] ThreadUnsettleCommand defined
 - [x] ThreadSettledPayload defined
 - [x] ThreadUnsettledPayload defined
 - [x] Commands added to unions
 - [x] Thread models have settled fields
 
 ### Server
+
 - [x] Decider handles thread.settle
 - [x] Decider handles thread.unsettle
 - [x] Projector handles thread.settled event
@@ -30,6 +32,7 @@
 ## ✅ macOS/Swift Verification
 
 ### T3Kit
+
 - [x] OrchestrationThreadShell has settled fields
 - [x] ThreadSettleCommand struct
 - [x] ThreadUnsettleCommand struct
@@ -40,6 +43,7 @@
 - [x] T3Client.unsettleThread() method
 
 ### SergeCodeMac
+
 - [x] ThreadStatus.settled case
 - [x] LiveBackend.mapStatus() updated
 - [x] LiveBackend.settleThread() implemented
@@ -59,8 +63,8 @@ Total: 24 files
 ## ✅ Ready for Testing
 
 All implementation tasks are complete. The code is ready for:
+
 1. Compilation
 2. Database migration
 3. End-to-end testing
 4. Production deployment
-

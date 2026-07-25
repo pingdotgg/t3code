@@ -57,9 +57,7 @@ export const layer = Layer.effectDiscard(
         ),
       contextForJob: (job) =>
         Effect.gen(function* () {
-          const shell = yield* snapshots.getShellSnapshot().pipe(
-            Effect.orElseSucceed(() => null),
-          );
+          const shell = yield* snapshots.getShellSnapshot().pipe(Effect.orElseSucceed(() => null));
           if (!shell) {
             return { cwd: "", candidates: [] };
           }
@@ -68,8 +66,7 @@ export const layer = Layer.effectDiscard(
             cwd: project?.workspaceRoot ?? "",
             candidates: shell.threads
               .filter(
-                (thread) =>
-                  String(thread.projectId) === job.projectId && thread.archivedAt == null,
+                (thread) => String(thread.projectId) === job.projectId && thread.archivedAt == null,
               )
               .map((thread) => ({
                 threadId: String(thread.id),

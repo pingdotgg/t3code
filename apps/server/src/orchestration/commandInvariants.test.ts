@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vite-plus/test";
+import { assert, it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 import {
   MessageId,
   CommandId,
@@ -131,30 +132,29 @@ describe("commandInvariants", () => {
     ).toEqual([ThreadId.make("thread-2")]);
   });
 
-  it("requires existing thread", async () => {
-    const thread = await Effect.runPromise(
-      requireThread({
+  it.effect("requires existing thread", () =>
+    Effect.gen(function* () {
+      const thread = yield* requireThread({
         readModel,
         command: messageSendCommand,
         threadId: ThreadId.make("thread-1"),
-      }),
-    );
-    expect(thread.id).toBe(ThreadId.make("thread-1"));
+      });
+      expect(thread.id).toBe(ThreadId.make("thread-1"));
 
-    await expect(
-      Effect.runPromise(
+      const missingError = yield* Effect.flip(
         requireThread({
           readModel,
           command: messageSendCommand,
           threadId: ThreadId.make("missing"),
         }),
-      ),
-    ).rejects.toThrow("does not exist");
-  });
+      );
+      assert.include(missingError.detail, "does not exist");
+    }),
+  );
 
-  it("requires missing thread for create flows", async () => {
-    await Effect.runPromise(
-      requireThreadAbsent({
+  it.effect("requires missing thread for create flows", () =>
+    Effect.gen(function* () {
+      yield* requireThreadAbsent({
         readModel,
         command: {
           type: "thread.create",
@@ -174,11 +174,9 @@ describe("commandInvariants", () => {
           createdAt: now,
         },
         threadId: ThreadId.make("thread-3"),
-      }),
-    );
+      });
 
-    await expect(
-      Effect.runPromise(
+      const duplicateError = yield* Effect.flip(
         requireThreadAbsent({
           readModel,
           command: {
@@ -200,43 +198,42 @@ describe("commandInvariants", () => {
           },
           threadId: ThreadId.make("thread-1"),
         }),
-      ),
-    ).rejects.toThrow("already exists");
-  });
+      );
+      assert.include(duplicateError.detail, "already exists");
+    }),
+  );
 
-  it("validates parentThreadId on create flows", async () => {
-    const createCommand = (threadId: string, parentThreadId: string): OrchestrationCommand => ({
-      type: "thread.create",
-      commandId: CommandId.make("cmd-parent"),
-      threadId: ThreadId.make(threadId),
-      projectId: ProjectId.make("project-a"),
-      title: "child",
-      modelSelection: {
-        instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5-codex",
-      },
-      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-      runtimeMode: "full-access",
-      branch: null,
-      worktreePath: null,
-      parentThreadId: ThreadId.make(parentThreadId),
-      createdAt: now,
-    });
+  it.effect("validates parentThreadId on create flows", () =>
+    Effect.gen(function* () {
+      const createCommand = (threadId: string, parentThreadId: string): OrchestrationCommand => ({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-parent"),
+        threadId: ThreadId.make(threadId),
+        projectId: ProjectId.make("project-a"),
+        title: "child",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        parentThreadId: ThreadId.make(parentThreadId),
+        createdAt: now,
+      });
 
-    // Existing same-project parent passes.
-    await Effect.runPromise(
-      requireValidParentThread({
+      // Existing same-project parent passes.
+      yield* requireValidParentThread({
         readModel,
         command: createCommand("thread-3", "thread-1"),
         threadId: ThreadId.make("thread-3"),
         projectId: ProjectId.make("project-a"),
         parentThreadId: ThreadId.make("thread-1"),
-      }),
-    );
+      });
 
-    // Self-parent is rejected.
-    await expect(
-      Effect.runPromise(
+      // Self-parent is rejected.
+      const selfParentError = yield* Effect.flip(
         requireValidParentThread({
           readModel,
           command: createCommand("thread-3", "thread-3"),
@@ -244,12 +241,11 @@ describe("commandInvariants", () => {
           projectId: ProjectId.make("project-a"),
           parentThreadId: ThreadId.make("thread-3"),
         }),
-      ),
-    ).rejects.toThrow("cannot be its own parent");
+      );
+      assert.include(selfParentError.detail, "cannot be its own parent");
 
-    // Unknown parent is rejected.
-    await expect(
-      Effect.runPromise(
+      // Unknown parent is rejected.
+      const missingParentError = yield* Effect.flip(
         requireValidParentThread({
           readModel,
           command: createCommand("thread-3", "thread-missing"),
@@ -257,12 +253,11 @@ describe("commandInvariants", () => {
           projectId: ProjectId.make("project-a"),
           parentThreadId: ThreadId.make("thread-missing"),
         }),
-      ),
-    ).rejects.toThrow("does not exist");
+      );
+      assert.include(missingParentError.detail, "does not exist");
 
-    // Cross-project parent is rejected.
-    await expect(
-      Effect.runPromise(
+      // Cross-project parent is rejected.
+      const crossProjectError = yield* Effect.flip(
         requireValidParentThread({
           readModel,
           command: createCommand("thread-3", "thread-2"),
@@ -270,27 +265,27 @@ describe("commandInvariants", () => {
           projectId: ProjectId.make("project-a"),
           parentThreadId: ThreadId.make("thread-2"),
         }),
-      ),
-    ).rejects.toThrow("belongs to project");
-  });
+      );
+      assert.include(crossProjectError.detail, "belongs to project");
+    }),
+  );
 
-  it("requires non-negative integers", async () => {
-    await Effect.runPromise(
-      requireNonNegativeInteger({
+  it.effect("requires non-negative integers", () =>
+    Effect.gen(function* () {
+      yield* requireNonNegativeInteger({
         commandType: "thread.checkpoint.revert",
         field: "turnCount",
         value: 0,
-      }),
-    );
+      });
 
-    await expect(
-      Effect.runPromise(
+      const negativeError = yield* Effect.flip(
         requireNonNegativeInteger({
           commandType: "thread.checkpoint.revert",
           field: "turnCount",
           value: -1,
         }),
-      ),
-    ).rejects.toThrow("greater than or equal to 0");
-  });
+      );
+      assert.include(negativeError.detail, "greater than or equal to 0");
+    }),
+  );
 });

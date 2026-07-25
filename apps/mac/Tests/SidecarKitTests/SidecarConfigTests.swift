@@ -14,6 +14,33 @@ struct SidecarConfigTests {
         #expect(entryPath == "/Users/dev/SergeCode/apps/server/dist/bin.mjs")
     }
 
+    @Test("bundled entry path resolves SergeCodeServer/bin.mjs under the bundle resources")
+    func bundledEntryPath() throws {
+        let resourceDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sergecode-entry-resolver-\(UUID().uuidString)")
+        let serverDir = resourceDir.appendingPathComponent("SergeCodeServer")
+        try FileManager.default.createDirectory(at: serverDir, withIntermediateDirectories: true)
+        let entry = serverDir.appendingPathComponent("bin.mjs")
+        guard FileManager.default.createFile(atPath: entry.path, contents: Data()) else {
+            throw NSError(domain: "SidecarConfigTests", code: 1)
+        }
+        defer { try? FileManager.default.removeItem(at: resourceDir) }
+
+        let resolved = SidecarEntryPathResolver.bundledEntryPath(resourceURL: resourceDir)
+        #expect(resolved == entry.path)
+    }
+
+    @Test("bundled entry path is nil when the bundle embeds no server")
+    func bundledEntryPathMissing() throws {
+        let resourceDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sergecode-entry-resolver-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: resourceDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: resourceDir) }
+
+        #expect(SidecarEntryPathResolver.bundledEntryPath(resourceURL: resourceDir) == nil)
+        #expect(SidecarEntryPathResolver.bundledEntryPath(resourceURL: nil) == nil)
+    }
+
     @Test("default base dir lives under Application Support/SergeCode")
     func defaultBaseDir() {
         let baseDir = SidecarConfig.defaultBaseDir()
