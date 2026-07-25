@@ -21,6 +21,7 @@ public struct ChangesTimelineView: View {
     @UIState private var hoveredCheckpointID: String?
     @UIState private var hoveredFilePath: String?
     @UIState private var changesCollapsed = false
+    @UIState private var changesFilesExpanded = false
     @UIState private var historyCollapsed = false
 
     public init(model: AppModel, threadID: String) {
@@ -54,17 +55,27 @@ public struct ChangesTimelineView: View {
     /// content while a turn is in flight.
     private var recentToolEvents: [RecentToolEvent] {
         let timeline = model.threadState(threadID)?.timeline ?? []
-        let events = timeline.compactMap { item -> RecentToolEvent? in
+        // Reverse-scan and stop at 3: this runs on every body pass while the
+        // timeline streams, so a full compactMap would be an O(n) allocation
+        // on a hot path.
+        var events: [RecentToolEvent] = []
+        events.reserveCapacity(3)
+        for item in timeline.reversed() {
             guard
                 case .toolEvent(let id, let name, let detail, let kind, let status, _, _, _) = item
-            else { return nil }
-            return RecentToolEvent(id: id, name: name, detail: detail, kind: kind, status: status)
+            else { continue }
+            events.append(
+                RecentToolEvent(id: id, name: name, detail: detail, kind: kind, status: status))
+            if events.count == 3 { break }
         }
-        return Array(events.suffix(3).reversed())
+        return events
     }
 
     private var showsNow: Bool {
-        isRunning || recentToolEvents.contains { $0.status == .running }
+        // Trust the thread status only: an interrupted turn (cancel, session
+        // restart, cut stream) can leave a trailing tool event stuck at
+        // `.running`, which would pin the live card at the top forever.
+        isRunning
     }
 
     private var isEmpty: Bool {
@@ -289,9 +300,14 @@ public struct ChangesTimelineView: View {
             .padding(.horizontal, 12)
 
             if !changesCollapsed {
+                // Bound the eager inner VStack: the outer LazyVStack only
+                // defers this section as one unit, so an uncapped list would
+                // materialize every row of a large working tree at once.
+                let visibleFiles =
+                    changesFilesExpanded ? fullDiff : Array(fullDiff.prefix(12))
                 VStack(alignment: .leading, spacing: 2) {
                     allChangesRow
-                    ForEach(Array(fullDiff.enumerated()), id: \.element.id) { index, file in
+                    ForEach(Array(visibleFiles.enumerated()), id: \.element.id) { index, file in
                         Button {
                             withAnimation(Motion.structure) {
                                 model.openReview(
@@ -302,6 +318,23 @@ public struct ChangesTimelineView: View {
                         }
                         .buttonStyle(.plain)
                         .entrance(.row, index: index)
+                    }
+                    if fullDiff.count > 12 {
+                        Button {
+                            withAnimation(Motion.structure) {
+                                changesFilesExpanded.toggle()
+                            }
+                        } label: {
+                            Text(
+                                changesFilesExpanded
+                                    ? "Show less" : "Show \(fullDiff.count - 12) more"
+                            )
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 12)
                     }
                 }
                 .transition(Motion.unfold)
@@ -525,6 +558,11 @@ public struct ChangesTimelineView: View {
 
             restoreButton(checkpoint)
                 .opacity(hovered ? 1 : 0)
+                // Zero-opacity views still take hits and stay in the AX tree;
+                // keep the invisible destructive control out of both. The
+                // context menu still offers Restore for keyboard/VO users.
+                .allowsHitTesting(hovered)
+                .accessibilityHidden(!hovered)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 5)
@@ -667,16 +705,16 @@ public struct ChangesTimelineView: View {
     }
 
     private func checkpointKindStyle(_ kind: String) -> ToolActivityStyle {
-        switch kind.lowercased() {
-        case "added", "add", "a":
-            ToolActivityStyle(symbolName: "plus", tint: AlpineTheme.meadow)
-        case "deleted", "delete", "d":
-            ToolActivityStyle(symbolName: "minus", tint: AlpineTheme.clay)
-        case "renamed", "rename", "r":
-            ToolActivityStyle(symbolName: "arrow.right", tint: AlpineTheme.lavender)
-        default:
-            ToolActivityStyle(symbolName: "pencil", tint: AlpineTheme.sky)
-        }
+        // Normalize the raw wire string into a DiffFileStatus so the glyph/
+        // tint pairs live in exactly one place (`fileStatusStyle`).
+        let status: DiffFileStatus =
+            switch kind.lowercased() {
+            case "added", "add", "a": .added
+            case "deleted", "delete", "d": .deleted
+            case "renamed", "rename", "r": .renamed
+            default: .modified
+            }
+        return fileStatusStyle(status)
     }
 
     private func isCheckpointSelected(_ checkpoint: Checkpoint) -> Bool {
