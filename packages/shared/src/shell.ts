@@ -573,10 +573,6 @@ export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(functi
   options: CommandAvailabilityOptions = {},
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcessPlatform;
-  if (platform !== "win32") {
-    return { command, args: [...args], shell: false };
-  }
-
   const hostEnvironment = yield* HostProcessEnvironment;
   const env =
     options.env === undefined
@@ -586,6 +582,14 @@ export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(functi
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
   const resolvedCommand = resolveExecutable(command, platform, env) ?? command;
+  if (platform !== "win32") {
+    // Bun's compiled executable can fail inside unprivileged Incus/LXC
+    // containers when posix_spawnp must search PATH itself (EACCES for an
+    // otherwise executable command). Resolve PATH here so the spawner always
+    // receives an absolute executable when one is available.
+    return { command: resolvedCommand, args: [...args], shell: false };
+  }
+
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };
