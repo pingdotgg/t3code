@@ -229,6 +229,135 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("creates pull requests against the parent of an origin fork", () =>
+    Effect.gen(function* () {
+      mockRun
+        .mockReturnValueOnce(
+          Effect.succeed(processOutput("github.com/pingdotgg/t3code\tgithub.com/octocat/t3code\n")),
+        )
+        .mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.createPullRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature/fork-pr",
+        headRepository: "octocat/t3code",
+        title: "Target upstream",
+        bodyFile: "/tmp/pr-body.md",
+      });
+
+      expect(mockRun).toHaveBeenNthCalledWith(1, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "repo",
+          "view",
+          "octocat/t3code",
+          "--json",
+          "nameWithOwner,parent,url",
+          "--jq",
+          '. as $repo | (.url | capture("^https?://(?<host>[^/]+)").host) as $host | [if $repo.parent then "\\($host)/\\($repo.parent.owner.login)/\\($repo.parent.name)" else "\\($host)/\\($repo.nameWithOwner)" end, "\\($host)/\\($repo.nameWithOwner)"] | @tsv',
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "api",
+          "--hostname",
+          "github.com",
+          "repos/pingdotgg/t3code/pulls",
+          "--method",
+          "POST",
+          "-f",
+          "title=Target upstream",
+          "-f",
+          "head=octocat:feature/fork-pr",
+          "-f",
+          "head_repo=t3code",
+          "-f",
+          "base=main",
+          "-F",
+          "body=@/tmp/pr-body.md",
+          "--silent",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("creates pull requests from organization-owned forks through the API", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.createPullRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "acme:feature/fork-pr",
+        repository: "pingdotgg/t3code",
+        headRepository: "acme/t3code",
+        title: "Target upstream",
+        bodyFile: "/tmp/pr-body.md",
+      });
+
+      expect(mockRun).toHaveBeenCalledTimes(1);
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: expect.arrayContaining([
+          "repos/pingdotgg/t3code/pulls",
+          "head=acme:feature/fork-pr",
+          "head_repo=t3code",
+        ]),
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("uses the normal create command for same-repository pull requests", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.createPullRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature/local-pr",
+        repository: "pingdotgg/t3code",
+        headRepository: "pingdotgg/t3code",
+        title: "Local pull request",
+        bodyFile: "/tmp/pr-body.md",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "pr",
+          "create",
+          "--base",
+          "main",
+          "--head",
+          "feature/local-pr",
+          "--title",
+          "Local pull request",
+          "--body-file",
+          "/tmp/pr-body.md",
+          "--repo",
+          "github.com/pingdotgg/t3code",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("keeps pull requests from gh versions without headRepository.nameWithOwner", () =>
     // gh < 2.47 (e.g. Ubuntu-packaged 2.46) exports headRepository as
     // {id, name} only. These entries must decode instead of being dropped,

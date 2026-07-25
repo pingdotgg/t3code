@@ -1721,6 +1721,17 @@ export const make = Effect.gen(function* () {
         cwd,
         baseRefName: baseBranch,
         headSelector: headContext.preferredHeadSelector,
+        ...(headContext.headRepositoryNameWithOwner
+          ? {
+              source: {
+                refName: headContext.headBranch,
+                ...(headContext.headRepositoryOwnerLogin
+                  ? { owner: headContext.headRepositoryOwnerLogin }
+                  : {}),
+                repository: headContext.headRepositoryNameWithOwner,
+              },
+            }
+          : {}),
         title: generated.title,
         bodyFile,
       })

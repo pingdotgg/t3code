@@ -239,6 +239,47 @@ it.effect("creates GitHub PRs through provider-neutral input names", () =>
   }),
 );
 
+it.effect("passes upstream and fork repositories to GitHub PR creation", () =>
+  Effect.gen(function* () {
+    let createInput: Parameters<GitHubCli.GitHubCli["Service"]["createPullRequest"]>[0] | null =
+      null;
+    const provider = yield* makeProvider({
+      createPullRequest: (input) => {
+        createInput = input;
+        return Effect.void;
+      },
+    });
+
+    yield* provider.createChangeRequest({
+      cwd: "/repo",
+      context: {
+        provider: { kind: "github", name: "github.com", baseUrl: "https://github.com" },
+        remoteName: "upstream",
+        remoteUrl: "git@github.com:pingdotgg/t3code.git",
+      },
+      source: {
+        refName: "feature/provider",
+        owner: "octocat",
+        repository: "octocat/t3code",
+      },
+      baseRefName: "main",
+      headSelector: "octocat:feature/provider",
+      title: "Provider PR",
+      bodyFile: "/tmp/body.md",
+    });
+
+    assert.deepStrictEqual(createInput, {
+      cwd: "/repo",
+      baseBranch: "main",
+      headSelector: "octocat:feature/provider",
+      title: "Provider PR",
+      bodyFile: "/tmp/body.md",
+      repository: "pingdotgg/t3code",
+      headRepository: "octocat/t3code",
+    });
+  }),
+);
+
 it("accepts active authenticated GitHub accounts when another account fails", () => {
   const auth = GitHubSourceControlProvider.discovery.parseAuth(
     processResult(
