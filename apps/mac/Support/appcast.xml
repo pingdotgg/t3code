@@ -1,9 +1,18 @@
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
-  <channel>
-    <title>SurgeCode Releases</title>
-    <description>Release feed for SurgeCode macOS app</description>
-    <language>en</language>
-    <!-- CI will inject release items here -->
-  </channel>
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>SurgeCode Releases</title>
+        <description>Release feed for SurgeCode macOS app</description>
+        <language>en</language>
+        <!-- CI will inject release items here -->
+        <item>
+            <title>0.1.0-alpha.5</title>
+            <pubDate>Sat, 25 Jul 2026 03:23:38 +0000</pubDate>
+            <sparkle:version>5</sparkle:version>
+            <sparkle:shortVersionString>0.1.0-alpha.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.1.0-alpha.5/SurgeCode-0.1.0-alpha.5.zip" length="154547515" type="application/octet-stream" sparkle:edSignature="Tj/3Fu3R3rklBQFss+RORkcDLVOQeVnL1trJB6j6qXhuLGhIl98V7NhMn601A1ijfxG4+PFLzADvZ0naiEFIDg=="/>
+        </item>
+    </channel>
 </rss>
