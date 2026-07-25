@@ -4,6 +4,12 @@ import SwiftUI
 /// full-bleed Dolomites scene (rotates daily) behind a welcome hub with the
 /// brand, a time-aware greeting, and glass action cards, with the required
 /// Unsplash attribution in the corner.
+///
+/// Arrival is a cascade: the glass card settles with the hero spring while the
+/// brand, greeting, and action cards stagger in beneath it. The brand mark
+/// then keeps a slow breathing float so the hub feels alive rather than
+/// frozen; both the stagger and the float collapse to a plain fade under
+/// Reduce Motion.
 struct EmptyStateView: View {
     let scenery: SceneryStore
     var onQuickChat: () -> Void
@@ -40,19 +46,25 @@ struct EmptyStateView: View {
             VStack(spacing: 0) {
                 BrandMarkView(style: .fullColor)
                     .frame(width: 68, height: 68)
+                    .welcomeFloat()
                 BrandWordmark(size: 34)
                     .padding(.top, 16)
+                    .entrance(.card, index: 1)
                 Text(greeting)
                     .font(.title3.weight(.medium))
                     .foregroundStyle(.white.opacity(0.82))
                     .padding(.top, 5)
+                    .entrance(.card, index: 2)
                 Text("Select a session, start a quick chat, or choose a project.")
                     .font(SurgeTypography.agentStatus)
                     .foregroundStyle(.white.opacity(0.6))
                     .multilineTextAlignment(.center)
                     .padding(.top, 10)
+                    .entrance(.card, index: 3)
 
-                HStack(spacing: 12) {
+                // .top alignment + a fixed card height keep the two tiles level
+                // even though their detail lines wrap differently.
+                HStack(alignment: .top, spacing: 12) {
                     WelcomeActionCard(
                         icon: "bubble.left.and.bubble.right",
                         title: "Quick Chat",
@@ -60,6 +72,7 @@ struct EmptyStateView: View {
                         tint: AlpineTheme.accent,
                         action: onQuickChat
                     )
+                    .entrance(.card, index: 4)
                     .help("Start a general session in \(GeneralWorkspace.relativePath)")
 
                     WelcomeActionCard(
@@ -69,6 +82,7 @@ struct EmptyStateView: View {
                         tint: AlpineTheme.sky,
                         action: onNewSession
                     )
+                    .entrance(.card, index: 5)
                     .help("Choose a project and provider")
                 }
                 .padding(.top, 26)
@@ -84,6 +98,7 @@ struct EmptyStateView: View {
             if let featured {
                 SceneryAttributionTag(photo: featured)
                     .padding(10)
+                    .entrance(.control, index: 6)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -99,9 +114,40 @@ struct EmptyStateView: View {
     }
 }
 
+/// Slow breathing drift for the welcome brand mark: a small vertical float
+/// plus a soft sky glow that deepens at the top of the breath. Purely
+/// decorative and render-only, so it never re-measures the hub. Reduce Motion
+/// keeps the glow but drops the movement.
+private struct WelcomeFloatModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if Motion.reduceMotion {
+            content.shadow(color: AlpineTheme.sky.opacity(0.35), radius: 14, y: 5)
+        } else {
+            content.phaseAnimator([false, true]) { view, floating in
+                view
+                    .offset(y: floating ? -3.5 : 0)
+                    .shadow(
+                        color: AlpineTheme.sky.opacity(floating ? 0.5 : 0.28),
+                        radius: floating ? 20 : 12,
+                        y: floating ? 8 : 4)
+            } animation: { _ in
+                .easeInOut(duration: 1.8)
+            }
+        }
+    }
+}
+
+extension View {
+    fileprivate func welcomeFloat() -> some View {
+        modifier(WelcomeFloatModifier())
+    }
+}
+
 /// Glass action tile on the welcome hub: circular tinted glyph, title, and a
-/// one-line description. Hover lifts the fill and stroke; press eases a small
-/// scale — both through `Motion.feedback`.
+/// one-line description. Hover lifts the tile, brightens the glyph with a
+/// tinted glow, and gives the symbol a one-shot bounce; press eases a small
+/// scale — hover and lift through `Motion.feedback`, press through the card's
+/// button style.
 private struct WelcomeActionCard: View {
     let icon: String
     let title: String
@@ -110,6 +156,7 @@ private struct WelcomeActionCard: View {
     let action: () -> Void
 
     @UIState private var isHovering = false
+    @UIState private var hoverBeat = 0
 
     var body: some View {
         Button(action: action) {
@@ -119,6 +166,10 @@ private struct WelcomeActionCard: View {
                     .foregroundStyle(AlpineTheme.forest)
                     .frame(width: 38, height: 38)
                     .background(tint.opacity(isHovering ? 1 : 0.85), in: Circle())
+                    .shadow(color: tint.opacity(isHovering ? 0.55 : 0), radius: 10)
+                    // A beat per hover entry, not per hover exit, so the glyph
+                    // only bounces as the pointer arrives.
+                    .symbolEffect(.bounce, value: hoverBeat)
 
                 Text(title)
                     .font(.headline)
@@ -131,8 +182,12 @@ private struct WelcomeActionCard: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(width: 190, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(16)
+            // Fixed height, not maxHeight: a Button sizes to its label instead
+            // of stretching it, so sibling cards can only stay level if the
+            // label itself pins the height. Sized for two detail lines.
+            .frame(width: 190, height: 148, alignment: .topLeading)
             .contentShape(
                 RoundedRectangle(
                     cornerRadius: AlpineTheme.Corners.hero, style: .continuous))
@@ -151,7 +206,13 @@ private struct WelcomeActionCard: View {
             }
         }
         .buttonStyle(WelcomeActionCardButtonStyle())
-        .onHover { isHovering = $0 }
+        .offset(y: isHovering ? -3 : 0)
+        .onHover { hovering in
+            isHovering = hovering
+            if hovering, !Motion.reduceMotion {
+                hoverBeat += 1
+            }
+        }
         .animation(Motion.feedback, value: isHovering)
     }
 }
