@@ -255,9 +255,9 @@ const watchTurnFlag = Flag.string("turn").pipe(
 );
 const watchInteractionsFlag = Flag.boolean("interactions").pipe(
   Flag.withDescription(
-    "Exit promptly with code 26 and one-line redacted JSON when input or approval is pending.",
+    "Exit promptly with code 26 and one-line redacted JSON when input or approval is pending (enabled by default; use --no-interactions to wait only for completion).",
   ),
-  Flag.withDefault(false),
+  Flag.withDefault(true),
 );
 const pendingThreadIdFlag = Flag.string("thread-id").pipe(
   Flag.withDescription("Only return interactions for this thread id."),

@@ -268,22 +268,22 @@ orchestration state, while `pending` is the narrow interaction-only view.
 
 ### Watch and response lifecycle
 
-Opt into actionable watch results explicitly:
+Watch returns actionable interactions by default:
 
 ```bash
 t3 remote watch thread-123 \
   --host https://backend.example.com \
-  --interactions \
   --format json
 ```
 
-When a user-input question or command approval is open, `watch --interactions` exits promptly with
+When a user-input question or command approval is open, `watch` exits promptly with
 code `26` and writes exactly one compact JSON object to stdout. Its fields are `threadId`, `turnId`,
 and `interaction`. The interaction contains `kind`, `requestId`, and bounded structural `prompt`
 metadata: question/option counts for user input or `requestKind: "command"` for an approval. It
 never includes prompt text, option text, command text, arguments, provider logs, credentials, or
 paths. Interaction output is JSON regardless of `--format`; the format flag controls the final
-assistant result.
+assistant result. Use `--no-interactions` only when a caller intentionally wants to wait for terminal
+completion without being interrupted by approvals or user input.
 
 Use `pending` to inspect the sanitized response choices:
 
@@ -336,7 +336,7 @@ it reports `canApprove: false` and exposes only `decline` and `cancel`.
 Every accepted response prints one JSON object with `threadId`, `requestId`, `status`, `action`,
 `idempotencyKey`, and `replayed`. `status` is `responding`: dispatch acceptance is not provider
 acknowledgement. The interaction remains visible as `responding` with no allowed actions until the
-provider emits the matching acknowledgement. Re-run `watch --interactions` after acknowledgement;
+provider emits the matching acknowledgement. Re-run `watch` after acknowledgement;
 it returns the next actionable question/approval with exit code `26`, or the final assistant result
 with exit code `0`. Final JSON fields are `threadId`, `turnId`, `status`, and `message`; `message`
 contains `id`, `text`, and `createdAt`.

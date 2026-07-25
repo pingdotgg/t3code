@@ -587,7 +587,7 @@ describe("remote thread watch", () => {
       }),
   );
 
-  it.effect("keeps legacy watch behavior unless interactions are explicitly enabled", () =>
+  it.effect("supports explicitly disabling interaction interrupts", () =>
     Effect.gen(function* () {
       let reads = 0;
       const transport: RemoteWatchTransport = {
@@ -618,7 +618,12 @@ describe("remote thread watch", () => {
         },
       };
 
-      const result = yield* watchRemoteThread({ transport, threadId, timeoutMs: 10_000 });
+      const result = yield* watchRemoteThread({
+        transport,
+        threadId,
+        timeoutMs: 10_000,
+        interactionAware: false,
+      });
       expect(result.message.text).toBe("legacy final");
     }),
   );
