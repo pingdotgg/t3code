@@ -9,6 +9,9 @@ dist/
 web-build/
 expo-env.d.ts
 
+# Signing / store credentials (personal fork)
+credentials/
+
 # Native
 .kotlin/
 *.orig.*
