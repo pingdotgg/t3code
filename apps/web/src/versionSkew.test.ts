@@ -8,7 +8,9 @@ import {
   dismissVersionMismatch,
   isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
+  resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
+  serverUpdateGuidance,
 } from "./versionSkew";
 
 describe("versionSkew", () => {
@@ -73,6 +75,36 @@ describe("versionSkew", () => {
 
     expect(appendVersionMismatchHint("Socket closed.", mismatch)).toBe(
       "Socket closed. Hint: Version mismatch. Try syncing the client and server to the same T3 Code version.",
+    );
+  });
+
+  it("reads desktop-managed update capabilities from config descriptors", () => {
+    expect(
+      resolveServerSelfUpdateCapability({
+        environment: {
+          environmentId: EnvironmentId.make("environment-desktop"),
+          label: "Desktop",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "9.9.9",
+          capabilities: {
+            repositoryIdentity: true,
+            serverSelfUpdate: "desktop-managed",
+          },
+        },
+      }),
+    ).toBe("desktop-managed");
+    expect(resolveServerSelfUpdateCapability(null)).toBeNull();
+  });
+
+  it("matches version-drift guidance to the advertised update path", () => {
+    expect(serverUpdateGuidance("respawn", "Remote server")).toBe(
+      "Update the Remote server so they stay in sync.",
+    );
+    expect(serverUpdateGuidance("desktop-managed", "Desktop server")).toBe(
+      "The Desktop server is run by the T3 Code desktop app on its machine — update the desktop app there to sync them.",
+    );
+    expect(serverUpdateGuidance(null, "Local server")).toBe(
+      "Relaunch the Local server with the copied command to sync them.",
     );
   });
 });

@@ -10,22 +10,85 @@ describe("ChangedFilesCard", () => {
       <ChangedFilesCard
         turnId={TurnId.make("turn-1")}
         files={[{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }]}
+        expanded
+        showCompactPreview={false}
         allDirectoriesExpanded
         resolvedTheme="light"
+        onExpandedChange={() => {}}
         onToggleAllDirectories={() => {}}
         onOpenTurnDiff={() => {}}
       />,
     );
 
-    expect(markup).toContain('class="sticky top-0 z-10');
-    expect(markup).not.toContain("self-start");
+    expect(markup).toContain('data-changed-files-state="expanded"');
+    expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain("whitespace-nowrap");
     expect(markup).toContain("!size-[22px]");
     expect(markup).toContain("size-3");
-    expect(markup).toContain('aria-label="Collapse all"');
-    expect(markup).toContain('aria-label="View diff"');
+    expect(markup).toContain('aria-label="Collapse all folders"');
+    expect(markup).toContain('aria-label="Open diff"');
+    expect(markup).toContain('role="group" aria-label="2 additions, 1 deletions"');
     expect(markup).toContain("1 changed file");
     expect(markup).not.toContain("1 changed files");
+  });
+
+  it("renders a scope and representative-file preview for a large latest change", () => {
+    const markup = renderToStaticMarkup(
+      <ChangedFilesCard
+        turnId={TurnId.make("turn-1")}
+        files={[
+          { path: "apps/web/src/App.tsx", kind: "modified", additions: 120, deletions: 20 },
+          { path: "apps/web/src/App.test.tsx", kind: "modified", additions: 30, deletions: 2 },
+          {
+            path: "packages/shared/src/git.ts",
+            kind: "modified",
+            additions: 15,
+            deletions: 4,
+          },
+          { path: "README.md", kind: "modified", additions: 3, deletions: 0 },
+        ]}
+        expanded={false}
+        showCompactPreview
+        allDirectoriesExpanded={false}
+        resolvedTheme="light"
+        onExpandedChange={() => {}}
+        onToggleAllDirectories={() => {}}
+        onOpenTurnDiff={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('data-changed-files-state="preview"');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain("apps");
+    expect(markup).toContain("2 files");
+    expect(markup).toContain("packages");
+    expect(markup).toContain("root");
+    expect(markup).toContain("App.tsx");
+    expect(markup).toContain("git.ts");
+    expect(markup).toContain("README.md");
+    expect(markup).toContain("Show all 4 files");
+    expect(markup).not.toContain("App.test.tsx");
+  });
+
+  it("keeps older collapsed changes to a one-line receipt", () => {
+    const markup = renderToStaticMarkup(
+      <ChangedFilesCard
+        turnId={TurnId.make("turn-1")}
+        files={[{ path: "apps/web/src/App.tsx", kind: "modified", additions: 120, deletions: 20 }]}
+        expanded={false}
+        showCompactPreview={false}
+        allDirectoriesExpanded={false}
+        resolvedTheme="light"
+        onExpandedChange={() => {}}
+        onToggleAllDirectories={() => {}}
+        onOpenTurnDiff={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('data-changed-files-state="collapsed"');
+    expect(markup).toContain("1 changed file");
+    expect(markup).not.toContain("Show all");
+    expect(markup).not.toContain("App.tsx");
   });
 });
 
