@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { ArrowLeftIcon, PlusIcon, RefreshCwIcon, ServerIcon, Trash2Icon } from "lucide-react";
 import { createFileRoute, redirect, useCanGoBack, useNavigate } from "@tanstack/react-router";
 import type { AuthGateBeforeLoadArgs } from "./-authGateRouteContext";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -21,6 +21,7 @@ import type {
   ProjectRemoteOverride,
   ProjectScript,
   ProjectSettingsPatch,
+  SidebarProjectGroupingMode,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { DEFAULT_MODEL } from "@t3tools/contracts";
@@ -61,7 +62,11 @@ import ProjectScriptsControl, {
 } from "../components/ProjectScriptsControl";
 import { commandForProjectScript, nextProjectScriptId } from "../projectScripts";
 import { syncProjectScriptKeybinding } from "../lib/projectScriptKeybindings";
-import { usePrimarySettings } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  usePrimarySettings,
+  useUpdateClientSettings,
+} from "../hooks/useSettings";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionForInstance,
@@ -84,13 +89,15 @@ import { ProviderInstanceIcon } from "../components/chat/ProviderInstanceIcon";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
-import { usePrimaryEnvironmentId } from "../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells } from "../state/entities";
 import {
   EMPTY_SERVER_PROVIDERS,
   primaryServerKeybindingsAtom,
   primaryServerProvidersAtom,
 } from "../state/server";
+import { deriveProjectGroupingOverrideKey, selectProjectGroupingSettings } from "../logicalProject";
+import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 
 const PROVIDER_LABELS: Record<SourceControlProviderKind, string> = {
   github: "GitHub",
@@ -103,6 +110,11 @@ const PROVIDER_LABELS: Record<SourceControlProviderKind, string> = {
 const DEFAULT_PROJECT_MODEL_SELECTION = createDefaultModelSelection();
 const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL_MS = Duration.toMillis(Duration.seconds(30));
 const GIT_FETCH_INTERVAL_STEP_SECONDS = 5;
+const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
+  repository: "Group by repository",
+  repository_path: "Group by repository path",
+  separate: "Keep separate",
+};
 
 const EMPTY_ACTION_ENVIRONMENT: ProjectActionEnvironment = {};
 const EMPTY_DISABLED_PROVIDER_INSTANCE_IDS: ProviderInstanceId[] = [];
@@ -216,10 +228,63 @@ function ProjectRouteView() {
   const canGoBack = useCanGoBack();
   const projects = useProjects();
   const threads = useThreadShells();
+  const { environments } = useEnvironments();
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const updateClientSettings = useUpdateClientSettings();
   const project = projects.find(
     (candidate) => candidate.environmentId === environmentId && candidate.id === projectId,
   );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const environmentLabelById = useMemo(
+    () =>
+      new Map(
+        environments.map((environment) => [environment.environmentId, environment.label] as const),
+      ),
+    [environments],
+  );
+  const projectGroup = useMemo(
+    () =>
+      buildSidebarProjectSnapshots({
+        projects,
+        settings: projectGroupingSettings,
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: (candidateEnvironmentId) =>
+          environmentLabelById.get(candidateEnvironmentId) ?? null,
+      }).find((group) =>
+        group.memberProjects.some(
+          (member) => member.environmentId === project?.environmentId && member.id === project?.id,
+        ),
+      ) ?? null,
+    [
+      environmentLabelById,
+      primaryEnvironmentId,
+      project?.environmentId,
+      project?.id,
+      projectGroupingSettings,
+      projects,
+    ],
+  );
+  const projectLocations = useMemo(
+    () =>
+      projectGroup?.memberProjects ??
+      (project
+        ? [
+            {
+              ...project,
+              environmentLabel: environmentLabelById.get(project.environmentId) ?? null,
+            },
+          ]
+        : []),
+    [environmentLabelById, project, projectGroup?.memberProjects],
+  );
+  const currentEnvironmentLabel = project
+    ? (environmentLabelById.get(project.environmentId) ?? "Current environment")
+    : "Current environment";
+  const projectGroupingSelection = project
+    ? (projectGroupingSettings.sidebarProjectGroupingOverrides?.[
+        deriveProjectGroupingOverrideKey(project)
+      ] ?? "inherit")
+    : "inherit";
   const primaryProviders = useAtomValue(primaryServerProvidersAtom);
   const primaryKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const primarySettings = usePrimarySettings();
@@ -543,6 +608,21 @@ function ProjectRouteView() {
     ],
   );
 
+  const updateProjectGroupingPreference = useCallback(
+    (selection: SidebarProjectGroupingMode | "inherit") => {
+      if (!project) return;
+      const overrideKey = deriveProjectGroupingOverrideKey(project);
+      const nextOverrides = { ...projectGroupingSettings.sidebarProjectGroupingOverrides };
+      if (selection === "inherit") {
+        delete nextOverrides[overrideKey];
+      } else {
+        nextOverrides[overrideKey] = selection;
+      }
+      updateClientSettings({ sidebarProjectGroupingOverrides: nextOverrides });
+    },
+    [project, projectGroupingSettings.sidebarProjectGroupingOverrides, updateClientSettings],
+  );
+
   const commitDefaultModelSelection = useCallback(
     (nextSelection: ModelSelection | null) => {
       if (isModelSelectionEqual(nextSelection, defaultModelSelection)) return;
@@ -851,7 +931,7 @@ function ProjectRouteView() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
       <div className="flex min-h-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 sm:px-5">
+        <header className="flex h-12 shrink-0 items-center gap-2 px-3 sm:px-5">
           <SidebarTrigger className="size-7 shrink-0 md:hidden" />
           <Button
             size="icon-xs"
@@ -886,13 +966,68 @@ function ProjectRouteView() {
               <ProjectNotice title="Unable to load project" description={projectDetails.error} />
             ) : projectDetails.data ? (
               <>
-                <section className="space-y-2">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <h1 className="truncate text-2xl font-semibold tracking-tight">
-                        {projectDetails.data.effective.title}
-                      </h1>
-                    </div>
+                <section className="px-4 sm:px-5">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">
+                      {title}
+                    </h1>
+                    <span className="text-xl text-muted-foreground/45" aria-hidden="true">
+                      /
+                    </span>
+                    {projectLocations.length > 1 ? (
+                      <Select
+                        value={`${project.environmentId}:${project.id}`}
+                        onValueChange={(value) => {
+                          const nextProject = projectLocations.find(
+                            (candidate) => `${candidate.environmentId}:${candidate.id}` === value,
+                          );
+                          if (!nextProject) return;
+                          void navigate({
+                            to: "/projects/$environmentId/$projectId",
+                            params: {
+                              environmentId: nextProject.environmentId,
+                              projectId: nextProject.id,
+                            },
+                          });
+                        }}
+                      >
+                        <SelectTrigger
+                          variant="ghost"
+                          size="sm"
+                          className="w-auto max-w-full px-2 font-medium"
+                          aria-label="Project environment"
+                        >
+                          <SelectValue>
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <ServerIcon className="size-3.5 shrink-0" />
+                              <span className="truncate">{currentEnvironmentLabel}</span>
+                            </span>
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectPopup align="start" alignItemWithTrigger={false}>
+                          {projectLocations.map((location) => (
+                            <SelectItem
+                              key={`${location.environmentId}:${location.id}`}
+                              value={`${location.environmentId}:${location.id}`}
+                            >
+                              <span className="flex min-w-0 flex-col">
+                                <span className="truncate">
+                                  {location.environmentLabel ?? "Current environment"}
+                                </span>
+                                <span className="truncate font-mono text-xs text-muted-foreground">
+                                  {location.workspaceRoot}
+                                </span>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
+                    ) : (
+                      <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                        <ServerIcon className="size-3.5 shrink-0" />
+                        <span className="truncate">{currentEnvironmentLabel}</span>
+                      </div>
+                    )}
                   </div>
                 </section>
 
@@ -901,6 +1036,50 @@ function ProjectRouteView() {
                     title="Name"
                     control={
                       <DraftInput className="max-w-md" value={title} onCommit={commitTitle} />
+                    }
+                  />
+                  <ProjectSettingRow
+                    title="Grouping rule"
+                    description="Controls how matching project entries are grouped in the sidebar."
+                    control={
+                      <Select
+                        value={projectGroupingSelection}
+                        onValueChange={(value) => {
+                          if (
+                            value === "inherit" ||
+                            value === "repository" ||
+                            value === "repository_path" ||
+                            value === "separate"
+                          ) {
+                            updateProjectGroupingPreference(value);
+                          }
+                        }}
+                      >
+                        <SelectTrigger
+                          className="w-full max-w-md"
+                          aria-label="Project grouping rule"
+                        >
+                          <SelectValue>
+                            {projectGroupingSelection === "inherit"
+                              ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
+                              : PROJECT_GROUPING_MODE_LABELS[projectGroupingSelection]}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectPopup align="start" alignItemWithTrigger={false}>
+                          <SelectItem hideIndicator value="inherit">
+                            Use global default
+                          </SelectItem>
+                          <SelectItem hideIndicator value="repository">
+                            {PROJECT_GROUPING_MODE_LABELS.repository}
+                          </SelectItem>
+                          <SelectItem hideIndicator value="repository_path">
+                            {PROJECT_GROUPING_MODE_LABELS.repository_path}
+                          </SelectItem>
+                          <SelectItem hideIndicator value="separate">
+                            {PROJECT_GROUPING_MODE_LABELS.separate}
+                          </SelectItem>
+                        </SelectPopup>
+                      </Select>
                     }
                   />
                   <ProjectSettingRow
