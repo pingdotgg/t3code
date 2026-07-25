@@ -25,6 +25,8 @@ import {
   renderBootServiceUnit,
   renderS6RunScript,
   S6_SERVICE_DIR_ENV,
+  S6_SERVICE_GROUP_ENV,
+  S6_SERVICE_USER_ENV,
   SERVICE_SUPERVISOR_ENV,
   type ServiceSupervisor,
 } from "./bootService.ts";
@@ -69,6 +71,8 @@ export interface ManagedService {
   readonly supervisor: ServiceSupervisor;
   readonly definitionPath: string;
   readonly serviceDir?: string;
+  readonly serviceUser?: string;
+  readonly serviceGroup?: string;
 }
 
 export function parseGitHubRepositoryUrl(value: string): GitHubRepository | null {
@@ -180,13 +184,18 @@ export function resolveManagedService(input: {
   if (
     declaredSupervisor === "s6" &&
     input.env[S6_SERVICE_DIR_ENV] &&
-    input.path.isAbsolute(input.env[S6_SERVICE_DIR_ENV])
+    input.path.isAbsolute(input.env[S6_SERVICE_DIR_ENV]) &&
+    input.env[S6_SERVICE_USER_ENV]
   ) {
     const serviceDir = input.env[S6_SERVICE_DIR_ENV];
     return {
       supervisor: "s6",
       serviceDir,
       definitionPath: input.path.join(serviceDir, "run"),
+      serviceUser: input.env[S6_SERVICE_USER_ENV],
+      ...(input.env[S6_SERVICE_GROUP_ENV] === undefined
+        ? {}
+        : { serviceGroup: input.env[S6_SERVICE_GROUP_ENV] }),
     };
   }
   if (
@@ -428,6 +437,12 @@ export const make = Effect.gen(function* () {
             baseDir: config.baseDir,
             logPath: path.join(config.logsDir, "boot-service.log"),
             unitPath: managedService.definitionPath,
+            ...(managedService.serviceUser === undefined
+              ? {}
+              : { serviceUser: managedService.serviceUser }),
+            ...(managedService.serviceGroup === undefined
+              ? {}
+              : { serviceGroup: managedService.serviceGroup }),
           } as const;
           const nextDefinition =
             managedService.supervisor === "systemd"
