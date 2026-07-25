@@ -139,7 +139,7 @@ describe("add project shared logic", () => {
       createWorkspaceRootIfMissing: true,
       defaultModelSelection: {
         instanceId: "codex",
-        model: "gpt-5.4",
+        model: "gpt-5.6",
       },
     });
   });
