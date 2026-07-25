@@ -119,6 +119,10 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   };
 }
 
+export interface ServerSettingsSubscription {
+  readonly take: Effect.Effect<ServerSettings>;
+}
+
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   {
@@ -138,6 +142,9 @@ export class ServerSettingsService extends Context.Service<
 
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
+
+    /** Acquire a change subscription before any subsequent update can publish. */
+    readonly subscribeChanges: Effect.Effect<ServerSettingsSubscription, never, Scope.Scope>;
   }
 >()("t3/serverSettings/ServerSettingsService") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -155,18 +162,26 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
         : {}),
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+    const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
 
     return {
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(currentSettingsRef),
       updateSettings: (patch) =>
-        Ref.get(currentSettingsRef).pipe(
-          Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
-          Effect.flatMap(normalizeServerSettings),
-          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-        ),
-      streamChanges: Stream.empty,
+        Effect.gen(function* () {
+          const currentSettings = yield* Ref.get(currentSettingsRef);
+          const nextSettings = yield* normalizeServerSettings(
+            applyServerSettingsPatch(currentSettings, patch),
+          );
+          yield* Ref.set(currentSettingsRef, nextSettings);
+          yield* PubSub.publish(changesPubSub, nextSettings);
+          return nextSettings;
+        }),
+      streamChanges: Stream.fromPubSub(changesPubSub),
+      subscribeChanges: PubSub.subscribe(changesPubSub).pipe(
+        Effect.map((subscription) => ({ take: PubSub.take(subscription) })),
+      ),
     } satisfies ServerSettingsService["Service"];
   });
 
@@ -622,6 +637,23 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
+  const materializeSettingsChange = Effect.fn("ServerSettings.materializeSettingsChange")(
+    function* (settings: ServerSettings) {
+      const materialized = yield* materializeProviderEnvironmentSecrets(settings).pipe(
+        Effect.flatMap(materializeMidsceneModelApiKey),
+        Effect.catch((error: ServerSettingsError) =>
+          Effect.logWarning("failed to materialize provider environment secrets", {
+            operation: error.operation,
+            providerInstanceId: error.providerInstanceId,
+            environmentVariable: error.environmentVariable,
+            cause: error.cause,
+          }).pipe(Effect.as(settings)),
+        ),
+      );
+      return resolveTextGenerationProvider(materialized);
+    },
+  );
+
   return {
     start,
     ready: Deferred.await(startedDeferred),
@@ -649,23 +681,13 @@ const make = Effect.gen(function* () {
         }),
       ),
     get streamChanges() {
-      return Stream.fromPubSub(changesPubSub).pipe(
-        Stream.mapEffect((settings) =>
-          materializeProviderEnvironmentSecrets(settings).pipe(
-            Effect.flatMap(materializeMidsceneModelApiKey),
-            Effect.catch((error: ServerSettingsError) =>
-              Effect.logWarning("failed to materialize provider environment secrets", {
-                operation: error.operation,
-                providerInstanceId: error.providerInstanceId,
-                environmentVariable: error.environmentVariable,
-                cause: error.cause,
-              }).pipe(Effect.as(settings)),
-            ),
-          ),
-        ),
-        Stream.map(resolveTextGenerationProvider),
-      );
+      return Stream.fromPubSub(changesPubSub).pipe(Stream.mapEffect(materializeSettingsChange));
     },
+    subscribeChanges: PubSub.subscribe(changesPubSub).pipe(
+      Effect.map((subscription) => ({
+        take: PubSub.take(subscription).pipe(Effect.flatMap(materializeSettingsChange)),
+      })),
+    ),
   } satisfies ServerSettingsService["Service"];
 });
 

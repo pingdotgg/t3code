@@ -618,4 +618,34 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("delivers materialized updates to pre-acquired subscriptions", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("codex_personal");
+        const changes = yield* serverSettings.subscribeChanges;
+
+        yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "OPENROUTER_API_KEY", value: "sk-or-secret", sensitive: true }],
+              config: {},
+            },
+          },
+        });
+
+        const observed = yield* changes.take;
+        assert.deepEqual(observed.providerInstances[instanceId]?.environment, [
+          {
+            name: "OPENROUTER_API_KEY",
+            value: "sk-or-secret",
+            sensitive: true,
+            valueRedacted: true,
+          },
+        ]);
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 });

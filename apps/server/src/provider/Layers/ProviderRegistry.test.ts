@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -17,6 +18,7 @@ import {
   CodexSettings,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
+  type ProviderInstanceConfig,
   ProviderInstanceId,
   ServerSettings,
   type ServerProvider,
@@ -58,6 +60,11 @@ const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({})
 const disabledCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({
   enabled: false,
 });
+const disabledPiProviderInstance = {
+  driver: ProviderDriverKind.make("piAgent"),
+  enabled: false,
+  config: {},
+} satisfies ProviderInstanceConfig;
 
 process.env.T3CODE_CURSOR_ENABLED = "1";
 
@@ -294,6 +301,9 @@ function makeMutableServerSettingsService(
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },
+      subscribeChanges: PubSub.subscribe(changes).pipe(
+        Effect.map((subscription) => ({ take: PubSub.take(subscription) })),
+      ),
     } satisfies ServerSettingsModule.ServerSettingsService["Service"];
   });
 }
@@ -1084,6 +1094,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 // accepts + decodes them. Cast the patch to `unknown` so
                 // the `Schema.decodeSync` below does the real validation.
                 providerInstances: {
+                  piAgent: disabledPiProviderInstance,
                   // Matches the shape the user had in `.t3/dev/settings.json`
                   // when the bug was reported: a custom enabled Codex instance
                   // pointing at a binary the server has to actually spawn.
@@ -1170,14 +1181,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       // Guards the second half of the reported bug: changing
       // `providers.codex.binaryPath` in settings must tear down the live
       // instance and rebuild it so a fresh probe runs with the new binary.
-      // This test drives the real settings stream → registry reconcile →
-      // aggregator sync pipeline and asserts that `getProviders` reflects
-      // the new background probe's outcome.
+      // This test drives the real settings subscription → registry reconcile
+      // pipeline and asserts both the instance replacement and new probe.
       //
       it.effect("re-probes when settings change the codex binaryPath", () =>
         Effect.gen(function* () {
           const firstMissing = `t3code_codex_first_`;
           const secondMissing = `t3code_codex_second_`;
+          const secondProbeStarted = yield* Deferred.make<void>();
           const spawnedCommands: Array<string> = [];
           const serverSettings = yield* makeMutableServerSettingsService(
             decodeServerSettings(
@@ -1189,6 +1200,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   grok: { enabled: false },
                   opencode: { enabled: false },
                 },
+                providerInstances: {
+                  piAgent: disabledPiProviderInstance,
+                } as unknown as ContractServerSettings["providerInstances"],
               }),
             ),
           );
@@ -1214,8 +1228,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
-                spawnedCommands.push((command as { readonly command: string }).command);
-                return spawner.spawn(command);
+                const executable = (command as { readonly command: string }).command;
+                spawnedCommands.push(executable);
+                const spawn = spawner.spawn(command);
+                return executable === secondMissing
+                  ? Deferred.succeed(secondProbeStarted, undefined).pipe(Effect.andThen(spawn))
+                  : spawn;
               }),
             ),
             Layer.provideMerge(NodeServices.layer),
@@ -1226,6 +1244,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
+            const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
             // Boot-time probe: the default codex instance is enabled with
             // `firstMissing`, so the real spawner yields ENOENT and the
             // snapshot should be `status: "error"`.
@@ -1248,44 +1267,127 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.strictEqual(initialCodex?.installed, false);
             assert.deepStrictEqual(spawnedCommands, [firstMissing]);
 
-            // Drive a settings change. The Hydration layer's
-            // `SettingsWatcherLive` consumes this via `streamChanges`,
-            // calls `reconcile`, which rebuilds the codex instance (the
-            // envelope changed because `binaryPath` differs → `entryEqual`
-            // is false). The registry's `Stream.runForEach(
-            // instanceRegistry.streamChanges, () => syncLiveSources)`
-            // fires `syncLiveSources`, which subscribes and launches a fresh
-            // background refresh on the rebuilt instance.
+            const initialInstance = yield* instanceRegistry.getInstance(
+              ProviderInstanceId.make("codex"),
+            );
+            assert.notStrictEqual(initialInstance, undefined);
+            const instanceChanges = yield* instanceRegistry.subscribeChanges.pipe(
+              Scope.provide(scope),
+            );
+
+            // The settings watcher rebuilds the Codex instance because its
+            // config envelope changed, then the managed replacement starts a
+            // fresh background probe with the new executable.
             yield* serverSettings.updateSettings({
               providers: {
                 codex: { enabled: true, binaryPath: secondMissing },
               },
             });
+            yield* PubSub.take(instanceChanges);
+            yield* Deferred.await(secondProbeStarted);
 
-            // Poll until the injected process boundary observes the new
-            // executable. This verifies the public settings-to-probe behavior
-            // without depending on timestamps assigned by TestClock.
-            const refreshed = yield* Effect.gen(function* () {
-              for (let attempts = 0; attempts < 60; attempts += 1) {
-                const providers = yield* registry.getProviders;
-                const codex = providers.find((provider) => provider.instanceId === "codex");
-                if (
-                  codex !== undefined &&
-                  codex.status === "error" &&
-                  spawnedCommands.includes(secondMissing)
-                ) {
-                  return providers;
-                }
-                yield* TestClock.adjust("50 millis");
-                yield* Effect.yieldNow;
-              }
-              return yield* registry.getProviders;
-            });
-
-            const reprobedCodex = refreshed.find((provider) => provider.instanceId === "codex");
+            const updatedInstance = yield* instanceRegistry.getInstance(
+              ProviderInstanceId.make("codex"),
+            );
+            assert.notStrictEqual(updatedInstance, undefined);
+            assert.notStrictEqual(initialInstance, updatedInstance);
             assert.deepStrictEqual(spawnedCommands, [firstMissing, secondMissing]);
-            assert.strictEqual(reprobedCodex?.status, "error");
-            assert.strictEqual(reprobedCodex?.installed, false);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("does not miss settings changes published during initial hydration", () =>
+        Effect.gen(function* () {
+          const ghostInstanceId = ProviderInstanceId.make("ghost_after_boot");
+          const initialSettings = decodeServerSettings(
+            deepMerge(encodedDefaultServerSettings, {
+              providers: {
+                codex: { enabled: false },
+                claudeAgent: { enabled: false },
+                cursor: { enabled: false },
+                grok: { enabled: false },
+                opencode: { enabled: false },
+              },
+              providerInstances: {
+                piAgent: disabledPiProviderInstance,
+              } as unknown as ContractServerSettings["providerInstances"],
+            }),
+          );
+          const updatedSettings = applyServerSettingsPatch(initialSettings, {
+            providerInstances: {
+              piAgent: disabledPiProviderInstance,
+              [ghostInstanceId]: {
+                driver: ProviderDriverKind.make("ghostDriver"),
+                enabled: false,
+                config: { source: "startup-race" },
+              },
+            } as unknown as ContractServerSettings["providerInstances"],
+          });
+          const settingsChanges = yield* PubSub.unbounded<ContractServerSettings>();
+          const releaseDelivery = yield* Deferred.make<void>();
+          let isInitialRead = true;
+          const serverSettings = {
+            start: Effect.void,
+            ready: Effect.void,
+            getSettings: Effect.suspend(() => {
+              if (!isInitialRead) {
+                return Effect.succeed(updatedSettings);
+              }
+              isInitialRead = false;
+              return PubSub.publish(settingsChanges, updatedSettings).pipe(
+                Effect.as(initialSettings),
+              );
+            }),
+            updateSettings: () => Effect.succeed(updatedSettings),
+            get streamChanges() {
+              return Stream.fromPubSub(settingsChanges);
+            },
+            subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
+              Effect.map((subscription) => ({
+                take: PubSub.take(subscription).pipe(
+                  Effect.tap(() => Deferred.await(releaseDelivery)),
+                ),
+              })),
+            ),
+          } satisfies ServerSettingsModule.ServerSettingsService["Service"];
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const hydrationLayer = ProviderInstanceRegistryHydrationLive.pipe(
+            Layer.provideMerge(
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+            ),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-hydration-",
+              }),
+            ),
+            Layer.provideMerge(TestHttpClientLive),
+            Layer.provideMerge(
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(NodeServices.layer),
+          );
+          const runtimeServices = yield* Layer.build(hydrationLayer).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+            const registryChanges = yield* registry.subscribeChanges.pipe(Scope.provide(scope));
+            const beforeRelease = yield* registry.listUnavailable;
+            assert.isUndefined(
+              beforeRelease.find((provider) => provider.instanceId === ghostInstanceId),
+            );
+
+            yield* Deferred.succeed(releaseDelivery, undefined);
+            yield* PubSub.take(registryChanges);
+
+            const afterRelease = yield* registry.listUnavailable;
+            const ghost = afterRelease.find((provider) => provider.instanceId === ghostInstanceId);
+            assert.strictEqual(ghost?.availability, "unavailable");
+            assert.strictEqual(ghost?.driver, ProviderDriverKind.make("ghostDriver"));
           }).pipe(Effect.provide(runtimeServices));
         }),
       );
@@ -1303,6 +1405,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   opencode: { enabled: false },
                 },
                 providerInstances: {
+                  piAgent: disabledPiProviderInstance,
                   ghost_main: {
                     driver: "ghostDriver",
                     displayName: "A fork-only driver we don't ship",
@@ -1438,6 +1541,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "cursor",
                 "grok",
                 "opencode",
+                "piAgent",
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);
               assert.strictEqual(cursorProvider?.status, "disabled");
