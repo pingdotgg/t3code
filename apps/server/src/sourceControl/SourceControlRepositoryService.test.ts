@@ -176,7 +176,7 @@ it.effect("clones a looked-up repository into the requested destination", () =>
       assert.deepStrictEqual(cloneCalls, [
         {
           cwd: parent,
-          args: ["clone", CLONE_URLS.url, "t3code"],
+          args: ["clone", "--", CLONE_URLS.url, "t3code"],
         },
       ]);
     }).pipe(
@@ -194,6 +194,73 @@ it.effect("clones a looked-up repository into the requested destination", () =>
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+const REJECTED_REMOTE_URLS: ReadonlyArray<readonly [string, string]> = [
+  ["--config=core.sshCommand=touch /tmp/pwned", "Clone URLs cannot start with '-'."],
+  ["--upload-pack=touch /tmp/pwned", "Clone URLs cannot start with '-'."],
+  ["-u./payload.sh", "Clone URLs cannot start with '-'."],
+  ["ext::sh -c 'touch /tmp/pwned'", "Clone URLs cannot use a git transport helper."],
+  ["javascript://example.com/repo.git", "Clone URL scheme 'javascript' is not supported."],
+  ["https://example.com/repo.git\nrm -rf /", "Clone URLs cannot contain control characters."],
+];
+
+for (const [remoteUrl, expectedDetail] of REJECTED_REMOTE_URLS) {
+  it.effect(`refuses to clone from an unsafe remote URL: ${JSON.stringify(remoteUrl)}`, () => {
+    const cloneCalls: Array<ReadonlyArray<string>> = [];
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const parent = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-source-control-clone-parent-",
+      });
+
+      yield* Effect.gen(function* () {
+        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+        const error = yield* Effect.flip(
+          service.cloneRepository({ remoteUrl, destinationPath: `${parent}/t3code` }),
+        );
+
+        assert.strictEqual(error.operation, "cloneRepository");
+        assert.strictEqual(error.detail, expectedDetail);
+        assert.deepStrictEqual(cloneCalls, []);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            git: {
+              execute: (input) =>
+                Effect.sync(() => {
+                  cloneCalls.push(input.args);
+                  return processOutput();
+                }),
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeServices.layer));
+  });
+}
+
+it.effect("refuses to look up a repository whose name would be parsed as a CLI option", () => {
+  const lookupCalls: Array<string> = [];
+  const provider = makeProvider({
+    getRepositoryCloneUrls: (input) =>
+      Effect.sync(() => {
+        lookupCalls.push(input.repository);
+        return CLONE_URLS;
+      }),
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const error = yield* Effect.flip(
+      service.lookupRepository({ provider: "github", repository: "--template=evil" }),
+    );
+
+    assert.strictEqual(error.operation, "lookupRepository");
+    assert.strictEqual(error.detail, "Repository names cannot start with '-'.");
+    assert.deepStrictEqual(lookupCalls, []);
+  }).pipe(Effect.provide(makeLayer({ provider })));
+});
 
 it.effect("preserves destination probe failures instead of treating them as missing paths", () => {
   const fileSystemCause = PlatformError.systemError({
