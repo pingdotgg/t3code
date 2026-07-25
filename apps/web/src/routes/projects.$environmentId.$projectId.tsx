@@ -48,11 +48,7 @@ import {
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
 import { Spinner } from "../components/ui/spinner";
 import { Switch } from "../components/ui/switch";
-import {
-  SettingResetButton,
-  SettingsPageContainer,
-  SettingsSection,
-} from "../components/settings/settingsLayout";
+import { SettingResetButton, SettingsPageContainer } from "../components/settings/settingsLayout";
 import { toastManager, stackedThreadToast } from "../components/ui/toast";
 import { DraftInput } from "../components/ui/draft-input";
 import { isElectron } from "../env";
@@ -959,7 +955,7 @@ function ProjectRouteView() {
         {project && projectDetails.isPending && !projectDetails.data ? (
           <ProjectSettingsLoading />
         ) : (
-          <SettingsPageContainer compact className="max-w-7xl gap-5">
+          <SettingsPageContainer compact className="min-h-full max-w-7xl gap-5">
             {!project ? (
               <ProjectNotice title="Project not found" description="This project is not loaded." />
             ) : projectDetails.error !== null ? (
@@ -1028,370 +1024,356 @@ function ProjectRouteView() {
                   </div>
                 </section>
 
-                <div className="grid min-w-0 gap-x-6 gap-y-4 xl:grid-cols-2 xl:items-start">
-                  <div className="min-w-0">
-                    <SettingsSection title="General" className="space-y-1.5">
-                      <div className="mx-3 rounded-xl p-1 sm:mx-4">
-                        <ProjectSettingRow
-                          title="Name"
-                          control={
-                            <DraftInput className="max-w-md" value={title} onCommit={commitTitle} />
-                          }
-                        />
-                        <ProjectSettingRow
-                          title="Grouping rule"
-                          control={
-                            <Select
-                              value={projectGroupingSelection}
-                              onValueChange={(value) => {
-                                if (
-                                  value === "inherit" ||
-                                  value === "repository" ||
-                                  value === "repository_path" ||
-                                  value === "separate"
-                                ) {
-                                  updateProjectGroupingPreference(value);
-                                }
-                              }}
-                            >
-                              <SelectTrigger
-                                className="w-full max-w-md"
-                                aria-label="Project grouping rule"
-                              >
-                                <SelectValue>
-                                  {projectGroupingSelection === "inherit"
-                                    ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
-                                    : PROJECT_GROUPING_MODE_LABELS[projectGroupingSelection]}
-                                </SelectValue>
-                              </SelectTrigger>
-                              <SelectPopup align="start" alignItemWithTrigger={false}>
-                                <SelectItem hideIndicator value="inherit">
-                                  Use global default
-                                </SelectItem>
-                                <SelectItem hideIndicator value="repository">
-                                  {PROJECT_GROUPING_MODE_LABELS.repository}
-                                </SelectItem>
-                                <SelectItem hideIndicator value="repository_path">
-                                  {PROJECT_GROUPING_MODE_LABELS.repository_path}
-                                </SelectItem>
-                                <SelectItem hideIndicator value="separate">
-                                  {PROJECT_GROUPING_MODE_LABELS.separate}
-                                </SelectItem>
-                              </SelectPopup>
-                            </Select>
-                          }
-                        />
-                        <ProjectSettingRow
-                          title="Default model"
-                          resetAction={
-                            projectDetails.data.defaultModelSelection !== null ? (
-                              <SettingResetButton
-                                label="project default model"
-                                onClick={() => commitDefaultModelSelection(null)}
-                              />
-                            ) : null
-                          }
-                          control={
-                            <div className="flex min-w-0 flex-wrap items-center justify-start gap-1.5">
-                              <ProviderModelPicker
-                                activeInstanceId={displayedModelSelection.instanceId}
-                                model={displayedModelSelection.model}
-                                lockedProvider={null}
-                                instanceEntries={projectProviderInstanceEntries}
-                                keybindings={keybindings}
-                                modelOptionsByInstance={modelOptionsByInstance}
-                                terminalOpen={false}
-                                triggerVariant="outline"
-                                triggerClassName="max-w-48 sm:max-w-52"
-                                disabled={projectProviderInstanceEntries.length === 0}
-                                onInstanceModelChange={(instanceId, model) =>
-                                  commitDefaultModelSelection(
-                                    createModelSelection(instanceId, model),
-                                  )
-                                }
-                              />
-                              {displayedModelInstanceEntry ? (
-                                <TraitsPicker
-                                  provider={displayedModelInstanceEntry.driverKind}
-                                  models={displayedModelInstanceEntry.models}
-                                  model={displayedModelSelection.model}
-                                  prompt=""
-                                  onPromptChange={() => {}}
-                                  modelOptions={displayedModelSelection.options}
-                                  allowPromptInjectedEffort={false}
-                                  triggerVariant="outline"
-                                  triggerClassName="max-w-32 sm:max-w-36"
-                                  onModelOptionsChange={(nextOptions) =>
-                                    commitDefaultModelSelection(
-                                      createModelSelection(
-                                        displayedModelSelection.instanceId,
-                                        displayedModelSelection.model,
-                                        nextOptions,
-                                      ),
-                                    )
-                                  }
-                                />
-                              ) : null}
-                            </div>
-                          }
-                        />
-                        <ProjectSettingRow
-                          title="Path"
-                          control={<ProjectPathLink path={projectDetails.data.workspaceRoot} />}
-                        />
-                      </div>
-                    </SettingsSection>
-                  </div>
+                <div className="grid min-w-0 flex-1 grid-cols-1 gap-x-10 gap-y-8 xl:grid-cols-2 xl:grid-rows-[1fr_1fr_auto] xl:gap-y-6">
+                  <ProjectSettingsSection title="General">
+                    <ProjectSettingRow
+                      title="Name"
+                      control={
+                        <DraftInput className="max-w-md" value={title} onCommit={commitTitle} />
+                      }
+                    />
+                    <ProjectSettingRow
+                      title="Grouping rule"
+                      control={
+                        <Select
+                          value={projectGroupingSelection}
+                          onValueChange={(value) => {
+                            if (
+                              value === "inherit" ||
+                              value === "repository" ||
+                              value === "repository_path" ||
+                              value === "separate"
+                            ) {
+                              updateProjectGroupingPreference(value);
+                            }
+                          }}
+                        >
+                          <SelectTrigger
+                            className="w-full max-w-md"
+                            aria-label="Project grouping rule"
+                          >
+                            <SelectValue>
+                              {projectGroupingSelection === "inherit"
+                                ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
+                                : PROJECT_GROUPING_MODE_LABELS[projectGroupingSelection]}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectPopup align="start" alignItemWithTrigger={false}>
+                            <SelectItem hideIndicator value="inherit">
+                              Use global default
+                            </SelectItem>
+                            <SelectItem hideIndicator value="repository">
+                              {PROJECT_GROUPING_MODE_LABELS.repository}
+                            </SelectItem>
+                            <SelectItem hideIndicator value="repository_path">
+                              {PROJECT_GROUPING_MODE_LABELS.repository_path}
+                            </SelectItem>
+                            <SelectItem hideIndicator value="separate">
+                              {PROJECT_GROUPING_MODE_LABELS.separate}
+                            </SelectItem>
+                          </SelectPopup>
+                        </Select>
+                      }
+                    />
+                    <ProjectSettingRow
+                      title="Default model"
+                      resetAction={
+                        projectDetails.data.defaultModelSelection !== null ? (
+                          <SettingResetButton
+                            label="project default model"
+                            onClick={() => commitDefaultModelSelection(null)}
+                          />
+                        ) : null
+                      }
+                      control={
+                        <div className="flex min-w-0 flex-wrap items-center justify-start gap-1.5">
+                          <ProviderModelPicker
+                            activeInstanceId={displayedModelSelection.instanceId}
+                            model={displayedModelSelection.model}
+                            lockedProvider={null}
+                            instanceEntries={projectProviderInstanceEntries}
+                            keybindings={keybindings}
+                            modelOptionsByInstance={modelOptionsByInstance}
+                            terminalOpen={false}
+                            triggerVariant="outline"
+                            triggerClassName="max-w-48 sm:max-w-52"
+                            disabled={projectProviderInstanceEntries.length === 0}
+                            onInstanceModelChange={(instanceId, model) =>
+                              commitDefaultModelSelection(createModelSelection(instanceId, model))
+                            }
+                          />
+                          {displayedModelInstanceEntry ? (
+                            <TraitsPicker
+                              provider={displayedModelInstanceEntry.driverKind}
+                              models={displayedModelInstanceEntry.models}
+                              model={displayedModelSelection.model}
+                              prompt=""
+                              onPromptChange={() => {}}
+                              modelOptions={displayedModelSelection.options}
+                              allowPromptInjectedEffort={false}
+                              triggerVariant="outline"
+                              triggerClassName="max-w-32 sm:max-w-36"
+                              onModelOptionsChange={(nextOptions) =>
+                                commitDefaultModelSelection(
+                                  createModelSelection(
+                                    displayedModelSelection.instanceId,
+                                    displayedModelSelection.model,
+                                    nextOptions,
+                                  ),
+                                )
+                              }
+                            />
+                          ) : null}
+                        </div>
+                      }
+                    />
+                    <ProjectSettingRow
+                      title="Path"
+                      control={<ProjectPathLink path={projectDetails.data.workspaceRoot} />}
+                    />
+                  </ProjectSettingsSection>
 
-                  <div className="min-w-0">
-                    <SettingsSection title="Git info" className="space-y-1.5">
-                      <div className="mx-3 rounded-xl p-1 sm:mx-4">
-                        <ProjectSettingRow
-                          title="Remote"
-                          description={
-                            overrideEnabled ? undefined : (
-                              <RemoteSettingDescription remote={effectiveRemote} />
-                            )
-                          }
-                          align="start"
-                          resetAction={
-                            projectDetails.data.settings.remoteOverride !== null ? (
-                              <SettingResetButton
-                                label="custom remote"
-                                onClick={() => {
-                                  stageDraft({ overrideEnabled: false });
-                                  void commitProjectSettings({ remoteOverride: null });
-                                }}
-                              />
-                            ) : null
-                          }
-                          control={
-                            <div className="grid w-full min-w-0 gap-4">
-                              <div className="flex w-full justify-start">
-                                <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                                  <span>Custom</span>
-                                  <Switch
-                                    checked={overrideEnabled}
-                                    aria-label="Use custom remote"
-                                    onCheckedChange={(checked) => {
-                                      const enabled = Boolean(checked);
-                                      stageDraft({ overrideEnabled: enabled });
-                                      persistRemoteOverrideIfValid({
-                                        enabled,
-                                        provider,
-                                        remoteName,
-                                        remoteUrl,
-                                        webUrl,
-                                      });
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                              {overrideEnabled ? (
-                                <div className="grid gap-3 border-t border-border/60 pt-4 md:grid-cols-2">
-                                  <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                                    Provider
-                                    <Select
-                                      value={provider}
-                                      onValueChange={(value) => {
-                                        const nextProvider = value as SourceControlProviderKind;
-                                        stageDraft({ provider: nextProvider });
-                                        persistRemoteOverrideIfValid({
-                                          enabled: overrideEnabled,
-                                          provider: nextProvider,
-                                          remoteName,
-                                          remoteUrl,
-                                          webUrl,
-                                        });
-                                      }}
-                                    >
-                                      <SelectTrigger aria-label="Source control provider">
-                                        <SelectValue>{PROVIDER_LABELS[provider]}</SelectValue>
-                                      </SelectTrigger>
-                                      <SelectPopup align="start">
-                                        {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
-                                          <SelectItem key={value} value={value}>
-                                            {label}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectPopup>
-                                    </Select>
-                                  </label>
-                                  <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                                    Remote name
-                                    <DraftInput
-                                      value={remoteName}
-                                      placeholder="origin"
-                                      onCommit={(nextRemoteName) => {
-                                        stageDraft({ remoteName: nextRemoteName });
-                                        persistRemoteOverrideIfValid({
-                                          enabled: overrideEnabled,
-                                          provider,
-                                          remoteName: nextRemoteName,
-                                          remoteUrl,
-                                          webUrl,
-                                        });
-                                      }}
-                                    />
-                                  </label>
-                                  <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                                    Remote URL
-                                    <DraftInput
-                                      value={remoteUrl}
-                                      placeholder="git@git.example.com:team/repo.git"
-                                      onCommit={(nextRemoteUrl) => {
-                                        stageDraft({ remoteUrl: nextRemoteUrl });
-                                        persistRemoteOverrideIfValid({
-                                          enabled: overrideEnabled,
-                                          provider,
-                                          remoteName,
-                                          remoteUrl: nextRemoteUrl,
-                                          webUrl,
-                                        });
-                                      }}
-                                    />
-                                  </label>
-                                  <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                                    Web URL
-                                    <DraftInput
-                                      value={webUrl}
-                                      placeholder="https://git.example.com/team/repo"
-                                      onCommit={(nextWebUrl) => {
-                                        stageDraft({ webUrl: nextWebUrl });
-                                        persistRemoteOverrideIfValid({
-                                          enabled: overrideEnabled,
-                                          provider,
-                                          remoteName,
-                                          remoteUrl,
-                                          webUrl: nextWebUrl,
-                                        });
-                                      }}
-                                    />
-                                  </label>
-                                  {buildRemoteOverride({
-                                    enabled: true,
+                  <ProjectSettingsSection title="Git">
+                    <ProjectSettingRow
+                      title="Remote"
+                      description={
+                        overrideEnabled ? undefined : (
+                          <RemoteSettingDescription remote={effectiveRemote} />
+                        )
+                      }
+                      align="start"
+                      resetAction={
+                        projectDetails.data.settings.remoteOverride !== null ? (
+                          <SettingResetButton
+                            label="custom remote"
+                            onClick={() => {
+                              stageDraft({ overrideEnabled: false });
+                              void commitProjectSettings({ remoteOverride: null });
+                            }}
+                          />
+                        ) : null
+                      }
+                      control={
+                        <div className="grid w-full min-w-0 gap-4">
+                          <div className="flex w-full justify-start">
+                            <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                              <span>Custom</span>
+                              <Switch
+                                checked={overrideEnabled}
+                                aria-label="Use custom remote"
+                                onCheckedChange={(checked) => {
+                                  const enabled = Boolean(checked);
+                                  stageDraft({ overrideEnabled: enabled });
+                                  persistRemoteOverrideIfValid({
+                                    enabled,
                                     provider,
                                     remoteName,
                                     remoteUrl,
                                     webUrl,
-                                  }) === null ? (
-                                    <p className="text-xs font-normal text-muted-foreground md:col-span-2">
-                                      Not saved yet — enter a remote name and URL to apply this
-                                      override.
-                                    </p>
-                                  ) : null}
-                                </div>
+                                  });
+                                }}
+                              />
+                            </div>
+                          </div>
+                          {overrideEnabled ? (
+                            <div className="grid gap-3 border-t border-border/60 pt-4 md:grid-cols-2">
+                              <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                                Provider
+                                <Select
+                                  value={provider}
+                                  onValueChange={(value) => {
+                                    const nextProvider = value as SourceControlProviderKind;
+                                    stageDraft({ provider: nextProvider });
+                                    persistRemoteOverrideIfValid({
+                                      enabled: overrideEnabled,
+                                      provider: nextProvider,
+                                      remoteName,
+                                      remoteUrl,
+                                      webUrl,
+                                    });
+                                  }}
+                                >
+                                  <SelectTrigger aria-label="Source control provider">
+                                    <SelectValue>{PROVIDER_LABELS[provider]}</SelectValue>
+                                  </SelectTrigger>
+                                  <SelectPopup align="start">
+                                    {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
+                                      <SelectItem key={value} value={value}>
+                                        {label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectPopup>
+                                </Select>
+                              </label>
+                              <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                                Remote name
+                                <DraftInput
+                                  value={remoteName}
+                                  placeholder="origin"
+                                  onCommit={(nextRemoteName) => {
+                                    stageDraft({ remoteName: nextRemoteName });
+                                    persistRemoteOverrideIfValid({
+                                      enabled: overrideEnabled,
+                                      provider,
+                                      remoteName: nextRemoteName,
+                                      remoteUrl,
+                                      webUrl,
+                                    });
+                                  }}
+                                />
+                              </label>
+                              <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                                Remote URL
+                                <DraftInput
+                                  value={remoteUrl}
+                                  placeholder="git@git.example.com:team/repo.git"
+                                  onCommit={(nextRemoteUrl) => {
+                                    stageDraft({ remoteUrl: nextRemoteUrl });
+                                    persistRemoteOverrideIfValid({
+                                      enabled: overrideEnabled,
+                                      provider,
+                                      remoteName,
+                                      remoteUrl: nextRemoteUrl,
+                                      webUrl,
+                                    });
+                                  }}
+                                />
+                              </label>
+                              <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                                Web URL
+                                <DraftInput
+                                  value={webUrl}
+                                  placeholder="https://git.example.com/team/repo"
+                                  onCommit={(nextWebUrl) => {
+                                    stageDraft({ webUrl: nextWebUrl });
+                                    persistRemoteOverrideIfValid({
+                                      enabled: overrideEnabled,
+                                      provider,
+                                      remoteName,
+                                      remoteUrl,
+                                      webUrl: nextWebUrl,
+                                    });
+                                  }}
+                                />
+                              </label>
+                              {buildRemoteOverride({
+                                enabled: true,
+                                provider,
+                                remoteName,
+                                remoteUrl,
+                                webUrl,
+                              }) === null ? (
+                                <p className="text-xs font-normal text-muted-foreground md:col-span-2">
+                                  Not saved yet — enter a remote name and URL to apply this
+                                  override.
+                                </p>
                               ) : null}
                             </div>
-                          }
-                        />
-                        <ProjectSettingRow
-                          title="Git root"
-                          value={
-                            projectDetails.data.detected.gitRoot ?? "No Git repository detected"
-                          }
-                        />
-                        <ProjectSettingRow
-                          title="Branch"
-                          value={
-                            projectDetails.data.detected.branch ??
-                            (projectDetails.data.detected.gitRoot ? "None" : "—")
-                          }
-                        />
-                        <ProjectSettingRow
-                          title="Fetch interval"
-                          resetAction={
-                            projectDetails.data.settings.automaticGitFetchInterval !== null ? (
-                              <SettingResetButton
-                                label="fetch interval"
-                                onClick={() => commitAutomaticGitFetchInterval(null)}
-                              />
-                            ) : null
-                          }
-                          control={
-                            <div className="flex shrink-0 items-center gap-2">
-                              <NumberField
-                                value={automaticGitFetchIntervalSeconds}
-                                min={0}
-                                step={GIT_FETCH_INTERVAL_STEP_SECONDS}
-                                size="sm"
-                                className="w-32"
-                                onValueChange={(value) =>
-                                  commitAutomaticGitFetchInterval(
-                                    Duration.toMillis(
-                                      Duration.seconds(normalizeFetchIntervalSeconds(value)),
-                                    ),
-                                  )
-                                }
-                              >
-                                <NumberFieldGroup>
-                                  <NumberFieldDecrement aria-label="Decrease fetch interval" />
-                                  <NumberFieldInput aria-label="Automatic Git fetch interval in seconds" />
-                                  <NumberFieldIncrement aria-label="Increase fetch interval" />
-                                </NumberFieldGroup>
-                              </NumberField>
-                              <span className="text-xs text-muted-foreground">seconds</span>
-                            </div>
-                          }
-                        />
-                      </div>
-                    </SettingsSection>
-                  </div>
-
-                  <SettingsSection title="Providers" className="space-y-1.5 xl:col-span-2">
-                    <div className="mx-3 grid gap-1 rounded-xl p-1 sm:mx-4 sm:grid-cols-2 xl:grid-cols-4">
-                      {globallyEnabledProviderInstanceEntries.map((entry) => {
-                        const allowed = !disabledProviderInstanceIds.includes(entry.instanceId);
-                        const isLastAllowedProvider =
-                          allowed && projectProviderInstanceEntries.length <= 1;
-                        const duplicateDriverCount = globallyEnabledProviderInstanceEntries.filter(
-                          (candidate) => candidate.driverKind === entry.driverKind,
-                        ).length;
-                        return (
-                          <div
-                            key={entry.instanceId}
-                            className="flex min-w-0 items-center justify-between gap-3 rounded-lg px-3 py-2"
+                          ) : null}
+                        </div>
+                      }
+                    />
+                    <ProjectSettingRow
+                      title="Git root"
+                      value={projectDetails.data.detected.gitRoot ?? "No Git repository detected"}
+                    />
+                    <ProjectSettingRow
+                      title="Branch"
+                      value={
+                        projectDetails.data.detected.branch ??
+                        (projectDetails.data.detected.gitRoot ? "None" : "—")
+                      }
+                    />
+                    <ProjectSettingRow
+                      title="Fetch interval"
+                      resetAction={
+                        projectDetails.data.settings.automaticGitFetchInterval !== null ? (
+                          <SettingResetButton
+                            label="fetch interval"
+                            onClick={() => commitAutomaticGitFetchInterval(null)}
+                          />
+                        ) : null
+                      }
+                      control={
+                        <div className="flex shrink-0 items-center gap-2">
+                          <NumberField
+                            value={automaticGitFetchIntervalSeconds}
+                            min={0}
+                            step={GIT_FETCH_INTERVAL_STEP_SECONDS}
+                            size="sm"
+                            className="w-32"
+                            onValueChange={(value) =>
+                              commitAutomaticGitFetchInterval(
+                                Duration.toMillis(
+                                  Duration.seconds(normalizeFetchIntervalSeconds(value)),
+                                ),
+                              )
+                            }
                           >
-                            <div className="flex min-w-0 items-center gap-2.5">
-                              <ProviderInstanceIcon
-                                driverKind={entry.driverKind}
-                                displayName={entry.displayName}
-                                accentColor={entry.accentColor}
-                                showBadge={Boolean(entry.accentColor) || duplicateDriverCount > 1}
-                                className={duplicateDriverCount > 1 ? "size-5" : "size-4"}
-                                iconClassName="size-4"
-                                badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 text-[7px]"
-                              />
-                              <div className="min-w-0">
-                                <div className="truncate text-sm font-medium text-foreground">
-                                  {entry.displayName}
-                                </div>
-                                <div className="truncate text-xs text-muted-foreground">
-                                  {entry.instanceId}
-                                </div>
+                            <NumberFieldGroup>
+                              <NumberFieldDecrement aria-label="Decrease fetch interval" />
+                              <NumberFieldInput aria-label="Automatic Git fetch interval in seconds" />
+                              <NumberFieldIncrement aria-label="Increase fetch interval" />
+                            </NumberFieldGroup>
+                          </NumberField>
+                          <span className="text-xs text-muted-foreground">seconds</span>
+                        </div>
+                      }
+                    />
+                  </ProjectSettingsSection>
+
+                  <ProjectSettingsSection title="Providers">
+                    {globallyEnabledProviderInstanceEntries.map((entry) => {
+                      const allowed = !disabledProviderInstanceIds.includes(entry.instanceId);
+                      const isLastAllowedProvider =
+                        allowed && projectProviderInstanceEntries.length <= 1;
+                      const duplicateDriverCount = globallyEnabledProviderInstanceEntries.filter(
+                        (candidate) => candidate.driverKind === entry.driverKind,
+                      ).length;
+                      return (
+                        <div
+                          key={entry.instanceId}
+                          className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-lg px-3 py-2.5 sm:px-4"
+                        >
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <ProviderInstanceIcon
+                              driverKind={entry.driverKind}
+                              displayName={entry.displayName}
+                              accentColor={entry.accentColor}
+                              showBadge={Boolean(entry.accentColor) || duplicateDriverCount > 1}
+                              className={duplicateDriverCount > 1 ? "size-5" : "size-4"}
+                              iconClassName="size-4"
+                              badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 text-[7px]"
+                            />
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-medium text-foreground">
+                                {entry.displayName}
+                              </div>
+                              <div className="truncate text-xs text-muted-foreground">
+                                {entry.instanceId}
                               </div>
                             </div>
-                            <Switch
-                              checked={allowed}
-                              disabled={isLastAllowedProvider}
-                              aria-label={`${allowed ? "Disable" : "Enable"} ${entry.displayName} for this project`}
-                              title={
-                                isLastAllowedProvider
-                                  ? "At least one provider must stay enabled for this project."
-                                  : undefined
-                              }
-                              onCheckedChange={(checked) =>
-                                commitProviderInstanceAllowed(entry.instanceId, Boolean(checked))
-                              }
-                            />
                           </div>
-                        );
-                      })}
-                    </div>
-                  </SettingsSection>
+                          <Switch
+                            checked={allowed}
+                            disabled={isLastAllowedProvider}
+                            aria-label={`${allowed ? "Disable" : "Enable"} ${entry.displayName} for this project`}
+                            title={
+                              isLastAllowedProvider
+                                ? "At least one provider must stay enabled for this project."
+                                : undefined
+                            }
+                            onCheckedChange={(checked) =>
+                              commitProviderInstanceAllowed(entry.instanceId, Boolean(checked))
+                            }
+                          />
+                        </div>
+                      );
+                    })}
+                  </ProjectSettingsSection>
 
-                  <SettingsSection title="Automation" className="space-y-1.5 xl:col-span-2">
-                    <div className="mx-3 grid min-w-0 gap-1 rounded-xl p-1 sm:mx-4 lg:grid-cols-2">
+                  <ProjectSettingsSection title="Automation">
+                    <div className="flex min-w-0 flex-1 flex-col justify-center">
                       <ProjectScriptsControl
                         variant="settings"
                         scripts={projectDetails.data.scripts}
@@ -1400,20 +1382,20 @@ function ProjectRouteView() {
                         onUpdateScript={updateProjectScript}
                         onDeleteScript={deleteProjectScript}
                       />
-                      <ProjectSettingRow
-                        title="Variables"
-                        align="start"
-                        control={
-                          <ActionEnvironmentEditor
-                            environment={actionEnvironment}
-                            onChange={commitActionEnvironment}
-                          />
-                        }
-                      />
                     </div>
-                  </SettingsSection>
+                    <ProjectSettingRow
+                      title="Variables"
+                      align="start"
+                      control={
+                        <ActionEnvironmentEditor
+                          environment={actionEnvironment}
+                          onChange={commitActionEnvironment}
+                        />
+                      }
+                    />
+                  </ProjectSettingsSection>
 
-                  <div className="mx-4 flex min-w-0 items-center justify-between gap-4 rounded-lg px-3 py-2 xl:col-span-2">
+                  <div className="flex min-w-0 items-center justify-between gap-4 rounded-lg px-3 py-2.5 sm:px-4 xl:col-span-2">
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-foreground">Remove project</div>
                       <div className="truncate text-xs text-muted-foreground">
@@ -1550,6 +1532,22 @@ function formatEffectiveGitRemoteValue(remote: ProjectEffectiveRemote) {
   return remote.remoteUrl;
 }
 
+/**
+ * Section that stretches to fill its grid track: the row list grows with the
+ * quadrant so leftover viewport height turns into even row spacing instead of
+ * pooling below the content.
+ */
+function ProjectSettingsSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="flex min-w-0 flex-col gap-1.5">
+      <div className="flex min-h-8 shrink-0 items-center px-3 sm:px-4">
+        <h2 className="text-lg font-semibold tracking-[-0.025em] text-foreground">{title}</h2>
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col">{children}</div>
+    </section>
+  );
+}
+
 function ProjectSettingRow({
   title,
   description,
@@ -1570,7 +1568,7 @@ function ProjectSettingRow({
   const hasChildren = Boolean(children);
   const alignStart = align === "start" || hasChildren || description !== undefined;
   return (
-    <div className="rounded-lg px-3 py-2.5 sm:px-4">
+    <div className="flex min-w-0 flex-1 flex-col justify-center rounded-lg px-3 py-2.5 sm:px-4">
       <div
         className={cn(
           "flex min-w-0 flex-col gap-2 sm:grid sm:grid-cols-[minmax(8rem,0.7fr)_minmax(12rem,1.3fr)] sm:gap-4",
