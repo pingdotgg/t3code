@@ -3,7 +3,7 @@ import {
   derivePhysicalProjectKey,
   deriveProjectGroupLabel,
 } from "@t3tools/client-runtime/state/project-grouping";
-import { projectDisplayTitle } from "@t3tools/client-runtime/state/models";
+import { isChatsProject, projectDisplayTitle } from "@t3tools/client-runtime/state/models";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -114,10 +114,12 @@ export function buildHomeProjectScopes(input: {
     const representative = projects[0]!;
     return {
       key,
-      title:
-        projects.length === 1
-          ? projectDisplayTitle(representative)
-          : deriveProjectGroupLabel({ representative, members: projects }),
+      // Only the Chat pseudo-project overrides its label. Real projects keep
+      // the derived group label, which prefers the repository name over the
+      // directory name even when the group has a single member.
+      title: isChatsProject(representative)
+        ? projectDisplayTitle(representative)
+        : deriveProjectGroupLabel({ representative, members: projects }),
       representative,
       projects,
       projectRefs: projectRefsByGroup.get(key) ?? [],
