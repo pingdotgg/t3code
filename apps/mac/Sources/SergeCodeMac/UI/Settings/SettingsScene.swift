@@ -45,24 +45,17 @@ public struct SettingsScene: View {
     private let model: AppModel
     private let multi: MultiDeviceModel
     private let scenery: SceneryStore
-    /// Mounted here (not at app root): Phase 5 Create Set flow only.
-    /// Held in `@UIState` so App.body redraws that reconstruct `Settings {
-    /// SettingsScene(...) }` do not drop in-flight create-set work.
-    @UIState private var sceneSetComposer: SceneSetComposer
     @UIState private var selectedTab: SettingsTab
 
     public init(
         model: AppModel,
         scenery: SceneryStore,
-        backend: any BackendService,
         multi: MultiDeviceModel? = nil,
         initialTab: SettingsTab = .general
     ) {
         self.model = model
         self.multi = multi ?? MultiDeviceModel(local: model)
         self.scenery = scenery
-        _sceneSetComposer = UIState(
-            initialValue: SceneSetComposer(store: scenery, backend: backend))
         _selectedTab = UIState(initialValue: initialTab)
     }
 
@@ -101,10 +94,6 @@ public struct SettingsScene: View {
                 .id(selectedTab)
         }
         .frame(width: 760, height: 560)
-        // Composer is owned by this scene only. Cancel in-flight create when
-        // the Settings window closes so Unsplash work does not keep running
-        // (and so `runCreate` can drop its self retain → deinit cancel).
-        .onDisappear { sceneSetComposer.cancel() }
     }
 
     private var selectedTabBinding: Binding<SettingsTab?> {
@@ -133,7 +122,7 @@ public struct SettingsScene: View {
         case .archive:
             ArchiveSettingsTab(model: model)
         case .scenery:
-            ScenerySettingsTab(model: model, scenery: scenery, composer: sceneSetComposer)
+            ScenerySettingsTab(model: model, scenery: scenery)
         case .devices:
             PhoneSettingsTab(model: model)
         case .remoteMacs:

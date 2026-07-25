@@ -69,8 +69,20 @@ The collectible Passport feature has been removed. Existing installs may still
 have an unused file at
 `~/Library/Application Support/SergeCode/scenery/passport.json`. The app no
 longer reads, writes, or surfaces it. Leave it in place (safe no-op) or delete
-it manually; scenery image sets, place naming, and thread photo assignment are
+it manually; the scenery photo pool and thread photo assignment are
 unaffected.
+
+### Scenery
+
+Scenery is a single built-in World set: 24 curated locations (Santorini,
+Kyoto, Moraine Lake, …) fetched once from Unsplash into
+`~/Library/Application Support/SergeCode/scenery/sets/world/`. Every new
+thread draws one uniformly random photo from that pool and is titled after
+the location ("Location, Country"); the assignment then stays pinned to the
+thread. There are no custom, per-project, or AI-generated sets — the
+earlier customizable-set system (and the `server.generateScenerySet` RPC
+client) was removed. Set directories left behind by that system still load,
+so legacy thread assignments keep rendering their photos.
 
 ## Wire protocol
 

@@ -37,7 +37,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),
-  // Dolomites scene reserved when the task was queued, so the pending row,
+  // World scenery location reserved when the task was queued, so the pending row,
   // the drained creation, and an online resend all keep the same title.
   sceneTitle: Schema.optional(Schema.String),
   scenePhotoId: Schema.optional(Schema.String),

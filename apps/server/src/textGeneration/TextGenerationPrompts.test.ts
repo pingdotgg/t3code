@@ -4,14 +4,9 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
-  buildScenerySetPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
-import {
-  normalizeCliError,
-  sanitizeScenerySetResult,
-  sanitizeThreadTitle,
-} from "./TextGenerationUtils.ts";
+import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 describe("buildCommitMessagePrompt", () => {
@@ -148,100 +143,6 @@ describe("sanitizeThreadTitle", () => {
         '  "Reconnect failures after restart because the session state does not recover"  ',
       ),
     ).toBe("Reconnect failures after restart because the se...");
-  });
-});
-
-describe("buildScenerySetPrompt", () => {
-  it("includes the location and scenery output rules", () => {
-    const result = buildScenerySetPrompt({ location: "Kyoto" });
-
-    expect(result.prompt).toContain("Location: Kyoto");
-    expect(result.prompt).toContain("locations");
-    expect(result.prompt).toContain("queries");
-    expect(result.prompt).toContain("dawn");
-    expect(result.prompt).toContain("Unsplash");
-    expect(result.prompt).toContain("Kirkjufell");
-  });
-});
-
-describe("sanitizeScenerySetResult", () => {
-  it("dedupes names/queries and drops invalid tags", () => {
-    const result = sanitizeScenerySetResult({
-      sceneNames: [" Fushimi Inari ", "fushimi inari", "Arashiyama", ""],
-      queries: [
-        { text: " kyoto temples ", timeOfDay: "dawn", season: "spring" },
-        { text: "kyoto temples", timeOfDay: "midday", season: "fall" },
-        { text: "  ", timeOfDay: "day" },
-        { text: "kyoto winter mountains", season: "winter" },
-      ],
-    });
-
-    expect(result.sceneNames).toEqual(["Fushimi Inari", "Arashiyama"]);
-    expect(result.queries).toEqual([
-      { text: "kyoto temples", timeOfDay: "dawn", season: "spring" },
-      { text: "kyoto winter mountains", season: "winter" },
-    ]);
-    expect(result.locations).toBeUndefined();
-  });
-
-  it("derives sceneNames from locations and caps at 16", () => {
-    const locations = Array.from({ length: 20 }, (_, i) => ({
-      name: `Place ${i + 1}`,
-      query: `Place ${i + 1} Iceland`,
-      ...(i === 0 ? { timeOfDay: "dawn" as const } : {}),
-    }));
-    const result = sanitizeScenerySetResult({
-      locations,
-      queries: [{ text: "iceland landscape" }],
-    });
-
-    expect(result.locations).toHaveLength(16);
-    expect(result.sceneNames).toEqual(result.locations?.map((l) => l.name));
-    expect(result.locations?.[0]).toEqual({
-      name: "Place 1",
-      query: "Place 1 Iceland",
-      timeOfDay: "dawn",
-    });
-    expect(result.queries).toEqual([{ text: "iceland landscape" }]);
-  });
-
-  it("dedupes locations by name and drops empty query/name", () => {
-    const result = sanitizeScenerySetResult({
-      locations: [
-        { name: " Kirkjufell ", query: " Kirkjufell mountain Iceland " },
-        { name: "kirkjufell", query: "duplicate" },
-        { name: "Skógafoss", query: "  " },
-        { name: "", query: "empty name" },
-        { name: "Jökulsárlón", query: "Jökulsárlón glacier lagoon", season: "winter" },
-      ],
-      queries: [{ text: "iceland coast" }],
-    });
-
-    expect(result.locations).toEqual([
-      { name: "Kirkjufell", query: "Kirkjufell mountain Iceland" },
-      { name: "Jökulsárlón", query: "Jökulsárlón glacier lagoon", season: "winter" },
-    ]);
-    expect(result.sceneNames).toEqual(["Kirkjufell", "Jökulsárlón"]);
-  });
-
-  it("caps general queries at 6", () => {
-    const queries = Array.from({ length: 12 }, (_, i) => ({
-      text: `iceland landscape ${i + 1}`,
-    }));
-    const result = sanitizeScenerySetResult({
-      sceneNames: ["Kirkjufell"],
-      queries,
-    });
-
-    expect(result.queries).toHaveLength(6);
-    expect(result.queries.map((q) => q.text)).toEqual([
-      "iceland landscape 1",
-      "iceland landscape 2",
-      "iceland landscape 3",
-      "iceland landscape 4",
-      "iceland landscape 5",
-      "iceland landscape 6",
-    ]);
   });
 });
 

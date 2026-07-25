@@ -22,14 +22,12 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
-  buildScenerySetPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
   sanitizeCommitSubject,
   sanitizePrTitle,
-  sanitizeScenerySetResult,
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
@@ -136,7 +134,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     | "generatePrContent"
     | "generateBranchName"
     | "generateThreadTitle"
-    | "generateScenerySet"
     | "generateAutoReviewFindings";
 
   const encodeJsonForOperation = (
@@ -453,35 +450,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
-  const generateScenerySet: TextGeneration.TextGeneration["Service"]["generateScenerySet"] =
-    Effect.fn("CodexTextGeneration.generateScenerySet")(function* (input) {
-      const location = input.location.trim();
-      if (location.length === 0) {
-        return yield* new TextGenerationError({
-          operation: "generateScenerySet",
-          detail: "Location must not be empty.",
-        });
-      }
-
-      const { prompt, outputSchema } = buildScenerySetPrompt({ location });
-      const generated = yield* runCodexJson({
-        operation: "generateScenerySet",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        modelSelection: input.modelSelection,
-      });
-
-      const sanitized = sanitizeScenerySetResult(generated);
-      if (sanitized.sceneNames.length === 0 || sanitized.queries.length === 0) {
-        return yield* new TextGenerationError({
-          operation: "generateScenerySet",
-          detail: "Codex returned an empty scenery set.",
-        });
-      }
-      return sanitized;
-    });
-
   const generateAutoReviewFindings: TextGeneration.TextGeneration["Service"]["generateAutoReviewFindings"] =
     Effect.fn("CodexTextGeneration.generateAutoReviewFindings")(function* (input) {
       const { prompt, outputSchema } = buildAutoReviewFindingsPrompt({
@@ -524,7 +492,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-    generateScenerySet,
     generateAutoReviewFindings,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

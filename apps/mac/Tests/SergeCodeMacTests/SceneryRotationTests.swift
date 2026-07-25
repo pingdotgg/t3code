@@ -165,7 +165,7 @@ struct SceneryPhotoTagSidecarTests {
 
         let writer = SceneryStore(client: nil, root: root)
         writer.reloadFromDiskForTesting()
-        writer.registerSetForTesting(
+        writer.installSetForTesting(
             testSet(), pool: [tagged, untagged], photoTags: expectedTags)
 
         let sidecarURL = root.appendingPathComponent("sets/rotation-test/photo-tags.json")
@@ -187,7 +187,7 @@ struct SceneryPhotoTagSidecarTests {
         let tagged = photo("tagged")
         let store = SceneryStore(client: nil, root: root)
         store.reloadFromDiskForTesting()
-        store.registerSetForTesting(
+        store.installSetForTesting(
             testSet(),
             pool: [tagged],
             photoTags: [tagged.id: SceneryPhotoTags(timeOfDay: .dawn, season: .spring)])
@@ -220,8 +220,8 @@ struct SceneryPhotoTagSidecarTests {
         let nightPhoto = photo("night")
         let store = SceneryStore(client: nil, root: root)
         store.reloadFromDiskForTesting()
-        store.registerSetForTesting(
-            ScenerySet.makeBuiltinDolomites(),
+        store.installSetForTesting(
+            ScenerySet.makeBuiltinWorldSet(),
             pool: [dawnPhoto, nightPhoto],
             photoTags: [
                 dawnPhoto.id: SceneryPhotoTags(timeOfDay: .dawn),
@@ -229,13 +229,16 @@ struct SceneryPhotoTagSidecarTests {
             ])
 
         store.reevaluateRotation(at: dawn, calendar: calendar)
-        #expect(store.peekNextScene()?.id == dawnPhoto.id)
         #expect(store.dailyFeatured()?.id == dawnPhoto.id)
-        store.assign(photoID: dawnPhoto.id, name: dawnPhoto.name, to: "existing-thread")
+        // The next-thread pick is random but pending: bucket flips must not
+        // change it, or the New Session preview would drift from the commit.
+        let pending = try #require(store.peekNextScene())
 
         store.reevaluateRotation(at: night, calendar: calendar)
-        #expect(store.peekNextScene()?.id == nightPhoto.id)
         #expect(store.dailyFeatured()?.id == nightPhoto.id)
+        #expect(store.peekNextScene()?.id == pending.id)
+
+        store.assign(photoID: dawnPhoto.id, name: dawnPhoto.name, to: "existing-thread")
         #expect(store.photo(for: "existing-thread")?.id == dawnPhoto.id)
     }
 }
@@ -256,7 +259,7 @@ struct SceneryRotationObservationTests {
             photographerProfileURL: nil)
     }
 
-    @Test("bucket mutation invalidates dailyFeatured/peekNextScene; same bucket is a no-op")
+    @Test("bucket mutation invalidates dailyFeatured; same bucket is a no-op")
     func observationFiresOnBucketChange() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("scenery-obs-\(UUID().uuidString)", isDirectory: true)
@@ -272,8 +275,8 @@ struct SceneryRotationObservationTests {
 
         let store = SceneryStore(client: nil, root: root)
         store.reloadFromDiskForTesting()
-        store.registerSetForTesting(
-            ScenerySet.makeBuiltinDolomites(),
+        store.installSetForTesting(
+            ScenerySet.makeBuiltinWorldSet(),
             pool: [photo("dawn"), photo("night")],
             photoTags: [
                 "dawn": SceneryPhotoTags(timeOfDay: .dawn),
@@ -302,16 +305,6 @@ struct SceneryRotationObservationTests {
         }
         store.reevaluateRotation(at: dawn, calendar: calendar)
         #expect(!noopChanged.value)
-
-        // peekNextScene() path (NewSessionSheet) — re-register after prior onChange.
-        let peekChanged = ObservationFlag()
-        withObservationTracking {
-            _ = store.peekNextScene()
-        } onChange: {
-            peekChanged.set()
-        }
-        store.reevaluateRotation(at: night, calendar: calendar)
-        #expect(peekChanged.value)
     }
 }
 

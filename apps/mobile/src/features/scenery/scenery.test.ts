@@ -13,17 +13,16 @@ import { makeMemorySceneryStorage } from "./scenery-storage";
 import {
   displayNamesFromState,
   SceneryStore,
-  SCENE_NAMES,
   sceneryStateAtom,
+  WORLD_LOCATIONS,
 } from "./scenery-store";
 import type { SceneryPhoto, UnsplashClient } from "./unsplash";
-import { extractPlaceName, makeUnsplashClient, sizedImageURL } from "./unsplash";
+import { makeUnsplashClient, sizedImageURL } from "./unsplash";
 
 function photo(id: string, overrides: Partial<SceneryPhoto> = {}): SceneryPhoto {
   return {
     id,
     name: "",
-    placeName: null,
     averageColorHex: "#889988",
     heroURL: `https://images.unsplash.com/photo-${id}?ixid=abc&w=1080`,
     thumbURL: `https://images.unsplash.com/photo-${id}?ixid=abc&w=200`,
@@ -35,6 +34,11 @@ function photo(id: string, overrides: Partial<SceneryPhoto> = {}): SceneryPhoto 
   };
 }
 
+/**
+ * Fake client returning the same photos for every query. The store keeps the
+ * first not-yet-seen photo per location query, so N photos here yield a pool
+ * of min(N, 24) photos named after the first N WORLD_LOCATIONS entries.
+ */
 function makeClient(photos: ReadonlyArray<SceneryPhoto>): UnsplashClient & {
   readonly searches: string[];
   readonly registered: string[];
@@ -44,9 +48,37 @@ function makeClient(photos: ReadonlyArray<SceneryPhoto>): UnsplashClient & {
   return {
     searches,
     registered,
+    searchPhotos: async (query, _count) => {
+      searches.push(query);
+      return photos;
+    },
+    registerDownload: async (url) => {
+      registered.push(url);
+    },
+  };
+}
+
+/** Fake client returning one distinct photo per curated location query. */
+function makeWorldClient(
+  options: { readonly emptyQueries?: ReadonlyArray<string> } = {},
+): UnsplashClient & {
+  readonly searches: string[];
+  readonly counts: number[];
+  readonly registered: string[];
+} {
+  const searches: string[] = [];
+  const counts: number[] = [];
+  const registered: string[] = [];
+  return {
+    searches,
+    counts,
+    registered,
     searchPhotos: async (query, count) => {
       searches.push(query);
-      return photos.slice(0, count);
+      counts.push(count);
+      if (options.emptyQueries?.includes(query)) return [];
+      const index = WORLD_LOCATIONS.findIndex((location) => location.query === query);
+      return index >= 0 ? [photo(`p${index}`)] : [];
     },
     registerDownload: async (url) => {
       registered.push(url);
@@ -132,31 +164,6 @@ describe("sizedImageURL", () => {
   });
 });
 
-describe("extractPlaceName", () => {
-  it("prefers location.name over city/country", () => {
-    expect(
-      extractPlaceName({ name: "Tre Cime di Lavaredo", city: "Auronzo", country: "Italy" }),
-    ).toBe("Tre Cime di Lavaredo");
-  });
-
-  it("falls back to city, then country", () => {
-    expect(extractPlaceName({ city: "Ortisei", country: "Italy" })).toBe("Ortisei");
-    expect(extractPlaceName({ country: "Italy" })).toBe("Italy");
-  });
-
-  it("returns null without any location metadata", () => {
-    expect(extractPlaceName(null)).toBeNull();
-    expect(extractPlaceName(undefined)).toBeNull();
-    expect(extractPlaceName({ name: "  " })).toBeNull();
-  });
-
-  it("collapses whitespace and truncates long labels", () => {
-    expect(extractPlaceName({ name: "Val   di   Funes" })).toBe("Val di Funes");
-    const long = "A".repeat(60);
-    expect(extractPlaceName({ name: long })).toBe(`${"A".repeat(45)}...`);
-  });
-});
-
 describe("makeUnsplashClient", () => {
   it("returns null without a key", () => {
     expect(makeUnsplashClient(null)).toBeNull();
@@ -176,49 +183,76 @@ describe("SceneryStore", () => {
     expect(store.dailyFeatured()).toBeNull();
   });
 
-  it("builds a pool with curated scene names paired in fetch order", async () => {
-    const photos = Array.from({ length: 30 }, (_, index) => photo(`p${index}`));
-    const client = makeClient(photos);
+  it("builds the pool from one search per curated location, named verbatim", async () => {
+    const client = makeWorldClient();
     const { store, registry, storage } = makeStore({ client });
     await store.start();
 
     const state = registry.get(sceneryStateAtom);
-    // 12 + 8 + 6 requested, but the fake client returns the same photos for
-    // every query, so dedupe leaves the first 12 unique ids.
-    expect(client.searches).toHaveLength(3);
-    expect(state.pool.length).toBeGreaterThan(0);
-    expect(state.pool[0]?.name).toBe(SCENE_NAMES[0]);
-    expect(state.pool[1]?.name).toBe(SCENE_NAMES[1]);
+    expect(client.searches).toEqual(WORLD_LOCATIONS.map((location) => location.query));
+    // Two results requested per location for dedupe resilience.
+    expect(client.counts.every((count) => count === 2)).toBe(true);
+    expect(state.pool).toHaveLength(WORLD_LOCATIONS.length);
+    for (const [index, location] of WORLD_LOCATIONS.entries()) {
+      expect(state.pool[index]?.name).toBe(location.name);
+    }
     expect(storage.state.pool?.photos.length).toBe(state.pool.length);
   });
 
-  it("keeps the plain place name as the thread title, even when reused", async () => {
-    // Mirrors mac's SceneryStore.threadTitle: duplicate primary titles across
-    // threads are expected; displayNames differentiates them once the server
-    // generates a description.
+  it("skips a location whose search returns nothing without failing the build", async () => {
+    const client = makeWorldClient({ emptyQueries: [WORLD_LOCATIONS[0]!.query] });
+    const { store, registry } = makeStore({ client });
+    await store.start();
+
+    const state = registry.get(sceneryStateAtom);
+    expect(state.pool).toHaveLength(WORLD_LOCATIONS.length - 1);
+    expect(state.pool.some((entry) => entry.name === WORLD_LOCATIONS[0]!.name)).toBe(false);
+    expect(state.pool.some((entry) => entry.name === WORLD_LOCATIONS[1]!.name)).toBe(true);
+  });
+
+  it("keeps the curated location name as the thread title, even when reused", async () => {
     const client = makeClient([photo("p0")]);
     const { store } = makeStore({ client });
     await store.start();
 
     const scene = store.peekNextScene();
     expect(scene).not.toBeNull();
-    expect(store.threadTitle(scene!)).toBe(SCENE_NAMES[0]);
+    expect(store.threadTitle(scene!)).toBe(WORLD_LOCATIONS[0]!.name);
     store.assign(scene!.id, "thread-1");
-    expect(store.threadTitle(scene!)).toBe(SCENE_NAMES[0]);
+    expect(store.threadTitle(scene!)).toBe(WORLD_LOCATIONS[0]!.name);
   });
 
-  it("spreads scenes least-used-first and keeps assignments stable", async () => {
+  it("peekNextScene holds the pending random pick until assign commits it, then picks again", async () => {
+    const client = makeClient([photo("p0"), photo("p1")]);
+    const { store } = makeStore({ client });
+    await store.start();
+
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const first = store.peekNextScene()!;
+      expect(first.id).toBe("p0");
+      // Repeated peeks (draft queue, then online create) see the same scene.
+      expect(store.peekNextScene()?.id).toBe("p0");
+
+      store.assign(first.id, "thread-1");
+      randomSpy.mockReturnValue(0.999);
+      const second = store.peekNextScene()!;
+      expect(second.id).toBe("p1");
+      expect(store.peekNextScene()?.id).toBe("p1");
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("photoFor keeps the explicit assignment and falls back to a stable hash", async () => {
     const client = makeClient([photo("p0"), photo("p1"), photo("p2")]);
     const { store, storage } = makeStore({ client });
     await store.start();
 
-    const first = store.peekNextScene()!;
-    store.assign(first.id, "thread-1");
-    const second = store.peekNextScene()!;
-    expect(second.id).not.toBe(first.id);
-
-    expect(store.photoFor("thread-1")?.id).toBe(first.id);
-    expect(storage.state.assignments["thread-1"]).toBe(first.id);
+    const scene = store.peekNextScene()!;
+    store.assign(scene.id, "thread-1");
+    expect(store.photoFor("thread-1")?.id).toBe(scene.id);
+    expect(storage.state.assignments["thread-1"]).toBe(scene.id);
     // Unassigned threads get a stable hash fallback, not null.
     expect(store.photoFor("thread-legacy")).not.toBeNull();
     expect(store.photoFor("thread-legacy")?.id).toBe(store.photoFor("thread-legacy")?.id);
@@ -229,7 +263,7 @@ describe("SceneryStore", () => {
     const storage = makeMemorySceneryStorage();
     storage.state.pool = {
       fetchedAt: "2026-07-01T00:00:00Z",
-      photos: [{ ...photo("cached"), name: "Seceda" }],
+      photos: [{ ...photo("cached"), name: "Kyoto, Japan" }],
     };
     const { store, registry } = makeStore({ client, storage });
     await store.start();
@@ -243,7 +277,7 @@ describe("SceneryStore", () => {
     const storage = makeMemorySceneryStorage();
     storage.state.pool = {
       fetchedAt: "2026-01-01T00:00:00Z",
-      photos: [{ ...photo("old-assigned"), name: "Marmolada" }, photo("old-unassigned")],
+      photos: [{ ...photo("old-assigned"), name: "Tre Cime, Italy" }, photo("old-unassigned")],
     };
     storage.state.assignments = { "thread-1": "old-assigned" };
     const { store, registry } = makeStore({ client, storage });
@@ -252,29 +286,27 @@ describe("SceneryStore", () => {
     const pool = registry.get(sceneryStateAtom).pool;
     expect(pool.some((entry) => entry.id === "old-assigned")).toBe(true);
     expect(pool.some((entry) => entry.id === "old-unassigned")).toBe(false);
-    expect(store.photoFor("thread-1")?.name).toBe("Marmolada");
+    expect(store.photoFor("thread-1")?.name).toBe("Tre Cime, Italy");
   });
 
   it("refreshing the pool keeps an assigned photo's name even when it reappears in the new results", async () => {
-    // Same photo id comes back from the refreshed search (e.g. Unsplash
-    // resurfaces it), but at a different index than before. Recomputing its
-    // name from the new index/placeName would silently rename thread-1's
-    // scene out from under it; the prior assigned name must win.
-    const client = makeClient([photo("fresh-0"), { ...photo("reused"), placeName: "Seiser Alm" }]);
+    // The world client returns photo id "p0" for the first location query;
+    // a stale cached pool already holds that id under an older curated name.
+    // Recomputing its name would silently rename thread-1's scene out from
+    // under it; the prior assigned name must win.
+    const client = makeWorldClient();
     const storage = makeMemorySceneryStorage();
     storage.state.pool = {
       fetchedAt: "2026-01-01T00:00:00Z",
-      photos: [{ ...photo("reused"), name: "Seceda" }],
+      photos: [{ ...photo("p0"), name: "Legacy Name, Italy" }],
     };
-    storage.state.assignments = { "thread-1": "reused" };
+    storage.state.assignments = { "thread-1": "p0" };
     const { store, registry } = makeStore({ client, storage });
     await store.start();
 
     const pool = registry.get(sceneryStateAtom).pool;
-    expect(pool.find((entry) => entry.id === "reused")?.name).toBe("Seceda");
-    expect(store.photoFor("thread-1")?.name).toBe("Seceda");
-    // Non-identity metadata still refreshes.
-    expect(pool.find((entry) => entry.id === "reused")?.placeName).toBe("Seiser Alm");
+    expect(pool.find((entry) => entry.id === "p0")?.name).toBe("Legacy Name, Italy");
+    expect(store.photoFor("thread-1")?.name).toBe("Legacy Name, Italy");
   });
 
   it("rotates the daily featured photo by day of year", async () => {
@@ -296,7 +328,7 @@ describe("SceneryStore", () => {
     const storage = makeMemorySceneryStorage();
     storage.state.pool = {
       fetchedAt: "2026-07-01T00:00:00Z",
-      photos: [{ ...photo("cached"), name: "Seceda" }],
+      photos: [{ ...photo("cached"), name: "Kyoto, Japan" }],
     };
     storage.state.assignments = { "thread-1": "cached" };
     const { store, registry } = makeStore({ client: null, storage });
@@ -336,19 +368,21 @@ describe("SceneryStore", () => {
     expect(store.peekNextScene()).not.toBeNull();
   });
 
-  it("unassign frees a reservation so least-used spread sees it again", async () => {
+  it("unassign removes the assignment; unknown keys are a no-op", async () => {
     const client = makeClient([photo("p0"), photo("p1")]);
-    const { store, storage } = makeStore({ client });
+    const { store, registry, storage } = makeStore({ client });
     await store.start();
 
     const scene = store.peekNextScene()!;
     store.assign(scene.id, "pending-thread");
-    const next = store.peekNextScene()!;
-    expect(next.id).not.toBe(scene.id);
+    expect(storage.state.assignments["pending-thread"]).toBe(scene.id);
 
     store.unassign("pending-thread");
-    expect(store.peekNextScene()?.id).toBe(scene.id);
     expect(storage.state.assignments["pending-thread"]).toBeUndefined();
+    // The explicit binding is gone; the thread falls back to its stable hash.
+    const pool = registry.get(sceneryStateAtom).pool;
+    const fallback = pool[stableIndex("pending-thread", pool.length)];
+    expect(store.photoFor("pending-thread")?.id).toBe(fallback?.id);
     // Unassigning an unknown key is a no-op.
     store.unassign("never-assigned");
   });
@@ -379,68 +413,6 @@ describe("SceneryStore", () => {
     expect(new URL(store.variantURL(scene, "frost")).searchParams.get("w")).toBe("800");
   });
 
-  it("names a pool photo after its real Unsplash location, not the curated cycle", async () => {
-    const client = makeClient([
-      photo("p0", { placeName: "Tre Cime di Lavaredo" }),
-      photo("p1"), // no location metadata: falls back to curated cycling
-    ]);
-    const { store, registry } = makeStore({ client });
-    await store.start();
-
-    const state = registry.get(sceneryStateAtom);
-    expect(state.pool.find((entry) => entry.id === "p0")?.name).toBe("Tre Cime di Lavaredo");
-    expect(state.pool.find((entry) => entry.id === "p1")?.name).toBe(SCENE_NAMES[1]);
-  });
-
-  it("never names a photo after the bare set title, even from location metadata", async () => {
-    const client = makeClient([photo("p0", { placeName: "Dolomites" })]);
-    const { store, registry } = makeStore({ client });
-    await store.start();
-
-    // Falls back to the curated cycle instead of surfacing "Dolomites"
-    // literally as a scene/thread name.
-    expect(registry.get(sceneryStateAtom).pool[0]?.name).toBe(SCENE_NAMES[0]);
-  });
-
-  it("peekNextScene prefers distinctly-named candidates over generically-named ones", async () => {
-    // p0 resolves to the bare set title (simulated directly on the pool,
-    // bypassing refreshPool's own guard, to exercise peekNextScene's filter
-    // in isolation); p1 gets a real place name.
-    const client = makeClient([photo("p0"), photo("p1", { placeName: "Seceda" })]);
-    const { store, storage } = makeStore({ client });
-    await store.start();
-    storage.state.pool = {
-      fetchedAt: new Date("2026-07-04T12:00:00Z").toISOString(),
-      photos: [
-        { ...photo("p0"), name: "Dolomites" },
-        { ...photo("p1"), name: "Seceda" },
-      ],
-    };
-    // Reuse the same (fresh, so unused) client — a fresh pool is loaded from
-    // disk without refetching, per the "reuses a fresh cached pool" case.
-    const { store: reloaded } = makeStore({ client, storage });
-    await reloaded.start();
-
-    // Both candidates are tied at zero uses; the generically-named one is
-    // filtered out, so the distinctly-named photo wins even though it isn't
-    // first in pool order.
-    expect(reloaded.peekNextScene()?.id).toBe("p1");
-  });
-
-  it("threadTitle strips pool-index and legacy lap-numbering pollution", async () => {
-    const client = makeClient([photo("p0")]);
-    const { store } = makeStore({ client });
-    await store.start();
-
-    expect(store.threadTitle({ ...photo("x"), name: "Tre Cime 2" })).toBe("Tre Cime");
-    expect(store.threadTitle({ ...photo("x"), name: "Seceda · 3" })).toBe("Seceda");
-    expect(store.threadTitle({ ...photo("x"), name: "Dolomites 5" })).toBe("Dolomites");
-    // A genuine location-derived name (not in SCENE_NAMES) passes through.
-    expect(store.threadTitle({ ...photo("x"), name: "Val di Funes, Italy" })).toBe(
-      "Val di Funes, Italy",
-    );
-  });
-
   it("displayNames: primary is the stable scene name, description appears only once titled", async () => {
     const client = makeClient([photo("p0")]);
     const { store } = makeStore({ client });
@@ -455,11 +427,6 @@ describe("SceneryStore", () => {
       primary: seedTitle,
       description: null,
     });
-    // Old-style numbered seed is also treated as "not yet titled".
-    expect(store.displayNames("thread-1", `${seedTitle} · 2`)).toEqual({
-      primary: seedTitle,
-      description: null,
-    });
     // Once the server retitles past the seed, it becomes the description.
     expect(store.displayNames("thread-1", "Fix the flaky retry test")).toEqual({
       primary: seedTitle,
@@ -470,22 +437,6 @@ describe("SceneryStore", () => {
     await emptyStore.start();
     expect(emptyStore.displayNames("thread-x", "Some title")).toEqual({
       primary: "Some title",
-      description: null,
-    });
-  });
-
-  it("displayNames suppresses a curated pool-index seed title, not just the bare scene name", async () => {
-    // A thread whose stored title is still the pool-builder's numbered
-    // fallback ("Tre Cime 2") for the scene it's assigned to ("Tre Cime")
-    // must read as "not yet titled" — the same as an exact or " · "-numbered
-    // match — not as a real server-generated description.
-    const client = makeClient([{ ...photo("p0"), name: "Tre Cime" }]);
-    const { store } = makeStore({ client });
-    await store.start();
-    store.assign("p0", "thread-1");
-
-    expect(store.displayNames("thread-1", "Tre Cime 2")).toEqual({
-      primary: "Tre Cime",
       description: null,
     });
   });

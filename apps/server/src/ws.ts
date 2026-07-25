@@ -60,7 +60,6 @@ import {
   type TerminalMetadataStreamEvent,
   WS_METHODS,
   WsRpcGroup,
-  type GenerateScenerySetResult,
 } from "@t3tools/contracts";
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
@@ -96,7 +95,6 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as AutoReviewJobStore from "./autoReview/AutoReviewJobStore.ts";
-import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -298,7 +296,6 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
   [WS_METHODS.providerUsageSummary, AuthOrchestrationReadScope],
-  [WS_METHODS.serverGenerateScenerySet, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
@@ -496,7 +493,6 @@ const makeWsRpcLayer = (
         fileSystem: fileSystemForExtensions,
         path: pathForExtensions,
       });
-      const textGeneration = yield* TextGeneration.TextGeneration;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1478,22 +1474,6 @@ const makeWsRpcLayer = (
                 ),
             {
               "rpc.aggregate": "provider",
-            },
-          ),
-        [WS_METHODS.serverGenerateScenerySet]: ({ location }) =>
-          observeRpcEffect(
-            WS_METHODS.serverGenerateScenerySet,
-            Effect.gen(function* () {
-              const settings = yield* serverSettings.getSettings;
-              const result = yield* textGeneration.generateScenerySet({
-                cwd: config.cwd,
-                location,
-                modelSelection: settings.textGenerationModelSelection,
-              });
-              return result satisfies GenerateScenerySetResult;
-            }),
-            {
-              "rpc.aggregate": "server",
             },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>

@@ -65,7 +65,6 @@ function makeText() {
     generatePrContent: () => Effect.die("unused"),
     generateBranchName: () => Effect.die("unused"),
     generateThreadTitle: () => Effect.die("unused"),
-    generateScenerySet: () => Effect.die("unused"),
     generateAutoReviewFindings: () =>
       Effect.succeed({
         summary: "ok",
@@ -75,10 +74,7 @@ function makeText() {
   });
 }
 
-function makeLayer(input: {
-  enabled: boolean;
-  listCount: { value: number };
-}) {
+function makeLayer(input: { enabled: boolean; listCount: { value: number } }) {
   return Layer.mergeAll(
     AutoReviewJobStore.layerInMemory,
     AutoReviewPoller.layer({

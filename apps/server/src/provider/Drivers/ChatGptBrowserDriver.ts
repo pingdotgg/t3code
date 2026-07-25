@@ -66,7 +66,6 @@ const textGeneration: TextGeneration["Service"] = {
   generatePrContent: () => unsupportedTextGeneration("generatePrContent"),
   generateBranchName: () => unsupportedTextGeneration("generateBranchName"),
   generateThreadTitle: () => unsupportedTextGeneration("generateThreadTitle"),
-  generateScenerySet: () => unsupportedTextGeneration("generateScenerySet"),
   generateAutoReviewFindings: () => unsupportedTextGeneration("generateAutoReviewFindings"),
 };
 

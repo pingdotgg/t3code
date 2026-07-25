@@ -16,13 +16,11 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
-  buildScenerySetPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
-  sanitizeScenerySetResult,
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
 import {
@@ -55,7 +53,6 @@ export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(functi
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle"
-      | "generateScenerySet"
       | "generateAutoReviewFindings";
     cwd: string;
     prompt: string;
@@ -262,35 +259,6 @@ export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(functi
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
-  const generateScenerySet: TextGeneration.TextGeneration["Service"]["generateScenerySet"] =
-    Effect.fn("KimiTextGeneration.generateScenerySet")(function* (input) {
-      const location = input.location.trim();
-      if (location.length === 0) {
-        return yield* new TextGenerationError({
-          operation: "generateScenerySet",
-          detail: "Location must not be empty.",
-        });
-      }
-
-      const { prompt, outputSchema } = buildScenerySetPrompt({ location });
-      const generated = yield* runKimiJson({
-        operation: "generateScenerySet",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        modelSelection: input.modelSelection,
-      });
-
-      const sanitized = sanitizeScenerySetResult(generated);
-      if (sanitized.sceneNames.length === 0 || sanitized.queries.length === 0) {
-        return yield* new TextGenerationError({
-          operation: "generateScenerySet",
-          detail: "Kimi returned an empty scenery set.",
-        });
-      }
-      return sanitized;
-    });
-
   const generateAutoReviewFindings: TextGeneration.TextGeneration["Service"]["generateAutoReviewFindings"] =
     Effect.fn("KimiTextGeneration.generateAutoReviewFindings")(function* (input) {
       const { prompt, outputSchema } = buildAutoReviewFindingsPrompt({
@@ -333,7 +301,6 @@ export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(functi
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-    generateScenerySet,
     generateAutoReviewFindings,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

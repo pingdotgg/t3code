@@ -127,12 +127,6 @@ extension T3Client {
         try await call("server.updateSettings", ServerUpdateSettingsInput(patch: patch))
     }
 
-    /// AI-curated scenery set for a user-typed location (`server.generateScenerySet`).
-    public func generateScenerySet(location: String) async throws -> GeneratedScenerySet {
-        try await call(
-            "server.generateScenerySet", GenerateScenerySetInput(location: location))
-    }
-
     /// Recent native auto-review jobs (`autoReview.listJobs`).
     public func listAutoReviewJobs(projectId: String? = nil, limit: Int? = nil) async throws
         -> AutoReviewJobsPayload
@@ -164,72 +158,4 @@ public struct AutoReviewJobWire: Decodable, Sendable, Identifiable {
     public var autoFixEnqueued: Bool
     public var error: String?
     public var updatedAt: String
-}
-
-/// `server.generateScenerySet` payload.
-struct GenerateScenerySetInput: Encodable, Sendable {
-    var location: String
-}
-
-/// Optional tags on an Unsplash query produced by text generation.
-public enum GeneratedSceneryTimeOfDay: String, Codable, Sendable, Hashable {
-    case dawn, day, dusk, night
-}
-
-public enum GeneratedScenerySeason: String, Codable, Sendable, Hashable {
-    case spring, summer, autumn, winter
-}
-
-public struct GeneratedSceneryQuery: Codable, Sendable, Hashable {
-    public var text: String
-    public var timeOfDay: GeneratedSceneryTimeOfDay?
-    public var season: GeneratedScenerySeason?
-
-    public init(
-        text: String,
-        timeOfDay: GeneratedSceneryTimeOfDay? = nil,
-        season: GeneratedScenerySeason? = nil
-    ) {
-        self.text = text
-        self.timeOfDay = timeOfDay
-        self.season = season
-    }
-}
-
-/// One iconic place with a place-specific Unsplash search query.
-public struct GeneratedSceneryLocation: Codable, Sendable, Hashable {
-    public var name: String
-    public var query: String
-    public var timeOfDay: GeneratedSceneryTimeOfDay?
-    public var season: GeneratedScenerySeason?
-
-    public init(
-        name: String,
-        query: String,
-        timeOfDay: GeneratedSceneryTimeOfDay? = nil,
-        season: GeneratedScenerySeason? = nil
-    ) {
-        self.name = name
-        self.query = query
-        self.timeOfDay = timeOfDay
-        self.season = season
-    }
-}
-
-/// Success payload for `server.generateScenerySet`.
-public struct GeneratedScenerySet: Codable, Sendable, Hashable {
-    public var sceneNames: [String]
-    public var queries: [GeneratedSceneryQuery]
-    /// Per-location fetch targets. Nil/empty → legacy query-pool path.
-    public var locations: [GeneratedSceneryLocation]?
-
-    public init(
-        sceneNames: [String],
-        queries: [GeneratedSceneryQuery],
-        locations: [GeneratedSceneryLocation]? = nil
-    ) {
-        self.sceneNames = sceneNames
-        self.queries = queries
-        self.locations = locations
-    }
 }

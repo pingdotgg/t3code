@@ -7,13 +7,11 @@ import T3Kit
 // per AppModel lifecycle so restart tests behave like the live backend.
 
 private enum MockBackendError: Error, LocalizedError {
-    case emptyLocation
     case threadNotFound(String)
     case taskNotFound(threadID: String, taskId: String)
     case unknownAttachment(String)
     var errorDescription: String? {
         switch self {
-        case .emptyLocation: "Location must not be empty."
         case .threadNotFound(let id): "Thread not found: \(id)."
         case .taskNotFound(let threadID, let taskId):
             "Task '\(taskId)' not found on thread \(threadID)."
@@ -153,33 +151,6 @@ public final class MockBackend: BackendService, @unchecked Sendable {
     public func refreshProviders() async throws {}
 
     public func updateProvider(instanceID: String) async throws {}
-
-    public func generateScenerySet(location: String) async throws -> GeneratedScenerySet {
-        let trimmed = location.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw MockBackendError.emptyLocation
-        }
-        // Deterministic fixture for UI/dev without the model CLI.
-        let slug = trimmed.lowercased()
-        let locations: [GeneratedSceneryLocation] = (1...14).map { index in
-            let name = "\(trimmed) Viewpoint \(index)"
-            return GeneratedSceneryLocation(
-                name: name,
-                query: "\(name) \(slug)",
-                timeOfDay: index == 3 ? .dawn : nil,
-                season: index == 7 ? .winter : nil)
-        }
-        return GeneratedScenerySet(
-            sceneNames: locations.map(\.name),
-            queries: [
-                GeneratedSceneryQuery(text: "\(slug) landscape"),
-                GeneratedSceneryQuery(text: "\(slug) mountains", timeOfDay: .day),
-                GeneratedSceneryQuery(text: "\(slug) sunrise", timeOfDay: .dawn),
-                GeneratedSceneryQuery(text: "\(slug) coast"),
-                GeneratedSceneryQuery(text: "\(slug) autumn colors", season: .autumn),
-            ],
-            locations: locations)
-    }
 
     public func watchVcsStatus(threadID: String) async throws {
         await state.emitVcsStatus(threadID: threadID)

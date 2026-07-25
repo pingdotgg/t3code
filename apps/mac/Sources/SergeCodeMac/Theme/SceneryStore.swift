@@ -4,15 +4,17 @@ import ImageIO
 import Observation
 import SwiftUI
 
-/// Owns the app's alpine identity photos: one or more location photo sets
-/// (builtin Dolomites + future custom sets), a stable thread → photo
-/// assignment (each thread keeps "its" scene and the name derived from it),
-/// and an in-memory NSImage cache for the views.
+/// Owns the app's scenery identity photos: the builtin World set (24 curated
+/// locations; every new thread draws one random photo from it), a stable
+/// thread → photo assignment (each thread keeps "its" scene and the name
+/// derived from it), and an in-memory NSImage cache for the views. Legacy
+/// set directories still on disk are loaded too, so threads assigned to a
+/// pre-World set keep rendering their photo.
 ///
 /// Disk layout (`~/Library/Application Support/SergeCode/scenery/`):
 /// - `assignments.json` — global thread → { photoID, setId? }
-/// - `settings.json` — `{ defaultSetId, sceneryTranslucency }`
-/// - `project-prefs.json` — projectPath → `{ setId?, accentHex?, sfSymbol? }`
+/// - `settings.json` — `{ sceneryTranslucency }`
+/// - `project-prefs.json` — projectPath → `{ accentHex?, sfSymbol? }`
 /// - `sets/<setId>/` — manifest.json, pool.json, photo-tags.json,
 ///   names.json, registered-downloads.json, images/
 ///
@@ -28,14 +30,19 @@ public final class SceneryStore {
         case heroBlurChrome  // memory-only blur of the decoded hero for chrome
     }
 
-    /// Default set's pool (kept for observation / source compatibility).
+    /// World set's pool (kept for observation / source compatibility).
     /// Prefer `photo(for:)` which resolves the correct per-thread set.
     public private(set) var pool: [SceneryPhoto] = []
-    /// Loaded set manifests (builtin + custom).
+    /// Loaded set manifests (builtin World + legacy sets still on disk).
     public private(set) var availableSets: [ScenerySet] = []
 
     /// threadID → assignment (photo + owning set).
     private var assignments: [String: SceneryAssignment] = [:]
+    /// The photo the next created thread will get. Sampled lazily by
+    /// `peekNextScene()` so the New Session preview and the actual commit
+    /// always agree; cleared by `assign(...)` (commit) and re-sampled when a
+    /// pool refresh no longer contains it.
+    private var pendingScene: SceneryPhoto?
     /// setId → (threadID → scene display name committed at creation).
     private var namesBySet: [String: [String: String]] = [:]
     /// setId → photo pool.
@@ -61,10 +68,10 @@ public final class SceneryStore {
     private let root: URL
 
     /// Updated only on activation/day-change notifications. `@Observable`
-    /// tracks these stores so surfaces that call `dailyFeatured()` /
-    /// `peekNextScene()` (which read them) invalidate when the bucket flips —
-    /// without polling or per-frame date reads, and without notifying views
-    /// that never touch rotation state.
+    /// tracks these stores so surfaces that call `dailyFeatured()` (which
+    /// reads them) invalidate when the bucket flips — without polling or
+    /// per-frame date reads, and without notifying views that never touch
+    /// rotation state.
     public private(set) var rotationBucket: SceneryBucket
     /// Day identity used by `dailyFeatured()` (year + ordinal). Public so
     /// views can also depend on day rollover explicitly if needed.
@@ -90,11 +97,6 @@ public final class SceneryStore {
     /// A single shared context avoids creating an expensive Core Image
     /// context for every wallpaper variant.
     nonisolated private static let heroBlurContext = CIContext()
-
-    /// Optional lookup: threadID → project workspace path. Wired from
-    /// AppModel so set resolution can read `project-prefs.json`.
-    @ObservationIgnored
-    public var projectPathForThread: ((String) -> String?)?
 
     /// Debounced `settings.json` write (translucency slider ticks).
     @ObservationIgnored
@@ -211,33 +213,13 @@ public final class SceneryStore {
 
     // MARK: - Set resolution
 
-    /// Resolves which set applies for a project path (or the global default).
-    public func resolvedSetId(projectPath: String?) -> String {
-        ScenerySetResolution.resolveSetId(
-            projectPath: projectPath,
-            projectPrefs: projectPrefs,
-            defaultSetId: settings.defaultSetId,
-            knownSetIds: Set(availableSets.map(\.id)))
-    }
-
-    /// Resolves the set for a project, honoring an explicit valid override.
-    public func effectiveSetId(projectPath: String?, setIdOverride: String? = nil) -> String {
-        if let setIdOverride,
-            availableSets.contains(where: { $0.id == setIdOverride })
-        {
-            return setIdOverride
-        }
-        return resolvedSetId(projectPath: projectPath)
-    }
-
-    /// Resolves the set for a thread via its project path (when wired) and
-    /// assignment fallback.
+    /// Resolves the set for a thread: its assignment when one exists (legacy
+    /// assignments keep pointing at their original set), else the World set.
     public func resolvedSetId(forThread threadID: String) -> String {
         if let assignment = assignments[threadID] {
             return assignment.resolvedSetId
         }
-        let path = projectPathForThread?(threadID)
-        return resolvedSetId(projectPath: path)
+        return ScenerySet.worldID
     }
 
     public func set(id: String) -> ScenerySet? {
@@ -250,17 +232,13 @@ public final class SceneryStore {
     }
 
     /// Palette for a resolved set. An explicit set id wins; otherwise the
-    /// photo's owning set and then the global default are used.
+    /// photo's owning set and then the World set are used.
     public func palette(for photo: SceneryPhoto?, setId: String? = nil) -> SceneryPalette? {
         let owner =
             setId
             ?? photo.flatMap { setIdContaining(photoID: $0.id) }
-            ?? resolvedSetId(projectPath: nil)
+            ?? ScenerySet.worldID
         return set(id: owner)?.palette
-    }
-
-    public var defaultSetId: String {
-        settings.defaultSetId
     }
 
     /// Opacity of scenery photo layers and solidifying strength of the
@@ -277,11 +255,10 @@ public final class SceneryStore {
     // MARK: - Assignment & naming
 
     /// The scene bound to a thread. Explicit assignment first (threads
-    /// created in-app); stable hash fallback for threads that predate the
-    /// scenery system or were created elsewhere.
+    /// created in-app); stable hash fallback over the World pool for threads
+    /// that predate the scenery system, were created elsewhere, or whose
+    /// assigned photo is no longer in any pool (deleted/missing legacy set).
     public func photo(for threadID: String) -> SceneryPhoto? {
-        let setId = resolvedSetId(forThread: threadID)
-        let setPool = pools[setId] ?? []
         if let assignment = assignments[threadID] {
             // Prefer the assignment's set pool; fall back to scanning all pools
             // so a renamed/missing set never blanks an existing photo.
@@ -296,72 +273,31 @@ public final class SceneryStore {
                 }
             }
         }
-        guard !setPool.isEmpty else { return nil }
-        return setPool[AlpineTheme.stableIndex(threadID, setPool.count)]
+        let worldPool = pools[ScenerySet.worldID] ?? []
+        guard !worldPool.isEmpty else { return nil }
+        return worldPool[AlpineTheme.stableIndex(threadID, worldPool.count)]
     }
 
-    /// The scene the next created thread will get. The preview
-    /// (`NewSessionSheet`) and the actual commit (`AppModel.createSceneThread`,
-    /// which calls this once and reuses the returned `SceneryPhoto` for both
-    /// the title and the `assign` call) both funnel through this single
-    /// function, so as long as every input it reads (pool, set metadata used
-    /// by the name filter, photo tags, rotation bucket, assignment count)
-    /// hasn't changed between calls they deterministically agree — there is
-    /// no separate "commit-time" selection to keep in sync.
-    public func peekNextScene(
-        projectPath: String? = nil,
-        setIdOverride: String? = nil
-    ) -> SceneryPhoto? {
-        let setId = effectiveSetId(
-            projectPath: projectPath,
-            setIdOverride: setIdOverride)
-        let setPool = pools[setId] ?? []
-        let candidatePool = distinctlyNamedCandidates(in: setPool, setId: setId)
-        let assignmentCount = assignments.values.count { $0.resolvedSetId == setId }
-        let seed = [
-            "next", setId, projectPath ?? "", String(assignmentCount),
-            rotationBucket.timeOfDay.rawValue, rotationBucket.season.rawValue,
-        ].joined(separator: "|")
-        return SceneryPhotoSelection.select(
-            photos: candidatePool,
-            tagsByPhotoID: photoTagsBySet[setId] ?? [:],
-            bucket: rotationBucket,
-            seed: seed)
-    }
-
-    /// New threads should be named after a distinct place, not the bare set
-    /// title ("Iceland"). Filters `pool` down to photos whose resolved name
-    /// (via `baseSceneName`) differs from the set's bare title, and falls
-    /// back to the full pool when no distinctly-named candidate exists —
-    /// e.g. built-in sets where every photo legitimately shares the set name,
-    /// or a still-thin custom pool that hasn't topped up with named photos
-    /// yet. Never returns an empty array when `pool` is non-empty, so
-    /// `SceneryPhotoSelection.select` always has candidates to choose from.
-    private func distinctlyNamedCandidates(in pool: [SceneryPhoto], setId: String) -> [SceneryPhoto]
-    {
-        let setTitle = set(id: setId)?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !setTitle.isEmpty else { return pool }
-        let titleKey = Self.sceneNameComparisonKey(setTitle)
-        let named = pool.filter {
-            Self.sceneNameComparisonKey(baseSceneName($0.name, setId: setId)) != titleKey
+    /// The scene the next created thread will get: a uniformly random photo
+    /// from the World pool. The first call samples and remembers the pick in
+    /// `pendingScene`, so the preview (`NewSessionSheet`) and the actual
+    /// commit (`AppModel.createSceneThread`, which calls this once and reuses
+    /// the returned `SceneryPhoto` for both the title and the `assign` call)
+    /// always agree. `assign(...)` clears the pending pick; a pool refresh
+    /// that no longer contains it re-samples on the next call.
+    public func peekNextScene() -> SceneryPhoto? {
+        let worldPool = pools[ScenerySet.worldID] ?? []
+        if let pendingScene, worldPool.contains(where: { $0.id == pendingScene.id }) {
+            return pendingScene
         }
-        return named.isEmpty ? pool : named
+        let pick = worldPool.randomElement()
+        pendingScene = pick
+        return pick
     }
 
-    /// Canonical comparison key for scene names — the same trimmed,
-    /// whitespace-collapsed, lowercased form
-    /// `SceneSetComposer.normalizeSceneNames` uses for its dedupe keys — so
-    /// case/whitespace variants ("iceland" vs "Iceland") are not treated as
-    /// distinct place names.
-    private static func sceneNameComparisonKey(_ name: String) -> String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .lowercased()
-    }
-
-    /// Thread title for a scene: the plain place name, even when reused.
-    public func threadTitle(for photo: SceneryPhoto, setId: String? = nil) -> String {
-        baseSceneName(photo.name, setId: setId ?? setIdContaining(photoID: photo.id))
+    /// Thread title for a scene: the curated place name, verbatim.
+    public func threadTitle(for photo: SceneryPhoto) -> String {
+        photo.name
     }
 
     /// Commit a thread → photo binding (after the backend confirmed create),
@@ -369,47 +305,35 @@ public final class SceneryStore {
     public func assign(
         photoID: String,
         name: String,
-        to threadID: String,
-        projectPath: String? = nil,
-        setIdOverride: String? = nil
+        to threadID: String
     ) {
-        let setId =
-            setIdOverride.flatMap { candidate in
-                guard pools[candidate]?.contains(where: { $0.id == photoID }) == true else {
-                    return nil
-                }
-                return candidate
-            }
-            ?? setIdContaining(photoID: photoID)
-            ?? resolvedSetId(projectPath: projectPath)
-        let base = baseSceneName(name, setId: setId)
+        pendingScene = nil
+        let setId = setIdContaining(photoID: photoID) ?? ScenerySet.worldID
         assignments[threadID] = SceneryAssignment(
             photoID: photoID,
-            setId: setId == ScenerySet.dolomitesID ? nil : setId)
+            setId: setId == ScenerySet.worldID ? nil : setId)
         var names = namesBySet[setId] ?? [:]
-        names[threadID] = base
+        names[threadID] = name
         namesBySet[setId] = names
         saveAssignments()
         saveNames(for: setId)
     }
 
-    /// Stable scene name for a thread ("Seceda"). Falls back to the
-    /// assigned/hashed photo's base name for threads that predate the name map
+    /// Stable scene name for a thread ("Kyoto, Japan"). Falls back to the
+    /// assigned/hashed photo's name for threads that predate the name map
     /// or were created by another client.
     public func sceneName(for threadID: String) -> String? {
         let setId = resolvedSetId(forThread: threadID)
         if let name = namesBySet[setId]?[threadID] {
-            return baseSceneName(name, setId: setId)
+            return name
         }
         // Scan other sets' name maps (legacy threads after migration).
-        for (otherSetId, names) in namesBySet {
+        for (_, names) in namesBySet {
             if let name = names[threadID] {
-                return baseSceneName(name, setId: otherSetId)
+                return name
             }
         }
-        return photo(for: threadID).map {
-            baseSceneName($0.name, setId: setIdContaining(photoID: $0.id) ?? setId)
-        }
+        return photo(for: threadID)?.name
     }
 
     /// Two-line naming for a thread: the scene place name as the stable
@@ -433,54 +357,6 @@ public final class SceneryStore {
         return (scene, title)
     }
 
-    private func baseSceneName(_ name: String, setId: String?) -> String {
-        let resolved = setId.flatMap { set(id: $0) }
-        let setTitle = resolved?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        // Pool-index labels ("Iceland 5") must never become thread titles.
-        // Prefer the set title when the photo name is the title or title+" N".
-        if !setTitle.isEmpty {
-            if name == setTitle || Self.isPoolNumberedSceneName(name, base: setTitle) {
-                return setTitle
-            }
-        }
-
-        let sceneNames =
-            resolved?.sceneNames
-            ?? ScenerySet.makeBuiltinDolomites().sceneNames
-        // Ignore polluted sceneNames entries that are themselves pool-index
-        // labels of the set title, or the bare set title itself, so generic
-        // names like "Iceland" or "Iceland 5" cannot win over specific place names.
-        let setTitleKey = Self.sceneNameComparisonKey(setTitle)
-        let authenticBases = sceneNames.filter { candidate in
-            guard !setTitle.isEmpty else { return true }
-            let candidateKey = Self.sceneNameComparisonKey(candidate)
-            return candidateKey != setTitleKey && !Self.isPoolNumberedSceneName(candidate, base: setTitle)
-        }
-        for base in authenticBases.sorted(by: { $0.count > $1.count }) {
-            if name == base || Self.isLegacyNumberedSceneTitle(name, base: base) {
-                return base
-            }
-        }
-
-        // Do not unconditionally strip trailing small integers — authentic
-        // titles like "Route 1" must survive when set title / sceneNames miss.
-        // Pool-index pollution ("Iceland N") is already handled above via the
-        // set-title-gated `isPoolNumberedSceneName` branch.
-        return name
-    }
-
-    /// Pool-builder / legacy labels: `"Iceland 1"`…`"Iceland 24"`.
-    /// Includes index 1 (unlike reuse lap names, which started at 2).
-    private static func isPoolNumberedSceneName(_ title: String, base: String) -> Bool {
-        guard !base.isEmpty else { return false }
-        let separator = " "
-        guard title.hasPrefix(base + separator) else { return false }
-        let suffix = title.dropFirst(base.count + separator.count)
-        guard let index = Int(suffix), String(index) == suffix else { return false }
-        return (1...SceneryPoolBuilder.maxPhotos).contains(index)
-    }
-
     /// Legacy scene numbering started at 2 (`<base> 1` was never produced).
     /// Plain-space lap names are capped to one digit to avoid hiding AI titles
     /// that end in years or large numbers.
@@ -499,17 +375,16 @@ public final class SceneryStore {
     }
 
     /// Empty-state hero: rotates by day and current time/season bucket through
-    /// the default set's preferred subset.
+    /// the World pool's preferred subset.
     public func dailyFeatured() -> SceneryPhoto? {
-        let setId = resolvedSetId(projectPath: nil)
-        let setPool = pools[setId] ?? []
+        let setPool = pools[ScenerySet.worldID] ?? []
         let seed = [
-            "daily", setId, rotationDayKey, rotationBucket.timeOfDay.rawValue,
+            "daily", ScenerySet.worldID, rotationDayKey, rotationBucket.timeOfDay.rawValue,
             rotationBucket.season.rawValue,
         ].joined(separator: "|")
         return SceneryPhotoSelection.select(
             photos: setPool,
-            tagsByPhotoID: photoTagsBySet[setId] ?? [:],
+            tagsByPhotoID: photoTagsBySet[ScenerySet.worldID] ?? [:],
             bucket: rotationBucket,
             seed: seed)
     }
@@ -523,7 +398,7 @@ public final class SceneryStore {
         variant: ImageVariant,
         setId explicitSetId: String? = nil
     ) -> NSImage? {
-        let setId = explicitSetId ?? setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
+        let setId = explicitSetId ?? setIdContaining(photoID: photo.id) ?? ScenerySet.worldID
         return images[cacheKey(setId, photo.id, variant)]
     }
 
@@ -558,7 +433,7 @@ public final class SceneryStore {
         triggerPaletteBackfill: Bool
     ) async {
         guard let photo else { return }
-        let setId = explicitSetId ?? setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
+        let setId = explicitSetId ?? setIdContaining(photoID: photo.id) ?? ScenerySet.worldID
         let key = cacheKey(setId, photo.id, variant)
         guard images[key] == nil, !loadingKeys.contains(key) else { return }
         loadingKeys.insert(key)
@@ -667,14 +542,14 @@ public final class SceneryStore {
         }
     }
 
-    /// Extracts and persists a custom set's palette once. New-set creation can
-    /// request thumbnail downloads first; startup and image loads use existing
-    /// disk files as a lazy backfill. Bitmap work stays off the main actor.
+    /// Extracts and persists a set's palette once. Startup and image loads
+    /// use existing disk files as a lazy backfill. Bitmap work stays off the
+    /// main actor.
     ///
     /// Failed extractions are not retried this launch (in-memory attempt marker).
     /// Missing sample files still allow a later retry once images land on disk.
     public func generatePaletteIfNeeded(for setId: String, downloadSamples: Bool = false) async {
-        guard let manifest = set(id: setId), manifest.origin == .custom,
+        guard let manifest = set(id: setId),
             manifest.palette == nil, !paletteExtractionAttempted.contains(setId)
         else { return }
 
@@ -805,20 +680,19 @@ public final class SceneryStore {
         var refreshedTags: [String: SceneryPhotoTags] = [:]
 
         if let locations = set.locations, !locations.isEmpty {
-            // Per-location path: re-fetch by place query and keep authentic names.
-            // Never round-robin sceneNames onto generic top-up photos.
+            // Per-location path (the builtin World set): one photo per curated
+            // location, named verbatim after it.
             guard
                 let built = try? await SceneryPoolBuilder.buildFromLocations(
                     client: client,
-                    locations: locations,
-                    queries: set.queries,
-                    setTitle: set.title)
+                    locations: locations)
             else { return }
             refreshed = built.photos
             refreshedTags = built.photoTags
         } else {
-            // Legacy path (builtin Dolomites, older custom sets without locations):
-            // query-pool fetch + curated sceneNames round-robin.
+            // Legacy path (set directories left over from the customizable
+            // scenery era): query-pool fetch + sceneNames round-robin so those
+            // pools can still top up and legacy assignments keep rendering.
             var fetched: [(photo: UnsplashClient.APIPhoto, tags: SceneryPhotoTags?)] = []
             for query in set.queries {
                 let take = max(1, query.take)
@@ -832,24 +706,12 @@ public final class SceneryStore {
                 fetched.filter { seen.insert($0.photo.id).inserted }.prefix(Self.poolCap))
             guard !unique.isEmpty else { return }
 
-            let sceneNames =
-                set.sceneNames.isEmpty
-                ? ScenerySet.makeBuiltinDolomites().sceneNames
-                : set.sceneNames
-            let named = unique.enumerated().map { index, entry in
+            let sceneNames = set.sceneNames.isEmpty ? [set.title] : set.sceneNames
+            refreshed = unique.enumerated().map { index, entry in
                 let photo = entry.photo
                 let base = sceneNames[index % sceneNames.count]
                 return SceneryPoolBuilder.sceneryPhoto(from: photo, name: base)
             }
-            // A custom set built before per-photo place names existed can have
-            // nothing but the set title in `sceneNames`, which would round-robin
-            // "Barbados" onto every photo. Give those their real place name.
-            // No-ops (and costs no request) for curated sets like the builtin
-            // Dolomites, whose names are already distinct from the set title.
-            refreshed = await SceneryPoolBuilder.hydratedNames(
-                client: client,
-                photos: named,
-                generic: SceneSetComposer.bareSetTitle(set.title))
             for entry in unique {
                 if let tags = entry.tags {
                     refreshedTags[entry.photo.id] = tags
@@ -874,19 +736,6 @@ public final class SceneryStore {
             }
         }
         pools[setId] = refreshed + kept
-        // Keep a custom set's manifest names in step with the pool it now holds,
-        // so a set whose sceneNames were nothing but the set title does not
-        // round-robin that title back on at the next refresh (and so
-        // `baseSceneName` still recognises the names it hands out).
-        let refreshedNames = SceneSetComposer.normalizeSceneNames(refreshed.map(\.name))
-        if set.origin == .custom, !refreshedNames.isEmpty, refreshedNames != set.sceneNames {
-            var updated = set
-            updated.sceneNames = refreshedNames
-            if let index = availableSets.firstIndex(where: { $0.id == setId }) {
-                availableSets[index] = updated
-            }
-            saveManifest(updated)
-        }
         photoTagsBySet[setId] = refreshedTags
         poolFetchedAt[setId] = Date()
         savePool(for: setId)
@@ -894,7 +743,7 @@ public final class SceneryStore {
         // Drop stale decoded images for this set from a previous pool.
         let prefix = "\(setId)/"
         images = images.filter { !$0.key.hasPrefix(prefix) }
-        if setId == settings.defaultSetId || setId == ScenerySet.dolomitesID {
+        if setId == ScenerySet.worldID {
             syncDefaultPool()
         }
     }
@@ -905,8 +754,7 @@ public final class SceneryStore {
     }
 
     private func syncDefaultPool() {
-        let setId = resolvedSetId(projectPath: nil)
-        pool = pools[setId] ?? []
+        pool = pools[ScenerySet.worldID] ?? []
     }
 
     private func setIdContaining(photoID: String) -> String? {
@@ -948,9 +796,9 @@ public final class SceneryStore {
         for set in availableSets {
             loadSetData(set.id)
         }
-        // Ensure builtin dolomites is always present even on empty disk.
-        if !availableSets.contains(where: { $0.id == ScenerySet.dolomitesID }) {
-            let builtin = ScenerySet.makeBuiltinDolomites()
+        // Ensure the builtin World set is always present even on empty disk.
+        if !availableSets.contains(where: { $0.id == ScenerySet.worldID }) {
+            let builtin = ScenerySet.makeBuiltinWorldSet()
             availableSets.append(builtin)
             saveManifest(builtin)
             loadSetData(builtin.id)
@@ -983,10 +831,10 @@ public final class SceneryStore {
             else { continue }
             loaded.append(manifest)
         }
-        // Builtin first for stable UI ordering later.
+        // Builtin World first for stable UI ordering later.
         loaded.sort { lhs, rhs in
-            if lhs.id == ScenerySet.dolomitesID { return true }
-            if rhs.id == ScenerySet.dolomitesID { return false }
+            if lhs.id == ScenerySet.worldID { return true }
+            if rhs.id == ScenerySet.worldID { return false }
             return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
         }
         availableSets = loaded
@@ -1172,19 +1020,12 @@ public final class SceneryStore {
         registeredBySet[setId] ?? []
     }
 
-    // MARK: - Registry mutations (Phase 2+)
+    // MARK: - Settings & project prefs
 
-    /// Writes project-prefs (used by Phase 5 UI; available now for tests).
+    /// Writes project-prefs (accent / symbol badges).
     public func setProjectPrefs(_ prefs: ProjectSceneryPrefs, forProjectPath path: String) {
         projectPrefs[path] = prefs
         saveProjectPrefs()
-    }
-
-    /// Updates the global default set id.
-    public func setDefaultSetId(_ setId: String) {
-        settings.defaultSetId = setId
-        saveSettings()
-        syncDefaultPool()
     }
 
     /// Updates the global scenery photo opacity (window glass bleed-through).
@@ -1221,68 +1062,26 @@ public final class SceneryStore {
         saveSettings()
     }
 
-    /// Installs a set manifest into the registry (disk + memory).
-    /// When `pool` is non-empty it is persisted; otherwise the pool stays empty
-    /// until a later refresh. Custom sets are sorted after the builtin.
-    ///
-    /// When `replacePoolResidue` is true and `pool` is non-empty, clears stale
-    /// per-set state left by a prior version of the same set id (thread name
-    /// overrides, download registrations for removed photos, cached images for
-    /// photos no longer in the pool, and palette extraction attempt markers so
-    /// a nil palette is recomputed).
-    public func registerSet(
+    /// Test hook: installs a set manifest + pool (and optional photo tags)
+    /// into the registry — disk + memory — without any network work.
+    func installSetForTesting(
         _ set: ScenerySet,
-        pool: [SceneryPhoto] = [],
-        photoTags: [String: SceneryPhotoTags]? = nil,
-        replacePoolResidue: Bool = false
+        pool: [SceneryPhoto],
+        photoTags: [String: SceneryPhotoTags]? = nil
     ) {
         if let idx = availableSets.firstIndex(where: { $0.id == set.id }) {
             availableSets[idx] = set
         } else {
             availableSets.append(set)
         }
-        availableSets.sort { lhs, rhs in
-            if lhs.id == ScenerySet.dolomitesID { return true }
-            if rhs.id == ScenerySet.dolomitesID { return false }
-            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-        }
         saveManifest(set)
         try? FileManager.default.createDirectory(
             at: setDirectory(set.id).appendingPathComponent("images", isDirectory: true),
             withIntermediateDirectories: true)
         pools[set.id] = pool
-        if let photoTags {
-            photoTagsBySet[set.id] = photoTags
-        } else {
-            photoTagsBySet[set.id] = photoTagsBySet[set.id] ?? [:]
-        }
-
-        if replacePoolResidue, !pool.isEmpty {
-            let keepIDs = Set(pool.map(\.id))
-            // Thread → scene name map may still reference caption-era names.
-            namesBySet[set.id] = [:]
-            saveNames(for: set.id)
-            // Keep download registrations only for photos that remain.
-            let previousRegistered = registeredBySet[set.id] ?? []
-            registeredBySet[set.id] = previousRegistered.intersection(keepIDs)
-            saveRegisteredDownloads(for: set.id)
-            // Drop in-memory images for removed photos.
-            let imagePrefix = "\(set.id)/"
-            images = images.filter { key, _ in
-                guard key.hasPrefix(imagePrefix) else { return true }
-                // key shape: "{setId}/{photoID}/{variant}"
-                let rest = key.dropFirst(imagePrefix.count)
-                let photoID = rest.split(separator: "/", maxSplits: 1).first.map(String.init) ?? ""
-                return keepIDs.contains(photoID)
-            }
-            pruneStaleImageFiles(setId: set.id, keepPhotoIDs: keepIDs)
-            // New set has palette: nil — allow generatePaletteIfNeeded to run again.
-            paletteExtractionAttempted.remove(set.id)
-        } else {
-            namesBySet[set.id] = namesBySet[set.id] ?? [:]
-            registeredBySet[set.id] = registeredBySet[set.id] ?? []
-        }
-
+        photoTagsBySet[set.id] = photoTags ?? [:]
+        namesBySet[set.id] = namesBySet[set.id] ?? [:]
+        registeredBySet[set.id] = registeredBySet[set.id] ?? []
         if !pool.isEmpty {
             poolFetchedAt[set.id] = Date()
             savePool(for: set.id)
@@ -1293,108 +1092,13 @@ public final class SceneryStore {
         syncDefaultPool()
     }
 
-    /// Test alias for `registerSet`.
-    public func registerSetForTesting(
-        _ set: ScenerySet,
-        pool: [SceneryPhoto] = [],
-        photoTags: [String: SceneryPhotoTags]? = nil,
-        replacePoolResidue: Bool = false
-    ) {
-        registerSet(
-            set, pool: pool, photoTags: photoTags, replacePoolResidue: replacePoolResidue)
-    }
-
-    /// Removes on-disk cached images for photos no longer in the pool.
-    private func pruneStaleImageFiles(setId: String, keepPhotoIDs: Set<String>) {
-        let imagesDirectory = setDirectory(setId).appendingPathComponent(
-            "images", isDirectory: true)
-        let files =
-            (try? FileManager.default.contentsOfDirectory(
-                at: imagesDirectory,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles])) ?? []
-        for file in files {
-            let name = file.lastPathComponent
-            // Files look like "{photoID}-thumb.jpg" or "{photoID}-hero-w{N}.jpg".
-            let photoID: String
-            if let range = name.range(of: "-thumb.") {
-                photoID = String(name[..<range.lowerBound])
-            } else if let range = name.range(of: "-hero-") {
-                photoID = String(name[..<range.lowerBound])
-            } else {
-                continue
-            }
-            if !keepPhotoIDs.contains(photoID) {
-                try? FileManager.default.removeItem(at: file)
-            }
-        }
-    }
-
-    public enum DeleteSetError: Error, LocalizedError, Equatable {
-        case notFound
-        case builtinProtected
-        public var errorDescription: String? {
-            switch self {
-            case .notFound: "That scenery set was not found."
-            case .builtinProtected: "Built-in scenery sets cannot be deleted."
-            }
-        }
-    }
-
-    /// Removes a custom set: registry entry, on-disk directory, project prefs
-    /// pointing at it, and thread assignments for that set (so those threads
-    /// lazily re-resolve photos from the default set). Builtin sets are refused.
-    public func deleteCustomSet(id: String) throws {
-        guard let existing = set(id: id) else { throw DeleteSetError.notFound }
-        guard existing.origin == .custom else { throw DeleteSetError.builtinProtected }
-
-        availableSets.removeAll { $0.id == id }
-        paletteExtractionAttempted.remove(id)
-        pools[id] = nil
-        photoTagsBySet[id] = nil
-        poolFetchedAt[id] = nil
-        namesBySet[id] = nil
-        registeredBySet[id] = nil
-        let imagePrefix = "\(id)/"
-        images = images.filter { !$0.key.hasPrefix(imagePrefix) }
-
-        if settings.defaultSetId == id {
-            settings.defaultSetId = ScenerySet.dolomitesID
-            saveSettings()
-        }
-
-        var prefsChanged = false
-        for (path, prefs) in projectPrefs where prefs.setId == id {
-            var next = prefs
-            next.setId = nil
-            projectPrefs[path] = next
-            prefsChanged = true
-        }
-        if prefsChanged { saveProjectPrefs() }
-
-        // Drop assignments owned by the deleted set so photo(for:) falls through
-        // to the resolved default pool (lazy reassignment).
-        let before = assignments.count
-        assignments = assignments.filter { $0.value.resolvedSetId != id }
-        if assignments.count != before {
-            saveAssignments()
-        }
-
-        let dir = setDirectory(id)
-        // Surface real disk failures to callers (Settings shows an alert).
-        // Skip when the directory is already gone so re-delete is clean.
-        if FileManager.default.fileExists(atPath: dir.path) {
-            try FileManager.default.removeItem(at: dir)
-        }
-        syncDefaultPool()
-    }
-
     /// Forces a disk reload (migration + registry) without network refresh.
     public func reloadFromDiskForTesting() {
         startTask = nil
         pool = []
         availableSets = []
         assignments = [:]
+        pendingScene = nil
         namesBySet = [:]
         pools = [:]
         photoTagsBySet = [:]
@@ -1408,30 +1112,29 @@ public final class SceneryStore {
     func photoTagsForTesting(setId: String) -> [String: SceneryPhotoTags] {
         photoTagsBySet[setId] ?? [:]
     }
+
+    /// Test hook: the pending next-thread pick, so preview/commit consistency
+    /// can be asserted without depending on random sampling.
+    var pendingSceneIDForTesting: String? {
+        pendingScene?.id
+    }
 }
 
 extension AppModel {
-    /// Scene-aware thread creation: reserves the next pool photo from the
-    /// project's resolved set, names the thread after it, and commits the
-    /// assignment once the backend confirms.
+    /// Scene-aware thread creation: reserves the pending World-pool photo,
+    /// names the thread after it, and commits the assignment once the backend
+    /// confirms.
     @discardableResult
     public func createSceneThread(
         projectID: String,
         provider: ProviderKind,
-        scenery: SceneryStore,
-        scenerySetId: String? = nil
+        scenery: SceneryStore
     ) async -> ChatThread? {
         // First launch races the initial pool fetch; start() is idempotent and
         // waits for it, so early threads still get a scene name + assignment.
         await scenery.start()
-        let projectPath = projects.first(where: { $0.id == projectID })?.path
-        let effectiveSetId = scenery.effectiveSetId(
-            projectPath: projectPath,
-            setIdOverride: scenerySetId)
-        let scene = scenery.peekNextScene(
-            projectPath: projectPath,
-            setIdOverride: effectiveSetId)
-        let sceneTitle = scene.map { scenery.threadTitle(for: $0, setId: effectiveSetId) }
+        let scene = scenery.peekNextScene()
+        let sceneTitle = scene.map { scenery.threadTitle(for: $0) }
         let thread = await createThread(
             projectID: projectID, provider: provider, title: sceneTitle)
         if let thread, let scene, let sceneTitle {
@@ -1439,9 +1142,7 @@ extension AppModel {
             scenery.assign(
                 photoID: scene.id,
                 name: sceneTitle,
-                to: threadKey,
-                projectPath: projectPath,
-                setIdOverride: effectiveSetId)
+                to: threadKey)
         }
         return thread
     }

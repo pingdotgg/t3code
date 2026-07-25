@@ -39,7 +39,7 @@ export interface ProjectThreadStartTurnSpec {
   /** Generated temp branch for worktree mode; unused for local mode. */
   readonly worktreeBranchName: string;
   /**
-   * Dolomites scene name used as the thread title ("Seceda", "Tre Cime · 2").
+   * World scenery location name used as the thread title ("Santorini, Greece").
    * The titleSeed stays prompt-derived, so the server's provider-title pass
    * (which only replaces titles equal to the seed or the default) leaves the
    * scene name in place. Null/absent falls back to the prompt-derived title.
