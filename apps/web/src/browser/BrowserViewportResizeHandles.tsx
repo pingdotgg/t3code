@@ -32,7 +32,7 @@ type HandleKind = "horizontal" | "vertical" | "corner";
 const EDGE_BUTTON_CLASS =
   "group absolute z-20 touch-none border-0 bg-transparent p-0 outline-none before:absolute before:-inset-1 before:content-[''] focus-visible:bg-foreground/[0.04]";
 const EDGE_GRIP_CLASS =
-  "pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center text-muted-foreground/55 transition-colors duration-150 group-hover:text-foreground/85 group-focus-visible:text-foreground group-active:text-foreground";
+  "pointer-events-none absolute start-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center text-muted-foreground transition-colors duration-150 group-hover:text-foreground/85 group-focus-visible:text-foreground group-active:text-foreground";
 
 function ResizeHandle(props: {
   readonly direction: BrowserViewportResizeDirection;
@@ -89,8 +89,8 @@ function ResizeHandle(props: {
             className={cn("relative block size-3", mirrorCorner && "-scale-x-100")}
             aria-hidden="true"
           >
-            <span className="absolute bottom-[3px] left-0 h-px w-3 -rotate-45 rounded-full bg-current" />
-            <span className="absolute bottom-0 left-[5px] h-px w-2 -rotate-45 rounded-full bg-current" />
+            <span className="absolute bottom-[3px] start-0 h-px w-3 -rotate-45 rounded-full bg-current" />
+            <span className="absolute bottom-0 start-[5px] h-px w-2 -rotate-45 rounded-full bg-current" />
           </span>
         )}
       </span>

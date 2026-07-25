@@ -114,7 +114,7 @@ export function CloudEnvironmentConnectRows({
     console.error("[t3-connect] Could not connect environment", { message, traceId, cause });
     toastManager.add({
       type: "error",
-      title: "Could not connect environment",
+      title: "Couldn't connect environment",
       description: message,
       data: traceId
         ? {

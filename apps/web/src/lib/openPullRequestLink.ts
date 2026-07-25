@@ -66,8 +66,11 @@ export function useOpenPrLink() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open pull request link",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Couldn't open pull request link",
+          description:
+            error instanceof Error
+              ? error.message
+              : "Opening the pull request didn't go through. Open it from your browser instead.",
         }),
       );
     });

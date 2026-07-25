@@ -31,7 +31,7 @@ export function AuthSurfaceShell({ children }: { readonly children: ReactNode })
           )}
           <div className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent_20%,rgba(7,18,55,0.46)_100%)]" />
           <div className="relative h-full p-5 sm:p-6">
-            <p className="text-[10px] font-semibold tracking-[0.2em] text-white/80 uppercase">
+            <p className="text-2xs font-semibold tracking-[0.2em] text-white/80 uppercase">
               {APP_DISPLAY_NAME}
             </p>
           </div>

@@ -40,7 +40,9 @@ function ProjectFaviconFallback({
   readonly className?: string | undefined;
   readonly icon: ComponentType<{ className?: string }>;
 }) {
-  return <Icon className={`size-3.5 shrink-0 text-muted-foreground/50 ${className ?? ""}`} />;
+  return (
+    <Icon className={`size-3.5 shrink-0 text-muted-foreground opacity-50 ${className ?? ""}`} />
+  );
 }
 
 function ProjectFaviconImage({

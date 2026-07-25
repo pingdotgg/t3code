@@ -336,7 +336,7 @@ function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }
-  return "An error occurred.";
+  return "That didn't go through. Try again.";
 }
 
 interface CommandPaletteOpenIntent {
@@ -971,14 +971,14 @@ function OpenCommandPaletteDialog(props: {
         const disabledHint = readiness.hint;
 
         const titleTrailingContent = readiness.ready ? undefined : (
-          <span className="ml-auto">
+          <span className="ms-auto">
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Button
                     variant="outline"
                     size="xs"
-                    className="h-5 rounded-[.25rem] px-1.5 text-[10px] text-warning-foreground"
+                    className="h-5 rounded-[.25rem] px-1.5 text-2xs text-warning-foreground"
                     onClick={() => {
                       openSourceControlSettings();
                     }}
@@ -1086,7 +1086,7 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to browse projects",
+          title: "Couldn't browse projects",
           description: "No environment is available.",
         }),
       );
@@ -1179,7 +1179,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "submenu",
       value: "action:new-thread-in",
       searchTerms: ["new thread", "project", "pick", "choose", "select"],
-      title: "New thread in...",
+      title: "New thread in…",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
@@ -1275,7 +1275,7 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to add project",
+            title: "Couldn't add project",
             description: "Windows-style paths are only supported on Windows.",
           }),
         );
@@ -1286,7 +1286,7 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to add project",
+            title: "Couldn't add project",
             description: "Relative paths require an active project.",
           }),
         );
@@ -1322,8 +1322,11 @@ function OpenCommandPaletteDialog(props: {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Failed to open project",
-                description: error instanceof Error ? error.message : "An error occurred.",
+                title: "Couldn't open project",
+                description:
+                  error instanceof Error
+                    ? error.message
+                    : "Opening the project didn't go through. Try again.",
               }),
             );
             return;
@@ -1357,8 +1360,11 @@ function OpenCommandPaletteDialog(props: {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Failed to add project",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: "Couldn't add project",
+              description:
+                error instanceof Error
+                  ? error.message
+                  : "Adding the project didn't go through. Try again.",
             }),
           );
         }
@@ -1373,8 +1379,11 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to add project",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Couldn't add project",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Adding the project didn't go through. Try again.",
           }),
         );
         return;
@@ -1459,7 +1468,7 @@ function OpenCommandPaletteDialog(props: {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Repository lookup failed",
+              title: "Couldn't find the repository",
               description: errorMessage(squashAtomCommandFailure(lookupResult)),
             }),
           );
@@ -1491,7 +1500,7 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Clone failed",
+          title: "Couldn't clone repository",
           description: "Windows-style paths are only supported on Windows.",
         }),
       );
@@ -1502,7 +1511,7 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Clone failed",
+          title: "Couldn't clone repository",
           description: "Relative paths require an active project.",
         }),
       );
@@ -1531,7 +1540,7 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Clone failed",
+            title: "Couldn't clone repository",
             description: errorMessage(squashAtomCommandFailure(cloneResult)),
           }),
         );
@@ -1744,8 +1753,11 @@ function OpenCommandPaletteDialog(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to run command",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: "Couldn't run command",
+          description:
+            error instanceof Error
+              ? error.message
+              : "Running the command didn't go through. Try again.",
         }),
       );
     });
@@ -1833,8 +1845,8 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not add WSL project",
-            description: "Start the matching WSL backend, then choose the folder again.",
+            title: "Couldn't add WSL project",
+            description: "Start the matching WSL environment, then choose the folder again.",
           }),
         );
         return;
@@ -2009,7 +2021,7 @@ function OpenCommandPaletteDialog(props: {
                   <span className="truncate text-foreground text-sm">
                     {remoteProjectContext.title}
                   </span>
-                  <span className="truncate text-muted-foreground/85 text-xs">
+                  <span className="truncate text-muted-foreground text-xs">
                     {remoteProjectContext.description}
                   </span>
                 </span>

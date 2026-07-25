@@ -56,7 +56,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
           "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed data-disabled:hover:bg-transparent",
       )}
     >
-      <div className="min-w-0 flex-1 text-left">
+      <div className="min-w-0 flex-1 text-start">
         <div className="flex min-w-0 items-center gap-2">
           <div className="min-w-0 truncate text-xs font-medium leading-snug">
             {props.useTriggerLabel
@@ -68,7 +68,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
           </div>
           {props.showNewBadge ? (
             <span
-              className="shrink-0 rounded border border-amber-500/35 bg-amber-500/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/12 dark:text-amber-200"
+              className="shrink-0 rounded border border-warning/35 bg-warning/15 px-0.5 py-px text-2xs font-bold uppercase leading-none tracking-wide text-warning-foreground"
               aria-label="New model"
             >
               New
@@ -78,7 +78,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
         {props.showProvider && (
           <div className="mt-1 flex items-center gap-1.5">
             {ProviderIcon ? <ProviderIcon className="size-3 shrink-0" /> : null}
-            <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
+            <span className="truncate text-xs font-normal leading-snug text-muted-foreground">
               {providerLabel}
             </span>
           </div>
@@ -87,7 +87,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
 
       <div className="flex shrink-0 items-center gap-1.5">
         {props.jumpLabel ? (
-          <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">{props.jumpLabel}</Kbd>
+          <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-2xs">{props.jumpLabel}</Kbd>
         ) : null}
         <Tooltip>
           <TooltipTrigger
@@ -96,7 +96,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 size="icon-xs"
                 variant="ghost"
                 className={cn(
-                  "-mr-1 shrink-0 text-muted-foreground/70 opacity-64 transition-[color,opacity] hover:text-foreground hover:opacity-100 group-hover:opacity-100",
+                  "-me-1 shrink-0 text-muted-foreground opacity-64 transition-[color,opacity] hover:text-foreground hover:opacity-100 group-hover:opacity-100",
                   props.isFavorite && "text-foreground opacity-100",
                 )}
                 onClick={(event) => {
@@ -112,7 +112,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 <StarIcon
                   className={cn(
                     "size-3.5 sm:size-3",
-                    props.isFavorite && "fill-current text-yellow-500",
+                    props.isFavorite && "fill-current text-warning",
                   )}
                 />
               </Button>

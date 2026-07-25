@@ -31,7 +31,7 @@ export function ComposerPendingReviewComments({
           <Tooltip key={comment.id}>
             <TooltipTrigger
               render={
-                <span className={cn(COMPOSER_INLINE_CHIP_CLASS_NAME, "pr-1")}>
+                <span className={cn(COMPOSER_INLINE_CHIP_CLASS_NAME, "pe-1")}>
                   <MessageCircle className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
                   <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{label}</span>
                   <button

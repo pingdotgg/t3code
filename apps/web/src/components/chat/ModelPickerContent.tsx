@@ -571,11 +571,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           <div
             className={cn(
               "flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/40",
-              showSidebar && "border-l",
+              showSidebar && "border-s",
             )}
           >
-            {/* Search bar */}
-            <div className="px-4 pt-2.5">
+            {/* Search bar. No inline inset of its own: the input's start addon
+                already carries 8px, which puts the magnifier on the same column
+                as each model row's leading glyph, and lets the underline read as
+                a full-width header rule. */}
+            <div className="pt-2.5">
               <div className="-translate-y-px border-b border-border/70 pb-2.5 transition-colors focus-within:border-ring">
                 <ComboboxInput
                   ref={searchInputRef}
@@ -584,7 +587,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   placeholder="Search models..."
                   showTrigger={false}
                   startAddon={
-                    <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground/55" />
+                    <SearchIcon className="size-4 shrink-0 text-muted-foreground opacity-55" />
                   }
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}

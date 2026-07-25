@@ -42,7 +42,7 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
               <h3 className="truncate text-sm font-semibold text-foreground">{device.label}</h3>
               <p className="text-xs text-muted-foreground">{mobileClientPlatformLabel(device)}</p>
             </div>
-            <p className="shrink-0 text-[11px] text-muted-foreground/75">
+            <p className="shrink-0 text-2xs text-caption-foreground">
               {mobileClientUpdatedAtLabel(device.updatedAt)}
             </p>
           </div>
@@ -56,7 +56,7 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
               label="Live Activities"
             />
           </div>
-          <p className="mt-2 text-xs leading-relaxed text-muted-foreground/80">
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
             {mobileClientNotificationDetail(device)}
           </p>
         </div>

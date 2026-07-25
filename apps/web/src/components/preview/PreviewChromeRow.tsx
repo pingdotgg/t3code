@@ -104,7 +104,7 @@ export function PreviewChromeRow({
 
   return (
     <div className="relative">
-      <form onSubmit={submit} className="surface-subheader gap-1 px-2" data-surface-subheader>
+      <form onSubmit={submit} className="surface-subheader gap-1" data-surface-subheader>
         <div className="flex items-center gap-0.5" role="group" aria-label="Navigation">
           <Tooltip>
             <TooltipTrigger
@@ -201,7 +201,7 @@ export function PreviewChromeRow({
           {onOpenInBrowser && !inputFocused ? (
             <InputGroupAddon
               align="inline-end"
-              className="pointer-events-none absolute inset-y-0 right-0 opacity-0 transition-opacity group-hover/address:pointer-events-auto group-hover/address:opacity-100"
+              className="pointer-events-none absolute inset-y-0 end-0 opacity-0 transition-opacity group-hover/address:pointer-events-auto group-hover/address:opacity-100"
             >
               <Tooltip>
                 <TooltipTrigger
@@ -266,7 +266,7 @@ export function PreviewChromeRow({
             >
               <Camera className={cn(recording && "text-destructive")} />
               {recording ? (
-                <span className="absolute right-0.5 top-0.5 size-1.5 animate-status-pulse rounded-full bg-destructive" />
+                <span className="absolute end-0.5 top-0.5 size-1.5 animate-status-pulse rounded-full bg-destructive" />
               ) : null}
             </TooltipTrigger>
             <TooltipPopup>
@@ -279,7 +279,7 @@ export function PreviewChromeRow({
       {loadProgress > 0 ? (
         <div
           aria-hidden
-          className="pointer-events-none absolute bottom-0 left-0 z-10 h-0.5 rounded-r-full bg-primary transition-all duration-150 ease-out"
+          className="pointer-events-none absolute bottom-0 start-0 z-10 h-0.5 rounded-e-full bg-primary transition-[width] duration-150 ease-out"
           style={{
             width: `${loadProgress}%`,
             boxShadow: "0 0 6px 1px var(--color-ring)",

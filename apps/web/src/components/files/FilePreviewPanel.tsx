@@ -131,7 +131,7 @@ function WorkspaceImagePreview(props: {
   if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-        Unable to load workspace image.
+        Couldn&apos;t load this image. Reopen the file to try again.
       </div>
     );
   }
@@ -727,8 +727,11 @@ export default function FilePreviewPanel({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open file in browser",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: "Couldn't open file in browser",
+          description:
+            error instanceof Error
+              ? error.message
+              : "Opening the file didn't go through. Try again.",
         }),
       );
     })();
@@ -737,7 +740,7 @@ export default function FilePreviewPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath ? (
-        <div className="surface-subheader gap-2 px-3" data-surface-subheader>
+        <div className="surface-subheader gap-2" data-surface-subheader>
           <ScrollArea
             ref={breadcrumbRef}
             hideScrollbars
@@ -753,7 +756,7 @@ export default function FilePreviewPanel({
                   data-current-file-crumb={crumb.kind === "file"}
                 >
                   {index > 0 ? (
-                    <ChevronRight className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
+                    <ChevronRight className="mx-1 size-3.5 shrink-0 text-muted-foreground" />
                   ) : null}
                   <span
                     className={cn(
@@ -847,7 +850,7 @@ export default function FilePreviewPanel({
         </div>
       ) : null}
       {relativePath && file.data?.truncated ? (
-        <div className="shrink-0 border-b border-amber-500/20 bg-amber-500/8 px-3 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+        <div className="shrink-0 border-b border-warning/20 bg-warning/8 px-3 py-1.5 text-2xs text-warning-foreground">
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
       ) : null}
@@ -932,7 +935,7 @@ export default function FilePreviewPanel({
             className={cn(
               "flex min-h-0 shrink-0 bg-background",
               relativePath
-                ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
+                ? "w-[min(22rem,46%)] min-w-64 border-s border-border/60"
                 : "min-w-0 flex-1",
             )}
           >

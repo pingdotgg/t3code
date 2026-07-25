@@ -127,12 +127,26 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     sans-serif;
   --font-mono:
     "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  /* Text tiers. "Quieter" is expressed through size and weight, never by
+     dropping text below its contrast floor:
+       --color-muted-foreground     secondary text, 4.72:1 light / 5.09:1 dark
+       --color-caption-foreground   <=12px labels, stronger to offset the size
+       --color-decorative-foreground non-text ornaments only, no floor */
+  --color-caption-foreground: var(--caption-foreground);
+  --color-decorative-foreground: var(--decorative-foreground);
+  /* The de-facto step below text-xs, previously written as text-[10px]/[11px]. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: calc(1 / 0.6875);
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-success-foreground: var(--success-foreground);
   --color-success: var(--success);
   --color-info-foreground: var(--info-foreground);
   --color-info: var(--info);
+  --color-pending-foreground: var(--pending-foreground);
+  --color-pending: var(--pending);
+  --color-merged-foreground: var(--merged-foreground);
+  --color-merged: var(--merged);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-ring: var(--ring);
   --color-input: var(--input);
@@ -236,8 +250,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     background-color: var(--app-chrome-background);
   }
   body {
-    @apply text-foreground relative;
+    @apply text-foreground relative antialiased;
     background-color: var(--app-chrome-background);
+    /* JetBrains Mono ships only 400 and 500 (see main.tsx), so `font-mono` at a
+       heavier weight would otherwise render a browser-faked bold. */
+    font-synthesis: none;
   }
 }
 
@@ -303,12 +320,26 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --stage-bp-bottom: #101f6e;
   }
 
+  /* One inline inset for every 52px chrome row (sidebar header, chat header,
+     right-panel tabs) so their content starts on the same vertical line, and
+     so the safe-area is honoured on every path rather than only two of them.
+     Matches .chat-composer-horizontal-inset below. Callers override only the
+     trailing side, where native window controls need extra room. */
   .workspace-topbar {
     display: flex;
     height: var(--workspace-topbar-height);
     min-height: var(--workspace-topbar-height);
     flex-shrink: 0;
     align-items: center;
+    padding-inline-start: calc(env(safe-area-inset-left) + 0.75rem);
+    padding-inline-end: calc(env(safe-area-inset-right) + 0.75rem);
+  }
+
+  @media (min-width: 40rem) {
+    .workspace-topbar {
+      padding-inline-start: calc(env(safe-area-inset-left) + 1.25rem);
+      padding-inline-end: calc(env(safe-area-inset-right) + 1.25rem);
+    }
   }
 
   /* Fade rows themselves as they pass beneath the top chrome. A mask remains
@@ -362,8 +393,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     -webkit-app-region: no-drag;
   }
 
+  /* The 40px sub-header shared by the preview, file and diff panels. The inset
+     lives here so switching right-panel tabs does not shift the toolbar's
+     leading edge under a fixed tab bar. */
   .surface-subheader {
-    @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
+    @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background px-3;
   }
 
   .chat-composer-horizontal-inset {
@@ -827,6 +861,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --secondary-foreground: var(--color-zinc-800);
   --muted: var(--color-zinc-50);
   --muted-foreground: var(--color-zinc-500);
+  --caption-foreground: color-mix(in oklch, var(--muted-foreground) 85%, var(--foreground));
+  --decorative-foreground: color-mix(in oklch, var(--muted-foreground) 55%, var(--background));
   --accent: var(--color-zinc-100);
   --accent-foreground: var(--color-zinc-900);
   --destructive: var(--color-red-500);
@@ -840,6 +876,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
   --warning-foreground: var(--color-amber-700);
+  /* States the four base roles do not cover: a thread waiting on the user, and
+     a merged change request. */
+  --pending: var(--color-indigo-500);
+  --pending-foreground: var(--color-indigo-700);
+  --merged: var(--color-violet-500);
+  --merged-foreground: var(--color-violet-700);
   /* Keep every sidebar primitive on the same light surface hierarchy, including
      portaled mobile sheets and settings navigation outside the app sidebar. */
   --sidebar: var(--color-zinc-50);
@@ -851,6 +893,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar-row-selected: var(--color-white);
   --sidebar-border: var(--border);
   --sidebar-stage-fade: var(--sidebar);
+  /* Scrollbar thumbs ride the neutral ramp instead of pure black/white, so they
+     stay in the same family as the surrounding chrome. */
+  --scrollbar-thumb: --alpha(var(--foreground) / 18%);
+  --scrollbar-thumb-hover: --alpha(var(--foreground) / 30%);
 
   @variant dark {
     color-scheme: dark;
@@ -860,19 +906,23 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --app-chrome-background: var(--background);
     --surface-raised: var(--secondary);
     --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--background) 97%, var(--color-white));
+    /* Mixed in oklch so each elevation step is an equal perceptual increment;
+       sRGB mixing compresses the lift on a near-black base. */
+    --card: color-mix(in oklch, var(--background) 97%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--background) 94%, var(--color-white));
+    --popover: color-mix(in oklch, var(--background) 94%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
     --primary: oklch(0.588 0.217 264);
     --primary-foreground: var(--color-white);
     --secondary: --alpha(var(--color-white) / 4%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 4%);
-    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
+    --muted-foreground: color-mix(in oklch, var(--color-neutral-500) 90%, var(--color-white));
+    --caption-foreground: color-mix(in oklch, var(--muted-foreground) 85%, var(--foreground));
+    --decorative-foreground: color-mix(in oklch, var(--muted-foreground) 55%, var(--background));
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
-    --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
+    --destructive: color-mix(in oklch, var(--color-red-500) 90%, var(--color-white));
     --border: --alpha(var(--color-white) / 6%);
     --input: --alpha(var(--color-white) / 8%);
     --ring: oklch(0.588 0.217 264);
@@ -883,6 +933,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --success-foreground: var(--color-emerald-400);
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
+    --pending: var(--color-indigo-500);
+    --pending-foreground: var(--color-indigo-400);
+    --merged: var(--color-violet-500);
+    --merged-foreground: var(--color-violet-400);
     --sidebar: var(--card);
     --sidebar-foreground: var(--foreground);
     --sidebar-muted-foreground: var(--muted-foreground);
@@ -892,6 +946,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --sidebar-row-selected: var(--muted);
     --sidebar-border: var(--border);
     --sidebar-stage-fade: var(--card);
+    --scrollbar-thumb: --alpha(var(--foreground) / 12%);
+    --scrollbar-thumb-hover: --alpha(var(--foreground) / 22%);
   }
 }
 
@@ -909,6 +965,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --accent-foreground: var(--color-zinc-900);
   --muted: var(--color-zinc-50);
   --muted-foreground: var(--color-zinc-500);
+  --caption-foreground: color-mix(in oklch, var(--muted-foreground) 85%, var(--foreground));
+  --decorative-foreground: color-mix(in oklch, var(--muted-foreground) 55%, var(--background));
+  --pending: var(--color-indigo-500);
+  --pending-foreground: var(--color-indigo-700);
+  --merged: var(--color-violet-500);
+  --merged-foreground: var(--color-violet-700);
   --border: var(--color-zinc-200);
   --input: var(--color-zinc-300);
   --sidebar: var(--color-zinc-50);
@@ -925,16 +987,28 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 .dark [data-sidebar-version="v1"],
 .dark [data-sidebar-version="v2"] {
-  --background: #000;
-  --foreground: #f1f3f7;
-  --card: #000;
+  /* Authored in OKLCH with zero chroma, matching the global dark theme's
+     neutral family. The previous hex values drifted blue (#f1f3f7 and #191a1d
+     carried C≈0.006 at h≈265-271) while their neighbours were pure neutral, so
+     the panel read cooler than the workspace beside it. */
+  --background: oklch(0 0 0);
+  --foreground: oklch(0.964 0 0);
+  /* Intentionally equal to --background: the sidebar is one flat black surface,
+     and elevation inside it comes from --sidebar-row-* rather than from cards. */
+  --card: var(--background);
   --card-foreground: var(--foreground);
-  --accent: #191a1d;
-  --accent-foreground: #f7f9ff;
-  --muted: #0a0a0a;
-  --muted-foreground: #a3a3a3;
-  --border: rgb(255 255 255 / 8%);
-  --input: rgb(255 255 255 / 18%);
+  --accent: oklch(0.218 0 0);
+  --accent-foreground: oklch(0.982 0 0);
+  --muted: oklch(0.145 0 0);
+  --muted-foreground: var(--color-neutral-400);
+  --caption-foreground: color-mix(in oklch, var(--muted-foreground) 85%, var(--foreground));
+  --decorative-foreground: color-mix(in oklch, var(--muted-foreground) 55%, var(--background));
+  --pending: var(--color-indigo-500);
+  --pending-foreground: var(--color-indigo-400);
+  --merged: var(--color-violet-500);
+  --merged-foreground: var(--color-violet-400);
+  --border: --alpha(var(--color-white) / 8%);
+  --input: --alpha(var(--color-white) / 18%);
   --sidebar: var(--card);
   --sidebar-foreground: var(--foreground);
   --sidebar-muted-foreground: var(--muted-foreground);
@@ -1035,20 +1109,12 @@ code {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
-}
-
-.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--scrollbar-thumb-hover);
 }
 
 .turn-chip-strip {
@@ -1093,6 +1159,22 @@ label:has(> select#reasoning-effort) select {
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+/* The timeline column is max-w-3xl (768px), which at text-sm runs ~110 characters
+   per line — nearly double a comfortable measure. Cap the prose only: code
+   blocks, tables and images still want the full column width. */
+.chat-markdown > p,
+.chat-markdown > ul,
+.chat-markdown > ol,
+.chat-markdown > blockquote,
+.chat-markdown > h1,
+.chat-markdown > h2,
+.chat-markdown > h3,
+.chat-markdown > h4,
+.chat-markdown > h5,
+.chat-markdown > h6 {
+  max-width: 68ch;
 }
 
 .chat-markdown > :first-child {
@@ -1551,20 +1633,12 @@ label:has(> select#reasoning-effort) select {
 }
 
 .model-picker-list::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--scrollbar-thumb);
   border-radius: 2px;
 }
 
 .model-picker-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.2);
-}
-
-.dark .model-picker-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.dark .model-picker-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* Composer chips are non-editable decorators, so the browser skips them when
@@ -1577,4 +1651,49 @@ label:has(> select#reasoning-effort) select {
   background-color: Highlight;
   opacity: 0.3;
   pointer-events: none;
+}
+
+/* Reduced motion.
+   Unlayered on purpose: these rules must outrank Tailwind's `animate-*`
+   utilities, which live in the `utilities` layer.
+
+   The setting asks for less *motion*, not less feedback. Colour and opacity
+   changes stay; what stops here is perpetual decorative movement, looping
+   status animation, and route transitions that translate or scale. Every state
+   affected below is also carried by a label, an icon, or a colour, so nothing
+   becomes unreadable when the movement is gone. */
+@media (prefers-reduced-motion: reduce) {
+  /* Purely decorative and, uniquely in this app, never-ending: a 10s
+     hue-rotate loop the user has no way to stop. */
+  .ultrathink-frame::before,
+  .ultrathink-chroma,
+  .ultrathink-pill,
+  .ultrathink-word {
+    animation: none;
+  }
+
+  /* Looping status indicators hold their resting frame. The adjacent text
+     ("Working", the skeleton's shape, the pill's label) already carries the
+     state, so holding still costs no information. */
+  .animate-skeleton,
+  .animate-status-pulse,
+  .animate-status-ping,
+  .animate-sidebar-working-text,
+  .provider-update-pill-progress {
+    animation: none;
+  }
+
+  /* Route and composer view transitions collapse to a cut instead of a slide. */
+  html[data-mobile-composer-route-transition="true"]::view-transition-old(root),
+  html[data-mobile-composer-route-transition="true"]::view-transition-new(root),
+  html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobile-composer),
+  html[data-mobile-composer-route-transition="true"]::view-transition-new(t3-mobile-composer),
+  html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobile-draft-headline) {
+    animation: none;
+  }
+
+  html[data-mobile-composer-route-transition="true"]::view-transition-group(t3-mobile-composer),
+  html[data-mobile-composer-route-transition="true"]::view-transition-group(t3-mobile-draft-headline) {
+    animation-duration: 1ms;
+  }
 }

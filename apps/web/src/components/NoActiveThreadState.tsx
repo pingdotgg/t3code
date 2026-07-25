@@ -16,12 +16,12 @@ export function NoActiveThreadState() {
           )}
         >
           {isElectron ? (
-            <span className="text-xs text-muted-foreground/50 wco:pr-[var(--workspace-native-controls-inset)]">
+            <span className="text-xs text-muted-foreground wco:pr-[var(--workspace-native-controls-inset)]">
               No active thread
             </span>
           ) : (
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
+              <span className="text-sm font-medium text-foreground md:text-muted-foreground">
                 No active thread
               </span>
             </div>
@@ -32,7 +32,7 @@ export function NoActiveThreadState() {
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
               <EmptyTitle className="text-foreground text-xl">Pick a thread to continue</EmptyTitle>
-              <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
+              <EmptyDescription className="mt-2 text-sm text-muted-foreground">
                 Select an existing thread or create a new one to get started.
               </EmptyDescription>
             </EmptyHeader>

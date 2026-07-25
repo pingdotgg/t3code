@@ -51,7 +51,7 @@ function DefaultBadge() {
   return (
     <Badge
       variant="outline"
-      className="inline-flex h-4 w-fit min-w-0 items-center justify-center gap-0 border-border/70 bg-muted/60 px-1.5 py-0 font-semibold text-[10px] text-muted-foreground leading-none sm:h-4"
+      className="inline-flex h-4 w-fit min-w-0 items-center justify-center gap-0 border-border/70 bg-muted/60 px-1.5 py-0 font-semibold text-2xs text-muted-foreground leading-none sm:h-4"
     >
       Default
     </Badge>
@@ -311,7 +311,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 {descriptor.label}
               </div>
               {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
-                <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
+                <div className="px-2 pb-1.5 text-muted-foreground text-xs">
                   Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change this
                   option.
                 </div>
@@ -484,8 +484,8 @@ export const TraitsPicker = memo(function TraitsPicker({
             variant={triggerVariant ?? "ghost"}
             className={cn(
               isCodexStyle
-                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:max-w-48 sm:px-3 [&_svg]:mx-0"
-                : "shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3",
+                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground hover:text-foreground/80 sm:max-w-48 sm:px-3 [&_svg]:mx-0"
+                : "shrink-0 whitespace-nowrap px-2 text-muted-foreground hover:text-foreground/80 sm:px-3",
               triggerClassName,
             )}
           />

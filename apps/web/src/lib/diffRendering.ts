@@ -147,6 +147,6 @@ export function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string
     case "rename-changed":
       return "text-[var(--diffs-modified-base)]";
     default:
-      return "text-muted-foreground/80";
+      return "text-muted-foreground";
   }
 }

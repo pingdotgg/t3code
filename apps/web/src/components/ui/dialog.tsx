@@ -79,7 +79,9 @@ function DialogPopup({
           {showCloseButton && (
             <DialogPrimitive.Close
               aria-label="Close"
-              className="absolute end-2 top-2"
+              // end-4/top-4 lands the glyph on the same 24px inline edge the
+              // header, panel, and footer already use.
+              className="absolute end-4 top-4"
               render={<Button size="icon" variant="ghost" />}
             >
               <XIcon />
@@ -116,7 +118,9 @@ function DialogFooter({
       className={cn(
         "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-2xl)-1px)]",
         variant === "default" && "border-t bg-muted/72 py-4",
-        variant === "bare" && "py-4",
+        // A bare footer is the bottom of the content, not a separate bar, so its
+        // bottom inset matches the header's 24px rather than a bar's 16px.
+        variant === "bare" && "pt-4 pb-6",
         className,
       )}
       data-slot="dialog-footer"

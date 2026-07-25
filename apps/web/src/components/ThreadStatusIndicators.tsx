@@ -38,11 +38,11 @@ export type ThreadPr = VcsStatusResult["pr"];
 export function settledPrHoverColorClass(state: NonNullable<ThreadPr>["state"]): string {
   switch (state) {
     case "open":
-      return "group-hover/v2-row:text-emerald-600 dark:group-hover/v2-row:text-emerald-300/90";
+      return "group-hover/v2-row:text-success-foreground";
     case "merged":
-      return "group-hover/v2-row:text-violet-600 dark:group-hover/v2-row:text-violet-300/90";
+      return "group-hover/v2-row:text-merged-foreground";
     case "closed":
-      return "group-hover/v2-row:text-red-600 dark:group-hover/v2-row:text-red-300/90";
+      return "group-hover/v2-row:text-destructive-foreground";
   }
 }
 
@@ -66,7 +66,7 @@ export function prStatusIndicator(
   if (pr.state === "open") {
     return {
       label: `${presentation.shortName} open`,
-      colorClass: "text-emerald-600 dark:text-emerald-300/90",
+      colorClass: "text-success-foreground",
       tooltip,
       tooltipLead,
       tooltipTitle: pr.title,
@@ -76,7 +76,7 @@ export function prStatusIndicator(
   if (pr.state === "closed") {
     return {
       label: `${presentation.shortName} closed`,
-      colorClass: "text-red-600 dark:text-red-300/90",
+      colorClass: "text-destructive-foreground",
       tooltip,
       tooltipLead,
       tooltipTitle: pr.title,
@@ -86,7 +86,7 @@ export function prStatusIndicator(
   if (pr.state === "merged") {
     return {
       label: `${presentation.shortName} merged`,
-      colorClass: "text-violet-600 dark:text-violet-300/90",
+      colorClass: "text-merged-foreground",
       tooltip,
       tooltipLead,
       tooltipTitle: pr.title,
@@ -103,9 +103,9 @@ export function ChangeRequestStatusIcon({ className }: { className?: string }) {
 export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
   return (
     <span className="flex max-w-[min(34rem,calc(100vw-2rem))] items-stretch overflow-hidden whitespace-nowrap">
-      <span className="shrink-0 pr-2 font-medium">{status.tooltipLead}</span>
-      <span className="min-h-4 shrink-0 border-border/70 border-l" aria-hidden="true" />
-      <span className="min-w-0 truncate pl-2">{status.tooltipTitle}</span>
+      <span className="shrink-0 pe-2 font-medium">{status.tooltipLead}</span>
+      <span className="min-h-4 shrink-0 border-border/70 border-s" aria-hidden="true" />
+      <span className="min-w-0 truncate ps-2">{status.tooltipTitle}</span>
     </span>
   );
 }
@@ -139,7 +139,7 @@ export function terminalStatusFromRunningIds(
   }
   return {
     label: "Terminal process running",
-    colorClass: "text-teal-600 dark:text-teal-300/90",
+    colorClass: "text-info-foreground",
     pulse: true,
   };
 }
@@ -171,7 +171,7 @@ export function ThreadWorktreeIndicator({
           />
         }
       >
-        <FolderGit2Icon className="size-3 text-muted-foreground/40" />
+        <FolderGit2Icon className="size-3 text-muted-foreground opacity-40" />
       </TooltipTrigger>
       <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>
@@ -213,7 +213,7 @@ export function ThreadStatusLabel({
         render={
           <span
             aria-label={status.label}
-            className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
+            className={`inline-flex items-center gap-1 text-2xs ${status.colorClass}`}
           />
         }
       >
@@ -348,7 +348,7 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
               />
             }
           >
-            <CloudIcon className="size-3 text-muted-foreground/60" />
+            <CloudIcon className="size-3 text-muted-foreground opacity-60" />
           </TooltipTrigger>
           <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
         </Tooltip>

@@ -75,7 +75,7 @@ export function ColorSelector({
         return (
           <div
             key={color}
-            className={`${sizeClass} cursor-pointer rounded-full transition-transform duration-200 active:scale-90`}
+            className={`${sizeClass} cursor-pointer rounded-full transition-transform duration-150 active:scale-[0.96]`}
             style={{
               backgroundColor: colorValue,
               ...(selectedColor === color && {

@@ -31,7 +31,11 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   const accentStyle = props.accentColor
     ? ({ "--provider-accent": props.accentColor } as CSSProperties)
     : undefined;
-  const badgeContent = props.badgeContent ?? "initials";
+  // Default to a bare accent dot. The badge is 12-14px across, so initials
+  // rendered inside it land at 7-8px — an unreadable smudge — and the badge is
+  // aria-hidden, so the text carried nothing for assistive tech either. The
+  // accent colour alone distinguishes provider instances.
+  const badgeContent = props.badgeContent ?? "none";
 
   return (
     <span
@@ -45,14 +49,14 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       {Icon ? (
         <Icon className={cn("size-5 shrink-0", props.iconClassName)} aria-hidden />
       ) : (
-        <span className={cn("text-[10px] font-semibold leading-none", props.iconClassName)}>
+        <span className={cn("text-2xs font-semibold leading-none", props.iconClassName)}>
           {providerInstanceInitials(props.displayName)}
         </span>
       )}
       {props.statusDotClassName ? (
         <span
           className={cn(
-            "pointer-events-none absolute -left-0.5 -top-0.5 z-10 size-2 rounded-full",
+            "pointer-events-none absolute -start-0.5 -top-0.5 z-10 size-2 rounded-full",
             props.statusDotClassName,
           )}
           style={{ boxShadow: `0 0 0 2px ${indicatorBackground}` }}
@@ -62,7 +66,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       {props.showBadge ? (
         <span
           className={cn(
-            "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-[8px] font-semibold leading-none shadow-sm",
+            "pointer-events-none absolute end-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-2xs font-semibold leading-none shadow-sm",
             props.accentColor
               ? "bg-[var(--provider-accent)] text-white"
               : "bg-muted text-muted-foreground",

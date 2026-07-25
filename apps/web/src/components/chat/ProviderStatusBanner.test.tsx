@@ -41,7 +41,7 @@ describe("ProviderStatusBanner", () => {
 
     expect(markup).toContain('role="alert"');
     expect(markup).toContain('aria-label="Dismiss Codex provider warning"');
-    expect(markup).toContain("absolute top-2 right-2");
+    expect(markup).toContain("absolute top-2 end-2");
   });
 
   it("labels error dismiss controls with the correct severity", () => {

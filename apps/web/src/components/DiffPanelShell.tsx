@@ -10,10 +10,11 @@ export type DiffPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
   const shouldUseDragRegion = isElectron && mode !== "sheet" && mode !== "embedded";
   return cn(
-    "flex items-center justify-between gap-2 px-4",
+    "flex items-center justify-between gap-2",
     shouldUseDragRegion
-      ? "drag-region h-[52px] border-b border-border wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
-      : "surface-subheader",
+      ? "drag-region h-[52px] border-b border-border px-4 wco:h-[env(titlebar-area-height)] wco:pe-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
+      : // .surface-subheader supplies the shared px-3 inset.
+        "surface-subheader",
   );
 }
 
@@ -29,7 +30,7 @@ export function DiffPanelShell(props: {
       className={cn(
         "flex h-full min-w-0 flex-col bg-background",
         props.mode === "inline"
-          ? "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border"
+          ? "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-s border-border"
           : "w-full",
       )}
     >
@@ -70,7 +71,7 @@ export function DiffPanelLoadingState(props: { label: string }) {
       >
         <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2">
           <Skeleton className="h-4 w-32 rounded-full" />
-          <Skeleton className="ml-auto h-4 w-20 rounded-full" />
+          <Skeleton className="ms-auto h-4 w-20 rounded-full" />
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-4 px-3 py-4">
           <div className="space-y-2">

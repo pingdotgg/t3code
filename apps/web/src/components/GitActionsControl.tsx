@@ -496,7 +496,11 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
-          setPublishError(error instanceof Error ? error.message : "An error occurred.");
+          setPublishError(
+            error instanceof Error
+              ? error.message
+              : "Publishing the repository didn't go through. Try again.",
+          );
         }
         return;
       }
@@ -565,7 +569,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     onClick={isClickable ? () => setPublishWizardStep(index) : undefined}
                     disabled={!isClickable}
                     className={cn(
-                      "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-x-2 rounded-lg border px-3 py-2 text-left",
+                      "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-x-2 rounded-lg border px-3 py-2 text-start",
                       index === publishWizardStep
                         ? "border-primary bg-primary/10 ring-1 ring-primary/25 dark:border-transparent"
                         : isComplete
@@ -587,7 +591,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     >
                       {isComplete ? <CheckIcon className="size-3" /> : null}
                     </span>
-                    <span className="text-[10px] font-medium uppercase text-muted-foreground">
+                    <span className="text-2xs font-medium uppercase text-muted-foreground">
                       Step {index + 1}
                     </span>
                     <span className="truncate text-xs font-semibold text-foreground">
@@ -627,7 +631,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       return (
                         <div
                           key={option.value}
-                          className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-55 dark:border-transparent dark:bg-white/[0.035]"
+                          className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-start opacity-55 dark:border-transparent dark:bg-white/[0.035]"
                         >
                           <option.Icon
                             className="size-5 shrink-0 text-muted-foreground"
@@ -642,7 +646,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                                 <Button
                                   variant="outline"
                                   size="xs"
-                                  className="h-5 rounded-[.25rem] px-1.5 text-[10px] text-warning-foreground"
+                                  className="h-5 rounded-[.25rem] px-1.5 text-2xs text-warning-foreground"
                                   onClick={(event) => {
                                     event.preventDefault();
                                     event.stopPropagation();
@@ -667,7 +671,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                         key={option.value}
                         value={option.value}
                         className={cn(
-                          "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                          "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-start outline-none transition-[background-color,border-color,box-shadow]",
                           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                           isSelected
                             ? "border-primary bg-background shadow-sm ring-2 ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
@@ -693,7 +697,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     Repository
                   </label>
                   <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background focus-within:outline-2 focus-within:-outline-offset-1 focus-within:outline-ring">
-                    <span className="flex shrink-0 items-center gap-1.5 border-r border-input bg-muted/50 px-2.5 font-mono text-xs text-muted-foreground">
+                    <span className="flex shrink-0 items-center gap-1.5 border-e border-input bg-muted/50 px-2.5 font-mono text-xs text-muted-foreground">
                       <currentPublishProvider.Icon className="size-3.5" />
                       {publishHost}/
                     </span>
@@ -712,7 +716,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       }}
                       placeholder={publishPathPlaceholder}
                       disabled={publishRepositoryAction.isPending}
-                      className="w-full bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground/60 focus:outline-none"
+                      className="w-full bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground focus:outline-none"
                     />
                   </div>
                 </div>
@@ -753,7 +757,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                           key={option.value}
                           value={option.value}
                           className={cn(
-                            "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                            "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-start outline-none transition-[background-color,border-color,box-shadow]",
                             "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                             isSelected
                               ? "border-primary bg-background shadow-sm ring-2 ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
@@ -852,7 +856,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     className="flex items-center gap-2 rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground dark:border-transparent dark:bg-white/[0.035]"
                   >
                     <Spinner className="size-3.5" aria-hidden />
-                    Publishing repository to {publishProviderLabel}...
+                    Publishing repository to {publishProviderLabel}…
                   </div>
                 ) : null}
                 {publishError && !publishRepositoryAction.isPending ? (
@@ -951,7 +955,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     {publishRepositoryAction.isPending ? (
                       <>
                         <Spinner className="size-3.5" aria-hidden />
-                        Publishing...
+                        Publishing…
                       </>
                     ) : (
                       "Publish"
@@ -1234,8 +1238,11 @@ export default function GitActionsControl({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open pull request link",
-          description: err instanceof Error ? err.message : "An error occurred.",
+          title: "Couldn't open pull request link",
+          description:
+            err instanceof Error
+              ? err.message
+              : "Opening the pull request link didn't go through. Try again.",
           ...(threadToastData !== undefined ? { data: threadToastData } : {}),
         }),
       );
@@ -1302,8 +1309,8 @@ export default function GitActionsControl({
         progressToastId ??
         toastManager.add({
           type: "loading",
-          title: progressStages[0] ?? "Running git action...",
-          description: "Waiting for Git...",
+          title: progressStages[0] ?? "Running git action…",
+          description: "Waiting for Git…",
           timeout: 0,
           data: scopedToastData,
         });
@@ -1312,19 +1319,19 @@ export default function GitActionsControl({
         toastId: resolvedProgressToastId,
         toastData: scopedToastData,
         actionId,
-        title: progressStages[0] ?? "Running git action...",
+        title: progressStages[0] ?? "Running git action…",
         phaseStartedAtMs: null,
         hookStartedAtMs: null,
         hookName: null,
         lastOutputLine: null,
-        currentPhaseLabel: progressStages[0] ?? "Running git action...",
+        currentPhaseLabel: progressStages[0] ?? "Running git action…",
       };
 
       if (progressToastId) {
         toastManager.update(progressToastId, {
           type: "loading",
-          title: progressStages[0] ?? "Running git action...",
-          description: "Waiting for Git...",
+          title: progressStages[0] ?? "Running git action…",
+          description: "Waiting for Git…",
           timeout: 0,
           data: scopedToastData,
         });
@@ -1359,7 +1366,7 @@ export default function GitActionsControl({
             progress.lastOutputLine = null;
             break;
           case "hook_started":
-            progress.title = `Running ${event.hookName}...`;
+            progress.title = `Running ${event.hookName}…`;
             progress.hookName = event.hookName;
             progress.hookStartedAtMs = now;
             progress.lastOutputLine = null;
@@ -1368,7 +1375,7 @@ export default function GitActionsControl({
             progress.lastOutputLine = event.text;
             break;
           case "hook_finished":
-            progress.title = progress.currentPhaseLabel ?? "Committing...";
+            progress.title = progress.currentPhaseLabel ?? "Committing…";
             progress.hookName = null;
             progress.hookStartedAtMs = null;
             progress.lastOutputLine = null;
@@ -1407,8 +1414,11 @@ export default function GitActionsControl({
           resolvedProgressToastId,
           stackedThreadToast({
             type: "error",
-            title: "Action failed",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Couldn't finish the Git action",
+            description:
+              error instanceof Error
+                ? error.message
+                : "The Git action didn't go through. Try again.",
             ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
           }),
         );
@@ -1534,7 +1544,7 @@ export default function GitActionsControl({
     if (quickAction.kind === "run_pull") {
       const toastId = toastManager.add({
         type: "loading",
-        title: "Pulling...",
+        title: "Pulling…",
         timeout: 0,
         data: threadToastData,
       });
@@ -1550,8 +1560,9 @@ export default function GitActionsControl({
             toastId,
             stackedThreadToast({
               type: "error",
-              title: "Pull failed",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: "Couldn't pull",
+              description:
+                error instanceof Error ? error.message : "Pulling didn't go through. Try again.",
               ...(threadToastData !== undefined ? { data: threadToastData } : {}),
             }),
           );
@@ -1638,8 +1649,11 @@ export default function GitActionsControl({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Couldn't open file",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Opening the file didn't go through. Try again.",
             ...(threadToastData !== undefined ? { data: threadToastData } : {}),
           }),
         );
@@ -1669,8 +1683,11 @@ export default function GitActionsControl({
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
-                  title: "Git initialization failed",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: "Couldn't initialize Git",
+                  description:
+                    error instanceof Error
+                      ? error.message
+                      : "Initializing the repository didn't go through. Try again.",
                   ...(threadToastData !== undefined ? { data: threadToastData } : {}),
                 }),
               );
@@ -1678,8 +1695,8 @@ export default function GitActionsControl({
           }}
         >
           <GitBranchPlusIcon className="size-3.5" aria-hidden />
-          <span className="ml-0.5">
-            {initAction.isPending ? "Initializing..." : "Initialize Git"}
+          <span className="ms-0.5">
+            {initAction.isPending ? "Initializing…" : "Initialize Git"}
           </span>
         </Button>
       ) : (
@@ -1701,7 +1718,7 @@ export default function GitActionsControl({
                   quickAction={quickAction}
                   SourceControlIcon={SourceControlIcon}
                 />
-                <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+                <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ms-0.5">
                   {quickAction.label}
                 </span>
               </PopoverTrigger>
@@ -1717,7 +1734,7 @@ export default function GitActionsControl({
               onClick={runQuickAction}
             >
               <GitQuickActionIcon quickAction={quickAction} SourceControlIcon={SourceControlIcon} />
-              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ms-0.5">
                 {quickAction.label}
               </span>
             </Button>
@@ -1788,7 +1805,7 @@ export default function GitActionsControl({
                   }}
                 >
                   <CloudUploadIcon />
-                  Publish repository...
+                  Publish repository…
                 </MenuItem>
               ) : null}
               {gitStatusForActions?.refName === null && (
@@ -1839,7 +1856,7 @@ export default function GitActionsControl({
                     {gitStatusForActions?.refName ?? "(detached HEAD)"}
                   </span>
                   {isDefaultRef && (
-                    <span className="text-right text-warning">Warning: default refName</span>
+                    <span className="text-end text-warning">Warning: default refName</span>
                   )}
                 </span>
               </div>
@@ -1905,7 +1922,7 @@ export default function GitActionsControl({
                               )}
                               <button
                                 type="button"
-                                className="flex flex-1 items-center justify-between gap-3 text-left truncate"
+                                className="flex flex-1 items-center justify-between gap-3 text-start truncate"
                                 onClick={() => openChangedFileInEditor(file.path)}
                               >
                                 <span
@@ -2005,7 +2022,7 @@ export default function GitActionsControl({
           </DialogHeader>
           <DialogFooter className="dark:border-transparent dark:bg-transparent sm:flex-wrap sm:items-center">
             <Button
-              className="w-full sm:mr-auto sm:w-auto"
+              className="w-full sm:me-auto sm:w-auto"
               variant="outline"
               size="sm"
               onClick={() => setPendingDefaultBranchAction(null)}

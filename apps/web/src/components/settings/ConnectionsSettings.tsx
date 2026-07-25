@@ -79,7 +79,14 @@ import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../ui/empty";
 import { Group, GroupSeparator } from "../ui/group";
 import { AnimatedHeight } from "../AnimatedHeight";
 import {
@@ -354,7 +361,7 @@ function parseRemotePairingFields(input: { readonly host: string; readonly pairi
   const host = input.host.trim();
   const pairingCode = input.pairingCode.trim();
   if (!host) {
-    throw new Error("Enter a backend host.");
+    throw new Error("Enter an environment host.");
   }
   if (!pairingCode) {
     throw new Error("Enter a pairing code.");
@@ -363,7 +370,7 @@ function parseRemotePairingFields(input: { readonly host: string; readonly pairi
 }
 
 function formatDesktopSshConnectionError(error: unknown): string {
-  const fallback = "Failed to connect SSH host.";
+  const fallback = "Couldn't connect to the SSH host. Check the host and try again.";
   const rawMessage = error instanceof Error ? error.message : fallback;
   const withoutIpcPrefix = rawMessage.replace(
     /^Error invoking remote method 'desktop:ensure-ssh-environment':\s*/u,
@@ -560,7 +567,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
         key: endpointDefaultPreferenceKey(endpoint),
         label: endpoint.label,
         url,
-        detail: isHostedAppPairingUrl(url) ? "Hosted app link" : "Backend pairing URL",
+        detail: isHostedAppPairingUrl(url) ? "Hosted app link" : "Environment pairing URL",
       });
     }
     return options;
@@ -605,10 +612,10 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           type: "error",
           title: canCopyToClipboard
             ? kind === "hosted-link"
-              ? "Could not copy hosted app link"
+              ? "Couldn't copy hosted app link"
               : kind === "link"
-                ? "Could not copy pairing URL"
-                : "Could not copy pairing code"
+                ? "Couldn't copy pairing URL"
+                : "Couldn't copy pairing code"
             : "Clipboard copy unavailable",
           description: canCopyToClipboard ? error.message : "Showing the full value instead.",
         }),
@@ -663,9 +670,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
         <span className="min-w-0 flex-1">
           <span className="block truncate">{option.label}</span>
           {renderDetail ? (
-            <span className="block truncate text-[11px] text-muted-foreground">
-              {option.detail}
-            </span>
+            <span className="block truncate text-2xs text-muted-foreground">{option.detail}</span>
           ) : null}
         </span>
       </MenuItem>
@@ -675,7 +680,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
       <span className="min-w-0 flex-1">
         <span className="block truncate">Copy code</span>
         {renderDetail ? (
-          <span className="block truncate text-[11px] text-muted-foreground">Token only</span>
+          <span className="block truncate text-2xs text-muted-foreground">Token only</span>
         ) : null}
       </span>
     </MenuItem>
@@ -734,7 +739,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           <div className="flex min-h-5 items-center gap-1.5">
             <ConnectionStatusDot
               tooltipText={`Link created at ${formatAccessTimestamp(pairingLink.createdAt)}`}
-              dotClassName="bg-amber-400"
+              dotClassName="bg-warning"
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
             <Popover>
@@ -747,7 +752,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                     render={
                       <button
                         type="button"
-                        className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/50 outline-none hover:text-foreground"
+                        className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-foreground"
                         aria-label="Show QR code"
                       />
                     }
@@ -773,8 +778,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
           </p>
           {shareablePairingUrl === null ? (
-            <p className="text-[11px] text-muted-foreground/70">
-              Copy the token and pair from another client using this backend&apos;s reachable host.
+            <p className="text-2xs text-caption-foreground">
+              Copy the token and pair from another client using this environment&apos;s reachable
+              host.
             </p>
           ) : null}
         </div>
@@ -936,7 +942,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
             {clientSession.current ? (
-              <span className="text-[10px] text-muted-foreground/80 rounded-md border border-border/50 bg-muted/50 px-1 py-0.5">
+              <span className="text-2xs text-caption-foreground rounded-md border border-border/50 bg-muted/50 px-1 py-0.5">
                 This device
               </span>
             ) : null}
@@ -994,11 +1000,12 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
       setPairingScopes([...AuthStandardClientScopes]);
       setDialogOpen(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to create pairing URL.";
+      const message =
+        error instanceof Error ? error.message : "Couldn't create the pairing URL. Try again.";
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not create pairing URL",
+          title: "Couldn't create pairing URL",
           description: message,
         }),
       );
@@ -1047,8 +1054,8 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
           <DialogHeader>
             <DialogTitle>Create pairing link</DialogTitle>
             <DialogDescription>
-              Generate a one-time link that another device can use to pair with this backend as an
-              authorized client.
+              Generate a one-time link that another device can use to pair with this environment as
+              an authorized client.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-5">
@@ -1196,7 +1203,10 @@ const PairingClientsList = memo(function PairingClientsList({
 
       {pairingLinks.length === 0 && clientSessions.length === 0 && !isLoading ? (
         <div className={accessRowClassName(presentation)}>
-          <p className="text-xs text-muted-foreground/60">No pairing links or client sessions.</p>
+          <p className="text-xs text-muted-foreground">
+            Nothing is paired with this environment yet. Create a pairing link to connect another
+            device or client.
+          </p>
         </div>
       ) : null}
     </>
@@ -1231,7 +1241,7 @@ const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
   return (
     <div className={endpointRowClassName(presentation, isAvailable)}>
       {isEndpointRail && isDefault ? (
-        <span className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-primary" aria-hidden />
+        <span className="absolute inset-y-2 start-0 w-1 rounded-e-full bg-primary" aria-hidden />
       ) : null}
       <div className="flex min-h-6 min-w-0 flex-col gap-2 sm:-my-0.5 sm:flex-row sm:items-center">
         <div className="flex min-w-0 items-baseline gap-3">
@@ -1247,14 +1257,14 @@ const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
             </p>
           ) : null}
           {!isAvailable ? (
-            <span className="shrink-0 rounded-md border border-border/70 px-1 py-0.5 text-[10px] text-muted-foreground">
+            <span className="shrink-0 rounded-md border border-border/70 px-1 py-0.5 text-2xs text-muted-foreground">
               Setup required
             </span>
           ) : null}
         </div>
-        <div className="ml-auto flex min-h-6 shrink-0 items-center justify-end gap-2">
+        <div className="ms-auto flex min-h-6 shrink-0 items-center justify-end gap-2">
           {isDefault ? (
-            <span className="rounded-md border border-primary/30 bg-primary/10 px-1 py-0.5 text-[10px] text-primary">
+            <span className="rounded-md border border-primary/30 bg-primary/10 px-1 py-0.5 text-2xs text-primary">
               Default
             </span>
           ) : null}
@@ -1323,7 +1333,7 @@ function NetworkAccessDescription({
       {hiddenEndpointCount > 0 ? (
         <button
           type="button"
-          className="inline-flex min-w-0 max-w-full items-baseline gap-2 border-b border-dotted border-muted-foreground/60 text-left text-muted-foreground underline-offset-4 hover:border-foreground hover:text-foreground"
+          className="inline-flex min-w-0 max-w-full items-baseline gap-2 border-b border-dotted border-muted-foreground/60 text-start text-muted-foreground underline-offset-4 hover:border-foreground hover:text-foreground"
           onClick={onToggleExpanded}
           aria-expanded={expanded}
         >
@@ -1376,7 +1386,7 @@ function SavedBackendListRow({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not copy trace ID",
+          title: "Couldn't copy trace ID",
           description: error.message,
         }),
       );
@@ -1466,7 +1476,7 @@ function SavedBackendListRow({
                 }
               />
               <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
-                The WSL backend is managed by the WSL setting above — turn it on or off there.
+                The WSL environment is managed by the WSL setting above — turn it on or off there.
               </TooltipPopup>
             </Tooltip>
           ) : (
@@ -1673,7 +1683,13 @@ function CloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) 
   return hasCloudPublicConfig() ? <ConfiguredCloudLinkRow canManageRelay={canManageRelay} /> : null;
 }
 
-function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
+function EmptyRemoteEnvironments({
+  cloudEnabled = true,
+  onAddEnvironment,
+}: {
+  readonly cloudEnabled?: boolean;
+  readonly onAddEnvironment?: () => void;
+}) {
   return (
     <Empty className="min-h-52">
       <EmptyMedia variant="icon">
@@ -1683,10 +1699,18 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <EmptyTitle>No saved remote environments</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from T3 Connect."
-            : "Click “Add environment” to pair another environment."}
+            ? "Remote environments let you run threads on another machine. Pair one to get started, or connect one from T3 Connect."
+            : "Remote environments let you run threads on another machine. Pair one to get started."}
         </EmptyDescription>
       </EmptyHeader>
+      {onAddEnvironment ? (
+        <EmptyContent>
+          <Button size="xs" variant="outline" onClick={onAddEnvironment}>
+            <PlusIcon className="size-3" />
+            Add environment
+          </Button>
+        </EmptyContent>
+      ) : null}
     </Empty>
   );
 }
@@ -1694,18 +1718,20 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
 function CloudRemoteEnvironmentRows({
   primaryEnvironmentId,
   savedEnvironments,
+  onAddEnvironment,
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
+  readonly onAddEnvironment: () => void;
 }) {
   return hasCloudPublicConfig() ? (
     <CloudEnvironmentConnectRows
       primaryEnvironmentId={primaryEnvironmentId}
       savedEnvironments={savedEnvironments}
-      empty={<EmptyRemoteEnvironments />}
+      empty={<EmptyRemoteEnvironments onAddEnvironment={onAddEnvironment} />}
     />
   ) : savedEnvironments.length === 0 ? (
-    <EmptyRemoteEnvironments cloudEnabled={false} />
+    <EmptyRemoteEnvironments cloudEnabled={false} onAddEnvironment={onAddEnvironment} />
   ) : null;
 }
 
@@ -1946,13 +1972,13 @@ export function ConnectionsSettings() {
         setIsUpdatingDesktopServerExposure(false);
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : "Failed to update network exposure.";
+          error instanceof Error ? error.message : "Couldn't update network exposure. Try again.";
         setIsDesktopServerExposureDialogOpen(false);
         setDesktopServerExposureMutationError(message);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not update network access",
+            title: "Couldn't update network access",
             description: message,
           }),
         );
@@ -1982,12 +2008,12 @@ export function ConnectionsSettings() {
       setPendingTailscaleServeEndpoint(null);
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Failed to configure Tailscale HTTPS.";
+        error instanceof Error ? error.message : "Couldn't configure Tailscale HTTPS. Try again.";
       setDesktopServerExposureMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not set up Tailscale HTTPS",
+          title: "Couldn't set up Tailscale HTTPS",
           description: message,
         }),
       );
@@ -2018,12 +2044,13 @@ export function ConnectionsSettings() {
       refreshDesktopNetworkAccessState();
       setDisableTailscaleServeDialogOpen(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to disable Tailscale HTTPS.";
+      const message =
+        error instanceof Error ? error.message : "Couldn't disable Tailscale HTTPS. Try again.";
       setDesktopServerExposureMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not disable Tailscale HTTPS",
+          title: "Couldn't disable Tailscale HTTPS",
           description: message,
         }),
       );
@@ -2042,12 +2069,13 @@ export function ConnectionsSettings() {
     try {
       await revokeServerPairingLink(id);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to revoke pairing link.";
+      const message =
+        error instanceof Error ? error.message : "Couldn't revoke the pairing link. Try again.";
       setDesktopAccessManagementMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not revoke pairing link",
+          title: "Couldn't revoke pairing link",
           description: message,
         }),
       );
@@ -2063,12 +2091,13 @@ export function ConnectionsSettings() {
       try {
         await revokeServerClientSession(sessionId);
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to revoke client access.";
+        const message =
+          error instanceof Error ? error.message : "Couldn't revoke client access. Try again.";
         setDesktopAccessManagementMutationError(message);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not revoke client access",
+            title: "Couldn't revoke client access",
             description: message,
           }),
         );
@@ -2090,12 +2119,13 @@ export function ConnectionsSettings() {
         description: "Other paired clients will need a new pairing link before reconnecting.",
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to revoke other clients.";
+      const message =
+        error instanceof Error ? error.message : "Couldn't revoke the other clients. Try again.";
       setDesktopAccessManagementMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not revoke other clients",
+          title: "Couldn't revoke other clients",
           description: message,
         }),
       );
@@ -2154,12 +2184,15 @@ export function ConnectionsSettings() {
         pairingCode: savedBackendPairingCode,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to add backend.";
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Couldn't add the environment. Check the host and pairing code, then try again.";
       setSavedBackendError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not add backend",
+          title: "Couldn't add environment",
           description: message,
         }),
       );
@@ -2171,12 +2204,15 @@ export function ConnectionsSettings() {
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        const message = error instanceof Error ? error.message : "Failed to add backend.";
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Couldn't add the environment. Check the host and pairing code, then try again.";
         setSavedBackendError(message);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not add backend",
+            title: "Couldn't add environment",
             description: message,
           }),
         );
@@ -2193,7 +2229,7 @@ export function ConnectionsSettings() {
     setAddBackendDialogOpen(false);
     toastManager.add({
       type: "success",
-      title: "Backend added",
+      title: "Environment added",
       description: "The environment is saved and will reconnect on app startup.",
     });
     setIsAddingSavedBackend(false);
@@ -2214,12 +2250,15 @@ export function ConnectionsSettings() {
       const result = await retryEnvironment(environmentId);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        const message = error instanceof Error ? error.message : "Failed to connect backend.";
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Couldn't connect to the environment. Check that it's running, then try again.";
         setSavedBackendError(message);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not connect backend",
+            title: "Couldn't connect environment",
             description: message,
           }),
         );
@@ -2236,12 +2275,13 @@ export function ConnectionsSettings() {
       setRemovingSavedEnvironmentId(null);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        const message = error instanceof Error ? error.message : "Failed to remove backend.";
+        const message =
+          error instanceof Error ? error.message : "Couldn't remove the environment. Try again.";
         setSavedBackendError(message);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not remove backend",
+            title: "Couldn't remove environment",
             description: message,
           }),
         );
@@ -2356,7 +2396,7 @@ export function ConnectionsSettings() {
         type="button"
         aria-pressed={selected}
         className={cn(
-          "group flex min-h-24 items-start gap-3 rounded-lg border p-4 text-left",
+          "group flex min-h-24 items-start gap-3 rounded-lg border p-4 text-start",
           selected ? "border-primary/50 bg-primary/5" : "border-border/60 hover:bg-muted/40",
         )}
         disabled={isAddingSavedBackend}
@@ -2394,7 +2434,7 @@ export function ConnectionsSettings() {
           <Input
             value={savedBackendHost}
             onChange={(event) => handleSavedBackendHostChange(event.target.value)}
-            placeholder="backend.example.com"
+            placeholder="env.example.com"
             disabled={isAddingSavedBackend}
             spellCheck={false}
           />
@@ -2411,7 +2451,7 @@ export function ConnectionsSettings() {
         </label>
       </div>
       <div>
-        <span className="mt-1 block text-[11px] text-muted-foreground">
+        <span className="mt-1 block text-2xs text-muted-foreground">
           Paste a full pairing URL here to fill both fields automatically.
         </span>
       </div>
@@ -2489,7 +2529,7 @@ export function ConnectionsSettings() {
         <div className="flex items-center justify-between gap-3 border-b border-border/60 bg-muted/30 px-3 py-2">
           <div className="min-w-0">
             <p className="text-xs font-medium text-foreground">Suggested hosts</p>
-            <p className="text-[11px] text-muted-foreground">From SSH config and known hosts</p>
+            <p className="text-2xs text-muted-foreground">From SSH config and known hosts</p>
           </div>
           <Button
             size="xs"
@@ -2575,12 +2615,15 @@ export function ConnectionsSettings() {
         // backend on/off or switching distros is picked up here without an
         // explicit renderer reconcile.
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to update WSL backend.";
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Couldn't update the WSL environment. Try again.";
         setDesktopWslMutationError(message);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not change WSL backend",
+            title: "Couldn't change WSL environment",
             description: message,
           }),
         );
@@ -2732,8 +2775,8 @@ export function ConnectionsSettings() {
       if (desktopWslError && canManageLocalBackend) {
         return (
           <SettingsRow
-            title="WSL backend"
-            description="Couldn't load the WSL backend state."
+            title="WSL environment"
+            description="Couldn't load the WSL environment state. Try again."
             status={<span className="block text-destructive">{desktopWslError}</span>}
             control={
               <Button
@@ -2761,8 +2804,8 @@ export function ConnectionsSettings() {
       if (!desktopWslState.enabled && !desktopWslState.wslOnly) return null;
       return (
         <SettingsRow
-          title="WSL backend"
-          description="WSL is no longer available, so the Windows backend is running instead. Switch off the WSL backend to clear this preference."
+          title="WSL environment"
+          description="WSL is no longer available, so the Windows environment is running instead. Switch off the WSL environment to clear this preference."
           status={
             desktopWslError ? (
               <span className="block text-destructive">{desktopWslError}</span>
@@ -2798,14 +2841,14 @@ export function ConnectionsSettings() {
     return (
       <>
         <SettingsRow
-          title="WSL backend"
-          description="Run a second backend inside a WSL distro alongside the Windows one. Pick a distro to start it; pick Off to stop it. Projects opened against the WSL backend live on the Linux side; Windows projects stay where they are."
+          title="WSL environment"
+          description="Run a second environment inside a WSL distro alongside the Windows one. Pick a distro to start it; pick Off to stop it. Projects opened against the WSL environment live on the Linux side; Windows projects stay where they are."
           status={
             desktopWslError ? (
               <span className="block text-destructive">{desktopWslError}</span>
             ) : desktopWslState.preflightError ? (
               <span className="block text-destructive">
-                WSL backend couldn't start: {desktopWslState.preflightError}
+                WSL environment couldn't start: {desktopWslState.preflightError}
               </span>
             ) : null
           }
@@ -2819,7 +2862,7 @@ export function ConnectionsSettings() {
             >
               <SelectTrigger
                 className="w-full sm:w-56"
-                aria-label="WSL backend"
+                aria-label="WSL environment"
                 disabled={isUpdatingWslBackend}
               >
                 <SelectValue>{selectLabel}</SelectValue>
@@ -2847,8 +2890,8 @@ export function ConnectionsSettings() {
         {desktopWslState.enabled ? (
           <SettingsRow
             title="WSL only"
-            description="Stop the Windows backend and run only the WSL backend. Useful if you develop entirely inside WSL and don't want a second backend process. T3 Code restarts when you change this."
-            className="bg-muted/20 pl-7 sm:pl-8"
+            description="Stop the Windows environment and run only the WSL one. Useful if you develop entirely inside WSL and don't want a second environment process. T3 Code restarts when you change this."
+            className="bg-muted/20 ps-7 sm:ps-8"
             control={
               <Switch
                 checked={desktopWslState.wslOnly}
@@ -2870,7 +2913,7 @@ export function ConnectionsSettings() {
         tailscaleHttpsEndpoint
           ? tailscaleHttpsEndpoint.status === "available"
             ? tailscaleHttpsEndpoint.httpBaseUrl
-            : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
+            : "Use Tailscale Serve to expose this environment through a MagicDNS HTTPS URL."
           : "Start Tailscale to set up HTTPS access through MagicDNS."
       }
       control={
@@ -2950,8 +2993,8 @@ export function ConnectionsSettings() {
       title="Network access"
       description={
         currentAuthPolicy === "remote-reachable"
-          ? "This backend is already configured for remote access. Network exposure changes must be made where the server is launched."
-          : "This backend is only reachable on this machine. Restart it with a non-loopback host to enable remote pairing."
+          ? "This environment is already configured for remote access. Network exposure changes must be made where the server is launched."
+          : "This environment is only reachable on this machine. Restart it with a non-loopback host to enable remote pairing."
       }
       control={
         <Tooltip>
@@ -2967,7 +3010,7 @@ export function ConnectionsSettings() {
             }
           />
           <TooltipPopup side="top">
-            Network exposure changes restart the backend and must be controlled where the server
+            Network exposure changes restart the environment and must be controlled where the server
             process is launched.
           </TooltipPopup>
         </Tooltip>
@@ -3105,27 +3148,27 @@ export function ConnectionsSettings() {
                   {pendingWslChange?.kind === "disable"
                     ? pendingWslChange.wasWslOnly
                       ? "Turn off WSL and switch back to Windows?"
-                      : "Disable WSL backend?"
+                      : "Disable WSL environment?"
                     : pendingWslChange?.kind === "distro"
                       ? "Switch WSL distro?"
                       : pendingWslChange?.kind === "enable"
-                        ? "Start the WSL backend"
+                        ? "Start the WSL environment"
                         : pendingWslChange?.nextValue
-                          ? "Run only the WSL backend?"
-                          : "Re-enable the Windows backend?"}
+                          ? "Run only the WSL environment?"
+                          : "Re-enable the Windows environment?"}
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {pendingWslChange?.kind === "disable"
                     ? pendingWslChange.wasWslOnly
-                      ? "T3 Code will restart on the Windows backend. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL."
-                      : "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in T3 Code until you re-enable WSL."
+                      ? "T3 Code will restart on the Windows environment. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL."
+                      : "The WSL environment will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in T3 Code until you re-enable WSL."
                     : pendingWslChange?.kind === "distro"
-                      ? "T3 Code will restart the WSL backend on the new distro. Sessions still running on the current distro will be interrupted."
+                      ? "T3 Code will restart the WSL environment on the new distro. Sessions still running on the current distro will be interrupted."
                       : pendingWslChange?.kind === "enable"
-                        ? "Run the WSL backend alongside the Windows one, or stop the Windows backend and use only WSL? You can change this later from Settings."
+                        ? "Run the WSL environment alongside the Windows one, or stop the Windows environment and use only WSL? You can change this later from Settings."
                         : pendingWslChange?.nextValue
-                          ? "T3 Code will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again."
-                          : "T3 Code will restart and bring the Windows backend back up alongside WSL."}
+                          ? "T3 Code will restart and start only the WSL environment. Your Windows-side projects won't be accessible until you turn this off again."
+                          : "T3 Code will restart and bring the Windows environment back up alongside WSL."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -3162,7 +3205,7 @@ export function ConnectionsSettings() {
                           Applying…
                         </>
                       ) : (
-                        "Run both backends"
+                        "Run both environments"
                       )}
                     </Button>
                   </>
@@ -3211,7 +3254,7 @@ export function ConnectionsSettings() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Disable Tailscale HTTPS?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  T3 Code will restart the local backend without Tailscale Serve.
+                  T3 Code will restart the local environment without Tailscale Serve.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -3249,8 +3292,8 @@ export function ConnectionsSettings() {
               <DialogHeader>
                 <DialogTitle>Set up Tailscale HTTPS?</DialogTitle>
                 <DialogDescription>
-                  T3 Code will restart the local backend with Tailscale Serve enabled and ask
-                  Tailscale to proxy HTTPS traffic to this backend.
+                  T3 Code will restart the local environment with Tailscale Serve enabled and ask
+                  Tailscale to proxy HTTPS traffic to this environment.
                 </DialogDescription>
               </DialogHeader>
               <DialogPanel className="space-y-4">
@@ -3309,7 +3352,7 @@ export function ConnectionsSettings() {
         <SettingsSection title="This environment">
           <SettingsRow
             title="Administrative access"
-            description="Pairing links and client-session management require the access:write scope for this backend."
+            description="Pairing links and client-session management require the access:write scope for this environment."
           />
           <CloudLinkRow canManageRelay={canManageRelay} />
         </SettingsSection>
@@ -3335,7 +3378,7 @@ export function ConnectionsSettings() {
                       <Button
                         size="xs"
                         variant="ghost"
-                        className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
+                        className="h-5 gap-1 rounded-sm px-1 text-2xs font-normal text-caption-foreground hover:text-muted-foreground"
                         aria-label="Add environment"
                       >
                         <PlusIcon className="size-3" />
@@ -3349,7 +3392,7 @@ export function ConnectionsSettings() {
             </Tooltip>
             <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
               <DialogHeader>
-                <DialogTitle>Add Environment</DialogTitle>
+                <DialogTitle>Add environment</DialogTitle>
                 <DialogDescription>Pair another environment to this client.</DialogDescription>
               </DialogHeader>
               <DialogPanel>
@@ -3358,14 +3401,15 @@ export function ConnectionsSettings() {
                     {renderConnectionModeCard({
                       mode: "remote",
                       title: "Remote link",
-                      description: "Enter a backend host and pairing code.",
+                      description: "Enter an environment host and pairing code.",
                       icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
                     })}
                     {desktopBridge
                       ? renderConnectionModeCard({
                           mode: "ssh",
                           title: "SSH",
-                          description: "Use local SSH config, agent, and tunnels for the backend.",
+                          description:
+                            "Use local SSH config, agent, and tunnels for the environment.",
                           icon: <TerminalIcon aria-hidden className="size-4" />,
                         })
                       : null}
@@ -3391,6 +3435,7 @@ export function ConnectionsSettings() {
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
+          onAddEnvironment={() => setAddBackendDialogOpen(true)}
         />
       </SettingsSection>
     </SettingsPageContainer>

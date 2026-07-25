@@ -174,7 +174,10 @@ function ComposerBannerStackAlert({
   return (
     <Alert
       variant={item.variant}
-      className={cn("alert-glass", item.className)}
+      // Banners stack directly on top of the composer and share its inline
+      // edges, so they carry the composer's 22px radius rather than the
+      // generic alert radius.
+      className={cn("alert-glass rounded-[22px]", item.className)}
       data-variant={item.variant}
     >
       {item.icon}

@@ -151,11 +151,11 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
   }
 
   if (lastCheckedRelative.status === "invalid") {
-    return <span className="text-[11px] text-muted-foreground/50">Checked unavailable</span>;
+    return <span className="text-2xs text-caption-foreground">Checked unavailable</span>;
   }
 
   return (
-    <span className="text-[11px] text-muted-foreground/60">
+    <span className="text-2xs text-caption-foreground">
       {lastCheckedRelative.suffix ? (
         <>
           Checked <span className="font-mono tabular-nums">{lastCheckedRelative.value}</span>{" "}
@@ -172,7 +172,7 @@ function AboutVersionTitle() {
   return (
     <span className="inline-flex items-center gap-2">
       <span>Version</span>
-      <code className="text-[11px] font-medium text-muted-foreground">{APP_VERSION}</code>
+      <code className="text-2xs font-medium text-muted-foreground">{APP_VERSION}</code>
     </span>
   );
 }
@@ -203,8 +203,11 @@ function AboutVersionSection() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not change update track",
-              description: error instanceof Error ? error.message : "Update track change failed.",
+              title: "Couldn't change update track",
+              description:
+                error instanceof Error
+                  ? error.message
+                  : "Couldn't change the update track. Try again.",
             }),
           );
         })
@@ -226,8 +229,11 @@ function AboutVersionSection() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not download update",
-            description: error instanceof Error ? error.message : "Download failed.",
+            title: "Couldn't download update",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Downloading the update didn't go through. Try again.",
           }),
         );
       });
@@ -246,8 +252,11 @@ function AboutVersionSection() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not install update",
-            description: error instanceof Error ? error.message : "Install failed.",
+            title: "Couldn't install update",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Installing the update didn't go through. Try again.",
           }),
         );
       });
@@ -262,7 +271,7 @@ function AboutVersionSection() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not check for updates",
+              title: "Couldn't check for updates",
               description:
                 result.state.message ?? "Automatic updates are not available in this build.",
             }),
@@ -273,8 +282,11 @@ function AboutVersionSection() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
+            title: "Couldn't check for updates",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Checking for updates didn't go through. Try again.",
           }),
         );
       });
@@ -635,7 +647,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Project Grouping"
+          title="Project grouping"
           description="Combine matching repositories across environments."
           resetAction={
             settings.sidebarProjectGroupingMode !==
@@ -665,7 +677,7 @@ export function GeneralSettingsPanel() {
                   ),
                 });
               }}
-              aria-label="Project Grouping"
+              aria-label="Project grouping"
             />
           }
         />
@@ -889,7 +901,7 @@ export function GeneralSettingsPanel() {
 
         {settings.defaultThreadEnvMode === "worktree" ? (
           <SettingsRow
-            className="bg-muted/20 sm:pl-9"
+            className="bg-muted/20 sm:ps-9"
             title="Start from origin"
             description="Creates the worktree from the latest matching branch on origin instead of your local branch."
             resetAction={
@@ -1196,11 +1208,11 @@ export function ProviderSettingsPanel() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `Could not update ${PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver}`,
+            title: `Couldn't update ${PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver}`,
             description:
               error instanceof Error
                 ? error.message
-                : "The provider update command could not be started.",
+                : "Couldn't start the provider update. Try again.",
           }),
         );
       }
@@ -1626,8 +1638,11 @@ export function ArchivedThreadsPanel() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Failed to unarchive thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: "Couldn't unarchive thread",
+              description:
+                error instanceof Error
+                  ? error.message
+                  : "Unarchiving didn't go through. Try again.",
             }),
           );
         }
@@ -1643,8 +1658,9 @@ export function ArchivedThreadsPanel() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Failed to delete thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: "Couldn't delete thread",
+              description:
+                error instanceof Error ? error.message : "Deleting didn't go through. Try again.",
             }),
           );
         }
@@ -1668,7 +1684,7 @@ export function ArchivedThreadsPanel() {
                 {isLoadingArchive
                   ? "Loading archived threads"
                   : archiveError
-                    ? "Could not load archived threads"
+                    ? "Couldn't load archived threads"
                     : "No archived threads"}
               </span>
             }
@@ -1706,9 +1722,11 @@ export function ArchivedThreadsPanel() {
                       toastManager.add(
                         stackedThreadToast({
                           type: "error",
-                          title: "Archived thread action failed",
+                          title: "Couldn't open the thread actions",
                           description:
-                            error instanceof Error ? error.message : "An error occurred.",
+                            error instanceof Error
+                              ? error.message
+                              : "Opening the menu didn't go through. Try again.",
                         }),
                       );
                     }
@@ -1742,9 +1760,11 @@ export function ArchivedThreadsPanel() {
                           toastManager.add(
                             stackedThreadToast({
                               type: "error",
-                              title: "Failed to unarchive thread",
+                              title: "Couldn't unarchive thread",
                               description:
-                                error instanceof Error ? error.message : "An error occurred.",
+                                error instanceof Error
+                                  ? error.message
+                                  : "Unarchiving didn't go through. Try again.",
                             }),
                           );
                         }

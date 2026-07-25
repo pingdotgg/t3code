@@ -44,7 +44,7 @@ export function ZoomIndicator({ zoomFactor }: Props) {
     <div
       aria-hidden={!visible}
       className={cn(
-        "pointer-events-none absolute top-3 right-3 z-20 select-none rounded-full border border-border/70 bg-popover/95 px-2.5 py-1 text-xs font-medium text-foreground shadow-md/10 backdrop-blur transition-all duration-200 ease-out",
+        "pointer-events-none absolute top-3 end-3 z-20 select-none rounded-full border border-border/70 bg-popover/95 px-2.5 py-1 text-xs font-medium text-foreground shadow-md/10 backdrop-blur transition-[opacity,translate] duration-200 ease-out",
         visible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1",
       )}
     >

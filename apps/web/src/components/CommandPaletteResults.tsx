@@ -75,9 +75,7 @@ function DisabledCommandPaletteResultRow(props: {
             {props.item.titleLeadingContent}
             <span className="truncate">{props.item.title}</span>
           </span>
-          <span className="truncate text-muted-foreground/85 text-xs">
-            {props.item.description}
-          </span>
+          <span className="truncate text-muted-foreground text-xs">{props.item.description}</span>
         </span>
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm text-foreground">
@@ -121,9 +119,7 @@ function CommandPaletteResultRow(props: {
             {props.item.titleLeadingContent}
             <span className="truncate">{props.item.title}</span>
           </span>
-          <span className="truncate text-muted-foreground/85 text-xs">
-            {props.item.description}
-          </span>
+          <span className="truncate text-muted-foreground text-xs">{props.item.description}</span>
         </span>
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm text-foreground">
@@ -133,13 +129,13 @@ function CommandPaletteResultRow(props: {
       )}
       {props.item.titleTrailingContent}
       {props.item.timestamp ? (
-        <span className="min-w-12 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground/70">
+        <span className="min-w-12 shrink-0 text-end text-2xs tabular-nums text-caption-foreground">
           {props.item.timestamp}
         </span>
       ) : null}
       {shortcutLabel ? <CommandShortcut>{shortcutLabel}</CommandShortcut> : null}
       {props.item.kind === "submenu" ? (
-        <ChevronRightIcon className="ml-auto size-4 shrink-0 text-muted-foreground/50" />
+        <ChevronRightIcon className="ms-auto size-4 shrink-0 text-muted-foreground opacity-50" />
       ) : null}
     </CommandItem>
   );

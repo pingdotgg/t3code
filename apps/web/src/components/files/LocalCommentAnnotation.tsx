@@ -34,7 +34,7 @@ export function LocalCommentAnnotation({
         <div className="flex items-center gap-2">
           <MessageCircle className="size-4 text-muted-foreground" />
           <span className="text-xs font-medium">Local comment</span>
-          <span className="ml-auto text-[11px] text-muted-foreground">{rangeLabel}</span>
+          <span className="ms-auto text-2xs text-muted-foreground">{rangeLabel}</span>
           <Button variant="ghost" size="icon-xs" aria-label="Delete comment" onClick={onDelete}>
             <Trash2 className="size-3.5" />
           </Button>

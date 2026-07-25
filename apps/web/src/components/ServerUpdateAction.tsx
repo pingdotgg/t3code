@@ -62,7 +62,7 @@ export function ServerUpdateAction({
     onError: (error) => {
       toastManager.add({
         type: "error",
-        title: "Could not copy update command",
+        title: "Couldn't copy update command",
         description: error.message,
       });
     },

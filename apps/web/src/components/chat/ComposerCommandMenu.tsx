@@ -65,7 +65,7 @@ function SkillGlyph(props: { className?: string }) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.85"
+      strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
       className={props.className}
@@ -141,13 +141,15 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
     >
       <div ref={listRef} className="dropdown-glass relative w-full overflow-hidden rounded-[20px]">
         {props.items.length > 0 ? (
-          <CommandList className="max-h-72">
+          // my-3 keeps the scrollbar clear of the panel's 20px corner radius
+          // instead of running into it and over the first row.
+          <CommandList className="max-h-72 **:data-[slot=scroll-area-scrollbar]:my-3">
             {groups.map((group, groupIndex) => (
               <div key={group.id}>
                 {groupIndex > 0 ? <CommandSeparator className="my-0.5" /> : null}
                 <CommandGroup>
                   {group.label ? (
-                    <CommandGroupLabel className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/55">
+                    <CommandGroupLabel className="px-3 pt-2 pb-1 text-2xs font-semibold uppercase tracking-[0.08em] text-caption-foreground">
                       {group.label}
                     </CommandGroupLabel>
                   ) : null}
@@ -169,10 +171,10 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
           <div className="px-5 py-3.5">
             {props.triggerKind === "skill" ? (
               <CommandGroup>
-                <CommandGroupLabel className="px-0 pt-0 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/55">
+                <CommandGroupLabel className="px-0 pt-0 pb-1 text-2xs font-semibold uppercase tracking-[0.08em] text-caption-foreground">
                   Skills
                 </CommandGroupLabel>
-                <p className="text-muted-foreground/70 text-xs">
+                <p className="text-muted-foreground text-xs">
                   {props.isLoading
                     ? "Searching workspace skills..."
                     : (props.emptyStateText ??
@@ -180,7 +182,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                 </p>
               </CommandGroup>
             ) : (
-              <p className="text-muted-foreground/70 text-xs">
+              <p className="text-muted-foreground text-xs">
                 {props.isLoading
                   ? "Searching workspace files..."
                   : (props.emptyStateText ??
@@ -232,26 +234,26 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         />
       ) : null}
       {props.item.type === "slash-command" ? (
-        <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />
+        <BotIcon className="size-4 shrink-0 text-muted-foreground opacity-80" />
       ) : null}
       {props.item.type === "provider-slash-command" ? (
-        <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
+        <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground">
           <SkillGlyph className="size-3.5" />
         </span>
       ) : null}
       {props.item.type === "skill" ? (
-        <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
+        <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground">
           <SkillGlyph className="size-3.5" />
         </span>
       ) : null}
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <span className="shrink-0">{props.item.label}</span>
-        <span className="min-w-0 flex-1 truncate text-muted-foreground/70 text-xs">
+        <span className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
           {props.item.description}
         </span>
       </span>
       {skillSourceLabel ? (
-        <span className="shrink-0 pl-2 text-muted-foreground/70 text-xs">{skillSourceLabel}</span>
+        <span className="shrink-0 ps-2 text-muted-foreground text-xs">{skillSourceLabel}</span>
       ) : null}
     </CommandItem>
   );

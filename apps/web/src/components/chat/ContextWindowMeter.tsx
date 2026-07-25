@@ -90,7 +90,7 @@ export function ContextWindowMeter(props: {
           <div className="flex items-center justify-between gap-3">
             <div className="font-medium text-muted-foreground text-xs">Context Window</div>
             {usage.maxTokens !== null && usedPercentage ? (
-              <div className="text-[11px] tabular-nums text-muted-foreground/70">
+              <div className="text-2xs tabular-nums text-caption-foreground">
                 <span>{usedPercentage}</span>
                 <span className="mx-1">·</span>
                 <span>
@@ -99,7 +99,7 @@ export function ContextWindowMeter(props: {
                 </span>
               </div>
             ) : (
-              <div className="text-[11px] tabular-nums text-muted-foreground/70">
+              <div className="text-2xs tabular-nums text-caption-foreground">
                 {formatContextWindowTokens(usage.usedTokens)}
               </div>
             )}
@@ -120,15 +120,15 @@ export function ContextWindowMeter(props: {
             </div>
           ) : null}
           {showTotalProcessed ? (
-            <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
-              <span className="text-muted-foreground/60">Total processed</span>
-              <span className="font-medium tabular-nums text-muted-foreground/80">
+            <div className="flex items-center justify-between gap-3 text-2xs leading-4">
+              <span className="text-muted-foreground">Total processed</span>
+              <span className="font-medium tabular-nums text-muted-foreground">
                 {formatContextWindowTokens(totalProcessedTokens)}
               </span>
             </div>
           ) : null}
           {usage.compactsAutomatically ? (
-            <div className="mt-1 text-pretty text-[11px] font-medium text-muted-foreground/70">
+            <div className="mt-1 text-pretty text-2xs font-medium text-caption-foreground">
               {providerDisplayName ?? "It"} automatically compacts its context when needed.
             </div>
           ) : null}

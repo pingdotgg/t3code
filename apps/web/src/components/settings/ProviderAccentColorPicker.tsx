@@ -193,7 +193,7 @@ function ProviderCustomColorPicker(props: {
           <button
             type="button"
             className={cn(
-              "flex size-6 cursor-pointer items-center justify-center rounded-full text-white transition-transform duration-200 active:scale-90",
+              "flex size-6 cursor-pointer items-center justify-center rounded-full text-white transition-transform duration-150 active:scale-[0.96]",
               "hover:scale-105",
             )}
             style={{
@@ -206,7 +206,7 @@ function ProviderCustomColorPicker(props: {
             }}
             aria-label={`Choose custom accent color for ${props.displayName}`}
           >
-            <PipetteIcon className="size-3 text-foreground/25" aria-hidden />
+            <PipetteIcon className="size-3 text-foreground opacity-25" aria-hidden />
           </button>
         }
       />

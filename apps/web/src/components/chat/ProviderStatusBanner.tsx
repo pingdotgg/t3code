@@ -19,6 +19,21 @@ export function shouldShowProviderStatusBanner(
   return bannerKey !== null && bannerKey !== dismissedBannerKey;
 }
 
+// CLI commands that re-authenticate a provider. Kept to the drivers whose CLI
+// documents an explicit login command; anything else falls back to naming the
+// CLI without inventing a command that may not exist.
+const PROVIDER_LOGIN_COMMANDS: Readonly<Record<string, string>> = {
+  codex: "codex login",
+  cursor: "agent login",
+};
+
+function unauthenticatedMessage(driver: string, providerName: string): string {
+  const command = PROVIDER_LOGIN_COMMANDS[driver];
+  return command
+    ? `Run \`${command}\` in a terminal to sign in again.`
+    : `Sign in again with the ${providerName} CLI in a terminal, then retry.`;
+}
+
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onDismiss,
   status,
@@ -34,9 +49,9 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
   const title = isUnauthenticated
     ? `${providerName} is unauthenticated`
-    : `${providerName} provider status`;
+    : `${providerName} needs attention`;
   const message = isUnauthenticated
-    ? "Sign in via the CLI to authenticate again."
+    ? (status.message ?? unauthenticatedMessage(status.driver, providerName))
     : (status.message ??
       (status.status === "error"
         ? `${providerName} provider is unavailable.`
@@ -68,7 +83,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
         <button
           type="button"
           aria-label={`Dismiss ${providerName} provider ${status.status}`}
-          className="absolute top-2 right-2 inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-foreground/8 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          className="absolute top-2 end-2 inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-foreground/8 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           onClick={onDismiss}
         >
           <XIcon aria-hidden className="size-3.5" />

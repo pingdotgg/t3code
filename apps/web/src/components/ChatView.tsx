@@ -1112,7 +1112,7 @@ type LocalThreadErrorEntry = {
 };
 
 function chatActionErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "An error occurred.";
+  return error instanceof Error ? error.message : "That didn't go through. Try again.";
 }
 
 function ChatViewContent(props: ChatViewProps) {
@@ -1627,7 +1627,7 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not reconnect environment",
+            title: "Couldn't reconnect environment",
             description: error instanceof Error ? error.message : "Failed to reconnect.",
           }),
         );
@@ -2017,6 +2017,21 @@ function ChatViewContent(props: ChatViewProps) {
     activeThread?.session ?? null,
     localDispatchStartedAt,
   );
+  // Responses stream in with no announcement of their own: sighted users see the
+  // pulsing dots, screen-reader users get silence. Keep the message terse — the
+  // reply itself is read from the timeline, this only marks the boundaries.
+  const [turnAnnouncement, setTurnAnnouncement] = useState("");
+  const wasWorkingRef = useRef(false);
+  useEffect(() => {
+    if (isWorking === wasWorkingRef.current) return;
+    wasWorkingRef.current = isWorking;
+    setTurnAnnouncement(isWorking ? "Assistant is responding" : "Response complete");
+  }, [isWorking]);
+  useEffect(() => {
+    // A new thread starts from silence rather than inheriting the last one.
+    wasWorkingRef.current = false;
+    setTurnAnnouncement("");
+  }, [activeThread?.id]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -2915,7 +2930,7 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not delete action",
+            title: "Couldn't delete action",
             description: error instanceof Error ? error.message : "An unexpected error occurred.",
           }),
         );
@@ -3269,7 +3284,7 @@ function ChatViewContent(props: ChatViewProps) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to copy path",
+          title: "Couldn't copy path",
           description: "Clipboard API unavailable.",
         }),
       );
@@ -3288,8 +3303,11 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to copy path",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Couldn't copy path",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Copying the path didn't go through. Try again.",
           }),
         );
       },
@@ -3899,8 +3917,11 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to un-settle thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Couldn't un-settle thread",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Un-settling the thread didn't go through. Try again.",
           }),
         );
       }
@@ -3927,8 +3948,11 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to wake thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Couldn't wake thread",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Waking the thread didn't go through. Try again.",
           }),
         );
       }
@@ -4000,7 +4024,7 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to switch checkout",
+            title: "Couldn't switch checkout",
             description: chatActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
           }),
         );
@@ -5305,11 +5329,11 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not start implementation thread",
+            title: "Couldn't start implementation thread",
             description:
               error instanceof Error
                 ? error.message
-                : "An error occurred while creating the new thread.",
+                : "Creating the thread didn't go through. Try again.",
           }),
         );
       }
@@ -5620,18 +5644,19 @@ function ChatViewContent(props: ChatViewProps) {
           data-chat-header
           className={cn(
             "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
+            // .workspace-topbar now carries the shared safe-area inset; only the
+            // trailing override for native window controls stays here.
             isElectron
               ? cn(
-                  "workspace-topbar drag-region relative px-3 sm:px-5",
+                  "workspace-topbar drag-region relative",
                   reserveTitleBarControlInset &&
                     !inlineRightPanelOwnsTitleBar &&
-                    "wco:pr-[var(--workspace-native-controls-inset)]",
+                    "wco:pe-[var(--workspace-native-controls-inset)]",
                 )
-              : "workspace-topbar pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
+              : "workspace-topbar",
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
-          {!rightPanelOpen ? panelLayoutControls : null}
           <ChatHeader
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}
@@ -5653,12 +5678,21 @@ function ChatViewContent(props: ChatViewProps) {
             onUpdateProjectScript={updateProjectScript}
             onDeleteProjectScript={deleteProjectScript}
           />
+          {/* Rendered last so keyboard and screen-reader users reach the project
+              and thread title before the panel controls. The controls are
+              absolutely positioned, so their visual position is unchanged. */}
+          {!rightPanelOpen ? panelLayoutControls : null}
         </header>
 
         <ThreadErrorBanner
           error={threadError}
           onDismiss={() => setThreadError(activeThread.id, null)}
         />
+        {/* Mounted empty so the region is already in the accessibility tree when
+            its first message lands; late-inserted live regions are not read. */}
+        <div aria-live="polite" role="status" className="sr-only">
+          {turnAnnouncement}
+        </div>
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}
@@ -5712,7 +5746,7 @@ function ChatViewContent(props: ChatViewProps) {
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
               {showScrollToBottom && (
                 <div
-                  className="pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
+                  className="pointer-events-none absolute start-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
                   style={{ bottom: composerOverlayHeight + 4 }}
                 >
                   <button

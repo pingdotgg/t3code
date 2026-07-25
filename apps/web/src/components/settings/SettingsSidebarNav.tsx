@@ -84,8 +84,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     isActive={isActive}
                     className={
                       isActive
-                        ? "h-8 items-center gap-2 rounded-md bg-sidebar-row-active px-2 py-1.5 text-left text-sm font-medium text-sidebar-foreground"
-                        : "h-8 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                        ? "h-8 items-center gap-2 rounded-md bg-sidebar-row-active px-2 py-1.5 text-start text-sm font-medium text-sidebar-foreground"
+                        : "h-8 items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                     }
                     onClick={() => handleSectionClick(item.to)}
                   >
@@ -93,7 +93,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       className={
                         isActive
                           ? "size-4 shrink-0 text-sidebar-foreground"
-                          : "size-4 shrink-0 text-sidebar-muted-foreground/60"
+                          : "size-4 shrink-0 text-sidebar-muted-foreground opacity-60"
                       }
                     />
                     <span className="truncate">{item.label}</span>
@@ -106,15 +106,18 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       </SidebarContent>
       <SidebarFooter className="p-2">
         <T3ConnectSidebarSignIn />
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
-          <SidebarMenu className="min-w-0">
+        {/* Flex, not grid: the avatar renders nothing when signed out, and a
+            grid track would still reserve its gap — leaving the Back row 4px
+            short of the footer's inline edge while the row above it is flush. */}
+        <div className="flex items-center gap-1">
+          <SidebarMenu className="min-w-0 flex-1">
             <SidebarMenuItem>
               <SidebarMenuButton
                 size="sm"
-                className="h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                className="h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                 onClick={handleBackClick}
               >
-                <ArrowLeftIcon className="size-4" />
+                <ArrowLeftIcon className="size-4 shrink-0" />
                 <span>Back</span>
               </SidebarMenuButton>
             </SidebarMenuItem>

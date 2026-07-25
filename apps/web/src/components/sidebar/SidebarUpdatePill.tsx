@@ -30,7 +30,7 @@ function SidebarUpdateReleaseNotesTooltip({
   }
 
   return (
-    <div className="w-120 max-w-[calc(100vw-2rem)] text-left">
+    <div className="w-120 max-w-[calc(100vw-2rem)] text-start">
       <div className="px-1">
         <div className="text-sm leading-5 font-medium">{tooltip}</div>
       </div>
@@ -42,7 +42,7 @@ function SidebarUpdateReleaseNotesTooltip({
               <h3 className="text-muted-foreground text-xs leading-4 font-semibold">
                 {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
               </h3>
-              <ul className="mt-2 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
+              <ul className="mt-2 space-y-1.5 ps-4 text-xs leading-5 text-popover-foreground/90">
                 {releaseNote.items.map((item, itemIndex) => (
                   <li className="list-disc break-words" key={`${releaseNote.version}-${itemIndex}`}>
                     {item}
@@ -92,7 +92,7 @@ export function SidebarUpdatePill() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not download update",
+              title: "Couldn't download update",
               description: actionError,
             }),
           );
@@ -101,8 +101,11 @@ export function SidebarUpdatePill() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not start update download",
-              description: error instanceof Error ? error.message : "An unexpected error occurred.",
+              title: "Couldn't start update download",
+              description:
+                error instanceof Error
+                  ? error.message
+                  : "Starting the download didn't go through. Try again.",
             }),
           );
         });
@@ -123,7 +126,7 @@ export function SidebarUpdatePill() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not install update",
+              title: "Couldn't install update",
               description: actionError,
             }),
           );
@@ -132,8 +135,11 @@ export function SidebarUpdatePill() {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not install update",
-              description: error instanceof Error ? error.message : "An unexpected error occurred.",
+              title: "Couldn't install update",
+              description:
+                error instanceof Error
+                  ? error.message
+                  : "Installing the update didn't go through. Try again.",
             }),
           );
         });
@@ -216,7 +222,7 @@ export function SidebarUpdatePill() {
                   <button
                     type="button"
                     aria-label="Dismiss update"
-                    className="mr-1 inline-flex size-5 items-center justify-center rounded-md text-primary/60 transition-colors hover:text-primary"
+                    className="me-1 inline-flex size-5 items-center justify-center rounded-md text-primary/60 transition-colors hover:text-primary"
                     onClick={() => setDismissed(true)}
                   >
                     <XIcon className="size-3.5" />

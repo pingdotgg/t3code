@@ -17,7 +17,7 @@ interface ComposerPreviewAnnotationCardsProps {
 function TargetStat(props: { icon: ReactNode; count: number; label: string }) {
   return (
     <span
-      className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground"
+      className="inline-flex items-center gap-1 text-2xs font-medium text-muted-foreground"
       title={`${props.count} ${props.label}${props.count === 1 ? "" : "s"}`}
     >
       {props.icon}
@@ -53,7 +53,7 @@ export function ComposerPreviewAnnotationCards({
               <button
                 type="button"
                 aria-label={`Preview ${image.name}`}
-                className="size-14 shrink-0 cursor-zoom-in overflow-hidden border-r border-border/70 bg-muted"
+                className="size-14 shrink-0 cursor-zoom-in overflow-hidden border-e border-border/70 bg-muted"
                 onClick={() => onExpandImage(image.id)}
               >
                 <img
@@ -63,11 +63,11 @@ export function ComposerPreviewAnnotationCards({
                 />
               </button>
             ) : (
-              <span className="grid size-10 shrink-0 place-items-center border-r border-border/70 text-blue-500">
+              <span className="grid size-10 shrink-0 place-items-center border-e border-border/70 text-info">
                 <MousePointerClick className="size-3.5" />
               </span>
             )}
-            <div className="min-w-0 px-2.5 py-2 pr-8">
+            <div className="min-w-0 px-2.5 py-2 pe-8">
               {annotation.comment.trim() ? (
                 <p className="max-w-80 truncate text-xs font-medium text-foreground/90">
                   {annotation.comment.trim()}
@@ -84,13 +84,13 @@ export function ComposerPreviewAnnotationCards({
                     {elementLabels.slice(0, 2).map(({ id, label }) => (
                       <span
                         key={id}
-                        className="max-w-40 truncate font-mono text-[10px] text-foreground/65"
+                        className="max-w-40 truncate font-mono text-2xs text-foreground/65"
                       >
                         {label}
                       </span>
                     ))}
                     {elementLabels.length > 2 ? (
-                      <span className="text-[10px] text-muted-foreground">
+                      <span className="text-2xs text-muted-foreground">
                         +{elementLabels.length - 2}
                       </span>
                     ) : null}
@@ -131,7 +131,7 @@ export function ComposerPreviewAnnotationCards({
             <button
               type="button"
               aria-label="Remove preview annotation"
-              className="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded text-muted-foreground/60 transition hover:bg-muted hover:text-foreground"
+              className="absolute end-1.5 top-1.5 grid size-5 place-items-center rounded text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background pointer-coarse:after:-translate-1/2 pointer-coarse:after:absolute pointer-coarse:after:top-1/2 pointer-coarse:after:start-1/2 pointer-coarse:after:size-11"
               onClick={() => onRemove(annotation.id)}
             >
               <X className="size-3" />

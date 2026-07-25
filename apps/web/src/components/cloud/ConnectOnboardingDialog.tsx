@@ -307,7 +307,7 @@ function OnboardingStepper({
           type="button"
           disabled={disabled}
           className={cn(
-            "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-x-2 rounded-lg border px-3 py-2 text-left",
+            "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-x-2 rounded-lg border px-3 py-2 text-start",
             index === currentIndex
               ? "border-primary bg-primary/10 ring-1 ring-primary/25"
               : index < currentIndex
@@ -329,7 +329,7 @@ function OnboardingStepper({
           >
             {index < currentIndex ? <CheckIcon className="size-3" /> : null}
           </span>
-          <span className="text-[10px] font-medium uppercase text-muted-foreground">
+          <span className="text-2xs font-medium uppercase text-muted-foreground">
             Step {index + 1}
           </span>
           <span className="truncate text-xs font-semibold text-foreground">

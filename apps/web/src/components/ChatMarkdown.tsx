@@ -481,7 +481,7 @@ function MarkdownDetails({
       data-markdown-details-open={isOpen ? "true" : "false"}
     >
       <CollapsibleTrigger
-        className="flex w-full items-center gap-2 py-2 text-left text-sm font-medium text-foreground data-panel-open:[&_svg]:rotate-90"
+        className="flex w-full items-center gap-2 py-2 text-start text-sm font-medium text-foreground data-panel-open:[&_svg]:rotate-90"
         data-markdown-details-summary=""
       >
         <ChevronRightIcon
@@ -1034,8 +1034,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Couldn't open file",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Opening the file didn't go through. Try again.",
           }),
         );
       } catch (cause) {
@@ -1046,8 +1049,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
+            title: "Couldn't open file",
+            description:
+              cause instanceof Error
+                ? cause.message
+                : "Opening the file didn't go through. Try again.",
           }),
         );
       }
@@ -1080,8 +1086,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file in browser",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Couldn't open file in browser",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Opening the file didn't go through. Try again.",
           }),
         );
       } catch (cause) {
@@ -1092,8 +1101,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file in browser",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
+            title: "Couldn't open file in browser",
+            description:
+              cause instanceof Error
+                ? cause.message
+                : "Opening the file didn't go through. Try again.",
           }),
         );
       }
@@ -1106,8 +1118,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `Failed to copy ${title.toLowerCase()}`,
-            description: "Clipboard API unavailable.",
+            title: `Couldn't copy ${title.toLowerCase()}`,
+            description:
+              "The clipboard isn't available here. Select the text and copy it manually.",
           }),
         );
         return;
@@ -1129,8 +1142,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: `Failed to copy ${title.toLowerCase()}`,
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: `Couldn't copy ${title.toLowerCase()}`,
+              description:
+                error instanceof Error ? error.message : "Copying didn't go through. Try again.",
             }),
           );
         },
@@ -1210,7 +1224,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       />
       <TooltipPopup
         side="top"
-        className="max-w-[min(40rem,calc(100vw-2rem))] font-mono text-[11px] leading-tight"
+        className="max-w-[min(40rem,calc(100vw-2rem))] font-mono text-2xs leading-tight"
       >
         <div className="markdown-file-link-tooltip-scroll overflow-x-auto whitespace-nowrap">
           {displayPath}

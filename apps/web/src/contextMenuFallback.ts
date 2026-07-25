@@ -197,7 +197,7 @@ export function showContextMenuFallback<T extends string>(
         const isDisabled = item.disabled === true;
         button.disabled = isDisabled;
         const rowBase =
-          "flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-left outline-none transition-colors sm:min-h-7 sm:text-sm min-h-8 text-base";
+          "flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-start outline-none transition-colors sm:min-h-7 sm:text-sm min-h-8 text-base";
         button.className = isDisabled
           ? `${rowBase} pointer-events-none cursor-not-allowed text-muted-foreground opacity-64`
           : isLeafDestructive
@@ -228,7 +228,7 @@ export function showContextMenuFallback<T extends string>(
 
         if (hasChildren) {
           const chevron = document.createElement("span");
-          chevron.className = "ms-auto shrink-0 text-muted-foreground/80 text-sm leading-none";
+          chevron.className = "ms-auto shrink-0 text-muted-foreground text-sm leading-none";
           chevron.textContent = ">";
           button.appendChild(chevron);
         }

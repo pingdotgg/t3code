@@ -104,8 +104,9 @@ export default function FileBrowserPanel({
         } catch (error) {
           toastManager.add({
             type: "error",
-            title: "Failed to copy mention",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Couldn't copy mention",
+            description:
+              error instanceof Error ? error.message : "Copying didn't go through. Try again.",
           });
         }
         return;
@@ -115,7 +116,7 @@ export default function FileBrowserPanel({
         if (!composer) {
           toastManager.add({
             type: "error",
-            title: "Unable to add to chat",
+            title: "Couldn't add to chat",
             description: "Open a chat for this project and try again.",
           });
           return;
@@ -124,7 +125,7 @@ export default function FileBrowserPanel({
         if (!inserted) {
           toastManager.add({
             type: "error",
-            title: "Unable to add to chat",
+            title: "Couldn't add to chat",
             description: "The chat isn't ready to accept input right now.",
           });
         }
@@ -226,7 +227,7 @@ export default function FileBrowserPanel({
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/60 px-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-medium text-foreground">{projectName}</div>
-          <div className="truncate text-[10px] leading-none text-muted-foreground">
+          <div className="truncate text-2xs leading-none text-muted-foreground">
             {entriesQuery.isPending && entriesQuery.data === null
               ? "Indexing…"
               : `${fileCount.toLocaleString()} files`}

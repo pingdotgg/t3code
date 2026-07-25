@@ -65,7 +65,10 @@ export function SidebarProviderUpdatePill() {
     void navigate({ to: "/settings/providers" });
   }, [navigate]);
   const displayedView = renderedView ?? view;
-  const dismissAfterVisibleMs = displayedView?.dismissAfterVisibleMs;
+  // An error must not disappear on a timer: a keyboard user can still be on
+  // their way to it, and it is the one tone that needs a decision.
+  const dismissAfterVisibleMs =
+    displayedView?.tone === "error" ? undefined : displayedView?.dismissAfterVisibleMs;
   const viewKey = displayedView?.key ?? null;
   const showDismissProgress =
     dismissAfterVisibleMs !== undefined &&
@@ -124,7 +127,9 @@ export function SidebarProviderUpdatePill() {
 
   return (
     <div
-      className={`group/provider-update relative flex h-7 w-full items-center overflow-hidden rounded-lg text-xs font-medium transform-gpu transition-all duration-180 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
+      role="status"
+      aria-live="polite"
+      className={`group/provider-update relative flex h-7 w-full items-center overflow-hidden rounded-lg text-xs font-medium transform-gpu transition-[opacity,translate] duration-180 ease-[cubic-bezier(0.22,1,0.36,1)] ${
         PROVIDER_UPDATE_PILL_STYLES[displayedView.tone]
       } ${
         exitingKey === displayedView.key
@@ -151,7 +156,7 @@ export function SidebarProviderUpdatePill() {
         <div
           key={displayedView.key}
           aria-hidden="true"
-          className={`provider-update-pill-progress pointer-events-none absolute inset-y-0 left-0 w-full origin-left border-r border-current/15 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.08)] ${
+          className={`provider-update-pill-progress pointer-events-none absolute inset-y-0 start-0 w-full origin-left border-e border-current/15 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.08)] ${
             PROVIDER_UPDATE_PILL_PROGRESS_STYLES[displayedView.tone]
           }`}
           style={
@@ -168,7 +173,7 @@ export function SidebarProviderUpdatePill() {
             <button
               type="button"
               aria-label={displayedView.description}
-              className="provider-update-main relative z-[1] flex h-full flex-1 items-center gap-2 px-2 text-left"
+              className="provider-update-main relative z-[1] flex h-full flex-1 items-center gap-2 px-2 text-start"
               onClick={openProviderSettings}
             >
               {displayedView.tone === "loading" ? (
@@ -193,7 +198,7 @@ export function SidebarProviderUpdatePill() {
               <button
                 type="button"
                 aria-label="Dismiss provider update notice"
-                className="relative z-[1] mr-1 inline-flex size-5 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100"
+                className="relative z-[1] me-1 inline-flex size-5 items-center justify-center rounded-md opacity-70 outline-none transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background pointer-coarse:after:-translate-1/2 pointer-coarse:after:absolute pointer-coarse:after:top-1/2 pointer-coarse:after:start-1/2 pointer-coarse:after:size-11"
                 onClick={() => startExit(displayedView.key, null, displayedView.key)}
               >
                 <XIcon className="size-3.5" />

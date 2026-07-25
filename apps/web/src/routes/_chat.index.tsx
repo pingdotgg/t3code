@@ -89,7 +89,7 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
       <Empty className="flex-1">
         <EmptyHeader className="max-w-md">
           <EmptyTitle className="text-foreground text-xl">Couldn’t start a new thread</EmptyTitle>
-          <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
+          <EmptyDescription className="mt-2 text-sm text-muted-foreground">
             The project is still available. Try opening the draft again.
           </EmptyDescription>
           <div className="mt-5 flex justify-center">
@@ -116,7 +116,7 @@ function NoProjectsHero() {
               <EmptyTitle className="text-foreground text-2xl sm:text-3xl">
                 What should we work on?
               </EmptyTitle>
-              <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
+              <EmptyDescription className="mt-2 text-sm text-muted-foreground">
                 Add a project to start your first thread.
               </EmptyDescription>
               <div className="mt-6 flex justify-center">
@@ -150,7 +150,7 @@ function HostedStaticOnboardingState() {
           )}
         >
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
+            <span className="text-sm font-medium text-foreground md:text-muted-foreground">
               {APP_DISPLAY_NAME}
             </span>
           </div>
@@ -165,7 +165,7 @@ function HostedStaticOnboardingState() {
               <EmptyTitle className="text-foreground text-xl">
                 Connect an environment to get started
               </EmptyTitle>
-              <EmptyDescription className="mt-2 text-sm leading-relaxed text-muted-foreground/78">
+              <EmptyDescription className="mt-2 text-sm leading-relaxed text-muted-foreground">
                 {cloudEnabled
                   ? "Sign in to T3 Connect to connect a linked environment through its managed tunnel, or add a reachable backend manually."
                   : "Add a reachable backend manually to start working from this browser."}

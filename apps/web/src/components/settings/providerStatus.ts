@@ -6,7 +6,9 @@ import type { ServerProvider, ServerProviderVersionAdvisory } from "@t3tools/con
  */
 export const PROVIDER_STATUS_STYLES = {
   disabled: {
-    dot: "bg-amber-400",
+    /* Neutral, not amber: a disabled provider is a user choice, and amber-400
+       sat within 1.25:1 of the `warning` dot beside it. */
+    dot: "bg-muted-foreground",
   },
   error: {
     dot: "bg-destructive",

@@ -150,7 +150,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             variant={props.triggerVariant ?? "ghost"}
             data-chat-provider-model-picker="true"
             className={cn(
-              "min-w-0 justify-between whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80",
+              "min-w-0 justify-between whitespace-nowrap px-2 text-muted-foreground hover:text-foreground/80",
               props.compact ? "max-w-42 shrink-0" : "max-w-48 shrink sm:max-w-56 sm:px-3",
               props.triggerClassName,
             )}
@@ -168,10 +168,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               className={showInstanceBadge ? "size-5" : "size-4"}
               iconClassName={cn("size-4", props.activeProviderIconClassName)}
               indicatorBackground="var(--input)"
-              badgeClassName={cn(
-                "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3",
-                "px-0.5 text-[7px]",
-              )}
+              badgeClassName={cn("end-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3", "px-0.5")}
             />
           ) : null}
           <Tooltip>
