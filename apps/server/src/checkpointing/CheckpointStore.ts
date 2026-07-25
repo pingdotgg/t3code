@@ -14,10 +14,12 @@
  * @module CheckpointStore
  */
 import { VcsUnsupportedOperationError, type CheckpointRef } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { makeCaptureBackoff } from "./CaptureBackoff.ts";
 import type { CheckpointStoreError } from "./Errors.ts";
 import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -96,75 +98,115 @@ export class CheckpointStore extends Context.Service<
   }
 >()("t3/checkpointing/CheckpointStore") {}
 
-export const make = Effect.gen(function* () {
-  const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
+export interface CheckpointStoreOptions {
+  /** Overridable clock for deterministic backoff tests. */
+  readonly now?: () => number;
+}
 
-  const resolveCheckpoints = Effect.fn("CheckpointStore.resolveCheckpoints")(function* (
-    operation: string,
-    cwd: string,
-  ) {
-    const handle = yield* vcsRegistry.resolve({ cwd });
-    if (!handle.driver.checkpoints) {
-      return yield* new VcsUnsupportedOperationError({
-        operation,
-        kind: handle.kind,
-        detail: `${handle.kind} driver does not implement checkpoint operations.`,
-      });
-    }
-    return handle.driver.checkpoints satisfies VcsCheckpointOps;
+export const makeWith = (options: CheckpointStoreOptions = {}) =>
+  Effect.gen(function* () {
+    const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
+    const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
+    const captureBackoff = makeCaptureBackoff<CheckpointStoreError>();
+
+    const resolveCheckpoints = Effect.fn("CheckpointStore.resolveCheckpoints")(function* (
+      operation: string,
+      cwd: string,
+    ) {
+      const handle = yield* vcsRegistry.resolve({ cwd });
+      if (!handle.driver.checkpoints) {
+        return yield* new VcsUnsupportedOperationError({
+          operation,
+          kind: handle.kind,
+          detail: `${handle.kind} driver does not implement checkpoint operations.`,
+        });
+      }
+      return handle.driver.checkpoints satisfies VcsCheckpointOps;
+    });
+
+    const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = (cwd) =>
+      vcsRegistry
+        .detect({ cwd, requestedKind: "git" })
+        .pipe(Effect.map((repository) => repository !== null));
+
+    const captureCheckpoint: CheckpointStore["Service"]["captureCheckpoint"] = Effect.fn(
+      "captureCheckpoint",
+    )(function* (input) {
+      const startedAt = yield* currentTimeMillis;
+      const decision = captureBackoff.evaluate(input.cwd, startedAt);
+      if (decision.skip && decision.lastError) {
+        // Spawning git here would repeat a capture that cannot succeed, so
+        // replay the failure the caller already handles instead of burning a
+        // CPU core and leaving another orphaned tmp_pack behind.
+        yield* Effect.logDebug("Skipping checkpoint capture during failure cooldown", {
+          cwdLength: input.cwd.length,
+          remainingMs: decision.remainingMs,
+        });
+        return yield* Effect.fail(decision.lastError);
+      }
+
+      const checkpoints = yield* resolveCheckpoints("CheckpointStore.captureCheckpoint", input.cwd);
+      return yield* checkpoints.captureCheckpoint(input).pipe(
+        Effect.tap(() => Effect.sync(() => captureBackoff.recordSuccess(input.cwd))),
+        Effect.tapError((error) =>
+          Effect.gen(function* () {
+            const failedAt = yield* currentTimeMillis;
+            const consecutiveFailures = captureBackoff.recordFailure(input.cwd, failedAt, error);
+            yield* Effect.logWarning("Checkpoint capture failed", {
+              cwdLength: input.cwd.length,
+              consecutiveFailures,
+              cooldownMs: captureBackoff.evaluate(input.cwd, failedAt).remainingMs,
+              error,
+            });
+          }),
+        ),
+      );
+    });
+
+    const hasCheckpointRef: CheckpointStore["Service"]["hasCheckpointRef"] = Effect.fn(
+      "hasCheckpointRef",
+    )(function* (input) {
+      const checkpoints = yield* resolveCheckpoints("CheckpointStore.hasCheckpointRef", input.cwd);
+      return yield* checkpoints.hasCheckpointRef(input);
+    });
+
+    const restoreCheckpoint: CheckpointStore["Service"]["restoreCheckpoint"] = Effect.fn(
+      "restoreCheckpoint",
+    )(function* (input) {
+      const checkpoints = yield* resolveCheckpoints("CheckpointStore.restoreCheckpoint", input.cwd);
+      return yield* checkpoints.restoreCheckpoint(input);
+    });
+
+    const diffCheckpoints: CheckpointStore["Service"]["diffCheckpoints"] = Effect.fn(
+      "diffCheckpoints",
+    )(function* (input) {
+      const checkpoints = yield* resolveCheckpoints("CheckpointStore.diffCheckpoints", input.cwd);
+      return yield* checkpoints.diffCheckpoints(input);
+    });
+
+    const deleteCheckpointRefs: CheckpointStore["Service"]["deleteCheckpointRefs"] = Effect.fn(
+      "deleteCheckpointRefs",
+    )(function* (input) {
+      const checkpoints = yield* resolveCheckpoints(
+        "CheckpointStore.deleteCheckpointRefs",
+        input.cwd,
+      );
+      return yield* checkpoints.deleteCheckpointRefs(input);
+    });
+
+    return CheckpointStore.of({
+      isGitRepository,
+      captureCheckpoint,
+      hasCheckpointRef,
+      restoreCheckpoint,
+      diffCheckpoints,
+      deleteCheckpointRefs,
+    });
   });
 
-  const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = (cwd) =>
-    vcsRegistry
-      .detect({ cwd, requestedKind: "git" })
-      .pipe(Effect.map((repository) => repository !== null));
-
-  const captureCheckpoint: CheckpointStore["Service"]["captureCheckpoint"] = Effect.fn(
-    "captureCheckpoint",
-  )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.captureCheckpoint", input.cwd);
-    return yield* checkpoints.captureCheckpoint(input);
-  });
-
-  const hasCheckpointRef: CheckpointStore["Service"]["hasCheckpointRef"] = Effect.fn(
-    "hasCheckpointRef",
-  )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.hasCheckpointRef", input.cwd);
-    return yield* checkpoints.hasCheckpointRef(input);
-  });
-
-  const restoreCheckpoint: CheckpointStore["Service"]["restoreCheckpoint"] = Effect.fn(
-    "restoreCheckpoint",
-  )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.restoreCheckpoint", input.cwd);
-    return yield* checkpoints.restoreCheckpoint(input);
-  });
-
-  const diffCheckpoints: CheckpointStore["Service"]["diffCheckpoints"] = Effect.fn(
-    "diffCheckpoints",
-  )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.diffCheckpoints", input.cwd);
-    return yield* checkpoints.diffCheckpoints(input);
-  });
-
-  const deleteCheckpointRefs: CheckpointStore["Service"]["deleteCheckpointRefs"] = Effect.fn(
-    "deleteCheckpointRefs",
-  )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints(
-      "CheckpointStore.deleteCheckpointRefs",
-      input.cwd,
-    );
-    return yield* checkpoints.deleteCheckpointRefs(input);
-  });
-
-  return CheckpointStore.of({
-    isGitRepository,
-    captureCheckpoint,
-    hasCheckpointRef,
-    restoreCheckpoint,
-    diffCheckpoints,
-    deleteCheckpointRefs,
-  });
-});
+export const make = makeWith();
 
 export const layer = Layer.effect(CheckpointStore, make);
+
+export const layerWith = (options: CheckpointStoreOptions) =>
+  Layer.effect(CheckpointStore, makeWith(options));

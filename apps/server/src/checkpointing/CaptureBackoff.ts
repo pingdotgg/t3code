@@ -1,0 +1,90 @@
+/**
+ * Consecutive-failure backoff for workspace checkpoint capture.
+ *
+ * Capture runs a full-tree `git add -A` under a temporary index after every
+ * completed turn. On a repository large enough to exceed the VCS process
+ * timeout, that capture can never succeed, so the unguarded retry pegs a CPU
+ * core for as long as any thread is in use and litters `.git/objects/pack`
+ * with `tmp_pack_*` files from each killed process.
+ *
+ * After a few consecutive failures for a workspace, capture is skipped for a
+ * growing cooldown instead of being retried every turn. Any success clears
+ * the record, so a transient failure (a lock held by a concurrent git
+ * command) costs nothing.
+ *
+ * @module CaptureBackoff
+ */
+
+/** Failures tolerated before a workspace enters cooldown. */
+const FAILURE_THRESHOLD = 3;
+const BASE_COOLDOWN_MS = 5 * 60_000;
+const MAX_COOLDOWN_MS = 60 * 60_000;
+
+export interface CaptureBackoffDecision<E> {
+  readonly skip: boolean;
+  /** Milliseconds left in the cooldown, for logging. Zero when not skipping. */
+  readonly remainingMs: number;
+  /**
+   * The failure that opened the cooldown. Replayed instead of inventing a new
+   * error, so callers keep seeing the real reason capture is unavailable and
+   * the error channel is unchanged.
+   */
+  readonly lastError: E | null;
+}
+
+export function cooldownForFailureCount(consecutiveFailures: number): number {
+  if (consecutiveFailures < FAILURE_THRESHOLD) return 0;
+  const doublings = consecutiveFailures - FAILURE_THRESHOLD;
+  // Clamp the exponent before shifting so a long-lived workspace cannot
+  // overflow into a negative or infinite cooldown.
+  const scale = 2 ** Math.min(doublings, 10);
+  return Math.min(BASE_COOLDOWN_MS * scale, MAX_COOLDOWN_MS);
+}
+
+interface WorkspaceRecord<E> {
+  consecutiveFailures: number;
+  skipUntilMs: number;
+  lastError: E;
+}
+
+/**
+ * Tracks capture health per workspace. Callers ask whether to skip, then
+ * report the outcome of any capture they actually ran.
+ */
+export function makeCaptureBackoff<E>() {
+  const recordByCwd = new Map<string, WorkspaceRecord<E>>();
+
+  return {
+    evaluate(cwd: string, nowMs: number): CaptureBackoffDecision<E> {
+      const record = recordByCwd.get(cwd);
+      if (!record || nowMs >= record.skipUntilMs) {
+        return { skip: false, remainingMs: 0, lastError: null };
+      }
+      return {
+        skip: true,
+        remainingMs: record.skipUntilMs - nowMs,
+        lastError: record.lastError,
+      };
+    },
+
+    recordSuccess(cwd: string): void {
+      recordByCwd.delete(cwd);
+    },
+
+    /** Returns the resulting consecutive failure count for this workspace. */
+    recordFailure(cwd: string, nowMs: number, error: E): number {
+      const consecutiveFailures = (recordByCwd.get(cwd)?.consecutiveFailures ?? 0) + 1;
+      const cooldownMs = cooldownForFailureCount(consecutiveFailures);
+      recordByCwd.set(cwd, {
+        consecutiveFailures,
+        skipUntilMs: cooldownMs === 0 ? 0 : nowMs + cooldownMs,
+        lastError: error,
+      });
+      return consecutiveFailures;
+    },
+
+    get trackedWorkspaceCount(): number {
+      return recordByCwd.size;
+    },
+  };
+}
