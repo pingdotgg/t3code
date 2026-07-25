@@ -82,6 +82,55 @@ function testLayer(input: {
 }
 
 describe("ProviderContinuationService", () => {
+  it.effect("marks an adapter-buffered wake with the provider creation source", () => {
+    return Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<unknown>();
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests;
+        yield* requests.offer(request());
+        const command = (yield* Queue.take(dispatched)) as { readonly creationSource: string };
+        // ClaudeAdapterV2 keys on this to attach buffered CLI output.
+        assert.equal(command.creationSource, "provider");
+      }).pipe(
+        Effect.provide(
+          testLayer({ dispatched, getThreadProjection: () => Effect.succeed(projection) }),
+        ),
+        Effect.scoped,
+      );
+    });
+  });
+
+  it.effect("delivers a message_text wake as a real prompt, not a buffered wake", () => {
+    return Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<unknown>();
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests;
+        yield* requests.offer({
+          threadId,
+          providerThreadId,
+          driver,
+          detail: "Delegated task completed.",
+          delivery: "message_text",
+        });
+        const command = (yield* Queue.take(dispatched)) as {
+          readonly creationSource: string;
+          readonly text: string;
+        };
+        // An app-owned child buffers nothing in the adapter, so this text is
+        // the whole wake. Marking it "provider" would make ClaudeAdapterV2
+        // drop it and settle the turn having prompted nothing.
+        assert.notEqual(command.creationSource, "provider");
+        assert.equal(command.creationSource, "server");
+        assert.equal(command.text, "Delegated task completed.");
+      }).pipe(
+        Effect.provide(
+          testLayer({ dispatched, getThreadProjection: () => Effect.succeed(projection) }),
+        ),
+        Effect.scoped,
+      );
+    });
+  });
+
   it.effect("dispatches a current request exactly once", () => {
     return Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();
