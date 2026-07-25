@@ -39,7 +39,7 @@ const emitOverlappingXAiPromptCompleteOutOfOrder =
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
-const emitModelConfigUpdate = process.env.T3_ACP_EMIT_MODEL_CONFIG_UPDATE === "1";
+const emitModelConfigUpdate = process.env.T3_ACP_EMIT_MODEL_CONFIG_UPDATE !== "0";
 const gateModelConfigUpdate = process.env.T3_ACP_GATE_MODEL_CONFIG_UPDATE === "1";
 const emptyModelConfigUpdate = process.env.T3_ACP_EMPTY_MODEL_CONFIG_UPDATE === "1";
 const modelScopedConfigOptions = process.env.T3_ACP_MODEL_SCOPED_CONFIG_OPTIONS === "1";
