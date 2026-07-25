@@ -87,7 +87,7 @@ private enum ProviderIconAssets {
             return cached
         }
         guard
-            let url = Bundle.module.url(
+            let url = Bundle.appResources?.url(
                 forResource: name, withExtension: "svgdata", subdirectory: "SVG"),
             let image = NSImage(contentsOf: url)
         else {

@@ -57,6 +57,10 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Framewor
 cp "$MAC_DIR/Support/Info.plist" "$APP/Contents/Info.plist"
 cp "$MAC_DIR/Support/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN" "$APP/Contents/MacOS/SergeCodeMac"
+# Bundle.appResources (Support/Bundle+AppResources.swift) resolves the
+# resource bundle via Bundle.main.resourceURL — it must stay directly under
+# Contents/Resources. Do not move it; the toolchain-generated Bundle.module
+# search paths are not honored anywhere in the app.
 cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
 cp -R "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/"
 

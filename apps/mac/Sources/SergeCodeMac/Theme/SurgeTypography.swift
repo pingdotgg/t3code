@@ -32,10 +32,12 @@ enum SurgeTypography {
     ]
 
     /// Registers the bundled Geist faces with the font manager. Idempotent;
-    /// call once at app startup.
+    /// call once at app startup. Missing bundle or faces degrade to the
+    /// system-font fallbacks in `customFont` — this must never crash launch.
     static func registerBundledFonts() {
+        guard let resources = Bundle.appResources else { return }
         for face in bundledFaces {
-            guard let url = Bundle.module.url(
+            guard let url = resources.url(
                 forResource: face, withExtension: "otf", subdirectory: "Geist")
             else { continue }
             CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
