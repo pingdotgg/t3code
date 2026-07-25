@@ -1,5 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveThreadStatus } from "./threadPresentation";
@@ -88,5 +88,56 @@ describe("resolveThreadStatus settled indicator", () => {
       }),
     );
     expect(running?.kind).toBe("working");
+  });
+});
+
+describe("resolveThreadStatus latestTurn fallback", () => {
+  const runningTurn = {
+    turnId: TurnId.make("turn-1"),
+    state: "running" as const,
+    requestedAt: "2026-06-02T00:00:00.000Z",
+    startedAt: "2026-06-02T00:00:00.000Z",
+    completedAt: null,
+    assistantMessageId: null,
+  };
+
+  it("shows Working when the latest turn is running but the session status is quiescent", () => {
+    const status = resolveThreadStatus(
+      makeThread("live-turn", {
+        latestTurn: runningTurn,
+        session: {
+          threadId: ThreadId.make("live-turn"),
+          status: "ready",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-06-02T00:00:00.000Z",
+        },
+      }),
+    );
+
+    expect(status?.kind).toBe("working");
+    expect(status?.label).toBe("Working");
+    expect(status?.pulse).toBe(true);
+  });
+
+  it("keeps error precedence over a running latest turn", () => {
+    const status = resolveThreadStatus(
+      makeThread("error-turn", {
+        latestTurn: runningTurn,
+        session: {
+          threadId: ThreadId.make("error-turn"),
+          status: "error",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "boom",
+          updatedAt: "2026-06-02T00:00:00.000Z",
+        },
+      }),
+    );
+
+    expect(status?.kind).toBe("error");
   });
 });
