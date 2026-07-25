@@ -17,6 +17,7 @@ import {
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   getStartedThreadModelChangeBlockReason,
+  hasQueuedNonSteerableFollowUp,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
@@ -100,6 +101,97 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+});
+
+describe("hasQueuedNonSteerableFollowUp", () => {
+  const runningTurn = {
+    ...completedTurn,
+    state: "running" as const,
+    completedAt: null,
+  };
+  const runningSession = {
+    ...readySession,
+    status: "running" as const,
+    activeTurnId: runningTurn.turnId,
+  };
+  const nonSteerableProvider = { supportsSteering: false };
+
+  it("detects a queued user message for a non-steerable provider", () => {
+    expect(
+      hasQueuedNonSteerableFollowUp(
+        makeThread({
+          latestTurn: runningTurn,
+          session: runningSession,
+          messages: [
+            {
+              id: MessageId.make("message-queued"),
+              role: "user",
+              text: "Follow up",
+              turnId: null,
+              createdAt: "2026-03-29T00:00:05.000Z",
+              updatedAt: "2026-03-29T00:00:05.000Z",
+              streaming: false,
+            },
+          ],
+        }),
+        nonSteerableProvider,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag the active prompt or a steerable provider as queued", () => {
+    const activePrompt = {
+      id: MessageId.make("message-active"),
+      role: "user" as const,
+      text: "Initial prompt",
+      turnId: null,
+      createdAt: runningTurn.requestedAt,
+      updatedAt: runningTurn.requestedAt,
+      streaming: false,
+    };
+    expect(
+      hasQueuedNonSteerableFollowUp(
+        makeThread({
+          latestTurn: runningTurn,
+          session: runningSession,
+          messages: [activePrompt],
+        }),
+        nonSteerableProvider,
+      ),
+    ).toBe(false);
+    expect(
+      hasQueuedNonSteerableFollowUp(
+        makeThread({
+          latestTurn: runningTurn,
+          session: runningSession,
+          messages: [
+            {
+              ...activePrompt,
+              createdAt: "2026-03-29T00:00:05.000Z",
+              updatedAt: "2026-03-29T00:00:05.000Z",
+            },
+          ],
+        }),
+        { supportsSteering: true },
+      ),
+    ).toBe(false);
+    expect(
+      hasQueuedNonSteerableFollowUp(
+        makeThread({
+          latestTurn: runningTurn,
+          session: runningSession,
+          messages: [
+            {
+              ...activePrompt,
+              createdAt: "2026-03-29T00:00:05.000Z",
+              updatedAt: "2026-03-29T00:00:05.000Z",
+            },
+          ],
+        }),
+        {},
+      ),
+    ).toBe(false);
   });
 });
 

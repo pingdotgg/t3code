@@ -119,7 +119,10 @@ it.layer(testLayer)("HermesAdapter ACP", (it) => {
         schemaVersion: 1,
         sessionId: "mock-session-1",
       });
-      assert.deepStrictEqual(adapter.capabilities, { sessionModelSwitch: "in-session" });
+      assert.deepStrictEqual(adapter.capabilities, {
+        sessionModelSwitch: "in-session",
+        turnSteering: "unsupported",
+      });
 
       yield* adapter.sendTurn({
         threadId,
