@@ -41,3 +41,20 @@ class PluginConfigTest(unittest.TestCase):
         ):
             with self.assertRaisesRegex(ValueError, "owner/repository"):
                 load_config(plugin_root=Path.cwd())
+
+    def test_uses_the_standard_hermes_identity_when_running_as_root(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "T3CODE_HERMES_SERVICE_USER": "",
+                    "T3CODE_HERMES_SERVICE_GROUP": "",
+                },
+                clear=False,
+            ),
+            patch("integrations.hermes_plugin.config.os.geteuid", return_value=0),
+        ):
+            config = load_config(plugin_root=Path.cwd())
+
+        self.assertEqual(config.service_user, "hermes")
+        self.assertIsNone(config.service_group)

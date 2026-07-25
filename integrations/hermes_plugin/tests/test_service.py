@@ -34,6 +34,8 @@ class ServiceDefinitionTest(unittest.TestCase):
         self.assertIn(str(self.config.service_dir), args)
         self.assertIn("--host", args)
         self.assertIn("--port", args)
+        self.assertIn("--service-user", args)
+        self.assertIn(self.config.service_user, args)
 
     def test_watchdog_definition_tracks_plugin_and_both_services(self) -> None:
         run = _render_watchdog_run(

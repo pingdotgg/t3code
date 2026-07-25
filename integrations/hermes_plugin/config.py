@@ -44,6 +44,8 @@ class PluginConfig:
     data_dir: Path
     service_dir: Path
     watchdog_service_dir: Path
+    service_user: str
+    service_group: str | None
     repository: str
     host: str
     port: int
@@ -76,6 +78,21 @@ def load_config(*, plugin_root: Path | None = None) -> PluginConfig:
     if service_dir.parent != watchdog_service_dir.parent:
         raise ValueError("T3 Code and watchdog services must share one s6 scan directory")
 
+    configured_service_user = os.environ.get(
+        "T3CODE_HERMES_SERVICE_USER", ""
+    ).strip()
+    configured_service_group = os.environ.get(
+        "T3CODE_HERMES_SERVICE_GROUP", ""
+    ).strip()
+    current_user_id = os.geteuid()
+    service_user = (
+        configured_service_user
+        or (str(current_user_id) if current_user_id > 0 else "hermes")
+    )
+    service_group = configured_service_group or (
+        str(os.getegid()) if current_user_id > 0 else None
+    )
+
     repository = os.environ.get(
         "T3CODE_HERMES_REPOSITORY", DEFAULT_REPOSITORY
     ).strip()
@@ -93,6 +110,8 @@ def load_config(*, plugin_root: Path | None = None) -> PluginConfig:
         data_dir=runtime_root / "data",
         service_dir=service_dir,
         watchdog_service_dir=watchdog_service_dir,
+        service_user=service_user,
+        service_group=service_group,
         repository=repository,
         host=os.environ.get("T3CODE_HERMES_HOST", DEFAULT_HOST).strip()
         or DEFAULT_HOST,

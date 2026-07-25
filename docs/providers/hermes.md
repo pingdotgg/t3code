@@ -50,6 +50,7 @@ ports:
 Configuration overrides are environment variables:
 
 - `T3CODE_HERMES_PORT` and `T3CODE_HERMES_HOST`
+- `T3CODE_HERMES_SERVICE_USER` and `T3CODE_HERMES_SERVICE_GROUP` for custom root-run containers
 - `T3CODE_HERMES_PUBLIC_URL` when the browser-facing URL cannot be derived from the dashboard host
 - `T3CODE_HERMES_REPOSITORY` for a release fork, in `owner/repository` form
 - `T3CODE_HERMES_WATCH_INTERVAL_SECONDS` and `T3CODE_HERMES_WATCH_MISSES`

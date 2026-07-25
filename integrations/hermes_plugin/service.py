@@ -108,7 +108,7 @@ def _prepare_service_dir(service_dir: Path) -> None:
 
 
 def _t3_service_args(config: PluginConfig, action: str) -> list[str]:
-    return [
+    args = [
         str(config.binary_path),
         "service",
         action,
@@ -122,7 +122,12 @@ def _t3_service_args(config: PluginConfig, action: str) -> list[str]:
         config.host,
         "--port",
         str(config.port),
+        "--service-user",
+        config.service_user,
     ]
+    if config.service_group:
+        args.extend(["--service-group", config.service_group])
+    return args
 
 
 def _render_watchdog_run(config: PluginConfig, watchdog_path: Path) -> str:
