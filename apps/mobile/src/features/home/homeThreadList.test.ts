@@ -224,4 +224,129 @@ describe("buildHomeThreadGroups", () => {
     );
     expect(buildGroups(projects, threads, { projectGroupingMode: "separate" })).toHaveLength(2);
   });
+
+  it("moves settled threads out of the inbox list into settledThreads", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "T3 Code",
+    });
+    const threads = [
+      makeThread({
+        environmentId,
+        id: ThreadId.make("thread-active"),
+        projectId: project.id,
+        title: "Active thread",
+        updatedAt: "2026-06-09T00:00:00.000Z",
+      }),
+      makeThread({
+        environmentId,
+        id: ThreadId.make("thread-settled-old"),
+        projectId: project.id,
+        title: "Settled earlier",
+        settledOverride: "settled",
+        settledAt: "2026-06-07T00:00:00.000Z",
+        updatedAt: "2026-06-07T00:00:00.000Z",
+      }),
+      makeThread({
+        environmentId,
+        id: ThreadId.make("thread-settled-new"),
+        projectId: project.id,
+        title: "Settled later",
+        settledOverride: "settled",
+        settledAt: "2026-06-08T00:00:00.000Z",
+        updatedAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ];
+
+    const groups = buildGroups([project], threads, { now: "2026-06-10T00:00:00.000Z" });
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.threads.map((thread) => thread.id)).toEqual(["thread-active"]);
+    // Most recently settled first (mac sortSettled).
+    expect(groups[0]?.settledThreads.map((thread) => thread.id)).toEqual([
+      "thread-settled-new",
+      "thread-settled-old",
+    ]);
+  });
+
+  it("auto-settles threads past the inactivity window", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "T3 Code",
+    });
+    const stale = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-stale"),
+      projectId: project.id,
+      title: "Stale thread",
+      latestUserMessageAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z",
+    });
+
+    const groups = buildGroups([project], [stale], { now: "2026-06-10T00:00:00.000Z" });
+
+    expect(groups[0]?.threads).toEqual([]);
+    expect(groups[0]?.settledThreads.map((thread) => thread.id)).toEqual(["thread-stale"]);
+  });
+
+  it("keeps a group reachable when every thread is settled", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "T3 Code",
+    });
+    const settled = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-settled"),
+      projectId: project.id,
+      title: "Settled thread",
+      settledOverride: "settled",
+      settledAt: "2026-06-08T00:00:00.000Z",
+    });
+
+    const groups = buildGroups([project], [settled], { now: "2026-06-10T00:00:00.000Z" });
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.threads).toEqual([]);
+    expect(groups[0]?.settledThreads).toHaveLength(1);
+  });
+
+  it("applies the search query to settled threads as well", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "T3 Code",
+    });
+    const threads = [
+      makeThread({
+        environmentId,
+        id: ThreadId.make("thread-active"),
+        projectId: project.id,
+        title: "Active thread",
+      }),
+      makeThread({
+        environmentId,
+        id: ThreadId.make("thread-settled"),
+        projectId: project.id,
+        title: "Settled needle",
+        settledOverride: "settled",
+        settledAt: "2026-06-08T00:00:00.000Z",
+      }),
+    ];
+
+    const groups = buildGroups([project], threads, {
+      now: "2026-06-10T00:00:00.000Z",
+      searchQuery: "needle",
+    });
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.threads).toEqual([]);
+    expect(groups[0]?.settledThreads.map((thread) => thread.id)).toEqual(["thread-settled"]);
+  });
 });

@@ -27,7 +27,8 @@ export function HomeRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
-  const { archiveThread, confirmDeleteThread } = useThreadListActions();
+  const { archiveThread, settleThread, unsettleThread, confirmDeleteThread } =
+    useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -106,6 +107,8 @@ export function HomeRouteScreen() {
         }
         onArchiveThread={archiveThread}
         onDeleteThread={confirmDeleteThread}
+        onSettleThread={settleThread}
+        onUnsettleThread={unsettleThread}
         onEnvironmentChange={setSelectedEnvironmentId}
         onOpenEnvironments={() =>
           navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" })

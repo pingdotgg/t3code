@@ -53,6 +53,7 @@ import {
   PendingTaskListRow,
   ThreadListGroupHeader,
   ThreadListRow,
+  ThreadListSettledToggleRow,
   ThreadListShowMoreRow,
 } from "./thread-list-items";
 
@@ -168,7 +169,8 @@ function ThreadNavigationSidebarPane(
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const headerIsOverContentRef = useRef(false);
   const sidebarScrollGesture = useMemo(() => Gesture.Native(), []);
-  const { archiveThread, confirmDeleteThread } = useThreadListActions();
+  const { archiveThread, settleThread, unsettleThread, confirmDeleteThread } =
+    useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -451,6 +453,8 @@ function ThreadNavigationSidebarPane(
               }
               fullSwipeWidth={props.width - 20}
               onArchiveThread={archiveThread}
+              onSettleThread={settleThread}
+              onUnsettleThread={unsettleThread}
               onDeleteThread={confirmDeleteThread}
               onSelectThread={handleSelectThread}
               onSwipeableClose={handleSwipeableClose}
@@ -459,6 +463,16 @@ function ThreadNavigationSidebarPane(
             />
           );
         }
+        case "settled-toggle":
+          return (
+            <ThreadListSettledToggleRow
+              variant="sidebar"
+              settledCount={item.settledCount}
+              revealed={item.revealed}
+              groupKey={item.groupKey}
+              onGroupAction={updateGroupDisplay}
+            />
+          );
         case "show-more":
           return (
             <ThreadListShowMoreRow
@@ -483,7 +497,9 @@ function ThreadNavigationSidebarPane(
       props.selectedThreadKey,
       props.width,
       savedConnectionsById,
+      settleThread,
       sidebarScrollGesture,
+      unsettleThread,
       updateGroupDisplay,
     ],
   );

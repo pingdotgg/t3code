@@ -59,7 +59,7 @@ function makeThread(id: string, projectId: ProjectId): EnvironmentThreadShell {
   };
 }
 
-function makeGroup(key: string, threadCount: number): HomeThreadGroup {
+function makeGroup(key: string, threadCount: number, settledCount = 0): HomeThreadGroup {
   const project = makeProject(key, key);
   return {
     key,
@@ -69,6 +69,9 @@ function makeGroup(key: string, threadCount: number): HomeThreadGroup {
     pendingTasks: [],
     threads: Array.from({ length: threadCount }, (_, index) =>
       makeThread(`${key}-thread-${index}`, project.id),
+    ),
+    settledThreads: Array.from({ length: settledCount }, (_, index) =>
+      makeThread(`${key}-settled-${index}`, project.id),
     ),
   };
 }
@@ -193,5 +196,64 @@ describe("buildHomeListLayout", () => {
     // header + 6 threads + show-more = 8 items, so beta's header is index 8.
     expect(layout.stickyHeaderIndices).toEqual([0, 8]);
     expect(layout.items[8]).toMatchObject({ type: "header", isFirst: false });
+  });
+
+  it("appends a collapsed settled disclosure after the group's threads", () => {
+    const layout = buildHomeListLayout({
+      groups: [makeGroup("alpha", 2, 3)],
+      displayStates: displayStates({}),
+    });
+
+    expect(itemTypes(layout.items)).toEqual(["header", "thread", "thread", "settled-toggle"]);
+    expect(layout.items.at(-1)).toMatchObject({
+      type: "settled-toggle",
+      groupKey: "alpha",
+      settledCount: 3,
+      revealed: false,
+    });
+  });
+
+  it("reveals settled threads after the toggle when the disclosure is open", () => {
+    const layout = buildHomeListLayout({
+      groups: [makeGroup("alpha", 1, 2)],
+      displayStates: displayStates({
+        alpha: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "toggle-settled"),
+      }),
+    });
+
+    expect(itemTypes(layout.items)).toEqual([
+      "header",
+      "thread",
+      "settled-toggle",
+      "thread",
+      "thread",
+    ]);
+    const settledItems = layout.items.slice(3);
+    expect(settledItems.map((item) => item.type === "thread" && item.thread.id)).toEqual([
+      "alpha-settled-0",
+      "alpha-settled-1",
+    ]);
+    expect(layout.items.at(-1)).toMatchObject({ type: "thread", isLast: true });
+    // The active thread is no longer the visual tail once the disclosure follows.
+    expect(layout.items[1]).toMatchObject({ type: "thread", isLast: false });
+  });
+
+  it("hides the settled disclosure for collapsed groups", () => {
+    const layout = buildHomeListLayout({
+      groups: [makeGroup("alpha", 1, 2)],
+      displayStates: displayStates({
+        alpha: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "toggle-collapsed"),
+      }),
+    });
+
+    expect(itemTypes(layout.items)).toEqual(["header"]);
+  });
+
+  it("toggles settledRevealed via nextGroupDisplayState", () => {
+    const revealed = nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "toggle-settled");
+    expect(revealed.settledRevealed).toBe(true);
+    expect(nextGroupDisplayState(revealed, "toggle-settled").settledRevealed).toBe(false);
+    // Other actions preserve the disclosure state.
+    expect(nextGroupDisplayState(revealed, "show-more").settledRevealed).toBe(true);
   });
 });
