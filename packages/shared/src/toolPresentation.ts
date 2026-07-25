@@ -707,24 +707,32 @@ function buildPermission(
   return { decision, ...(reason ? { reason } : {}) };
 }
 
-function titleFor(surface: ToolSurface, provenance: ToolProvenance, fallback: string): string {
+function titleFor(
+  surface: ToolSurface,
+  provenance: ToolProvenance,
+  fallback: string,
+  state: ToolExecutionState,
+): string {
+  // While the invocation is still in flight, describe what the tool is doing
+  // rather than what it did.
+  const inProgress = state === "pending" || state === "running";
   switch (surface) {
     case "command":
-      return "Ran command";
+      return inProgress ? "Running command" : "Ran command";
     case "file_read":
-      return "Read file";
+      return inProgress ? "Reading file" : "Read file";
     case "file_change":
-      return "Changed files";
+      return inProgress ? "Changing files" : "Changed files";
     case "file_search":
-      return "Searched files";
+      return inProgress ? "Searching files" : "Searched files";
     case "web_search":
-      return "Web search";
+      return inProgress ? "Searching the web" : "Web search";
     case "web_fetch":
-      return "Fetched page";
+      return inProgress ? "Fetching page" : "Fetched page";
     case "image":
-      return "Viewed image";
+      return inProgress ? "Viewing image" : "Viewed image";
     case "todo":
-      return "Updated plan";
+      return inProgress ? "Updating plan" : "Updated plan";
     case "skill": {
       const name = provenance.skillName ?? provenance.displayName;
       return name ? `Skill: ${name}` : "Skill";
@@ -852,7 +860,7 @@ export function deriveToolPresentation(input: ToolPresentationInput): ToolPresen
   const state = resolveState(asTrimmedString(input.status), input.fallbackState ?? "running");
   const provenance = identity.provenance;
 
-  const resolvedTitle = titleFor(surface, provenance, title ?? "Tool");
+  const resolvedTitle = titleFor(surface, provenance, title ?? "Tool", state);
   const subtitle =
     subtitleFor({ surface, provenance, toolInput, data, title }) ??
     (surface === "generic" ? asTrimmedString(input.detail) : undefined);
