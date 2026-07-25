@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import sys
+import threading
+import time
 import types
 import unittest
 from pathlib import Path
@@ -102,3 +105,31 @@ class HermesPluginContractTest(unittest.TestCase):
                 ("POST", "/uninstall"),
             ],
         )
+
+        active = 0
+        peak = 0
+        state_lock = threading.Lock()
+
+        def install(_config):
+            nonlocal active, peak
+            with state_lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.02)
+            with state_lock:
+                active -= 1
+            return {}
+
+        async def invoke_concurrently() -> None:
+            await asyncio.gather(
+                module._run_action("install", FakeRequest()),
+                module._run_action("install", FakeRequest()),
+            )
+
+        with (
+            patch.object(module.service, "install", side_effect=install),
+            patch.object(module, "_response", return_value={}),
+        ):
+            asyncio.run(invoke_concurrently())
+
+        self.assertEqual(peak, 1)

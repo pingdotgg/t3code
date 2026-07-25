@@ -16,6 +16,7 @@ from integrations.hermes_plugin.config import load_config
 from integrations.hermes_plugin import service
 
 router = APIRouter()
+_ACTION_LOCK = asyncio.Lock()
 
 
 def _public_url(request: Request) -> str:
@@ -56,9 +57,10 @@ async def _run_action(action: str, request: Request) -> dict[str, object]:
         "uninstall": service.uninstall,
     }[action]
     try:
-        result = await asyncio.to_thread(handler, config)
-        result["status"] = _response(request)
-        return result
+        async with _ACTION_LOCK:
+            result = await asyncio.to_thread(handler, config)
+            result["status"] = _response(request)
+            return result
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
 

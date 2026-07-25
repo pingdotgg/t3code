@@ -12,4 +12,3 @@ def register(_ctx: Any) -> None:
     extension. Importing the plugin must not download binaries or mutate the
     supervision tree.
     """
-
