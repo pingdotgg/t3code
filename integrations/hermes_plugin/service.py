@@ -125,6 +125,10 @@ def _t3_service_args(config: PluginConfig, action: str) -> list[str]:
         "--service-user",
         config.service_user,
     ]
+    if action in {"install", "update"}:
+        args.extend(
+            ["--service-environment", f"HERMES_HOME={config.hermes_home}"]
+        )
     if config.service_group:
         args.extend(["--service-group", config.service_group])
     return args

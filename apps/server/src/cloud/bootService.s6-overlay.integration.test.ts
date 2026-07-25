@@ -19,6 +19,7 @@ function docker(args: ReadonlyArray<string>) {
 
 describe.runIf(integrationEnabled)("s6-overlay service integration", () => {
   it("starts t3 serve with a non-root runtime UID", async () => {
+    const serviceEnvironmentValue = "/state/T3's $data `literal` mode=service";
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-s6-overlay-test-"));
     const serviceDir = NodePath.join(root, "service");
     const stateDir = NodePath.join(root, "state");
@@ -42,11 +43,12 @@ describe.runIf(integrationEnabled)("s6-overlay service integration", () => {
           nodePath: "/usr/local/bin/t3-fixture",
           t3EntryPath: "",
           baseDir: "/state",
+          serviceEnvironment: [{ name: "HERMES_HOME", value: serviceEnvironmentValue }],
           logPath: "/state/boot-service.log",
           unitPath: "/run/service/t3code/run",
         }),
       );
-      await NodeFSP.chmod(runPath, 0o755);
+      await NodeFSP.chmod(runPath, 0o700);
 
       const build = docker(["build", "--tag", image, fixtureDir]);
       expect(build.status, build.stderr || build.stdout).toBe(0);
@@ -83,6 +85,9 @@ describe.runIf(integrationEnabled)("s6-overlay service integration", () => {
       expect((await NodeFSP.readFile(NodePath.join(stateDir, "runtime-home"), "utf8")).trim()).toBe(
         "/home/t3",
       );
+      expect(
+        (await NodeFSP.readFile(NodePath.join(stateDir, "service-environment"), "utf8")).trim(),
+      ).toBe(serviceEnvironmentValue);
       expect((await NodeFSP.stat(NodePath.join(stateDir, "boot-service.log"))).uid).toBe(10001);
 
       const restart = docker([

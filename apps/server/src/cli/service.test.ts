@@ -1,6 +1,9 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { Command } from "effect/unstable/cli";
 
-import { formatServiceStatus } from "./service.ts";
+import { formatServiceStatus, parseServiceEnvironmentEntries, serviceCommand } from "./service.ts";
 
 const status = {
   supported: true,
@@ -68,4 +71,76 @@ it("explains service availability without a configured supervisor", () => {
     formatServiceStatus({ ...status, supported: false, installed: false }, "0.0.29"),
     "Supported on: Linux with systemd, or s6 with --service-dir",
   );
+});
+
+it("parses repeated service environment entries without splitting value equals", () => {
+  assert.deepEqual(
+    parseServiceEnvironmentEntries(
+      ["SECOND=two", "FIRST=spaces ' $dollar `backtick` and=equals"],
+      "s6",
+    ),
+    [
+      { name: "FIRST", value: "spaces ' $dollar `backtick` and=equals" },
+      { name: "SECOND", value: "two" },
+    ],
+  );
+});
+
+it("rejects invalid, reserved, duplicate, and unsafe service environment entries", () => {
+  const invalidEntries = [
+    ["MISSING_EQUALS"],
+    ["9INVALID=value"],
+    ["T3CODE_HOME=value"],
+    ["DUPLICATE=first", "DUPLICATE=second"],
+    ["UNSAFE=line\rbreak"],
+    ["UNSAFE=line\nbreak"],
+    ["UNSAFE=nul\0break"],
+  ];
+
+  for (const entries of invalidEntries) {
+    assert.throws(() => parseServiceEnvironmentEntries(entries, "s6"));
+  }
+});
+
+it("rejects service environment entries for systemd without leaking their values", () => {
+  const secret = "do-not-print-$SECRET=`command`";
+  let error: unknown;
+  try {
+    parseServiceEnvironmentEntries([`EXAMPLE=${secret}`], "systemd");
+  } catch (cause) {
+    error = cause;
+  }
+
+  assert.instanceOf(error, Error);
+  assert.include((error as Error).message, "--supervisor s6");
+  assert.notInclude((error as Error).message, secret);
+});
+
+it.effect("rejects the option on install and update without CLI error leakage", () =>
+  Effect.gen(function* () {
+    const secret = "do-not-print-$SECRET=`command`";
+    const run = Command.runWith(serviceCommand, { version: "test" });
+
+    for (const action of ["install", "update"]) {
+      const error = yield* run([action, "--service-environment", `EXAMPLE=${secret}`]).pipe(
+        Effect.flip,
+      );
+      assert.instanceOf(error, Error);
+      assert.include(error.message, "--supervisor s6");
+      assert.notInclude(error.message, secret);
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it("does not include service environment values in stale status output", () => {
+  const secret = "do-not-print-$SECRET=`command`";
+  const options = {
+    supervisor: "s6" as const,
+    s6ServiceDir: "/run/service/t3code",
+    serviceEnvironment: [{ name: "EXAMPLE", value: secret }],
+  };
+
+  const output = formatServiceStatus({ ...status, current: false }, "0.0.29", options);
+  assert.notInclude(output, secret);
+  assert.notInclude(output, "--service-environment");
 });
