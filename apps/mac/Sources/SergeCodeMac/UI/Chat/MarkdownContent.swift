@@ -720,9 +720,24 @@ struct AssistantMarkdownView: View {
 
     /// Streaming assistant text renders through `StreamingMarkdownBlocks`,
     /// which reveals the incoming markdown a few bytes per display frame and
-    /// parses the revealed prefix incrementally in its own body.
+    /// parses the revealed prefix incrementally in its own body. A message
+    /// whose stream has just ended stays on this path while the reveal store
+    /// still holds unrevealed backlog, so the buffered remainder glides out
+    /// instead of popping in at once.
     private var usesStreamingReveal: Bool {
-        isStreaming && style == .assistant && !messageID.isEmpty
+        style == .assistant && !messageID.isEmpty
+            && (isStreaming || hasPendingRevealAfterStreamEnd)
+    }
+
+    /// True when the stream is over but the reveal store still has buffered
+    /// text for this message. Under Reduce Motion the reveal never lags, so
+    /// there is nothing to drain and the settled path renders directly.
+    private var hasPendingRevealAfterStreamEnd: Bool {
+        !isStreaming
+            && !Motion.reduceMotion
+            && StreamingRevealStore.hasPendingReveal(
+                threadID: model.scopedThreadKey(threadID), messageID: messageID,
+                target: markdown)
     }
 
     init(
@@ -745,7 +760,13 @@ struct AssistantMarkdownView: View {
         self.showsRoleChrome = showsRoleChrome
         // Uses the raw parameters: `usesStreamingReveal` can't run here because
         // `renderedBlocks` isn't initialized yet. Keep the two in sync.
-        if isStreaming && style == .assistant && !messageID.isEmpty {
+        let streamingReveal = style == .assistant && !messageID.isEmpty
+            && (isStreaming
+                || (!Motion.reduceMotion
+                    && StreamingRevealStore.hasPendingReveal(
+                        threadID: model.scopedThreadKey(threadID), messageID: messageID,
+                        target: markdown)))
+        if streamingReveal {
             // Streaming text renders through `StreamingMarkdownBlocks`, which
             // reveals the incoming markdown a few bytes per display frame
             // (see StreamingReveal.swift) and parses the revealed prefix
@@ -787,6 +808,7 @@ struct AssistantMarkdownView: View {
                         messageID: messageID,
                         model: model,
                         style: style,
+                        isStreaming: isStreaming,
                         showsStreamingIndicator: showsRoleChrome)
                 } else {
                     MarkdownBlocksView(
@@ -1069,7 +1091,9 @@ private struct MarkdownBlocksView: View {
 /// instead of jumping once per ~30 Hz delta flush. A vsync-aligned
 /// `TimelineView` advances `StreamingRevealStore`; the revealed prefix is
 /// parsed through `StreamingMarkdownCache`, whose incremental settled-prefix
-/// cache means each frame only re-parses the small growing tail. Under
+/// cache means each frame only re-parses the small growing tail. The view
+/// stays on this path after the stream ends until the buffered backlog has
+/// glided out (see `AssistantMarkdownView.usesStreamingReveal`). Under
 /// Reduce Motion the policy snaps straight to the full target and this
 /// renders exactly like the settled path.
 private struct StreamingMarkdownBlocks: View {
@@ -1078,6 +1102,10 @@ private struct StreamingMarkdownBlocks: View {
     let messageID: String
     let model: AppModel
     let style: MarkdownRenderStyle
+    /// False once the stream has ended but buffered text is still draining;
+    /// the reveal then runs its faster final window and the streaming
+    /// indicator is already gone.
+    let isStreaming: Bool
     let showsStreamingIndicator: Bool
 
     /// Bumped when the store's revealed text changes; the store itself is not
@@ -1102,15 +1130,18 @@ private struct StreamingMarkdownBlocks: View {
             MarkdownBlocksView(
                 renderedBlocks: blocks,
                 style: style,
+                // Stays true while draining after stream end so the still-
+                // growing tail block keeps deferring its syntax highlight.
                 isStreaming: true,
-                showsStreamingIndicator: showsStreamingIndicator)
+                showsStreamingIndicator: showsStreamingIndicator && isStreaming)
                 .onChange(of: timeline.date, initial: true) { _, date in
                     guard StreamingRevealStore.advance(
                         threadID: threadKey,
                         messageID: messageID,
                         target: markdown,
                         at: date,
-                        policy: StreamingRevealPolicy(reduceMotion: reduceMotion))
+                        policy: StreamingRevealPolicy(
+                            reduceMotion: reduceMotion, isFinal: !isStreaming))
                     else { return }
                     revealGeneration += 1
                 }

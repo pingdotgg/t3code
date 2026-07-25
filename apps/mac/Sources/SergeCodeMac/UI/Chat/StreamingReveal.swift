@@ -3,26 +3,62 @@ import Foundation
 /// Pacing policy for the smooth streaming-text reveal.
 ///
 /// Provider deltas arrive pre-batched at ~30 Hz (see `LiveBackend` and
-/// `AppModel` flushes). Rendering each flush as it lands makes the tail of a
-/// message jump in visible chunks. Instead the view buffers the incoming
-/// string and reveals it a few bytes per display frame, paced by this policy
-/// so the render trails the stream by roughly one catch-up window. Pure and
-/// SwiftUI-free so the pacing is directly testable, the same split
-/// `MotionProfile` and `EntrancePolicy` use.
+/// `AppModel` flushes), and model output itself is bursty. Rendering each
+/// burst as it lands makes the tail of a message jump, then stall, then
+/// jump again. Instead the view buffers the incoming string and reveals it
+/// a few bytes per display frame, paced by this policy.
+///
+/// The policy deliberately trades time-to-first-token for an even glide:
+/// this is a coding client, not a chat toy, so a few extra seconds of lag
+/// behind the stream is fine if the text never visibly stutters. Three
+/// mechanisms do that:
+///
+/// 1. A warm-up hold buffers the first burst of a live stream before
+///    revealing anything, so short responses effectively appear all at
+///    once (at stream end) and then type out smoothly.
+/// 2. A multi-second catch-up window spreads every burst over seconds at
+///    a slowly-varying rate instead of ~150 ms, keeping the reveal speed
+///    nearly constant while the stream is live.
+/// 3. A faster final window drains the remaining backlog briskly once the
+///    stream ends, so a finished message never trails for long.
+///
+/// Pure and SwiftUI-free so the pacing is directly testable, the same
+/// split `MotionProfile` and `EntrancePolicy` use.
 struct StreamingRevealPolicy: Equatable, Sendable {
     let reduceMotion: Bool
+    /// True once the message's stream has ended. A final target skips the
+    /// warm-up hold (a short response buffered in full should start its
+    /// glide immediately) and drains its backlog over `finalCatchUpWindow`.
+    let isFinal: Bool
 
-    /// Seconds of backlog the reveal tries to keep behind the stream. Small
-    /// enough that the text never feels like it lags the agent, large enough
-    /// that a 33 ms flush is spread across many frames.
-    let catchUpWindow = 0.15
+    init(reduceMotion: Bool, isFinal: Bool = false) {
+        self.reduceMotion = reduceMotion
+        self.isFinal = isFinal
+    }
+
+    /// Seconds of backlog the reveal keeps behind a live stream. Long on
+    /// purpose: the lag stays roughly this many seconds no matter how
+    /// bursty the deltas are, so the on-screen rate barely changes when a
+    /// chunk lands. Bursts are absorbed into the backlog, not flashed.
+    let catchUpWindow = 4.0
+    /// Once the stream ends, the remaining backlog glides out over this
+    /// shorter window — the message is done, so the tail should finish in
+    /// a couple of seconds rather than trail by the full live window.
+    let finalCatchUpWindow = 1.5
+    /// A live stream reveals nothing until this many bytes have buffered.
+    /// Roughly two lines of text: long enough that the first reveal starts
+    /// with a comfortable runway, short enough that a model emits it in a
+    /// second or two. Final targets skip the hold entirely.
+    let warmUpStartBytes = 480
     /// Floor on reveal speed so a slow trickle still glides instead of
     /// stalling between flushes. ~2 bytes per frame at 120 Hz.
     let minRevealBytesPerSecond = 240.0
     /// Above this backlog the reveal snaps to the target immediately —
     /// hydration, reconnect replays, and huge pastes must never type out
-    /// seconds behind reality.
-    let instantSnapBacklog = 4096
+    /// seconds behind reality. Well above any backlog a live stream can
+    /// accumulate at the `catchUpWindow` lag, so normal streaming never
+    /// snaps mid-message.
+    let instantSnapBacklog = 16_384
 
     /// Next reveal position as a UTF-8 byte count into the target. `current`
     /// is the policy's own desired position (which may sit inside a grapheme;
@@ -36,9 +72,14 @@ struct StreamingRevealPolicy: Equatable, Sendable {
         let backlog = target - current
         guard backlog > 0 else { return current }
         if backlog >= instantSnapBacklog { return target }
+        // Warm-up hold: a live stream stays hidden until enough has
+        // buffered to glide without immediately starving. Once revealing
+        // (or once the stream is final) this never applies again.
+        if current == 0 && !isFinal && target < warmUpStartBytes { return 0 }
 
         let dt = max(0, min(elapsed, 0.1))
-        let catchUpStep = Double(backlog) * (dt / catchUpWindow)
+        let window = isFinal ? finalCatchUpWindow : catchUpWindow
+        let catchUpStep = Double(backlog) * (dt / window)
         let minStep = minRevealBytesPerSecond * dt
         let step = max(1, Int(max(catchUpStep, minStep).rounded(.up)))
         return min(target, current + step)
@@ -110,6 +151,19 @@ enum StreamingRevealStore {
         session.revealedUTF8Count = newCount
         session.fingerprint = Array(session.revealed.utf8.suffix(64))
         return true
+    }
+
+    /// True when a session exists with unrevealed backlog for `target`.
+    /// Lets a message whose stream has just ended keep rendering through
+    /// the reveal path until the buffered text has fully glided out, so
+    /// completion never pops the remaining tail in at once. Creates no
+    /// session, so finished messages rendered from history stay settled.
+    static func hasPendingReveal(threadID: String, messageID: String, target: String) -> Bool {
+        guard let session = sessions[threadID]?[messageID] else { return false }
+        if diverged(session: session, target: target) {
+            reset(session)
+        }
+        return session.revealedUTF8Count < target.utf8.count
     }
 
     static func finish(threadID: String, messageID: String) {

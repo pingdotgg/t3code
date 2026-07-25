@@ -6,7 +6,11 @@ import Testing
 @Suite("Streaming reveal")
 @MainActor
 struct StreamingRevealTests {
+    /// Live-stream pacing: warm-up hold plus the long catch-up window.
     private let policy = StreamingRevealPolicy(reduceMotion: false)
+    /// Stream-ended pacing: no hold, brisk final drain. Store tests use this
+    /// so small targets reveal instead of sitting in the warm-up hold.
+    private let finalPolicy = StreamingRevealPolicy(reduceMotion: false, isFinal: true)
 
     // MARK: Policy
 
@@ -34,15 +38,45 @@ struct StreamingRevealTests {
 
     @Test("larger backlog catches up proportionally faster")
     func policyCatchUp() {
-        let small = policy.advancedRevealCount(current: 0, target: 50, elapsed: 1.0 / 60)
-        let large = policy.advancedRevealCount(current: 0, target: 500, elapsed: 1.0 / 60)
-        #expect(large > small)
+        let small = policy.advancedRevealCount(current: 600, target: 650, elapsed: 1.0 / 60)
+        let large = policy.advancedRevealCount(current: 600, target: 2_600, elapsed: 1.0 / 60)
+        #expect(large - 600 > small - 600)
+    }
+
+    @Test("a live stream holds at zero until the warm-up buffer fills")
+    func policyWarmUpHold() {
+        // Below the warm-up threshold a live stream reveals nothing yet...
+        #expect(policy.advancedRevealCount(current: 0, target: 200, elapsed: 1.0 / 60) == 0)
+        // ...and above it the glide starts.
+        #expect(policy.advancedRevealCount(current: 0, target: 600, elapsed: 1.0 / 60) > 0)
+    }
+
+    @Test("a final target skips the warm-up hold")
+    func policyFinalSkipsWarmUp() {
+        // A short response buffered in full starts its glide immediately.
+        #expect(finalPolicy.advancedRevealCount(current: 0, target: 200, elapsed: 1.0 / 60) > 0)
+    }
+
+    @Test("a final target drains its backlog faster than a live stream")
+    func policyFinalDrainsFaster() {
+        let live = policy.advancedRevealCount(current: 0, target: 2_000, elapsed: 1.0 / 60)
+        let final = finalPolicy.advancedRevealCount(current: 0, target: 2_000, elapsed: 1.0 / 60)
+        #expect(final > live)
     }
 
     @Test("huge backlog snaps instantly instead of typing out")
     func policyInstantSnap() {
+        let next = policy.advancedRevealCount(current: 0, target: 20_000, elapsed: 1.0 / 60)
+        #expect(next == 20_000)
+    }
+
+    @Test("ordinary streaming backlog never snaps mid-message")
+    func policyNoSnapBelowThreshold() {
+        // 10 KB was the old snap threshold; a live stream must now glide
+        // through it rather than jump.
         let next = policy.advancedRevealCount(current: 0, target: 10_000, elapsed: 1.0 / 60)
-        #expect(next == 10_000)
+        #expect(next < 10_000)
+        #expect(next > 0)
     }
 
     @Test("Reduce Motion reveals everything immediately")
@@ -92,7 +126,7 @@ struct StreamingRevealTests {
         for _ in 0..<2_000 {
             now.addTimeInterval(1.0 / 120)
             if StreamingRevealStore.advance(
-                threadID: "t", messageID: "m", target: target, at: now, policy: policy)
+                threadID: "t", messageID: "m", target: target, at: now, policy: finalPolicy)
             {
                 advanced += 1
             }
@@ -115,10 +149,15 @@ struct StreamingRevealTests {
         var now = Date(timeIntervalSinceReferenceDate: 0)
         var last = ""
         for chunk in ["The agent ", "is writing ", "a reply ", "in chunks."] {
-            now.addTimeInterval(1.0 / 30)
             let target = last + chunk
-            _ = StreamingRevealStore.advance(
-                threadID: "t", messageID: "m", target: target, at: now, policy: policy)
+            // Several frames per flush: the reveal glides a little further
+            // each tick instead of jumping the whole chunk at once.
+            for _ in 0..<3 {
+                now.addTimeInterval(1.0 / 30)
+                _ = StreamingRevealStore.advance(
+                    threadID: "t", messageID: "m", target: target, at: now,
+                    policy: finalPolicy)
+            }
             let revealed = StreamingRevealStore.revealed(
                 threadID: "t", messageID: "m", target: target)
             #expect(target.hasPrefix(revealed))
@@ -135,18 +174,54 @@ struct StreamingRevealTests {
 
         var now = Date(timeIntervalSinceReferenceDate: 0)
         _ = StreamingRevealStore.advance(
-            threadID: "t", messageID: "m", target: "Hello world", at: now, policy: policy)
+            threadID: "t", messageID: "m", target: "Hello world", at: now, policy: finalPolicy)
         let before = StreamingRevealStore.revealed(
             threadID: "t", messageID: "m", target: "Hello world")
         #expect(!before.isEmpty)
 
         now.addTimeInterval(1.0 / 60)
         _ = StreamingRevealStore.advance(
-            threadID: "t", messageID: "m", target: "Jello world", at: now, policy: policy)
+            threadID: "t", messageID: "m", target: "Jello world", at: now, policy: finalPolicy)
         #expect(StreamingRevealStore.resetCount == 1)
         let after = StreamingRevealStore.revealed(
             threadID: "t", messageID: "m", target: "Jello world")
         #expect("Jello world".hasPrefix(after))
+    }
+
+    @Test("hasPendingReveal reports buffered backlog without creating sessions")
+    func storeHasPendingReveal() {
+        StreamingRevealStore.resetForTesting()
+        defer { StreamingRevealStore.resetForTesting() }
+
+        // No session: nothing pending, and the query must not create one —
+        // a finished message rendered from history stays settled.
+        #expect(
+            !StreamingRevealStore.hasPendingReveal(
+                threadID: "t", messageID: "m", target: "hello world"))
+        #expect(
+            StreamingRevealStore.revealed(threadID: "t", messageID: "m", target: "hello world")
+                .isEmpty)
+
+        // Partially revealed: backlog pending.
+        var now = Date(timeIntervalSinceReferenceDate: 0)
+        _ = StreamingRevealStore.advance(
+            threadID: "t", messageID: "m", target: "hello world", at: now, policy: finalPolicy)
+        #expect(
+            StreamingRevealStore.hasPendingReveal(
+                threadID: "t", messageID: "m", target: "hello world"))
+
+        // Fully drained: nothing pending.
+        for _ in 0..<100 {
+            now.addTimeInterval(1.0 / 30)
+            _ = StreamingRevealStore.advance(
+                threadID: "t", messageID: "m", target: "hello world", at: now, policy: finalPolicy)
+        }
+        #expect(
+            StreamingRevealStore.revealed(threadID: "t", messageID: "m", target: "hello world")
+                == "hello world")
+        #expect(
+            !StreamingRevealStore.hasPendingReveal(
+                threadID: "t", messageID: "m", target: "hello world"))
     }
 
     @Test("finish drops the session so a reused key starts fresh")
@@ -156,7 +231,7 @@ struct StreamingRevealTests {
 
         let now = Date(timeIntervalSinceReferenceDate: 0)
         _ = StreamingRevealStore.advance(
-            threadID: "t", messageID: "m", target: "some text", at: now, policy: policy)
+            threadID: "t", messageID: "m", target: "some text", at: now, policy: finalPolicy)
         #expect(
             !StreamingRevealStore.revealed(threadID: "t", messageID: "m", target: "some text")
                 .isEmpty)
@@ -175,7 +250,7 @@ struct StreamingRevealTests {
         let now = Date(timeIntervalSinceReferenceDate: 0)
         for message in ["a", "b"] {
             _ = StreamingRevealStore.advance(
-                threadID: "t", messageID: message, target: "text", at: now, policy: policy)
+                threadID: "t", messageID: message, target: "text", at: now, policy: finalPolicy)
         }
         StreamingRevealStore.evict(threadID: "t")
         #expect(StreamingRevealStore.revealed(threadID: "t", messageID: "a", target: "text").isEmpty)
