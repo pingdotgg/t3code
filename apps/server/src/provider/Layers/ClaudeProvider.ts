@@ -799,37 +799,67 @@ export const probeClaudeUsageLimits = Effect.fn("probeClaudeUsageLimits")(functi
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
 ): Effect.fn.Return<
-  ServerProviderUsageLimits | undefined,
+  | {
+      readonly accountIdentity: string | undefined;
+      readonly usageLimits: ServerProviderUsageLimits | undefined;
+    }
+  | undefined,
   never,
   ChildProcessSpawner.ChildProcessSpawner | Path.Path
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  return yield* runClaudeCommand(
-    claudeSettings,
+  return yield* Effect.all(
     [
-      "--print",
-      "/usage",
-      "--output-format",
-      "json",
-      "--permission-mode",
-      "plan",
-      "--strict-mcp-config",
-      "--mcp-config",
-      '{"mcpServers":{}}',
+      runClaudeCommand(
+        claudeSettings,
+        [
+          "--print",
+          "/usage",
+          "--output-format",
+          "json",
+          "--permission-mode",
+          "plan",
+          "--strict-mcp-config",
+          "--mcp-config",
+          '{"mcpServers":{}}',
+        ],
+        {
+          ...(environment ?? process.env),
+          ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+        },
+        { closeStdin: true, ...(cwd ? { cwd } : {}) },
+      ),
+      runClaudeCommand(claudeSettings, ["auth", "status", "--json"], environment, {
+        closeStdin: true,
+        ...(cwd ? { cwd } : {}),
+      }),
     ],
-    {
-      ...(environment ?? process.env),
-      ENABLE_CLAUDEAI_MCP_SERVERS: "false",
-    },
-    { closeStdin: true, ...(cwd ? { cwd } : {}) },
+    { concurrency: "unbounded" },
   ).pipe(
     Effect.timeoutOption(USAGE_PROBE_TIMEOUT_MS),
     Effect.map(
-      Option.flatMap((result) =>
-        result.code === 0
-          ? Option.fromUndefinedOr(parseClaudeUsageLimitsJson(result.stdout, checkedAt))
-          : Option.none(),
-      ),
+      Option.map(([usageResult, authResult]) => {
+        let accountIdentity: string | undefined;
+        if (authResult.code === 0) {
+          try {
+            const decoded: unknown = JSON.parse(authResult.stdout);
+            const email =
+              typeof decoded === "object" && decoded !== null
+                ? (decoded as { email?: unknown }).email
+                : undefined;
+            accountIdentity = typeof email === "string" ? email.trim() || undefined : undefined;
+          } catch {
+            accountIdentity = undefined;
+          }
+        }
+        return {
+          accountIdentity,
+          usageLimits:
+            usageResult.code === 0
+              ? parseClaudeUsageLimitsJson(usageResult.stdout, checkedAt)
+              : undefined,
+        };
+      }),
     ),
     Effect.catchCause(() => Effect.succeed(Option.none())),
     Effect.map(Option.getOrUndefined),
@@ -995,7 +1025,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           ? resolveUsage(capabilities.email?.trim() || undefined).pipe(
               Effect.catchCause(() => Effect.void),
             )
-          : probeClaudeUsageLimits(claudeSettings, resolvedEnvironment, cwd);
+          : probeClaudeUsageLimits(claudeSettings, resolvedEnvironment, cwd).pipe(
+              Effect.map((result) =>
+                result?.accountIdentity && result.accountIdentity === capabilities.email?.trim()
+                  ? result.usageLimits
+                  : undefined,
+              ),
+            );
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,

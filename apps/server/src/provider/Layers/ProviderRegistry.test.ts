@@ -47,7 +47,6 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
-import { resolveRetainedClaudeUsage } from "../Drivers/ClaudeDriver.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
@@ -1861,34 +1860,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
     // ── checkClaudeProviderStatus tests ──────────────────────────
 
     describe("checkClaudeProviderStatus", () => {
-      it("preserves Claude usage only for the same known account", () => {
-        const available: ServerProvider["usageLimits"] = {
-          source: "claudePrint",
-          checkedAt: "2026-07-22T12:00:00.000Z",
-          windows: [{ label: "Session", usedPercent: 30 }],
-        };
-
-        const initial = resolveRetainedClaudeUsage(undefined, "first@example.com", available);
-        assert.strictEqual(initial.usageLimits, available);
-        assert.strictEqual(
-          resolveRetainedClaudeUsage(initial.retained, "first@example.com", undefined).usageLimits,
-          available,
-        );
-        assert.strictEqual(
-          resolveRetainedClaudeUsage(initial.retained, "second@example.com", undefined).usageLimits,
-          undefined,
-        );
-        assert.strictEqual(
-          resolveRetainedClaudeUsage(initial.retained, undefined, undefined).usageLimits,
-          undefined,
-        );
-      });
-
       it.effect("returns ready when claude is installed and authenticated", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
-            claudeCapabilities(),
+            claudeCapabilities({ email: "claude@example.com" }),
           );
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
@@ -1915,7 +1891,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           yield* TestClock.setTime(Date.parse("2026-07-22T12:00:00.000Z"));
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
-            claudeCapabilities(),
+            claudeCapabilities({ email: "claude@example.com" }),
           );
           assert.strictEqual(status.status, "ready");
           assert.deepStrictEqual(status.usageLimits?.windows, [
@@ -1941,6 +1917,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   code: 0,
                 };
               }
+              if (joined === "auth status --json") {
+                return {
+                  stdout: JSON.stringify({ email: "claude@example.com" }),
+                  stderr: "",
+                  code: 0,
+                };
+              }
               throw new Error(`Unexpected args: ${joined}`);
             }),
           ),
@@ -1958,6 +1941,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               code: 0,
             };
           }
+          if (args.join(" ") === "auth status --json") {
+            return {
+              stdout: JSON.stringify({ email: "claude@example.com" }),
+              stderr: "",
+              code: 0,
+            };
+          }
           throw new Error(`Unexpected args: ${args.join(" ")}`);
         });
 
@@ -1967,10 +1957,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             undefined,
             "/tmp/provider-usage-workspace",
           );
-          assert.strictEqual(usageLimits?.windows[0]?.usedPercent, 30);
+          assert.strictEqual(usageLimits?.usageLimits?.windows[0]?.usedPercent, 30);
+          assert.strictEqual(usageLimits?.accountIdentity, "claude@example.com");
           assert.deepStrictEqual(
             recorded.commands.map((command) => command.cwd),
-            ["/tmp/provider-usage-workspace"],
+            ["/tmp/provider-usage-workspace", "/tmp/provider-usage-workspace"],
           );
         }).pipe(Effect.provide(recorded.layer));
       });
