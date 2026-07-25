@@ -67,4 +67,21 @@ describe("workspace connection status", () => {
     expect(shouldShowWorkspaceConnectionStatus(state)).toBe(true);
     expect(workspaceConnectionStatusLabel(state)).toBe("Could not reach Julius’s Mac mini");
   });
+
+  it("shows shell catch-up while cached threads remain visible", () => {
+    const state = workspaceState({ hasPendingShellSnapshot: true });
+
+    expect(shouldShowWorkspaceConnectionStatus(state)).toBe(true);
+    expect(workspaceConnectionStatusLabel(state)).toBe("Syncing threads...");
+  });
+
+  it("distinguishes initial shell loading from cached catch-up", () => {
+    const state = workspaceState({
+      hasLoadedShellSnapshot: false,
+      hasPendingShellSnapshot: true,
+    });
+
+    expect(shouldShowWorkspaceConnectionStatus(state)).toBe(true);
+    expect(workspaceConnectionStatusLabel(state)).toBe("Loading threads...");
+  });
 });

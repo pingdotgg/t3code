@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 
 import {
+  hostedAppUrlConfig,
   makeCloudCliOAuthConfig,
   makeRelayUrlConfig,
   resolveRelayClientTracingConfig,
@@ -45,6 +46,40 @@ it.effect("rejects an insecure runtime relay URL override", () =>
 
 it.effect("rejects an injected relay URL with a non-origin path", () =>
   makeRelayUrlConfig("https://embedded.example.test/path").pipe(provideEnv({}), Effect.flip),
+);
+
+it.effect("normalizes the hosted app URL to an absolute origin", () =>
+  Effect.gen(function* () {
+    assert.equal(
+      yield* hostedAppUrlConfig.pipe(
+        provideEnv({ T3CODE_HOSTED_APP_URL: "https://nightly.app.t3.codes" }),
+      ),
+      "https://nightly.app.t3.codes",
+    );
+    assert.equal(
+      yield* hostedAppUrlConfig.pipe(
+        provideEnv({ T3CODE_HOSTED_APP_URL: "http://localhost:5733" }),
+      ),
+      "http://localhost:5733",
+    );
+  }),
+);
+
+it.effect("rejects malformed or insecure hosted app URLs", () =>
+  Effect.gen(function* () {
+    for (const value of [
+      "app.t3.codes",
+      "http://app.t3.codes",
+      "https://app.t3.codes/nested",
+      "https://app.t3.codes?alias=true",
+    ]) {
+      const result = yield* hostedAppUrlConfig.pipe(
+        provideEnv({ T3CODE_HOSTED_APP_URL: value }),
+        Effect.result,
+      );
+      assert.isTrue(Result.isFailure(result), value);
+    }
+  }),
 );
 
 it.effect("derives direct Clerk OAuth endpoints from statically injected public config", () =>

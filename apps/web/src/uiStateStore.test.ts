@@ -116,7 +116,7 @@ describe("uiStateStore pure functions", () => {
     );
   });
 
-  it("stores only collapsed changed-file turns", () => {
+  it("stores explicit changed-file expansion choices", () => {
     const threadId = ThreadId.make("thread-1");
     const collapsed = setThreadChangedFilesExpanded(makeUiState(), threadId, "turn-1", false);
 
@@ -128,7 +128,11 @@ describe("uiStateStore pure functions", () => {
     expect(
       setThreadChangedFilesExpanded(collapsed, threadId, "turn-1", true)
         .threadChangedFilesExpandedById,
-    ).toEqual({});
+    ).toEqual({
+      [threadId]: {
+        "turn-1": true,
+      },
+    });
   });
 
   it("stores the endpoint preference by stable key", () => {
@@ -155,6 +159,7 @@ describe("parsePersistedState", () => {
         invalid: "not-a-date",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      threadChangedFilesExpansionVersion: 1,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -175,9 +180,22 @@ describe("parsePersistedState", () => {
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
+          "turn-2": true,
         },
       },
     });
+  });
+
+  it("ignores changed-file expansion values saved with legacy folder semantics", () => {
+    const parsed = parsePersistedState({
+      threadChangedFilesExpandedById: {
+        "environment:thread-1": {
+          "turn-1": false,
+        },
+      },
+    });
+
+    expect(parsed.threadChangedFilesExpandedById).toEqual({});
   });
 
   it("migrates legacy CWD project preferences into local alias keys", () => {
@@ -278,19 +296,16 @@ describe("uiStateStore persistence", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      threadChangedFilesExpansionVersion: 1,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
+          "turn-2": true,
         },
       },
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
-      threadChangedFilesExpandedById: {
-        "environment:thread-1": {
-          "turn-1": false,
-        },
-      },
     });
   });
 

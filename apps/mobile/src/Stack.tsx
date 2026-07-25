@@ -15,7 +15,6 @@ import { DynamicColorIOS, Platform, Pressable, ScrollView, StyleSheet } from "re
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/AppText";
-import { renderCompactBrandTitle } from "./components/CompactBrandTitle";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ClerkSettingsSheetDetentProvider } from "./features/cloud/ClerkSettingsSheetDetent";
@@ -60,6 +59,7 @@ import {
   EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
   transitionIncomingSharePresentation,
 } from "./features/sharing/incoming-share-presentation";
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 
@@ -79,19 +79,24 @@ type AppScreenOptions = NativeStackNavigationOptions & {
 // Shared header presets. Screens only override genuinely dynamic values (titles,
 // subtitles, toolbar items, search callbacks) via NativeStackScreenOptions.
 //
-// GLASS: transparent header over the screen's primary scroll view, with the iOS 26
-// scroll-edge blur sampling the content (Home, Thread, Files tree, settings sheet).
+// GLASS: transparent header over the screen's primary scroll view on supported
+// iOS versions. Pre-glass iOS gets the same solid material as internal-scroll
+// surfaces so content is laid out below the bar instead of underlapping it.
 const GLASS_HEADER_OPTIONS: AppScreenOptions = {
   headerBackButtonDisplayMode: "minimal",
   headerBackTitle: "",
   headerLargeTitle: false,
   headerShadowVisible: false,
   headerShown: true,
-  headerStyle: Platform.OS === "ios" ? { backgroundColor: "transparent" } : undefined,
+  headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED
+    ? { backgroundColor: "transparent" }
+    : SHEET_BACKGROUND_COLOR !== undefined
+      ? { backgroundColor: SHEET_BACKGROUND_COLOR as unknown as string }
+      : undefined,
   headerTitleStyle: { fontSize: 18, fontWeight: "800" },
-  headerTransparent: Platform.OS === "ios",
-  scrollEdgeEffects: Platform.OS === "ios" ? HEADER_SCROLL_EDGE_EFFECTS : undefined,
-  unstable_navigationItemStyle: Platform.OS === "ios" ? "editor" : undefined,
+  headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
+  scrollEdgeEffects: NATIVE_LIQUID_GLASS_SUPPORTED ? HEADER_SCROLL_EDGE_EFFECTS : undefined,
+  unstable_navigationItemStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? "editor" : undefined,
 };
 
 // SOLID: opaque sheet-colored header for surfaces whose content scrolls internally
@@ -378,8 +383,7 @@ export const RootStack = createNativeStackNavigator({
         ...GLASS_HEADER_OPTIONS,
         contentStyle: { backgroundColor: "transparent" },
         headerBackVisible: false,
-        headerTitle: renderCompactBrandTitle,
-        title: "T3 Code",
+        title: "Threads",
       },
     }),
     Thread: createNativeStackScreen({

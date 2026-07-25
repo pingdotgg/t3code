@@ -1,10 +1,9 @@
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useNavigation } from "@react-navigation/native";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { renderCompactBrandTitle } from "../../components/CompactBrandTitle";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
@@ -16,6 +15,7 @@ import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
 import { useHomeListOptions } from "./home-list-options";
+import { buildHomeProjectScopes } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 
@@ -29,7 +29,8 @@ export function HomeRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
-  const { archiveThread, confirmDeleteThread } = useThreadListActions();
+  const { archiveThread, confirmDeleteThread, settleThread, unsettleThread } =
+    useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -53,11 +54,31 @@ export function HomeRouteScreen() {
   const {
     options: listOptions,
     setSelectedEnvironmentId,
-    setProjectGroupingMode,
     setProjectSortOrder,
     setThreadSortOrder,
   } = useHomeListOptions(availableEnvironmentIds);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  const projectFilterOptions = useMemo(
+    () =>
+      buildHomeProjectScopes({
+        projects,
+        environmentId: selectedEnvironmentId,
+        projectGroupingMode: listOptions.projectGroupingMode,
+      }).map((scope) => ({
+        key: scope.key,
+        label: scope.title,
+      })),
+    [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
+  );
+  useEffect(() => {
+    if (
+      selectedProjectKey !== null &&
+      !projectFilterOptions.some((project) => project.key === selectedProjectKey)
+    ) {
+      setSelectedProjectKey(null);
+    }
+  }, [projectFilterOptions, selectedProjectKey]);
 
   // In split layouts the persistent sidebar IS the thread list — Home becomes
   // an empty detail pane so selecting a thread never transitions layouts.
@@ -87,19 +108,18 @@ export function HomeRouteScreen() {
     >
       <>
         {/* Restore the compact title in case the split branch blanked it. */}
-        <NativeStackScreenOptions
-          options={{ title: "T3 Code", headerTitle: renderCompactBrandTitle }}
-        />
+        <NativeStackScreenOptions options={{ title: "Threads", headerTitle: "Threads" }} />
         <HomeHeader
           environments={environments}
+          projects={projectFilterOptions}
           searchQuery={searchQuery}
           selectedEnvironmentId={selectedEnvironmentId}
+          selectedProjectKey={selectedProjectKey}
           projectSortOrder={listOptions.projectSortOrder}
           threadSortOrder={listOptions.threadSortOrder}
-          projectGroupingMode={listOptions.projectGroupingMode}
           onEnvironmentChange={setSelectedEnvironmentId}
+          onProjectChange={setSelectedProjectKey}
           onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
-          onProjectGroupingModeChange={setProjectGroupingMode}
           onProjectSortOrderChange={setProjectSortOrder}
           onSearchQueryChange={setSearchQuery}
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
@@ -114,15 +134,19 @@ export function HomeRouteScreen() {
           }
           onArchiveThread={archiveThread}
           onDeleteThread={confirmDeleteThread}
+          onSettleThread={settleThread}
+          onUnsettleThread={unsettleThread}
           onEnvironmentChange={setSelectedEnvironmentId}
+          onProjectChange={setSelectedProjectKey}
           onOpenEnvironments={() =>
             navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" })
           }
           onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
-          onProjectGroupingModeChange={setProjectGroupingMode}
           onProjectSortOrderChange={setProjectSortOrder}
           onSearchQueryChange={setSearchQuery}
           onSelectThread={(thread) => {
+            // Settled threads are live shells: opening one is plain
+            // navigation, and sending a message un-settles server-side.
             navigation.navigate("Thread", {
               environmentId: thread.environmentId,
               threadId: thread.id,
@@ -149,6 +173,7 @@ export function HomeRouteScreen() {
           savedConnectionsById={savedConnectionsById}
           searchQuery={searchQuery}
           selectedEnvironmentId={selectedEnvironmentId}
+          selectedProjectKey={selectedProjectKey}
           threads={threads}
           threadSortOrder={listOptions.threadSortOrder}
         />

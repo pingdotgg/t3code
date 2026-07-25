@@ -2,6 +2,7 @@ import type {
   ProjectScript,
   ProjectScriptIcon,
   ResolvedKeybindingsConfig,
+  T3ProjectFileScript,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -11,6 +12,7 @@ import {
 import {
   BugIcon,
   ChevronDownIcon,
+  DownloadIcon,
   FlaskConicalIcon,
   HammerIcon,
   ListChecksIcon,
@@ -54,7 +56,16 @@ import {
 import { Group, GroupSeparator } from "./ui/group";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuShortcut,
+  MenuTrigger,
+} from "./ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
@@ -98,8 +109,12 @@ export interface NewProjectScriptInput {
 
 export type ProjectScriptActionResult = AtomCommandResult<void, unknown>;
 
+const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
+
 interface ProjectScriptsControlProps {
   scripts: ReadonlyArray<ProjectScript>;
+  /** Scripts declared in the project's checked-in t3.json, offered for import. */
+  fileScripts?: ReadonlyArray<T3ProjectFileScript>;
   keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
   onRunScript: (script: ProjectScript) => void;
@@ -113,6 +128,7 @@ interface ProjectScriptsControlProps {
 
 export default function ProjectScriptsControl({
   scripts,
+  fileScripts = NO_FILE_SCRIPTS,
   keybindings,
   preferredScriptId = null,
   onRunScript,
@@ -141,6 +157,18 @@ export default function ProjectScriptsControl({
     }
     return primaryProjectScript(scripts);
   }, [preferredScriptId, scripts]);
+  const importableScripts = useMemo(
+    () =>
+      fileScripts.filter(
+        (fileScript) =>
+          !scripts.some(
+            (script) =>
+              script.command === fileScript.command ||
+              script.name.toLowerCase() === fileScript.name.toLowerCase(),
+          ),
+      ),
+    [fileScripts, scripts],
+  );
   const isEditing = editingScriptId !== null;
   const dropdownItemClassName =
     "data-highlighted:bg-transparent data-highlighted:text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:hover:bg-accent data-highlighted:hover:text-accent-foreground data-highlighted:focus-visible:bg-accent data-highlighted:focus-visible:text-accent-foreground";
@@ -247,6 +275,57 @@ export default function ProjectScriptsControl({
     void onDeleteScript(editingScriptId);
   }, [editingScriptId, onDeleteScript]);
 
+  const importFileScript = async (fileScript: T3ProjectFileScript) => {
+    const payload: NewProjectScriptInput = {
+      name: fileScript.name,
+      command: fileScript.command,
+      icon: fileScript.icon ?? "play",
+      runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
+      keybinding: null,
+      previewUrl: fileScript.previewUrl ?? null,
+      autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
+    };
+    const result = await onAddScript(payload);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      // Surface the failure through the regular add dialog, prefilled so the
+      // user can adjust and retry.
+      const error = squashAtomCommandFailure(result);
+      setEditingScriptId(null);
+      setName(payload.name);
+      setCommand(payload.command);
+      setIcon(payload.icon);
+      setIconPickerOpen(false);
+      setRunOnWorktreeCreate(payload.runOnWorktreeCreate);
+      setKeybinding("");
+      setPreviewUrl(payload.previewUrl ?? "");
+      setAutoOpenPreview(payload.autoOpenPreview);
+      setValidationError(error instanceof Error ? error.message : "Failed to import action.");
+      setDialogOpen(true);
+    }
+  };
+
+  const importMenuItems = importableScripts.length > 0 && (
+    <>
+      {primaryScript && <MenuSeparator />}
+      <MenuGroup>
+        <MenuGroupLabel>From t3.json</MenuGroupLabel>
+        {importableScripts.map((fileScript) => (
+          <MenuItem
+            key={`${fileScript.name} ${fileScript.command}`}
+            className={dropdownItemClassName}
+            onClick={() => void importFileScript(fileScript)}
+          >
+            <ScriptIcon icon={fileScript.icon ?? "play"} className="size-4" />
+            <span className="truncate">{fileScript.name}</span>
+            <MenuShortcut className="ms-auto">
+              <DownloadIcon className="size-3.5" aria-label="Import" />
+            </MenuShortcut>
+          </MenuItem>
+        ))}
+      </MenuGroup>
+    </>
+  );
+
   return (
     <>
       {primaryScript ? (
@@ -320,6 +399,7 @@ export default function ProjectScriptsControl({
                   </MenuItem>
                 );
               })}
+              {importMenuItems}
               <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
                 <PlusIcon className="size-4" />
                 Add action
@@ -327,6 +407,23 @@ export default function ProjectScriptsControl({
             </MenuPopup>
           </Menu>
         </Group>
+      ) : importableScripts.length > 0 ? (
+        <Menu highlightItemOnHover={false}>
+          <MenuTrigger render={<Button size="xs" variant="outline" aria-label="Project actions" />}>
+            <PlusIcon className="size-3.5" />
+            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+              Add action
+            </span>
+            <ChevronDownIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            {importMenuItems}
+            <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
+              <PlusIcon className="size-4" />
+              Add action
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
       ) : (
         <Tooltip>
           <TooltipTrigger
@@ -382,7 +479,7 @@ export default function ProjectScriptsControl({
                         <Button
                           type="button"
                           variant="outline"
-                          className="size-9 shrink-0 hover:bg-popover active:bg-popover data-pressed:bg-popover data-pressed:shadow-xs/5 data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)]"
+                          className="size-9 shrink-0 hover:bg-popover active:bg-popover data-pressed:bg-popover data-pressed:shadow-xs/5 data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:border-transparent dark:bg-white/[0.035] dark:data-pressed:before:shadow-none"
                           aria-label="Choose icon"
                         />
                       }
@@ -397,10 +494,10 @@ export default function ProjectScriptsControl({
                             <button
                               key={entry.id}
                               type="button"
-                              className={`relative flex flex-col items-center gap-2 rounded-md border px-2 py-2 text-xs ${
+                              className={`relative flex flex-col items-center gap-2 rounded-md border px-2 py-2 text-xs dark:border-transparent ${
                                 isSelected
-                                  ? "border-primary/70 bg-primary/10"
-                                  : "border-border/70 hover:bg-accent/60"
+                                  ? "border-primary/70 bg-primary/10 dark:ring-1 dark:ring-primary/30"
+                                  : "border-border/70 hover:bg-accent/60 dark:bg-white/[0.035]"
                               }`}
                               onClick={() => {
                                 setIcon(entry.id);
@@ -458,7 +555,7 @@ export default function ProjectScriptsControl({
                   Open this URL in the in-app preview when this action runs.
                 </p>
               </div>
-              <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm">
+              <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
                 <span>Run automatically on worktree creation</span>
                 <Switch
                   checked={runOnWorktreeCreate}
@@ -466,7 +563,7 @@ export default function ProjectScriptsControl({
                 />
               </label>
               <label
-                className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm ${
+                className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
                   previewUrl.trim().length === 0 ? "opacity-60" : ""
                 }`}
               >
@@ -480,7 +577,7 @@ export default function ProjectScriptsControl({
               {validationError && <p className="text-sm text-destructive">{validationError}</p>}
             </form>
           </DialogPanel>
-          <DialogFooter>
+          <DialogFooter className="dark:border-transparent dark:bg-transparent">
             {isEditing && (
               <Button
                 type="button"

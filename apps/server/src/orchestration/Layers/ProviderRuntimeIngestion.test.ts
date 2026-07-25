@@ -30,6 +30,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
@@ -448,6 +449,230 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it("clears active turn when provider session becomes ready", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-session-ready"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-session-ready"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-session-ready",
+      10_000,
+    );
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-state-ready-with-active-turn"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: {
+        state: "ready",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session?.activeTurnId === null &&
+        entry.session?.lastError === null,
+      10_000,
+    );
+    expect(thread.session?.status).toBe("ready");
+    expect(thread.session?.activeTurnId).toBeNull();
+    expect(thread.session?.lastError).toBeNull();
+  });
+
+  effectIt.effect(
+    "keeps a reconnecting pending turn starting while ready clears stale active state",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const threadId = asThreadId("thread-1");
+        const staleTurnId = asTurnId("turn-stale-before-reconnect");
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-pending-reconnect"),
+          threadId,
+          message: {
+            messageId: MessageId.make("message-pending-reconnect"),
+            role: "user",
+            text: "resume after reconnect",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-starting-pending-reconnect"),
+          threadId,
+          session: {
+            threadId,
+            status: "starting",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: staleTurnId,
+            lastError: null,
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          },
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+
+        harness.emit({
+          type: "session.state.changed",
+          eventId: asEventId("evt-session-ready-pending-reconnect"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          createdAt: "2026-01-01T00:00:02.000Z",
+          payload: { state: "ready" },
+        });
+
+        let thread = yield* Effect.promise(() =>
+          waitForThread(
+            harness.readModel,
+            (entry) => entry.session?.status === "starting" && entry.session.activeTurnId === null,
+          ),
+        );
+        expect(thread.session?.status).toBe("starting");
+        expect(thread.session?.activeTurnId).toBeNull();
+
+        harness.emit({
+          type: "session.started",
+          eventId: asEventId("evt-session-started-pending-reconnect"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          createdAt: "2026-01-01T00:00:03.000Z",
+        });
+        yield* Effect.promise(() => harness.drain());
+        thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === threadId,
+        )!;
+        expect(thread.session?.status).toBe("starting");
+        expect(thread.session?.activeTurnId).toBeNull();
+
+        harness.emit({
+          type: "turn.started",
+          eventId: asEventId("evt-turn-started-pending-reconnect"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          turnId: asTurnId("turn-after-reconnect"),
+          createdAt: "2026-01-01T00:00:04.000Z",
+        });
+        thread = yield* Effect.promise(() =>
+          waitForThread(
+            harness.readModel,
+            (entry) =>
+              entry.session?.status === "running" &&
+              entry.session.activeTurnId === asTurnId("turn-after-reconnect"),
+          ),
+        );
+        expect(thread.session?.status).toBe("running");
+
+        harness.emit({
+          type: "session.started",
+          eventId: asEventId("evt-session-started-duplicate-midturn"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          createdAt: "2026-01-01T00:00:05.000Z",
+        });
+        yield* Effect.promise(() => harness.drain());
+        thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === threadId,
+        )!;
+        expect(thread.session?.status).toBe("running");
+        expect(thread.session?.activeTurnId).toBe(asTurnId("turn-after-reconnect"));
+      }),
+  );
+
+  effectIt.effect("keeps an aborted pending start stopped across duplicate exit events", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const threadId = asThreadId("thread-1");
+      const stoppedAt = "2026-01-01T00:00:02.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-stop"),
+        threadId,
+        message: {
+          messageId: MessageId.make("message-before-stop"),
+          role: "user",
+          text: "stop this startup",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-starting-before-stop"),
+        threadId,
+        session: {
+          threadId,
+          status: "starting",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-stop-pending-start"),
+        threadId,
+        session: {
+          threadId,
+          status: "stopped",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: stoppedAt,
+        },
+        createdAt: stoppedAt,
+      });
+
+      harness.emit({
+        type: "session.exited",
+        eventId: asEventId("evt-session-exited-after-stop"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:00:03.000Z",
+      });
+      harness.emit({
+        type: "session.exited",
+        eventId: asEventId("evt-duplicate-session-exited-after-stop"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:00:04.000Z",
+      });
+
+      yield* Effect.promise(() => harness.drain());
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(thread?.session?.status).toBe("stopped");
+      expect(thread?.session?.activeTurnId).toBeNull();
+    }),
+  );
+
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -466,6 +691,7 @@ describe("ProviderRuntimeIngestion", () => {
       (thread) =>
         thread.session?.status === "running" &&
         thread.session?.activeTurnId === "turn-midturn-lifecycle",
+      10_000,
     );
 
     harness.emit({
@@ -502,6 +728,7 @@ describe("ProviderRuntimeIngestion", () => {
     await waitForThread(
       harness.readModel,
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+      10_000,
     );
   });
 
@@ -2945,6 +3172,196 @@ describe("ProviderRuntimeIngestion", () => {
         (entry: ProviderRuntimeTestProposedPlan) => entry.id === "plan:thread-1:turn:turn-task-1",
       )?.planMarkdown,
     ).toBe("# Plan title");
+  });
+
+  it("titles task activities with the task description, including on completion", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-named-task-started"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-named-task"),
+      payload: {
+        taskId: "named-task-1",
+        description: "Typecheck mobile app",
+        taskType: "local_bash",
+      },
+    });
+
+    harness.emit({
+      type: "task.progress",
+      eventId: asEventId("evt-named-task-progress"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-named-task"),
+      payload: {
+        taskId: "named-task-1",
+        description: "Typecheck mobile app",
+        summary: "Running tsc across the mobile workspace.",
+      },
+    });
+
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-named-task-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-named-task"),
+      payload: {
+        taskId: "named-task-1",
+        status: "completed",
+        summary: "Typecheck finished without errors.",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-named-task-completed",
+      ),
+    );
+
+    const progress = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-named-task-progress",
+    );
+    const completed = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-named-task-completed",
+    );
+
+    const progressPayload =
+      progress?.payload && typeof progress.payload === "object"
+        ? (progress.payload as Record<string, unknown>)
+        : undefined;
+    const completedPayload =
+      completed?.payload && typeof completed.payload === "object"
+        ? (completed.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(progress?.summary).toBe("Typecheck mobile app");
+    expect(progressPayload?.title).toBe("Typecheck mobile app");
+    expect(completed?.summary).toBe("Task completed");
+    expect(completedPayload?.title).toBe("Typecheck mobile app");
+    expect(completedPayload?.summary).toBe("Typecheck finished without errors.");
+    expect(completedPayload?.detail).toBe("Typecheck finished without errors.");
+  });
+
+  it("titles task completion from task.started when no progress event carried the name", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-fast-task-started"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-fast-task"),
+      payload: {
+        taskId: "fast-task-1",
+        description: "wait for codex review to finish",
+        taskType: "local_bash",
+      },
+    });
+
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-fast-task-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-fast-task"),
+      payload: {
+        taskId: "fast-task-1",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-fast-task-completed",
+      ),
+    );
+
+    const completed = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-fast-task-completed",
+    );
+    const completedPayload =
+      completed?.payload && typeof completed.payload === "object"
+        ? (completed.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(completedPayload?.title).toBe("wait for codex review to finish");
+  });
+
+  it("titles task completion from persisted activities after the description cache is swept", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "task.progress",
+      eventId: asEventId("evt-swept-task-progress"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-swept-task"),
+      payload: {
+        taskId: "swept-task-1",
+        description: "Watch round-3 CI and bots",
+        summary: "Polling CI checks.",
+      },
+    });
+
+    await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-swept-task-progress",
+      ),
+    );
+
+    // session.exited sweeps the in-memory description cache; the completion
+    // that follows must recover the name from persisted activities.
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-swept-task-session-exited"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {},
+    });
+
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-swept-task-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-swept-task"),
+      payload: {
+        taskId: "swept-task-1",
+        status: "completed",
+        summary: "CI is green.",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-swept-task-completed",
+      ),
+    );
+
+    const completed = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-swept-task-completed",
+    );
+    const completedPayload =
+      completed?.payload && typeof completed.payload === "object"
+        ? (completed.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(completedPayload?.title).toBe("Watch round-3 CI and bots");
   });
 
   it("projects structured user input request and resolution as thread activities", async () => {
