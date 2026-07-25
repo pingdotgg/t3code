@@ -249,6 +249,30 @@ export const make = Effect.gen(function* () {
     (input: Input) =>
       ensureGit(operation, input.cwd).pipe(Effect.andThen(run(input)));
 
+  const REMOTE_TRACKING_REF_PATTERN = /^origin\/(.+)$/;
+
+  const refreshRemoteTrackingBase = (input: VcsCreateWorktreeInput): Effect.Effect<void, never> => {
+    const remoteBranch = REMOTE_TRACKING_REF_PATTERN.exec(input.refName)?.[1];
+    if (!remoteBranch) {
+      return Effect.void;
+    }
+    return git
+      .fetchRemoteTrackingBranch({
+        cwd: input.cwd,
+        remoteName: "origin",
+        remoteBranch,
+      })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Failed to fetch the latest remote base; using the local ref", {
+            cwd: input.cwd,
+            refName: input.refName,
+            detail: error.detail,
+          }),
+        ),
+      );
+  };
+
   return GitWorkflowService.of({
     status: (input) =>
       detectGitRepositoryForStatus("GitWorkflowService.status", input.cwd).pipe(
@@ -297,6 +321,12 @@ export const make = Effect.gen(function* () {
       ),
     createWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
+        // When the worktree is based on a remote-tracking ref (`origin/<base>`),
+        // refresh that ref from the remote first so new threads always branch
+        // off the latest upstream state instead of a stale local copy. The
+        // fetch is best-effort: when the remote is unreachable we log a
+        // warning and fall back to the ref as-is.
+        Effect.andThen(refreshRemoteTrackingBase(input)),
         Effect.andThen(git.createWorktree(input)),
       ),
     fetchRemote: (input) =>

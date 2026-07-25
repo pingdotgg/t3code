@@ -1711,10 +1711,11 @@ public actor LiveBackend: BackendService {
     }
 
     /// Eager worktree creation at session-create time (vcs.createWorktree).
-    /// startFromOrigin uses the base's origin tracking ref as the start point
-    /// — fresh as of the last fetch; unlike the turn bootstrap this RPC does
-    /// no network fetch — and falls back to the local base when that ref
-    /// doesn't resolve.
+    /// startFromOrigin uses the base's origin tracking ref as the start point;
+    /// the server fetches that ref from the remote right before creating the
+    /// worktree (best-effort — on fetch failure it uses the ref as-is), so new
+    /// threads branch off the latest upstream state. Falls back to the local
+    /// base when the origin ref doesn't resolve.
     private func createEagerWorktree(plan: WorktreePlan) async -> VcsWorktree? {
         guard let client = currentClient else { return nil }
         let branch = Self.temporaryWorktreeBranchName()

@@ -2,7 +2,7 @@ import { assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { VcsRepositoryDetectionError } from "@t3tools/contracts";
+import { GitCommandError, VcsRepositoryDetectionError } from "@t3tools/contracts";
 
 import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
@@ -185,6 +185,162 @@ describe("GitWorkflowService", () => {
       Effect.provide(
         makeLayer({
           detect: () => Effect.fail(cause),
+        }),
+      ),
+    );
+  });
+
+  const gitHandle = {
+    kind: "git",
+    repository: {},
+    driver: {},
+  } as unknown as VcsDriverRegistry.VcsDriverHandle;
+
+  function makeGitRepoLayer(input: {
+    readonly fetchRemoteTrackingBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"];
+    readonly createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"];
+  }) {
+    return GitWorkflowService.layer.pipe(
+      Layer.provide(
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          resolve: () => Effect.succeed(gitHandle),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          fetchRemoteTrackingBranch: input.fetchRemoteTrackingBranch,
+          createWorktree: input.createWorktree,
+        }),
+      ),
+      Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    );
+  }
+
+  it.effect("fetches the latest remote base before creating a worktree from an origin ref", () => {
+    const operations: string[] = [];
+    const fetchRemoteTrackingBranch = vi.fn(
+      (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
+        Effect.sync(() => {
+          operations.push("fetch");
+        }),
+    );
+    const createWorktree = vi.fn(
+      (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+        Effect.sync(() => {
+          operations.push("create-worktree");
+          return {
+            worktree: {
+              refName: "sergecode/abc12345",
+              path: "/tmp/worktree",
+            },
+          };
+        }),
+    );
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const result = yield* workflow.createWorktree({
+        cwd: "/tmp/project",
+        refName: "origin/main",
+        newRefName: "sergecode/abc12345",
+        baseRefName: "main",
+        path: null,
+      });
+
+      assert.deepEqual(fetchRemoteTrackingBranch.mock.calls[0]?.[0], {
+        cwd: "/tmp/project",
+        remoteName: "origin",
+        remoteBranch: "main",
+      });
+      assert.deepEqual(operations, ["fetch", "create-worktree"]);
+      assert.equal(result.worktree.path, "/tmp/worktree");
+    }).pipe(
+      Effect.provide(
+        makeGitRepoLayer({
+          fetchRemoteTrackingBranch,
+          createWorktree,
+        }),
+      ),
+    );
+  });
+
+  it.effect("still creates the worktree when the remote base fetch fails", () => {
+    const fetchRemoteTrackingBranch = vi.fn(
+      (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
+        Effect.fail(
+          new GitCommandError({
+            operation: "fetchRemoteTrackingBranch",
+            command: "git fetch origin main",
+            cwd: "/tmp/project",
+            detail: "network unreachable",
+          }),
+        ),
+    );
+    const createWorktree = vi.fn(
+      (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+        Effect.succeed({
+          worktree: {
+            refName: "sergecode/abc12345",
+            path: "/tmp/worktree",
+          },
+        }),
+    );
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const result = yield* workflow.createWorktree({
+        cwd: "/tmp/project",
+        refName: "origin/main",
+        newRefName: "sergecode/abc12345",
+        baseRefName: "main",
+        path: null,
+      });
+
+      assert.equal(fetchRemoteTrackingBranch.mock.calls.length, 1);
+      assert.equal(createWorktree.mock.calls.length, 1);
+      assert.equal(result.worktree.path, "/tmp/worktree");
+    }).pipe(
+      Effect.provide(
+        makeGitRepoLayer({
+          fetchRemoteTrackingBranch,
+          createWorktree,
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not fetch when the worktree base is a local ref", () => {
+    const fetchRemoteTrackingBranch = vi.fn(
+      (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
+        Effect.void,
+    );
+    const createWorktree = vi.fn(
+      (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+        Effect.succeed({
+          worktree: {
+            refName: "sergecode/abc12345",
+            path: "/tmp/worktree",
+          },
+        }),
+    );
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      yield* workflow.createWorktree({
+        cwd: "/tmp/project",
+        refName: "main",
+        newRefName: "sergecode/abc12345",
+        baseRefName: "main",
+        path: null,
+      });
+
+      assert.equal(fetchRemoteTrackingBranch.mock.calls.length, 0);
+      assert.equal(createWorktree.mock.calls.length, 1);
+    }).pipe(
+      Effect.provide(
+        makeGitRepoLayer({
+          fetchRemoteTrackingBranch,
+          createWorktree,
         }),
       ),
     );
