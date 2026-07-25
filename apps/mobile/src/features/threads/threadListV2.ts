@@ -342,7 +342,9 @@ export function buildThreadListV2Items(input: {
   const snoozed: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
   for (const thread of input.threads) {
-    // Callers pass live shells. The server stamps settledOverride for the tail.
+    if (thread.lineage.relationshipToParent === "subagent") continue;
+    // Callers pass live (unarchived) shells; settled threads are among them
+    // and partition into the tail via effectiveSettled.
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
     if (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) {
       continue;
