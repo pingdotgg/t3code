@@ -1429,10 +1429,13 @@ public actor LiveBackend: BackendService {
         Array(threadsByID.values).sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    public func archivedThreads() async throws -> [ChatThread] {
+    public func archivedThreadsPage(cursor: Int?, limit: Int) async throws -> ArchivedThreadsPage {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        let snapshot = try await client.getArchivedShellSnapshot()
-        return snapshot.threads.map(mapThread).sorted { $0.updatedAt > $1.updatedAt }
+        let snapshot = try await client.getArchivedShellSnapshot(cursor: cursor, limit: limit)
+        return ArchivedThreadsPage(
+            threads: snapshot.threads.map(mapThread).sorted { $0.updatedAt > $1.updatedAt },
+            total: snapshot.archivedTotal,
+            nextCursor: snapshot.nextCursor)
     }
 
     public func timeline(threadID: String) async throws -> [TimelineItem] {
@@ -2213,6 +2216,26 @@ public actor LiveBackend: BackendService {
             }
         }
         vcsSubscriptions[threadID] = task
+    }
+
+    /// One-shot status fetch without registering a persistent watch: the
+    /// launch sweep uses it to learn PR state for threads nobody is watching.
+    /// The flattened `vcs.refreshStatus` result is split back into the
+    /// local/remote pair and routed through the same snapshot path as the
+    /// live stream, so consumers see an ordinary `.vcsStatusChanged`.
+    public func refreshVcsStatus(threadID: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let result = try await client.refreshVcsStatus(cwd: try threadCwd(threadID))
+        let local = VcsStatusLocal(
+            isRepo: result.isRepo, hasPrimaryRemote: result.hasPrimaryRemote,
+            isDefaultRef: result.isDefaultRef, refName: result.refName,
+            hasWorkingTreeChanges: result.hasWorkingTreeChanges,
+            workingTree: result.workingTree)
+        let remote = VcsStatusRemote(
+            hasUpstream: result.hasUpstream, aheadCount: result.aheadCount,
+            behindCount: result.behindCount, aheadOfDefaultCount: result.aheadOfDefaultCount,
+            pr: result.pr)
+        applyVcsEvent(threadID: threadID, event: .snapshot(local: local, remote: remote))
     }
 
     public func pullRequestReview(threadID: String, reference: String) async throws

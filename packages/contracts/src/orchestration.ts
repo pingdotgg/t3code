@@ -536,6 +536,25 @@ export const OrchestrationShellSnapshot = Schema.Struct({
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
 
+/** Upper bound for `limit` on archived shell snapshot pages. */
+export const ORCHESTRATION_ARCHIVED_SHELL_MAX_LIMIT = 200;
+
+export const OrchestrationGetArchivedShellSnapshotInput = Schema.Struct({
+  cursor: Schema.optionalKey(NonNegativeInt),
+  limit: Schema.optionalKey(
+    NonNegativeInt.check(Schema.isLessThanOrEqualTo(ORCHESTRATION_ARCHIVED_SHELL_MAX_LIMIT)),
+  ),
+});
+export type OrchestrationGetArchivedShellSnapshotInput =
+  typeof OrchestrationGetArchivedShellSnapshotInput.Type;
+
+export const OrchestrationArchivedShellPage = Schema.Struct({
+  ...OrchestrationShellSnapshot.fields,
+  archivedTotal: NonNegativeInt,
+  nextCursor: Schema.NullOr(NonNegativeInt),
+});
+export type OrchestrationArchivedShellPage = typeof OrchestrationArchivedShellPage.Type;
+
 export const OrchestrationShellStreamEvent = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("project-upserted"),
@@ -1500,8 +1519,8 @@ export const OrchestrationRpcSchemas = {
     output: OrchestrationReplayEventsResult,
   },
   getArchivedShellSnapshot: {
-    input: Schema.Struct({}),
-    output: OrchestrationShellSnapshot,
+    input: OrchestrationGetArchivedShellSnapshotInput,
+    output: OrchestrationArchivedShellPage,
   },
   subscribeThread: {
     input: OrchestrationSubscribeThreadInput,

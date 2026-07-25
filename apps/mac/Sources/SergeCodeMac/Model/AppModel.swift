@@ -18,6 +18,10 @@ public final class AppModel {
     public private(set) var archivedThreads: [ChatThread] = []
     public private(set) var archivedThreadsLoading = false
     public private(set) var archivedThreadsError: String?
+    /// Offset for the next archived page; nil when everything is loaded.
+    public private(set) var archivedThreadsNextCursor: Int?
+    /// Total archived thread count across all pages (from the server).
+    public private(set) var archivedThreadsTotal = 0
     /// Thread IDs pinned locally in the macOS client. Pinning is intentionally
     /// client-local: it is sidebar organization, not server thread metadata.
     public private(set) var pinnedThreadIDs: Set<String>
@@ -168,6 +172,14 @@ public final class AppModel {
     /// commit, so overlapping keystroke-driven saves can't land out of order.
     @ObservationIgnored private var settingsSaveToken = 0
     @ObservationIgnored private var archivedThreadsRefreshToken = UUID()
+    /// Serializes `loadMoreArchivedThreads` so double-taps can't interleave
+    /// pages or duplicate entries.
+    @ObservationIgnored private var archivedThreadsLoadMoreInFlight = false
+    /// Threads with an in-flight `settleThread` dispatch from the merged/closed
+    /// PR observer — prevents duplicate settles while the server round-trips.
+    @ObservationIgnored private var prSettleInFlightThreadIDs: Set<String> = []
+    /// Launch sweep (PRs merged while the app was closed) runs once per process.
+    @ObservationIgnored private var didRunClosedPrSettleSweep = false
     /// threadID → (messageID, index) of the actively streaming assistant
     /// message, so per-token appends skip the O(n) timeline scan. Entries
     /// are validated against the array before use — a stale index costs one
@@ -754,6 +766,10 @@ public final class AppModel {
                 previousStalled: previousStalled,
                 thread: thread)
             updateProjectPathIndex(for: thread)
+            // No VCS event fires when a watched PR's thread merely goes
+            // idle — re-evaluate the cached merged/closed state so the
+            // settle still gets persisted once the session finishes.
+            persistSettleForClosedPullRequest(threadID: thread.id)
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
             if pinnedThreadIDs.remove(id) != nil {
@@ -812,6 +828,7 @@ public final class AppModel {
             state(creating: threadID).planProgress = progress
         case .vcsStatusChanged(let threadID, let status):
             state(creating: threadID).vcsStatus = status
+            persistSettleForClosedPullRequest(threadID: threadID)
         case .subagentStopFailed(let taskId, let message):
             // Async stop failures (unsupported adapter, no session, etc.)
             // arrive as projected activities, not as a thrown RPC error.
@@ -820,6 +837,33 @@ public final class AppModel {
             .approvalResolved, .userInputResolved:
             // Timeline events are staged by applyBatch; never reach here.
             assertionFailure("timeline event routed past the batch reducer")
+        }
+    }
+
+    /// Persists a server-side settle when the cached VCS status shows the
+    /// thread's PR merged/closed. The "settled because PR merged" inbox rule
+    /// is otherwise computed from in-memory VCS state only, so it vanished on
+    /// every relaunch; an explicit settle survives in the server's
+    /// `settledOverride` column. Never overrides a user pin (either
+    /// "settled" or "active") and mirrors the server's settle validation
+    /// (`canSettle`), so a thread with a live session or pending interaction
+    /// is left alone until a later upsert re-evaluates it.
+    private func persistSettleForClosedPullRequest(threadID: String) {
+        guard let status = threadStates[threadID]?.vcsStatus,
+            status.prState == .merged || status.prState == .closed,
+            let thread = threads.first(where: { $0.id == threadID }),
+            thread.status != .archived,
+            thread.settledOverride == nil,
+            ThreadInboxSemantics.canSettle(thread),
+            !prSettleInFlightThreadIDs.contains(threadID)
+        else { return }
+        prSettleInFlightThreadIDs.insert(threadID)
+        // Fire-and-forget: the successful settle echoes back as a thread
+        // upsert with settledOverride == "settled", which self-limits further
+        // dispatches once the in-flight guard clears.
+        Task {
+            try? await backend.settleThread(id: threadID)
+            prSettleInFlightThreadIDs.remove(threadID)
         }
     }
 
@@ -982,9 +1026,34 @@ public final class AppModel {
                         thread: thread)
                 }
             }
-            await refreshArchivedThreads()
+            // The archive list loads on demand when its settings tab appears
+            // (ArchiveSettingsTab's .task) — not on every app refresh.
+            if !didRunClosedPrSettleSweep {
+                didRunClosedPrSettleSweep = true
+                Task { await sweepClosedPullRequestSettles() }
+            }
         } catch {
             lastError = String(describing: error)
+        }
+    }
+
+    /// One-shot launch sweep: threads whose PR merged/closed while the app
+    /// was closed have no in-memory VCS status, so the merged-PR inbox rule
+    /// can't see them and they resurface as active. Refresh each candidate's
+    /// status once — sequentially, to avoid a git-fetch storm at launch —
+    /// and let each resulting `.vcsStatusChanged` flow through
+    /// `persistSettleForClosedPullRequest`, which settles server-side.
+    /// Threads the inactivity rule already settles are skipped: their
+    /// placement survives relaunch without a persisted override.
+    private func sweepClosedPullRequestSettles() async {
+        let candidates = threads.filter {
+            $0.status != .archived
+                && $0.settledOverride == nil
+                && ThreadInboxSemantics.canSettle($0)
+                && !ThreadInboxSemantics.effectiveSettled($0)
+        }
+        for thread in candidates {
+            try? await backend.refreshVcsStatus(threadID: thread.id)
         }
     }
 
@@ -1999,15 +2068,49 @@ public final class AppModel {
         }
     }
 
+    /// Page size for the Archive settings tab.
+    static let archivedThreadsPageSize = 50
+
+    /// Reloads the FIRST archived page, replacing the list. Cheap enough to
+    /// run after every archive/unarchive/delete mutation.
     public func refreshArchivedThreads() async {
         let token = UUID()
         archivedThreadsRefreshToken = token
         archivedThreadsLoading = true
         archivedThreadsError = nil
         do {
-            let refreshed = try await backend.archivedThreads().sorted { $0.updatedAt > $1.updatedAt }
+            let page = try await backend.archivedThreadsPage(
+                cursor: nil, limit: Self.archivedThreadsPageSize)
             guard archivedThreadsRefreshToken == token else { return }
-            archivedThreads = refreshed
+            archivedThreads = page.threads
+            archivedThreadsTotal = page.total
+            archivedThreadsNextCursor = page.nextCursor
+            archivedThreadsLoading = false
+        } catch {
+            guard archivedThreadsRefreshToken == token else { return }
+            archivedThreadsLoading = false
+            archivedThreadsError = String(describing: error)
+        }
+    }
+
+    /// Appends the next archived page. A refresh racing the fetch invalidates
+    /// the result via the shared refresh token; the in-flight flag keeps
+    /// duplicate triggers from interleaving pages.
+    public func loadMoreArchivedThreads() async {
+        guard let cursor = archivedThreadsNextCursor, !archivedThreadsLoadMoreInFlight
+        else { return }
+        let token = archivedThreadsRefreshToken
+        archivedThreadsLoadMoreInFlight = true
+        archivedThreadsLoading = true
+        defer { archivedThreadsLoadMoreInFlight = false }
+        do {
+            let page = try await backend.archivedThreadsPage(
+                cursor: cursor, limit: Self.archivedThreadsPageSize)
+            guard archivedThreadsRefreshToken == token else { return }
+            let loadedIDs = Set(archivedThreads.map(\.id))
+            archivedThreads.append(contentsOf: page.threads.filter { !loadedIDs.contains($0.id) })
+            archivedThreadsTotal = page.total
+            archivedThreadsNextCursor = page.nextCursor
             archivedThreadsLoading = false
         } catch {
             guard archivedThreadsRefreshToken == token else { return }

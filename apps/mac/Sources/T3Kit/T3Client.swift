@@ -42,7 +42,7 @@ public protocol T3RpcTransport: Actor {
 
 /// `{}` — the payload schema for every no-argument RPC in the v1 subset
 /// (`server.getConfig`, `subscribeServerConfig`, `subscribeServerLifecycle`,
-/// `orchestration.getArchivedShellSnapshot`, `orchestration.subscribeShell`).
+/// `orchestration.subscribeShell`).
 public struct EmptyPayload: Encodable, Sendable {
     public init() {}
 }
@@ -51,6 +51,18 @@ public struct EmptyPayload: Encodable, Sendable {
 public struct OrchestrationSubscribeThreadInput: Encodable, Sendable {
     public var threadId: String
     public init(threadId: String) { self.threadId = threadId }
+}
+
+/// `orchestration.getArchivedShellSnapshot` input. Both fields optional:
+/// omitting `limit` preserves the legacy "return everything" behavior.
+/// `cursor` is a plain offset into the most-recently-archived-first ordering.
+public struct OrchestrationGetArchivedShellSnapshotInput: Encodable, Sendable {
+    public var cursor: Int?
+    public var limit: Int?
+    public init(cursor: Int? = nil, limit: Int? = nil) {
+        self.cursor = cursor
+        self.limit = limit
+    }
 }
 
 /// Client-side id/timestamp generation helpers. Every dispatched command
@@ -206,8 +218,12 @@ public actor T3Client {
             OrchestrationReplayEventsInput(fromSequenceExclusive: fromSequenceExclusive))
     }
 
-    public func getArchivedShellSnapshot() async throws -> OrchestrationShellSnapshot {
-        try await call("orchestration.getArchivedShellSnapshot", EmptyPayload())
+    public func getArchivedShellSnapshot(
+        cursor: Int? = nil, limit: Int? = nil
+    ) async throws -> OrchestrationShellSnapshot {
+        try await call(
+            "orchestration.getArchivedShellSnapshot",
+            OrchestrationGetArchivedShellSnapshotInput(cursor: cursor, limit: limit))
     }
 
     /// Snapshot-then-live-tail (§4.2): first item is `.snapshot`, then

@@ -633,6 +633,8 @@ const buildAppUnderTest = (options?: {
               projects: [],
               threads: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
+              archivedTotal: 0,
+              nextCursor: null,
             }),
           getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
           getProjectShellById: () => Effect.succeed(Option.none()),

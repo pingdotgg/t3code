@@ -570,6 +570,311 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("paginates the archived shell snapshot by archived_at descending across projects", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES
+          (
+            'project-page-a',
+            'Page Project A',
+            '/tmp/page-a',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '2026-05-01T00:00:00.000Z',
+            '2026-05-01T00:00:00.000Z',
+            NULL
+          ),
+          (
+            'project-page-b',
+            'Page Project B',
+            '/tmp/page-b',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '2026-05-01T00:00:00.000Z',
+            '2026-05-01T00:00:00.000Z',
+            NULL
+          )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES
+          (
+            'thread-page-old',
+            'project-page-a',
+            'Oldest Archived',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:01.000Z',
+            '2026-05-01T00:00:01.000Z',
+            '2026-05-01T00:00:01.000Z',
+            NULL
+          ),
+          (
+            'thread-page-b-first',
+            'project-page-b',
+            'Project B First',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:02.000Z',
+            '2026-05-01T00:00:02.000Z',
+            '2026-05-01T00:00:02.000Z',
+            NULL
+          ),
+          (
+            'thread-page-mid',
+            'project-page-a',
+            'Mid Archived',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:03.000Z',
+            '2026-05-01T00:00:03.000Z',
+            '2026-05-01T00:00:03.000Z',
+            NULL
+          ),
+          (
+            'thread-page-b-second',
+            'project-page-b',
+            'Project B Second',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:04.000Z',
+            '2026-05-01T00:00:04.000Z',
+            '2026-05-01T00:00:04.000Z',
+            NULL
+          ),
+          (
+            'thread-page-new',
+            'project-page-a',
+            'Newest Archived',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:05.000Z',
+            '2026-05-01T00:00:05.000Z',
+            '2026-05-01T00:00:05.000Z',
+            NULL
+          ),
+          (
+            'thread-page-active',
+            'project-page-a',
+            'Still Active',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:06.000Z',
+            '2026-05-01T00:00:06.000Z',
+            NULL,
+            NULL
+          ),
+          (
+            'thread-page-deleted',
+            'project-page-a',
+            'Archived Then Deleted',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-05-01T00:00:07.000Z',
+            '2026-05-01T00:00:07.000Z',
+            '2026-05-01T00:00:07.000Z',
+            '2026-05-01T00:00:08.000Z'
+          )
+      `;
+
+      // Sessions on the newest (page 1) and oldest (page 3) threads prove the
+      // paginated read only hydrates dependent rows for the page's threads.
+      yield* sql`
+        INSERT INTO projection_thread_sessions (
+          thread_id,
+          status,
+          provider_name,
+          provider_session_id,
+          provider_thread_id,
+          runtime_mode,
+          active_turn_id,
+          last_error,
+          updated_at
+        )
+        VALUES
+          (
+            'thread-page-new',
+            'stopped',
+            'codex',
+            'provider-session-new',
+            'provider-thread-new',
+            'full-access',
+            NULL,
+            NULL,
+            '2026-05-01T00:00:05.000Z'
+          ),
+          (
+            'thread-page-old',
+            'stopped',
+            'codex',
+            'provider-session-old',
+            'provider-thread-old',
+            'full-access',
+            NULL,
+            NULL,
+            '2026-05-01T00:00:01.000Z'
+          )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+        VALUES
+          (${ORCHESTRATION_PROJECTOR_NAMES.projects}, 9, '2026-05-01T00:00:09.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threads}, 9, '2026-05-01T00:00:09.000Z')
+      `;
+
+      const expectedOrder = [
+        "thread-page-new",
+        "thread-page-b-second",
+        "thread-page-mid",
+        "thread-page-b-first",
+        "thread-page-old",
+      ] as const;
+
+      // First page: most-recently-archived first, interleaved across projects.
+      const firstPage = yield* snapshotQuery.getArchivedShellSnapshot({ limit: 2 });
+      assert.deepEqual(
+        firstPage.threads.map((thread) => thread.id),
+        [ThreadId.make("thread-page-new"), ThreadId.make("thread-page-b-second")],
+      );
+      assert.equal(firstPage.archivedTotal, 5);
+      assert.equal(firstPage.nextCursor, 2);
+      assert.equal(firstPage.threads[0]?.session?.updatedAt, "2026-05-01T00:00:05.000Z");
+
+      // Second page via cursor.
+      const secondPage = yield* snapshotQuery.getArchivedShellSnapshot({ cursor: 2, limit: 2 });
+      assert.deepEqual(
+        secondPage.threads.map((thread) => thread.id),
+        [ThreadId.make("thread-page-mid"), ThreadId.make("thread-page-b-first")],
+      );
+      assert.equal(secondPage.archivedTotal, 5);
+      assert.equal(secondPage.nextCursor, 4);
+      assert.equal(secondPage.threads[0]?.session, null);
+
+      // Final page returns the remainder and terminates pagination.
+      const finalPage = yield* snapshotQuery.getArchivedShellSnapshot({
+        cursor: secondPage.nextCursor ?? 0,
+        limit: 2,
+      });
+      assert.deepEqual(
+        finalPage.threads.map((thread) => thread.id),
+        [ThreadId.make("thread-page-old")],
+      );
+      assert.equal(finalPage.archivedTotal, 5);
+      assert.equal(finalPage.nextCursor, null);
+      assert.equal(finalPage.threads[0]?.session?.updatedAt, "2026-05-01T00:00:01.000Z");
+
+      // Legacy callers that omit the input still get everything in one shot.
+      const fullSnapshot = yield* snapshotQuery.getArchivedShellSnapshot();
+      assert.deepEqual(
+        fullSnapshot.threads.map((thread) => thread.id),
+        expectedOrder.map((id) => ThreadId.make(id)),
+      );
+      assert.equal(fullSnapshot.archivedTotal, 5);
+      assert.equal(fullSnapshot.nextCursor, null);
+
+      const emptyInputSnapshot = yield* snapshotQuery.getArchivedShellSnapshot({});
+      assert.deepEqual(
+        emptyInputSnapshot.threads.map((thread) => thread.id),
+        expectedOrder.map((id) => ThreadId.make(id)),
+      );
+      assert.equal(emptyInputSnapshot.nextCursor, null);
+    }),
+  );
+
   it.effect(
     "reads targeted project, thread, and count queries without hydrating the full snapshot",
     () =>

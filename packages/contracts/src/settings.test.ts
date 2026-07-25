@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -178,6 +179,26 @@ describe("ServerSettings worktree defaults", () => {
     expect(
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: true }).newWorktreesStartFromOrigin,
     ).toBe(true);
+  });
+});
+
+describe("ServerSettings auto-archive defaults", () => {
+  it("defaults autoArchiveSettledAfter to three days when the key is missing", () => {
+    const decoded = decodeServerSettings({});
+    expect(decoded.autoArchiveSettledAfter).not.toBeNull();
+    expect(Duration.toMillis(decoded.autoArchiveSettledAfter!)).toBe(
+      Duration.toMillis(Duration.days(3)),
+    );
+    expect(DEFAULT_SERVER_SETTINGS.autoArchiveSettledAfter).not.toBeNull();
+  });
+
+  it("keeps auto-archive disabled when explicitly set to null", () => {
+    expect(decodeServerSettings({ autoArchiveSettledAfter: null }).autoArchiveSettledAfter).toBe(
+      null,
+    );
+    expect(
+      decodeServerSettingsPatch({ autoArchiveSettledAfter: null }).autoArchiveSettledAfter,
+    ).toBe(null);
   });
 });
 

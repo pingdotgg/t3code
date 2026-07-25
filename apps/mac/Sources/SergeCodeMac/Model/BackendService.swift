@@ -51,9 +51,10 @@ public protocol BackendService: Sendable {
 
     func projects() async throws -> [Project]
     func threads() async throws -> [ChatThread]
-    /// Returns archived threads without relying on the active shell snapshot.
-    /// Backends that do not have a separate query can use the default filter.
-    func archivedThreads() async throws -> [ChatThread]
+    /// One page of archived threads (most-recently-archived first), without
+    /// relying on the active shell snapshot. `cursor` is the offset returned
+    /// as the previous page's `nextCursor` (nil = first page).
+    func archivedThreadsPage(cursor: Int?, limit: Int) async throws -> ArchivedThreadsPage
     func timeline(threadID: String) async throws -> [TimelineItem]
     /// Drop a thread's live timeline subscription and per-thread caches.
     /// Re-opening later goes through `timeline(threadID:)` which re-subscribes
@@ -136,6 +137,11 @@ public protocol BackendService: Sendable {
     /// Start (or keep) a live VCS status subscription for a thread's
     /// workspace; status arrives via `.vcsStatusChanged` events.
     func watchVcsStatus(threadID: String) async throws
+    /// One-shot VCS status refresh (no persistent subscription); the result
+    /// arrives via a `.vcsStatusChanged` event like the watched path. Used by
+    /// the launch sweep that settles threads whose PR merged while the app
+    /// was closed.
+    func refreshVcsStatus(threadID: String) async throws
     func pullRequestReview(threadID: String, reference: String) async throws
         -> PullRequestReviewSnapshot
     func listBranches(threadID: String, query: String?) async throws -> [BranchRef]
@@ -175,8 +181,36 @@ public protocol BackendService: Sendable {
 }
 
 public extension BackendService {
-    func archivedThreads() async throws -> [ChatThread] {
-        try await threads().filter { $0.status == .archived }
+    func archivedThreadsPage(cursor: Int?, limit: Int) async throws -> ArchivedThreadsPage {
+        // Default for backends without a separate archived query: paginate
+        // the full thread list client-side.
+        let archived = try await threads()
+            .filter { $0.status == .archived }
+            .sorted { $0.updatedAt > $1.updatedAt }
+        let offset = min(cursor ?? 0, archived.count)
+        let page = Array(archived.dropFirst(offset).prefix(limit))
+        let next = offset + page.count
+        return ArchivedThreadsPage(
+            threads: page, total: archived.count,
+            nextCursor: next < archived.count ? next : nil)
+    }
+
+    /// Default for conformers without one-shot VCS refresh (test fakes).
+    func refreshVcsStatus(threadID: String) async throws {}
+}
+
+/// One page of archived threads as returned by `archivedThreadsPage`.
+public struct ArchivedThreadsPage: Sendable {
+    public var threads: [ChatThread]
+    /// Total archived thread count across all pages.
+    public var total: Int
+    /// Offset for the next page; nil when this page is the last.
+    public var nextCursor: Int?
+
+    public init(threads: [ChatThread], total: Int, nextCursor: Int?) {
+        self.threads = threads
+        self.total = total
+        self.nextCursor = nextCursor
     }
 }
 
