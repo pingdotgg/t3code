@@ -20,6 +20,7 @@ import {
   observeRemoteWatchStream,
   RemoteWatchFailure,
   RemoteWatchInteractionRequiredError,
+  RemoteWatchNoTurnError,
   RemoteWatchTerminalWithoutMessageError,
   RemoteWatchTimeoutError,
   selectFinalAssistantMessage,
@@ -899,6 +900,41 @@ describe("remote thread watch", () => {
       expect(error[Runtime.errorExitCode]).toBe(23);
     }),
   );
+
+  it("preserves the documented watch exit-code range from 20 through 26", () => {
+    const errors = [
+      new RemoteWatchTerminalWithoutMessageError({
+        threadId,
+        turnId,
+        status: "stopped",
+      }),
+      new RemoteWatchTerminalWithoutMessageError({
+        threadId,
+        turnId,
+        status: "interrupted",
+      }),
+      new RemoteWatchTerminalWithoutMessageError({
+        threadId,
+        turnId,
+        status: "error",
+      }),
+      new RemoteWatchTimeoutError({ threadId, timeoutMs: 1_000 }),
+      new RemoteWatchFailure({ kind: "transport" }),
+      new RemoteWatchNoTurnError({ threadId }),
+      new RemoteWatchInteractionRequiredError({
+        threadId,
+        turnId,
+        interaction: {
+          kind: "approval",
+          requestId: "request-exit-code",
+          prompt: { requestKind: "command" },
+        },
+      }),
+    ];
+    expect(errors.map((error) => error[Runtime.errorExitCode])).toEqual([
+      20, 21, 22, 23, 24, 25, 26,
+    ]);
+  });
 
   it("formats text as only message text and JSON as a structured single result", () => {
     const result = {

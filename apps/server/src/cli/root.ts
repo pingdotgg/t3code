@@ -6,7 +6,7 @@ import { authCommand } from "./auth.ts";
 import { connectCommand } from "./connect.ts";
 import { sharedServerCommandFlags } from "./config.ts";
 import { projectCommand } from "./project.ts";
-import { remoteCommand } from "./remote.ts";
+import { localOrchestrationCommands, remoteCommand } from "./remote.ts";
 import { runServerCommand, serveCommand, startCommand } from "./server.ts";
 import { serviceCommand } from "./service.ts";
 import { hasCloudPublicConfig } from "../cloud/publicConfig.ts";
@@ -44,6 +44,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       projectCommand,
       serviceCommand,
       remoteCommand,
+      ...localOrchestrationCommands,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );

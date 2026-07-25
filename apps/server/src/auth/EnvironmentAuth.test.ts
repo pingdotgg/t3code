@@ -42,6 +42,14 @@ const makeCookieRequest = (
     EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]
   >[0];
 
+const makeBearerRequest = (
+  token: string,
+): Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["getSessionState"]>[0] =>
+  ({
+    cookies: {},
+    headers: { authorization: `Bearer ${token}` },
+  }) as unknown as Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["getSessionState"]>[0];
+
 const requestMetadata = {
   deviceType: "desktop" as const,
   os: "macOS",
@@ -97,6 +105,24 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         "relay:read",
       ]);
       expect(verified.subject).toBe("one-time-token");
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+  );
+
+  it.effect("reports the authenticated bearer principal in session state", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const issued = yield* serverAuth.issueSession({
+        scopes: ["orchestration:read"],
+        subject: "local-cli:environment-test",
+        label: "T3 local CLI",
+      });
+      const state = yield* serverAuth.getSessionState(makeBearerRequest(issued.token));
+
+      expect(state.authenticated).toBe(true);
+      expect(state.principal).toEqual({
+        sessionId: issued.sessionId,
+        subject: "local-cli:environment-test",
+      });
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );
 

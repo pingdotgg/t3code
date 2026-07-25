@@ -9,8 +9,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthAdministrativeScopes,
   CommandId,
+  EnvironmentId,
   EnvironmentHttpApi,
+  EnvironmentAuthHttpApi,
+  EnvironmentMetadataHttpApi,
   EnvironmentOrchestrationHttpApi,
+  ORCHESTRATION_CLI_API_VERSION,
   MessageId,
   ProviderInstanceId,
   ThreadId,
@@ -44,17 +48,28 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as ServerSettings from "./serverSettings.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
+import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
+import { serverEnvironmentHttpApiLayer } from "./http.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import {
+  isOrchestrationCliInvocation,
+  RemoteCliError,
+  requireCliApiCompatibility,
+} from "./cli/remote.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
-class ProjectCliHttpApi extends HttpApi.make("environment").add(EnvironmentOrchestrationHttpApi) {}
+class ProjectCliHttpApi extends HttpApi.make("environment")
+  .add(EnvironmentMetadataHttpApi)
+  .add(EnvironmentAuthHttpApi)
+  .add(EnvironmentOrchestrationHttpApi) {}
 
 const connectCli = makeCli({ cloudEnabled: true });
 const noConnectCli = makeCli({ cloudEnabled: false });
@@ -128,8 +143,11 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
     const config = yield* makeCliTestServerConfig(baseDir);
     const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
       Layer.provide(orchestrationHttpApiLayer),
+      Layer.provide(authHttpApiLayer),
+      Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     );
+    const environmentId = EnvironmentId.make("bin-test-local-environment");
     const appLayer = HttpRouter.serve(routesLayer, {
       disableListenLog: true,
       disableLogger: true,
@@ -141,6 +159,26 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
         ),
       ),
       Layer.provideMerge(makeProjectPersistenceLayer(config)),
+      Layer.provide(
+        Layer.mock(ServerEnvironment.ServerEnvironment)({
+          getEnvironmentId: Effect.succeed(environmentId),
+          getDescriptor: Effect.succeed({
+            environmentId,
+            label: "Bin test",
+            platform: { os: "linux", arch: "x64" },
+            serverVersion: "0.0.0",
+            capabilities: {
+              repositoryIdentity: true,
+              orchestration: {
+                pendingInteractions: true,
+                cliApiVersion: ORCHESTRATION_CLI_API_VERSION,
+                serverAuthoritativeCreate: true,
+                watchResume: true,
+              },
+            },
+          }),
+        }),
+      ),
       Layer.provide(Layer.mock(GitWorkflowService.GitWorkflowService)({})),
       Layer.provide(
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
@@ -172,6 +210,13 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
       ),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(ServerConfig.layer(config)),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(
+        ServerSecretStore.layer.pipe(
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provide(ServerConfig.layer(config)),
+        ),
+      ),
     );
 
     return yield* Effect.scoped(
@@ -188,6 +233,9 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
             port: address.port,
           }),
         });
+        yield* Effect.promise(() =>
+          NodeFS.promises.writeFile(config.environmentIdPath, `${environmentId}\n`),
+        );
         return yield* run();
       }).pipe(Effect.provide(Layer.mergeAll(appLayer, NodeServices.layer))),
     );
@@ -200,6 +248,172 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
 
   it.effect("accepts canonical --no-<flag> boolean negation", () =>
     runCliWithRuntime(["--no-log-websocket-events", "--version"]),
+  );
+
+  it.effect("exposes the unified local orchestration command surface", () =>
+    Effect.gen(function* () {
+      const { output } = yield* captureStdout(runCli(["--help"]));
+      for (const command of [
+        "create",
+        "send",
+        "watch",
+        "pending",
+        "answer",
+        "approve",
+        "reject",
+        "thread",
+        "shell",
+        "session",
+        "snapshot",
+      ]) {
+        assert.include(output, command);
+      }
+      assert.include(output, "auth");
+      assert.include(output, "remote");
+    }),
+  );
+
+  it("routes failures only for actual top-level orchestration commands", () => {
+    assert.isTrue(
+      isOrchestrationCliInvocation(["--log-level", "debug", "--base-dir", "/tmp/t3", "session"]),
+    );
+    assert.isTrue(isOrchestrationCliInvocation(["remote", "watch", "thread-1"]));
+    assert.isFalse(isOrchestrationCliInvocation(["auth", "pairing", "create"]));
+    assert.isFalse(isOrchestrationCliInvocation(["project", "add", "/tmp/send"]));
+    assert.isFalse(
+      isOrchestrationCliInvocation(["--base-dir", "create", "auth", "session", "list"]),
+    );
+  });
+
+  it.effect("fails local discovery without creating credentials when no server is live", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-local-missing-test-"),
+      );
+      const failure = yield* runCliWithRuntime(["session", "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+
+      assert.equal(
+        failure instanceof Error ? failure.message : "",
+        "No live T3 server was discovered for this base directory.",
+      );
+      assert.isFalse(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "local-cli")));
+    }),
+  );
+
+  it.effect("rejects stale local runtime state before reading or creating credentials", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-local-stale-test-"),
+      );
+      const config = yield* makeCliTestServerConfig(baseDir);
+      NodeFS.mkdirSync(NodePath.dirname(config.serverRuntimeStatePath), { recursive: true });
+      NodeFS.writeFileSync(
+        config.serverRuntimeStatePath,
+        `${JSON.stringify({
+          version: 1,
+          pid: 2_147_483_647,
+          host: "127.0.0.1",
+          port: 65_534,
+          origin: "http://127.0.0.1:65534",
+          startedAt: "2026-01-01T00:00:00.000Z",
+        })}\n`,
+      );
+
+      const failure = yield* runCliWithRuntime(["session", "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+
+      assert.equal(
+        failure instanceof Error ? failure.message : "",
+        "No live T3 server was discovered for this base directory.",
+      );
+      assert.isFalse(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "local-cli")));
+    }),
+  );
+
+  it.effect("reuses one minimum-scope local CLI principal across invocations", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-local-session-test-"),
+      );
+      yield* withLiveProjectCliServer(baseDir, () =>
+        Effect.gen(function* () {
+          const first = yield* captureStdout(runCli(["session", "--base-dir", baseDir]));
+          const second = yield* captureStdout(runCli(["session", "--base-dir", baseDir]));
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI output DTO assertion.
+          const firstDto = JSON.parse(first.output) as {
+            readonly target: {
+              readonly kind: string;
+              readonly environment: { readonly environmentId: string };
+            };
+            readonly auth: {
+              readonly scopes: ReadonlyArray<string>;
+              readonly principal: { readonly sessionId: string; readonly subject: string };
+            };
+          };
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI output DTO assertion.
+          const secondDto = JSON.parse(second.output) as typeof firstDto;
+
+          assert.equal(firstDto.target.kind, "local");
+          assert.equal(firstDto.target.environment.environmentId, "bin-test-local-environment");
+          assert.deepEqual(firstDto.auth.scopes, ["orchestration:read", "orchestration:operate"]);
+          assert.equal(firstDto.auth.principal.sessionId, secondDto.auth.principal.sessionId);
+          assert.equal(firstDto.auth.principal.subject, "local-cli:bin-test-local-environment");
+        }),
+      );
+    }),
+  );
+
+  it.effect("rejects orchestration CLI API version skew before authentication", () =>
+    Effect.gen(function* () {
+      const failure = yield* requireCliApiCompatibility(
+        {
+          environmentId: EnvironmentId.make("skewed"),
+          label: "Skewed",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "9.9.9",
+          capabilities: {
+            repositoryIdentity: true,
+            orchestration: {
+              pendingInteractions: true,
+              cliApiVersion: ORCHESTRATION_CLI_API_VERSION + 1,
+              serverAuthoritativeCreate: true,
+              watchResume: true,
+            },
+          },
+        },
+        "session",
+      ).pipe(Effect.flip);
+
+      assert.instanceOf(failure, RemoteCliError);
+      assert.equal(failure.reason, "version-incompatible");
+    }),
+  );
+
+  it.effect("rejects a live server whose environment id does not match the base directory", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-local-mismatch-test-"),
+      );
+      yield* withLiveProjectCliServer(baseDir, () =>
+        Effect.gen(function* () {
+          NodeFS.writeFileSync(
+            NodePath.join(baseDir, "userdata", "environment-id"),
+            "different-environment\n",
+          );
+          const failure = yield* runCliWithRuntime(["session", "--base-dir", baseDir]).pipe(
+            Effect.flip,
+          );
+          assert.equal(
+            failure instanceof Error ? failure.message : "",
+            "The discovered T3 server does not match this base directory.",
+          );
+          assert.isFalse(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "local-cli")));
+        }),
+      );
+    }),
   );
 
   it.effect("rejects invalid log-level casing before launching the server", () =>

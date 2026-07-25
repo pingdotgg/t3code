@@ -29,6 +29,8 @@ import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
+  OrchestrationCliCreateRequest,
+  OrchestrationCliCreateResult,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationThreadDetailSnapshot,
@@ -502,6 +504,14 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       params: EnvironmentOrchestrationThreadSnapshotParams,
       success: OrchestrationThreadDetailSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("create", "/api/orchestration/create", {
+      headers: OptionalBearerHeaders,
+      payload: OrchestrationCliCreateRequest,
+      success: OrchestrationCliCreateResult,
+      error: EnvironmentOrchestrationDispatchErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

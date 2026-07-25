@@ -1,4 +1,8 @@
-import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ORCHESTRATION_CLI_API_VERSION,
+  type ExecutionEnvironmentDescriptor,
+} from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -144,6 +148,9 @@ export const make = Effect.gen(function* () {
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       orchestration: {
         pendingInteractions: true,
+        cliApiVersion: ORCHESTRATION_CLI_API_VERSION,
+        serverAuthoritativeCreate: true,
+        watchResume: true,
       },
     },
   };

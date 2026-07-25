@@ -77,6 +77,23 @@ allowed only for a trusted allowlisted semantic summary that sets `canApprove: t
 provider prose can never grant approval capability. Until a server-authored semantic normalizer
 provides such an allowlist, all provider-derived approvals are reject/cancel-only.
 
+### Unified orchestration CLI boundary
+
+Local and remote CLI orchestration use one set of command specifications and handlers. The target
+resolver supplies either a live server discovered from base-directory runtime state or an explicit
+remote HTTP base URL; every operation after that point uses the same authenticated HTTP/WebSocket
+transport. Local discovery verifies process liveness, the persisted environment identity, CLI API
+version, and operation capabilities before credential access. Remote authentication and public
+environment inspection remain nested under `t3 remote` so they do not collide with local
+administrative auth.
+
+CLI create is a dedicated server-authoritative operation. Clients send project identity, first
+message, optional overrides, and a session-scoped idempotency key. The server resolves only active
+registered projects and owns defaults, branch/worktree preparation, setup, first-turn dispatch,
+deduplication, and compensation. It never enrolls a project from a client-supplied path. The
+environment descriptor advertises the CLI API version plus create and resumable-watch
+capabilities, and clients fail closed on missing or incompatible capability versions.
+
 ## Domain model
 
 ### ExecutionEnvironment

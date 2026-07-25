@@ -8,6 +8,7 @@ import {
   ApprovalRequestId,
   AuthAccessTokenType,
   AuthEnvironmentBootstrapTokenType,
+  AuthOrchestrationReadScope,
   AuthTokenExchangeGrantType,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
@@ -7029,6 +7030,181 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         dispatchedCommands.map((command) => command.type),
         ["thread.archive", "thread.session.stop"],
       );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("creates worktree threads server-authoritatively and replays duplicate delivery", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const createWorktree = vi.fn(() =>
+        Effect.succeed({
+          worktree: {
+            refName: "t3code/cli-create",
+            path: "/tmp/cli-create-worktree",
+          },
+        }),
+      );
+      let accepted:
+        | {
+            readonly commandId: CommandId;
+            readonly threadId: ThreadId;
+            readonly sequence: number;
+          }
+        | undefined;
+      let shellSnapshotRequests = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: {
+            createWorktree,
+            fetchRemote: () => Effect.void,
+            resolveRemoteTrackingCommit: () =>
+              Effect.succeed({
+                commitSha: "origin-main-sha",
+                remoteRefName: "origin/main",
+              }),
+          },
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Effect.sync(() => ({
+                snapshotSequence: 0,
+                projects:
+                  shellSnapshotRequests++ === 0
+                    ? [
+                        {
+                          id: defaultProjectId,
+                          title: "Registered Project",
+                          workspaceRoot: "/tmp/project",
+                          defaultModelSelection,
+                          scripts: [],
+                          createdAt: "2026-01-01T00:00:00.000Z",
+                          updatedAt: "2026-01-01T00:00:00.000Z",
+                        },
+                      ]
+                    : [],
+                threads: [],
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              })),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                const sequence = dispatchedCommands.length;
+                if (command.type === "thread.turn.start") {
+                  accepted = {
+                    commandId: command.commandId,
+                    threadId: command.threadId,
+                    sequence,
+                  };
+                }
+                return { sequence };
+              }),
+            getCommandReceipt: (commandId) =>
+              Effect.succeed(
+                accepted?.commandId === commandId
+                  ? Option.some({
+                      commandId,
+                      aggregateKind: "thread" as const,
+                      aggregateId: accepted.threadId,
+                      acceptedAt: "2026-01-01T00:00:00.000Z",
+                      resultSequence: accepted.sequence,
+                      status: "accepted" as const,
+                      error: null,
+                    })
+                  : Option.none(),
+              ),
+          },
+        },
+      });
+      const token = yield* getAuthenticatedBearerSessionToken();
+      const readOnlyPairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { authorization: `Bearer ${token}` },
+        body: yield* HttpBody.json({
+          scopes: [AuthOrchestrationReadScope],
+          label: "Read-only create test",
+        }),
+      });
+      const readOnlyPairing = (yield* readOnlyPairingResponse.json) as {
+        readonly credential: string;
+      };
+      const readOnlyExchange = yield* exchangeAccessToken(readOnlyPairing.credential, {
+        scope: AuthOrchestrationReadScope,
+      });
+      const readOnlyToken = readOnlyExchange.body.access_token ?? "";
+      const create = () =>
+        HttpClient.post("/api/orchestration/create", {
+          headers: { authorization: `Bearer ${token}` },
+          body: HttpBody.text(
+            jsonRequestBody({
+              project: defaultProjectId,
+              message: "Create this safely",
+              idempotencyKey: "create-delivery-1",
+              branch: "t3code/cli-create",
+              baseBranch: "main",
+            }),
+            "application/json",
+          ),
+        });
+
+      const firstResponse = yield* create();
+      const first = (yield* firstResponse.json) as {
+        readonly threadId: string;
+        readonly commandId: string;
+        readonly sequence: number;
+        readonly replayed: boolean;
+      };
+      const retryResponse = yield* create();
+      const retry = (yield* retryResponse.json) as typeof first;
+      const missingProjectResponse = yield* HttpClient.post("/api/orchestration/create", {
+        headers: { authorization: `Bearer ${token}` },
+        body: HttpBody.text(
+          jsonRequestBody({
+            project: "/tmp/not-enrolled",
+            message: "Do not enroll this",
+            idempotencyKey: "create-missing-project",
+            branch: "t3code/missing",
+            baseBranch: "main",
+          }),
+          "application/json",
+        ),
+      });
+      const readOnlyResponse = yield* HttpClient.post("/api/orchestration/create", {
+        headers: { authorization: `Bearer ${readOnlyToken}` },
+        body: HttpBody.text(
+          jsonRequestBody({
+            project: defaultProjectId,
+            message: "Read scope must not create",
+            idempotencyKey: "create-read-only",
+            branch: "t3code/read-only",
+            baseBranch: "main",
+          }),
+          "application/json",
+        ),
+      });
+
+      assert.equal(firstResponse.status, 200);
+      assert.equal(retryResponse.status, 200);
+      assert.equal(missingProjectResponse.status, 400);
+      assert.equal(readOnlyPairingResponse.status, 200);
+      assert.equal(readOnlyExchange.response.status, 200);
+      assert.equal(readOnlyResponse.status, 403);
+      assert.isFalse(first.replayed);
+      assert.isTrue(retry.replayed);
+      assert.equal(retry.threadId, first.threadId);
+      assert.equal(retry.commandId, first.commandId);
+      assert.equal(retry.sequence, first.sequence);
+      assert.equal(shellSnapshotRequests, 2);
+      assert.equal(createWorktree.mock.calls.length, 1);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.create", "thread.meta.update", "thread.turn.start"],
+      );
+      const final = dispatchedCommands.at(-1);
+      assertTrue(final?.type === "thread.turn.start");
+      if (final?.type === "thread.turn.start") {
+        assert.equal(final.bootstrap, undefined);
+        assert.equal(final.modelSelection?.instanceId, defaultModelSelection.instanceId);
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

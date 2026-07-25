@@ -124,6 +124,7 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
+export const ORCHESTRATION_CLI_API_VERSION = 1 as const;
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
@@ -425,6 +426,32 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
+
+export const OrchestrationCliCreateIdempotencyKey = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(256),
+);
+export type OrchestrationCliCreateIdempotencyKey = typeof OrchestrationCliCreateIdempotencyKey.Type;
+
+export const OrchestrationCliCreateRequest = Schema.Struct({
+  project: TrimmedNonEmptyString,
+  message: TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+  idempotencyKey: OrchestrationCliCreateIdempotencyKey,
+  title: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
+  branch: Schema.optionalKey(TrimmedNonEmptyString),
+  baseBranch: Schema.optionalKey(TrimmedNonEmptyString),
+  startFromOrigin: Schema.optionalKey(Schema.Boolean),
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  interactionMode: Schema.optionalKey(ProviderInteractionMode),
+});
+export type OrchestrationCliCreateRequest = typeof OrchestrationCliCreateRequest.Type;
+
+export const OrchestrationCliCreateResult = Schema.Struct({
+  threadId: ThreadId,
+  commandId: CommandId,
+  sequence: NonNegativeInt,
+  replayed: Schema.Boolean,
+});
+export type OrchestrationCliCreateResult = typeof OrchestrationCliCreateResult.Type;
 
 export const OrchestrationShellStreamEvent = Schema.Union([
   Schema.Struct({

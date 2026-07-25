@@ -51,6 +51,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   orchestration: Schema.optionalKey(
     Schema.Struct({
       pendingInteractions: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+      cliApiVersion: Schema.optionalKey(Schema.Int),
+      serverAuthoritativeCreate: Schema.optionalKey(Schema.Boolean),
+      watchResume: Schema.optionalKey(Schema.Boolean),
     }),
   ),
 });
