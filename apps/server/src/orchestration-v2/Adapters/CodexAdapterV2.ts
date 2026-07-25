@@ -1266,16 +1266,16 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
   );
 }
 
-const withLiveCodexIntegrationEnvironment = (
-  environment: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv => ({
-  ...environment,
-  ...(process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] === undefined
-    ? {}
-    : {
-        [T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV]: process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV],
-      }),
-});
+const withLiveCodexIntegrationEnvironment = (environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+  const merged = { ...environment };
+  const liveLaunchArgs = process.env[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
+  if (liveLaunchArgs === undefined) {
+    delete merged[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV];
+  } else {
+    merged[T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV] = liveLaunchArgs;
+  }
+  return merged;
+};
 
 export const resolveCodexAdapterAppServerArgs = (
   launchArgs: string | undefined,
