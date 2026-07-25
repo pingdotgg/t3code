@@ -18,9 +18,13 @@ export function resolvePreviewAutomationOpenWaitPolicy(
       waitForVisibility: false,
     };
   }
+  const canPresentBrowserSurface =
+    input.url !== undefined ||
+    snapshot.navStatus._tag === "Loading" ||
+    snapshot.navStatus._tag === "Success";
   return {
     acknowledgeAfterCreation: false,
     waitForOverlay: input.url !== undefined || snapshot.navStatus._tag !== "Idle",
-    waitForVisibility: input.show ?? true,
+    waitForVisibility: (input.show ?? true) && canPresentBrowserSurface,
   };
 }

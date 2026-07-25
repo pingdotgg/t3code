@@ -80,4 +80,38 @@ describe("preview automation open readiness", () => {
       waitForVisibility: false,
     });
   });
+
+  it("does not require visibility for a reused empty tab", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        {} as PreviewAutomationOpenInput,
+        snapshot({ _tag: "Idle" }),
+        true,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: false,
+      waitForVisibility: false,
+    });
+  });
+
+  it("does not require visibility for a reused failed tab", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        {} as PreviewAutomationOpenInput,
+        snapshot({
+          _tag: "LoadFailed",
+          url: "https://example.com/",
+          title: "Example",
+          code: -2,
+          description: "Failed",
+        }),
+        true,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: false,
+      waitForOverlay: true,
+      waitForVisibility: false,
+    });
+  });
 });

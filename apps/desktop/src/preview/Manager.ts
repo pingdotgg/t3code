@@ -977,12 +977,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const tabs = yield* SynchronizedRef.get(tabsRef);
       if (tabs.has(tabId)) yield* update(tabId, { controller: "none" });
     });
+    let detachOnTimeout = true;
     const boundedExecution = Effect.gen(function* () {
       // Session initialization itself sends CDP commands. Keep it inside the
       // operation deadline so an offscreen or suspended guest cannot retain
       // the synchronized session lock indefinitely and poison later actions.
       const control = yield* ensureControlSession(wc);
-      return yield* control.semaphore.withPermit(execute());
+      detachOnTimeout = false;
+      return yield* control.semaphore.withPermit(
+        Effect.sync(() => {
+          detachOnTimeout = true;
+        }).pipe(Effect.andThen(execute())),
+      );
     }).pipe(
       Effect.timeoutOption(Math.max(1, timeoutMs - AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS)),
       Effect.flatMap((result) =>
@@ -994,7 +1000,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return yield* boundedExecution.pipe(
       Effect.onExit(finalize),
       Effect.tapError((error) =>
-        isPreviewAutomationTimeoutError(error) ? detachControlSession(wc.id) : Effect.void,
+        isPreviewAutomationTimeoutError(error) && detachOnTimeout
+          ? detachControlSession(wc.id)
+          : Effect.void,
       ),
     );
   });

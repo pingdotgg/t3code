@@ -13,6 +13,7 @@ import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelSto
 import {
   isPreviewAutomationTabPresented,
   revealPreviewAutomationTab,
+  withPreviewAutomationBackgroundPresentation,
   waitForPreviewAutomationBackgroundPresentation,
 } from "./previewAutomationPresentation";
 
@@ -83,6 +84,85 @@ describe("preview automation presentation", () => {
 
       await vi.advanceTimersByTimeAsync(40);
       await rejection;
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it("accepts a tab that becomes foregrounded while background staging renders", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("document", {
+      querySelectorAll: () => [],
+    });
+    vi.stubGlobal("window", {
+      setTimeout,
+    });
+    const surface = acquireBrowserSurface("tab-foregrounded");
+    try {
+      revealPreviewAutomationTab(threadRef, "tab-foregrounded");
+      const presentation = waitForPreviewAutomationBackgroundPresentation({
+        threadRef,
+        requestId: "request-foregrounded",
+        tabId: "tab-foregrounded",
+        timeoutMs: 40,
+      });
+
+      surface.present({ x: 0, y: 0, width: 800, height: 600 }, true);
+      await vi.advanceTimersByTimeAsync(16);
+
+      await expect(presentation).resolves.toBeUndefined();
+    } finally {
+      surface.release();
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases a background capture lease when the staged operation stalls", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("document", {
+      querySelectorAll: () => [
+        {
+          dataset: {
+            previewViewport: "tab-background",
+            previewBackgroundCapture: "true",
+          },
+          offsetWidth: 800,
+        },
+      ],
+    });
+    vi.stubGlobal("window", {
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      },
+    });
+    try {
+      const operation = withPreviewAutomationBackgroundPresentation(
+        threadRef,
+        "request-stalled",
+        "tab-background",
+        40,
+        () => new Promise<never>(() => undefined),
+      );
+      const rejection = expect(operation).rejects.toMatchObject({
+        _tag: "PreviewAutomationBackgroundPresentationTimeoutError",
+        requestId: "request-stalled",
+        tabId: "tab-background",
+        timeoutMs: 40,
+      });
+      await Promise.resolve();
+      expect(
+        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+      ).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(40);
+
+      await rejection;
+      expect(
+        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+      ).toBeUndefined();
     } finally {
       vi.unstubAllGlobals();
       vi.useRealTimers();

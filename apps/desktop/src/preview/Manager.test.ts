@@ -366,6 +366,78 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("does not let a queued timeout detach the active control session", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let attached = false;
+        let stallNextEvaluation = true;
+        const attach = vi.fn(() => {
+          attached = true;
+        });
+        const detach = vi.fn(() => {
+          attached = false;
+        });
+        const sendCommand = vi.fn(async (method: string): Promise<unknown> => {
+          if (method === "Runtime.evaluate" && stallNextEvaluation) {
+            stallNextEvaluation = false;
+            return await new Promise<never>(() => undefined);
+          }
+          return method === "Runtime.evaluate" ? { result: { value: "recovered" } } : undefined;
+        });
+        fromId.mockReturnValue({
+          id: 44,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com/",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => attached,
+            attach,
+            detach,
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_queued_timeout");
+        yield* manager.registerWebview("tab_queued_timeout", 44);
+        const active = yield* manager
+          .automationEvaluate("tab_queued_timeout", { expression: "document.title" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        const queued = yield* manager
+          .automationWaitFor("tab_queued_timeout", { text: "ready", timeoutMs: 1_000 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+
+        yield* TestClock.adjust(1_000);
+        expect(Exit.isFailure(yield* Effect.exit(Fiber.join(queued)))).toBe(true);
+        expect(detach).not.toHaveBeenCalled();
+
+        yield* TestClock.adjust(14_000);
+        expect(Exit.isFailure(yield* Effect.exit(Fiber.join(active)))).toBe(true);
+        expect(detach).toHaveBeenCalledOnce();
+
+        expect(
+          yield* manager.automationEvaluate("tab_queued_timeout", {
+            expression: "document.title",
+          }),
+        ).toBe("recovered");
+      }),
+    ),
+  );
+
   effectIt.effect("isolates failed state listeners and continues delivery", () => {
     const loggedErrors: Array<unknown> = [];
     const logger = Logger.make(({ message }) => {

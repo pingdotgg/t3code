@@ -19,6 +19,7 @@ import {
 } from "./previewAutomationErrors";
 import {
   createPreviewAutomationRequestConsumerAtom,
+  previewAutomationExecutionBudget,
   serializePreviewAutomationError,
 } from "./previewAutomationRequestConsumer";
 
@@ -56,6 +57,12 @@ const consumerState = (handleRequest: (request: PreviewAutomationRequest) => Pro
 });
 
 describe("previewAutomationRequestConsumer", () => {
+  it("preserves the full execution budget for short requested timeouts", () => {
+    expect(previewAutomationExecutionBudget(100, 250)).toBe(100);
+    expect(previewAutomationExecutionBudget(500, 250)).toBe(500);
+    expect(previewAutomationExecutionBudget(1_000, 250)).toBe(750);
+  });
+
   it("acknowledges a replacement stream before consuming requests from it", async () => {
     const requestsAtom = Atom.make(
       AsyncResult.success<PreviewAutomationStreamEvent, Error>({
@@ -414,6 +421,56 @@ describe("previewAutomationRequestConsumer", () => {
           error: expect.objectContaining({
             _tag: "PreviewAutomationTimeoutError",
             detail: expect.objectContaining({ timeoutMs: 750 }),
+          }),
+        }),
+      );
+      registry.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not collapse a short host timeout to one millisecond", async () => {
+    vi.useFakeTimers();
+    try {
+      const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationStreamEvent, Error>>(
+        AsyncResult.initial<PreviewAutomationStreamEvent, Error>(false),
+      );
+      const respond = vi.fn(async (_response: PreviewAutomationResponse) => undefined);
+      const state = consumerState(() => new Promise(() => undefined));
+      const consumerAtom = createPreviewAutomationRequestConsumerAtom({
+        requestsAtom,
+        clientId,
+        connectionAtom: state.connectionAtom,
+        environmentId,
+        requestHandlerAtom: state.requestHandlerAtom,
+        respond,
+        label: "test:preview-automation-short-deadline",
+      });
+      const registry = AtomRegistry.make();
+      registry.mount(consumerAtom);
+      registry.set(
+        requestsAtom,
+        AsyncResult.success(
+          requestEvent("request-short", {
+            operation: "click",
+            tabId,
+            timeoutMs: 100,
+          }),
+        ),
+      );
+
+      await vi.advanceTimersByTimeAsync(99);
+      expect(respond).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestId: "request-short",
+          ok: false,
+          error: expect.objectContaining({
+            _tag: "PreviewAutomationTimeoutError",
+            detail: expect.objectContaining({ timeoutMs: 100 }),
           }),
         }),
       );

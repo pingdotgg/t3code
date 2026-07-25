@@ -1,6 +1,9 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
+import {
+  acquireBrowserSurfaceBackgroundCapture,
+  useBrowserSurfaceStore,
+} from "~/browser/browserSurfaceStore";
 import { setActivePreviewTab } from "~/previewStateStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
@@ -28,6 +31,8 @@ export async function waitForPreviewAutomationBackgroundPresentation(input: {
 }): Promise<void> {
   const deadline = Date.now() + input.timeoutMs;
   while (true) {
+    if (isPreviewAutomationTabPresented(input.threadRef, input.tabId)) return;
+
     const wrapper = Array.from(
       document.querySelectorAll<HTMLElement>("[data-preview-viewport]"),
     ).find(
@@ -56,4 +61,51 @@ export async function waitForPreviewAutomationBackgroundPresentation(input: {
     tabId: input.tabId,
     timeoutMs: input.timeoutMs,
   });
+}
+
+export async function withPreviewAutomationBackgroundPresentation<A>(
+  threadRef: ScopedThreadRef,
+  requestId: string,
+  tabId: string,
+  timeoutMs: number,
+  use: (background: boolean) => Promise<A>,
+): Promise<A> {
+  const background = !(useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false);
+  if (!background) return await use(false);
+
+  const timeoutError = () =>
+    new PreviewAutomationBackgroundPresentationTimeoutError({
+      requestId,
+      environmentId: threadRef.environmentId,
+      threadId: threadRef.threadId,
+      tabId,
+      timeoutMs,
+    });
+  const releaseCapture = acquireBrowserSurfaceBackgroundCapture(tabId);
+  let timedOut = false;
+  let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = globalThis.setTimeout(() => {
+      timedOut = true;
+      reject(timeoutError());
+    }, timeoutMs);
+  });
+  const operation = (async () => {
+    await waitForPreviewAutomationBackgroundPresentation({
+      threadRef,
+      requestId,
+      tabId,
+      timeoutMs,
+    });
+    if (timedOut) throw timeoutError();
+    const stillBackground = !(useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false);
+    return await use(stillBackground);
+  })();
+
+  try {
+    return await Promise.race([operation, deadline]);
+  } finally {
+    if (timer !== undefined) globalThis.clearTimeout(timer);
+    releaseCapture();
+  }
 }

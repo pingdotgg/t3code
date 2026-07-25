@@ -37,10 +37,7 @@ import {
   stopBrowserRecording,
 } from "~/browser/browserRecording";
 import { resolveBrowserRecordingStopTarget } from "~/browser/browserRecordingScope";
-import {
-  acquireBrowserSurfaceBackgroundCapture,
-  useBrowserSurfaceStore,
-} from "~/browser/browserSurfaceStore";
+import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
@@ -51,7 +48,7 @@ import { previewBridge } from "./previewBridge";
 import {
   isPreviewAutomationTabPresented,
   revealPreviewAutomationTab,
-  waitForPreviewAutomationBackgroundPresentation,
+  withPreviewAutomationBackgroundPresentation,
 } from "./previewAutomationPresentation";
 import {
   PreviewAutomationNavigationTimeoutError,
@@ -63,7 +60,10 @@ import {
   PreviewAutomationViewportTimeoutError,
 } from "./previewAutomationErrors";
 import { resolvePreviewAutomationOpenWaitPolicy } from "./previewAutomationOpenReadiness";
-import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
+import {
+  createPreviewAutomationRequestConsumerAtom,
+  previewAutomationExecutionBudget,
+} from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
 import {
   needsPreviewAutomationSessionSync,
@@ -134,30 +134,6 @@ const waitForBrowserSurfaceVisibility = async (
     surfaceRegistered: panel.surfaces.some((surface) => surface.id === `browser:${tabId}`),
     presentationRectAvailable: presentation?.rect !== null && presentation?.rect !== undefined,
   });
-};
-
-const withBackgroundAutomationPresentation = async <A,>(
-  threadRef: ScopedThreadRef,
-  requestId: string,
-  tabId: string,
-  timeoutMs: number,
-  use: (background: boolean) => Promise<A>,
-): Promise<A> => {
-  const background = !(useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false);
-  if (!background) return await use(false);
-
-  const releaseCapture = acquireBrowserSurfaceBackgroundCapture(tabId);
-  try {
-    await waitForPreviewAutomationBackgroundPresentation({
-      threadRef,
-      requestId,
-      tabId,
-      timeoutMs,
-    });
-    return await use(true);
-  } finally {
-    releaseCapture();
-  }
 };
 
 const waitForNavigationReadiness = async (
@@ -376,7 +352,11 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
   const handleRequest = useCallback(
     async (request: PreviewAutomationRequest): Promise<unknown> => {
       const operationDeadline =
-        Date.now() + Math.max(1, request.timeoutMs - PREVIEW_AUTOMATION_INTERNAL_RESPONSE_GRACE_MS);
+        Date.now() +
+        previewAutomationExecutionBudget(
+          request.timeoutMs,
+          PREVIEW_AUTOMATION_INTERNAL_RESPONSE_GRACE_MS,
+        );
       const remainingOperationBudget = (requestedTimeoutMs = request.timeoutMs): number =>
         Math.max(1, Math.min(requestedTimeoutMs, operationDeadline - Date.now()));
       const threadRef: ScopedThreadRef = {
@@ -509,7 +489,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               },
             );
             await ready.bridge.navigate(ready.tabId, resolution.resolvedUrl);
-            await withBackgroundAutomationPresentation(
+            await withPreviewAutomationBackgroundPresentation(
               threadRef,
               request.requestId,
               ready.tabId,
@@ -560,7 +540,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "setColorScheme": {
             const ready = await requireReadyTab();
             const input = request.input as PreviewAutomationSetColorSchemeInput;
-            await withBackgroundAutomationPresentation(
+            await withPreviewAutomationBackgroundPresentation(
               threadRef,
               request.requestId,
               ready.tabId,
@@ -574,7 +554,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "snapshot": {
             const ready = await requireReadyTab();
-            return await withBackgroundAutomationPresentation(
+            return await withPreviewAutomationBackgroundPresentation(
               threadRef,
               request.requestId,
               ready.tabId,
@@ -584,7 +564,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "click": {
             const ready = await requireReadyTab();
-            return await withBackgroundAutomationPresentation(
+            return await withPreviewAutomationBackgroundPresentation(
               threadRef,
               request.requestId,
               ready.tabId,
@@ -598,7 +578,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "type": {
             const ready = await requireReadyTab();
-            return await withBackgroundAutomationPresentation(
+            return await withPreviewAutomationBackgroundPresentation(
               threadRef,
               request.requestId,
               ready.tabId,
@@ -612,7 +592,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "press": {
             const ready = await requireReadyTab();
-            return await withBackgroundAutomationPresentation(
+            return await withPreviewAutomationBackgroundPresentation(
               threadRef,
               request.requestId,
               ready.tabId,
@@ -626,7 +606,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "scroll": {
             const ready = await requireReadyTab();
-            return await withBackgroundAutomationPresentation(
+            return await withPreviewAutomationBackgroundPresentation(
               threadRef,
               request.requestId,
               ready.tabId,
@@ -640,7 +620,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "evaluate": {
             const ready = await requireReadyTab();
-            return await withBackgroundAutomationPresentation(
+            return await withPreviewAutomationBackgroundPresentation(
               threadRef,
               request.requestId,
               ready.tabId,
@@ -654,7 +634,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "waitFor": {
             const ready = await requireReadyTab();
-            return await withBackgroundAutomationPresentation(
+            return await withPreviewAutomationBackgroundPresentation(
               threadRef,
               request.requestId,
               ready.tabId,
