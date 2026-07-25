@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { RotatingFileSink } from "@t3tools/shared/logging";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const tempRoots: string[] = [];
 
@@ -14,6 +14,7 @@ function makeTempDir(): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const dir of tempRoots.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -56,7 +57,21 @@ describe("RotatingFileSink", () => {
     expect(fs.existsSync(path.join(dir, "server-child.log.3"))).toBe(false);
   });
 
-  it("prunes stale backups above maxFiles on startup", () => {
+  it("does not scan the log directory during construction", () => {
+    const dir = makeTempDir();
+    const readdirSync = vi.spyOn(fs, "readdirSync");
+
+    const sink = new RotatingFileSink({
+      filePath: path.join(dir, "desktop-main.log"),
+      maxBytes: 16,
+      maxFiles: 2,
+    });
+
+    expect(sink).toBeInstanceOf(RotatingFileSink);
+    expect(readdirSync).not.toHaveBeenCalled();
+  });
+
+  it("defers pruning stale backups above maxFiles until rotation", () => {
     const dir = makeTempDir();
     const logPath = path.join(dir, "desktop-main.log");
     fs.writeFileSync(path.join(dir, "desktop-main.log.1"), "first");
@@ -64,11 +79,13 @@ describe("RotatingFileSink", () => {
 
     const sink = new RotatingFileSink({
       filePath: logPath,
-      maxBytes: 16,
+      maxBytes: 4,
       maxFiles: 2,
     });
-    sink.write("hello");
 
+    expect(fs.existsSync(path.join(dir, "desktop-main.log.4"))).toBe(true);
+    sink.write("abcd");
+    sink.write("e");
     expect(fs.existsSync(path.join(dir, "desktop-main.log.4"))).toBe(false);
   });
 });

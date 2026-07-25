@@ -14,6 +14,7 @@ export class RotatingFileSink {
   private readonly maxFiles: number;
   private readonly throwOnError: boolean;
   private currentSize = 0;
+  private hasPrunedOverflowBackups = false;
 
   constructor(options: RotatingFileSinkOptions) {
     if (options.maxBytes < 1) {
@@ -29,7 +30,6 @@ export class RotatingFileSink {
     this.throwOnError = options.throwOnError ?? false;
 
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    this.pruneOverflowBackups();
     this.currentSize = this.readCurrentSize();
   }
 
@@ -58,6 +58,11 @@ export class RotatingFileSink {
 
   private rotate(): void {
     try {
+      if (!this.hasPrunedOverflowBackups) {
+        this.pruneOverflowBackups();
+        this.hasPrunedOverflowBackups = true;
+      }
+
       const oldest = this.withSuffix(this.maxFiles);
       if (fs.existsSync(oldest)) {
         fs.rmSync(oldest, { force: true });
