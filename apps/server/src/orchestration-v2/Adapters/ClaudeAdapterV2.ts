@@ -50,6 +50,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -1482,6 +1483,11 @@ type ClaudeNativeToolOutput =
 
 const NO_CLAUDE_NATIVE_TOOL_OUTPUT = { type: "none" } satisfies ClaudeNativeToolOutput;
 
+// How long a turn stays alive on a steer handoff result before settling anyway.
+// The CLI opens the steered native turn within a second or two, so this only
+// fires when it never opens one at all.
+const CLAUDE_STEERING_HANDOFF_TIMEOUT = Duration.seconds(60);
+
 function claudeNativeToolOutputFromToolResult(
   toolResult: ClaudeToolResultContentBlock,
 ): ClaudeNativeToolOutput {
@@ -1819,8 +1825,34 @@ function terminalStatusFromResult(
   return "failed";
 }
 
-function isClaudeActiveSteeringAbortResult(message: SDKResultMessage): boolean {
-  return message.terminal_reason === "aborted_streaming";
+// The CLI ends the native turn to take a steer and answers it in the next one,
+// so that first result hands off rather than ending the T3 turn. Recorded
+// shapes: mid-stream it aborts the stream and reports `aborted_streaming` on an
+// error result, mid-tool it aborts the tools and reports `aborted_tools` on a
+// clean success whose text is empty.
+//
+// A turn that ends normally with nothing to say also counts: it has not
+// answered the steer either. Both extra conditions are deliberate. A result
+// carrying text has answered something, so it terminalizes the turn rather than
+// holding the run open until the handoff bound expires. And `completed` (or an
+// older CLI that omits the field) is the only non-abort reason that means "this
+// turn ended cleanly"; `max_turns`, `background_requested`, `tool_deferred` and
+// the hook reasons are real terminals even when they arrive as a success.
+//
+// The two aborted reasons hand off unless a clean success carries non-empty
+// text. Error subtypes have no result field and stay handoffs, which preserves
+// the recorded `aborted_streaming` shape.
+function isClaudeSteeringHandoffResult(message: SDKResultMessage): boolean {
+  if (
+    message.terminal_reason === "aborted_streaming" ||
+    message.terminal_reason === "aborted_tools"
+  ) {
+    return message.subtype !== "success" || message.is_error || message.result.trim().length === 0;
+  }
+  if (message.terminal_reason !== undefined && message.terminal_reason !== "completed") {
+    return false;
+  }
+  return message.subtype === "success" && !message.is_error && message.result.trim().length === 0;
 }
 
 function isClaudeProviderContinuationTurn(input: ProviderAdapterV2TurnInput): boolean {
@@ -2064,7 +2096,15 @@ export function makeClaudeAdapterV2(
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
-        const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
+        // Steers awaiting a handoff result, counted per provider turn: each
+        // accepted steer ends one native turn, so each one swallows exactly one
+        // result before the turn can terminalize again.
+        const steeredTurns = yield* Ref.make(new Map<OrchestrationV2ProviderTurn["id"], number>());
+        // Frames seen per provider turn, so a swallowed handoff can tell "the
+        // steered turn started" from "the CLI went silent".
+        const turnFrameCounts = yield* Ref.make(
+          new Map<OrchestrationV2ProviderTurn["id"], number>(),
+        );
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
         const itemOrdinals = yield* Ref.make(new Map<string, number>());
@@ -3236,6 +3276,19 @@ export function makeClaudeAdapterV2(
           readonly failure?: OrchestrationV2ProviderFailure;
           readonly threadDisposition?: "reusable" | "broken";
         }) {
+          // Claim the turn before emitting anything. The handoff bound runs on
+          // its own fiber, so without this a frame handler and the bound can
+          // both finalize the same turn and emit two terminals for it.
+          const claimed = yield* Ref.modify(activeTurn, (current) => {
+            if (current?.providerTurnId !== input.context.providerTurnId) {
+              return [false, current] as const;
+            }
+            return [true, null] as const;
+          });
+          if (!claimed) {
+            return;
+          }
+
           for (const toolCall of input.context.toolCalls.values()) {
             const artifacts = buildToolCallArtifacts({
               context: input.context,
@@ -3425,14 +3478,72 @@ export function makeClaudeAdapterV2(
             ],
             { concurrency: 1 },
           );
-          yield* Ref.update(activeTurn, (current) =>
-            current?.providerTurnId === input.context.providerTurnId ? null : current,
-          );
           yield* Ref.update(interruptedTurns, (current) => {
             const next = new Set(current);
             next.delete(input.context.providerTurnId);
             return next;
           });
+          yield* Ref.update(steeredTurns, (current) => {
+            const next = new Map(current);
+            next.delete(input.context.providerTurnId);
+            return next;
+          });
+          yield* Ref.update(turnFrameCounts, (current) => {
+            const next = new Map(current);
+            next.delete(input.context.providerTurnId);
+            return next;
+          });
+        });
+
+        // A steer handoff keeps the T3 turn alive so the steered work still
+        // attaches to it, which leaves the turn depending on a native turn that
+        // the CLI has not opened yet. Bound that wait: if no further frame
+        // reaches this turn, settle it rather than leaving the run running.
+        const boundSteeringHandoff = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+        ) {
+          const framesAtHandoff =
+            (yield* Ref.get(turnFrameCounts)).get(context.providerTurnId) ?? 0;
+          yield* Effect.gen(function* () {
+            yield* Effect.sleep(CLAUDE_STEERING_HANDOFF_TIMEOUT);
+            const current = yield* Ref.get(activeTurn);
+            if (current?.providerTurnId !== context.providerTurnId) {
+              return;
+            }
+            // Claim the settle in one update, so overlapping bounds from
+            // several steers on the same turn cannot both finalize it.
+            const claimed = yield* Ref.modify(turnFrameCounts, (counts) => {
+              const framesNow = counts.get(context.providerTurnId) ?? 0;
+              if (framesNow !== framesAtHandoff) {
+                return [false, counts] as const;
+              }
+              const next = new Map(counts);
+              next.delete(context.providerTurnId);
+              return [true, next] as const;
+            });
+            if (!claimed) {
+              return;
+            }
+            yield* Effect.logWarning("orchestration-v2.claude-steer-handoff-timeout", {
+              providerSessionId: input.providerSessionId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+            });
+            // Settle as a failure, not a quiet completion. The steer was
+            // accepted and never answered, which is the silence this whole
+            // path exists to stop the user from having to guess at.
+            const completedAt = yield* DateTime.now;
+            yield* finalizeActiveTurn({
+              context,
+              status: "failed",
+              completedAt,
+              failure: makeProviderFailure({
+                message: "Claude accepted the steer but never opened a turn to answer it.",
+                code: "steer_handoff_timeout",
+                class: "transport_error",
+              }),
+            });
+          }).pipe(Effect.forkIn(sessionScope));
         });
 
         const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
@@ -3619,9 +3730,22 @@ export function makeClaudeAdapterV2(
             ) ?? false;
           const isNativeOpaqueWakeFrame =
             hasBufferedNotification && (message.type === "assistant" || message.type === "user");
+          // Assistant text with no active turn is the other exception: an early
+          // terminal settled the run while the query kept working, so no
+          // notification is coming and the next result may be minutes away or
+          // never arrive. Without an offer here those frames sit in the buffer
+          // until the session recycles and are never projected.
+          //
+          // Only text qualifies. A tool_use or tool_result frame is the model
+          // working rather than speaking, and the notification or result that
+          // follows it carries the wake detail; offering on those would open
+          // the continuation early and strip that detail from it.
+          const isStrandedNativeOutput =
+            (assistantTextFromSdkMessage(message)?.text.length ?? 0) > 0;
           if (
             !isPendingSubagentNotification &&
             !isNativeOpaqueWakeFrame &&
+            !isStrandedNativeOutput &&
             message.type !== "result"
           ) {
             return;
@@ -3775,6 +3899,12 @@ export function makeClaudeAdapterV2(
             }
             return;
           }
+
+          yield* Ref.update(turnFrameCounts, (current) => {
+            const updated = new Map(current);
+            updated.set(context.providerTurnId, (updated.get(context.providerTurnId) ?? 0) + 1);
+            return updated;
+          });
 
           if (message.type === "assistant") {
             context.nativeMessageCursor = message.uuid;
@@ -4045,6 +4175,27 @@ export function makeClaudeAdapterV2(
             });
           }
 
+          // Decide the steer handoff before anything reads this result: a
+          // handoff belongs to the native turn that was cut short, so it must
+          // not seed this turn's fallback assistant text either.
+          if (message.type === "result") {
+            const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
+            const pendingSteers = (yield* Ref.get(steeredTurns)).get(context.providerTurnId) ?? 0;
+            if (!interrupted && pendingSteers > 0 && isClaudeSteeringHandoffResult(message)) {
+              yield* Ref.update(steeredTurns, (current) => {
+                const next = new Map(current);
+                if (pendingSteers <= 1) {
+                  next.delete(context.providerTurnId);
+                } else {
+                  next.set(context.providerTurnId, pendingSteers - 1);
+                }
+                return next;
+              });
+              yield* boundSteeringHandoff(context);
+              return;
+            }
+          }
+
           // An is_error result's text is the error message; it belongs on the
           // terminal-failure item, not on a synthetic assistant message.
           const resultText =
@@ -4064,12 +4215,8 @@ export function makeClaudeAdapterV2(
           if (message.type === "result") {
             const completedAt = yield* DateTime.now;
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
-            const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
-            if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
-              return;
-            }
             yield* Ref.update(steeredTurns, (current) => {
-              const next = new Set(current);
+              const next = new Map(current);
               next.delete(context.providerTurnId);
               return next;
             });
@@ -4555,12 +4702,30 @@ export function makeClaudeAdapterV2(
               attachmentsDir,
               fileSystem,
             });
+            // Count the steer before offering it, so a handoff result that
+            // races back cannot terminalize the turn, and roll the count back
+            // if the offer never reached the CLI.
             yield* Ref.update(steeredTurns, (current) => {
-              const next = new Set(current);
-              next.add(turnInput.providerTurnId);
+              const next = new Map(current);
+              next.set(turnInput.providerTurnId, (next.get(turnInput.providerTurnId) ?? 0) + 1);
               return next;
             });
-            yield* existing.query.offer(userMessage);
+            yield* existing.query.offer(userMessage).pipe(
+              Effect.onExit((exit) =>
+                Exit.isSuccess(exit)
+                  ? Effect.void
+                  : Ref.update(steeredTurns, (current) => {
+                      const pending = current.get(turnInput.providerTurnId) ?? 0;
+                      const next = new Map(current);
+                      if (pending <= 1) {
+                        next.delete(turnInput.providerTurnId);
+                      } else {
+                        next.set(turnInput.providerTurnId, pending - 1);
+                      }
+                      return next;
+                    }),
+              ),
+            );
           },
           (effect, turnInput) =>
             effect.pipe(

@@ -18,6 +18,7 @@ import { makeCheckpointWorkspace } from "../src/orchestration-v2/testkit/ReplayF
 import { CLAUDE_MODEL_SELECTION } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
 import {
   MESSAGE_STEERING_INITIAL_PROMPT,
+  MESSAGE_STEERING_MID_TOOL_PROMPT,
   MULTI_TURN_FIRST_PROMPT,
   MESSAGE_STEERING_STEER_PROMPT,
   READ_ONLY_NEVER_POLICY,
@@ -93,6 +94,12 @@ const CLAUDE_RECORDINGS = {
     prompts: [MESSAGE_STEERING_INITIAL_PROMPT, MESSAGE_STEERING_STEER_PROMPT],
     defaultTranscriptFile: "fixtures/message_steering/claude_transcript.ndjson",
     queryMode: "active_steering",
+    enableTools: true,
+  },
+  message_steering_mid_tool: {
+    prompts: [MESSAGE_STEERING_MID_TOOL_PROMPT, MESSAGE_STEERING_STEER_PROMPT],
+    defaultTranscriptFile: "fixtures/message_steering_mid_tool/claude_transcript.ndjson",
+    queryMode: "active_steering_mid_tool",
     enableTools: true,
   },
   turn_interrupt_mid_tool: {
@@ -249,13 +256,14 @@ function selectedQueryMode(defaultMode: ClaudeRecordingQueryMode): ClaudeRecordi
     raw === "fork_session_merge_back" ||
     raw === "fork_session_merge_back_siblings" ||
     raw === "active_steering" ||
+    raw === "active_steering_mid_tool" ||
     raw === "interrupt" ||
     raw === "interrupt_restart"
   ) {
     return raw;
   }
   throw new Error(
-    `Unsupported Claude replay query mode '${raw}'. Use 'streaming', 'restart', 'resume_at_cursor', 'fork_session', 'fork_session_prior_turn', 'fork_session_continue', 'fork_session_siblings', 'fork_session_merge_back', 'fork_session_merge_back_siblings', 'active_steering', 'interrupt', or 'interrupt_restart'.`,
+    `Unsupported Claude replay query mode '${raw}'. Use 'streaming', 'restart', 'resume_at_cursor', 'fork_session', 'fork_session_prior_turn', 'fork_session_continue', 'fork_session_siblings', 'fork_session_merge_back', 'fork_session_merge_back_siblings', 'active_steering', 'active_steering_mid_tool', 'interrupt', or 'interrupt_restart'.`,
   );
 }
 
