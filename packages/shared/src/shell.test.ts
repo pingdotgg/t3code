@@ -367,6 +367,28 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
 });
 
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
+  it.effect("resolves POSIX executables against the effective environment", () =>
+    Effect.gen(function* () {
+      let resolvedEnvironment: NodeJS.ProcessEnv | undefined;
+      const command = yield* resolveSpawnCommand("systemctl", ["--user", "daemon-reload"], {
+        env: { PATH: "/usr/local/bin:/usr/bin" },
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(SpawnExecutableResolution, (_command, _platform, env) => {
+          resolvedEnvironment = env;
+          return "/usr/bin/systemctl";
+        }),
+      );
+
+      expect(resolvedEnvironment).toEqual({ PATH: "/usr/local/bin:/usr/bin" });
+      expect(command).toEqual({
+        command: "/usr/bin/systemctl",
+        args: ["--user", "daemon-reload"],
+        shell: false,
+      });
+    }),
+  );
+
   it.effect("runs Windows executables directly without a shell", () =>
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("node.exe", ["script.js", "hello & goodbye"], {

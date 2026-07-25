@@ -37,11 +37,14 @@ const CURSOR_INSTANCE_ID = ProviderInstanceId.make("cursor");
 const OPENCODE_INSTANCE_ID = ProviderInstanceId.make("opencode");
 const encoder = new TextEncoder();
 
-// Pin a non-win32 platform so `resolveSpawnCommand` is a no-op and the raw
-// `{ command, args }` assertions below hold deterministically on any host
-// (including Windows). Windows-specific resolution is covered by the dedicated
-// win32 case at the end of this suite.
-const NonWindowsPlatform = Layer.succeed(HostProcessPlatform, "linux");
+// Pin a non-win32 platform and an unresolved executable lookup so the raw
+// `{ command, args }` assertions below do not depend on executables installed
+// on the host. POSIX resolution is covered by ProcessRunner tests, while the
+// Windows-specific behavior is covered at the end of this suite.
+const NonWindowsPlatform = Layer.mergeAll(
+  Layer.succeed(HostProcessPlatform, "linux"),
+  Layer.succeed(SpawnExecutableResolution, () => undefined),
+);
 
 function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabilities {
   if (provider === CURSOR_DRIVER) {

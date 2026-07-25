@@ -162,6 +162,30 @@ describe("runProcess", () => {
     );
   });
 
+  it.effect("spawns a resolved systemctl path on Linux", () => {
+    const spawner = makeSpawner((command) =>
+      Effect.sync(() => {
+        expect(command.command).toBe("/usr/bin/systemctl");
+        expect(command.args).toEqual(["--user", "daemon-reload"]);
+        expect(command.options.shell).toBe(false);
+        return makeHandle({});
+      }),
+    );
+
+    return runWith(spawner)({
+      command: "systemctl",
+      args: ["--user", "daemon-reload"],
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(HostProcessEnvironment, {
+        PATH: "/usr/local/bin:/usr/bin",
+      }),
+      Effect.provideService(SpawnExecutableResolution, (_command, _platform, env) =>
+        env.PATH === "/usr/local/bin:/usr/bin" ? "/usr/bin/systemctl" : undefined,
+      ),
+    );
+  });
+
   it.effect("preserves resolved spawn context and cause", () =>
     Effect.gen(function* () {
       const cause = PlatformError.systemError({
