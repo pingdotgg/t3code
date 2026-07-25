@@ -226,7 +226,7 @@ jobs:
             --target main \
             --title "SurgeCode $VERSION" \
             --generate-notes \
-            $(case "$VERSION" in *-alpha.*|*-beta.*|*-rc.*) echo --prerelease;; esac)
+            $(case "$VERSION" in (*-alpha.*|*-beta.*|*-rc.*) echo --prerelease;; esac)
 
       - name: Commit appcast to main
         env:
