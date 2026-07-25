@@ -157,7 +157,12 @@ jobs:
           # AppModelTimelineEvictionTests on the alpha.7 release run).
           # Parallelism buys nothing here anyway: MainActor tests already
           # serialize on the main thread.
-          swift test --package-path apps/mac --no-parallel
+          # -j 2: cap SwiftPM build jobs. The arm64 runner has little memory
+          # headroom, and a full cold-cache compile with the default job
+          # count gets a swift-frontend jetsam-killed — which SwiftPM
+          # reports as a bare `error: fatalError` with no diagnostics
+          # (failed the alpha.14 release run).
+          swift test --package-path apps/mac --no-parallel -j 2
 
       - name: Build server sidecar
         run: vp run build:server
@@ -170,6 +175,9 @@ jobs:
         run: ./apps/mac/scripts/stage-sidecar.sh
 
       - name: Build macOS app
+        env:
+          # Same memory-headroom cap as the swift test invocation above.
+          SERGE_CODE_SWIFT_JOBS: "2"
         run: ./apps/mac/scripts/make-app.sh
 
       - name: Require standalone sidecar packaging
