@@ -62,7 +62,12 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { clamp } from "effect/Number";
-import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
+import {
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -467,19 +472,48 @@ const makeWsRpcLayer = (
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
           requiredScope,
         });
+      const revokedSessionError = (requiredScope: AuthEnvironmentScope) =>
+        new EnvironmentAuthorizationError({
+          message: "The authenticated session is no longer valid.",
+          requiredScope,
+        });
+      /**
+       * Re-check the session on every call.
+       *
+       * The socket authenticates once at the upgrade and then stays open for
+       * hours, so without this a revoked or expired client keeps whatever
+       * scopes it connected with until it happens to reconnect. Revocation
+       * also closes the socket outright; this covers the window before that
+       * lands, and any revocation this process never observed.
+       */
+      const requireLiveSession = (requiredScope: AuthEnvironmentScope) =>
+        sessions.isLive(currentSessionId).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to verify session liveness for an RPC call.").pipe(
+              Effect.annotateLogs({ sessionId: currentSessionId, cause }),
+              Effect.as(false),
+            ),
+          ),
+          Effect.flatMap((live) =>
+            live ? Effect.void : Effect.fail(revokedSessionError(requiredScope)),
+          ),
+        );
       const authorizeEffect = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         effect: Effect.Effect<A, E, R>,
       ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
         currentSession.scopes.includes(requiredScope)
-          ? effect
+          ? requireLiveSession(requiredScope).pipe(Effect.flatMap(() => effect))
           : Effect.fail(authorizationError(requiredScope));
       const authorizeStream = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         stream: Stream.Stream<A, E, R>,
       ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
         currentSession.scopes.includes(requiredScope)
-          ? stream
+          ? Stream.concat(
+              Stream.fromEffect(requireLiveSession(requiredScope)).pipe(Stream.drain),
+              stream,
+            )
           : Stream.fail(authorizationError(requiredScope));
       const requiredScopeForMethod = (method: string): AuthEnvironmentScope => {
         const requiredScope = RPC_REQUIRED_SCOPE.get(method);
@@ -2180,7 +2214,21 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         );
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
+          () =>
+            // Authentication is only checked at the upgrade, so revoking a
+            // session has to actively tear the socket down. Losing the race
+            // interrupts the RPC protocol effect, which closes the socket.
+            Effect.race(
+              rpcWebSocketHttpEffect,
+              sessions.awaitRevoked(session.sessionId).pipe(
+                Effect.tap(() =>
+                  Effect.logInfo("Closing websocket for a revoked session.").pipe(
+                    Effect.annotateLogs({ sessionId: session.sessionId }),
+                  ),
+                ),
+                Effect.as(HttpServerResponse.empty()),
+              ),
+            ),
           () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(

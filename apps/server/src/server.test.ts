@@ -3160,6 +3160,55 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("stops serving rpcs on a live websocket once its session is revoked", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { body: adminToken } = yield* exchangeAccessToken(defaultDesktopBootstrapToken);
+      const { body: victimToken } = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        clientMetadata: { label: "Revoked client" },
+      });
+      const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${victimToken.access_token ?? ""}` },
+      });
+      const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+
+      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: { authorization: `Bearer ${adminToken.access_token ?? ""}` },
+      });
+      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+        readonly sessionId: string;
+        readonly client: { readonly label?: string };
+      }>;
+      const victimSessionId = clients.find(
+        (entry) => entry.client.label === "Revoked client",
+      )?.sessionId;
+      assert.isDefined(victimSessionId);
+
+      const afterRevoke = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            yield* client[WS_METHODS.serverProbe]({});
+
+            const revokeResponse = yield* HttpClient.post("/api/auth/clients/revoke", {
+              headers: { authorization: `Bearer ${adminToken.access_token ?? ""}` },
+              body: yield* HttpBody.json({ sessionId: victimSessionId }),
+            });
+            assert.equal(revokeResponse.status, 200);
+
+            return yield* client[WS_METHODS.serverProbe]({}).pipe(Effect.result);
+          }),
+        ),
+      );
+
+      // The socket is torn down on revocation, so the follow-up call fails
+      // either as an authorization error or as a dead transport; both mean the
+      // revoked client no longer has access.
+      assert.equal(afterRevoke._tag, "Failure");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("includes CORS headers on remote auth success responses", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
