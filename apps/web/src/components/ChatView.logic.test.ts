@@ -464,6 +464,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         session: readySession,
         hasPendingApproval: false,
         hasPendingUserInput: false,
+        isLatestUserMessageQueuedForServiceUpdate: false,
         threadError: null,
       }),
     ).toBe(false);
@@ -490,6 +491,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         session: { ...readySession, updatedAt: newerTurn.completedAt },
         hasPendingApproval: false,
         hasPendingUserInput: false,
+        isLatestUserMessageQueuedForServiceUpdate: false,
         threadError: null,
       }),
     ).toBe(true);
@@ -521,6 +523,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         },
         hasPendingApproval: false,
         hasPendingUserInput: false,
+        isLatestUserMessageQueuedForServiceUpdate: false,
         threadError: null,
       }),
     ).toBe(false);
@@ -537,6 +540,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         },
         hasPendingApproval: false,
         hasPendingUserInput: false,
+        isLatestUserMessageQueuedForServiceUpdate: false,
         threadError: null,
       }),
     ).toBe(true);
@@ -580,6 +584,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         session: runningSession,
         hasPendingApproval: false,
         hasPendingUserInput: false,
+        isLatestUserMessageQueuedForServiceUpdate: false,
         threadError: null,
       }),
     ).toBe(true);
@@ -595,11 +600,18 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       session: null,
       hasPendingApproval: false,
       hasPendingUserInput: false,
+      isLatestUserMessageQueuedForServiceUpdate: false,
       threadError: null,
     };
 
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        ...common,
+        isLatestUserMessageQueuedForServiceUpdate: true,
+      }),
+    ).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
   });
 });

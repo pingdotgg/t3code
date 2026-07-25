@@ -453,7 +453,11 @@ describe("ProviderCommandReactor", () => {
       Effect.gen(function* () {
         const harness = yield* Effect.promise(() => createHarness());
         const now = "2026-01-01T00:00:00.000Z";
-        yield* serviceUpdateCoordinator.beginDrain;
+        yield* serviceUpdateCoordinator.beginDrain({
+          targetVersion: "0.0.29",
+          activeTurnCount: 0,
+          startedAt: now,
+        });
 
         for (const suffix of ["one", "two"]) {
           yield* harness.engine.dispatch({
@@ -475,6 +479,9 @@ describe("ProviderCommandReactor", () => {
 
         expect(harness.startSession).not.toHaveBeenCalled();
         expect(harness.sendTurn).not.toHaveBeenCalled();
+        const updateState = yield* serviceUpdateCoordinator.state;
+        expect(updateState.status).toBe("draining");
+        expect(updateState.status === "draining" ? updateState.queuedTurnCount : 0).toBe(2);
         expect(
           (yield* Effect.promise(() => harness.readModel())).threads
             .find((entry) => entry.id === ThreadId.make("thread-1"))
@@ -482,8 +489,9 @@ describe("ProviderCommandReactor", () => {
         ).toHaveLength(2);
 
         yield* serviceUpdateCoordinator.cancelDrain;
-        yield* harness.replayPendingStarts;
         yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.sendTurn).toHaveBeenCalledTimes(2);
       }),
   );
 

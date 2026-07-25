@@ -1,11 +1,13 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type EditorId,
+  type EnvironmentId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
   type ServerProvider,
   type ServerSettings,
+  type ServiceUpdateState,
 } from "@t3tools/contracts";
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
@@ -25,6 +27,19 @@ export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,
 });
+
+export const IDLE_SERVICE_UPDATE_STATE: ServiceUpdateState = { status: "idle" };
+export const serviceUpdateStateAtom = Atom.family((environmentId: EnvironmentId | null) =>
+  environmentId === null
+    ? Atom.make(IDLE_SERVICE_UPDATE_STATE)
+    : Atom.make(
+        (get): ServiceUpdateState =>
+          Option.getOrElse(
+            AsyncResult.value(get(serverEnvironment.serviceUpdate({ environmentId, input: {} }))),
+            () => IDLE_SERVICE_UPDATE_STATE,
+          ),
+      ).pipe(Atom.withLabel(`web-service-update-state:${environmentId}`)),
+);
 
 interface PrimaryServerState {
   readonly config: ServerConfig | null;

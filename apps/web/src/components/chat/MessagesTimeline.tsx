@@ -47,6 +47,7 @@ import {
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
   CircleAlertIcon,
+  Clock3Icon,
   EyeIcon,
   FileDiffIcon,
   GlobeIcon,
@@ -134,6 +135,7 @@ interface TimelineRowSharedState {
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
+  queuedMessageIds: ReadonlySet<MessageId>;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -152,6 +154,7 @@ const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_QUEUED_MESSAGE_IDS: ReadonlySet<MessageId> = new Set();
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -163,6 +166,7 @@ interface MessagesTimelineProps {
   activeTurnStartedAt: string | null;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
+  queuedMessageIds?: ReadonlySet<MessageId>;
   latestTurn: TimelineLatestTurn | null;
   runningTurnId: TurnId | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
@@ -197,6 +201,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   activeTurnStartedAt,
   listRef,
   timelineEntries,
+  queuedMessageIds = EMPTY_QUEUED_MESSAGE_IDS,
   latestTurn,
   runningTurnId,
   turnDiffSummaryByAssistantMessageId,
@@ -425,6 +430,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
+      queuedMessageIds,
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
@@ -439,6 +445,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
+      queuedMessageIds,
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
@@ -883,6 +890,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
+  const queuedForServiceUpdate = ctx.queuedMessageIds.has(row.message.id);
 
   return (
     <div className="group flex flex-col items-end gap-1">
@@ -944,6 +952,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           markdownCwd={ctx.markdownCwd}
         />
       </div>
+      {queuedForServiceUpdate ? (
+        <div
+          className="flex max-w-[80%] items-center gap-1.5 pe-1 text-warning text-xs"
+          data-message-service-update-state="queued"
+        >
+          <Clock3Icon className="size-3" aria-hidden />
+          Queued until the service update completes.
+        </div>
+      ) : null}
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>

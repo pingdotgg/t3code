@@ -190,6 +190,7 @@ import {
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
   serverEnvironment,
+  serviceUpdateStateAtom,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
@@ -454,6 +455,7 @@ function useLocalDispatchState(input: {
   phase: SessionPhase;
   activePendingApproval: ApprovalRequestId | null;
   activePendingUserInput: ApprovalRequestId | null;
+  queuedMessageIds: ReadonlySet<MessageId>;
   threadError: string | null | undefined;
 }) {
   const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
@@ -474,6 +476,8 @@ function useLocalDispatchState(input: {
         session: input.activeThread?.session ?? null,
         hasPendingApproval: input.activePendingApproval !== null,
         hasPendingUserInput: input.activePendingUserInput !== null,
+        isLatestUserMessageQueuedForServiceUpdate:
+          latestUserMessageId !== null && input.queuedMessageIds.has(latestUserMessageId),
         threadError: input.threadError,
       }),
     [
@@ -482,6 +486,7 @@ function useLocalDispatchState(input: {
       input.activePendingUserInput,
       input.activeThread?.session,
       input.phase,
+      input.queuedMessageIds,
       input.threadError,
       latestUserMessageId,
       localDispatch,
@@ -1884,6 +1889,18 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
+  const serviceUpdateState = useAtomValue(serviceUpdateStateAtom(props.environmentId));
+  const queuedMessageIds = useMemo<ReadonlySet<MessageId>>(
+    () =>
+      serviceUpdateState.status === "idle"
+        ? new Set()
+        : new Set(
+            serviceUpdateState.queuedTurns
+              .filter((turn) => turn.threadId === activeThread?.id)
+              .map((turn) => turn.messageId),
+          ),
+    [activeThread?.id, serviceUpdateState],
+  );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const pendingApprovals = useMemo(
@@ -1969,6 +1986,7 @@ function ChatViewContent(props: ChatViewProps) {
     phase,
     activePendingApproval: activePendingApproval?.requestId ?? null,
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
+    queuedMessageIds,
     threadError,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
@@ -5281,6 +5299,7 @@ function ChatViewContent(props: ChatViewProps) {
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
+                queuedMessageIds={queuedMessageIds}
                 latestTurn={activeLatestTurn}
                 runningTurnId={
                   activeThread.session?.status === "running"

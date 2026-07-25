@@ -4,6 +4,7 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -322,21 +323,36 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const waitForNoActiveTasks: Effect.Effect<void> = Effect.suspend(() =>
-    providerService
-      .listSessions()
-      .pipe(
-        Effect.flatMap((sessions) =>
-          sessions.some(
+  const countActiveTasks = providerService
+    .listSessions()
+    .pipe(
+      Effect.map(
+        (sessions) =>
+          sessions.filter(
             (session) =>
               session.status === "connecting" ||
               session.status === "running" ||
               session.activeTurnId !== undefined,
-          )
-            ? Effect.sleep(DRAIN_POLL_INTERVAL).pipe(Effect.andThen(waitForNoActiveTasks))
-            : Effect.void,
-        ),
+          ).length,
       ),
+    );
+
+  const waitForNoActiveTasks: Effect.Effect<boolean> = Effect.suspend(() =>
+    coordinator.isDraining.pipe(
+      Effect.flatMap((isDraining) => {
+        if (!isDraining) {
+          return Effect.succeed(false);
+        }
+        return countActiveTasks.pipe(
+          Effect.tap((count) => coordinator.updateActiveTurnCount(count)),
+          Effect.flatMap((count) =>
+            count > 0
+              ? Effect.sleep(DRAIN_POLL_INTERVAL).pipe(Effect.andThen(waitForNoActiveTasks))
+              : Effect.succeed(true),
+          ),
+        );
+      }),
+    ),
   );
 
   const checkNow: ServiceAutoUpdate["Service"]["checkNow"] = Effect.gen(function* () {
@@ -424,16 +440,29 @@ export const make = Effect.gen(function* () {
     }
 
     yield* Effect.gen(function* () {
-      yield* coordinator.beginDrain;
+      yield* coordinator.beginDrain({
+        targetVersion: candidate.version,
+        activeTurnCount: 0,
+        startedAt: DateTime.formatIso(yield* DateTime.now),
+      });
       yield* providerCommandReactor.drain;
       yield* Effect.logInfo("T3 Code service update pending; waiting for active tasks.", {
         targetVersion: candidate.version,
       });
-      yield* waitForNoActiveTasks;
+      if (!(yield* waitForNoActiveTasks)) {
+        return;
+      }
 
       yield* coordinator.withActivationHandoff(
         Effect.gen(function* () {
+          if (!(yield* coordinator.isDraining)) {
+            return;
+          }
           yield* providerCommandReactor.drain;
+          if (!(yield* coordinator.isDraining)) {
+            return;
+          }
+          yield* coordinator.markActivating;
           const activationDefinitionPath =
             managedService.supervisor === "s6"
               ? managedService.launcherPath
@@ -509,11 +538,7 @@ export const make = Effect.gen(function* () {
           );
         }),
       );
-    }).pipe(
-      Effect.onError(() =>
-        coordinator.cancelDrain.pipe(Effect.andThen(providerCommandReactor.replayPendingStarts)),
-      ),
-    );
+    }).pipe(Effect.onError(() => coordinator.cancelDrain));
   });
 
   yield* checkNow.pipe(

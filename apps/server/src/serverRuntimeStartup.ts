@@ -21,6 +21,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -34,6 +35,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+import { serviceUpdateCoordinator } from "./cloud/serviceUpdateCoordinator.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -303,6 +305,18 @@ export const make = Effect.gen(function* () {
   const reactorScope = yield* Scope.make("sequential");
 
   yield* Effect.addFinalizer(() => Scope.close(reactorScope, Exit.void));
+  yield* serviceUpdateCoordinator.changes.pipe(
+    Stream.runForEach((payload) =>
+      lifecycleEvents
+        .publish({
+          version: 1,
+          type: "serviceUpdate",
+          payload,
+        })
+        .pipe(Effect.asVoid),
+    ),
+    Effect.forkScoped,
+  );
 
   const startup = Effect.gen(function* () {
     yield* Effect.logDebug("startup phase: starting keybindings runtime");
