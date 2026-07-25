@@ -115,6 +115,29 @@ jobs:
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
+      # SwiftPM build cache: restores compiled deps (FluidAudio, cmark,
+      # Sparkle, swift-markdown — the bulk of both compile steps) so
+      # `swift test` (debug) and make-app.sh (release) only rebuild what
+      # changed. Keyed on the runner image (toolchain identity) and the
+      # package manifest/lockfile; the restore-key prefix still matches on
+      # app-only source changes, and SwiftPM revalidates anything stale, so
+      # a mismatched restore degrades to today's full build.
+      - name: Restore SwiftPM build cache
+        uses: actions/cache@v4
+        with:
+          path: apps/mac/.build
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ runner.imageVersion }}-${{ hashFiles('apps/mac/Package.swift', 'apps/mac/Package.resolved') }}
+          restore-keys: swiftpm-${{ runner.os }}-${{ runner.arch }}-
+
+      # The staged Node runtime is a pinned, checksum-verified binary that
+      # only changes when stage-sidecar.sh's pin does; the script itself
+      # skips the download when the staged binary already matches.
+      - name: Restore staged Node runtime cache
+        uses: actions/cache@v4
+        with:
+          path: apps/mac/dist/sidecar/SergeCodeNode
+          key: sidecar-node-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/mac/scripts/stage-sidecar.sh') }}
+
       - name: Set up Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
@@ -192,11 +215,15 @@ jobs:
           ZIP_PATH="$DIST_DIR/SurgeCode-$VERSION.zip"
           mkdir -p "$PWD/apps/mac/dmg-temp"
           cp -R "$APP_PATH" "$PWD/apps/mac/dmg-temp/"
+          # DMG compression and zip are independent; run them concurrently
+          # (saves roughly half of this step's wall time).
           hdiutil create -volname "SurgeCode" \
             -srcfolder "$PWD/apps/mac/dmg-temp" \
-            -ov -format UDZO "$DMG_PATH"
-          rm -rf "$PWD/apps/mac/dmg-temp"
+            -ov -format UDZO "$DMG_PATH" &
+          DMG_PID=$!
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
+          wait "$DMG_PID"
+          rm -rf "$PWD/apps/mac/dmg-temp"
           echo "dmg=$DMG_PATH" >> "$GITHUB_OUTPUT"
           echo "zip=$ZIP_PATH" >> "$GITHUB_OUTPUT"
 
