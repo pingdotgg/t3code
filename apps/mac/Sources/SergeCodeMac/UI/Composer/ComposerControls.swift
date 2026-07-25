@@ -11,7 +11,9 @@ struct ComposerControlsRow: View {
         HStack(spacing: 10) {
             ModelRunProfileGroup(thread: thread, model: model)
             RuntimePlanModeGroup(thread: thread, model: model)
-            AutoPRToggle()
+            if !thread.hasStarted {
+                AutoPRToggle()
+            }
             Spacer()
             if let status = model.threadState(thread.id)?.contextWindow {
                 ContextMeterView(status: status)
@@ -53,6 +55,7 @@ private struct ModelRunProfileGroup: View {
         .background(
             .fill.quaternary,
             in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
+        .animation(Motion.reveal, value: showsRunProfile)
     }
 
     private var segmentDivider: some View {
@@ -143,10 +146,12 @@ private struct RuntimePlanModeGroup: View {
     }
 }
 
-/// Composer-level "create PR when done" toggle. When on, every sent message
-/// carries an extra instruction asking the agent to open a PR for the work
-/// once it finishes (see `CreatePRPrompt.messageSuffix`). Persisted globally
-/// in UserDefaults so the choice survives thread switches and relaunches.
+/// Composer-level "create PR when done" toggle. When on, the first message of
+/// a fresh thread carries an extra instruction asking the agent to open a PR
+/// for the work once it finishes (see `CreatePRPrompt.messageSuffix`). Only
+/// shown for threads that haven't started yet — once a thread has messages,
+/// the suffix no longer applies. Persisted globally in UserDefaults so the
+/// choice survives thread switches and relaunches.
 private struct AutoPRToggle: View {
     @AppStorage(CreatePRPrompt.autoCreateDefaultsKey) private var isOn = false
     @UIState private var isHovering = false
@@ -495,12 +500,13 @@ private struct InteractionModeMenu: View {
     }
 }
 
-/// Compact context-window usage meter (ring + percent). Hovering opens a
-/// popover with the full numbers (used / limit / remaining).
+/// Compact context-window usage meter (ring + percent). Resting the pointer
+/// on it opens a popover with the full numbers (used / limit / remaining).
 struct ContextMeterView: View {
     let status: ContextWindowStatus
 
     @UIState private var showDetails = false
+    @UIState private var hoverTask: Task<Void, Never>?
 
     var body: some View {
         if let fraction = status.usedFraction {
@@ -517,9 +523,14 @@ struct ContextMeterView: View {
                     .monospacedDigit()
                     .contentTransition(.numericText())
             }
-            .onHover { showDetails = $0 }
+            .onHover { scheduleDetails(hovering: $0) }
             .popover(isPresented: $showDetails, arrowEdge: .top) {
                 ContextMeterDetails(status: status, fraction: fraction, tint: meterColor(fraction))
+            }
+            .onDisappear {
+                hoverTask?.cancel()
+                hoverTask = nil
+                showDetails = false
             }
             // The ring sweeps and the percent ticks as usage grows.
             .animation(Motion.ambient, value: fraction)
@@ -536,6 +547,26 @@ struct ContextMeterView: View {
         case ..<0.7: AlpineTheme.meadow
         case ..<0.9: AlpineTheme.clay
         default: .red
+        }
+    }
+
+    /// Presents the details card only once the pointer has rested: transient
+    /// passes (window drags, scrolls) must never present and dismiss a popover
+    /// in quick succession. The meter's anchor is rebuilt constantly while a
+    /// turn streams (and removed entirely when `usedFraction` flips to nil),
+    /// and presenting a popover while its anchor is mid-teardown crashes
+    /// inside NSPopover's child-window ordering (NSRemoteView / ViewBridge).
+    private func scheduleDetails(hovering: Bool) {
+        hoverTask?.cancel()
+        hoverTask = nil
+        if hovering {
+            hoverTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
+                showDetails = true
+            }
+        } else {
+            showDetails = false
         }
     }
 }

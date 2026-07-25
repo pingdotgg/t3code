@@ -47,8 +47,9 @@ public struct ComposerBar: View {
     @FocusState private var editorFocused: Bool
 
     /// Composer-level "create PR when done" toggle (see `AutoPRToggle` in
-    /// ComposerControls.swift). When on, outgoing messages get
-    /// `CreatePRPrompt.messageSuffix` appended before dispatch.
+    /// ComposerControls.swift). When on, a fresh thread's first message gets
+    /// `CreatePRPrompt.messageSuffix` appended before dispatch; the toggle is
+    /// hidden and the suffix skipped once the thread has started.
     @AppStorage(CreatePRPrompt.autoCreateDefaultsKey) private var autoCreatePR = false
 
     // `nonisolated` so the background encode helpers (which run off the main
@@ -173,7 +174,6 @@ public struct ComposerBar: View {
         VStack(alignment: .leading, spacing: 6) {
             if let rows = activeSuggestionRows {
                 SuggestionList(items: rows, highlightedIndex: highlightedSuggestionIndex)
-                    .transition(Motion.pop(from: .bottomLeading))
             }
 
             if !model.selectedQueuedMessages.isEmpty {
@@ -274,7 +274,6 @@ public struct ComposerBar: View {
                                     .foregroundStyle(.secondary)
                                     .padding(.leading, 5)
                                     .allowsHitTesting(false)
-                                    .transition(.opacity)
                             }
                         }
                         .padding(.vertical, 4)
@@ -385,7 +384,8 @@ public struct ComposerBar: View {
         .shadow(color: .black.opacity(0.10), radius: 16, y: 6)
         // Typing and suggestion filtering are deliberately unanimated. Async
         // arrivals reveal independently without moving the entire composer on
-        // every keystroke.
+        // every keystroke. Suggestion menus intentionally carry no transition
+        // declaration — keyboard-frequency UI stays instant.
         .animation(Motion.reveal, value: attachments.map(\.id))
         .animation(Motion.reveal, value: model.selectedQueuedMessages.map(\.id))
         .animation(Motion.reveal, value: attachmentError)
@@ -626,10 +626,13 @@ public struct ComposerBar: View {
     // MARK: - Sending
 
     /// The text actually dispatched for a draft: the user's words plus, when
-    /// the auto-PR toggle is on, the instruction to open a PR once the work
-    /// is finished. Never appended to an empty (attachment-only) message.
+    /// the auto-PR toggle is on and the thread hasn't started yet, the
+    /// instruction to open a PR once the work is finished. Never appended to
+    /// an empty (attachment-only) message or to follow-ups on a thread that
+    /// already has messages.
     private func outgoingText(for trimmedDraft: String) -> String {
-        guard autoCreatePR, !trimmedDraft.isEmpty else { return trimmedDraft }
+        guard autoCreatePR, !trimmedDraft.isEmpty, model.selectedThread?.hasStarted == false
+        else { return trimmedDraft }
         return trimmedDraft + CreatePRPrompt.messageSuffix
     }
 

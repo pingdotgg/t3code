@@ -47,6 +47,15 @@ export interface ProviderServiceShape {
   >;
 
   /**
+   * Record liveness for a session from outside the provider event stream.
+   *
+   * Used when a turn is legitimately busy without emitting events on its own
+   * thread (e.g. blocked on a delegated child thread), so the turn-activity
+   * watchdog does not flag the session as stalled.
+   */
+  readonly noteSessionActivity?: (threadId: ThreadId) => Effect.Effect<void>;
+
+  /**
    * Start a provider session.
    */
   readonly startSession: (

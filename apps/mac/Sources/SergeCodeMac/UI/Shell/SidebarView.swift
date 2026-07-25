@@ -270,7 +270,9 @@ struct SidebarView: View {
             let hiddenCount = split.active.count - visibleActive.count
             if hiddenCount > 0 {
                 Button {
-                    expandedProjects.insert(group.id)
+                    withAnimation(Motion.structure) {
+                        expandedProjects.insert(group.id)
+                    }
                 } label: {
                     HStack {
                         Spacer()
@@ -297,7 +299,7 @@ struct SidebarView: View {
         let isRevealed = revealedSettled.contains(group.id)
         HStack(spacing: 6) {
             Button {
-                withAnimation(Motion.feedback) {
+                withAnimation(Motion.structure) {
                     if isRevealed {
                         revealedSettled.remove(group.id)
                     } else {
@@ -310,6 +312,7 @@ struct SidebarView: View {
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.tertiary)
                         .frame(width: 12, height: 12)
+                        .contentTransition(Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                     Text("Settled")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -525,7 +528,7 @@ struct SidebarView: View {
     }
 
     private func toggleProjectCollapse(_ projectID: String) {
-        withAnimation(Motion.feedback) {
+        withAnimation(Motion.structure) {
             if collapsedProjects.contains(projectID) {
                 collapsedProjects.remove(projectID)
             } else {
@@ -831,6 +834,7 @@ private struct ProjectSectionHeader: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 12, height: 12)
                     .contentShape(Rectangle())
+                    .contentTransition(Motion.reduceMotion ? .identity : .symbolEffect(.replace))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(isCollapsed ? "Expand \(group.name)" : "Collapse \(group.name)")
@@ -899,7 +903,7 @@ private struct ProjectSectionHeader: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onToggleCollapse)
         .onHover { isHovering = $0 }
-        .animation(Motion.feedback, value: isCollapsed)
+        .animation(Motion.structure, value: isCollapsed)
         .animation(Motion.feedback, value: isHovering)
         .contextMenu {
             projectMenuContent
@@ -1141,6 +1145,7 @@ private struct SidebarConnectionsFooter: View {
     let onForget: (RemoteDeviceSession) -> Void
 
     @UIState private var isPresented = false
+    @UIState private var isHovering = false
 
     var body: some View {
         Button {
@@ -1156,6 +1161,7 @@ private struct SidebarConnectionsFooter: View {
                         Circle()
                             .fill(location.connection.statusColor)
                             .frame(width: 5, height: 5)
+                            .animation(Motion.ambient, value: location.connection)
                             .accessibilityHidden(true)
                     }
                 }
@@ -1171,12 +1177,15 @@ private struct SidebarConnectionsFooter: View {
             .frame(height: 34)
             .contentShape(Rectangle())
             .background {
-                if isPresented {
-                    Rectangle().fill(Color.primary.opacity(0.055))
+                if isPresented || isHovering {
+                    Rectangle().fill(Color.primary.opacity(isPresented ? 0.055 : 0.04))
                 }
             }
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(Motion.feedback, value: isHovering)
+        .animation(Motion.feedback, value: isPresented)
         .accessibilityLabel("Connections, \(readyCount) of \(locations.count) ready")
         .popover(isPresented: $isPresented, arrowEdge: .top) {
             connectionPopover

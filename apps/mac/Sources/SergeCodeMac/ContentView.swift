@@ -38,8 +38,9 @@ struct RootView: View {
                     .transition(.opacity)
                 }
             }
-            // Keyed to presence, not thread id — thread → thread switches
-            // cross-fade inside ChatScreen; this only covers hero ↔ chat.
+            // Keyed to presence, not thread id — thread → thread switches render
+            // immediately inside ChatScreen (frequent, often keyboard-driven); this
+            // only covers hero ↔ chat.
             .animation(Motion.structure, value: multi.selectedThread == nil)
             // The inspector hangs off this stable node, not off the
             // per-thread detail view: re-presenting it on every thread
@@ -62,7 +63,28 @@ struct RootView: View {
         // Let `WindowGlassBackground` show through chrome gaps / faded scenery
         // instead of an opaque split-view plate over the desktop glass.
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        // The stock AppKit sidebar toggle renders larger than the custom
+        // 28×28 glass controls it sits next to; replace it with one of ours
+        // (the View ▸ Toggle Sidebar menu item is unaffected).
+        .toolbar(removing: .sidebarToggle)
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    // Same one-runloop deferral as the Inspector button below:
+                    // re-vending toolbar items mid layout pass trips AppKit's
+                    // layout-feedback-loop guard on macOS 26/27.
+                    DispatchQueue.main.async {
+                        withAnimation(Motion.structure) {
+                            columnVisibility =
+                                columnVisibility == .detailOnly ? .all : .detailOnly
+                        }
+                    }
+                } label: {
+                    Label("Toggle Sidebar", systemImage: "sidebar.leading")
+                }
+                .buttonStyle(AlpineToolbarIconButtonStyle())
+            }
+            .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .navigation) {
                 ConnectionStatusPill(phase: model.connection)
             }

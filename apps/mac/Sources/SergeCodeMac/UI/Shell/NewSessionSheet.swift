@@ -177,6 +177,7 @@ struct NewSessionSheet: View {
         .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.hero))
         .animation(Motion.structure, value: mode)
         .animation(Motion.reveal, value: errorMessage == nil)
+        .animation(Motion.reveal, value: providerReadinessMessage == nil)
         .task {
             // Warm the settings so the folder picker can open at the
             // configured default projects directory.
@@ -350,41 +351,12 @@ private struct ProjectChoiceList: View {
                 ScrollView {
                     LazyVStack(spacing: 2) {
                         ForEach(filteredProjects) { project in
-                            Button {
+                            ProjectChoiceRow(
+                                project: project,
+                                isSelected: selectedProjectID == project.id
+                            ) {
                                 selectedProjectID = project.id
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "folder")
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 16)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(project.name)
-                                            .foregroundStyle(.primary)
-                                            .lineLimit(1)
-                                        Text(project.path)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                    }
-                                    Spacer(minLength: 8)
-                                    if selectedProjectID == project.id {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(AlpineTheme.accent)
-                                    }
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .contentShape(Rectangle())
-                                .background(
-                                    selectedProjectID == project.id
-                                        ? AlpineTheme.accent.opacity(0.12) : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 8))
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("\(project.name), \(project.path)")
-                            .accessibilityAddTraits(
-                                selectedProjectID == project.id ? .isSelected : [])
                         }
                     }
                 }
@@ -403,6 +375,51 @@ private struct ProjectChoiceList: View {
     }
 }
 
+private struct ProjectChoiceRow: View {
+    let project: Project
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    @UIState private var isHovering = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                Image(systemName: "folder")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(project.name).foregroundStyle(.primary).lineLimit(1)
+                    Text(project.path)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 8)
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(AlpineTheme.accent)
+                        .transition(.opacity)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+            .background(
+                isSelected ? AlpineTheme.accent.opacity(0.12)
+                    : isHovering ? Color.primary.opacity(0.06) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(Motion.feedback, value: isHovering)
+        .animation(Motion.feedback, value: isSelected)
+        .accessibilityLabel("\(project.name), \(project.path)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 /// Presents `NewSessionSheet` in a standalone AppKit window so the ⌘N menu
 /// command (registered in a `CommandGroup`) can open it without reaching
 /// into `RootView`'s own `@UIState` sheet-presentation flag — a custom View
@@ -415,6 +432,21 @@ final class NewSessionWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
 
     func show(multi: MultiDeviceModel, scenery: SceneryStore) {
+        // Defer one runloop turn: callers reach this from popover rows (the
+        // sidebar "Choose Target…" item), and creating the window
+        // synchronously lands its first layout pass inside the still-open
+        // CATransaction from the popover dismissal. On macOS 26/27 the
+        // `.fullSizeContentView` hosting view then invalidates safe area
+        // insets mid-pass, which trips AppKit's layout-feedback-loop guard
+        // (NSInternalInconsistency in _postWindowNeedsUpdateConstraints →
+        // hard crash). Same deferral pattern as the toolbar buttons in
+        // ContentView.
+        DispatchQueue.main.async { [self] in
+            present(multi: multi, scenery: scenery)
+        }
+    }
+
+    private func present(multi: MultiDeviceModel, scenery: SceneryStore) {
         // Always mint a fresh sheet — reusing a cached window would leak the
         // previous invocation's typed path/selected provider into this one.
         window?.close()

@@ -827,9 +827,10 @@ struct AssistantMarkdownView: View {
         .onChange(of: isStreaming) { _, streaming in
             // One-shot settle cue at stream end: the content dips and
             // restores its opacity. Render-only — the timeline never
-            // re-measures. Deferred so the dip commits before the restore.
+            // re-measures. The dip eases in on the feedback curve; deferred
+            // so it commits before the restore.
             guard !streaming, Motion.profile.allowsDecorativeEffects else { return }
-            streamSettleOpacity = 0.6
+            withAnimation(Motion.feedback) { streamSettleOpacity = 0.6 }
             withDeferredAnimation(Motion.reveal) { streamSettleOpacity = 1 }
         }
         .modifier(

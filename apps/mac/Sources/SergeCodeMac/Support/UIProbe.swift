@@ -55,8 +55,10 @@
             // Let the inspector timeline present and the diff refresh land.
             try? await Task.sleep(for: .seconds(2))
             snapshot("1-inspector-timeline", dir: dir)
+            await probeChatScrollbar(dir: dir)
 
-            // Changes panel segmented control: Files (default) then Activity.
+            // Unified activity panel: scroll to the checkpoint history, then
+            // back up to the changed-files section (legacy section keys).
             toggleSection("activity")
             try? await Task.sleep(for: .seconds(1))
             snapshot("1b-changes-activity", dir: dir)
@@ -214,6 +216,33 @@
                 await snapshotSettings(
                     tab: .scenery, name: "12-settings-scenery", model: model, scenery: scenery,
                     dir: dir)
+                await snapshotSettings(
+                    tab: .general, name: "13-settings-general", model: model, scenery: scenery,
+                    dir: dir)
+                await snapshotSettings(
+                    tab: .providers, name: "14-settings-providers", model: model, scenery: scenery,
+                    dir: dir)
+                // Archive a seeded thread so the Archive tab captures its
+                // search field and thread rows, not just the empty state.
+                // thread-2 is safe to borrow: the service-tier step above is
+                // its last consumer. Restored right after the capture.
+                let borrowedThread = model.threads.first { $0.id == "thread-2" }
+                if let borrowedThread {
+                    await model.archiveThread(borrowedThread)
+                    await model.refreshArchivedThreads()
+                }
+                await snapshotSettings(
+                    tab: .archive, name: "15-settings-archive", model: model, scenery: scenery,
+                    dir: dir)
+                if let borrowedThread {
+                    await model.unarchiveThread(borrowedThread)
+                }
+                await snapshotSettings(
+                    tab: .remoteMacs, name: "16-settings-remote-macs", model: model,
+                    scenery: scenery, dir: dir)
+                await snapshotSettings(
+                    tab: .autoReview, name: "17-settings-auto-review", model: model,
+                    scenery: scenery, dir: dir)
 
                 // Window glass translucency: capture solid (1.0) and floor
                 // (0.5) states, logging NSWindow isOpaque/clear + behind-window
@@ -578,6 +607,71 @@
             window.orderOut(nil)
         }
 
+        /// Verifies the chat timeline's NSScrollView carries the slim custom
+        /// scroller, then captures the window with the scroller flashed so the
+        /// knob is visible in the PNG.
+        private static func probeChatScrollbar(dir: String) async {
+            guard let window = NSApp.windows.first(where: { $0.isVisible }),
+                let root = window.contentView
+            else {
+                print("UIProbe: scrollbar probe failed (no window)")
+                return
+            }
+            var scrollViews: [NSScrollView] = []
+            var stack: [NSView] = [root]
+            while let view = stack.popLast() {
+                if let scrollView = view as? NSScrollView { scrollViews.append(scrollView) }
+                stack.append(contentsOf: view.subviews)
+            }
+            // The chat timeline is the largest scrolling surface in the window.
+            let chat = scrollViews.max(by: { $0.contentSize.width < $1.contentSize.width })
+            let classes = scrollViews.map {
+                String(describing: type(of: $0.verticalScroller))
+            }
+            print(
+                "UIProbe: scrollbar installed=\(chat?.verticalScroller is ModernOverlayScroller) "
+                    + "scrollers=\(classes)")
+            guard let chat, chat.verticalScroller is ModernOverlayScroller else { return }
+            chat.flashScrollers()
+            try? await Task.sleep(for: .milliseconds(300))
+            snapshot("1c-chat-scrollbar", dir: dir)
+
+            // The seeded conversation fits the viewport, so the live knob
+            // never has room to flash. Exercise drawKnob directly instead: a
+            // throwaway overflowing scroll view carrying the custom scroller,
+            // captured with the scroller flashed.
+            let harness = NSScrollView(frame: NSRect(x: 0, y: 0, width: 320, height: 240))
+            let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 2000))
+            text.string = (1...120).map { "Transcript line \($0)" }.joined(separator: "\n")
+            harness.documentView = text
+            harness.hasVerticalScroller = true
+            harness.verticalScroller = ModernOverlayScroller()
+            let harnessWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            DarkAppearanceConfigurator.applyAppearance(to: harnessWindow)
+            harnessWindow.contentView = harness
+            harnessWindow.orderFront(nil)
+            harness.layoutSubtreeIfNeeded()
+            harness.flashScrollers()
+            try? await Task.sleep(for: .milliseconds(300))
+            if let scroller = harness.verticalScroller {
+                print(
+                    "UIProbe: scrollbar harness knobRect=\(scroller.rect(for: .knob)) "
+                        + "proportion=\(scroller.knobProportion) hidden=\(scroller.isHidden)")
+            }
+            if let rep = harness.bitmapImageRepForCachingDisplay(in: harness.bounds) {
+                harness.cacheDisplay(in: harness.bounds, to: rep)
+                if let data = rep.representation(using: .png, properties: [:]) {
+                    let url = URL(fileURLWithPath: dir)
+                        .appendingPathComponent("1d-scrollbar-harness.png")
+                    try? data.write(to: url)
+                    print("UIProbe: wrote \(url.path)")
+                }
+            }
+            harnessWindow.orderOut(nil)
+        }
+
         /// Captures the main window at translucency 1.0 and 0.5 and logs
         /// window/glass configuration for verification.
         private static func probeWindowTranslucency(scenery: SceneryStore, dir: String) async {
@@ -685,7 +779,7 @@
                     scenery: scenery,
                     initialTab: tab))
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 760, height: 560),
+                contentRect: NSRect(x: 0, y: 0, width: 780, height: 560),
                 styleMask: [.titled], backing: .buffered, defer: false)
             DarkAppearanceConfigurator.applyAppearance(to: window)
             window.contentView = hosting

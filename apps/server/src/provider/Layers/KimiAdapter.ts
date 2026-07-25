@@ -62,6 +62,7 @@ import {
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
+import { selectAutoApprovedPermissionOption } from "../acp/AcpPermissionAutoApprove.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   extractKimiAskUserQuestions,
@@ -257,15 +258,6 @@ function selectPermissionOptionId(
         : "reject_once";
   const option = request.options.find((entry) => entry.kind === kind);
   return option?.optionId.trim() || undefined;
-}
-
-function selectAutoApprovedPermissionOption(
-  request: EffectAcpSchema.RequestPermissionRequest,
-): string | undefined {
-  return (
-    selectPermissionOptionId(request, "acceptForSession") ??
-    selectPermissionOptionId(request, "accept")
-  );
 }
 
 function completedStopReasonFromPromptResponse(

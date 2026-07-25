@@ -951,7 +951,7 @@ const program = Effect.gen(function* () {
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: "hello from mock" },
+            content: { type: "text", text: promptResponseText ?? "hello from mock" },
           },
         });
 

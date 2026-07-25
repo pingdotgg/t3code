@@ -1,26 +1,21 @@
-import AppKit
 import SwiftUI
 
-/// Contextual next-step strip between the timeline and the composer. Shows
-/// at most one suggestion:
-/// - the branch has an open PR whose review is mid-cycle → report where the
-///   review stands (bot reviewing, our fix turn running), offer to fix the
-///   actionable comments when there are any, and plain link to the PR when the
-///   review is settled with nothing left to fix;
-/// - the agent finished a turn with shippable work and no PR yet → offer to
-///   have it open one.
-///
-/// Which of the review phases we are in is `ReviewLifecycle`'s call.
+/// Contextual next-step strip between the timeline and the composer. Shows at
+/// most one suggestion: the agent finished a turn with shippable work and no
+/// PR yet → offer to have it open one. Review status and the PR link live in
+/// the git section at the top, so the chat log stays out of that business.
 struct ChatFollowUpBar: View {
     let model: AppModel
 
     var body: some View {
         Group {
-            if let thread = model.selectedThread, thread.status != .archived {
-                let vcs = model.selectedVcsStatus()
-                if let vcs, vcs.prState != .merged {
-                    reviewFollowUp(thread: thread, vcs: vcs)
-                }
+            if let thread = model.selectedThread, thread.status != .archived,
+                let vcs = model.selectedVcsStatus(),
+                vcs.prState != .merged,
+                shouldOfferPR(thread: thread, vcs: vcs)
+            {
+                createPRSuggestion
+                    .transition(Motion.banner)
             }
         }
         // A merged PR is the bar's rarest success moment: ripple once on the
@@ -43,10 +38,6 @@ struct ChatFollowUpBar: View {
     private enum VisibleStrip: Equatable {
         case none
         case archive
-        case fixReviews
-        case reviewInProgress
-        case fixesInProgress
-        case openPR
         case createPR
     }
 
@@ -55,92 +46,7 @@ struct ChatFollowUpBar: View {
             let vcs = model.selectedVcsStatus()
         else { return .none }
         if vcs.prState == .merged { return .archive }
-        switch ReviewLifecycle.followUp(
-            threadStatus: thread.status, vcs: vcs, timeline: model.selectedTimeline())
-        {
-        case .fixReviews: return .fixReviews
-        case .reviewInProgress: return .reviewInProgress
-        case .fixesInProgress: return .fixesInProgress
-        case .none:
-            if vcs.prState == .open, pullRequestURL(vcs) != nil { return .openPR }
-            if shouldOfferPR(thread: thread, vcs: vcs) { return .createPR }
-            return .none
-        }
-    }
-
-    @ViewBuilder
-    private func reviewFollowUp(thread: ChatThread, vcs: VcsStatus) -> some View {
-        switch ReviewLifecycle.followUp(
-            threadStatus: thread.status, vcs: vcs, timeline: model.selectedTimeline())
-        {
-        case .fixReviews(let actionableCount):
-            fixReviewCommentsSuggestion(actionableCount: actionableCount)
-                .transition(Motion.banner)
-        case .reviewInProgress:
-            reviewProgressStrip(text: "Review in progress", vcs: vcs)
-                .transition(Motion.banner)
-        case .fixesInProgress:
-            reviewProgressStrip(text: "Fixing review comments", vcs: vcs)
-                .transition(Motion.banner)
-        case .none:
-            if vcs.prState == .open, let url = pullRequestURL(vcs) {
-                openPullRequestChip(vcs: vcs, url: url)
-                    .transition(Motion.banner)
-            } else if shouldOfferPR(thread: thread, vcs: vcs) {
-                createPRSuggestion
-                    .transition(Motion.banner)
-            }
-        }
-    }
-
-    // MARK: - PR open → link
-
-    private func openPullRequestChip(vcs: VcsStatus, url: URL) -> some View {
-        Button {
-            NSWorkspace.shared.open(url)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.triangle.pull")
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.tint)
-
-                Text(pullRequestLabel(vcs))
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                Spacer(minLength: 8)
-
-                Image(systemName: "arrow.up.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.card))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .help(vcs.prTitle ?? "Open pull request")
-    }
-
-    private func pullRequestURL(_ vcs: VcsStatus) -> URL? {
-        guard let prURL = vcs.prURL else { return nil }
-        return URL(string: prURL)
-    }
-
-    private func pullRequestLabel(_ vcs: VcsStatus) -> String {
-        let number = vcs.prNumber.map { "PR #\($0)" } ?? "Pull request"
-        guard
-            let title = vcs.prTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !title.isEmpty
-        else {
-            return number
-        }
-        return "\(number) · \(title)"
+        return shouldOfferPR(thread: thread, vcs: vcs) ? .createPR : .none
     }
 
     // MARK: - Turn done → create PR
@@ -174,48 +80,6 @@ struct ChatFollowUpBar: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
     }
-
-    // MARK: - PR open → fix review comments
-
-    private func fixReviewCommentsSuggestion(actionableCount: Int) -> some View {
-        HStack(spacing: 8) {
-            Text(actionableCount == 1 ? "1 actionable comment" : "\(actionableCount) actionable comments")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            Button {
-                Task { await model.send(text: ReviewLifecycle.fixReviewCommentsPrompt) }
-            } label: {
-                Label("Fix Reviews", systemImage: "text.bubble")
-            }
-            .buttonStyle(NatureActionButtonStyle())
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
-
-    // MARK: - Review mid-cycle → wait it out
-
-    /// Read-only progress strip for the phases where there is nothing to click:
-    /// the bot is reviewing, or the fix turn we asked for is running.
-    private func reviewProgressStrip(text: String, vcs: VcsStatus) -> some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-            Text(text)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            if let url = pullRequestURL(vcs), let number = vcs.prNumber {
-                Link("PR #\(number)", destination: url)
-                    .font(.callout)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
 }
 
 private struct NatureActionButtonStyle: ButtonStyle {
@@ -230,6 +94,7 @@ private struct NatureActionButtonStyle: ButtonStyle {
             }
             .foregroundStyle(AlpineTheme.forest)
             .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+            .scaleEffect(configuration.isPressed && !Motion.reduceMotion ? 0.97 : 1)
             .animation(Motion.feedback, value: configuration.isPressed)
     }
 }

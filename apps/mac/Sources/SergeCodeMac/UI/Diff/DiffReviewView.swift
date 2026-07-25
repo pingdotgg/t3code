@@ -366,6 +366,12 @@ public struct DiffReviewView: View {
                         }
                     }
                 }
+                // Keyed on the values, not the write sites, so both the file
+                // popover and the chevron steppers crossfade (paneChange rides
+                // the reveal; the spinner↔content swap crossfades via the
+                // default opacity transition in the same transaction).
+                .animation(Motion.reveal, value: selectedFileKey)
+                .animation(Motion.reveal, value: isPreparing)
                 .onAppear { contentWidth = geo.size.width }
                 .onChange(of: geo.size.width) { _, width in contentWidth = width }
             }

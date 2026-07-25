@@ -187,15 +187,33 @@ struct ChatTimelineScrollView: View {
                     // re-anchors opt out individually below.
                     .animation(revealAnimation, value: displayItems.count)
                     .transaction { transaction in
-                        if suppressLayoutAnimation {
+                        // User-initiated disclosure toggles keep their
+                        // animation even mid-run; everything else (streaming
+                        // churn, regroups) stays unanimated.
+                        if suppressLayoutAnimation && !transaction.isIntentionalDisclosure {
                             transaction.animation = nil
                         }
                     }
+                    // The thinking indicator only ever appears/disappears
+                    // mid-run, when the suppressor above has cleared the
+                    // ambient animation. Re-arm a narrow reveal keyed to its
+                    // flip so it rises/fades instead of popping. Placed after
+                    // `.transaction` — downstream transaction modifiers win.
+                    .animation(Motion.reveal, value: showThinking)
                     // A LazyVStack realizes rows as they scroll into view, so
                     // without this every row would fade in under the pointer on
                     // the way past. Entrance is for content arriving, not for
                     // content being revealed by scrolling.
                     .entranceSuppressed(isUserScrolling)
+                    // Swaps the stock NSScroller for the slim capsule knob.
+                    // Lives inside the scrolled content so the installer can
+                    // walk up to the enclosing NSScrollView; zero-size, so it
+                    // takes no part in layout.
+                    .background(alignment: .top) {
+                        ModernScrollbarInstaller()
+                            .frame(width: 0, height: 0)
+                            .accessibilityHidden(true)
+                    }
                 }
                 // Intentionally no `.defaultScrollAnchor(.bottom)`. That modifier
                 // re-applies on content-size changes independently of pin state
