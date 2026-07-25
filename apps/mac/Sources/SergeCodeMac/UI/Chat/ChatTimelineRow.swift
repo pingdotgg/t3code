@@ -284,18 +284,15 @@ private struct UserMessageBubble: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
                         .background(
-                            LinearGradient(
-                                colors: [AlpineTheme.userBubbleTop, AlpineTheme.userBubbleBottom],
-                                startPoint: .top,
-                                endPoint: .bottom),
+                            AlpineTheme.userBubbleFill,
                             in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
-                        .foregroundStyle(AlpineTheme.forest)
+                        .foregroundStyle(.primary)
                         .overlay(alignment: .topTrailing) {
                             messageActions
                         }
                         .overlay(
                             RoundedRectangle(cornerRadius: AlpineTheme.Corners.card)
-                                .strokeBorder(AlpineTheme.forest.opacity(0.14), lineWidth: 1))
+                                .strokeBorder(AlpineTheme.userBubbleStroke, lineWidth: 1))
                         .overlay(alignment: .bottomLeading) {
                             if isLarge {
                                 Button(isExpanded ? "Show Less" : "Show More") {
@@ -305,7 +302,7 @@ private struct UserMessageBubble: View {
                                 }
                                 .buttonStyle(.plain)
                                 .font(.caption.weight(.medium))
-                                .foregroundStyle(AlpineTheme.forest.opacity(0.78))
+                                .foregroundStyle(AlpineTheme.accent)
                                 .padding(.leading, 14)
                                 .padding(.bottom, 5)
                             }
@@ -409,7 +406,7 @@ private struct ChatAttachmentThumbnail: View {
         Button(action: onOpen) {
             ZStack {
                 RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
-                    .fill(AlpineTheme.userBubbleBottom.opacity(0.85))
+                    .fill(AlpineTheme.userBubbleFill)
                 if let image {
                     Image(nsImage: image)
                         .resizable()
@@ -426,7 +423,7 @@ private struct ChatAttachmentThumbnail: View {
                         Text("Unavailable")
                             .font(.caption2)
                     }
-                    .foregroundStyle(AlpineTheme.forest.opacity(0.7))
+                    .foregroundStyle(.secondary)
                 }
             }
             .frame(width: 220, height: 160)
@@ -446,7 +443,7 @@ private struct ChatAttachmentThumbnail: View {
             }
             .overlay(
                 RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
-                    .strokeBorder(AlpineTheme.forest.opacity(0.14), lineWidth: 1))
+                    .strokeBorder(AlpineTheme.userBubbleStroke, lineWidth: 1))
         }
         .buttonStyle(.plain)
         .disabled(phase != .loaded)

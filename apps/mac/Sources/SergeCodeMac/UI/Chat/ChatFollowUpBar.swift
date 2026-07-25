@@ -226,7 +226,7 @@ private struct NatureActionButtonStyle: ButtonStyle {
             .padding(.vertical, 5)
             .background {
                 RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
-                    .fill(AlpineTheme.userBubbleTop.opacity(configuration.isPressed ? 0.78 : 0.94))
+                    .fill(AlpineTheme.accent.opacity(configuration.isPressed ? 0.72 : 1))
             }
             .foregroundStyle(AlpineTheme.forest)
             .shadow(color: .black.opacity(0.25), radius: 3, y: 1)

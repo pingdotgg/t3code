@@ -488,8 +488,8 @@ struct VcsToolbar: View {
                 if runningAction == .mergePR {
                     HStack(spacing: 6) {
                         ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .black))
                             .controlSize(.small)
+                            .tint(AlpineTheme.forest)
                         Text("Merging…")
                     }
                     .transition(.opacity)
@@ -663,6 +663,9 @@ struct VcsToolbar: View {
 }
 
 /// Emphasized pill for the one-click merge affordance (matches follow-up bar).
+/// Solid accent fill with a forest label — the app's primary-action language —
+/// so the button and its in-flight spinner stay legible on the dark chrome
+/// (the old white capsule rendered a white-on-white spinner).
 private struct VcsMergePillButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -671,9 +674,9 @@ private struct VcsMergePillButtonStyle: ButtonStyle {
             .padding(.vertical, 4)
             .background {
                 Capsule()
-                    .fill(.white.opacity(configuration.isPressed ? 0.75 : 0.92))
+                    .fill(AlpineTheme.accent.opacity(configuration.isPressed ? 0.72 : 1))
             }
-            .foregroundStyle(.black)
+            .foregroundStyle(AlpineTheme.forest)
             .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
             .animation(Motion.feedback, value: configuration.isPressed)
     }
