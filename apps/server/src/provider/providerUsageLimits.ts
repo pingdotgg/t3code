@@ -111,7 +111,7 @@ export function parseClaudeUsageLimitsJson(
     ) {
       return undefined;
     }
-    result = (decoded as { result: string }).result;
+    result = (decoded as { result: string }).result.replaceAll("\r\n", "\n");
   } catch {
     return undefined;
   }

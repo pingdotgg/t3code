@@ -17,6 +17,7 @@ import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
@@ -189,15 +190,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
       const lastAvailableUsageRef = yield* Ref.make<RetainedClaudeUsage | undefined>(undefined);
-      const usageProbeCache = yield* Cache.make({
-        capacity: 2,
-        timeToLive: CAPABILITIES_PROBE_TTL,
-        lookup: () =>
+      const usageProbeCache = yield* Cache.makeWith(
+        () =>
           probeClaudeUsageLimits(effectiveConfig, processEnv, cwd).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(Path.Path, path),
           ),
-      });
+        {
+          capacity: 2,
+          timeToLive: Exit.match({
+            onSuccess: (usageLimits) => (usageLimits ? CAPABILITIES_PROBE_TTL : Duration.zero),
+            onFailure: () => Duration.zero,
+          }),
+        },
+      );
 
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,

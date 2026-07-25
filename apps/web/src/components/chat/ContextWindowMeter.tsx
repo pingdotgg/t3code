@@ -89,7 +89,7 @@ export function ContextWindowMeter(props: {
         tooltipStyle
         side="top"
         align="end"
-        viewportClassName="p-0"
+        viewportClassName="overflow-y-auto p-0"
         className="w-64 max-w-none text-left whitespace-normal"
       >
         <div className="flex flex-col gap-2 p-[var(--floating-content-inset)]">

@@ -93,4 +93,15 @@ describe("parseClaudeUsageLimitsJson", () => {
       parseClaudeUsageLimitsJson(output, "2027-01-01T00:30:00.000Z")?.windows[0]?.resetsAt,
     ).toBe("2027-01-01T07:00:00.000Z");
   });
+
+  it("parses Claude usage with CRLF line endings", () => {
+    const output = JSON.stringify({
+      result: [
+        "Current session: 30% used \u00b7 resets Jul 23, 1:30am (America/Chicago)",
+        "Current week (all models): 16% used \u00b7 resets Jul 28, 1am (America/Chicago)",
+      ].join("\r\n"),
+    });
+
+    expect(parseClaudeUsageLimitsJson(output, "2026-07-22T12:00:00.000Z")?.windows).toHaveLength(2);
+  });
 });
