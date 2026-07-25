@@ -26,6 +26,7 @@ import {
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
 import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { isChatsProject, projectDisplayTitle } from "@t3tools/client-runtime/state/models";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -1606,6 +1607,10 @@ function ChatViewContent(props: ChatViewProps) {
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
+  // The reserved Chats pseudo-project has no real codebase, so project-scoped
+  // surfaces (diff, files, terminal, branches/worktrees, git actions) are
+  // hidden for it.
+  const activeProjectIsChats = isChatsProject(activeProject);
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
   );
@@ -1644,8 +1649,13 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThreadRef || !activeEnvironmentBootstrapComplete) return;
-    useRightPanelStore.getState().reconcileFileSurfaces(activeThreadRef, activeProject !== null);
-  }, [activeEnvironmentBootstrapComplete, activeProject, activeThreadRef]);
+    useRightPanelStore
+      .getState()
+      .reconcileFileSurfaces(activeThreadRef, activeProject !== null && !activeProjectIsChats);
+    useRightPanelStore
+      .getState()
+      .reconcileWorkspaceSurfaces(activeThreadRef, !activeProjectIsChats);
+  }, [activeEnvironmentBootstrapComplete, activeProject, activeProjectIsChats, activeThreadRef]);
 
   // Compute the list of environments this logical project spans, used to
   // drive the environment picker in BranchToolbar.
@@ -2425,7 +2435,7 @@ function ChatViewContent(props: ChatViewProps) {
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
-  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const isGitRepo = (gitStatusQuery.data?.isRepo ?? true) && !activeProjectIsChats;
   const showComposerContextStrip = isGitRepo && activeProject !== null;
   const initialDiffPanelGitScope =
     gitStatusQuery.data?.hasWorkingTreeChanges === true ? "unstaged" : "branch";
@@ -2563,7 +2573,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     const nextOpen = !terminalUiState.terminalOpen;
     if (nextOpen && terminalUiState.terminalIds.length === 0) {
-      if (!activeThreadId || !activeProject) {
+      if (!activeThreadId || !activeProject || activeProjectIsChats) {
         return;
       }
       const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
@@ -2591,6 +2601,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeKnownTerminalIds,
     activeProject,
+    activeProjectIsChats,
     activeThreadId,
     activeThreadRef,
     activeThreadWorktreePath,
@@ -3054,15 +3065,15 @@ function ChatViewContent(props: ChatViewProps) {
     planSidebarOpen,
   ]);
   const addFilesSurface = useCallback(() => {
-    if (!activeThreadRef || !activeProject) return;
+    if (!activeThreadRef || !activeProject || activeProjectIsChats) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
-  }, [activeProject, activeThreadRef]);
+  }, [activeProject, activeProjectIsChats, activeThreadRef]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
-      if (!activeThreadRef || !activeProject) return;
+      if (!activeThreadRef || !activeProject || activeProjectIsChats) return;
       useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
     },
-    [activeProject, activeThreadRef],
+    [activeProject, activeProjectIsChats, activeThreadRef],
   );
   const togglePreviewPanel = useCallback(() => {
     if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;
@@ -3084,7 +3095,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [activeThreadRef]);
   const addTerminalSurface = useCallback(() => {
-    if (!activeThreadRef || !activeThreadId || !activeProject) return;
+    if (!activeThreadRef || !activeThreadId || !activeProject || activeProjectIsChats) return;
     const cwd = gitCwd ?? activeProject.workspaceRoot;
     const terminalId = nextTerminalId([...activeKnownTerminalIds, ...panelTerminalIds]);
     useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
@@ -3105,6 +3116,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeKnownTerminalIds,
     activeProject,
+    activeProjectIsChats,
     activeThreadId,
     activeThreadRef,
     activeThreadWorktreePath,
@@ -4405,6 +4417,7 @@ function ChatViewContent(props: ChatViewProps) {
     return () => window.removeEventListener("keydown", handler, true);
   }, [
     activeProject,
+    activeProjectIsChats,
     activeRightPanelSurface,
     addTerminalSurface,
     terminalUiState.terminalOpen,
@@ -5559,7 +5572,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   const panelToggleControls = (
     <PanelLayoutControls
-      terminalAvailable={activeProject !== null}
+      terminalAvailable={activeProject !== null && !activeProjectIsChats}
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
       rightPanelAvailable={activeProject !== null}
@@ -5687,7 +5700,7 @@ function ChatViewContent(props: ChatViewProps) {
             activeThreadId={activeThread.id}
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
-            activeProjectName={activeProject?.title}
+            activeProjectName={activeProject ? projectDisplayTitle(activeProject) : undefined}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}
@@ -5699,6 +5712,7 @@ function ChatViewContent(props: ChatViewProps) {
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
             onNewThreadInProject={handleNewThreadInActiveProject}
+            isChatsProject={activeProjectIsChats}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}
@@ -5809,7 +5823,10 @@ function ChatViewContent(props: ChatViewProps) {
                       >
                         <DraftHeroHeadline
                           activeProjectRef={activeProjectRef}
-                          activeProjectTitle={activeProject?.title ?? null}
+                          activeProjectTitle={
+                            activeProject ? projectDisplayTitle(activeProject) : null
+                          }
+                          isChatsProject={activeProjectIsChats}
                         />
                       </div>
                       <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
@@ -6063,7 +6080,8 @@ function ChatViewContent(props: ChatViewProps) {
           onAddFiles={addFilesSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
-          filesAvailable={activeProject !== null}
+          filesAvailable={activeProject !== null && !activeProjectIsChats}
+          terminalAvailable={activeProject !== null && !activeProjectIsChats}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -6090,7 +6108,8 @@ function ChatViewContent(props: ChatViewProps) {
             onAddFiles={addFilesSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
-            filesAvailable={activeProject !== null}
+            filesAvailable={activeProject !== null && !activeProjectIsChats}
+            terminalAvailable={activeProject !== null && !activeProjectIsChats}
           >
             {rightPanelContent}
           </RightPanelTabs>

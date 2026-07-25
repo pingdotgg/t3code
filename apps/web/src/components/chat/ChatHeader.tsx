@@ -35,6 +35,11 @@ interface ChatHeaderProps {
   rightPanelOpen: boolean;
   gitCwd: string | null;
   onNewThreadInProject: () => void;
+  /**
+   * True for the reserved Chats pseudo-project: scripts, open-in and git
+   * actions are hidden because there is no real codebase behind the thread.
+   */
+  isChatsProject: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -71,6 +76,7 @@ export const ChatHeader = memo(function ChatHeader({
   rightPanelOpen,
   gitCwd,
   onNewThreadInProject,
+  isChatsProject,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -79,13 +85,15 @@ export const ChatHeader = memo(function ChatHeader({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const fileScripts = useT3ProjectFileScripts(
     activeThreadEnvironmentId,
-    activeProjectScripts ? activeProjectCwd : null,
+    activeProjectScripts && !isChatsProject ? activeProjectCwd : null,
   );
-  const showOpenInPicker = shouldShowOpenInPicker({
-    activeProjectName,
-    activeThreadEnvironmentId,
-    primaryEnvironmentId,
-  });
+  const showOpenInPicker =
+    !isChatsProject &&
+    shouldShowOpenInPicker({
+      activeProjectName,
+      activeThreadEnvironmentId,
+      primaryEnvironmentId,
+    });
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -108,6 +116,7 @@ export const ChatHeader = memo(function ChatHeader({
                 <ProjectFavicon
                   environmentId={activeThreadEnvironmentId}
                   cwd={activeProjectCwd ?? ""}
+                  kind={isChatsProject ? "chats" : undefined}
                   className="size-3.5"
                 />
                 <span className="max-w-40 truncate text-sm font-medium">{activeProjectName}</span>
@@ -140,7 +149,7 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
-        {activeProjectScripts && (
+        {activeProjectScripts && !isChatsProject && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
             fileScripts={fileScripts}
@@ -160,7 +169,7 @@ export const ChatHeader = memo(function ChatHeader({
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && (
+        {activeProjectName && !isChatsProject && (
           <GitActionsControl
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}

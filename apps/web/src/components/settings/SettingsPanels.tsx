@@ -137,6 +137,7 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { projectDisplayTitle } from "@t3tools/client-runtime/state/models";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 const THEME_OPTIONS = [
@@ -2229,8 +2230,9 @@ export function ArchivedThreadsPanel() {
               {
                 id: project.id,
                 environmentId,
-                name: project.title,
+                name: projectDisplayTitle(project),
                 cwd: project.workspaceRoot,
+                kind: project.kind,
               },
             ] as const,
         ),
@@ -2348,7 +2350,13 @@ export function ArchivedThreadsPanel() {
           <SettingsSection
             key={project.id}
             title={project.name}
-            icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
+            icon={
+              <ProjectFavicon
+                environmentId={project.environmentId}
+                cwd={project.cwd}
+                kind={project.kind}
+              />
+            }
           >
             {projectThreads.map((thread) => (
               <SettingsRow

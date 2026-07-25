@@ -6,13 +6,20 @@ import {
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  isChatsProject,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type {
+  ProjectKind,
+  ScopedThreadRef,
+  SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -224,6 +231,7 @@ function SidebarV2ThreadTooltip({
   thread,
   projectTitle,
   projectCwd,
+  projectKind,
   environmentLabel,
   driverKind,
   modelInstanceId,
@@ -233,6 +241,7 @@ function SidebarV2ThreadTooltip({
   thread: SidebarThreadSummary;
   projectTitle: string | null;
   projectCwd: string | null;
+  projectKind: ProjectKind | undefined;
   environmentLabel: string | null;
   driverKind: ProviderInstanceEntry["driverKind"] | null;
   modelInstanceId: string;
@@ -260,6 +269,7 @@ function SidebarV2ThreadTooltip({
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={projectCwd ?? ""}
+                kind={projectKind}
                 className="size-3 shrink-0 stroke-muted-foreground"
               />
               <div className="min-w-0 truncate text-foreground/75">{projectTitle}</div>
@@ -381,6 +391,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   environmentLabel: string | null;
   projectCwd: string | null;
   projectTitle: string | null;
+  projectKind: ProjectKind | undefined;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
@@ -537,6 +548,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       thread={thread}
       projectTitle={props.projectTitle}
       projectCwd={props.projectCwd}
+      projectKind={props.projectKind}
       environmentLabel={props.environmentLabel}
       driverKind={driverKind}
       modelInstanceId={modelInstanceId}
@@ -769,6 +781,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={props.projectCwd ?? ""}
+                kind={props.projectKind}
                 className="size-4"
                 fallbackIcon={MessageSquareIcon}
               />
@@ -845,6 +858,28 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   }
 
   const diff = latestTurnDiff(thread);
+  const hasThreadMetaRow = Boolean(thread.branch) || prBadge !== null || diff !== null;
+  const threadMetaIcons = (
+    <span
+      aria-hidden
+      className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+    >
+      {isRemote ? (
+        <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+          <ServerIcon aria-hidden className="size-3.5" />
+        </span>
+      ) : null}
+      {driverKind ? (
+        <span className="inline-flex shrink-0 items-center opacity-60">
+          <ProviderInstanceIcon
+            driverKind={driverKind}
+            displayName={thread.session?.providerName ?? modelInstanceId}
+            iconClassName="size-3.5"
+          />
+        </span>
+      ) : null}
+    </span>
+  );
 
   return (
     <li
@@ -866,11 +901,17 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             />
           }
         >
-          <div className="relative z-10 h-[4.875rem] px-2.5 py-2">
+          <div
+            className={cn(
+              "relative z-10 px-2.5 py-2",
+              hasThreadMetaRow ? "h-[4.875rem]" : undefined,
+            )}
+          >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={props.projectCwd ?? ""}
+                kind={props.projectKind}
                 className="size-4 shrink-0"
               />
               {props.projectTitle ? (
@@ -953,40 +994,29 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 ) : null}
               </span>
             </div>
-            <div className="mt-1 flex min-w-0">{title}</div>
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
-              {thread.branch ? (
-                <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
-              ) : (
-                <span className="flex-1" />
-              )}
-              {prBadge}
-              {diff ? (
-                <span className="shrink-0 font-mono">
-                  <span className="text-emerald-600 dark:text-emerald-400">+{diff.insertions}</span>{" "}
-                  <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
-                </span>
-              ) : null}
-              <span
-                aria-hidden
-                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-              >
-                {isRemote ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-                    <ServerIcon aria-hidden className="size-3.5" />
-                  </span>
-                ) : null}
-                {driverKind ? (
-                  <span className="inline-flex shrink-0 items-center opacity-60">
-                    <ProviderInstanceIcon
-                      driverKind={driverKind}
-                      displayName={thread.session?.providerName ?? modelInstanceId}
-                      iconClassName="size-3.5"
-                    />
-                  </span>
-                ) : null}
-              </span>
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              {title}
+              {!hasThreadMetaRow ? threadMetaIcons : null}
             </div>
+            {hasThreadMetaRow ? (
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
+                {thread.branch ? (
+                  <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+                ) : (
+                  <span className="flex-1" />
+                )}
+                {prBadge}
+                {diff ? (
+                  <span className="shrink-0 font-mono">
+                    <span className="text-emerald-600 dark:text-emerald-400">
+                      +{diff.insertions}
+                    </span>{" "}
+                    <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
+                  </span>
+                ) : null}
+                {threadMetaIcons}
+              </div>
+            ) : null}
           </div>
           {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
         </TooltipTrigger>
@@ -1123,6 +1153,10 @@ export default function SidebarV2() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
+  const manageableProjectGroups = useMemo(
+    () => projectGroups.filter((group) => !group.memberProjects.some(isChatsProject)),
+    [projectGroups],
+  );
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByInstanceId = useMemo(
     () =>
@@ -1141,6 +1175,11 @@ export default function SidebarV2() {
           project.workspaceRoot,
         ]),
       ),
+    [projects],
+  );
+  const projectKindByKey = useMemo(
+    () =>
+      new Map(projects.map((project) => [`${project.environmentId}:${project.id}`, project.kind])),
     [projects],
   );
   const projectDisplayNameByKey = useMemo(
@@ -1193,8 +1232,8 @@ export default function SidebarV2() {
     () =>
       projectScopeKey === null
         ? null
-        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
-    [projectGroups, projectScopeKey],
+        : (manageableProjectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
+    [manageableProjectGroups, projectScopeKey],
   );
   const scopedProjectKeys = useMemo(
     () =>
@@ -2207,7 +2246,7 @@ export default function SidebarV2() {
   // for multi-project setups.
   const handleNewThreadClick = useCallback(() => {
     // One project: nothing to pick, create immediately.
-    if (projectGroups.length <= 1) {
+    if (manageableProjectGroups.length <= 1) {
       if (isMobile) setOpenMobile(false);
       void startNewThreadFromContext({
         activeDraftThread: newThreadContext.activeDraftThread,
@@ -2219,7 +2258,7 @@ export default function SidebarV2() {
     }
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
-  }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
+  }, [isMobile, manageableProjectGroups.length, newThreadContext, setOpenMobile]);
 
   const commandPaletteShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
   // Same resolution as v1: prefer the local-thread binding, fall back to
@@ -2283,7 +2322,7 @@ export default function SidebarV2() {
                 </Tooltip>
               </div>
             </div>
-            {projectGroups.length > 0 ? (
+            {manageableProjectGroups.length > 0 ? (
               <div className="flex items-center gap-1">
                 <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
                   <MenuTrigger
@@ -2298,6 +2337,7 @@ export default function SidebarV2() {
                       <ProjectFavicon
                         environmentId={scopedProjectGroup.environmentId}
                         cwd={scopedProjectGroup.workspaceRoot}
+                        kind={scopedProjectGroup.kind}
                         className="size-4 shrink-0"
                       />
                     ) : (
@@ -2323,7 +2363,7 @@ export default function SidebarV2() {
                         <FolderIcon className="size-4 shrink-0" />
                         <span className="min-w-0 truncate text-sm">All projects</span>
                       </MenuRadioItem>
-                      {projectGroups.map((project) => {
+                      {manageableProjectGroups.map((project) => {
                         const scopeKey = project.projectKey;
                         return (
                           <MenuRadioItem
@@ -2335,6 +2375,7 @@ export default function SidebarV2() {
                             <ProjectFavicon
                               environmentId={project.environmentId}
                               cwd={project.workspaceRoot}
+                              kind={project.kind}
                               className="size-4 shrink-0"
                             />
                             <span className="min-w-0 truncate text-sm">{project.displayName}</span>
@@ -2454,6 +2495,9 @@ export default function SidebarV2() {
                           `${thread.environmentId}:${thread.projectId}`,
                         ) ?? null
                       }
+                      projectKind={projectKindByKey.get(
+                        `${thread.environmentId}:${thread.projectId}`,
+                      )}
                       providerEntryByInstanceId={providerEntryByInstanceId}
                       onThreadClick={handleThreadClick}
                       onThreadActivate={navigateToThread}

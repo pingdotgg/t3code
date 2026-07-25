@@ -21,6 +21,7 @@ import {
   type OrchestrationSession,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
+  type ProjectKind,
   ModelSelection,
   ProjectId,
   ThreadId,
@@ -50,6 +51,8 @@ import { ProjectionThreadProposedPlan } from "../../persistence/Services/Project
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
+import { resolveProjectKind } from "../../project/ProjectKind.ts";
+import { ServerConfig } from "../../config.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
@@ -227,11 +230,13 @@ function mapSessionRow(
 function mapProjectShellRow(
   row: Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>,
   repositoryIdentity: OrchestrationProject["repositoryIdentity"],
+  kind: ProjectKind,
 ): OrchestrationProjectShell {
   return {
     id: row.projectId,
     title: row.title,
     workspaceRoot: row.workspaceRoot,
+    kind,
     repositoryIdentity,
     defaultModelSelection: row.defaultModelSelection,
     scripts: row.scripts,
@@ -264,6 +269,14 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+  // Optional so test layer stacks without ServerConfig keep working; without a
+  // configured chats dir every project resolves to "standard".
+  const chatsDir = Option.map(
+    yield* Effect.serviceOption(ServerConfig),
+    (config) => config.chatsDir,
+  ).pipe(Option.getOrUndefined);
+  const projectKindForWorkspaceRoot = (workspaceRoot: string) =>
+    resolveProjectKind(workspaceRoot, chatsDir);
   const repositoryIdentityResolutionConcurrency = 4;
   const resolveRepositoryIdentitiesForProjects = Effect.fn(
     "ProjectionSnapshotQuery.resolveRepositoryIdentitiesForProjects",
@@ -1181,6 +1194,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 id: row.projectId,
                 title: row.title,
                 workspaceRoot: row.workspaceRoot,
+                kind: projectKindForWorkspaceRoot(row.workspaceRoot),
                 repositoryIdentity: repositoryIdentities.get(row.projectId) ?? null,
                 defaultModelSelection: row.defaultModelSelection,
                 scripts: row.scripts,
@@ -1518,7 +1532,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               projects: Arr.filterMap(projectRows, (row) =>
                 row.deletedAt === null
                   ? Result.succeed(
-                      mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
+                      mapProjectShellRow(
+                        row,
+                        repositoryIdentities.get(row.projectId) ?? null,
+                        projectKindForWorkspaceRoot(row.workspaceRoot),
+                      ),
                     )
                   : Result.failVoid,
               ),
@@ -1657,7 +1675,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               projects: Arr.filterMap(projectRows, (row) =>
                 row.deletedAt === null && activeProjectIds.has(row.projectId)
                   ? Result.succeed(
-                      mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
+                      mapProjectShellRow(
+                        row,
+                        repositoryIdentities.get(row.projectId) ?? null,
+                        projectKindForWorkspaceRoot(row.workspaceRoot),
+                      ),
                     )
                   : Result.failVoid,
               ),
@@ -1755,6 +1777,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     id: option.value.projectId,
                     title: option.value.title,
                     workspaceRoot: option.value.workspaceRoot,
+                    kind: projectKindForWorkspaceRoot(option.value.workspaceRoot),
                     repositoryIdentity,
                     defaultModelSelection: option.value.defaultModelSelection,
                     scripts: option.value.scripts,
@@ -1782,7 +1805,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               .resolve(option.value.workspaceRoot)
               .pipe(
                 Effect.map((repositoryIdentity) =>
-                  Option.some(mapProjectShellRow(option.value, repositoryIdentity)),
+                  Option.some(
+                    mapProjectShellRow(
+                      option.value,
+                      repositoryIdentity,
+                      projectKindForWorkspaceRoot(option.value.workspaceRoot),
+                    ),
+                  ),
                 ),
               ),
       ),

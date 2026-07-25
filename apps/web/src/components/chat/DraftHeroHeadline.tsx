@@ -27,11 +27,17 @@ import {
 interface DraftHeroHeadlineProps {
   readonly activeProjectRef: ScopedProjectRef | null;
   readonly activeProjectTitle: string | null;
+  /**
+   * The Chat pseudo-project is not a codebase, so the build-oriented prompt
+   * is replaced with a neutral one.
+   */
+  readonly isChatsProject: boolean;
 }
 
 export function DraftHeroHeadline({
   activeProjectRef,
   activeProjectTitle,
+  isChatsProject,
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
   const threads = useThreadShells();
@@ -146,7 +152,9 @@ export function DraftHeroHeadline({
 
   return (
     <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
-      {hasResolvedProject ? (
+      {hasResolvedProject && isChatsProject ? (
+        <>What&rsquo;s on your mind?</>
+      ) : hasResolvedProject ? (
         <>What should we build in {projectSelector}?</>
       ) : canChooseProject ? (
         <>{projectSelector} to start</>

@@ -1,6 +1,6 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectKind } from "@t3tools/contracts";
 import { isProjectFaviconFallbackUrl } from "@t3tools/shared/projectFavicon";
-import { FolderIcon } from "lucide-react";
+import { FolderIcon, MessageCircleIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import { useState } from "react";
 import { useAssetUrl } from "../assets/assetUrls";
@@ -13,14 +13,18 @@ export function ProjectFavicon(input: {
   cwd: string;
   className?: string | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;
+  kind?: ProjectKind | undefined;
 }) {
   const src = useAssetUrl(input.environmentId, {
     _tag: "project-favicon",
     cwd: input.cwd,
   });
-  const FallbackIcon = input.fallbackIcon ?? FolderIcon;
+  // The Chat pseudo-project has no repository to source a favicon from, and
+  // its directory is an implementation detail — always show the chat bubble.
+  const FallbackIcon =
+    input.kind === "chats" ? MessageCircleIcon : (input.fallbackIcon ?? FolderIcon);
 
-  if (!src || isProjectFaviconFallbackUrl(src)) {
+  if (input.kind === "chats" || !src || isProjectFaviconFallbackUrl(src)) {
     return <ProjectFaviconFallback className={input.className} icon={FallbackIcon} />;
   }
 

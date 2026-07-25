@@ -3,6 +3,7 @@ import {
   derivePhysicalProjectKey,
   deriveProjectGroupLabel,
 } from "@t3tools/client-runtime/state/project-grouping";
+import { projectDisplayTitle } from "@t3tools/client-runtime/state/models";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -113,7 +114,10 @@ export function buildHomeProjectScopes(input: {
     const representative = projects[0]!;
     return {
       key,
-      title: deriveProjectGroupLabel({ representative, members: projects }),
+      title:
+        projects.length === 1
+          ? projectDisplayTitle(representative)
+          : deriveProjectGroupLabel({ representative, members: projects }),
       representative,
       projects,
       projectRefs: projectRefsByGroup.get(key) ?? [],

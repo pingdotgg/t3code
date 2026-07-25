@@ -10,6 +10,7 @@ import { type ReactNode } from "react";
 import { sortThreads } from "../lib/threadSort";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
+import { isChatsProject, projectDisplayTitle } from "@t3tools/client-runtime/state/models";
 
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-muted-foreground/80";
@@ -46,7 +47,8 @@ export interface CommandPaletteSubmenuItem extends CommandPaletteItem {
 
 export interface CommandPaletteGroup {
   readonly value: string;
-  readonly label: string;
+  /** Omitted for single-item groups that read as standalone actions. */
+  readonly label?: string;
   readonly items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
 }
 
@@ -86,8 +88,10 @@ export function buildProjectActionItems(input: {
     kind: "action",
     value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
     searchTerms: [project.title, project.workspaceRoot, ...(input.searchTerms?.(project) ?? [])],
-    title: project.title,
-    description: project.workspaceRoot,
+    title: projectDisplayTitle(project),
+    // The Chat pseudo-project's directory is an implementation detail, so it
+    // stays hidden even though it is still searchable above.
+    ...(isChatsProject(project) ? {} : { description: project.workspaceRoot }),
     icon: input.icon(project),
     ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
     run: async () => {
@@ -260,7 +264,9 @@ export function filterCommandPaletteGroups(input: {
       return [];
     }
 
-    return [{ value: group.value, label: group.label, items }];
+    return [
+      { value: group.value, ...(group.label === undefined ? {} : { label: group.label }), items },
+    ];
   });
 }
 

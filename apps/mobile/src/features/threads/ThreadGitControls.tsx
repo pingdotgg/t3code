@@ -392,17 +392,21 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
+  const hidden = props.showActionControls === false;
   return useMemo(
-    () => [actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems,
-    [actionItems],
+    () =>
+      hidden ? [] : ([actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems),
+    [actionItems, hidden],
   );
 }
 
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
+  const hidden = props.showActionControls === false;
   return useMemo(
-    () => [actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems,
-    [actionItems],
+    () =>
+      hidden ? [] : ([actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems),
+    [actionItems, hidden],
   );
 }
 

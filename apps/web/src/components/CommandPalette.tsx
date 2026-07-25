@@ -1,6 +1,7 @@
 "use client";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isChatsProject, projectDisplayTitle } from "@t3tools/client-runtime/state/models";
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
@@ -35,6 +36,7 @@ import {
   MessageSquareIcon,
   SettingsIcon,
   SquarePenIcon,
+  MessageCircleIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -598,6 +600,31 @@ function OpenCommandPaletteDialog(props: {
       })),
     [projectPickerEntries],
   );
+  // The Chat pseudo-project is not a codebase: it never appears in project
+  // lists, and is reachable only through its own "Start a new chat" action.
+  const chatProject = useMemo(
+    () => pickerProjects.find((project) => isChatsProject(project)) ?? null,
+    [pickerProjects],
+  );
+  const codebasePickerProjects = useMemo(
+    () => pickerProjects.filter((project) => !isChatsProject(project)),
+    [pickerProjects],
+  );
+  const startNewChat = useCallback(async () => {
+    if (!chatProject) return;
+    await handleNewThread(scopeProjectRef(chatProject.environmentId, chatProject.id));
+  }, [chatProject, handleNewThread]);
+  const startNewChatItem = useMemo(
+    (): CommandPaletteActionItem => ({
+      kind: "action",
+      value: "action:new-chat",
+      searchTerms: ["start a new chat", "chat", "new chat", "conversation", "ask"],
+      title: "Start a new chat",
+      icon: <MessageCircleIcon className={ITEM_ICON_CLASS} />,
+      run: startNewChat,
+    }),
+    [startNewChat],
+  );
   const projectGroupByTargetKey = useMemo(
     () =>
       new Map(
@@ -711,7 +738,10 @@ function OpenCommandPaletteDialog(props: {
     [projects],
   );
   const projectTitleById = useMemo(
-    () => new Map<ProjectId, string>(projects.map((project) => [project.id, project.title])),
+    () =>
+      new Map<ProjectId, string>(
+        projects.map((project) => [project.id, projectDisplayTitle(project)]),
+      ),
     [projects],
   );
 
@@ -837,7 +867,7 @@ function OpenCommandPaletteDialog(props: {
   const projectSearchItems = useMemo(
     () =>
       buildProjectActionItems({
-        projects: pickerProjects,
+        projects: codebasePickerProjects,
         valuePrefix: "project",
         searchTerms: (project) => {
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
@@ -849,19 +879,20 @@ function OpenCommandPaletteDialog(props: {
           <ProjectFavicon
             environmentId={project.environmentId}
             cwd={project.workspaceRoot}
+            kind={project.kind}
             className={ITEM_ICON_CLASS}
           />
         ),
         runProject: openProjectFromSearch,
       }),
-    [openProjectFromSearch, pickerProjects, projectGroupByTargetKey],
+    [codebasePickerProjects, openProjectFromSearch, projectGroupByTargetKey],
   );
 
   const projectThreadItems = useMemo(
     () =>
       enumerateCommandPaletteItems(
         buildProjectActionItems({
-          projects: pickerProjects,
+          projects: codebasePickerProjects,
           valuePrefix: "new-thread-in",
           searchTerms: (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
@@ -873,6 +904,7 @@ function OpenCommandPaletteDialog(props: {
             <ProjectFavicon
               environmentId={project.environmentId}
               cwd={project.workspaceRoot}
+              kind={project.kind}
               className={ITEM_ICON_CLASS}
             />
           ),
@@ -893,7 +925,7 @@ function OpenCommandPaletteDialog(props: {
           },
         }),
       ),
-    [contextualProjectRef, handleNewThread, pickerProjects, projectGroupByTargetKey],
+    [codebasePickerProjects, contextualProjectRef, handleNewThread, projectGroupByTargetKey],
   );
 
   const allThreadItems = useMemo(
@@ -1214,6 +1246,7 @@ function OpenCommandPaletteDialog(props: {
     pushPaletteView({
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [
+        ...(chatProject ? [{ value: "chat", items: [startNewChatItem] }] : []),
         {
           value: "projects",
           label: "Projects",
@@ -1222,6 +1255,7 @@ function OpenCommandPaletteDialog(props: {
       ],
     });
   }, [
+    chatProject,
     clearOpenIntent,
     browseNavigation,
     currentProjectEnvironmentId,
@@ -1229,14 +1263,21 @@ function OpenCommandPaletteDialog(props: {
     openIntent,
     projectThreadItems,
     pushPaletteView,
+    startNewChatItem,
   ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
-  if (projects.length > 0) {
+  if (codebasePickerProjects.length > 0) {
+    const codebasePickerEntries = projectPickerEntries.filter(
+      (entry) => !isChatsProject(entry.targetProject),
+    );
+    // "New thread in X" always names a real codebase, even while a chat
+    // thread is the active one.
     const activeProjectTitle =
-      projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
-      (currentProjectId ? (projectTitleById.get(currentProjectId) ?? null) : null);
+      codebasePickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
+      codebasePickerEntries[0]?.group.displayName ??
+      null;
 
     if (activeProjectTitle) {
       actionItems.push({
@@ -1268,8 +1309,15 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread in...",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+      groups: [
+        ...(chatProject ? [{ value: "chat", items: [startNewChatItem] }] : []),
+        { value: "projects", label: "Projects", items: projectThreadItems },
+      ],
     });
+  }
+
+  if (chatProject) {
+    actionItems.push(startNewChatItem);
   }
 
   actionItems.push({

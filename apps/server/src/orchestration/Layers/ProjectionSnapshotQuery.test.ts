@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import * as ServerConfigModule from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
@@ -32,6 +33,79 @@ const projectionSnapshotLayer = it.layer(
     Layer.provideMerge(NodeServices.layer),
   ),
 );
+
+const projectionSnapshotWithServerConfigLayer = it.layer(
+  OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(
+      Layer.fresh(
+        ServerConfigModule.layerTest(process.cwd(), { prefix: "t3code-project-kind-test-" }),
+      ),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+projectionSnapshotWithServerConfigLayer("ProjectionSnapshotQuery project kind", (it) => {
+  it.effect("derives the chats kind for the project rooted at the chats dir", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const serverConfig = yield* ServerConfigModule.ServerConfig;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES
+          (
+            'project-chats',
+            'Chats',
+            ${serverConfig.chatsDir},
+            NULL,
+            '[]',
+            '2026-02-24T00:00:00.000Z',
+            '2026-02-24T00:00:01.000Z',
+            NULL
+          ),
+          (
+            'project-standard',
+            'Standard',
+            '/tmp/project-standard',
+            NULL,
+            '[]',
+            '2026-02-24T00:00:00.000Z',
+            '2026-02-24T00:00:01.000Z',
+            NULL
+          )
+      `;
+
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+      const kindsById = new Map(
+        shellSnapshot.projects.map((project) => [project.id, project.kind]),
+      );
+      assert.equal(kindsById.get(asProjectId("project-chats")), "chats");
+      assert.equal(kindsById.get(asProjectId("project-standard")), "standard");
+
+      const chatsProject = yield* snapshotQuery.getActiveProjectByWorkspaceRoot(
+        serverConfig.chatsDir,
+      );
+      assert.equal(chatsProject._tag, "Some");
+      if (chatsProject._tag === "Some") {
+        assert.equal(chatsProject.value.kind, "chats");
+      }
+    }),
+  );
+});
 
 projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
   it.effect("hydrates read model from projection tables and computes snapshot sequence", () =>
@@ -261,6 +335,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
+          kind: "standard",
           repositoryIdentity: null,
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
@@ -376,6 +451,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
+          kind: "standard",
           repositoryIdentity: null,
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),

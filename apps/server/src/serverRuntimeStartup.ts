@@ -166,6 +166,37 @@ export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => ({
   model: DEFAULT_MODEL,
 });
 
+export const CHATS_PROJECT_TITLE = "Chat";
+
+/**
+ * Ensures the reserved Chat pseudo-project exists. It points at the
+ * `<baseDir>/chats` directory and hosts one-off conversations that are not
+ * tied to a real codebase. The directory is created when missing.
+ */
+export const ensureChatsProject = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  const projectionReadModelQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+
+  const existingProject = yield* projectionReadModelQuery.getActiveProjectByWorkspaceRoot(
+    serverConfig.chatsDir,
+  );
+  if (Option.isSome(existingProject)) {
+    return;
+  }
+
+  yield* orchestrationEngine.dispatch({
+    type: "project.create",
+    commandId: CommandId.make(yield* crypto.randomUUIDv4),
+    projectId: ProjectId.make(yield* crypto.randomUUIDv4),
+    title: CHATS_PROJECT_TITLE,
+    workspaceRoot: serverConfig.chatsDir,
+    createWorkspaceRootIfMissing: true,
+    createdAt: DateTime.formatIso(yield* DateTime.now),
+  });
+});
+
 export const resolveWelcomeBase = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const segments = serverConfig.cwd.split(/[/\\]/).filter(Boolean);
@@ -344,6 +375,18 @@ export const make = Effect.gen(function* () {
         yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
         yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
       }),
+    );
+
+    yield* Effect.forkScoped(
+      runStartupPhase(
+        "chats.ensure",
+        ensureChatsProject.pipe(
+          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.catch((cause) =>
+            Effect.logWarning("startup chats project ensure failed", { cause }),
+          ),
+        ),
+      ),
     );
 
     const welcomeBase = yield* resolveWelcomeBase;

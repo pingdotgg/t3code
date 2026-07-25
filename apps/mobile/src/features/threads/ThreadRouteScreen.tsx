@@ -8,6 +8,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import { isChatsProject } from "@t3tools/client-runtime/state/models";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -206,9 +207,18 @@ function ThreadRouteContent(
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
     () => (props.renderInspector ? { routeThreadIdentity, mode: "route" } : null),
   );
+  // The reserved Chats pseudo-project has no real codebase, so files/git
+  // inspectors, terminals and git controls are hidden for its threads.
+  const selectedProjectIsChats = isChatsProject(selectedThreadProject);
   const inspectorMode = (() => {
     if (inspectorSelection?.routeThreadIdentity === routeThreadIdentity) {
       if (inspectorSelection.mode === "files" && selectedThreadCwd === null) {
+        return null;
+      }
+      if (
+        selectedProjectIsChats &&
+        (inspectorSelection.mode === "files" || inspectorSelection.mode === "git")
+      ) {
         return null;
       }
       return inspectorSelection.mode;
@@ -594,22 +604,29 @@ function ThreadRouteContent(
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
     auxiliaryPaneControl:
-      !layout.usesSplitView && fileInspector.supported && selectedThreadCwd !== null
+      !layout.usesSplitView &&
+      fileInspector.supported &&
+      selectedThreadCwd !== null &&
+      !selectedProjectIsChats
         ? {
             accessibilityLabel: "Toggle inspector",
             onPress: handleToggleInspector,
           }
         : undefined,
     onOpenFilesInspector:
-      fileInspector.supported && selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
-    onOpenGitInspector: fileInspector.supported ? handleOpenGitInspector : undefined,
+      fileInspector.supported && selectedThreadCwd !== null && !selectedProjectIsChats
+        ? handleOpenFilesInspector
+        : undefined,
+    onOpenGitInspector:
+      fileInspector.supported && !selectedProjectIsChats ? handleOpenGitInspector : undefined,
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal: Boolean(selectedThreadProject?.workspaceRoot),
-    canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
-    projectScripts: selectedThreadProject?.scripts ?? [],
+    canOpenTerminal: Boolean(selectedThreadProject?.workspaceRoot) && !selectedProjectIsChats,
+    canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot) && !selectedProjectIsChats,
+    projectScripts: selectedProjectIsChats ? [] : (selectedThreadProject?.scripts ?? []),
     terminalSessions: terminalMenuSessions,
+    showActionControls: !selectedProjectIsChats,
     showDirectFileControl: layout.usesSplitView,
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
@@ -743,7 +760,10 @@ function ThreadRouteContent(
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
-      <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
+      <ThreadGitControls
+        {...threadGitControlProps}
+        showActionControls={showActionControls && !selectedProjectIsChats}
+      />
 
       <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
 

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import type { Thread } from "../types";
+import type { Project, Thread } from "../types";
 import {
   buildBrowseGroups,
+  buildProjectActionItems,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
@@ -230,5 +231,46 @@ describe("buildBrowseGroups", () => {
     finishNavigation?.();
     await action;
     expect(actionSettled).toBe(true);
+  });
+});
+
+describe("buildProjectActionItems", () => {
+  const makeProject = (overrides: Partial<Project> = {}): Project =>
+    ({
+      id: ProjectId.make("project-1"),
+      environmentId: EnvironmentId.make("env-1"),
+      title: "Chats",
+      workspaceRoot: "/home/user/.t3/chats",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      ...overrides,
+    }) as Project;
+
+  it("labels the chats pseudo-project and hides its workspace path", () => {
+    const [item] = buildProjectActionItems({
+      projects: [makeProject({ kind: "chats" })],
+      valuePrefix: "project",
+      icon: () => null,
+      runProject: async () => undefined,
+    });
+
+    expect(item?.title).toBe("Chat");
+    expect(item?.description).toBeUndefined();
+    // The directory stays searchable even though it is not displayed.
+    expect(item?.searchTerms).toContain("/home/user/.t3/chats");
+  });
+
+  it("keeps the title and path for standard projects", () => {
+    const [item] = buildProjectActionItems({
+      projects: [makeProject({ title: "t3code", workspaceRoot: "/dev/t3code" })],
+      valuePrefix: "project",
+      icon: () => null,
+      runProject: async () => undefined,
+    });
+
+    expect(item?.title).toBe("t3code");
+    expect(item?.description).toBe("/dev/t3code");
   });
 });

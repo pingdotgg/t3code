@@ -208,10 +208,20 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+/**
+ * Discriminates the reserved "Chats" pseudo-project (workspace root at
+ * `<baseDir>/chats`) from normal projects. Derived server-side from the
+ * workspace root — never persisted — so it stays correct across base-dir
+ * changes and older snapshots.
+ */
+export const ProjectKind = Schema.Literals(["standard", "chats"]);
+export type ProjectKind = typeof ProjectKind.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  kind: Schema.optional(ProjectKind),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
@@ -389,6 +399,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  kind: Schema.optional(ProjectKind),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),

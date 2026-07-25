@@ -107,6 +107,102 @@ it.effect("launchStartupHeartbeat does not block the caller while counts are loa
   ),
 );
 
+it.effect("ensureChatsProject creates the Chats project when missing", () =>
+  Effect.gen(function* () {
+    const dispatchedCommands = yield* Ref.make<ReadonlyArray<Record<string, unknown>>>([]);
+    yield* ServerRuntimeStartup.ensureChatsProject.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, {
+        chatsDir: "/tmp/t3-home/chats",
+      } as never),
+      Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+        getCommandReadModel: () => Effect.die("unused"),
+        getSnapshot: () => Effect.die("unused"),
+        getShellSnapshot: () => Effect.die("unused"),
+        getArchivedShellSnapshot: () => Effect.die("unused"),
+        getSnapshotSequence: () => Effect.die("unused"),
+        getCounts: () => Effect.die("unused"),
+        getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+        getProjectShellById: () => Effect.die("unused"),
+        getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+        getThreadCheckpointContext: () => Effect.succeed(Option.none()),
+        getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+        getThreadShellById: () => Effect.die("unused"),
+        getThreadDetailById: () => Effect.die("unused"),
+        getThreadDetailSnapshot: () => Effect.die("unused"),
+      }),
+      Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
+        readEvents: () => Stream.empty,
+        dispatch: (command) =>
+          Ref.update(dispatchedCommands, (calls) => [...calls, command]).pipe(
+            Effect.as({ sequence: 1 }),
+          ),
+        streamDomainEvents: Stream.empty,
+        latestSequence: Effect.succeed(0),
+      } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
+      Effect.provide(NodeServices.layer),
+    );
+
+    const commands = yield* Ref.get(dispatchedCommands);
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0]?.type, "project.create");
+    assert.equal(commands[0]?.title, ServerRuntimeStartup.CHATS_PROJECT_TITLE);
+    assert.equal(commands[0]?.workspaceRoot, "/tmp/t3-home/chats");
+    assert.equal(commands[0]?.createWorkspaceRootIfMissing, true);
+  }),
+);
+
+it.effect("ensureChatsProject leaves an existing Chats project untouched", () =>
+  Effect.gen(function* () {
+    const dispatchedCommands = yield* Ref.make<ReadonlyArray<string>>([]);
+    yield* ServerRuntimeStartup.ensureChatsProject.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, {
+        chatsDir: "/tmp/t3-home/chats",
+      } as never),
+      Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+        getCommandReadModel: () => Effect.die("unused"),
+        getSnapshot: () => Effect.die("unused"),
+        getShellSnapshot: () => Effect.die("unused"),
+        getArchivedShellSnapshot: () => Effect.die("unused"),
+        getSnapshotSequence: () => Effect.die("unused"),
+        getCounts: () => Effect.die("unused"),
+        getActiveProjectByWorkspaceRoot: () =>
+          Effect.succeed(
+            Option.some({
+              id: ProjectId.make("project-chats"),
+              title: ServerRuntimeStartup.CHATS_PROJECT_TITLE,
+              workspaceRoot: "/tmp/t3-home/chats",
+              kind: "chats" as const,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+              deletedAt: null,
+            }),
+          ),
+        getProjectShellById: () => Effect.die("unused"),
+        getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+        getThreadCheckpointContext: () => Effect.succeed(Option.none()),
+        getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+        getThreadShellById: () => Effect.die("unused"),
+        getThreadDetailById: () => Effect.die("unused"),
+        getThreadDetailSnapshot: () => Effect.die("unused"),
+      }),
+      Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
+        readEvents: () => Stream.empty,
+        dispatch: (command) =>
+          Ref.update(dispatchedCommands, (calls) => [...calls, command.type]).pipe(
+            Effect.as({ sequence: 1 }),
+          ),
+        streamDomainEvents: Stream.empty,
+        latestSequence: Effect.succeed(0),
+      } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
+      Effect.provide(NodeServices.layer),
+    );
+
+    assert.deepStrictEqual(yield* Ref.get(dispatchedCommands), []);
+  }),
+);
+
 it.effect("resolveWelcomeBase derives cwd and project name from server config", () =>
   Effect.gen(function* () {
     const welcome = yield* ServerRuntimeStartup.resolveWelcomeBase.pipe(

@@ -22,6 +22,30 @@ export interface EnvironmentThread extends OrchestrationThread {
   readonly environmentId: EnvironmentId;
 }
 
+/**
+ * The reserved Chat pseudo-project hosts one-off conversations with no
+ * real codebase behind them, so project-scoped surfaces (diff, files,
+ * branches, worktrees, terminal, git actions) are hidden for it.
+ */
+export function isChatsProject(
+  project: Pick<OrchestrationProjectShell, "kind"> | null | undefined,
+): boolean {
+  return project?.kind === "chats";
+}
+
+/**
+ * Label shown wherever the Chat pseudo-project is named. Overriding the
+ * stored title keeps already-created projects consistent with the current
+ * wording without a data migration.
+ */
+export const CHATS_PROJECT_LABEL = "Chat";
+
+export function projectDisplayTitle(
+  project: Pick<OrchestrationProjectShell, "kind" | "title">,
+): string {
+  return isChatsProject(project) ? CHATS_PROJECT_LABEL : project.title;
+}
+
 export function scopeProject(
   environmentId: EnvironmentId,
   project: OrchestrationProjectShell,
