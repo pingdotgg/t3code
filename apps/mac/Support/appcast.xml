@@ -6,6 +6,15 @@
         <language>en</language>
         <!-- CI will inject release items here -->
         <item>
+            <title>0.1.0-alpha.16</title>
+            <pubDate>Sat, 25 Jul 2026 23:52:11 +0000</pubDate>
+            <sparkle:version>16</sparkle:version>
+            <sparkle:shortVersionString>0.1.0-alpha.16</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.1.0-alpha.16/SurgeCode-0.1.0-alpha.16.zip" length="154797619" type="application/octet-stream" sparkle:edSignature="lFtaIpqhJxM6GhjnDnhXl+E10SvPfITeta4F+5f7cA4nEHjjCUu6lg/k7gJCZLb7hawuMaSY+PqAD1pTIhehCA=="/>
+        </item>
+        <item>
             <title>0.1.0-alpha.13</title>
             <pubDate>Sat, 25 Jul 2026 20:56:25 +0000</pubDate>
             <sparkle:version>13</sparkle:version>
@@ -22,15 +31,6 @@
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.1.0-alpha.11/SurgeCode-0.1.0-alpha.11.zip" length="154602344" type="application/octet-stream" sparkle:edSignature="u/bb8046M8wLyM8reI8Nbwd+pRxV2Mj30NZQV1ij3hlfO4GujYN+IkWVoacAdRwL84tNet0qu/5XzwmXSDizDQ=="/>
-        </item>
-        <item>
-            <title>0.1.0-alpha.5</title>
-            <pubDate>Sat, 25 Jul 2026 03:23:38 +0000</pubDate>
-            <sparkle:version>5</sparkle:version>
-            <sparkle:shortVersionString>0.1.0-alpha.5</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.1.0-alpha.5/SurgeCode-0.1.0-alpha.5.zip" length="154547515" type="application/octet-stream" sparkle:edSignature="Tj/3Fu3R3rklBQFss+RORkcDLVOQeVnL1trJB6j6qXhuLGhIl98V7NhMn601A1ijfxG4+PFLzADvZ0naiEFIDg=="/>
         </item>
     </channel>
 </rss>
