@@ -76,10 +76,12 @@ enum AlpineTheme {
     static let lichen = Color(red: 0.82, green: 0.76, blue: 0.52)
     static let lavender = Color(red: 0.69, green: 0.64, blue: 0.76)
 
-    /// The user's message is a light sage surface, deliberately distinct from
-    /// the darker app tint while remaining part of the same color family.
-    static let userBubbleTop = Color(red: 0.72, green: 0.89, blue: 0.76)
-    static let userBubbleBottom = Color(red: 0.58, green: 0.81, blue: 0.65)
+    /// The user's message is a deep spruce panel — a solid, dark surface that
+    /// belongs to the app's always-dark chrome while staying in the accent's
+    /// hue family. Light prose sits on it at ~11:1 contrast.
+    static let userBubbleFill = Color(red: 0.14, green: 0.26, blue: 0.19)
+    /// Hairline edge for the bubble: a whisper of accent, not a glow.
+    static let userBubbleStroke = accent.opacity(0.22)
 
     /// Playful pastel ramp for reasoning-effort levels, calm → intense. Slot
     /// indices line up with `EffortLevelStyle.slot`; all entries come from the

@@ -111,8 +111,10 @@ struct CopyActionButton: View {
     }
 }
 
-/// Compact material backing for action buttons that float over message
-/// content. The buttons stay visually consistent without reserving row height.
+/// Compact floating backing for action buttons that sit over message content.
+/// An opaque dark capsule (not a material): materials blend with whatever is
+/// behind them in-window, which washed the chip out to near-invisible over
+/// light surfaces. The solid fill keeps the icons legible over any bubble.
 struct MessageActionChip<Content: View>: View {
     let content: Content
 
@@ -126,8 +128,8 @@ struct MessageActionChip<Content: View>: View {
         }
         .padding(.horizontal, 3)
         .padding(.vertical, 2)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.separator.opacity(0.7), lineWidth: 1))
-        .shadow(color: .black.opacity(0.08), radius: 5, y: 2)
+        .background(Color(nsColor: .windowBackgroundColor), in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 1))
+        .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
     }
 }

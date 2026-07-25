@@ -100,8 +100,6 @@ enum MarkdownTheme {
         case secondaryOpacity(Double)
         case white
         case whiteOpacity(Double)
-        case forest
-        case forestOpacity(Double)
         case accentOpacity(Double)
         case separatorOpacity(Double)
 
@@ -117,10 +115,6 @@ enum MarkdownTheme {
                 return .white
             case .whiteOpacity(let opacity):
                 return .white.opacity(opacity)
-            case .forest:
-                return AlpineTheme.forest
-            case .forestOpacity(let opacity):
-                return AlpineTheme.forest.opacity(opacity)
             case .accentOpacity(let opacity):
                 return AlpineTheme.accent.opacity(opacity)
             case .separatorOpacity(let opacity):
@@ -195,18 +189,20 @@ enum MarkdownTheme {
                 codeBlock: .rich,
                 table: .rich)
         case .userBubble:
+            // Deep spruce bubble: light prose with white-opacity secondaries
+            // so quotes, rules, and inline code stay legible on the dark fill.
             return StyleTokens(
-                proseForeground: .forest,
-                headingForeground: .forest,
-                listMarkerForeground: .forestOpacity(0.72),
-                taskCheckboxForeground: .forestOpacity(0.72),
-                checkedTaskTextForeground: .forest,
-                quoteBar: .forestOpacity(0.55),
-                quoteText: .forestOpacity(0.82),
-                quoteFill: .forestOpacity(0.08),
-                headingRule: .forestOpacity(0.28),
-                rule: .forestOpacity(0.28),
-                inlineCodeBackground: .forestOpacity(0.12),
+                proseForeground: .primary,
+                headingForeground: .primary,
+                listMarkerForeground: .whiteOpacity(0.66),
+                taskCheckboxForeground: .whiteOpacity(0.66),
+                checkedTaskTextForeground: .whiteOpacity(0.66),
+                quoteBar: .accentOpacity(quoteAccentOpacity),
+                quoteText: .whiteOpacity(0.78),
+                quoteFill: .whiteOpacity(0.06),
+                headingRule: .whiteOpacity(0.18),
+                rule: .whiteOpacity(0.18),
+                inlineCodeBackground: .whiteOpacity(0.10),
                 linksAreUnderlined: true,
                 codeBlock: .plainPanel,
                 table: .plainPanel)
