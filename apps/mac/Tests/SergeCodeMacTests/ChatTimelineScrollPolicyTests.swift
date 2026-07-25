@@ -7,9 +7,11 @@ import Testing
 struct ChatTimelineScrollPolicyTests {
     @Test("near-bottom uses a fixed threshold from the content edge")
     func nearBottomThreshold() {
+        // Viewport bottom is 40pt from the content edge — inside the 48pt
+        // threshold, so it counts as near.
         #expect(
             ChatTimelineScrollPolicy.isNearBottom(
-                contentOffsetY: 940,
+                contentOffsetY: 960,
                 containerHeight: 600,
                 contentHeight: 1600,
                 threshold: 48))
@@ -23,6 +25,13 @@ struct ChatTimelineScrollPolicyTests {
         #expect(
             ChatTimelineScrollPolicy.isNearBottom(
                 contentOffsetY: 952,
+                containerHeight: 600,
+                contentHeight: 1600,
+                threshold: 48))
+        // One point past the threshold does not.
+        #expect(
+            !ChatTimelineScrollPolicy.isNearBottom(
+                contentOffsetY: 951,
                 containerHeight: 600,
                 contentHeight: 1600,
                 threshold: 48))
