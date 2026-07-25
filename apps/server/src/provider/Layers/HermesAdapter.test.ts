@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
@@ -65,6 +66,31 @@ async function readJsonLines(filePath: string) {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => decodeAcpRequestLogLine(line));
+}
+
+function waitForFileContent(
+  filePath: string,
+  attempts = 40,
+  expectedContent?: string,
+): Effect.Effect<string> {
+  const readAttempt = (remainingAttempts: number): Effect.Effect<string> =>
+    Effect.gen(function* () {
+      if (remainingAttempts <= 0) {
+        return yield* Effect.die(new Error(`Timed out waiting for file content at ${filePath}`));
+      }
+      const raw = yield* Effect.tryPromise(() => NodeFSP.readFile(filePath, "utf8")).pipe(
+        Effect.orElseSucceed(() => ""),
+      );
+      if (
+        raw.trim().length > 0 &&
+        (expectedContent === undefined || raw.includes(expectedContent))
+      ) {
+        return raw;
+      }
+      yield* Effect.sleep("25 millis");
+      return yield* readAttempt(remainingAttempts - 1);
+    });
+  return readAttempt(attempts);
 }
 
 function decodeRequestParams<A>(
@@ -282,5 +308,70 @@ it.layer(testLayer)("HermesAdapter ACP", (it) => {
       yield* Fiber.join(turnFiber);
       yield* Fiber.interrupt(eventFiber);
     }),
+  );
+
+  it.effect("clears the active turn when the send fiber is interrupted", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hermes-acp-interrupt-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockHermesWrapper({
+          T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const instanceId = ProviderInstanceId.make("hermes");
+      const adapter = yield* makeHermesAdapter(decodeSettings({ binaryPath: wrapperPath }), {
+        instanceId,
+      });
+      const threadId = ThreadId.make("hermes-interrupted-send-thread");
+      const firstTurnStarted = yield* Deferred.make<void>();
+      const events: ProviderRuntimeEvent[] = [];
+      const eventFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => events.push(event)).pipe(
+          Effect.andThen(
+            event.type === "turn.started"
+              ? Deferred.succeed(firstTurnStarted, undefined).pipe(Effect.ignore)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+        modelSelection: { instanceId, model: "grok-build" },
+      });
+      const firstTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "hang until interrupted", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(firstTurnStarted).pipe(Effect.timeout("2 seconds"));
+      yield* waitForFileContent(requestLogPath, 80, '"method":"session/prompt"');
+      yield* Fiber.interrupt(firstTurnFiber);
+
+      const secondTurn = yield* adapter
+        .sendTurn({ threadId, input: "start after interruption", attachments: [] })
+        .pipe(Effect.timeout("2 seconds"));
+      const session = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === threadId,
+      );
+
+      assert.isDefined(secondTurn.turnId);
+      assert.equal(session?.status, "ready");
+      assert.isUndefined(session?.activeTurnId);
+      assert.deepEqual(
+        events
+          .filter(
+            (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+              event.type === "turn.completed",
+          )
+          .map((event) => event.payload.state),
+        ["cancelled", "completed"],
+      );
+      yield* Fiber.interrupt(eventFiber);
+    }).pipe(TestClock.withLive),
   );
 });
