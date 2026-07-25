@@ -185,7 +185,7 @@ export function ProviderModelsSection({
   };
 
   return (
-    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+    <div>
       <div className="text-xs font-medium text-foreground">Models</div>
       <div className="mt-1 text-xs text-muted-foreground">
         {models.length} model{models.length === 1 ? "" : "s"} available.
