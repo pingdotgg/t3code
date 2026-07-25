@@ -3,9 +3,11 @@ import { DEFAULT_AUTO_REVIEW_SETTINGS, ProjectId, ProviderInstanceId } from "@t3
 
 import {
   buildAutoReviewFooter,
+  clampAutoReviewMaxAttempts,
   linkOriginThread,
   mapFindingsToDecision,
   matchAutoReviewMention,
+  nextAutoReviewAttempt,
   parseAutoReviewFooter,
   resolveAutoReviewPolicy,
   shouldAutoFixOriginThread,
@@ -34,6 +36,51 @@ describe("resolveAutoReviewPolicy", () => {
     );
     expect(policy.enabled).toBe(true);
     expect(policy.mode).toBe("mention");
+  });
+
+  it("clamps maxAttempts into 1..10 with default 2", () => {
+    expect(resolveAutoReviewPolicy(DEFAULT_AUTO_REVIEW_SETTINGS, "proj_1").maxAttempts).toBe(2);
+    expect(
+      resolveAutoReviewPolicy({ ...DEFAULT_AUTO_REVIEW_SETTINGS, maxAttempts: 99 }, "proj_1")
+        .maxAttempts,
+    ).toBe(10);
+  });
+});
+
+describe("clampAutoReviewMaxAttempts", () => {
+  it("clamps to a sane 1..10 range", () => {
+    expect(clampAutoReviewMaxAttempts(undefined)).toBe(2);
+    expect(clampAutoReviewMaxAttempts(0)).toBe(1);
+    expect(clampAutoReviewMaxAttempts(3)).toBe(3);
+    expect(clampAutoReviewMaxAttempts(50)).toBe(10);
+    expect(clampAutoReviewMaxAttempts(Number.NaN)).toBe(2);
+  });
+});
+
+describe("nextAutoReviewAttempt", () => {
+  it("starts at 1 when there is no prior job or the latest did not fail", () => {
+    expect(nextAutoReviewAttempt({ latestJob: null, maxAttempts: 2 })).toBe(1);
+    expect(
+      nextAutoReviewAttempt({
+        latestJob: { attempt: 1, status: "succeeded" },
+        maxAttempts: 2,
+      }),
+    ).toBe(1);
+  });
+
+  it("increments failed attempts until the cap, then returns null", () => {
+    expect(
+      nextAutoReviewAttempt({
+        latestJob: { attempt: 1, status: "failed" },
+        maxAttempts: 2,
+      }),
+    ).toBe(2);
+    expect(
+      nextAutoReviewAttempt({
+        latestJob: { attempt: 2, status: "failed" },
+        maxAttempts: 2,
+      }),
+    ).toBeNull();
   });
 });
 

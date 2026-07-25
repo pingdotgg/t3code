@@ -11,7 +11,11 @@ import type {
   ModelSelection,
   ProjectId,
 } from "@t3tools/contracts";
-import { shouldEnqueueAutoReviewJob } from "@t3tools/shared/autoReview";
+import {
+  clampAutoReviewMaxAttempts,
+  nextAutoReviewAttempt,
+  shouldEnqueueAutoReviewJob,
+} from "@t3tools/shared/autoReview";
 
 export interface EnqueueAutoReviewJobInput {
   readonly projectId: ProjectId | string;
@@ -20,6 +24,12 @@ export interface EnqueueAutoReviewJobInput {
   readonly trigger: AutoReviewTrigger;
   readonly commentId?: string | null;
   readonly modelSelection: ModelSelection;
+  /**
+   * Total attempts allowed for this (project, PR, headSha) chain before the
+   * store stops handing out retries. Defaults to
+   * DEFAULT_AUTO_REVIEW_MAX_ATTEMPTS when omitted.
+   */
+  readonly maxAttempts?: number | undefined;
 }
 
 export interface AutoReviewCommentWatermark {
@@ -101,6 +111,30 @@ export const makeInMemory = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * Latest job for a (project, PR, headSha) key regardless of status. Used to
+   * continue or cap the retry chain after a failure. `createdAt` carries a
+   * zero-padded sequence suffix, so lexicographic order is insertion order.
+   */
+  const findLatestByKey = (input: {
+    readonly projectId: string;
+    readonly prNumber: number;
+    readonly headSha: string;
+  }) =>
+    Ref.get(jobsRef).pipe(
+      Effect.map(
+        (jobs) =>
+          jobs
+            .filter(
+              (job) =>
+                job.projectId === input.projectId &&
+                job.prNumber === input.prNumber &&
+                job.headSha === input.headSha,
+            )
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null,
+      ),
+    );
+
   const enqueue: AutoReviewJobStore["Service"]["enqueue"] = (input) =>
     Effect.gen(function* () {
       const existing = yield* findActiveByKey({
@@ -145,6 +179,34 @@ export const makeInMemory = Effect.gen(function* () {
         return { job: existing, created: false };
       }
 
+      // Retry cap: a failed chain may be retried up to `maxAttempts` total
+      // attempts, then the poller stops re-enqueueing it so a model that keeps
+      // failing (e.g. invalid structured output) does not burn tokens every
+      // tick. A new mention comment starts a fresh chain.
+      const latest = yield* findLatestByKey({
+        projectId: String(input.projectId),
+        prNumber: input.prNumber,
+        headSha: input.headSha,
+      });
+      const maxAttempts = clampAutoReviewMaxAttempts(input.maxAttempts);
+      let attempt = 1;
+      if (latest && latest.status === "failed") {
+        const isSameMentionChain =
+          input.trigger === "mention" &&
+          input.commentId != null &&
+          latest.commentId === input.commentId;
+        const isRetryChain =
+          (input.trigger === "open_or_push" && latest.trigger === "open_or_push") ||
+          isSameMentionChain;
+        if (isRetryChain) {
+          const nextAttempt = nextAutoReviewAttempt({ latestJob: latest, maxAttempts });
+          if (nextAttempt === null) {
+            return { job: latest, created: false };
+          }
+          attempt = nextAttempt;
+        }
+      }
+
       const seq = yield* Ref.updateAndGet(sequenceRef, (n) => n + 1);
       const stamp = yield* nowIso;
       const createdAt = `${stamp}#${String(seq).padStart(8, "0")}`;
@@ -156,6 +218,7 @@ export const makeInMemory = Effect.gen(function* () {
         trigger: input.trigger,
         commentId: input.commentId ?? null,
         status: "queued",
+        attempt,
         modelSelection: input.modelSelection,
         findingsCount: null,
         reviewUrl: null,

@@ -17,6 +17,7 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  LenientAutoReviewFindingsSchema,
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
@@ -250,7 +251,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
 
   const generateAutoReviewFindings: TextGeneration.TextGeneration["Service"]["generateAutoReviewFindings"] =
     Effect.fn("GrokTextGeneration.generateAutoReviewFindings")(function* (input) {
-      const { prompt, outputSchema } = buildAutoReviewFindingsPrompt({
+      const { prompt } = buildAutoReviewFindingsPrompt({
         prNumber: input.prNumber,
         prTitle: input.prTitle,
         prBody: input.prBody,
@@ -265,7 +266,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         operation: "generateAutoReviewFindings",
         cwd: input.cwd,
         prompt,
-        outputSchemaJson: outputSchema,
+        outputSchemaJson: LenientAutoReviewFindingsSchema,
         modelSelection: input.modelSelection,
       });
 

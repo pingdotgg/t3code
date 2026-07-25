@@ -1,6 +1,7 @@
 import type {
   AutoReviewDecision,
   AutoReviewFindings,
+  AutoReviewJob,
   AutoReviewJobStatus,
   AutoReviewMode,
   AutoReviewSettings,
@@ -9,9 +10,11 @@ import type {
   ModelSelection,
   ProjectId,
 } from "@t3tools/contracts";
+import { DEFAULT_AUTO_REVIEW_MAX_ATTEMPTS } from "@t3tools/contracts";
 
 export const AUTO_REVIEW_POLL_INTERVAL_MIN_MS = 15_000;
 export const AUTO_REVIEW_POLL_INTERVAL_MAX_MS = 600_000;
+export const AUTO_REVIEW_MAX_ATTEMPTS_LIMIT = 10;
 
 export interface ResolvedAutoReviewPolicy {
   readonly enabled: boolean;
@@ -21,6 +24,7 @@ export interface ResolvedAutoReviewPolicy {
   readonly mentionHandle: string;
   readonly maxDiffBytes: number;
   readonly concurrency: number;
+  readonly maxAttempts: number;
 }
 
 export function resolveAutoReviewPolicy(
@@ -39,7 +43,36 @@ export function resolveAutoReviewPolicy(
     mentionHandle: handle.length > 0 ? handle : "surgecode",
     maxDiffBytes: settings.maxDiffBytes ?? 400_000,
     concurrency: settings.concurrency ?? 1,
+    maxAttempts: clampAutoReviewMaxAttempts(settings.maxAttempts),
   };
+}
+
+export function clampAutoReviewMaxAttempts(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return DEFAULT_AUTO_REVIEW_MAX_ATTEMPTS;
+  }
+  return Math.min(AUTO_REVIEW_MAX_ATTEMPTS_LIMIT, Math.max(1, Math.trunc(value)));
+}
+
+/**
+ * Decide whether a failed job for a (project, PR, headSha) chain may be
+ * retried, and if so what the next 1-based attempt number is. Returns `null`
+ * when the chain has exhausted `maxAttempts` and the poller must stop
+ * re-enqueueing it.
+ */
+export function nextAutoReviewAttempt(input: {
+  readonly latestJob: Pick<AutoReviewJob, "attempt" | "status"> | null | undefined;
+  readonly maxAttempts: number;
+}): number | null {
+  const latest = input.latestJob;
+  if (!latest || latest.status !== "failed") {
+    return 1;
+  }
+  const cap = clampAutoReviewMaxAttempts(input.maxAttempts);
+  if (latest.attempt >= cap) {
+    return null;
+  }
+  return latest.attempt + 1;
 }
 
 export function matchAutoReviewMention(body: string, handle: string): boolean {

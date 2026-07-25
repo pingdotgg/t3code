@@ -20,6 +20,7 @@ describe("AutoReviewSettings", () => {
     expect(settings.mentionHandle).toBe("surgecode");
     expect(settings.autoFixOriginThread).toBe(true);
     expect(settings.concurrency).toBe(1);
+    expect(settings.maxAttempts).toBe(2);
     expect(settings.projects).toEqual({});
     expect(settings).toEqual(DEFAULT_AUTO_REVIEW_SETTINGS);
   });
