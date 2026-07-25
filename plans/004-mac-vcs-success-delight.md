@@ -1,6 +1,6 @@
 # 004 — Give PR-created / merge success the delight tier (mac)
 
-- **Status**: TODO
+- **Status**: DONE (re-baselined at c9013c976, executed via plan 011)
 - **Commit**: 774d2f560
 - **Severity**: LOW
 - **Category**: Missed opportunity (delight budget on rare success)

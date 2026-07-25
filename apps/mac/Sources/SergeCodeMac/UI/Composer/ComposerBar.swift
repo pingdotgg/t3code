@@ -174,7 +174,6 @@ public struct ComposerBar: View {
         VStack(alignment: .leading, spacing: 6) {
             if let rows = activeSuggestionRows {
                 SuggestionList(items: rows, highlightedIndex: highlightedSuggestionIndex)
-                    .transition(Motion.pop(from: .bottomLeading))
             }
 
             if !model.selectedQueuedMessages.isEmpty {
@@ -275,7 +274,6 @@ public struct ComposerBar: View {
                                     .foregroundStyle(.secondary)
                                     .padding(.leading, 5)
                                     .allowsHitTesting(false)
-                                    .transition(.opacity)
                             }
                         }
                         .padding(.vertical, 4)
@@ -386,7 +384,8 @@ public struct ComposerBar: View {
         .shadow(color: .black.opacity(0.10), radius: 16, y: 6)
         // Typing and suggestion filtering are deliberately unanimated. Async
         // arrivals reveal independently without moving the entire composer on
-        // every keystroke.
+        // every keystroke. Suggestion menus intentionally carry no transition
+        // declaration — keyboard-frequency UI stays instant.
         .animation(Motion.reveal, value: attachments.map(\.id))
         .animation(Motion.reveal, value: model.selectedQueuedMessages.map(\.id))
         .animation(Motion.reveal, value: attachmentError)

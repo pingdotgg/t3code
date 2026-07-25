@@ -58,14 +58,15 @@ public struct PlanCard: View {
         // replays it.
         .animation(Motion.delight, value: plan.isImplemented)
         .successRipple(fire: plan.isImplemented, cornerRadius: AlpineTheme.Corners.card)
-        .entrance(.card)
+        // Arrival is owned by the timeline ForEach's `.entrance(.row)` — a
+        // second `.entrance(.card)` here doubled the entrance travel.
     }
 
     // MARK: - Header
 
     private var header: some View {
         Button {
-            withAnimation(Motion.structure) { isExpanded.toggle() }
+            withDeferredDisclosureAnimation { isExpanded.toggle() }
         } label: {
             HStack(spacing: 10) {
                 iconTile

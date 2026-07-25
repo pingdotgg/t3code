@@ -6,8 +6,9 @@ import SwiftUI
 ///
 /// Thumb position is driven by a GeometryReader + offset (not per-segment
 /// `matchedGeometryEffect`) so external binding writes — e.g. UIProbe
-/// section toggles — always land on the correct segment. Under Reduce
-/// Motion the thumb snaps with an opacity cross-fade instead of sliding.
+/// section toggles — always land on the correct segment. `Motion.ambient`
+/// drives the thumb's slide; under Reduce Motion it shortens to a quick
+/// ease, so the opacity thumb swap cross-fades instead of snapping.
 struct AlpineSegmentedControl<Value: Hashable>: View {
     struct Segment: Identifiable {
         let value: Value
@@ -52,7 +53,7 @@ struct AlpineSegmentedControl<Value: Hashable>: View {
             }
         }
         .frame(height: height)
-        .animation(Motion.reduceMotion ? nil : Motion.reveal, value: selection)
+        .animation(Motion.ambient, value: selection)
         .animation(Motion.feedback, value: hovered)
         .focusable(true)
         .onMoveCommand(perform: handleMove)

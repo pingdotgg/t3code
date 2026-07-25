@@ -56,7 +56,13 @@ struct VcsToolbar: View {
             prControls(status)
             actionMenu(status)
         }
-        .animation(Motion.reveal, value: model.lastGitActionOutcome(for: threadID))
+        // Rare successes arrive on the delight spring; failures stay sober.
+        .animation(
+            model.lastGitActionOutcome(for: threadID)?.success == true
+                ? Motion.delight
+                : Motion.reveal,
+            value: model.lastGitActionOutcome(for: threadID)
+        )
         .animation(Motion.ambient, value: status)
         .alert("New branch", isPresented: $showNewBranchPrompt) {
             TextField("Branch name", text: $newBranchName)
@@ -597,8 +603,13 @@ struct VcsToolbar: View {
     /// grows a second line.
     private func outcomePill(_ outcome: GitActionOutcome) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: outcome.success ? "checkmark.circle.fill" : "xmark.octagon.fill")
+            let icon = Image(systemName: outcome.success ? "checkmark.circle.fill" : "xmark.octagon.fill")
                 .foregroundStyle(outcome.success ? .green : .red)
+            if Motion.reduceMotion || !outcome.success {
+                icon
+            } else {
+                icon.symbolEffect(.bounce, value: outcome)
+            }
             Text(outcome.title)
                 .lineLimit(1)
             if let prURL = outcome.prURL, let url = URL(string: prURL) {
@@ -646,6 +657,7 @@ private struct VcsMergePillButtonStyle: ButtonStyle {
             }
             .foregroundStyle(AlpineTheme.forest)
             .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+            .scaleEffect(configuration.isPressed && !Motion.reduceMotion ? 0.97 : 1)
             .animation(Motion.feedback, value: configuration.isPressed)
     }
 }

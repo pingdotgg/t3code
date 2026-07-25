@@ -67,8 +67,9 @@ public struct ApprovalCard: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
         // An approval prompt interrupts the user mid-read, so it is the one
         // surface that most needs to announce itself rather than blink into
-        // the transcript.
-        .entrance(.card)
+        // the transcript. Arrival is owned by the timeline ForEach's
+        // `.entrance(.row)` — a second `.entrance(.card)` here doubled the
+        // travel and multiplied the opacity/scale.
     }
 
     private var icon: String {

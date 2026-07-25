@@ -58,12 +58,16 @@ struct PlanProgressStrip: View {
                     .foregroundStyle(.secondary)
                     .contentTransition(
                         Motion.reduceMotion ? .identity : .numericText())
+                    .animation(Motion.ambient, value: completed)
                 if !isExpanded, let current = currentStep(progress) {
                     Text(current.title)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .contentTransition(
+                            Motion.reduceMotion ? .identity : .opacity)
+                        .animation(Motion.ambient, value: current.title)
                         .transition(Motion.rise)
                 }
                 Spacer(minLength: 8)

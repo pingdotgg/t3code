@@ -18,6 +18,7 @@ public struct ChangesTimelineView: View {
     @UIState private var pendingRestore: Checkpoint?
     @UIState private var isConfirmingRestore = false
     @UIState private var expandedFileCheckpoints: Set<String> = []
+    @UIState private var isHoveringAllChanges = false
     @UIState private var hoveredCheckpointID: String?
     @UIState private var hoveredFilePath: String?
     @UIState private var changesCollapsed = false
@@ -388,13 +389,18 @@ public struct ChangesTimelineView: View {
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                selected ? AlpineTheme.accent.opacity(0.12) : Color.clear,
+                selected
+                    ? AlpineTheme.accent.opacity(0.12)
+                    : Color.primary.opacity(isHoveringAllChanges ? 0.05 : 0),
                 in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 4)
+        .onHover { isHoveringAllChanges = $0 }
+        .animation(Motion.feedback, value: isHoveringAllChanges)
+        .animation(Motion.feedback, value: selected)
         .accessibilityIdentifier("timeline-all-changes")
     }
 

@@ -103,6 +103,13 @@ public struct ChatScreen: View {
         // The plan strip mounts/dismounts on run start/end; ease the flip so
         // the composer glides instead of jumping.
         .animation(Motion.structure, value: selectedThreadIsActive)
+        // The strip's content arrives mid-run (the plan lands after the run
+        // starts), which `selectedThreadIsActive` doesn't cover — ease that
+        // flip too.
+        .animation(
+            Motion.structure,
+            value: model.selectedThreadID.flatMap { model.threadState($0)?.planProgress } != nil
+        )
         .background {
             // The thread's scene as a full chat wallpaper; the wash inside
             // keeps timeline text readable (see SceneryChatBackground).
