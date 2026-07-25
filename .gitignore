@@ -4,6 +4,8 @@ node_modules
 .DS_Store
 *.log
 *.tsbuildinfo
+__pycache__/
+*.pyc
 apps/*/dist
 infra/*/dist
 .astro

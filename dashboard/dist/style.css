@@ -1,0 +1,50 @@
+.t3code-plugin {
+  margin: 0 auto;
+  max-width: 56rem;
+}
+
+.t3code-plugin__header {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: row;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.t3code-plugin__status {
+  display: grid;
+  font-size: 0.875rem;
+  gap: 0.5rem 1rem;
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+
+.t3code-plugin__status dt {
+  color: var(--color-muted-foreground);
+}
+
+.t3code-plugin__status dd {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.t3code-plugin__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.t3code-plugin__error {
+  border: 1px solid var(--color-destructive);
+  border-radius: var(--radius);
+  color: var(--color-destructive);
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+}
+
+.t3code-plugin__note {
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  margin-top: 1rem;
+}

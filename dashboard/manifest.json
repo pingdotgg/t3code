@@ -1,0 +1,14 @@
+{
+  "name": "t3code",
+  "label": "T3 Code",
+  "description": "Run T3 Code as an s6-supervised Hermes companion using Hermes ACP.",
+  "icon": "Code",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/t3code",
+    "position": "after:chat"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

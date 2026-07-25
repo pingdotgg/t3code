@@ -426,6 +426,8 @@ export const make = Effect.gen(function* () {
             nodePath: stagedBinary,
             t3EntryPath: "",
             baseDir: config.baseDir,
+            ...(config.host === undefined ? {} : { serverHost: config.host }),
+            serverPort: config.port,
             logPath: path.join(config.logsDir, "boot-service.log"),
             unitPath: managedService.definitionPath,
           } as const;

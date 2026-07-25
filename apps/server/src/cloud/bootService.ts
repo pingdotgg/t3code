@@ -83,6 +83,10 @@ export interface BootServicePlan {
   /** Optional JavaScript entry point. Empty for a standalone executable. */
   readonly t3EntryPath: string;
   readonly baseDir: string;
+  /** Optional network interface persisted into the service environment. */
+  readonly serverHost?: string;
+  /** Optional fixed HTTP/WebSocket port persisted into the service environment. */
+  readonly serverPort?: number;
   readonly logPath: string;
   readonly unitPath: string;
 }
@@ -120,6 +124,12 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "Type=simple",
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
+    ...(plan.serverHost === undefined
+      ? []
+      : [`Environment=T3CODE_HOST=${quoteSystemdValue(plan.serverHost)}`]),
+    ...(plan.serverPort === undefined
+      ? []
+      : [`Environment=T3CODE_PORT=${String(plan.serverPort)}`]),
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `Environment=${SERVICE_SUPERVISOR_ENV}=systemd`,
     `ExecStart=${serviceExecArgs(plan).map(quoteSystemdValue).join(" ")}`,
@@ -142,6 +152,12 @@ export function renderS6RunScript(plan: BootServicePlan): string {
     "#!/bin/sh",
     "set -eu",
     `export T3CODE_HOME=${quoteShellValue(plan.baseDir)}`,
+    ...(plan.serverHost === undefined
+      ? []
+      : [`export T3CODE_HOST=${quoteShellValue(plan.serverHost)}`]),
+    ...(plan.serverPort === undefined
+      ? []
+      : [`export T3CODE_PORT=${quoteShellValue(String(plan.serverPort))}`]),
     `export ${SERVICE_SUPERVISOR_ENV}=s6`,
     `export ${S6_SERVICE_DIR_ENV}=${quoteShellValue(pathForS6ServiceDir(plan.unitPath))}`,
     `exec ${serviceExecArgs(plan).map(quoteShellValue).join(" ")} >>${quoteShellValue(plan.logPath)} 2>&1`,
@@ -227,6 +243,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
+  readonly serverHost?: string;
+  readonly serverPort?: number;
   readonly supervisor?: ServiceSupervisor;
   readonly s6ServiceDir?: string;
 }) {
@@ -380,6 +398,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     nodePath: host.execPath,
     t3EntryPath: plannedEntryPath,
     baseDir: input.baseDir,
+    ...(input.serverHost === undefined ? {} : { serverHost: input.serverHost }),
+    ...(input.serverPort === undefined ? {} : { serverPort: input.serverPort }),
     logPath,
     unitPath: definitionPath,
   };
@@ -561,6 +581,8 @@ export const layer = (input: {
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
+  readonly serverHost?: string;
+  readonly serverPort?: number;
   readonly supervisor?: ServiceSupervisor;
   readonly s6ServiceDir?: string;
 }) => Layer.effect(BootService, make(input));

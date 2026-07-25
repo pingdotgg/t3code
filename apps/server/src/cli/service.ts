@@ -9,13 +9,15 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import type * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { hostFlag, portFlag, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 export const bootServiceLayer = (
   config: ServerConfig.ServerConfig["Service"],
   options?: {
     readonly supervisor?: BootService.ServiceSupervisor;
     readonly s6ServiceDir?: string;
+    readonly serverHost?: string;
+    readonly serverPort?: number;
   },
 ) =>
   BootService.layer({
@@ -24,6 +26,8 @@ export const bootServiceLayer = (
     cliVersion: packageJson.version,
     ...(options?.supervisor === undefined ? {} : { supervisor: options.supervisor }),
     ...(options?.s6ServiceDir === undefined ? {} : { s6ServiceDir: options.s6ServiceDir }),
+    ...(options?.serverHost === undefined ? {} : { serverHost: options.serverHost }),
+    ...(options?.serverPort === undefined ? {} : { serverPort: options.serverPort }),
   }).pipe(Layer.provide(ProcessRunner.layer));
 
 const supervisorFlag = Flag.choice("supervisor", ["systemd", "s6"] as const).pipe(
@@ -38,6 +42,8 @@ const s6ServiceDirFlag = Flag.string("service-dir").pipe(
 
 const serviceFlags = {
   ...projectLocationFlags,
+  host: hostFlag,
+  port: portFlag,
   supervisor: supervisorFlag,
   s6ServiceDir: s6ServiceDirFlag,
 };
@@ -74,6 +80,8 @@ export function formatServiceStatus(
   options?: {
     readonly supervisor?: BootService.ServiceSupervisor;
     readonly s6ServiceDir?: string;
+    readonly serverHost?: string;
+    readonly serverPort?: number;
   },
 ): string {
   if (!status.supported) {
@@ -82,10 +90,20 @@ export function formatServiceStatus(
   if (!status.installed) {
     return "T3 Code service\n  Status: not installed\n  Next: Run `t3 service install`.";
   }
-  const repairCommand =
-    options?.supervisor === "s6" && options.s6ServiceDir !== undefined
-      ? `npx t3@latest service update --supervisor s6 --service-dir ${BootService.quoteShellValue(options.s6ServiceDir)}`
-      : "npx t3@latest service update";
+  const repairArgs = ["npx t3@latest service update"];
+  if (options?.supervisor === "s6" && options.s6ServiceDir !== undefined) {
+    repairArgs.push(
+      "--supervisor s6",
+      `--service-dir ${BootService.quoteShellValue(options.s6ServiceDir)}`,
+    );
+  }
+  if (options?.serverHost !== undefined) {
+    repairArgs.push(`--host ${BootService.quoteShellValue(options.serverHost)}`);
+  }
+  if (options?.serverPort !== undefined) {
+    repairArgs.push(`--port ${String(options.serverPort)}`);
+  }
+  const repairCommand = repairArgs.join(" ");
   return [
     "T3 Code service",
     `  Status: ${status.current ? `installed · t3@${cliVersion}` : "needs an update or repair"}`,
@@ -98,6 +116,8 @@ export function formatServiceStatus(
 const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
   flags: {
     readonly baseDir: Parameters<typeof resolveCliAuthConfig>[0]["baseDir"];
+    readonly host: Option.Option<string>;
+    readonly port: Option.Option<number>;
     readonly supervisor: BootService.ServiceSupervisor;
     readonly s6ServiceDir: Option.Option<string>;
   },
@@ -110,6 +130,8 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
       bootServiceLayer(config, {
         supervisor: flags.supervisor,
         ...(Option.isSome(flags.s6ServiceDir) ? { s6ServiceDir: flags.s6ServiceDir.value } : {}),
+        ...(Option.isSome(flags.host) ? { serverHost: flags.host.value } : {}),
+        ...(Option.isSome(flags.port) ? { serverPort: flags.port.value } : {}),
       }),
     ),
   );
@@ -186,6 +208,8 @@ const serviceStatusCommand = Command.make("status", serviceFlags).pipe(
             ...(Option.isSome(flags.s6ServiceDir)
               ? { s6ServiceDir: flags.s6ServiceDir.value }
               : {}),
+            ...(Option.isSome(flags.host) ? { serverHost: flags.host.value } : {}),
+            ...(Option.isSome(flags.port) ? { serverPort: flags.port.value } : {}),
           }),
         );
       }),

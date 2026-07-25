@@ -150,17 +150,36 @@ it("renders a classic s6 run script with supervisor markers and shell-safe paths
     nodePath: "/home/me/T3's bin/t3",
     t3EntryPath: "",
     baseDir: "/home/me/T3 Data",
+    serverHost: "0.0.0.0",
+    serverPort: 3773,
     logPath: "/home/me/T3 Data/logs/service.log",
     unitPath: "/etc/s6-overlay/s6-rc.d/user/contents.d/t3code/run",
   });
 
   assert.include(script, "export T3_SERVICE_SUPERVISOR=s6");
+  assert.include(script, "export T3CODE_HOST='0.0.0.0'");
+  assert.include(script, "export T3CODE_PORT='3773'");
   assert.include(
     script,
     "export T3_S6_SERVICE_DIR='/etc/s6-overlay/s6-rc.d/user/contents.d/t3code'",
   );
   assert.include(script, "exec '/home/me/T3'\\''s bin/t3' 'serve'");
   assert.include(script, ">>'/home/me/T3 Data/logs/service.log' 2>&1");
+});
+
+it("persists an explicit host and port in a systemd service", () => {
+  const unit = BootService.renderBootServiceUnit({
+    nodePath: "/usr/local/bin/t3",
+    t3EntryPath: "",
+    baseDir: "/home/me/.t3",
+    serverHost: "127.0.0.1",
+    serverPort: 4773,
+    logPath: "/home/me/.t3/logs/service.log",
+    unitPath: "/home/me/.config/systemd/user/t3code.service",
+  });
+
+  assert.include(unit, "Environment=T3CODE_HOST=127.0.0.1");
+  assert.include(unit, "Environment=T3CODE_PORT=4773");
 });
 
 it("flags package-manager cache entry points as ephemeral", () => {

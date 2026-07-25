@@ -41,6 +41,14 @@ t3 service status --supervisor s6 --service-dir /run/service/t3code
 The service directory must already be inside a scan directory managed by `s6-svscan`. T3 Code owns
 the `run` file inside that directory and controls it with `s6-svc`.
 
+Pass `--host` and `--port` when the managed service needs a stable listening address. These values
+are persisted in the generated service definition:
+
+```sh
+t3 service install --supervisor s6 --service-dir /run/service/t3code \
+  --host 0.0.0.0 --port 3773
+```
+
 ## Automatic Service Updates
 
 Set **Settings** → **General** → **Service update repository** to an exact GitHub repository URL,
