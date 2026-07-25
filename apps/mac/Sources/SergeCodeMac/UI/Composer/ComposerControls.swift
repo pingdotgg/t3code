@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// The compact control strip inside the composer: model picker, runtime-mode
-/// picker, plan-mode toggle, and the explicitly labelled context-window meter.
+/// picker, plan-mode toggle, the auto-PR toggle, and the explicitly labelled
+/// context-window meter.
 struct ComposerControlsRow: View {
     let thread: ChatThread
     let model: AppModel
@@ -10,6 +11,7 @@ struct ComposerControlsRow: View {
         HStack(spacing: 10) {
             ModelRunProfileGroup(thread: thread, model: model)
             RuntimePlanModeGroup(thread: thread, model: model)
+            AutoPRToggle()
             Spacer()
             if let status = model.threadState(thread.id)?.contextWindow {
                 ContextMeterView(status: status)
@@ -138,6 +140,41 @@ private struct RuntimePlanModeGroup: View {
             .fill(.separator)
             .frame(width: 1, height: 18)
             .padding(.horizontal, 2)
+    }
+}
+
+/// Composer-level "create PR when done" toggle. When on, every sent message
+/// carries an extra instruction asking the agent to open a PR for the work
+/// once it finishes (see `CreatePRPrompt.messageSuffix`). Persisted globally
+/// in UserDefaults so the choice survives thread switches and relaunches.
+private struct AutoPRToggle: View {
+    @AppStorage(CreatePRPrompt.autoCreateDefaultsKey) private var isOn = false
+    @UIState private var isHovering = false
+
+    var body: some View {
+        Button {
+            isOn.toggle()
+        } label: {
+            ComposerSegmentLabel(
+                icon: "arrow.triangle.pull",
+                title: "PR",
+                isHovering: isHovering,
+                isAccented: isOn
+            )
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .frame(minHeight: AlpineControls.segmentHeight)
+        .background(
+            .fill.quaternary,
+            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
+        .animation(Motion.feedback, value: isOn)
+        .help(
+            isOn
+                ? "Create PR when done: on — sent messages ask the agent to open a pull request after finishing"
+                : "Create PR when done: off"
+        )
+        .onHover { isHovering = $0 }
     }
 }
 
