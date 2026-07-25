@@ -2129,6 +2129,31 @@ public final class AppModel {
         }
     }
 
+    /// Archives several threads in one go (e.g. every settled session of a
+    /// project). Unlike repeated `archiveThread` calls, the archived list is
+    /// refreshed once at the end instead of after every thread, and one
+    /// failure does not stop the rest.
+    public func archiveThreads(_ threads: [ChatThread]) async {
+        var failures = 0
+        var firstError: String?
+        for thread in threads {
+            do {
+                try await backend.archiveThread(id: thread.id)
+                await releaseTimeline(threadID: thread.id)
+            } catch {
+                failures += 1
+                if firstError == nil { firstError = String(describing: error) }
+            }
+        }
+        await refreshArchivedThreads()
+        if let firstError {
+            lastError =
+                failures == threads.count
+                ? firstError
+                : "Failed to archive \(failures) of \(threads.count) sessions: \(firstError)"
+        }
+    }
+
     public func unarchiveThread(_ thread: ChatThread) async {
         do {
             try await backend.unarchiveThread(id: thread.id)
