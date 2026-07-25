@@ -116,6 +116,8 @@ import {
 import {
   ServerConfigStreamEvent,
   ServerConfig,
+  ServerProviderDiscoverSkillsInput,
+  ServerProviderDiscoverSkillsResult,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerLifecycleStreamEvent,
@@ -208,6 +210,7 @@ export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
+  serverDiscoverProviderSkills: "server.discoverProviderSkills",
   serverUpdateServer: "server.updateServer",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
@@ -281,6 +284,12 @@ export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvide
   payload: ServerProviderUpdateInput,
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([ServerProviderUpdateError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerDiscoverProviderSkillsRpc = Rpc.make(WS_METHODS.serverDiscoverProviderSkills, {
+  payload: ServerProviderDiscoverSkillsInput,
+  success: ServerProviderDiscoverSkillsResult,
+  error: EnvironmentAuthorizationError,
 });
 
 export const WsServerUpdateServerRpc = Rpc.make(WS_METHODS.serverUpdateServer, {
@@ -703,6 +712,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
+  WsServerDiscoverProviderSkillsRpc,
   WsServerUpdateServerRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,

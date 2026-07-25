@@ -575,6 +575,21 @@ export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerPro
   }
 }
 
+export const ServerProviderDiscoverSkillsInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  /** Workspace root to resolve project-scoped skills against — the active
+      project's repository path (or worktree), not the server process cwd. */
+  cwd: TrimmedNonEmptyString,
+});
+export type ServerProviderDiscoverSkillsInput = typeof ServerProviderDiscoverSkillsInput.Type;
+
+export const ServerProviderDiscoverSkillsResult = Schema.Struct({
+  /** `null` when the instance's driver has no workspace skill discovery —
+      consumers fall back to the snapshot's `skills` in that case. */
+  skills: Schema.NullOr(Schema.Array(ServerProviderSkill)),
+});
+export type ServerProviderDiscoverSkillsResult = typeof ServerProviderDiscoverSkillsResult.Type;
+
 export const ServerSelfUpdateInput = Schema.Struct({
   /** Exact npm version of the `t3` package to install (never a dist-tag, so
       the server and the acknowledging client agree on what was requested). */

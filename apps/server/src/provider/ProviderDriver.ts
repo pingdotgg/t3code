@@ -25,6 +25,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ServerProviderSkill,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -71,6 +72,17 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  /**
+   * Best-effort skill discovery resolved against a specific workspace root.
+   * The snapshot's `skills` are scanned against the server process cwd,
+   * which only matches the user's repository in the `npx t3`-inside-a-repo
+   * flow; transports call this with the active project's path so the `$`
+   * picker sees that project's skills. Absent when the driver has no
+   * workspace-scoped skill discovery — callers then fall back to the
+   * snapshot's `skills`. Must never fail; unreadable roots yield fewer
+   * skills, not errors.
+   */
+  readonly discoverSkills?: (cwd: string) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
 }
 
 export interface ProviderContinuationIdentity {
