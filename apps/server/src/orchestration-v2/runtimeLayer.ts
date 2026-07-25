@@ -197,6 +197,9 @@ const orchestratorProvided = orchestratorLayer.pipe(
       contextHandoffServiceProvided,
       idAllocatorLayer,
       providerAdapterRegistryProvided,
+      // Same layer reference as the continuation worker and the adapter
+      // infrastructure so layer memoization yields one shared request queue.
+      providerContinuationRequestsLayer,
       providerEventIngestorProvided,
       runtimePolicyProvided,
       providerSessionManagerProvided,

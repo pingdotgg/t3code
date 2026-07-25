@@ -118,6 +118,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "provider.switch":
       return [command.threadId];
     case "delegated_task.request":
+    case "delegated_task.wake-policy":
     case "thread.created.record":
       return [command.parentThreadId];
     case "thread.fork":
