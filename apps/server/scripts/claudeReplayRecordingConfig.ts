@@ -9,6 +9,7 @@ export type ClaudeRecordingQueryMode =
   | "fork_session_merge_back"
   | "fork_session_merge_back_siblings"
   | "active_steering"
+  | "active_steering_mid_tool"
   | "interrupt"
   | "interrupt_restart";
 
