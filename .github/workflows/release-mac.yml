@@ -219,6 +219,12 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
+          # Note: bash 3.2 (macOS runners) cannot parse `$(case ... esac)`
+          # with unparenthesized patterns, so compute the flag separately.
+          PRERELEASE_FLAG=""
+          case "$VERSION" in
+            *-alpha.*|*-beta.*|*-rc.*) PRERELEASE_FLAG="--prerelease";;
+          esac
           gh release create "$TAG" \
             "${{ steps.archive.outputs.dmg }}" \
             "${{ steps.archive.outputs.zip }}" \
@@ -226,7 +232,7 @@ jobs:
             --target main \
             --title "SurgeCode $VERSION" \
             --generate-notes \
-            $(case "$VERSION" in (*-alpha.*|*-beta.*|*-rc.*) echo --prerelease;; esac)
+            $PRERELEASE_FLAG
 
       - name: Commit appcast to main
         env:
