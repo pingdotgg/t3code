@@ -662,10 +662,13 @@ public struct ChangesTimelineView: View {
                 if files.count > 6 {
                     Button {
                         withAnimation(Motion.structure) {
+                            // `_ =`: keep the Set.insert/remove results out
+                            // of `withAnimation`'s generic Result inference
+                            // (see SidebarView's expandedProjects toggle).
                             if expanded {
-                                expandedFileCheckpoints.remove(checkpoint.id)
+                                _ = expandedFileCheckpoints.remove(checkpoint.id)
                             } else {
-                                expandedFileCheckpoints.insert(checkpoint.id)
+                                _ = expandedFileCheckpoints.insert(checkpoint.id)
                             }
                         }
                     } label: {

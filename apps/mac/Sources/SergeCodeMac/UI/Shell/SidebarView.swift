@@ -306,10 +306,13 @@ struct SidebarView: View {
         HStack(spacing: 6) {
             Button {
                 withAnimation(Motion.structure) {
+                    // `_ =`: keep the Set.insert/remove results out of
+                    // `withAnimation`'s generic Result inference (see the
+                    // expandedProjects toggle above).
                     if isRevealed {
-                        revealedSettled.remove(group.id)
+                        _ = revealedSettled.remove(group.id)
                     } else {
-                        revealedSettled.insert(group.id)
+                        _ = revealedSettled.insert(group.id)
                     }
                 }
             } label: {
@@ -535,10 +538,11 @@ struct SidebarView: View {
 
     private func toggleProjectCollapse(_ projectID: String) {
         withAnimation(Motion.structure) {
+            // `_ =`: see the expandedProjects toggle above.
             if collapsedProjects.contains(projectID) {
-                collapsedProjects.remove(projectID)
+                _ = collapsedProjects.remove(projectID)
             } else {
-                collapsedProjects.insert(projectID)
+                _ = collapsedProjects.insert(projectID)
             }
         }
         saveCollapsedProjects()
