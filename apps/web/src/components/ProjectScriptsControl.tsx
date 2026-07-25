@@ -333,7 +333,7 @@ export default function ProjectScriptsControl({
       return (
         <div className="min-w-0">
           {scripts.length > 0 ? (
-            <div className="divide-y divide-border/60">
+            <div className="grid gap-1">
               {scripts.map((script) => {
                 const shortcutLabel = shortcutLabelForCommand(
                   keybindings,
@@ -342,7 +342,7 @@ export default function ProjectScriptsControl({
                 return (
                   <div
                     key={script.id}
-                    className="flex min-w-0 items-center gap-3 px-4 py-3.5 sm:px-5"
+                    className="flex min-w-0 items-center gap-3 rounded-lg px-3 py-2.5 sm:px-4"
                   >
                     <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background">
                       <ScriptIcon icon={script.icon} className="size-3.5" />
@@ -382,11 +382,11 @@ export default function ProjectScriptsControl({
               })}
             </div>
           ) : (
-            <div className="px-4 py-4 text-sm text-muted-foreground sm:px-5">
+            <div className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
               No project actions configured.
             </div>
           )}
-          <div className="border-t border-border/60 px-4 py-3.5 sm:px-5">
+          <div className="px-3 py-2.5 sm:px-4">
             <Button type="button" size="sm" variant="outline" onClick={openAddDialog}>
               <PlusIcon className="size-3.5" />
               Add action
