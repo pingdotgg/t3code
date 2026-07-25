@@ -30,7 +30,7 @@ import {
   menuItemIconName,
   statusSummary,
 } from "./gitSheetComponents";
-import { isMergeReady } from "./mergeReadiness";
+import { hasPrConflicts, isMergeReady, shouldOfferReadyPr } from "./mergeReadiness";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -58,6 +58,9 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const borderColor = useThemeColor("--color-border");
   const foregroundColor = String(useThemeColor("--color-foreground"));
   const sheetColor = String(useThemeColor("--color-sheet"));
+  const dangerBg = useThemeColor("--color-danger");
+  const dangerBorder = useThemeColor("--color-danger-border");
+  const dangerFg = useThemeColor("--color-danger-foreground");
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -73,8 +76,12 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const currentWorktreePath = selectedThreadWorktreePath;
 
   // Mirrors apps/mac's MergeReadiness: only offer the one-click merge affordance
-  // once the PR is open with all review feedback fixed.
+  // once the PR is open, not a draft, conflict-free, and all review feedback fixed.
   const mergeReady = isMergeReady(gitStatus.data);
+  // Mirrors the mac VcsToolbar: conflicts surface as a visible state, and a
+  // draft PR offers "mark ready for review" instead of merge.
+  const prHasConflicts = gitStatus.data?.pr?.state === "open" && hasPrConflicts(gitStatus.data);
+  const offerReadyPr = shouldOfferReadyPr(gitStatus.data);
   const gitActionTarget = useMemo(
     () => ({ environmentId: selectedThread?.environmentId ?? null, cwd: selectedThreadCwd }),
     [selectedThread?.environmentId, selectedThreadCwd],
@@ -83,6 +90,10 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const isMergingPR = gitActionState.isRunning && gitActionState.action === "merge_pr";
   const onMergePR = useCallback(() => {
     void gitActions.onRunSelectedThreadGitAction({ action: "merge_pr" });
+  }, [gitActions]);
+  const isMarkingPrReady = gitActionState.isRunning && gitActionState.action === "ready_pr";
+  const onMarkPrReady = useCallback(() => {
+    void gitActions.onRunSelectedThreadGitAction({ action: "ready_pr" });
   }, [gitActions]);
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
@@ -202,7 +213,8 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         return `${ahead} commit${ahead === 1 ? "" : "s"} ahead`;
       }
       if (item.kind === "open_pr" && status.pr?.number != null) {
-        return `PR #${status.pr.number} ${status.pr.state ?? "open"}`;
+        const prState = status.pr.state ?? "open";
+        return `PR #${status.pr.number} ${prState === "open" && status.pr.isDraft === true ? "draft" : prState}`;
       }
       return undefined;
     },
@@ -248,6 +260,32 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
           disabled={busy || isMergingPR}
           onPress={onMergePR}
         />
+      ) : null}
+      {offerReadyPr ? (
+        <SheetActionButton
+          icon="checkmark.circle"
+          label={isMarkingPrReady ? "Marking Ready…" : "Mark Ready for Review"}
+          loading={isMarkingPrReady}
+          tone="secondary"
+          disabled={busy || isMarkingPrReady}
+          onPress={onMarkPrReady}
+        />
+      ) : null}
+      {prHasConflicts ? (
+        <View
+          className="flex-row items-center gap-2 rounded-[18px] border px-4 py-3"
+          style={{ backgroundColor: dangerBg, borderColor: dangerBorder }}
+        >
+          <SymbolView
+            name="exclamationmark.triangle.fill"
+            size={15}
+            tintColor={dangerFg}
+            type="monochrome"
+          />
+          <Text className="flex-1 text-xs font-medium leading-snug" style={{ color: dangerFg }}>
+            This pull request has merge conflicts with its base branch. Resolve them before merging.
+          </Text>
+        </View>
       ) : null}
       <View
         className={
