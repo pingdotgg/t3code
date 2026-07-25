@@ -172,11 +172,7 @@ function ComposerBannerStackAlert({
   const dismissOnly = item.onDismiss && !item.actions;
 
   return (
-    <Alert
-      variant={item.variant}
-      className={cn("alert-glass", item.className)}
-      data-variant={item.variant}
-    >
+    <Alert variant={item.variant} className={cn("alert-glass", item.className)}>
       {item.icon}
       <AlertTitle>{item.title}</AlertTitle>
       {item.description ? <AlertDescription>{item.description}</AlertDescription> : null}

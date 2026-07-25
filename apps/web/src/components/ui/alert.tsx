@@ -68,6 +68,9 @@ function Alert({
     <div
       className={cn(alertVariants({ variant }), className)}
       data-slot="alert"
+      // `.alert-glass` keys its tint off the variant, so surfaces that opt into
+      // the opaque alert background don't have to restate it at the call site.
+      data-variant={variant ?? "default"}
       role="alert"
       {...props}
     >

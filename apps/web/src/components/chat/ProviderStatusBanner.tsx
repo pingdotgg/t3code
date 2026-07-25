@@ -1,8 +1,9 @@
 import { type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
-import { cn } from "~/lib/utils";
 import { formatProviderDriverKindLabel } from "../../providerModels";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
@@ -44,36 +45,33 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
-      <div
-        className={cn(
-          "relative inline-flex items-center gap-3 rounded-xl border py-3 ps-3.5 pe-10 text-card-foreground text-sm",
-          status.status === "warning"
-            ? "border-warning/32 bg-warning/4 [&_svg]:text-warning"
-            : "border-destructive/32 bg-destructive/4 text-destructive-foreground [&_svg]:text-destructive",
-        )}
-        role="alert"
-      >
-        <InfoIcon className="size-4 shrink-0" aria-hidden />
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="font-medium">{title}</div>
+      {/*
+       * This banner is an overlay painted on top of the message timeline, so it
+       * needs `alert-glass` — the alert variants alone are a 4% tint with no
+       * surface behind them, which lets the transcript read through the copy.
+       */}
+      <Alert variant={status.status === "warning" ? "warning" : "error"} className="alert-glass">
+        <InfoIcon aria-hidden />
+        <AlertTitle>{title}</AlertTitle>
+        <AlertDescription>
           <Tooltip>
-            <TooltipTrigger
-              render={<div className="line-clamp-3 text-muted-foreground">{message}</div>}
-            />
+            <TooltipTrigger render={<div className="line-clamp-3">{message}</div>} />
             <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap">
               {message}
             </TooltipPopup>
           </Tooltip>
-        </div>
-        <button
-          type="button"
-          aria-label={`Dismiss ${providerName} provider ${status.status}`}
-          className="absolute top-2 right-2 inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-foreground/8 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={onDismiss}
-        >
-          <XIcon aria-hidden className="size-3.5" />
-        </button>
-      </div>
+        </AlertDescription>
+        <AlertAction>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Dismiss ${providerName} provider ${status.status}`}
+            onClick={onDismiss}
+          >
+            <XIcon aria-hidden className="size-3.5" />
+          </Button>
+        </AlertAction>
+      </Alert>
     </div>
   );
 });
