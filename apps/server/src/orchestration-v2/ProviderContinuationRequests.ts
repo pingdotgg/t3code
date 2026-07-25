@@ -10,6 +10,19 @@ export interface ProviderContinuationRequest {
   readonly providerThreadId: ProviderThreadId;
   readonly driver: ProviderDriverKind;
   readonly detail: string | null;
+  /**
+   * How the continuation turn gets its content.
+   *
+   * `adapter_buffered` (default) is the provider-native wake: the adapter has
+   * already buffered the CLI's wake output, and the dispatched message only
+   * triggers ingestion. `ClaudeAdapterV2` deliberately discards the message
+   * text on that path.
+   *
+   * `message_text` is for app-owned work with no buffered provider output, such
+   * as a delegated child finishing. The text is the entire wake, so it must
+   * reach the provider as a real prompt.
+   */
+  readonly delivery?: "adapter_buffered" | "message_text";
   readonly dispatchIfCurrent?: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<Option.Option<A>, E, R>;

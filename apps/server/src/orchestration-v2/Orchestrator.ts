@@ -45,6 +45,10 @@ import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
 import { applyToProjection, emptyProjection, ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
+import {
+  type ProviderContinuationRequest,
+  ProviderContinuationRequests,
+} from "./ProviderContinuationRequests.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -193,6 +197,7 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "provider.switch":
       return command.threadId;
     case "delegated_task.request":
+    case "delegated_task.wake-policy":
     case "thread.created.record":
       return command.parentThreadId;
     case "thread.fork":
@@ -213,6 +218,60 @@ function isBlockingRun(run: OrchestrationV2Run): boolean {
     run.status === "starting" ||
     run.status === "running" ||
     run.status === "waiting"
+  );
+}
+
+/**
+ * A parent thread is "live" for wake purposes while a run is still producing
+ * agent output. A run parked at "waiting" is post-terminal drain, so its agent
+ * turn is over and a wake is still needed.
+ */
+function hasLiveRun(projection: OrchestrationV2ThreadProjection): boolean {
+  return projection.runs.some(
+    (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
+  );
+}
+
+function delegatedTaskWakeDetail(
+  task: Pick<OrchestrationV2Subagent, "id" | "title" | "status">,
+): string {
+  const label = task.title === null ? task.id : `"${task.title}"`;
+  return task.status === "completed"
+    ? `Delegated task ${label} completed. Use task_status with taskId ${task.id} to read the result.`
+    : `Delegated task ${label} ended with status ${task.status}. Use task_status with taskId ${task.id} for details.`;
+}
+
+/**
+ * Both app-owned wake producers must go through this. An app-owned child leaves
+ * nothing buffered in the adapter, so the detail text is the entire wake and has
+ * to reach the provider as a real prompt. Omitting `delivery` here would mark
+ * the dispatch as an adapter-buffered wake, which ClaudeAdapterV2 and
+ * AcpAdapterV2 both answer by discarding the text and settling the turn against
+ * an empty buffer.
+ */
+function delegatedTaskWakeRequest(input: {
+  readonly threadId: ThreadId;
+  readonly providerThread: Pick<
+    OrchestrationV2ThreadProjection["providerThreads"][number],
+    "id" | "driver"
+  >;
+  readonly task: Pick<OrchestrationV2Subagent, "id" | "title" | "status">;
+}): ProviderContinuationRequest {
+  return {
+    threadId: input.threadId,
+    providerThreadId: input.providerThread.id,
+    driver: input.providerThread.driver,
+    detail: delegatedTaskWakeDetail(input.task),
+    delivery: "message_text",
+  };
+}
+
+function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]): boolean {
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted"
   );
 }
 
@@ -406,6 +465,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const idAllocator = yield* IdAllocatorV2;
   const projectionStore = yield* ProjectionStoreV2;
   const providerAdapters = yield* ProviderAdapterRegistryV2;
+  const continuationRequests = yield* ProviderContinuationRequests;
   const providerSessions = yield* ProviderSessionManagerV2;
   const providerSwitchService = yield* ProviderSwitchServiceV2;
   const runtimePolicy = yield* RuntimePolicyV2;
@@ -3547,6 +3607,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         prompt: command.task,
         title: command.title ?? null,
         model: command.modelSelection.model,
+        ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
         status: "running",
         result: null,
         startedAt: now,
@@ -3697,6 +3758,98 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     },
   );
+
+  // Rewrites a delegated task's completionWake after creation. The wait path
+  // uses this when its blocking window ends without a terminal (timeout), so
+  // a child that later terminalizes mid-parent-turn still wakes the parent.
+  // Runs under the parent thread's dispatch lock, which is also what finalize
+  // takes for its parent-side writes, so the two never interleave on this row.
+  const dispatchDelegatedTaskWakePolicy = Effect.fn(
+    "orchestrationV2.dispatch.delegatedTaskWakePolicy",
+  )(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.wake-policy" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const parentProjection = yield* projectionStore
+      .getThreadProjection(command.parentThreadId)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorProjectionError({
+              threadId: command.parentThreadId,
+              cause,
+            }),
+        ),
+      );
+    const task = parentProjection.subagents.find(
+      (candidate) => candidate.id === command.taskId && candidate.origin === "app_owned",
+    );
+    // No-op commands reject with a descriptive cause, matching the thread
+    // mutation handlers ("already archived", "not archived").
+    if (task === undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Delegated task ${command.taskId} is not an app-owned task of thread ${command.parentThreadId}.`,
+      });
+    }
+    if (task.completionWake === command.completionWake) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Delegated task ${command.taskId} already wakes the parent with completionWake ${command.completionWake}.`,
+      });
+    }
+    const now = yield* DateTime.now;
+    const emitEvent = emit(events, command);
+    yield* emitEvent({
+      type: "subagent.updated",
+      threadId: command.parentThreadId,
+      ...(task.runId === null ? {} : { runId: task.runId }),
+      nodeId: task.id,
+      driver: task.driver,
+      providerInstanceId: task.providerInstanceId,
+      occurredAt: now,
+      payload: { ...task, completionWake: command.completionWake, updatedAt: now },
+    });
+    // A non-terminal task needs no offer here: finalize reads the upgraded
+    // policy when the child terminalizes. Both writers hold this parent lock,
+    // so a terminal task means finalize already committed the terminal row and
+    // already made its offer decision under the pre-upgrade policy: under
+    // settled_only it offered iff the parent had no live run. Offer here only
+    // when the parent has a live run now, which is precisely the case where
+    // finalize skipped; queue_after_active then sequences the wake behind that
+    // run. When the parent is not live, finalize already offered and a second
+    // offer would wake the parent twice. (If the parent settled in between,
+    // this skips a wake that finalize also skipped; a missed wake is cheaper
+    // than a duplicate one, and the result is already in the projection.)
+    if (command.completionWake !== "always" || !isTerminalDelegatedTaskStatus(task.status)) {
+      return;
+    }
+    if (!hasLiveRun(parentProjection)) {
+      return;
+    }
+    const parentRun =
+      task.runId === null
+        ? undefined
+        : parentProjection.runs.find((candidate) => candidate.id === task.runId);
+    const parentProviderThread =
+      parentRun?.providerThreadId === null || parentRun?.providerThreadId === undefined
+        ? undefined
+        : parentProjection.providerThreads.find(
+            (candidate) => candidate.id === parentRun.providerThreadId,
+          );
+    if (parentProviderThread === undefined) {
+      return;
+    }
+    yield* continuationRequests.offer(
+      delegatedTaskWakeRequest({
+        threadId: command.parentThreadId,
+        providerThread: parentProviderThread,
+        task,
+      }),
+    );
+  });
 
   const dispatchCreatedThreadRecord = Effect.fn("orchestrationV2.dispatch.createdThreadRecord")(
     function* (
@@ -4738,6 +4891,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     });
 
+  /**
+   * Parent thread of an app-owned delegated child, or undefined when the
+   * thread is not one. Thread lineage and fork origin are immutable, so this
+   * is safe to read without holding either thread's dispatch lock.
+   */
+  const appOwnedSubagentParentThreadId = (childThreadId: ThreadId) =>
+    Effect.gen(function* () {
+      const childProjection = yield* projectionStore.getThreadProjection(childThreadId);
+      const lineage = childProjection.thread.lineage;
+      return lineage.relationshipToParent === "subagent" &&
+        lineage.parentThreadId !== null &&
+        childProjection.thread.forkedFrom?.type === "node"
+        ? lineage.parentThreadId
+        : undefined;
+    });
+
+  /**
+   * Transfers a terminal child's result into its parent and offers the parent
+   * wake. Every mutation here targets the PARENT thread, so callers must hold
+   * the parent thread's dispatch lock rather than the child's: the
+   * delegated_task.wake-policy handler rewrites the same subagent row under
+   * that lock with a full-row payload, and unserialized writers clobber each
+   * other (stale policy on the terminal row, or a terminal row regressed to
+   * running).
+   */
   const finalizeAppOwnedSubagent = (childThreadId: ThreadId) =>
     Effect.gen(function* () {
       const childProjection = yield* projectionStore.getThreadProjection(childThreadId);
@@ -4939,6 +5117,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: resultTransfer,
         },
       ]);
+
+      // Nothing else re-invokes a parent that already settled: the child's
+      // result lands in the projection above, but no parent run starts to let
+      // the agent act on it. Offer a continuation (dispatched
+      // queue_after_active) so the parent wakes and collects the result.
+      // Policy comes from the task's completionWake: "always" (async
+      // delegations) offers on every terminal, sequencing behind a live
+      // parent run like a provider task notification; "settled_only" (wait
+      // delegations, and legacy records without the field) skips while the
+      // parent has a run in preparing/starting/running, because the blocking
+      // tool call already returns the result there. A run parked at
+      // "waiting" is post-terminal drain, so its agent turn is over and the
+      // wake is still needed. The result-transfer guard above makes this a
+      // single offer per child, replay included.
+      if (parentProviderThread === undefined) {
+        return;
+      }
+      if ((task.completionWake ?? "settled_only") === "settled_only") {
+        // Re-read under the parent lock so the gate sees the run states left
+        // by the writes above rather than the pre-write snapshot.
+        if (hasLiveRun(yield* projectionStore.getThreadProjection(parentThreadId))) {
+          return;
+        }
+      }
+      yield* continuationRequests.offer(
+        delegatedTaskWakeRequest({
+          threadId: parentThreadId,
+          providerThread: parentProviderThread,
+          task: updatedTask,
+        }),
+      );
     });
 
   const dispatchUnsupported = (command: OrchestrationV2Command) =>
@@ -5028,6 +5237,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "delegated_task.request":
         yield* dispatchDelegatedTaskRequest(command, events, effects);
+        break;
+      case "delegated_task.wake-policy":
+        yield* dispatchDelegatedTaskWakePolicy(command, events);
         break;
       case "thread.created.record":
         yield* dispatchCreatedThreadRecord(command, events);
@@ -5180,14 +5392,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           stored.event.payload.status === "rolled_back"),
     ),
     Stream.runForEach((stored) =>
-      threadDispatch
-        .withLock(
-          stored.event.threadId,
-          finalizeAppOwnedSubagent(stored.event.threadId).pipe(
-            Effect.andThen(startNextQueuedRun(stored.event.threadId)),
-          ),
-        )
-        .pipe(Effect.catchCause(() => Effect.void)),
+      Effect.gen(function* () {
+        const threadId = stored.event.threadId;
+        // finalize writes the parent thread and startNextQueuedRun writes this
+        // thread, so each takes its own thread's lock, sequentially and never
+        // nested: dispatchDelegatedTaskRequest already writes child events
+        // while holding the parent lock, so nesting the parent lock inside the
+        // child lock here would invert that order, and the keyed executor's
+        // semaphores are neither reentrant nor deadlock-aware.
+        const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
+        if (parentThreadId !== undefined) {
+          yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
+        }
+        yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
+      }).pipe(Effect.catchCause(() => Effect.void)),
     ),
     Effect.forkDetach,
   );
