@@ -169,6 +169,7 @@ private struct ChatEmptyStateView: View {
                 .font(.system(size: 40))
                 .foregroundStyle(.secondary)
             Text("Select a thread to start chatting")
+                .font(SurgeTypography.chatBody)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -1002,6 +1002,7 @@ private struct SidebarThreadRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(item.thread.title)
+                        .font(SurgeTypography.sidebarTaskTitle)
                         .lineLimit(1)
                     if item.isPinned {
                         Image(systemName: "pin.fill")
@@ -1011,7 +1012,7 @@ private struct SidebarThreadRow: View {
                     }
                 }
                 Text(secondaryText)
-                    .font(.caption)
+                    .font(SurgeTypography.technicalMetadata)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }

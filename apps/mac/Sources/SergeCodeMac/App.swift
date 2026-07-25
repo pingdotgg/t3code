@@ -20,6 +20,10 @@ struct SergeCodeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        // Geist Sans/Mono for content surfaces (see Theme/SurgeTypography).
+        // Must happen before any view renders so the custom faces resolve.
+        SurgeTypography.registerBundledFonts()
+
         // Initialize Sparkle updater controller. Not started for mock/probe
         // runs: those launch the raw build product (no .app bundle, so no
         // SUFeedURL), and Sparkle's startup failure is a modal NSAlert that

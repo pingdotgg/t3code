@@ -37,6 +37,11 @@ let package = Package(
                 .process("Vendor/HighlightSwift/HighlightSwift-LICENSE.md"),
                 .copy("Vendor/ProviderIcons/SVG"),
                 .copy("Vendor/ProviderIcons/LICENSES.md"),
+                // Geist Sans/Mono (SIL OFL) — registered at launch via
+                // CTFontManager (see Theme/SurgeTypography.swift); the app is a
+                // hand-assembled SwiftPM bundle, so ATSApplicationFontsPath
+                // cannot see inside Bundle.module.
+                .copy("Vendor/Geist"),
             ]
         ),
         .testTarget(

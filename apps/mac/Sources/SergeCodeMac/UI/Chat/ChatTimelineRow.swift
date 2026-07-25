@@ -602,7 +602,7 @@ private struct ToolGroupRow: View {
                 HStack(spacing: 10) {
                     chipFan
                     Text(headline)
-                        .font(.body)
+                        .font(SurgeTypography.toolTitle)
                         .foregroundStyle(.secondary)
                     Spacer()
                     if summary.failedCount > 0 {
@@ -769,7 +769,7 @@ private struct ToolEventRow: View {
                             fire: displayState == .succeeded,
                             cornerRadius: TranscriptMetrics.iconColumn * 0.32)
                     Text(name)
-                        .font(.body.weight(.semibold))
+                        .font(SurgeTypography.toolTitle)
                         .layoutPriority(1)
                     if let preview {
                         previewLabel(preview)
@@ -844,9 +844,9 @@ private struct ToolEventRow: View {
     @ViewBuilder
     private func previewLabel(_ preview: (text: String, fullPath: String?)) -> some View {
         let label = Text(preview.text)
-            .font(.system(
-                .callout,
-                design: kind == .command || kind == .fileChange ? .monospaced : .default))
+            .font(kind == .command || kind == .fileChange
+                ? SurgeTypography.toolPayload
+                : .callout)
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .truncationMode(.middle)
@@ -892,7 +892,7 @@ private struct ToolEventRow: View {
 
     private func monospacedBody(_ text: String, foreground: Color) -> some View {
         Text(text)
-            .font(.system(.callout, design: .monospaced))
+            .font(SurgeTypography.toolPayload)
             .foregroundStyle(foreground)
             .textSelection(.enabled)
             .padding(10)
@@ -1019,7 +1019,7 @@ private struct FileChangeDiffView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text(displayPath)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(SurgeTypography.toolPayload)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(path)
@@ -1044,14 +1044,14 @@ private struct FileChangeDiffView: View {
             // runs rather than full-width row backgrounds.
             Text(FileChangeDiffText.attributedBody(visible.map(\.textLine)))
                 .textSelection(.enabled)
-                .font(.system(.callout, design: .monospaced))
+                .font(SurgeTypography.toolPayload)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
 
             if hidden > 0 {
                 Text("… \(hidden) more line\(hidden == 1 ? "" : "s")")
-                    .font(.system(.callout, design: .monospaced))
+                    .font(SurgeTypography.toolPayload)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -1086,17 +1086,17 @@ enum FileChangeDiffText {
         switch kind {
         case .separator:
             var piece = AttributedString(text)
-            piece.font = .system(.callout, design: .monospaced)
+            piece.font = SurgeTypography.toolPayload
             piece.foregroundColor = Color.secondary.opacity(0.55)
             return piece
         case .removed:
             var piece = AttributedString("- " + text)
-            piece.font = .system(.callout, design: .monospaced)
+            piece.font = SurgeTypography.toolPayload
             piece.backgroundColor = Color.red.opacity(0.12)
             return piece
         case .added:
             var piece = AttributedString("+ " + text)
-            piece.font = .system(.callout, design: .monospaced)
+            piece.font = SurgeTypography.toolPayload
             piece.backgroundColor = Color.green.opacity(0.12)
             return piece
         }
@@ -1184,8 +1184,7 @@ private struct ReasoningRow: View {
                 size: 22)
             VStack(alignment: .leading, spacing: 4) {
                 Text(text)
-                    .font(.body)
-                    .italic()
+                    .font(SurgeTypography.agentStatus)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .lineLimit(showsPreview ? 4 : nil)
@@ -1278,7 +1277,7 @@ private struct SessionExitRow: View {
             }
             ScrollView {
                 Text(stderrTail)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(SurgeTypography.toolPayload)
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)

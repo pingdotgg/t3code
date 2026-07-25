@@ -47,7 +47,7 @@ struct EmptyStateView: View {
                     .foregroundStyle(.white.opacity(0.82))
                     .padding(.top, 5)
                 Text("Select a session, start a quick chat, or choose a project.")
-                    .font(.callout)
+                    .font(SurgeTypography.agentStatus)
                     .foregroundStyle(.white.opacity(0.6))
                     .multilineTextAlignment(.center)
                     .padding(.top, 10)

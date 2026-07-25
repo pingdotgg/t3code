@@ -15,7 +15,7 @@ struct ChatHeaderView: View {
             let names = scenery.displayNames(for: thread, threadKey: threadKey)
             VStack(alignment: .leading, spacing: 5) {
                 Text(thread.title.isEmpty ? names.primary : thread.title)
-                    .font(.title3.weight(.semibold))
+                    .font(SurgeTypography.threadTitle)
                     .lineLimit(1)
 
                 HStack(spacing: 8) {
@@ -40,7 +40,7 @@ struct ChatHeaderView: View {
                             .lineLimit(1)
                     }
                 }
-                .font(.caption)
+                .font(SurgeTypography.technicalMetadata)
                 .foregroundStyle(.primary.opacity(0.76))
             }
 

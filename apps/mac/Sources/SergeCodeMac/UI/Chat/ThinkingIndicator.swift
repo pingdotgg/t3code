@@ -3,7 +3,7 @@ import SwiftUI
 /// Ephemeral parent-agent "Thinking…" cue for silent model reasoning.
 ///
 /// Distinct from subagent "Working..." rows and generic ProgressView loading:
-/// soft meadow/lavender dots, italic label, no busy spinner. One instance is
+/// soft meadow/lavender dots, quiet Geist label, no busy spinner. One instance is
 /// pinned to the timeline tail so long silent periods never flood the transcript.
 struct ThinkingIndicator: View {
     var body: some View {
@@ -13,12 +13,10 @@ struct ThinkingIndicator: View {
 
             HStack(spacing: 0) {
                 Text("Thinking")
-                    .font(.callout)
-                    .italic()
+                    .font(SurgeTypography.agentStatus)
                     .foregroundStyle(.secondary)
                 ThinkingEllipsis()
-                    .font(.callout)
-                    .italic()
+                    .font(SurgeTypography.agentStatus)
                     .foregroundStyle(.secondary)
             }
             .accessibilityElement(children: .ignore)

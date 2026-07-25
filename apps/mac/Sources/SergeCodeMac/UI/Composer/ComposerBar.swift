@@ -249,7 +249,7 @@ public struct ComposerBar: View {
                     .accessibilityLabel("Attach images")
 
                     TextEditor(text: draftBinding)
-                        .font(.body)
+                        .font(SurgeTypography.composer)
                         .focused($editorFocused)
                         .scrollContentBackground(.hidden)
                         // Keep the editor transparent so the composer remains
@@ -265,7 +265,7 @@ public struct ComposerBar: View {
                                 // placeholder sits exactly where typed text
                                 // appears.
                                 Text("Message…  (@ files, / commands)")
-                                    .font(.body)
+                                    .font(SurgeTypography.composer)
                                     .foregroundStyle(.secondary)
                                     .padding(.leading, 5)
                                     .allowsHitTesting(false)
