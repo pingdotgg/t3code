@@ -76,7 +76,7 @@ export function applyServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
-  const { automaticGitFetchInterval, ...patchForMerge } = patch;
+  const { automaticGitFetchInterval, autoArchiveSettledAfter, ...patchForMerge } = patch;
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacements = {
     ...next,
@@ -108,6 +108,7 @@ export function applyServerSettingsPatch(
         }
       : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
+    ...(autoArchiveSettledAfter !== undefined ? { autoArchiveSettledAfter } : {}),
   };
   if (!selectionPatch) {
     return nextWithReplacements;
