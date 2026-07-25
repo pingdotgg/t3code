@@ -25,11 +25,11 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
-  EllipsisIcon,
   MessageSquareIcon,
   PlusIcon,
   SearchIcon,
   ServerIcon,
+  Settings2Icon,
   SquarePenIcon,
   Undo2Icon,
 } from "lucide-react";
@@ -1989,7 +1989,7 @@ export default function SidebarV2() {
 
   const attachListAutoAnimateRef = useCallback((node: HTMLUListElement | null) => {
     if (!node) return;
-    autoAnimate(node, { duration: 150, easing: "ease-out" });
+    autoAnimate(node, { duration: 0, easing: "linear" });
   }, []);
 
   // New thread defaults to the project you're in (active thread's project,
@@ -2116,7 +2116,7 @@ export default function SidebarV2() {
                           key={scopeKey}
                           value={scopeKey}
                           closeOnClick
-                          className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                          className="group/project-scope h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
                         >
                           <ProjectFavicon
                             environmentId={project.environmentId}
@@ -2128,13 +2128,13 @@ export default function SidebarV2() {
                             type="button"
                             aria-label={`Project actions for ${project.displayName}`}
                             title={`Project actions for ${project.displayName}`}
-                            className="ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                            className="pointer-events-none ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 opacity-0 outline-none hover:bg-accent hover:text-foreground focus-visible:pointer-events-auto focus-visible:bg-accent focus-visible:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/project-scope:pointer-events-auto group-hover/project-scope:opacity-100"
                             onPointerDown={(event) => event.stopPropagation()}
                             onClick={(event) => {
                               void handleProjectActions(event, project);
                             }}
                           >
-                            <EllipsisIcon className="size-3.5" />
+                            <Settings2Icon className="size-3.5" />
                           </button>
                         </MenuRadioItem>
                       );

@@ -19,6 +19,7 @@ import {
   PlayIcon,
   PlusIcon,
   SettingsIcon,
+  Trash2Icon,
   WrenchIcon,
 } from "lucide-react";
 import React, { type FormEvent, type KeyboardEvent, useCallback, useMemo, useState } from "react";
@@ -270,6 +271,12 @@ export default function ProjectScriptsControl({
     setDialogOpen(true);
   };
 
+  const openDeleteConfirm = (script: ProjectScript) => {
+    setEditingScriptId(script.id);
+    setName(script.name);
+    setDeleteConfirmOpen(true);
+  };
+
   const confirmDeleteScript = useCallback(() => {
     if (!editingScriptId) return;
     setDeleteConfirmOpen(false);
@@ -332,6 +339,26 @@ export default function ProjectScriptsControl({
     if (variant === "settings") {
       return (
         <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-3 px-3 py-2 sm:px-4">
+            <div className="shrink-0 text-sm font-medium text-foreground">Actions</div>
+            {scripts.length === 0 ? (
+              <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                No project actions configured.
+              </div>
+            ) : (
+              <div className="min-w-0 flex-1" />
+            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="shrink-0"
+              onClick={openAddDialog}
+            >
+              <PlusIcon className="size-3.5" />
+              Add action
+            </Button>
+          </div>
           {scripts.length > 0 ? (
             <div className="grid gap-1">
               {scripts.map((script) => {
@@ -342,7 +369,7 @@ export default function ProjectScriptsControl({
                 return (
                   <div
                     key={script.id}
-                    className="flex min-w-0 items-center gap-3 rounded-lg px-3 py-2.5 sm:px-4"
+                    className="flex min-w-0 items-center gap-3 rounded-lg px-3 py-2 sm:px-4"
                   >
                     <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background">
                       <ScriptIcon icon={script.icon} className="size-3.5" />
@@ -367,46 +394,29 @@ export default function ProjectScriptsControl({
                         {script.command}
                       </div>
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="xs"
-                      className="w-fit shrink-0"
-                      onClick={() => openEditDialog(script)}
-                    >
-                      <SettingsIcon className="size-3.5" />
-                      Edit
-                    </Button>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openEditDialog(script)}
+                      >
+                        <SettingsIcon className="size-3.5" />
+                        Edit
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive-outline"
+                        size="sm"
+                        onClick={() => openDeleteConfirm(script)}
+                      >
+                        <Trash2Icon className="size-3.5" />
+                        Delete
+                      </Button>
+                    </div>
                   </div>
                 );
               })}
-            </div>
-          ) : (
-            <div className="flex min-w-0 items-center justify-between gap-3 px-3 py-2 sm:px-4">
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-foreground">Actions</div>
-                <div className="truncate text-xs text-muted-foreground">
-                  No project actions configured.
-                </div>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="shrink-0"
-                onClick={openAddDialog}
-              >
-                <PlusIcon className="size-3.5" />
-                Add action
-              </Button>
-            </div>
-          )}
-          {scripts.length > 0 ? (
-            <div className="px-3 py-2 sm:px-4">
-              <Button type="button" size="sm" variant="outline" onClick={openAddDialog}>
-                <PlusIcon className="size-3.5" />
-                Add action
-              </Button>
             </div>
           ) : null}
         </div>
