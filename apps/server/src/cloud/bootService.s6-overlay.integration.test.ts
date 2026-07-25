@@ -28,6 +28,9 @@ describe.runIf(integrationEnabled)("s6-overlay service integration", () => {
       await NodeFSP.mkdir(serviceDir);
       await NodeFSP.mkdir(stateDir);
       await NodeFSP.chmod(stateDir, 0o777);
+      const launcherPath = NodePath.join(stateDir, "s6-service-launcher");
+      await NodeFSP.writeFile(launcherPath, '#!/bin/sh\nexec /usr/local/bin/t3-fixture "$@"\n');
+      await NodeFSP.chmod(launcherPath, 0o755);
       const runPath = NodePath.join(serviceDir, "run");
       await NodeFSP.writeFile(
         runPath,
@@ -35,11 +38,12 @@ describe.runIf(integrationEnabled)("s6-overlay service integration", () => {
           supervisor: "s6",
           serviceUser: "t3",
           serviceGroup: "t3",
+          serviceLauncherPath: "/state/s6-service-launcher",
           nodePath: "/usr/local/bin/t3-fixture",
           t3EntryPath: "",
           baseDir: "/state",
           logPath: "/state/boot-service.log",
-          unitPath: "/etc/services.d/t3code/run",
+          unitPath: "/run/service/t3code/run",
         }),
       );
       await NodeFSP.chmod(runPath, 0o755);
@@ -77,6 +81,17 @@ describe.runIf(integrationEnabled)("s6-overlay service integration", () => {
       expect(runtimeUserId.trim()).toBe("10001");
       expect(runtimeUserId.trim()).not.toBe("0");
       expect((await NodeFSP.stat(NodePath.join(stateDir, "boot-service.log"))).uid).toBe(10001);
+
+      const restart = docker([
+        "exec",
+        "--user",
+        "10001:10001",
+        container,
+        "/package/admin/s6/command/s6-svc",
+        "-r",
+        "/run/service/t3code",
+      ]);
+      expect(restart.status, restart.stderr || restart.stdout).toBe(0);
     } finally {
       docker(["rm", "--force", container]);
       await NodeFSP.rm(root, { recursive: true, force: true });

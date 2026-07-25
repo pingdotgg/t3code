@@ -65,10 +65,14 @@ directory. T3 Code verifies the checksum and the binary's reported version befor
 update pending.
 
 While an update is pending, existing agent turns may finish and new turns are saved in a durable
-queue. Once no agent turn is active, T3 Code atomically replaces the systemd unit or s6 run script
-and asks the configured supervisor to restart it. The replacement process invokes queued turns
-after it starts. A failed supervisor activation restores the previous service definition and
-resumes queued work.
+queue. Once no agent turn is active, T3 Code atomically replaces the systemd unit or s6 launcher and
+asks the configured supervisor to restart it. The replacement process invokes queued turns after it
+starts. A failed supervisor activation restores the previous service definition and resumes queued
+work.
+
+For s6, the root-owned run script remains fixed. It grants the selected group permission to restart
+only that service, drops privileges, and then runs a launcher under the selected identity. Automatic
+updates replace that user-owned launcher rather than modifying a script that s6 executes as root.
 
 ## Using It with T3 Connect
 

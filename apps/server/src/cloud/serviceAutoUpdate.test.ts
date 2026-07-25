@@ -97,6 +97,7 @@ it.effect("detects only explicitly marked managed systemd and s6 services", () =
           T3_S6_SERVICE_DIR: "/run/service/t3code",
           T3_S6_SERVICE_USER: "1000",
           T3_S6_SERVICE_GROUP: "1000",
+          T3_S6_SERVICE_LAUNCHER: "/home/theo/.t3/runtime/s6-service-launcher",
         },
         homeDir: "/home/theo",
         path,
@@ -107,6 +108,7 @@ it.effect("detects only explicitly marked managed systemd and s6 services", () =
         definitionPath: "/run/service/t3code/run",
         serviceUser: "1000",
         serviceGroup: "1000",
+        launcherPath: "/home/theo/.t3/runtime/s6-service-launcher",
       },
     );
     assert.equal(

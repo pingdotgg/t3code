@@ -180,9 +180,41 @@ it("renders a classic s6 run script with supervisor markers and shell-safe paths
   assert.include(script, "export T3_S6_SERVICE_USER='theo'");
   assert.include(script, "export T3_S6_SERVICE_GROUP='staff'");
   assert.include(script, "'s6-envuidgid' '-nB' 'theo:staff' 's6-applyuidgid' '-Uz'");
+  assert.include(script, "'-Uz' '-G' ''");
+  assert.include(script, "s6-svperms -G 'staff' '/etc/s6-overlay/s6-rc.d/user/contents.d/t3code'");
   assert.include(script, "'/home/me/T3'\\''s bin/t3' 'serve'");
   assert.include(script, 'exec "$@" >>');
   assert.include(script, "/home/me/T3 Data/logs/service.log");
+});
+
+it("resolves the selected user's primary group for delegated s6 control", () => {
+  const script = BootService.renderS6RunScript({
+    supervisor: "s6",
+    serviceUser: "theo",
+    nodePath: "/usr/local/bin/t3",
+    t3EntryPath: "",
+    baseDir: "/home/theo/.t3",
+    logPath: "/home/theo/.t3/service.log",
+    unitPath: "/run/service/t3code/run",
+  });
+
+  assert.include(script, "service_group=$(id -g 'theo')");
+  assert.include(script, `s6-svperms -G ":$service_group" '/run/service/t3code'`);
+  assert.include(script, "'s6-setuidgid' 'theo'");
+});
+
+it("renders a mutable s6 launcher that forwards arguments after privilege drop", () => {
+  assert.equal(
+    BootService.renderS6LauncherScript({
+      supervisor: "s6",
+      nodePath: "/home/me/node",
+      t3EntryPath: "/home/me/t3 entry.mjs",
+      baseDir: "/home/me/.t3",
+      logPath: "/home/me/.t3/log",
+      unitPath: "/run/service/t3code/run",
+    }),
+    ["#!/bin/sh", "set -eu", `exec '/home/me/node' '/home/me/t3 entry.mjs' "$@"`, ""].join("\n"),
+  );
 });
 
 it("defaults s6 to the current non-root identity or sudo's invoking identity", () => {
@@ -355,7 +387,13 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       const script = yield* fs.readFileString(plan.unitPath);
       assert.include(script, "export T3_S6_SERVICE_USER='1000'");
       assert.include(script, "export T3_S6_SERVICE_GROUP='1000'");
-      assert.include(script, `'${dirs.stableEntry}' 'serve'`);
+      assert.include(script, `export T3_S6_SERVICE_LAUNCHER='${plan.serviceLauncherPath}'`);
+      assert.include(script, `s6-svperms -G ':1000' '${serviceDir}'`);
+      assert.notInclude(script, dirs.stableEntry);
+      assert.include(
+        yield* fs.readFileString(plan.serviceLauncherPath ?? ""),
+        `exec '${dirs.stableEntry}' "$@"`,
+      );
       assert.isTrue((yield* fs.stat(plan.unitPath)).mode % 2 === 1);
       assert.isTrue((yield* service.status).current);
 
@@ -395,7 +433,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
 
   it.effect("installs an s6 service for an explicitly selected user and group", () =>
     Effect.gen(function* () {
-      const { dirs, path } = yield* makeTestContext();
+      const { dirs, fs, path } = yield* makeTestContext();
       const commands: Array<RecordedCommand> = [];
       const serviceDir = path.join(dirs.home, "service", "t3code");
       const service = yield* BootService.make({
@@ -426,6 +464,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
           args: ["-R", "--", "t3:t3", dirs.baseDir, dirs.logsDir],
         },
       ]);
+      assert.include(yield* fs.readFileString(plan.unitPath), `s6-svperms -G 't3' '${serviceDir}'`);
     }),
   );
 
