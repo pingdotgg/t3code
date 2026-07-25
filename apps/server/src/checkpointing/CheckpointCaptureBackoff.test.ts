@@ -98,6 +98,44 @@ describe("checkpoint capture backoff", () => {
     );
   });
 
+  it.effect("does not hold a workspace when the driver cannot be resolved", () => {
+    const captureAttempts = { count: 0 };
+    const registryFailure = new VcsProcessTimeoutError({
+      operation: "VcsDriverRegistry.resolve",
+      command: "git rev-parse",
+      cwd: CWD,
+      timeoutMs: 5_000,
+    });
+    const failingRegistry = Layer.succeed(
+      VcsDriverRegistry.VcsDriverRegistry,
+      VcsDriverRegistry.VcsDriverRegistry.of({
+        get: () => Effect.fail(registryFailure),
+        detect: () => Effect.fail(registryFailure),
+        resolve: () => Effect.fail(registryFailure),
+      }) as never,
+    );
+
+    return Effect.gen(function* () {
+      const store = yield* CheckpointStore.CheckpointStore;
+      const capture = (turn: number) =>
+        store
+          .captureCheckpoint({
+            cwd: CWD,
+            checkpointRef: checkpointRefForThreadTurn(THREAD_ID, turn),
+          })
+          .pipe(Effect.flip);
+
+      // Failing before the driver runs still counts as a failure, so the
+      // first two turns stay under the threshold and keep retrying rather
+      // than being held by a stale reservation.
+      for (let turn = 1; turn <= 2; turn += 1) {
+        const error = yield* capture(turn);
+        expect(error).toBe(registryFailure);
+      }
+      expect(captureAttempts.count).toBe(0);
+    }).pipe(Effect.provide(CheckpointStore.layer.pipe(Layer.provide(failingRegistry))));
+  });
+
   it.effect("keeps capturing for a workspace that recovers", () => {
     const captureAttempts = { count: 0 };
 

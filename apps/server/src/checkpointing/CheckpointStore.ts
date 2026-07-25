@@ -138,8 +138,13 @@ export const make = Effect.gen(function* () {
       return yield* Effect.fail(decision.lastError);
     }
 
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.captureCheckpoint", input.cwd);
-    return yield* checkpoints.captureCheckpoint(input).pipe(
+    // Resolving the driver sits inside the reported scope so that a failure
+    // before the capture runs still replaces this caller's reservation with a
+    // real outcome, rather than leaving the workspace held until it lapses.
+    return yield* Effect.gen(function* () {
+      const checkpoints = yield* resolveCheckpoints("CheckpointStore.captureCheckpoint", input.cwd);
+      return yield* checkpoints.captureCheckpoint(input);
+    }).pipe(
       Effect.tap(() => Effect.sync(() => captureBackoff.recordSuccess(input.cwd))),
       Effect.tapError((error) =>
         Effect.gen(function* () {

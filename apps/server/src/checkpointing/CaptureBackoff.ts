@@ -98,6 +98,13 @@ export function makeCaptureBackoff<E>() {
       }
 
       touch(cwd, record);
+      // Below the threshold a workspace has no cooldown at all, and its zero
+      // deadline must not read as one that just expired: reserving there
+      // would let a single transient failure suppress a concurrent capture.
+      if (record.consecutiveFailures < FAILURE_THRESHOLD) {
+        return { skip: false, remainingMs: 0, lastError: null };
+      }
+
       if (nowMs < record.skipUntilMs) {
         return {
           skip: true,

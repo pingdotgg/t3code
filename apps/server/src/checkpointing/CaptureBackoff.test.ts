@@ -131,6 +131,17 @@ describe("makeCaptureBackoff", () => {
     expect(backoff.beginAttempt(CWD, 1_000).skip).toBe(true);
   });
 
+  it("does not reserve for a workspace that has not reached the threshold", () => {
+    const backoff = makeCaptureBackoff<string>();
+
+    backoff.recordFailure(CWD, 0, "timeout");
+
+    // One transient failure must not suppress a capture running alongside it.
+    expect(backoff.beginAttempt(CWD, 1_000).skip).toBe(false);
+    expect(backoff.beginAttempt(CWD, 1_000).skip).toBe(false);
+    expect(backoff.beginAttempt(CWD, 2_000).skip).toBe(false);
+  });
+
   it("releases only one caller when the cooldown expires", () => {
     const backoff = makeCaptureBackoff<string>();
 
