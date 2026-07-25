@@ -1706,6 +1706,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      turnSteering: "supported",
     },
     startSession,
     sendTurn,

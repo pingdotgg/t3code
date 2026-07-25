@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+printf "%s\n" "${HOME}" >"${T3CODE_HOME}/runtime-home"
+id -g >"${T3CODE_HOME}/runtime-gid"
+id -u >"${T3CODE_HOME}/runtime-uid"
+
+while :; do
+  sleep 1
+done

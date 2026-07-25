@@ -17,6 +17,7 @@ interface ComposerPrimaryActionsProps {
   compact: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
+  hasQueuedNonSteerableFollowUp: boolean;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -56,6 +57,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
   isRunning,
+  hasQueuedNonSteerableFollowUp,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -124,6 +126,22 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (isRunning) {
+    if (hasQueuedNonSteerableFollowUp) {
+      return (
+        <Button
+          type="button"
+          size="sm"
+          variant="destructive"
+          className="rounded-full"
+          {...pointerFocusProps}
+          onClick={onInterrupt}
+          aria-label="Interrupt and run queued message"
+          title="Interrupt the current turn and run the queued message"
+        >
+          Interrupt
+        </Button>
+      );
+    }
     return (
       <button
         type="button"

@@ -68,14 +68,51 @@ export function currentHermesModelIdFromSessionSetup(
     | EffectAcpSchema.NewSessionResponse
     | EffectAcpSchema.ResumeSessionResponse,
 ): string | undefined {
-  return sessionSetupResult.models?.currentModelId?.trim() || undefined;
+  const modelId = sessionSetupResult.models?.currentModelId;
+  return modelId?.trim() ? modelId : undefined;
 }
 
 export function resolveHermesRequestedModelId(
   model: string | null | undefined,
 ): string | undefined {
-  const trimmed = model?.trim();
-  return !trimmed || trimmed === HERMES_DEFAULT_MODEL ? undefined : trimmed;
+  if (typeof model !== "string") {
+    return undefined;
+  }
+  const trimmed = model.trim();
+  return !trimmed || trimmed === HERMES_DEFAULT_MODEL ? undefined : model;
+}
+
+export function resolveHermesAcpConfigUpdates(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+  selections: ModelSelection["options"] | null | undefined,
+): ReadonlyArray<{ readonly configId: string; readonly value: string | boolean }> {
+  if (!configOptions?.length || !selections?.length) {
+    return [];
+  }
+  const updates: Array<{ readonly configId: string; readonly value: string | boolean }> = [];
+  for (const selection of selections) {
+    const advertised = configOptions.find((option) => option.id === selection.id);
+    if (!advertised) {
+      continue;
+    }
+    if (advertised.type === "boolean") {
+      if (typeof selection.value === "boolean") {
+        updates.push({ configId: advertised.id, value: selection.value });
+      }
+      continue;
+    }
+    if (
+      typeof selection.value === "string" &&
+      advertised.options.some((entry) =>
+        "value" in entry
+          ? entry.value === selection.value
+          : entry.options.some((option) => option.value === selection.value),
+      )
+    ) {
+      updates.push({ configId: advertised.id, value: selection.value });
+    }
+  }
+  return updates;
 }
 
 export function applyHermesAcpSelection<E>(input: {
@@ -85,6 +122,7 @@ export function applyHermesAcpSelection<E>(input: {
   >;
   readonly currentModelId: string | undefined;
   readonly selection: Pick<ModelSelection, "model" | "options"> | undefined;
+  readonly forceModelSelection?: boolean;
   readonly mapError: (input: {
     readonly cause: EffectAcpErrors.AcpError;
     readonly method: "session/set_config_option" | "session/set_model";
@@ -93,7 +131,10 @@ export function applyHermesAcpSelection<E>(input: {
   return Effect.gen(function* () {
     const requestedModelId = resolveHermesRequestedModelId(input.selection?.model);
     let currentModelId = input.currentModelId;
-    if (requestedModelId !== undefined && requestedModelId !== currentModelId) {
+    if (
+      requestedModelId !== undefined &&
+      (input.forceModelSelection === true || requestedModelId !== currentModelId)
+    ) {
       yield* input.runtime.setSessionModel(requestedModelId).pipe(
         Effect.mapError((cause) =>
           input.mapError({
@@ -109,14 +150,12 @@ export function applyHermesAcpSelection<E>(input: {
       return currentModelId;
     }
 
-    const availableConfigIds = new Set(
-      (yield* input.runtime.getConfigOptions).map((option) => option.id),
+    const configUpdates = resolveHermesAcpConfigUpdates(
+      yield* input.runtime.getConfigOptions,
+      input.selection.options,
     );
-    for (const option of input.selection.options) {
-      if (!availableConfigIds.has(option.id)) {
-        continue;
-      }
-      yield* input.runtime.setConfigOption(option.id, option.value).pipe(
+    for (const update of configUpdates) {
+      yield* input.runtime.setConfigOption(update.configId, update.value).pipe(
         Effect.mapError((cause) =>
           input.mapError({
             cause,

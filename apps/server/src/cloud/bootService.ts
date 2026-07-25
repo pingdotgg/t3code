@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as NodeFSP from "node:fs/promises";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -11,8 +12,11 @@ import * as Schema from "effect/Schema";
 
 import {
   HostProcessArguments,
+  HostProcessEnvironment,
   HostProcessExecutablePath,
+  HostProcessGroupId,
   HostProcessPlatform,
+  HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -31,6 +35,9 @@ export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const SERVICE_SUPERVISOR_ENV = "T3_SERVICE_SUPERVISOR";
 export const S6_SERVICE_DIR_ENV = "T3_S6_SERVICE_DIR";
+export const S6_SERVICE_USER_ENV = "T3_S6_SERVICE_USER";
+export const S6_SERVICE_GROUP_ENV = "T3_S6_SERVICE_GROUP";
+export const S6_SERVICE_LAUNCHER_ENV = "T3_S6_SERVICE_LAUNCHER";
 
 export type ServiceSupervisor = "systemd" | "s6";
 
@@ -78,6 +85,9 @@ export function quoteSystemdValue(value: string): string {
 
 export interface BootServicePlan {
   readonly supervisor?: ServiceSupervisor;
+  readonly serviceUser?: string;
+  readonly serviceGroup?: string;
+  readonly serviceLauncherPath?: string;
   /** Absolute executable used to launch the CLI. */
   readonly nodePath: string;
   /** Optional JavaScript entry point. Empty for a standalone executable. */
@@ -97,8 +107,67 @@ function serviceExecArgs(plan: BootServicePlan): ReadonlyArray<string> {
     : [plan.nodePath, plan.t3EntryPath, "serve"];
 }
 
+function serviceExecutableArgs(plan: BootServicePlan): ReadonlyArray<string> {
+  return plan.t3EntryPath === "" ? [plan.nodePath] : [plan.nodePath, plan.t3EntryPath];
+}
+
 export function quoteShellValue(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+export interface S6ServiceIdentity {
+  readonly serviceUser: string;
+  readonly serviceGroup?: string;
+}
+
+function parseNonNegativeInteger(value: string | undefined): number | undefined {
+  if (value === undefined || !/^\d+$/u.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+/**
+ * Resolve an s6 identity without trusting USER/LOGNAME. A non-root caller can
+ * safely use its kernel identity. A root caller may inherit the original
+ * identity from sudo, but otherwise must select a user explicitly.
+ */
+export function resolveS6ServiceIdentity(input: {
+  readonly serviceUser?: string;
+  readonly serviceGroup?: string;
+  readonly processUserId?: number;
+  readonly processGroupId?: number;
+  readonly env: NodeJS.ProcessEnv;
+}): S6ServiceIdentity | undefined {
+  const selectedUser = input.serviceUser?.trim();
+  const selectedGroup = input.serviceGroup?.trim();
+  if (selectedUser) {
+    return {
+      serviceUser: selectedUser,
+      ...(selectedGroup ? { serviceGroup: selectedGroup } : {}),
+    };
+  }
+
+  if (input.processUserId !== undefined && input.processUserId > 0) {
+    return {
+      serviceUser: String(input.processUserId),
+      ...(selectedGroup
+        ? { serviceGroup: selectedGroup }
+        : input.processGroupId === undefined
+          ? {}
+          : { serviceGroup: String(input.processGroupId) }),
+    };
+  }
+
+  const sudoUserId = parseNonNegativeInteger(input.env.SUDO_UID);
+  const sudoGroupId = parseNonNegativeInteger(input.env.SUDO_GID);
+  if (sudoUserId !== undefined && sudoUserId > 0 && sudoGroupId !== undefined) {
+    return {
+      serviceUser: String(sudoUserId),
+      serviceGroup: selectedGroup ?? String(sudoGroupId),
+    };
+  }
+
+  return undefined;
 }
 
 /**
@@ -148,6 +217,27 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
  * explicit because s6-overlay and hand-managed scan directories do not share
  * a portable default location. */
 export function renderS6RunScript(plan: BootServicePlan): string {
+  if (plan.serviceUser === undefined) {
+    throw new Error("An s6 service user is required.");
+  }
+  const serviceCommand =
+    plan.serviceLauncherPath === undefined
+      ? serviceExecArgs(plan)
+      : [plan.serviceLauncherPath, "serve"];
+  const serviceDir = pathForS6ServiceDir(plan.unitPath);
+  const shellCommand = `exec "$@" >>${quoteShellValue(plan.logPath)} 2>&1`;
+  const privilegeDropArgs =
+    plan.serviceGroup === undefined
+      ? ["s6-setuidgid", plan.serviceUser]
+      : [
+          "s6-envuidgid",
+          "-nB",
+          `${plan.serviceUser}:${plan.serviceGroup}`,
+          "/bin/sh",
+          "-c",
+          'exec s6-applyuidgid -z -u "$UID" -g "$GID" -G "$GID" "$@"',
+          "t3code-applyuidgid",
+        ];
   return [
     "#!/bin/sh",
     "set -eu",
@@ -160,7 +250,47 @@ export function renderS6RunScript(plan: BootServicePlan): string {
       : [`export T3CODE_PORT=${quoteShellValue(String(plan.serverPort))}`]),
     `export ${SERVICE_SUPERVISOR_ENV}=s6`,
     `export ${S6_SERVICE_DIR_ENV}=${quoteShellValue(pathForS6ServiceDir(plan.unitPath))}`,
-    `exec ${serviceExecArgs(plan).map(quoteShellValue).join(" ")} >>${quoteShellValue(plan.logPath)} 2>&1`,
+    `export ${S6_SERVICE_USER_ENV}=${quoteShellValue(plan.serviceUser)}`,
+    ...(plan.serviceGroup === undefined
+      ? []
+      : [`export ${S6_SERVICE_GROUP_ENV}=${quoteShellValue(plan.serviceGroup)}`]),
+    ...(plan.serviceLauncherPath === undefined
+      ? []
+      : [`export ${S6_SERVICE_LAUNCHER_ENV}=${quoteShellValue(plan.serviceLauncherPath)}`]),
+    'service_home=""',
+    `if command -v getent >/dev/null 2>&1; then service_home=$(getent passwd ${quoteShellValue(plan.serviceUser)} 2>/dev/null | cut -d: -f6); fi`,
+    'if [ -z "$service_home" ]; then',
+    "  while IFS=: read -r account _ account_uid _ _ account_home _; do",
+    `    if [ "$account" = ${quoteShellValue(plan.serviceUser)} ] || [ "$account_uid" = ${quoteShellValue(plan.serviceUser)} ]; then service_home=$account_home; break; fi`,
+    "  done </etc/passwd",
+    "fi",
+    'if [ -z "$service_home" ]; then echo "Could not resolve s6 service user home." >&2; exit 1; fi',
+    'export HOME="$service_home"',
+    ...(plan.serviceGroup === undefined
+      ? [
+          `service_group=$(id -g ${quoteShellValue(plan.serviceUser)})`,
+          `s6-svperms -G ":$service_group" ${quoteShellValue(serviceDir)}`,
+        ]
+      : [
+          `s6-svperms -G ${quoteShellValue(
+            /^\d+$/u.test(plan.serviceGroup) ? `:${plan.serviceGroup}` : plan.serviceGroup,
+          )} ${quoteShellValue(serviceDir)}`,
+        ]),
+    `exec ${[...privilegeDropArgs, "/bin/sh", "-c", shellCommand, "t3code", ...serviceCommand]
+      .map(quoteShellValue)
+      .join(" ")}`,
+    "",
+  ].join("\n");
+}
+
+/** The root-owned s6 run script executes this mutable launcher only after
+ * dropping privileges. Automatic updates can safely replace the launcher
+ * without gaining a path to root execution. */
+export function renderS6LauncherScript(plan: BootServicePlan): string {
+  return [
+    "#!/bin/sh",
+    "set -eu",
+    `exec ${serviceExecutableArgs(plan).map(quoteShellValue).join(" ")} "$@"`,
     "",
   ].join("\n");
 }
@@ -204,9 +334,24 @@ export class BootServiceInstallError extends Schema.TaggedErrorClass<BootService
   }
 }
 
+export class BootServiceIdentityError extends Schema.TaggedErrorClass<BootServiceIdentityError>()(
+  "BootServiceIdentityError",
+  {
+    reason: Schema.Literals(["missing", "root"]),
+  },
+) {
+  override get message(): string {
+    if (this.reason === "missing") {
+      return "Installing an s6 service as root requires --service-user (and optionally --service-group), unless sudo provides a non-root invoking identity.";
+    }
+    return "The s6 service user must resolve to a non-root UID.";
+  }
+}
+
 export type BootServiceError =
   | BootServiceUnsupportedError
   | BootServiceCommandError
+  | BootServiceIdentityError
   | BootServiceInstallError;
 
 export interface BootServiceStatus {
@@ -238,6 +383,11 @@ export interface BootServiceHost {
   readonly standalone?: boolean;
 }
 
+interface S6OwnershipSnapshot {
+  readonly target: string;
+  readonly owner: string;
+}
+
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly baseDir: string;
   readonly logsDir: string;
@@ -247,10 +397,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly serverPort?: number;
   readonly supervisor?: ServiceSupervisor;
   readonly s6ServiceDir?: string;
+  readonly serviceUser?: string;
+  readonly serviceGroup?: string;
 }) {
   const hostExecPath = yield* HostProcessExecutablePath;
   const hostArguments = yield* HostProcessArguments;
   const platform = yield* HostProcessPlatform;
+  const processEnvironment = yield* HostProcessEnvironment;
+  const processUserId = yield* HostProcessUserId;
+  const processGroupId = yield* HostProcessGroupId;
   const homeDir = yield* Config.string("HOME").pipe(Config.withDefault(""));
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -267,6 +422,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   };
 
   const supervisor = input.supervisor ?? "systemd";
+  const serviceIdentity =
+    supervisor === "s6"
+      ? resolveS6ServiceIdentity({
+          ...(input.serviceUser === undefined ? {} : { serviceUser: input.serviceUser }),
+          ...(input.serviceGroup === undefined ? {} : { serviceGroup: input.serviceGroup }),
+          ...(processUserId === undefined ? {} : { processUserId }),
+          ...(processGroupId === undefined ? {} : { processGroupId }),
+          env: processEnvironment,
+        })
+      : undefined;
+  const serviceLauncherPath =
+    supervisor === "s6" ? path.join(input.baseDir, "runtime", "s6-service-launcher") : undefined;
   const unitDir =
     supervisor === "systemd"
       ? path.join(homeDir, ".config", "systemd", "user")
@@ -395,6 +562,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         : host.cliEntryPath;
   const plan: BootServicePlan = {
     supervisor,
+    ...serviceIdentity,
+    ...(serviceLauncherPath === undefined ? {} : { serviceLauncherPath }),
     nodePath: host.execPath,
     t3EntryPath: plannedEntryPath,
     baseDir: input.baseDir,
@@ -407,10 +576,31 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const install: BootService["Service"]["install"] = Effect.gen(function* () {
     yield* requireSupportedLinux;
     yield* fs
-      .makeDirectory(input.logsDir, { recursive: true })
+      .makeDirectory(input.baseDir, { recursive: true })
+      .pipe(Effect.andThen(fs.makeDirectory(input.logsDir, { recursive: true })))
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
 
     yield* ensurePinnedRuntime;
+
+    if (supervisor === "s6") {
+      if (serviceIdentity === undefined) {
+        return yield* new BootServiceIdentityError({ reason: "missing" });
+      }
+      const numericUserId = parseNonNegativeInteger(serviceIdentity.serviceUser);
+      if (numericUserId === 0) {
+        return yield* new BootServiceIdentityError({ reason: "root" });
+      }
+      if (numericUserId === undefined) {
+        const resolvedUser = yield* runStep("resolving the s6 service user", "id", [
+          "-u",
+          serviceIdentity.serviceUser,
+        ]);
+        const resolvedUserId = parseNonNegativeInteger(resolvedUser.stdout.trim());
+        if (resolvedUserId === undefined || resolvedUserId === 0) {
+          return yield* new BootServiceIdentityError({ reason: "root" });
+        }
+      }
+    }
 
     const previousUnit = yield* fs.exists(definitionPath).pipe(
       Effect.flatMap((exists) =>
@@ -420,19 +610,76 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ),
       Effect.mapError((cause) => new BootServiceInstallError({ cause })),
     );
+    const previousLauncher =
+      supervisor === "s6" && serviceLauncherPath !== undefined
+        ? yield* fs.exists(serviceLauncherPath).pipe(
+            Effect.flatMap((exists) =>
+              exists
+                ? fs.readFileString(serviceLauncherPath).pipe(Effect.map(Option.some))
+                : Effect.succeed(Option.none<string>()),
+            ),
+            Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+          )
+        : Option.none<string>();
+    const ownershipTargets = [...new Set([input.baseDir, input.logsDir])];
+    const previousOwnership =
+      supervisor === "s6"
+        ? yield* Effect.tryPromise({
+            try: async () => {
+              const snapshot: Array<S6OwnershipSnapshot> = [];
+              const visit = async (target: string): Promise<void> => {
+                const info = await NodeFSP.lstat(target);
+                snapshot.push({
+                  target,
+                  owner: `${String(info.uid)}:${String(info.gid)}`,
+                });
+                if (info.isDirectory()) {
+                  for (const entry of await NodeFSP.readdir(target)) {
+                    await visit(path.join(target, entry));
+                  }
+                }
+              };
+              for (const target of ownershipTargets) {
+                await visit(target);
+              }
+              return snapshot;
+            },
+            catch: (cause) => new BootServiceInstallError({ cause }),
+          })
+        : [];
 
-    const definition =
-      supervisor === "systemd" ? renderBootServiceUnit(plan) : renderS6RunScript(plan);
-    yield* fs.makeDirectory(unitDir, { recursive: true }).pipe(
-      Effect.andThen(fs.writeFileString(definitionPath, definition)),
-      Effect.andThen(supervisor === "s6" ? fs.chmod(definitionPath, 0o755) : Effect.void),
-      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
-    );
-
-    // If any activation step fails, remove the unit again: a leftover file
-    // would make service status report it as installed even though it was
-    // never enabled or lingered.
     yield* Effect.gen(function* () {
+      if (supervisor === "s6" && serviceLauncherPath !== undefined) {
+        yield* fs.makeDirectory(path.dirname(serviceLauncherPath), { recursive: true }).pipe(
+          Effect.andThen(fs.writeFileString(serviceLauncherPath, renderS6LauncherScript(plan))),
+          Effect.andThen(fs.chmod(serviceLauncherPath, 0o755)),
+          Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+        );
+      }
+
+      if (supervisor === "s6" && serviceIdentity !== undefined) {
+        const owner =
+          serviceIdentity.serviceGroup === undefined
+            ? serviceIdentity.serviceUser
+            : `${serviceIdentity.serviceUser}:${serviceIdentity.serviceGroup}`;
+        yield* runStep("reconciling s6 service state ownership", "chown", [
+          "-R",
+          "--",
+          owner,
+          ...ownershipTargets,
+        ]);
+      }
+
+      const definition =
+        supervisor === "systemd" ? renderBootServiceUnit(plan) : renderS6RunScript(plan);
+      yield* fs.makeDirectory(unitDir, { recursive: true }).pipe(
+        Effect.andThen(fs.writeFileString(definitionPath, definition)),
+        Effect.andThen(supervisor === "s6" ? fs.chmod(definitionPath, 0o755) : Effect.void),
+        Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+      );
+
+      // If any install or activation step fails after replacing a definition,
+      // restore both the previous unit and the mutable s6 launcher.
       if (supervisor === "systemd") {
         yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]);
         yield* runStep("enabling the service", "systemctl", [
@@ -458,7 +705,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           [Option.isSome(previousUnit) ? "-r" : "-u", unitDir],
         );
       }
-    }).pipe(Effect.tapError(() => rollbackFailedInstall(previousUnit)));
+    }).pipe(
+      Effect.tapError(() =>
+        rollbackFailedInstall(previousUnit, previousLauncher, previousOwnership),
+      ),
+    );
 
     return plan;
   }).pipe(Effect.withSpan("cloud.boot_service.install"));
@@ -470,7 +721,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   // next lifecycle command misreports the state.
   const rollbackFailedInstall = Effect.fn("cloud.boot_service.rollback_failed_install")(function* (
     previousUnit: Option.Option<string>,
+    previousLauncher: Option.Option<string>,
+    previousOwnership: ReadonlyArray<S6OwnershipSnapshot>,
   ) {
+    if (supervisor === "s6" && serviceLauncherPath !== undefined) {
+      if (Option.isSome(previousLauncher)) {
+        yield* fs
+          .writeFileString(serviceLauncherPath, previousLauncher.value)
+          .pipe(Effect.andThen(fs.chmod(serviceLauncherPath, 0o755)), Effect.ignore);
+      } else {
+        yield* fs.remove(serviceLauncherPath).pipe(Effect.ignore);
+      }
+    }
     if (Option.isSome(previousUnit)) {
       yield* fs.writeFileString(definitionPath, previousUnit.value).pipe(Effect.ignore);
     } else {
@@ -485,6 +747,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         yield* runStep("cleaning up the s6 service", "s6-svc", ["-d", unitDir]).pipe(Effect.ignore);
       }
       yield* fs.remove(definitionPath).pipe(Effect.ignore);
+    }
+    if (supervisor === "s6") {
+      for (let index = previousOwnership.length - 1; index >= 0; index -= 1) {
+        const ownership = previousOwnership[index];
+        if (ownership === undefined) continue;
+        yield* runStep("restoring s6 service state ownership", "chown", [
+          "-h",
+          "--",
+          ownership.owner,
+          ownership.target,
+        ]).pipe(Effect.ignore);
+      }
     }
     if (supervisor === "systemd") {
       yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]).pipe(
@@ -564,9 +838,27 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const entryExists = yield* fs.exists(
       plannedEntryPath === "" ? host.execPath : plannedEntryPath,
     );
+    const launcherCurrent =
+      supervisor !== "s6" || serviceLauncherPath === undefined
+        ? true
+        : yield* fs
+            .exists(serviceLauncherPath)
+            .pipe(
+              Effect.flatMap((exists) =>
+                exists
+                  ? fs
+                      .readFileString(serviceLauncherPath)
+                      .pipe(Effect.map((launcher) => launcher === renderS6LauncherScript(plan)))
+                  : Effect.succeed(false),
+              ),
+            );
     const expected =
-      supervisor === "systemd" ? renderBootServiceUnit(plan) : renderS6RunScript(plan);
-    const current = unit === expected && entryExists;
+      supervisor === "systemd"
+        ? renderBootServiceUnit(plan)
+        : serviceIdentity === undefined
+          ? undefined
+          : renderS6RunScript(plan);
+    const current = expected !== undefined && unit === expected && entryExists && launcherCurrent;
     return { supported: true, installed: true, current, unitPath: definitionPath, logPath };
   }).pipe(
     Effect.mapError((cause) => new BootServiceInstallError({ cause })),
@@ -585,4 +877,6 @@ export const layer = (input: {
   readonly serverPort?: number;
   readonly supervisor?: ServiceSupervisor;
   readonly s6ServiceDir?: string;
+  readonly serviceUser?: string;
+  readonly serviceGroup?: string;
 }) => Layer.effect(BootService, make(input));

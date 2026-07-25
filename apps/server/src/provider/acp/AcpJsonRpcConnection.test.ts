@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -15,11 +16,89 @@ import { describe, expect } from "vite-plus/test";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
+import type * as EffectAcpSchema from "effect-acp/schema";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const mockAgentCommand = "node";
 const mockAgentArgs = [mockAgentPath];
+const releaseModelConfigUpdateMethod = "x/t3-test/release-model-config-update";
+const modelConfigUpdateAcknowledgedMethod = "x/t3-test/model-config-update-acknowledged";
+
+function acknowledgedModelId(method: string, params: unknown): string | undefined {
+  if (
+    method !== modelConfigUpdateAcknowledgedMethod ||
+    typeof params !== "object" ||
+    params === null ||
+    !("modelId" in params) ||
+    typeof params.modelId !== "string"
+  ) {
+    return undefined;
+  }
+  return params.modelId;
+}
+
+function verifyUnsupportedConfigCatalog(setupValue: "omitted" | "null") {
+  return Effect.gen(function* () {
+    const modelResponse = yield* Deferred.make<void>();
+    const updateAcknowledged =
+      yield* Deferred.make<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>();
+    yield* Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.handleUnknownExtNotification((method, params) => {
+        if (acknowledgedModelId(method, params) !== "grok-mock-alt") {
+          return Effect.void;
+        }
+        return runtime.getConfigOptions.pipe(
+          Effect.flatMap((configOptions) => Deferred.succeed(updateAcknowledged, configOptions)),
+          Effect.ignore,
+        );
+      });
+      const started = yield* runtime.start();
+      if (setupValue === "omitted") {
+        expect(Object.hasOwn(started.sessionSetupResult, "configOptions")).toBe(false);
+      } else {
+        expect(started.sessionSetupResult.configOptions).toBeNull();
+      }
+      expect(yield* runtime.getConfigOptions).toEqual([]);
+
+      const modelSwitch = yield* runtime.setSessionModel("grok-mock-alt").pipe(Effect.forkChild);
+      yield* Deferred.await(modelResponse);
+      yield* Fiber.join(modelSwitch);
+
+      yield* runtime.notify(releaseModelConfigUpdateMethod, {
+        modelId: "grok-mock-alt",
+      });
+      expect(yield* Deferred.await(updateAcknowledged)).toEqual([]);
+      expect(yield* runtime.getConfigOptions).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_EMIT_MODEL_CONFIG_UPDATE: "1",
+              T3_ACP_GATE_MODEL_CONFIG_UPDATE: "1",
+              T3_ACP_MODEL_SCOPED_CONFIG_OPTIONS: "1",
+              ...(setupValue === "omitted"
+                ? { T3_ACP_OMIT_SESSION_CONFIG_OPTIONS: "1" }
+                : { T3_ACP_NULL_SESSION_CONFIG_OPTIONS: "1" }),
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          requestLogger: (event) =>
+            event.method === "session/set_model" && event.status === "succeeded"
+              ? Deferred.succeed(modelResponse, undefined).pipe(Effect.ignore)
+              : Effect.void,
+        }),
+      ),
+      Effect.scoped,
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.timeout("5 seconds"));
+}
 
 describe("AcpSessionRuntime", () => {
   it.effect("merges custom initialize client capabilities into the ACP handshake", () => {
@@ -454,6 +533,160 @@ describe("AcpSessionRuntime", () => {
       Effect.provide(NodeServices.layer),
     );
   });
+
+  it.effect("waits for each model's gated config catalog before allowing the next switch", () =>
+    Effect.gen(function* () {
+      const firstResponse = yield* Deferred.make<void>();
+      const firstUpdateAcknowledged = yield* Deferred.make<void>();
+      const secondSwitchAttempted = yield* Deferred.make<void>();
+      const secondRequestStarted = yield* Deferred.make<void>();
+      const secondResponse = yield* Deferred.make<void>();
+      const secondUpdateAcknowledged = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        yield* runtime.handleUnknownExtNotification((method, params) => {
+          const modelId = acknowledgedModelId(method, params);
+          if (modelId === "grok-build") {
+            return Deferred.succeed(firstUpdateAcknowledged, undefined).pipe(Effect.ignore);
+          }
+          if (modelId === "grok-mock-alt") {
+            return Deferred.succeed(secondUpdateAcknowledged, undefined).pipe(Effect.ignore);
+          }
+          return Effect.void;
+        });
+        yield* runtime.start();
+
+        const firstSwitch = yield* runtime.setSessionModel("grok-build").pipe(Effect.forkChild);
+        yield* Deferred.await(firstResponse);
+        expect(firstSwitch.pollUnsafe()).toBeUndefined();
+
+        const blockedSecondSwitch = yield* Effect.gen(function* () {
+          yield* Deferred.succeed(secondSwitchAttempted, undefined);
+          return yield* runtime.setSessionModel("grok-mock-alt");
+        }).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(secondSwitchAttempted);
+        const blockedSecondRequest = yield* Deferred.poll(secondRequestStarted);
+        expect(Option.isNone(blockedSecondRequest)).toBe(true);
+        yield* Fiber.interrupt(blockedSecondSwitch);
+
+        yield* runtime.notify(releaseModelConfigUpdateMethod, { modelId: "grok-build" });
+        yield* Deferred.await(firstUpdateAcknowledged);
+        yield* Fiber.join(firstSwitch);
+        expect((yield* runtime.getConfigOptions).map((option) => option.id)).toEqual([
+          "model",
+          "reasoning/build",
+        ]);
+
+        const secondSwitch = yield* runtime.setSessionModel("grok-mock-alt").pipe(Effect.forkChild);
+        yield* Deferred.await(secondResponse);
+        expect(secondSwitch.pollUnsafe()).toBeUndefined();
+        yield* runtime.notify(releaseModelConfigUpdateMethod, { modelId: "grok-mock-alt" });
+        yield* Deferred.await(secondUpdateAcknowledged);
+        yield* Fiber.join(secondSwitch);
+        expect((yield* runtime.getConfigOptions).map((option) => option.id)).toEqual([
+          "model",
+          "thinking/alt",
+        ]);
+      }).pipe(
+        Effect.provide(
+          AcpSessionRuntime.layer({
+            authMethodId: "test",
+            spawn: {
+              command: mockAgentCommand,
+              args: mockAgentArgs,
+              env: {
+                T3_ACP_EMIT_MODEL_CONFIG_UPDATE: "1",
+                T3_ACP_GATE_MODEL_CONFIG_UPDATE: "1",
+                T3_ACP_MODEL_SCOPED_CONFIG_OPTIONS: "1",
+              },
+            },
+            cwd: process.cwd(),
+            clientInfo: { name: "t3-test", version: "0.0.0" },
+            requestLogger: (event) => {
+              if (
+                event.method !== "session/set_model" ||
+                typeof event.payload !== "object" ||
+                event.payload === null ||
+                !("modelId" in event.payload)
+              ) {
+                return Effect.void;
+              }
+              if (event.payload.modelId === "grok-build" && event.status === "succeeded") {
+                return Deferred.succeed(firstResponse, undefined).pipe(Effect.ignore);
+              }
+              if (event.payload.modelId === "grok-mock-alt" && event.status === "started") {
+                return Deferred.succeed(secondRequestStarted, undefined).pipe(Effect.ignore);
+              }
+              if (event.payload.modelId === "grok-mock-alt" && event.status === "succeeded") {
+                return Deferred.succeed(secondResponse, undefined).pipe(Effect.ignore);
+              }
+              return Effect.void;
+            },
+          }),
+        ),
+        Effect.scoped,
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.timeout("5 seconds")),
+  );
+
+  it.effect("treats an explicitly empty config catalog as negotiated", () =>
+    Effect.gen(function* () {
+      const modelResponse = yield* Deferred.make<void>();
+      const updateAcknowledged = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        yield* runtime.handleUnknownExtNotification((method, params) =>
+          acknowledgedModelId(method, params) === "grok-mock-alt"
+            ? Deferred.succeed(updateAcknowledged, undefined).pipe(Effect.ignore)
+            : Effect.void,
+        );
+        const started = yield* runtime.start();
+        expect(started.sessionSetupResult.configOptions).toEqual([]);
+
+        const modelSwitch = yield* runtime.setSessionModel("grok-mock-alt").pipe(Effect.forkChild);
+        yield* Deferred.await(modelResponse);
+        expect(modelSwitch.pollUnsafe()).toBeUndefined();
+
+        yield* runtime.notify(releaseModelConfigUpdateMethod, {
+          modelId: "grok-mock-alt",
+        });
+        yield* Deferred.await(updateAcknowledged);
+        yield* Fiber.join(modelSwitch);
+        expect(yield* runtime.getConfigOptions).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          AcpSessionRuntime.layer({
+            authMethodId: "test",
+            spawn: {
+              command: mockAgentCommand,
+              args: mockAgentArgs,
+              env: {
+                T3_ACP_EMIT_MODEL_CONFIG_UPDATE: "1",
+                T3_ACP_GATE_MODEL_CONFIG_UPDATE: "1",
+                T3_ACP_EMPTY_MODEL_CONFIG_UPDATE: "1",
+                T3_ACP_EMPTY_SESSION_CONFIG_OPTIONS: "1",
+              },
+            },
+            cwd: process.cwd(),
+            clientInfo: { name: "t3-test", version: "0.0.0" },
+            requestLogger: (event) =>
+              event.method === "session/set_model" && event.status === "succeeded"
+                ? Deferred.succeed(modelResponse, undefined).pipe(Effect.ignore)
+                : Effect.void,
+          }),
+        ),
+        Effect.scoped,
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.timeout("5 seconds")),
+  );
+
+  it.effect("treats an omitted config catalog as unsupported", () =>
+    verifyUnsupportedConfigCatalog("omitted"),
+  );
+
+  it.effect("treats a null config catalog as unsupported", () =>
+    verifyUnsupportedConfigCatalog("null"),
+  );
 
   it.effect("emits low-level ACP protocol logs for raw and decoded messages", () => {
     const protocolEvents: Array<EffectAcpProtocol.AcpProtocolLogEvent> = [];

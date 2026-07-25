@@ -45,7 +45,7 @@ jobs:
   test:
     name: Test
     runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-8vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -59,6 +59,11 @@ jobs:
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Verify s6-overlay service privilege drop
+        env:
+          T3_S6_OVERLAY_INTEGRATION: "1"
+        run: vp test run apps/server/src/cloud/bootService.s6-overlay.integration.test.ts
 
       - name: Test
         run: vp run test

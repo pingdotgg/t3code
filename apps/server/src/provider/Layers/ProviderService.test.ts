@@ -22,6 +22,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { it, assert, vi } from "@effect/vitest";
 
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -364,6 +365,95 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
     assert.equal(Exit.isSuccess(closeExit), true);
     assert.equal(codex.stopAll.mock.calls.length, 1);
   }),
+);
+
+it.effect("ProviderServiceLive queues turns for adapters without steering support", () =>
+  Effect.gen(function* () {
+    const firstTurnStarted = yield* Deferred.make<void>();
+    const releaseFirstTurn = yield* Deferred.make<void>();
+    const secondTurnStarted = yield* Deferred.make<void>();
+    const base = makeFakeCodexAdapter();
+    let sendCount = 0;
+    const sendTurn = vi.fn((input: ProviderSendTurnInput) =>
+      Effect.gen(function* () {
+        sendCount += 1;
+        const currentSend = sendCount;
+        if (currentSend === 1) {
+          yield* Deferred.succeed(firstTurnStarted, undefined);
+          yield* Deferred.await(releaseFirstTurn);
+        } else {
+          yield* Deferred.succeed(secondTurnStarted, undefined);
+        }
+        return {
+          threadId: input.threadId,
+          turnId: TurnId.make(`queued-turn-${currentSend}`),
+        };
+      }),
+    );
+    const interruptTurn = vi.fn(() =>
+      Deferred.succeed(releaseFirstTurn, undefined).pipe(Effect.asVoid),
+    );
+    const adapter: ProviderAdapterShape<ProviderAdapterError> = {
+      ...base.adapter,
+      capabilities: {
+        ...base.adapter.capabilities,
+        turnSteering: "unsupported",
+      },
+      sendTurn,
+      interruptTurn,
+    };
+    const registry = makeAdapterRegistryMock({
+      [CODEX_DRIVER]: adapter,
+    });
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+      Layer.provide(SqlitePersistenceMemory),
+    );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const providerLayer = makeProviderServiceLive().pipe(
+      Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+      Layer.provide(directoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    );
+    const threadId = asThreadId("thread-non-steerable-queue");
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const firstTurnFiber = yield* provider
+        .sendTurn({ threadId, input: "first", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(firstTurnStarted);
+      const secondTurnFiber = yield* provider
+        .sendTurn({ threadId, input: "second", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      assert.equal(sendTurn.mock.calls.length, 1);
+
+      yield* provider.interruptTurn({ threadId });
+      yield* Deferred.await(secondTurnStarted);
+      const [firstTurn, secondTurn] = yield* Effect.all([
+        Fiber.join(firstTurnFiber),
+        Fiber.join(secondTurnFiber),
+      ]);
+
+      assert.equal(interruptTurn.mock.calls.length, 1);
+      assert.notEqual(firstTurn.turnId, secondTurn.turnId);
+    }).pipe(Effect.provide(providerLayer));
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("ProviderServiceLive rejects new sessions for disabled providers", () =>

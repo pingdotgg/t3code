@@ -87,6 +87,25 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
   };
 }
 
+export function hasQueuedNonSteerableFollowUp(
+  thread: Pick<Thread, "latestTurn" | "messages" | "session"> | null | undefined,
+  provider: Pick<ServerProvider, "supportsSteering"> | null | undefined,
+): boolean {
+  if (
+    provider?.supportsSteering !== false ||
+    thread?.session === null ||
+    thread?.session === undefined ||
+    thread.session.status !== "running" ||
+    thread.latestTurn?.state !== "running"
+  ) {
+    return false;
+  }
+  const latestUserMessage = thread.messages.findLast((message) => message.role === "user");
+  return (
+    latestUserMessage !== undefined && latestUserMessage.createdAt > thread.latestTurn.requestedAt
+  );
+}
+
 export function reconcileMountedTerminalThreadIds(input: {
   currentThreadIds: ReadonlyArray<string>;
   openThreadIds: ReadonlyArray<string>;

@@ -24,12 +24,18 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
+export type ProviderTurnSteeringMode = "supported" | "unsupported";
 
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  /**
+   * Declares whether a new message may be sent while a turn is already
+   * running. Missing is treated as supported for legacy adapters.
+   */
+  readonly turnSteering?: ProviderTurnSteeringMode;
 }
 
 export interface ProviderThreadTurnSnapshot {

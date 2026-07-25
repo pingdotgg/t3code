@@ -18,8 +18,6 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
-  buildBooleanOptionDescriptor,
-  buildSelectOptionDescriptor,
   buildServerProvider,
   isCommandMissingCause,
   parseGenericCliVersion,
@@ -27,6 +25,7 @@ import {
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { HERMES_DEFAULT_MODEL, makeHermesAcpRuntime } from "../acp/HermesAcpSupport.ts";
 
 const PRESENTATION = {
@@ -56,12 +55,8 @@ function fallbackModels(settings: HermesSettings): ReadonlyArray<ServerProviderM
 
 function flattenSelectOptions(
   option: Extract<EffectAcpSchema.SessionConfigOption, { type: "select" }>,
-): ReadonlyArray<{ value: string; name: string }> {
-  return option.options.flatMap((entry) =>
-    "value" in entry
-      ? [{ value: entry.value, name: entry.name }]
-      : entry.options.map((nested) => ({ value: nested.value, name: nested.name })),
-  );
+): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
+  return option.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
 }
 
 export function buildHermesCapabilitiesFromConfigOptions(
@@ -73,35 +68,41 @@ export function buildHermesCapabilitiesFromConfigOptions(
     if (option.id === "mode" || option.id === "model") {
       continue;
     }
+    if (!option.id.trim() || !option.name.trim()) {
+      continue;
+    }
+    const description = option.description?.trim() ? option.description : undefined;
     if (option.type === "boolean") {
-      optionDescriptors.push(
-        buildBooleanOptionDescriptor({
-          id: option.id,
-          label: option.name,
-          currentValue: option.currentValue,
-        }),
-      );
+      optionDescriptors.push({
+        id: option.id,
+        label: option.name,
+        type: "boolean",
+        currentValue: option.currentValue,
+        ...(description ? { description } : {}),
+      });
       continue;
     }
     const choices = flattenSelectOptions(option).flatMap((choice) => {
-      const value = choice.value.trim();
-      if (!value) return [];
+      if (!choice.value.trim() || !choice.name.trim()) return [];
+      const choiceDescription = choice.description?.trim() ? choice.description : undefined;
       return [
         {
-          value,
-          label: choice.name.trim() || value,
-          ...(option.currentValue === value ? { isDefault: true } : {}),
+          id: choice.value,
+          label: choice.name,
+          ...(choiceDescription ? { description: choiceDescription } : {}),
+          ...(option.currentValue === choice.value ? { isDefault: true } : {}),
         },
       ];
     });
     if (choices.length > 0) {
-      optionDescriptors.push(
-        buildSelectOptionDescriptor({
-          id: option.id,
-          label: option.name,
-          options: choices,
-        }),
-      );
+      optionDescriptors.push({
+        id: option.id,
+        label: option.name,
+        type: "select",
+        options: choices,
+        ...(option.currentValue.trim() ? { currentValue: option.currentValue } : {}),
+        ...(description ? { description } : {}),
+      });
     }
   }
   return createModelCapabilities({
@@ -111,25 +112,62 @@ export function buildHermesCapabilitiesFromConfigOptions(
 
 export function buildHermesDiscoveredModels(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
-  configOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null,
+  configOptionsByModel: ReadonlyMap<string, ReadonlyArray<EffectAcpSchema.SessionConfigOption>>,
 ): ReadonlyArray<ServerProviderModel> {
   if (!modelState?.availableModels.length) return [];
-  const capabilities = buildHermesCapabilitiesFromConfigOptions(configOptions);
   const seen = new Set<string>();
   return modelState.availableModels.flatMap((model) => {
-    const slug = model.modelId.trim();
-    if (!slug || seen.has(slug)) return [];
+    const slug = model.modelId;
+    if (!slug.trim() || seen.has(slug)) return [];
     seen.add(slug);
     return [
       {
         slug,
-        name: model.name.trim() || slug,
+        name: model.name.trim() ? model.name : slug,
         isCustom: false,
-        capabilities,
+        capabilities: buildHermesCapabilitiesFromConfigOptions(configOptionsByModel.get(slug)),
       } satisfies ServerProviderModel,
     ];
   });
 }
+
+export const discoverHermesModelsFromAcpSession = Effect.fn("discoverHermesModelsFromAcpSession")(
+  function* (input: {
+    readonly runtime: Pick<
+      AcpSessionRuntime.AcpSessionRuntime["Service"],
+      "getConfigOptions" | "setSessionModel"
+    >;
+    readonly sessionSetupResult:
+      | EffectAcpSchema.LoadSessionResponse
+      | EffectAcpSchema.NewSessionResponse
+      | EffectAcpSchema.ResumeSessionResponse;
+  }) {
+    const modelState = input.sessionSetupResult.models;
+    if (!modelState?.availableModels.length) {
+      return [];
+    }
+
+    const configOptionsByModel = new Map<
+      string,
+      ReadonlyArray<EffectAcpSchema.SessionConfigOption>
+    >();
+    const currentModelId = modelState.currentModelId;
+    if (currentModelId.trim()) {
+      configOptionsByModel.set(currentModelId, input.sessionSetupResult.configOptions ?? []);
+    }
+
+    for (const model of modelState.availableModels) {
+      const modelId = model.modelId;
+      if (!modelId.trim() || configOptionsByModel.has(modelId)) {
+        continue;
+      }
+      yield* input.runtime.setSessionModel(modelId);
+      configOptionsByModel.set(modelId, yield* input.runtime.getConfigOptions);
+    }
+
+    return buildHermesDiscoveredModels(modelState, configOptionsByModel);
+  },
+);
 
 export const makePendingHermesProvider = Effect.fn("makePendingHermesProvider")(function* (
   settings: HermesSettings,
@@ -184,10 +222,10 @@ const discoverHermesModelsViaAcp = (settings: HermesSettings, environment: NodeJ
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
-    return buildHermesDiscoveredModels(
-      started.sessionSetupResult.models,
-      started.sessionSetupResult.configOptions,
-    );
+    return yield* discoverHermesModelsFromAcpSession({
+      runtime: acp,
+      sessionSetupResult: started.sessionSetupResult,
+    });
   }).pipe(Effect.scoped);
 
 export const checkHermesProviderStatus = Effect.fn("checkHermesProviderStatus")(function* (

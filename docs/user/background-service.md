@@ -34,12 +34,25 @@ Updating restarts T3 Code briefly. Let active agent work and terminal commands f
 For a classic s6 scan directory, pass the same supervisor options to each lifecycle command:
 
 ```sh
-t3 service install --supervisor s6 --service-dir /run/service/t3code
-t3 service status --supervisor s6 --service-dir /run/service/t3code
+sudo t3 service install --base-dir "$HOME/.t3" \
+  --supervisor s6 --service-dir /run/service/t3code
+sudo t3 service status --base-dir "$HOME/.t3" \
+  --supervisor s6 --service-dir /run/service/t3code
 ```
 
 The service directory must already be inside a scan directory managed by `s6-svscan`. T3 Code owns
-the `run` file inside that directory and controls it with `s6-svc`.
+the `run` file inside that directory and controls it with `s6-svc`. The generated service drops
+privileges before starting T3 Code. A non-root invocation uses its own UID and GID; a root invocation
+under `sudo` uses `SUDO_UID` and `SUDO_GID`. For another account, or when invoking directly as root,
+select the non-root identity explicitly and repeat it for update or repair commands:
+
+```sh
+t3 service install --supervisor s6 --service-dir /run/service/t3code \
+  --service-user t3 --service-group t3
+```
+
+Installation reconciles the T3 Code state and log ownership to the selected identity so the service
+can keep writing across supervisor restarts.
 
 Pass `--host` and `--port` when the managed service needs a stable listening address. These values
 are persisted in the generated service definition:
@@ -60,10 +73,14 @@ directory. T3 Code verifies the checksum and the binary's reported version befor
 update pending.
 
 While an update is pending, existing agent turns may finish and new turns are saved in a durable
-queue. Once no agent turn is active, T3 Code atomically replaces the systemd unit or s6 run script
-and asks the configured supervisor to restart it. The replacement process invokes queued turns
-after it starts. A failed supervisor activation restores the previous service definition and
-resumes queued work.
+queue. Once no agent turn is active, T3 Code atomically replaces the systemd unit or s6 launcher and
+asks the configured supervisor to restart it. The replacement process invokes queued turns after it
+starts. A failed supervisor activation restores the previous service definition and resumes queued
+work.
+
+For s6, the root-owned run script remains fixed. It grants the selected group permission to restart
+only that service, drops privileges, and then runs a launcher under the selected identity. Automatic
+updates replace that user-owned launcher rather than modifying a script that s6 executes as root.
 
 ## Using It with T3 Connect
 

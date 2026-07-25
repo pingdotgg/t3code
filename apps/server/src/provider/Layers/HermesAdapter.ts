@@ -232,7 +232,7 @@ export function makeHermesAdapter(
 
     const settlePendingApprovals = (context: HermesSessionContext) =>
       Effect.forEach(
-        context.pendingApprovals.values(),
+        Array.from(context.pendingApprovals.values()),
         (pending) => Deferred.succeed(pending.decision, "cancel").pipe(Effect.ignore),
         { discard: true },
       );
@@ -411,6 +411,7 @@ export function makeHermesAdapter(
             runtime: acp,
             currentModelId: currentHermesModelIdFromSessionSetup(started.sessionSetupResult),
             selection: modelSelection,
+            forceModelSelection: modelSelection !== undefined,
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
           });
@@ -750,13 +751,13 @@ export function makeHermesAdapter(
         if (turnId !== undefined && context.activeTurnId !== turnId) {
           return;
         }
-        yield* settlePendingApprovals(context);
         yield* context.acp.cancel.pipe(
           Effect.mapError((error) =>
             mapAcpToAdapterError(PROVIDER, threadId, "session/cancel", error),
           ),
           Effect.ignore,
         );
+        yield* settlePendingApprovals(context);
       });
 
     const respondToRequest: ProviderAdapterShape<ProviderAdapterError>["respondToRequest"] = (
@@ -843,7 +844,10 @@ export function makeHermesAdapter(
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: {
+        sessionModelSwitch: "in-session",
+        turnSteering: "unsupported",
+      },
       startSession,
       sendTurn,
       interruptTurn,

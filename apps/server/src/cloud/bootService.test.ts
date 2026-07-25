@@ -4,14 +4,18 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import {
   HostProcessArguments,
+  HostProcessEnvironment,
   HostProcessExecutablePath,
+  HostProcessGroupId,
   HostProcessPlatform,
+  HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
 
 import { reconcileService } from "../cli/service.ts";
@@ -20,6 +24,7 @@ import * as BootService from "./bootService.ts";
 
 const isUnsupportedError = Schema.is(BootService.BootServiceUnsupportedError);
 const isCommandError = Schema.is(BootService.BootServiceCommandError);
+const isIdentityError = Schema.is(BootService.BootServiceIdentityError);
 
 interface RecordedCommand {
   readonly command: string;
@@ -31,6 +36,7 @@ const makeRecordingRunnerLayer = (
   options?: {
     readonly failCommand?: string;
     readonly failWhen?: (command: string, args: ReadonlyArray<string>) => boolean;
+    readonly stdoutWhen?: (command: string, args: ReadonlyArray<string>) => string;
   },
 ) =>
   Layer.succeed(
@@ -44,7 +50,7 @@ const makeRecordingRunnerLayer = (
             input.command === options?.failCommand ||
             options?.failWhen?.(input.command, input.args) === true;
           return {
-            stdout: "",
+            stdout: options?.stdoutWhen?.(input.command, input.args) ?? "",
             stderr: failed ? `${input.command} exploded` : "",
             code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
             timedOut: false,
@@ -60,10 +66,21 @@ const makeHost = (entry: string): BootService.BootServiceHost => ({
   cliEntryPath: entry,
 });
 
-const provideHostRefs = (home: string, platform: NodeJS.Platform = "linux") =>
+const provideHostRefs = (
+  home: string,
+  platform: NodeJS.Platform = "linux",
+  identity: {
+    readonly userId: number;
+    readonly groupId: number;
+    readonly env: NodeJS.ProcessEnv;
+  } = { userId: 1000, groupId: 1000, env: {} },
+) =>
   Effect.provide(
     Layer.mergeAll(
       Layer.succeed(HostProcessPlatform, platform),
+      Layer.succeed(HostProcessEnvironment, identity.env),
+      Layer.succeed(HostProcessUserId, identity.userId),
+      Layer.succeed(HostProcessGroupId, identity.groupId),
       ConfigProvider.layer(ConfigProvider.fromEnv({ env: { HOME: home } })),
     ),
   );
@@ -147,6 +164,8 @@ it("quotes systemd values containing spaces and escapes percent specifiers", () 
 it("renders a classic s6 run script with supervisor markers and shell-safe paths", () => {
   const script = BootService.renderS6RunScript({
     supervisor: "s6",
+    serviceUser: "theo",
+    serviceGroup: "staff",
     nodePath: "/home/me/T3's bin/t3",
     t3EntryPath: "",
     baseDir: "/home/me/T3 Data",
@@ -163,8 +182,74 @@ it("renders a classic s6 run script with supervisor markers and shell-safe paths
     script,
     "export T3_S6_SERVICE_DIR='/etc/s6-overlay/s6-rc.d/user/contents.d/t3code'",
   );
-  assert.include(script, "exec '/home/me/T3'\\''s bin/t3' 'serve'");
-  assert.include(script, ">>'/home/me/T3 Data/logs/service.log' 2>&1");
+  assert.include(script, "export T3_S6_SERVICE_USER='theo'");
+  assert.include(script, "export T3_S6_SERVICE_GROUP='staff'");
+  assert.include(script, "if command -v getent >/dev/null 2>&1;");
+  assert.include(script, "done </etc/passwd");
+  assert.include(script, "[ \"$account_uid\" = 'theo' ]");
+  assert.include(script, 'export HOME="$service_home"');
+  assert.include(script, "'s6-envuidgid' '-nB' 'theo:staff' '/bin/sh' '-c'");
+  assert.include(script, `'exec s6-applyuidgid -z -u "$UID" -g "$GID" -G "$GID" "$@"'`);
+  assert.include(script, "s6-svperms -G 'staff' '/etc/s6-overlay/s6-rc.d/user/contents.d/t3code'");
+  assert.include(script, "'/home/me/T3'\\''s bin/t3' 'serve'");
+  assert.include(script, 'exec "$@" >>');
+  assert.include(script, "/home/me/T3 Data/logs/service.log");
+});
+
+it("resolves the selected user's primary group for delegated s6 control", () => {
+  const script = BootService.renderS6RunScript({
+    supervisor: "s6",
+    serviceUser: "theo",
+    nodePath: "/usr/local/bin/t3",
+    t3EntryPath: "",
+    baseDir: "/home/theo/.t3",
+    logPath: "/home/theo/.t3/service.log",
+    unitPath: "/run/service/t3code/run",
+  });
+
+  assert.include(script, "service_group=$(id -g 'theo')");
+  assert.include(script, `s6-svperms -G ":$service_group" '/run/service/t3code'`);
+  assert.include(script, "'s6-setuidgid' 'theo'");
+});
+
+it("renders a mutable s6 launcher that forwards arguments after privilege drop", () => {
+  assert.equal(
+    BootService.renderS6LauncherScript({
+      supervisor: "s6",
+      nodePath: "/home/me/node",
+      t3EntryPath: "/home/me/t3 entry.mjs",
+      baseDir: "/home/me/.t3",
+      logPath: "/home/me/.t3/log",
+      unitPath: "/run/service/t3code/run",
+    }),
+    ["#!/bin/sh", "set -eu", `exec '/home/me/node' '/home/me/t3 entry.mjs' "$@"`, ""].join("\n"),
+  );
+});
+
+it("defaults s6 to the current non-root identity or sudo's invoking identity", () => {
+  assert.deepEqual(
+    BootService.resolveS6ServiceIdentity({
+      processUserId: 1001,
+      processGroupId: 1002,
+      env: { USER: "stale-or-untrusted" },
+    }),
+    { serviceUser: "1001", serviceGroup: "1002" },
+  );
+  assert.deepEqual(
+    BootService.resolveS6ServiceIdentity({
+      processUserId: 0,
+      processGroupId: 0,
+      env: { SUDO_UID: "2001", SUDO_GID: "2002", SUDO_USER: "theo" },
+    }),
+    { serviceUser: "2001", serviceGroup: "2002" },
+  );
+  assert.isUndefined(
+    BootService.resolveS6ServiceIdentity({
+      processUserId: 0,
+      processGroupId: 0,
+      env: { USER: "root" },
+    }),
+  );
 });
 
 it("persists an explicit host and port in a systemd service", () => {
@@ -313,6 +398,10 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       assert.equal(plan.unitPath, path.join(serviceDir, "run"));
       assert.deepEqual(commands, [
         {
+          command: "chown",
+          args: ["-R", "--", "1000:1000", dirs.baseDir, dirs.logsDir],
+        },
+        {
           command: "s6-svscanctl",
           args: ["-a", path.dirname(serviceDir)],
         },
@@ -320,7 +409,15 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         { command: "s6-svc", args: ["-u", serviceDir] },
       ]);
       const script = yield* fs.readFileString(plan.unitPath);
-      assert.include(script, `exec '${dirs.stableEntry}' 'serve'`);
+      assert.include(script, "export T3_S6_SERVICE_USER='1000'");
+      assert.include(script, "export T3_S6_SERVICE_GROUP='1000'");
+      assert.include(script, `export T3_S6_SERVICE_LAUNCHER='${plan.serviceLauncherPath}'`);
+      assert.include(script, `s6-svperms -G ':1000' '${serviceDir}'`);
+      assert.notInclude(script, dirs.stableEntry);
+      assert.include(
+        yield* fs.readFileString(plan.serviceLauncherPath ?? ""),
+        `exec '${dirs.stableEntry}' "$@"`,
+      );
       assert.isTrue((yield* fs.stat(plan.unitPath)).mode % 2 === 1);
       assert.isTrue((yield* service.status).current);
 
@@ -333,6 +430,173 @@ it.layer(NodeServices.layer)("BootService", (it) => {
       assert.isTrue(yield* service.uninstall);
       assert.deepEqual(commands.at(-1), { command: "s6-svc", args: ["-d", serviceDir] });
       assert.isFalse(yield* fs.exists(plan.unitPath));
+    }),
+  );
+
+  it.effect("refuses to install an s6 service as root without a non-root identity", () =>
+    Effect.gen(function* () {
+      const { dirs, path } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        supervisor: "s6",
+        s6ServiceDir: path.join(dirs.home, "service", "t3code"),
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(commands)),
+        provideHostRefs("", "linux", { userId: 0, groupId: 0, env: {} }),
+      );
+
+      const error = yield* service.install.pipe(Effect.flip);
+      assert.isTrue(isIdentityError(error));
+      assert.isEmpty(commands);
+    }),
+  );
+
+  it.effect("installs an s6 service for an explicitly selected user and group", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const serviceDir = path.join(dirs.home, "service", "t3code");
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+        serviceUser: "t3",
+        serviceGroup: "t3",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(
+          makeRecordingRunnerLayer(commands, {
+            stdoutWhen: (command) => (command === "id" ? "10001\n" : ""),
+          }),
+        ),
+        provideHostRefs("", "linux", { userId: 0, groupId: 0, env: {} }),
+      );
+
+      const plan = yield* service.install;
+      assert.equal(plan.serviceUser, "t3");
+      assert.equal(plan.serviceGroup, "t3");
+      assert.deepEqual(commands.slice(0, 2), [
+        { command: "id", args: ["-u", "t3"] },
+        {
+          command: "chown",
+          args: ["-R", "--", "t3:t3", dirs.baseDir, dirs.logsDir],
+        },
+      ]);
+      assert.include(yield* fs.readFileString(plan.unitPath), `s6-svperms -G 't3' '${serviceDir}'`);
+    }),
+  );
+
+  it.effect("restores the previous s6 launcher when ownership reconciliation fails", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const serviceDir = path.join(dirs.home, "service", "t3code");
+      const launcherPath = path.join(dirs.baseDir, "runtime", "s6-service-launcher");
+      const unitPath = path.join(serviceDir, "run");
+      yield* fs.makeDirectory(path.dirname(launcherPath), { recursive: true });
+      yield* fs.makeDirectory(serviceDir, { recursive: true });
+      yield* fs.writeFileString(launcherPath, '#!/bin/sh\nexec /previous/t3 "$@"\n');
+      yield* fs.writeFileString(unitPath, "#!/bin/sh\nexec /previous/launcher serve\n");
+
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(commands, { failCommand: "chown" })),
+        provideHostRefs(""),
+      );
+
+      const error = yield* service.install.pipe(Effect.flip);
+      assert.isTrue(isCommandError(error));
+      assert.equal(yield* fs.readFileString(launcherPath), '#!/bin/sh\nexec /previous/t3 "$@"\n');
+      assert.equal(
+        yield* fs.readFileString(unitPath),
+        "#!/bin/sh\nexec /previous/launcher serve\n",
+      );
+    }),
+  );
+
+  it.effect("restores prior s6 state ownership when activation fails", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const serviceDir = path.join(dirs.home, "service", "t3code");
+      const launcherPath = path.join(dirs.baseDir, "runtime", "s6-service-launcher");
+      const unitPath = path.join(serviceDir, "run");
+      yield* fs.makeDirectory(path.dirname(launcherPath), { recursive: true });
+      yield* fs.makeDirectory(dirs.logsDir, { recursive: true });
+      yield* fs.makeDirectory(serviceDir, { recursive: true });
+      yield* fs.writeFileString(launcherPath, '#!/bin/sh\nexec /previous/t3 "$@"\n');
+      yield* fs.writeFileString(unitPath, "#!/bin/sh\nexec /previous/launcher serve\n");
+      const nestedStatePath = path.join(dirs.baseDir, "userdata", "state.json");
+      yield* fs.makeDirectory(path.dirname(nestedStatePath), { recursive: true });
+      yield* fs.writeFileString(nestedStatePath, "{}");
+      const previousBaseInfo = yield* fs.stat(dirs.baseDir);
+      const previousLogsInfo = yield* fs.stat(dirs.logsDir);
+      const previousNestedInfo = yield* fs.stat(nestedStatePath);
+      let activationFailed = false;
+
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(
+          makeRecordingRunnerLayer(commands, {
+            failWhen: (command, args) => {
+              if (command !== "s6-svc" || args[0] !== "-r" || activationFailed) return false;
+              activationFailed = true;
+              return true;
+            },
+          }),
+        ),
+        provideHostRefs(""),
+      );
+
+      const error = yield* service.install.pipe(Effect.flip);
+      assert.isTrue(isCommandError(error));
+      assert.includeDeepMembers(commands, [
+        {
+          command: "chown",
+          args: [
+            "-h",
+            "--",
+            `${Option.getOrThrow(previousBaseInfo.uid)}:${Option.getOrThrow(previousBaseInfo.gid)}`,
+            dirs.baseDir,
+          ],
+        },
+        {
+          command: "chown",
+          args: [
+            "-h",
+            "--",
+            `${Option.getOrThrow(previousLogsInfo.uid)}:${Option.getOrThrow(previousLogsInfo.gid)}`,
+            dirs.logsDir,
+          ],
+        },
+        {
+          command: "chown",
+          args: [
+            "-h",
+            "--",
+            `${Option.getOrThrow(previousNestedInfo.uid)}:${Option.getOrThrow(previousNestedInfo.gid)}`,
+            nestedStatePath,
+          ],
+        },
+      ]);
     }),
   );
 

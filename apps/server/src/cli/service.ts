@@ -18,6 +18,8 @@ export const bootServiceLayer = (
     readonly s6ServiceDir?: string;
     readonly serverHost?: string;
     readonly serverPort?: number;
+    readonly serviceUser?: string;
+    readonly serviceGroup?: string;
   },
 ) =>
   BootService.layer({
@@ -28,6 +30,8 @@ export const bootServiceLayer = (
     ...(options?.s6ServiceDir === undefined ? {} : { s6ServiceDir: options.s6ServiceDir }),
     ...(options?.serverHost === undefined ? {} : { serverHost: options.serverHost }),
     ...(options?.serverPort === undefined ? {} : { serverPort: options.serverPort }),
+    ...(options?.serviceUser === undefined ? {} : { serviceUser: options.serviceUser }),
+    ...(options?.serviceGroup === undefined ? {} : { serviceGroup: options.serviceGroup }),
   }).pipe(Layer.provide(ProcessRunner.layer));
 
 const supervisorFlag = Flag.choice("supervisor", ["systemd", "s6"] as const).pipe(
@@ -40,12 +44,26 @@ const s6ServiceDirFlag = Flag.string("service-dir").pipe(
   Flag.optional,
 );
 
+const serviceUserFlag = Flag.string("service-user").pipe(
+  Flag.withDescription(
+    "Non-root user for the s6 service (defaults to the invoking non-root or sudo identity).",
+  ),
+  Flag.optional,
+);
+
+const serviceGroupFlag = Flag.string("service-group").pipe(
+  Flag.withDescription("Group for the s6 service (defaults with the invoking identity)."),
+  Flag.optional,
+);
+
 const serviceFlags = {
   ...projectLocationFlags,
   host: hostFlag,
   port: portFlag,
   supervisor: supervisorFlag,
   s6ServiceDir: s6ServiceDirFlag,
+  serviceUser: serviceUserFlag,
+  serviceGroup: serviceGroupFlag,
 };
 
 export type ServiceReconcileResult =
@@ -82,6 +100,8 @@ export function formatServiceStatus(
     readonly s6ServiceDir?: string;
     readonly serverHost?: string;
     readonly serverPort?: number;
+    readonly serviceUser?: string;
+    readonly serviceGroup?: string;
   },
 ): string {
   if (!status.supported) {
@@ -90,20 +110,28 @@ export function formatServiceStatus(
   if (!status.installed) {
     return "T3 Code service\n  Status: not installed\n  Next: Run `t3 service install`.";
   }
-  const repairArgs = ["npx t3@latest service update"];
+  const repairCommandParts = ["npx t3@latest service update"];
   if (options?.supervisor === "s6" && options.s6ServiceDir !== undefined) {
-    repairArgs.push(
+    repairCommandParts.push(
       "--supervisor s6",
       `--service-dir ${BootService.quoteShellValue(options.s6ServiceDir)}`,
     );
+    if (options.serviceUser !== undefined) {
+      repairCommandParts.push(`--service-user ${BootService.quoteShellValue(options.serviceUser)}`);
+    }
+    if (options.serviceGroup !== undefined) {
+      repairCommandParts.push(
+        `--service-group ${BootService.quoteShellValue(options.serviceGroup)}`,
+      );
+    }
   }
   if (options?.serverHost !== undefined) {
-    repairArgs.push(`--host ${BootService.quoteShellValue(options.serverHost)}`);
+    repairCommandParts.push(`--host ${BootService.quoteShellValue(options.serverHost)}`);
   }
   if (options?.serverPort !== undefined) {
-    repairArgs.push(`--port ${String(options.serverPort)}`);
+    repairCommandParts.push(`--port ${String(options.serverPort)}`);
   }
-  const repairCommand = repairArgs.join(" ");
+  const repairCommand = repairCommandParts.join(" ");
   return [
     "T3 Code service",
     `  Status: ${status.current ? `installed · t3@${cliVersion}` : "needs an update or repair"}`,
@@ -120,6 +148,8 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
     readonly port: Option.Option<number>;
     readonly supervisor: BootService.ServiceSupervisor;
     readonly s6ServiceDir: Option.Option<string>;
+    readonly serviceUser: Option.Option<string>;
+    readonly serviceGroup: Option.Option<string>;
   },
   run: Effect.Effect<A, E, BootService.BootService>,
 ) {
@@ -132,6 +162,8 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
         ...(Option.isSome(flags.s6ServiceDir) ? { s6ServiceDir: flags.s6ServiceDir.value } : {}),
         ...(Option.isSome(flags.host) ? { serverHost: flags.host.value } : {}),
         ...(Option.isSome(flags.port) ? { serverPort: flags.port.value } : {}),
+        ...(Option.isSome(flags.serviceUser) ? { serviceUser: flags.serviceUser.value } : {}),
+        ...(Option.isSome(flags.serviceGroup) ? { serviceGroup: flags.serviceGroup.value } : {}),
       }),
     ),
   );
@@ -210,6 +242,10 @@ const serviceStatusCommand = Command.make("status", serviceFlags).pipe(
               : {}),
             ...(Option.isSome(flags.host) ? { serverHost: flags.host.value } : {}),
             ...(Option.isSome(flags.port) ? { serverPort: flags.port.value } : {}),
+            ...(Option.isSome(flags.serviceUser) ? { serviceUser: flags.serviceUser.value } : {}),
+            ...(Option.isSome(flags.serviceGroup)
+              ? { serviceGroup: flags.serviceGroup.value }
+              : {}),
           }),
         );
       }),
@@ -257,6 +293,8 @@ export const recoverServiceOnboardingOffer = <R>(
       BootServiceUnsupportedError: (error) =>
         Console.log(`Skipping background setup: ${error.message}`).pipe(Effect.as(false)),
       BootServiceCommandError: (error) =>
+        Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
+      BootServiceIdentityError: (error) =>
         Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
       BootServiceInstallError: (error) =>
         Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
