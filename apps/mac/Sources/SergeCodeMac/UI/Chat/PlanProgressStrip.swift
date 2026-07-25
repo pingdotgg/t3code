@@ -43,7 +43,9 @@ struct PlanProgressStrip: View {
     private func headerButton(_ progress: PlanProgress) -> some View {
         let completed = progress.steps.filter { $0.status == .completed }.count
         return Button {
-            withAnimation(Motion.feedback) { isExpanded.toggle() }
+            // No explicit animation: the container's structure-curve
+            // `.animation(value: isExpanded)` owns the expand/collapse.
+            isExpanded.toggle()
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "checklist")
@@ -54,14 +56,15 @@ struct PlanProgressStrip: View {
                 Text("\(completed)/\(progress.steps.count)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
+                    .contentTransition(
+                        Motion.reduceMotion ? .identity : .numericText())
                 if !isExpanded, let current = currentStep(progress) {
                     Text(current.title)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .transition(.opacity)
+                        .transition(Motion.rise)
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right")
@@ -113,7 +116,10 @@ struct PlanProgressStrip: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            ForEach(progress.steps) { step in
+            // Batch arrivals stagger through the entrance policy (clamped
+            // 28ms step) instead of rising all at once; the one-shot latch
+            // keeps live status updates from replaying the entrance.
+            ForEach(Array(progress.steps.enumerated()), id: \.element.id) { index, step in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     statusIcon(step.status)
                     Text(step.title)
@@ -121,7 +127,7 @@ struct PlanProgressStrip: View {
                         .strikethrough(step.status == .completed, color: .secondary)
                         .foregroundStyle(step.status == .completed ? .secondary : .primary)
                 }
-                .transition(Motion.rise)
+                .entrance(.row, index: index)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

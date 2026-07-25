@@ -61,7 +61,7 @@ struct DelegatedTaskCard: View {
             HStack(alignment: .top, spacing: 9) {
                 Button {
                     guard hasExpandableContent else { return }
-                    withAnimation(Motion.feedback) { isExpanded.toggle() }
+                    withAnimation(Motion.structure) { isExpanded.toggle() }
                 } label: {
                     HStack(alignment: .top, spacing: 9) {
                         SubagentTaskStatusIcon(task: task)
@@ -100,6 +100,10 @@ struct DelegatedTaskCard: View {
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                                     .fixedSize(horizontal: false, vertical: true)
+                                    // Subtitle → result swap on settle crossfades
+                                    // under the card's ambient state animation.
+                                    .contentTransition(
+                                        Motion.reduceMotion ? .identity : .opacity)
                             }
 
                             // Always visible — stop failures must not require expand.
@@ -117,8 +121,14 @@ struct DelegatedTaskCard: View {
                 .buttonStyle(.plain)
                 .disabled(!hasExpandableContent)
 
-                if task.state == .running || task.state == .paused, isHovering {
+                if task.state == .running || task.state == .paused {
+                    // Always present so hover never re-measures the live
+                    // row; the reveal is opacity-only (messageActions in
+                    // ChatTimelineRow uses the same pattern).
                     stopAgentButton
+                        .opacity(isHovering ? 1 : 0)
+                        .allowsHitTesting(isHovering)
+                        .accessibilityHidden(!isHovering)
                 }
             }
 
@@ -136,8 +146,8 @@ struct DelegatedTaskCard: View {
             onClearStopError()
         }
         .onHover { isHovering = $0 }
-        // The hover-revealed stop control above is conditional, so without
-        // this it blinks into the card instead of fading.
+        // The hover-revealed stop control above reserves its space and only
+        // fades, so hovering never re-measures the row.
         .animation(Motion.feedback, value: isHovering)
         .contextMenu {
             if let result = resultText {

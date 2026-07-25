@@ -23,7 +23,49 @@ struct ChatFollowUpBar: View {
                 }
             }
         }
-        .animation(Motion.structure, value: model.selectedVcsStatus())
+        // A merged PR is the bar's rarest success moment: ripple once on the
+        // merged edge (the Group identity persists across strip swaps, so
+        // `fire` sees a real false→true) and let the strip spring in on the
+        // delight curve. Every other strip swap keeps Motion.structure.
+        .successRipple(
+            fire: visibleStrip == .archive,
+            cornerRadius: AlpineTheme.Corners.card)
+        // Key on which strip is showing, not the whole VcsStatus: mid-run
+        // file-count republishes must not re-animate the bar.
+        .animation(
+            visibleStrip == .archive ? Motion.delight : Motion.structure,
+            value: visibleStrip)
+    }
+
+    /// Identity of whichever suggestion strip is on screen. Mirrors the
+    /// branching in `body` so the bar's swap animation keys on presence and
+    /// identity only — count-only VCS republishes leave it unchanged.
+    private enum VisibleStrip: Equatable {
+        case none
+        case archive
+        case fixReviews
+        case reviewInProgress
+        case fixesInProgress
+        case openPR
+        case createPR
+    }
+
+    private var visibleStrip: VisibleStrip {
+        guard let thread = model.selectedThread, thread.status != .archived,
+            let vcs = model.selectedVcsStatus()
+        else { return .none }
+        if vcs.prState == .merged { return .archive }
+        switch ReviewLifecycle.followUp(
+            threadStatus: thread.status, vcs: vcs, timeline: model.selectedTimeline())
+        {
+        case .fixReviews: return .fixReviews
+        case .reviewInProgress: return .reviewInProgress
+        case .fixesInProgress: return .fixesInProgress
+        case .none:
+            if vcs.prState == .open, pullRequestURL(vcs) != nil { return .openPR }
+            if shouldOfferPR(thread: thread, vcs: vcs) { return .createPR }
+            return .none
+        }
     }
 
     @ViewBuilder
