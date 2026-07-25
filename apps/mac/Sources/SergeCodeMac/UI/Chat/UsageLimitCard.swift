@@ -66,6 +66,8 @@ public struct UsageLimitCard: View {
                 Text(statusLine)
                     .font(.caption)
                     .foregroundStyle(statusColor)
+                    .contentTransition(Motion.reduceMotion ? .identity : .opacity)
+                    .transition(Motion.banner)
             }
 
             HStack {
@@ -104,6 +106,10 @@ public struct UsageLimitCard: View {
             }
         }
         .padding(14)
+        // The status narrative (idle → waiting → resuming → continued/failed)
+        // changes from the model, not a tap; ambient eases the line in/out,
+        // its rewrites, and the failure color so the beat lands.
+        .animation(Motion.ambient, value: state)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
         .entrance(.card)
     }

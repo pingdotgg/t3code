@@ -17,6 +17,11 @@ struct ChatHeaderView: View {
                 Text(thread.title.isEmpty ? names.primary : thread.title)
                     .font(SurgeTypography.threadTitle)
                     .lineLimit(1)
+                    // A generated title lands after the header is already on
+                    // screen; fade the swap instead of teleporting the
+                    // header's largest text.
+                    .contentTransition(Motion.reduceMotion ? .identity : .opacity)
+                    .animation(Motion.reveal, value: thread.title)
 
                 HStack(spacing: 8) {
                     projectIdentity(names.primary)
@@ -32,6 +37,10 @@ struct ChatHeaderView: View {
                                 "^[\(status.changedFileCount) file](inflect: true) changed"
                             )
                             .monospacedDigit()
+                            // Mid-run count changes tick rather than pop.
+                            .contentTransition(
+                                Motion.reduceMotion ? .identity : .numericText())
+                            .animation(Motion.ambient, value: status.changedFileCount)
                         }
                     }
                     if model.isRemote {
