@@ -180,7 +180,9 @@ it("renders a classic s6 run script with supervisor markers and shell-safe paths
   );
   assert.include(script, "export T3_S6_SERVICE_USER='theo'");
   assert.include(script, "export T3_S6_SERVICE_GROUP='staff'");
-  assert.include(script, "service_home=$(getent passwd 'theo' | cut -d: -f6)");
+  assert.include(script, "if command -v getent >/dev/null 2>&1;");
+  assert.include(script, "done </etc/passwd");
+  assert.include(script, "[ \"$account_uid\" = 'theo' ]");
   assert.include(script, 'export HOME="$service_home"');
   assert.include(script, "'s6-envuidgid' '-nB' 'theo:staff' '/bin/sh' '-c'");
   assert.include(script, `'exec s6-applyuidgid -z -u "$UID" -g "$GID" -G "$GID" "$@"'`);

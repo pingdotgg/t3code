@@ -240,7 +240,13 @@ export function renderS6RunScript(plan: BootServicePlan): string {
     ...(plan.serviceLauncherPath === undefined
       ? []
       : [`export ${S6_SERVICE_LAUNCHER_ENV}=${quoteShellValue(plan.serviceLauncherPath)}`]),
-    `service_home=$(getent passwd ${quoteShellValue(plan.serviceUser)} | cut -d: -f6)`,
+    'service_home=""',
+    `if command -v getent >/dev/null 2>&1; then service_home=$(getent passwd ${quoteShellValue(plan.serviceUser)} 2>/dev/null | cut -d: -f6); fi`,
+    'if [ -z "$service_home" ]; then',
+    "  while IFS=: read -r account _ account_uid _ _ account_home _; do",
+    `    if [ "$account" = ${quoteShellValue(plan.serviceUser)} ] || [ "$account_uid" = ${quoteShellValue(plan.serviceUser)} ]; then service_home=$account_home; break; fi`,
+    "  done </etc/passwd",
+    "fi",
     'if [ -z "$service_home" ]; then echo "Could not resolve s6 service user home." >&2; exit 1; fi',
     'export HOME="$service_home"',
     ...(plan.serviceGroup === undefined
