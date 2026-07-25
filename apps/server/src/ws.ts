@@ -24,6 +24,7 @@ import {
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
+  type OrchestrationThreadShell,
   type OrchestrationShellStreamItem,
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
@@ -1001,6 +1002,13 @@ const makeWsRpcLayer = (
         };
       });
 
+      // Mirrors the client's worktree identity rule (worktreeCleanup.ts):
+      // blank and null both mean "the project's local checkout".
+      const normalizeWorktreePathForArchive = (worktreePath: string | null): string | null => {
+        const trimmed = worktreePath?.trim();
+        return trimmed !== undefined && trimmed.length > 0 ? trimmed : null;
+      };
+
       const refreshGitStatus = (cwd: string) =>
         vcsStatusBroadcaster
           .refreshStatus(cwd)
@@ -1012,21 +1020,17 @@ const makeWsRpcLayer = (
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
-              const shouldStopSessionAfterArchive =
+              const threadShellBeforeArchive =
                 normalizedCommand.type === "thread.archive"
                   ? yield* projectionSnapshotQuery
                       .getThreadShellById(normalizedCommand.threadId)
-                      .pipe(
-                        Effect.map(
-                          Option.match({
-                            onNone: () => false,
-                            onSome: (thread) =>
-                              thread.session !== null && thread.session.status !== "stopped",
-                          }),
-                        ),
-                        Effect.orElseSucceed(() => false),
-                      )
-                  : false;
+                      .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationThreadShell>()))
+                  : Option.none<OrchestrationThreadShell>();
+              const shouldStopSessionAfterArchive = Option.match(threadShellBeforeArchive, {
+                onNone: () => false,
+                onSome: (thread) =>
+                  thread.session !== null && thread.session.status !== "stopped",
+              });
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
               if (normalizedCommand.type === "thread.archive") {
                 if (shouldStopSessionAfterArchive) {
@@ -1051,14 +1055,36 @@ const makeWsRpcLayer = (
                   );
                 }
 
-                yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
-                  Effect.catch((error) =>
-                    Effect.logWarning("failed to close thread terminals after archive", {
-                      threadId: normalizedCommand.threadId,
-                      error: error.message,
-                    }),
-                  ),
-                );
+                // Terminals are worktree-scoped on the client (every thread in
+                // a checkout shares one set of ptys via a canonical thread id),
+                // so archiving one thread must not kill sessions that sibling
+                // threads still use — e.g. a running dev server.
+                const worktreeStillInUse = yield* Option.match(threadShellBeforeArchive, {
+                  onNone: () => Effect.succeed(false),
+                  onSome: (archivedThread) =>
+                    projectionSnapshotQuery.getShellSnapshot().pipe(
+                      Effect.map((snapshot) =>
+                        snapshot.threads.some(
+                          (thread) =>
+                            thread.id !== archivedThread.id &&
+                            thread.projectId === archivedThread.projectId &&
+                            normalizeWorktreePathForArchive(thread.worktreePath) ===
+                              normalizeWorktreePathForArchive(archivedThread.worktreePath),
+                        ),
+                      ),
+                      Effect.orElseSucceed(() => false),
+                    ),
+                });
+                if (!worktreeStillInUse) {
+                  yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
+                    Effect.catch((error) =>
+                      Effect.logWarning("failed to close thread terminals after archive", {
+                        threadId: normalizedCommand.threadId,
+                        error: error.message,
+                      }),
+                    ),
+                  );
+                }
               }
               return result;
             }).pipe(

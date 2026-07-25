@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { applyPreviewServerSnapshot, isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { resolveWorktreeCanonicalThreadRef } from "~/worktreeScope";
 import { useRightPanelStore } from "~/rightPanelStore";
 
 const terminalLinkErrorContext = {
@@ -81,9 +82,12 @@ export async function openTerminalLinkInPreview<E>(
   }
 
   if (choice === "open-in-preview") {
+    // Preview sessions are worktree-scoped: open through the worktree's
+    // canonical thread id so sibling threads share one set of tabs.
+    const canonicalRef = resolveWorktreeCanonicalThreadRef(input.threadRef);
     const result = await input.openPreview({
-      environmentId: input.threadRef.environmentId,
-      input: { threadId: input.threadRef.threadId, url: input.url },
+      environmentId: canonicalRef.environmentId,
+      input: { threadId: canonicalRef.threadId, url: input.url },
     });
     if (result._tag === "Failure") {
       if (isAtomCommandInterrupted(result)) {

@@ -6859,6 +6859,75 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("skips closing terminals on archive while a sibling thread shares the worktree", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-archive-shared-worktree");
+      const siblingThreadId = ThreadId.make("thread-archive-shared-sibling");
+      const worktreePath = "/tmp/worktrees/shared";
+      const effects: string[] = [];
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* buildAppUnderTest({
+        layers: {
+          terminalManager: {
+            close: (input) =>
+              Effect.sync(() => {
+                effects.push(`terminal.close:${input.threadId}`);
+              }),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                effects.push(`dispatch:${command.type}`);
+                return { sequence: 1 };
+              }),
+          },
+          projectionSnapshotQuery: {
+            getThreadShellById: () =>
+              Effect.succeed(
+                Option.some(
+                  makeDefaultOrchestrationThreadShell({
+                    id: threadId,
+                    updatedAt: now,
+                    worktreePath,
+                  }),
+                ),
+              ),
+            getShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 1,
+                projects: [],
+                threads: [
+                  makeDefaultOrchestrationThreadShell({
+                    id: siblingThreadId,
+                    updatedAt: now,
+                    worktreePath,
+                  }),
+                ],
+                updatedAt: now,
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.archive",
+            commandId: CommandId.make("cmd-thread-archive-shared-worktree"),
+            threadId,
+          }),
+        ),
+      );
+
+      // Terminals are worktree-scoped on the client: the sibling still uses
+      // the checkout, so its terminals (e.g. a running dev server) must
+      // survive the archive.
+      assert.deepEqual(effects, ["dispatch:thread.archive"]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect(
     "bootstraps first-send worktree turns on the server before dispatching turn start",
     () =>

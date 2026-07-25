@@ -12,6 +12,7 @@ import {
   reconcilePreviewServerSessions,
 } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
+import { useWorktreeCanonicalThreadRef } from "~/worktreeScope";
 
 class PreviewSessionThreadKeyParseError extends Schema.TaggedErrorClass<PreviewSessionThreadKeyParseError>()(
   "PreviewSessionThreadKeyParseError",
@@ -79,5 +80,9 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
 });
 
 export function usePreviewSession(threadRef: ScopedThreadRef): void {
-  useAtomValue(previewSessionSyncAtom(scopedThreadKey(threadRef)));
+  // Preview sessions are worktree-scoped: every thread in a checkout syncs
+  // through the worktree's canonical thread id, so the same tabs stay
+  // attached as the user jumps between sibling threads.
+  const canonicalRef = useWorktreeCanonicalThreadRef(threadRef);
+  useAtomValue(previewSessionSyncAtom(scopedThreadKey(canonicalRef ?? threadRef)));
 }

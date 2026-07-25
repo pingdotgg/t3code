@@ -1,11 +1,14 @@
 /**
- * Single Zustand store for terminal UI state keyed by scoped thread identity.
+ * Single Zustand store for terminal UI state keyed by WORKTREE identity.
+ *
+ * Callers pass a thread ref; the store resolves it to the thread's worktree
+ * scope key so every thread sharing a checkout shares one drawer layout
+ * (open state, height, terminal ids, splits).
  *
  * Terminal UI transition helpers are intentionally private to keep the public
  * API constrained to store actions/selectors.
  */
 
-import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -16,6 +19,7 @@ import {
   MAX_TERMINALS_PER_GROUP,
   type ThreadTerminalGroup,
 } from "./types";
+import { resolveWorktreeScopeKeyForThreadRef } from "./worktreeScope";
 
 interface ThreadTerminalUiState {
   terminalOpen: boolean;
@@ -36,20 +40,18 @@ interface PersistedTerminalUiStateStoreState {
 
 export function migratePersistedTerminalUiStateStoreState(
   persistedState: unknown,
-  _version: number,
+  version: number,
 ): PersistedTerminalUiStateStoreState {
-  if (!persistedState || typeof persistedState !== "object") {
+  // v5 re-keyed entries from thread keys to worktree scope keys; older
+  // thread-keyed entries can never match again, so they are dropped rather
+  // than left as unreachable garbage.
+  if (version < 5 || !persistedState || typeof persistedState !== "object") {
     return { terminalUiStateByThreadKey: {} };
   }
 
   const candidate = persistedState as PersistedTerminalUiStateStoreState;
-  const persistedUiStateByThreadKey =
+  const terminalUiStateByThreadKey =
     candidate.terminalUiStateByThreadKey ?? candidate.terminalStateByThreadKey ?? {};
-  const terminalUiStateByThreadKey = Object.fromEntries(
-    Object.entries(persistedUiStateByThreadKey).filter(([threadKey]) =>
-      parseScopedThreadKey(threadKey),
-    ),
-  );
 
   return { terminalUiStateByThreadKey };
 }
@@ -240,7 +242,7 @@ function isValidTerminalId(terminalId: string): boolean {
 }
 
 function terminalThreadKey(threadRef: ScopedThreadRef): string {
-  return scopedThreadKey(threadRef);
+  return resolveWorktreeScopeKeyForThreadRef(threadRef);
 }
 
 function copyTerminalGroups(groups: ThreadTerminalGroup[]): ThreadTerminalGroup[] {
@@ -770,7 +772,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
     },
     {
       name: TERMINAL_UI_STATE_STORAGE_KEY,
-      version: 4,
+      version: 5,
       storage: createJSONStorage(createTerminalUiStateStorage),
       migrate: migratePersistedTerminalUiStateStoreState,
       partialize: (state) => ({

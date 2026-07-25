@@ -21,6 +21,7 @@ import {
   rememberPreviewUrl,
 } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { resolveWorktreeCanonicalThreadRef } from "~/worktreeScope";
 
 export const isBrowserPreviewFile = (path: string): boolean =>
   /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
@@ -41,9 +42,12 @@ export async function openUrlInPreview<E>(input: {
   readonly url: string;
   readonly openPreview: OpenPreviewMutation<E>;
 }): Promise<AtomCommandResult<void, E>> {
+  // Preview sessions are worktree-scoped: open through the worktree's
+  // canonical thread id so sibling threads share one set of tabs.
+  const canonicalRef = resolveWorktreeCanonicalThreadRef(input.threadRef);
   const result = await input.openPreview({
-    environmentId: input.threadRef.environmentId,
-    input: { threadId: input.threadRef.threadId, url: input.url },
+    environmentId: canonicalRef.environmentId,
+    input: { threadId: canonicalRef.threadId, url: input.url },
   });
   return mapAtomCommandResult(result, (snapshot) => {
     applyPreviewServerSnapshot(input.threadRef, snapshot);

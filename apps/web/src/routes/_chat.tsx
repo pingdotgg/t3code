@@ -1,5 +1,6 @@
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useEffect, useMemo } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
@@ -80,6 +81,34 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.newLocal") {
         event.preventDefault();
         event.stopPropagation();
+        void startNewThreadFromContext({
+          activeDraftThread,
+          activeThread: activeThread ?? undefined,
+          defaultProjectRef,
+          handleNewThread,
+        });
+        return;
+      }
+
+      if (command === "chat.newInWorktree") {
+        event.preventDefault();
+        event.stopPropagation();
+        // Same action as the sidebar card's "New thread on {branch}" menu
+        // item: the new thread joins the active thread's checkout (its git
+        // worktree, or its branch on the local checkout). With no active
+        // checkout to join, fall back to the default contextual create.
+        if (activeThread && (activeThread.worktreePath !== null || activeThread.branch !== null)) {
+          void handleNewThread(
+            scopeProjectRef(activeThread.environmentId, activeThread.projectId),
+            {
+              branch: activeThread.branch,
+              worktreePath: activeThread.worktreePath,
+              envMode: activeThread.worktreePath !== null ? "worktree" : "local",
+              startFromOrigin: false,
+            },
+          );
+          return;
+        }
         void startNewThreadFromContext({
           activeDraftThread,
           activeThread: activeThread ?? undefined,

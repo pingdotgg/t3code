@@ -1,9 +1,13 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef, TurnId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
+import { resolveWorktreeScopeKeyForThreadRef } from "./worktreeScope";
+
+// Diff selections belong to the CHECKOUT, not the thread: every thread
+// sharing a worktree sees the same diff scope and base ref.
+const diffScopeKey = resolveWorktreeScopeKeyForThreadRef;
 
 export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
@@ -35,7 +39,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       branchBaseRefByThreadKey: {},
       selectGitScope: (ref, scope) =>
         set((state) => {
-          const threadKey = scopedThreadKey(ref);
+          const threadKey = diffScopeKey(ref);
           const previous = state.byThreadKey[threadKey];
           const previousBaseRef =
             previous?.kind === "branch"
@@ -57,7 +61,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         }),
       selectBranchBaseRef: (ref, baseRef) =>
         set((state) => {
-          const threadKey = scopedThreadKey(ref);
+          const threadKey = diffScopeKey(ref);
           const normalizedBaseRef = normalizeBaseRef(baseRef);
           return {
             byThreadKey: {
@@ -72,7 +76,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         }),
       selectTurn: (ref, turnId, filePath) =>
         set((state) => {
-          const threadKey = scopedThreadKey(ref);
+          const threadKey = diffScopeKey(ref);
           const previous = state.byThreadKey[threadKey];
           return {
             byThreadKey: {
@@ -88,7 +92,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         }),
       reconcileTurnSelection: (ref, availableTurnIds) =>
         set((state) => {
-          const threadKey = scopedThreadKey(ref);
+          const threadKey = diffScopeKey(ref);
           const previous = state.byThreadKey[threadKey];
           const latestTurnId = availableTurnIds[0];
           if (
@@ -107,7 +111,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         }),
       removeThread: (ref) =>
         set((state) => {
-          const threadKey = scopedThreadKey(ref);
+          const threadKey = diffScopeKey(ref);
           if (!(threadKey in state.byThreadKey) && !(threadKey in state.branchBaseRefByThreadKey)) {
             return state;
           }
@@ -119,7 +123,16 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
     }),
     {
       name: "t3code:diff-panel-state:v1",
-      version: 1,
+      // v2 re-keyed entries from thread keys to worktree scope keys; older
+      // thread-keyed entries can never match again, so they are dropped.
+      version: 2,
+      migrate: (persistedState, version) =>
+        version < 2 || !persistedState || typeof persistedState !== "object"
+          ? { byThreadKey: {}, branchBaseRefByThreadKey: {} }
+          : (persistedState as {
+              byThreadKey: Record<string, DiffPanelSelection>;
+              branchBaseRefByThreadKey: Record<string, string | null>;
+            }),
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
@@ -138,7 +151,7 @@ export function selectThreadDiffPanelSelection(
 ): DiffPanelSelection {
   if (!ref) return DEFAULT_SELECTION;
   return (
-    byThreadKey[scopedThreadKey(ref)] ??
+    byThreadKey[diffScopeKey(ref)] ??
     (hasWorkingTreeChanges ? DEFAULT_WORKING_TREE_SELECTION : DEFAULT_SELECTION)
   );
 }

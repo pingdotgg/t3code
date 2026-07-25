@@ -25,6 +25,16 @@ vi.mock("~/state/session", () => ({
   readPreparedConnection: mocks.readPreparedConnection,
 }));
 
+// worktreeScope pulls the full entities/server atom graph into the module
+// graph; identity stubs keep this suite's narrow mocks sufficient.
+vi.mock("~/worktreeScope", () => ({
+  useWorktreeCanonicalThreadRef: (ref: unknown) => ref,
+  useWorktreeScopeKeyForThreadRef: (ref: unknown) =>
+    ref === null ? null : JSON.stringify(ref),
+  resolveWorktreeCanonicalThreadRef: (ref: unknown) => ref,
+  resolveWorktreeScopeKeyForThreadRef: (ref: unknown) => JSON.stringify(ref),
+}));
+
 vi.mock("~/composerDraftStore", () => ({
   useComposerDraftStore: (
     select: (store: { addPreviewAnnotation: () => void; addImage: () => void }) => unknown,
