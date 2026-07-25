@@ -495,12 +495,13 @@ private struct InteractionModeMenu: View {
     }
 }
 
-/// Compact context-window usage meter (ring + percent). Hovering opens a
-/// popover with the full numbers (used / limit / remaining).
+/// Compact context-window usage meter (ring + percent). Resting the pointer
+/// on it opens a popover with the full numbers (used / limit / remaining).
 struct ContextMeterView: View {
     let status: ContextWindowStatus
 
     @UIState private var showDetails = false
+    @UIState private var hoverTask: Task<Void, Never>?
 
     var body: some View {
         if let fraction = status.usedFraction {
@@ -517,9 +518,14 @@ struct ContextMeterView: View {
                     .monospacedDigit()
                     .contentTransition(.numericText())
             }
-            .onHover { showDetails = $0 }
+            .onHover { scheduleDetails(hovering: $0) }
             .popover(isPresented: $showDetails, arrowEdge: .top) {
                 ContextMeterDetails(status: status, fraction: fraction, tint: meterColor(fraction))
+            }
+            .onDisappear {
+                hoverTask?.cancel()
+                hoverTask = nil
+                showDetails = false
             }
             // The ring sweeps and the percent ticks as usage grows.
             .animation(Motion.ambient, value: fraction)
@@ -536,6 +542,26 @@ struct ContextMeterView: View {
         case ..<0.7: AlpineTheme.meadow
         case ..<0.9: AlpineTheme.clay
         default: .red
+        }
+    }
+
+    /// Presents the details card only once the pointer has rested: transient
+    /// passes (window drags, scrolls) must never present and dismiss a popover
+    /// in quick succession. The meter's anchor is rebuilt constantly while a
+    /// turn streams (and removed entirely when `usedFraction` flips to nil),
+    /// and presenting a popover while its anchor is mid-teardown crashes
+    /// inside NSPopover's child-window ordering (NSRemoteView / ViewBridge).
+    private func scheduleDetails(hovering: Bool) {
+        hoverTask?.cancel()
+        hoverTask = nil
+        if hovering {
+            hoverTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
+                showDetails = true
+            }
+        } else {
+            showDetails = false
         }
     }
 }
