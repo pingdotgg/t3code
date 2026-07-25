@@ -244,6 +244,69 @@ describe("SceneryStore", () => {
     }
   });
 
+  it("peekNextScene skips scenes occupied by excluded thread keys", async () => {
+    const client = makeClient([photo("p0"), photo("p1")]);
+    const { store } = makeStore({ client });
+    await store.start();
+
+    store.assign("p0", "env:thread-1");
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      // Without the exclusion, random = 0 would pick the occupied p0.
+      const pick = store.peekNextScene({ excludingThreadKeys: new Set(["env:thread-1"]) })!;
+      expect(pick.id).toBe("p1");
+      // The pending pick holds for subsequent peeks.
+      expect(store.peekNextScene()?.id).toBe("p1");
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("peekNextScene treats an excluded thread's stable-hash scene as occupied", async () => {
+    const client = makeClient([photo("p0"), photo("p1")]);
+    const { store } = makeStore({ client });
+    await store.start();
+
+    // No explicit assignment: the thread still displays (and therefore
+    // occupies) its stable-hash scene.
+    const hashed = store.photoFor("env:busy")!;
+    const pick = store.peekNextScene({ excludingThreadKeys: new Set(["env:busy"]) })!;
+    expect(pick.id).not.toBe(hashed.id);
+  });
+
+  it("peekNextScene allows duplicates only once every pool photo is occupied", async () => {
+    const client = makeClient([photo("p0")]);
+    const { store } = makeStore({ client });
+    await store.start();
+
+    store.assign("p0", "env:thread-1");
+    const pick = store.peekNextScene({ excludingThreadKeys: new Set(["env:thread-1"]) })!;
+    expect(pick.id).toBe("p0");
+  });
+
+  it("peekNextScene re-samples a pending pick that an exclusion now covers", async () => {
+    const client = makeClient([photo("p0"), photo("p1")]);
+    const { store } = makeStore({ client });
+    await store.start();
+
+    // A thread created elsewhere occupies p0 via the stable-hash fallback.
+    const busyKey = ["env:k0", "env:k1", "env:k2", "env:k3"].find(
+      (key) => store.photoFor(key)?.id === "p0",
+    )!;
+
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      // Preview sampled p0 before the busy thread was known.
+      expect(store.peekNextScene()!.id).toBe("p0");
+      // The exclusion now covers the pending pick: re-sample instead of
+      // committing a duplicate.
+      const pick = store.peekNextScene({ excludingThreadKeys: new Set([busyKey]) })!;
+      expect(pick.id).toBe("p1");
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
   it("photoFor keeps the explicit assignment and falls back to a stable hash", async () => {
     const client = makeClient([photo("p0"), photo("p1"), photo("p2")]);
     const { store, storage } = makeStore({ client });

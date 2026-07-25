@@ -190,11 +190,18 @@ struct NewSessionSheet: View {
             // peek can't lose the cold-start race and come back nil.
             await scenery.start()
             if nextScene == nil {
-                nextScene = scenery.peekNextScene()
+                nextScene = scenery.peekNextScene(excludingThreadKeys: model.activeSceneThreadKeys)
             }
         }
         .onChange(of: model.configuredProviderKinds) {
             syncProviderSelection()
+        }
+        .onChange(of: model.activeSceneThreadKeys) {
+            // Keep the preview aligned with what createSceneThread will
+            // commit: re-peek when occupancy changes. The store keeps the
+            // pending pick while it is still unoccupied, so unrelated
+            // thread activity leaves the preview untouched.
+            nextScene = scenery.peekNextScene(excludingThreadKeys: model.activeSceneThreadKeys)
         }
     }
 
