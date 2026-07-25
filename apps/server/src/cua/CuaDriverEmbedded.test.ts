@@ -4,11 +4,11 @@ import * as Effect from "effect/Effect";
 
 import type { EmbeddedDriverExit } from "@trycua/cua-driver/embedded";
 
+import { T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV } from "../provider/Layers/codexLaunchArgs.ts";
 import {
   buildCodexLaunchArgs,
   installCodexLaunchArgs,
   monitorEmbeddedCuaDriverExit,
-  T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV,
 } from "./CuaDriverEmbedded.ts";
 
 const connection = {

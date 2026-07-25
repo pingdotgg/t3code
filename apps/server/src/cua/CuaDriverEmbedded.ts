@@ -3,10 +3,11 @@ import * as Schema from "effect/Schema";
 
 import type { EmbeddedDriverConnection, EmbeddedDriverExit } from "@trycua/cua-driver/embedded";
 
+import { T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV } from "../provider/Layers/codexLaunchArgs.ts";
+
 export const T3CODE_CUA_DRIVER_PATH_ENV = "T3CODE_CUA_DRIVER_PATH";
 export const T3CODE_CUA_DRIVER_HOST_BUNDLE_ID_ENV = "T3CODE_CUA_DRIVER_HOST_BUNDLE_ID";
 export const T3CODE_CUA_DRIVER_MODULE_URL_ENV = "T3CODE_CUA_DRIVER_MODULE_URL";
-export const T3CODE_CODEX_APPEND_LAUNCH_ARGS_ENV = "T3CODE_CODEX_APPEND_LAUNCH_ARGS";
 
 export class CuaDriverStartError extends Schema.TaggedErrorClass<CuaDriverStartError>()(
   "CuaDriverStartError",
