@@ -61,7 +61,7 @@ struct DelegatedTaskCard: View {
             HStack(alignment: .top, spacing: 9) {
                 Button {
                     guard hasExpandableContent else { return }
-                    withAnimation(Motion.structure) { isExpanded.toggle() }
+                    withDeferredDisclosureAnimation { isExpanded.toggle() }
                 } label: {
                     HStack(alignment: .top, spacing: 9) {
                         SubagentTaskStatusIcon(task: task)
@@ -101,9 +101,12 @@ struct DelegatedTaskCard: View {
                                     .lineLimit(2)
                                     .fixedSize(horizontal: false, vertical: true)
                                     // Subtitle → result swap on settle crossfades
-                                    // under the card's ambient state animation.
+                                    // under the card's ambient state animation;
+                                    // live rewrites key their own ambient since
+                                    // task.state doesn't change mid-run.
                                     .contentTransition(
                                         Motion.reduceMotion ? .identity : .opacity)
+                                    .animation(Motion.ambient, value: subtitle)
                             }
 
                             // Always visible — stop failures must not require expand.

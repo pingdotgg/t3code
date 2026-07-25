@@ -212,6 +212,7 @@ struct ModelPickerPopoverContent: View {
                         : Color.primary.opacity(0.12)
                 )
         }
+        .animation(Motion.feedback, value: searchFocused)
     }
 
     private var providerSidebar: some View {
@@ -228,7 +229,7 @@ struct ModelPickerPopoverContent: View {
                 count: allItems.count,
                 isSelected: providerFilter == .all
             ) {
-                providerFilter = .all
+                withAnimation(Motion.reveal) { providerFilter = .all }
             }
 
             ForEach(availableProviders) { provider in
@@ -238,7 +239,7 @@ struct ModelPickerPopoverContent: View {
                     count: allItems.count { $0.option.provider == provider },
                     isSelected: providerFilter == .provider(provider)
                 ) {
-                    providerFilter = .provider(provider)
+                    withAnimation(Motion.reveal) { providerFilter = .provider(provider) }
                 }
             }
 
@@ -272,6 +273,7 @@ struct ModelPickerPopoverContent: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(Motion.reveal, value: providerFilter)
     }
 
     private var browserTitle: String {

@@ -55,6 +55,7 @@ private struct ModelRunProfileGroup: View {
         .background(
             .fill.quaternary,
             in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
+        .animation(Motion.reveal, value: showsRunProfile)
     }
 
     private var segmentDivider: some View {

@@ -1,6 +1,6 @@
 # 001 — Animate press feedback in the two custom ButtonStyles (mac)
 
-- **Status**: TODO
+- **Status**: DONE (re-baselined at c9013c976, executed via plan 011)
 - **Commit**: 774d2f560
 - **Severity**: MEDIUM
 - **Category**: Physicality & origin (missing press feedback)

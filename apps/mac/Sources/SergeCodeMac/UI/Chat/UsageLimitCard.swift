@@ -111,7 +111,8 @@ public struct UsageLimitCard: View {
         // its rewrites, and the failure color so the beat lands.
         .animation(Motion.ambient, value: state)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
-        .entrance(.card)
+        // Arrival is owned by the timeline ForEach's `.entrance(.row)` — a
+        // second `.entrance(.card)` here doubled the entrance travel.
     }
 
     private var resetLine: String {

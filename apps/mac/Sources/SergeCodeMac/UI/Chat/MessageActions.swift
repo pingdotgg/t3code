@@ -78,7 +78,7 @@ private struct MessageActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .scaleEffect(configuration.isPressed && !Motion.reduceMotion ? 0.94 : 1)
             .brightness(isHovered ? 0.08 : 0)
             .animation(Motion.feedback, value: configuration.isPressed)
             .animation(Motion.feedback, value: isHovered)

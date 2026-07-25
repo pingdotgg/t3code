@@ -16,7 +16,10 @@ struct DictationLiveOverlay: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             meter
+            // DictationState is Equatable (DictationController.swift:6). Keyed
+            // on state, not the transcript, so streaming words don't retrigger it.
             content
+                .animation(Motion.reveal, value: dictation.state)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)

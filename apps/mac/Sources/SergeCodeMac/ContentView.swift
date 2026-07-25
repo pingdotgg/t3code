@@ -38,8 +38,9 @@ struct RootView: View {
                     .transition(.opacity)
                 }
             }
-            // Keyed to presence, not thread id — thread → thread switches
-            // cross-fade inside ChatScreen; this only covers hero ↔ chat.
+            // Keyed to presence, not thread id — thread → thread switches render
+            // immediately inside ChatScreen (frequent, often keyboard-driven); this
+            // only covers hero ↔ chat.
             .animation(Motion.structure, value: multi.selectedThread == nil)
             // The inspector hangs off this stable node, not off the
             // per-thread detail view: re-presenting it on every thread

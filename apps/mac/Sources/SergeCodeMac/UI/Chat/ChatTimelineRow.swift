@@ -296,7 +296,7 @@ private struct UserMessageBubble: View {
                         .overlay(alignment: .bottomLeading) {
                             if isLarge {
                                 Button(isExpanded ? "Show Less" : "Show More") {
-                                    withDeferredAnimation(Motion.structure) {
+                                    withDeferredDisclosureAnimation {
                                         isExpanded.toggle()
                                     }
                                 }
@@ -529,10 +529,18 @@ private struct ChatAttachmentPreviewSheet: View {
             image = nil
             do {
                 let url = try await model.attachmentImageURL(id: attachment.id)
-                image = try await loadNSImage(from: url)
-                phase = .loaded
+                let loaded = try await loadNSImage(from: url)
+                // Crossfade the spinner into the decoded image, mirroring the
+                // thumbnail's load(); the ZStack frame is fixed, so this stays
+                // a render-only opacity change.
+                withAnimation(Motion.reveal) {
+                    image = loaded
+                    phase = .loaded
+                }
             } catch {
-                phase = .failed
+                withAnimation(Motion.reveal) {
+                    phase = .failed
+                }
             }
         }
     }
@@ -587,6 +595,7 @@ private struct ToolGroupRow: View {
     let projectRoot: String?
 
     @UIState private var isExpanded = false
+    @UIState private var isHovering = false
 
     /// Distinct tool kinds in the burst, in first-appearance order.
     private var fannedKinds: [ToolEventKind] {
@@ -606,7 +615,7 @@ private struct ToolGroupRow: View {
             Button {
                 // Settle, not snap: expanding can reveal dozens of rows, and
                 // the quick snap curve makes that layout shift feel violent.
-                withDeferredAnimation(Motion.structure) {
+                withDeferredDisclosureAnimation {
                     isExpanded.toggle()
                 }
             } label: {
@@ -639,7 +648,9 @@ private struct ToolGroupRow: View {
                 .transition(Motion.unfold)
             }
         }
-        .transcriptCard(fill: .quaternary.opacity(0.4))
+        .transcriptCard(fill: .quaternary.opacity(isHovering ? 0.55 : 0.4))
+        .animation(Motion.feedback, value: isHovering)
+        .onHover { isHovering = $0 }
     }
 
     /// Overlapping chips with alternating tilt, popping in with a clamped
@@ -770,7 +781,7 @@ private struct ToolEventRow: View {
             Button {
                 // Settle, not snap, and deferred like ToolGroupRow: the
                 // disclosure can reveal dozens of output lines.
-                withDeferredAnimation(Motion.structure) { isExpanded.toggle() }
+                withDeferredDisclosureAnimation { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 10) {
                     ActivityIconChip(style: kind.activityStyle)
@@ -780,6 +791,9 @@ private struct ToolEventRow: View {
                         }
                         .successRipple(
                             fire: displayState == .succeeded,
+                            cornerRadius: TranscriptMetrics.iconColumn * 0.32)
+                        .failureRipple(
+                            fire: displayState == .failed,
                             cornerRadius: TranscriptMetrics.iconColumn * 0.32)
                     Text(name)
                         .font(SurgeTypography.toolTitle)
@@ -815,6 +829,7 @@ private struct ToolEventRow: View {
         .overlay(alignment: .topTrailing) {
             if isHovering, let at {
                 TranscriptTimestamp(date: at)
+                    .transition(.opacity)
                     .padding(.top, 9)
                     .padding(.trailing, hasExpandableContent ? 28 : 12)
             }
@@ -918,7 +933,8 @@ private struct ToolEventRow: View {
     /// Status badge pinned to the chip's bottom-trailing corner. One `Image`
     /// whose name/tint swap rides `.contentTransition` — the running → done
     /// flip morphs instead of hard-swapping glyphs; the running badge pulses
-    /// and a success bounces once (both dropped under Reduce Motion).
+    /// and a terminal success or failure bounces once (both dropped under
+    /// Reduce Motion).
     @ViewBuilder
     private var statusBadge: some View {
         let badge = Image(systemName: iconName)
@@ -931,7 +947,7 @@ private struct ToolEventRow: View {
         } else if displayState == .running {
             badge.symbolEffect(.pulse)
         } else {
-            badge.symbolEffect(.bounce, value: displayState == .succeeded)
+            badge.symbolEffect(.bounce, value: displayState == .succeeded || displayState == .failed)
         }
     }
 
@@ -1202,10 +1218,13 @@ private struct ReasoningRow: View {
                     .textSelection(.enabled)
                     .lineLimit(showsPreview ? 4 : nil)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // In-place progress rewrites crossfade instead of snapping.
+                    .contentTransition(Motion.reduceMotion ? .identity : .opacity)
+                    .animation(Motion.ambient, value: text)
 
                 if isExpandable {
                     Button(isExpanded ? "Show Less" : "Show More") {
-                        withDeferredAnimation(Motion.structure) {
+                        withDeferredDisclosureAnimation {
                             isExpanded.toggle()
                         }
                     }
@@ -1244,7 +1263,7 @@ private struct SessionExitRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
-                withDeferredAnimation(Motion.structure) {
+                withDeferredDisclosureAnimation {
                     isExpanded.toggle()
                 }
             } label: {
