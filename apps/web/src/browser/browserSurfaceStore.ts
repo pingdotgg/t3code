@@ -66,6 +66,28 @@ export function resolveBrowserSurfacePanelRect(
   return latestVisible?.rect ?? current?.rect ?? null;
 }
 
+export function resolveBrowserSurfaceBackgroundCaptureRect(
+  byTabId: Readonly<Record<string, BrowserSurfacePresentation>>,
+  tabId: string,
+  viewport: { readonly width: number; readonly height: number },
+): BrowserSurfaceRect {
+  const presentedRect = resolveBrowserSurfacePanelRect(byTabId, tabId);
+  if (presentedRect) return presentedRect;
+
+  const viewportWidth =
+    Number.isFinite(viewport.width) && viewport.width > 0 ? Math.round(viewport.width) : 1280;
+  const viewportHeight =
+    Number.isFinite(viewport.height) && viewport.height > 0 ? Math.round(viewport.height) : 800;
+  const width = Math.max(1, Math.min(1280, viewportWidth));
+  const height = Math.max(1, Math.min(800, viewportHeight));
+  return {
+    x: Math.max(0, Math.round((viewportWidth - width) / 2)),
+    y: Math.max(0, Math.round((viewportHeight - height) / 2)),
+    width,
+    height,
+  };
+}
+
 const rectEquals = (left: BrowserSurfaceRect | null, right: BrowserSurfaceRect): boolean =>
   left !== null &&
   left.x === right.x &&

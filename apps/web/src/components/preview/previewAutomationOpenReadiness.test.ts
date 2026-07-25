@@ -13,10 +13,28 @@ const snapshot = (navStatus: PreviewSessionSnapshot["navStatus"]): PreviewSessio
 });
 
 describe("preview automation open readiness", () => {
-  it("acknowledges a newly created URL tab before cold renderer readiness", () => {
+  it("acknowledges a newly created shown tab without cold renderer readiness", () => {
     expect(
       resolvePreviewAutomationOpenWaitPolicy(
         { url: "https://example.com" } as PreviewAutomationOpenInput,
+        snapshot({
+          _tag: "Loading",
+          url: "https://example.com/",
+          title: "",
+        }),
+        false,
+      ),
+    ).toEqual({
+      acknowledgeAfterCreation: true,
+      waitForOverlay: false,
+      waitForVisibility: false,
+    });
+  });
+
+  it("acknowledges a newly created background tab without renderer readiness", () => {
+    expect(
+      resolvePreviewAutomationOpenWaitPolicy(
+        { url: "https://example.com", show: false } as PreviewAutomationOpenInput,
         snapshot({
           _tag: "Loading",
           url: "https://example.com/",

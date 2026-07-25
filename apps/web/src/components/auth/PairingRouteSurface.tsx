@@ -13,6 +13,7 @@ import { readHostedPairingRequest } from "../../hostedPairing";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { claimPairingToken } from "./PairingRouteSurface.logic";
 
 export function PairingPendingSurface() {
   return (
@@ -47,11 +48,10 @@ export function PairingRouteSurface({
   initialErrorMessage?: string;
   onAuthenticated: () => void;
 }) {
-  const autoPairTokenRef = useRef<string | null>(peekPairingTokenFromUrl());
-  const [credential, setCredential] = useState(() => autoPairTokenRef.current ?? "");
+  const [credential, setCredential] = useState(() => peekPairingTokenFromUrl() ?? "");
   const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const autoSubmitAttemptedRef = useRef(false);
+  const attemptedPairingTokensRef = useRef(new Set<string>());
 
   const submitCredential = useCallback(
     async (nextCredential: string) => {
@@ -86,14 +86,20 @@ export function PairingRouteSurface({
   );
 
   useEffect(() => {
-    const token = autoPairTokenRef.current;
-    if (!token || autoSubmitAttemptedRef.current) {
-      return;
-    }
+    const submitPairingTokenFromUrl = () => {
+      const token = claimPairingToken(peekPairingTokenFromUrl(), attemptedPairingTokensRef.current);
+      if (!token) return;
 
-    autoSubmitAttemptedRef.current = true;
-    stripPairingTokenFromUrl();
-    void submitCredential(token);
+      setCredential(token);
+      stripPairingTokenFromUrl();
+      void submitCredential(token);
+    };
+
+    submitPairingTokenFromUrl();
+    window.addEventListener("hashchange", submitPairingTokenFromUrl);
+    return () => {
+      window.removeEventListener("hashchange", submitPairingTokenFromUrl);
+    };
   }, [submitCredential]);
 
   return (

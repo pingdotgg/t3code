@@ -895,7 +895,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     };
     yield* pushAction(tabId, actionEvent);
     const epoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
-    const control = yield* ensureControlSession(wc);
     const execute = Effect.fn("PreviewManager.executeControlAction")(function* () {
       yield* update(tabId, { controller: "agent" });
       const send: SendCommand = Effect.fn("PreviewManager.sendCommand")(
@@ -938,6 +937,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           );
         },
       );
+      const colorScheme = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.colorScheme ?? "system";
+      if (colorScheme !== "system") {
+        yield* send("Emulation.setEmulatedMedia", {
+          features: [{ name: "prefers-color-scheme", value: colorScheme }],
+        });
+      }
       return yield* use(send, sendCleanup);
     });
     const finalize = Effect.fn("PreviewManager.finalizeControlAction")(function* (
@@ -973,14 +978,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (tabs.has(tabId)) yield* update(tabId, { controller: "none" });
     });
     const boundedExecution = Effect.gen(function* () {
-      const result = yield* control.semaphore
-        .withPermit(execute())
-        .pipe(Effect.timeoutOption(Math.max(1, timeoutMs - AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS)));
-      if (Option.isNone(result)) {
-        return yield* new PreviewAutomationTimeoutError({ tabId, timeoutMs });
-      }
-      return result.value;
-    });
+      // Session initialization itself sends CDP commands. Keep it inside the
+      // operation deadline so an offscreen or suspended guest cannot retain
+      // the synchronized session lock indefinitely and poison later actions.
+      const control = yield* ensureControlSession(wc);
+      return yield* control.semaphore.withPermit(execute());
+    }).pipe(
+      Effect.timeoutOption(Math.max(1, timeoutMs - AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS)),
+      Effect.flatMap((result) =>
+        Option.isNone(result)
+          ? Effect.fail(new PreviewAutomationTimeoutError({ tabId, timeoutMs }))
+          : Effect.succeed(result.value),
+      ),
+    );
     return yield* boundedExecution.pipe(
       Effect.onExit(finalize),
       Effect.tapError((error) =>
@@ -1410,7 +1420,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             wc.getZoomFactor(),
           );
     yield* attachListeners(tabId, wc);
-    runFork(restoreControlSession(tabId, wc));
+    // The default scheme needs no CDP state, so keep debugger attachment lazy
+    // for the common offscreen-registration path. A persisted override still
+    // needs to follow a replaced guest immediately; its restore path is
+    // separately bounded and releases a stalled session.
+    if (tab.colorScheme !== "system") runFork(restoreControlSession(tabId, wc));
     const registeredAt = yield* currentIso;
     const registration = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
       const current = tabs.get(tabId);
@@ -1549,9 +1563,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     yield* detachControlSession(wc.id);
     yield* attempt({ operation: "openDevTools", tabId, webContentsId: wc.id }, () => {
-      wc.once("devtools-closed", () => {
-        if (!wc.isDestroyed()) runFork(restoreControlSession(tabId, wc));
-      });
       wc.openDevTools({ mode: "detach" });
     });
   });
@@ -1736,12 +1747,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // session attaches so a concurrent setColorScheme is not overwritten with
   // a stale snapshot.
   const restoreControlSession = (tabId: string, wc: Electron.WebContents) =>
-    ensureControlSession(wc).pipe(
-      Effect.andThen(SynchronizedRef.get(tabsRef)),
-      Effect.flatMap((tabs) => {
-        const colorScheme = tabs.get(tabId)?.colorScheme ?? "system";
-        return colorScheme === "system" ? Effect.void : applyColorScheme(tabId, wc, colorScheme);
-      }),
+    Effect.gen(function* () {
+      yield* ensureControlSession(wc);
+      const tabs = yield* SynchronizedRef.get(tabsRef);
+      const colorScheme = tabs.get(tabId)?.colorScheme ?? "system";
+      if (colorScheme !== "system") yield* applyColorScheme(tabId, wc, colorScheme);
+    }).pipe(
+      Effect.timeoutOption(
+        Math.max(1, DEFAULT_AUTOMATION_TIMEOUT_MS - AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS),
+      ),
+      Effect.flatMap((result) =>
+        Option.isSome(result) ? Effect.void : detachControlSession(wc.id),
+      ),
       Effect.ignore,
     );
 

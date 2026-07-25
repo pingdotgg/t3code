@@ -83,6 +83,10 @@ export class PreviewAutomationVisibilityTimeoutError extends Schema.TaggedErrorC
     threadId: ThreadId,
     tabId: PreviewTabId,
     timeoutMs: Schema.Int,
+    activeSurfaceId: Schema.optional(Schema.NullOr(Schema.String)),
+    rightPanelOpen: Schema.optional(Schema.Boolean),
+    surfaceRegistered: Schema.optional(Schema.Boolean),
+    presentationRectAvailable: Schema.optional(Schema.Boolean),
   },
 ) {
   get responseTag() {

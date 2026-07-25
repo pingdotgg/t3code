@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import {
   acquireBrowserSurface,
   acquireBrowserSurfaceBackgroundCapture,
+  resolveBrowserSurfaceBackgroundCaptureRect,
   resolveBrowserSurfacePanelRect,
   useBrowserSurfaceStore,
 } from "./browserSurfaceStore";
@@ -63,6 +64,34 @@ describe("browserSurfaceStore", () => {
         "hidden",
       ),
     ).toEqual(liveRect);
+  });
+
+  it("stages a never-presented background tab inside the renderer viewport", () => {
+    expect(
+      resolveBrowserSurfaceBackgroundCaptureRect({}, "never-presented", {
+        width: 1440,
+        height: 900,
+      }),
+    ).toEqual({
+      x: 80,
+      y: 50,
+      width: 1280,
+      height: 800,
+    });
+  });
+
+  it("fits background capture staging to a smaller renderer viewport", () => {
+    expect(
+      resolveBrowserSurfaceBackgroundCaptureRect({}, "never-presented", {
+        width: 800,
+        height: 600,
+      }),
+    ).toEqual({
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 600,
+    });
   });
 
   it("ignores updates and releases from a stale surface lease", () => {

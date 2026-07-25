@@ -292,11 +292,11 @@ describe("PreviewManager", () => {
       ),
   );
 
-  effectIt.effect("releases and resets timed-out automation control sessions", () =>
+  effectIt.effect("bounds debugger initialization and recovers the control session", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         let attached = false;
-        let firstEvaluation = true;
+        let firstInitialization = true;
         const attach = vi.fn(() => {
           attached = true;
         });
@@ -304,12 +304,11 @@ describe("PreviewManager", () => {
           attached = false;
         });
         const sendCommand = vi.fn(async (method: string): Promise<unknown> => {
-          if (method !== "Runtime.evaluate") return undefined;
-          if (firstEvaluation) {
-            firstEvaluation = false;
+          if (method === "Runtime.enable" && firstInitialization) {
+            firstInitialization = false;
             return await new Promise<never>(() => undefined);
           }
-          return { result: { value: "recovered" } };
+          return method === "Runtime.evaluate" ? { result: { value: "recovered" } } : undefined;
         });
         fromId.mockReturnValue({
           id: 43,

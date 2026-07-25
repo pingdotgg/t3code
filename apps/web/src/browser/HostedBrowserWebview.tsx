@@ -9,7 +9,11 @@ import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { cn } from "~/lib/utils";
 
 import { stopBrowserRecording, useActiveBrowserRecordingTabId } from "./browserRecording";
-import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
+import {
+  resolveBrowserSurfaceBackgroundCaptureRect,
+  resolveBrowserSurfacePanelRect,
+  useBrowserSurfaceStore,
+} from "./browserSurfaceStore";
 import { browserViewportSettingKey } from "./browserViewportLayout";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
@@ -51,9 +55,18 @@ export function HostedBrowserWebview(props: {
   const presentation = useBrowserSurfaceStore(
     useShallow((state) => {
       const current = state.byTabId[tabId];
+      const backgroundCapture = (state.backgroundCaptureCountByTabId[tabId] ?? 0) > 0;
+      const panelRect = resolveBrowserSurfacePanelRect(state.byTabId, tabId);
       return {
-        backgroundCapture: (state.backgroundCaptureCountByTabId[tabId] ?? 0) > 0,
-        rect: resolveBrowserSurfacePanelRect(state.byTabId, tabId),
+        backgroundCapture,
+        rect:
+          panelRect ??
+          (backgroundCapture
+            ? resolveBrowserSurfaceBackgroundCaptureRect(state.byTabId, tabId, {
+                width: window.innerWidth,
+                height: window.innerHeight,
+              })
+            : null),
         visible: current?.visible ?? false,
       };
     }),

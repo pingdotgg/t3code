@@ -300,6 +300,10 @@ describe("previewAutomationRequestConsumer", () => {
       threadId,
       tabId,
       timeoutMs: 2_000,
+      activeSurfaceId: "browser:tab-1",
+      rightPanelOpen: true,
+      surfaceRegistered: true,
+      presentationRectAvailable: false,
     });
 
     expect(
@@ -312,7 +316,14 @@ describe("previewAutomationRequestConsumer", () => {
       }),
     ).toMatchObject({
       _tag: "PreviewAutomationTimeoutError",
-      detail: { tabId: "tab-1", timeoutMs: 2_000 },
+      detail: {
+        tabId: "tab-1",
+        timeoutMs: 2_000,
+        activeSurfaceId: "browser:tab-1",
+        rightPanelOpen: true,
+        surfaceRegistered: true,
+        presentationRectAvailable: false,
+      },
     });
   });
 
