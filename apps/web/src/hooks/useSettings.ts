@@ -29,6 +29,8 @@ import * as Struct from "effect/Struct";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useSyncExternalStoreWithSelector } from "use-sync-external-store/with-selector";
+import { shallow } from "zustand/shallow";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -53,6 +55,10 @@ function emitClientSettingsHydrationChange() {
 
 function getClientSettingsSnapshot(): ClientSettings {
   return clientSettingsSnapshot;
+}
+
+function selectClientSettings(settings: ClientSettings): ClientSettings {
+  return settings;
 }
 
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
@@ -214,8 +220,13 @@ function useMergedSettings<T>(
 export function useClientSettings<T = ClientSettings>(
   selector?: (settings: ClientSettings) => T,
 ): T {
-  const settings = useClientSettingsValue();
-  return useMemo(() => (selector ? selector(settings) : (settings as T)), [selector, settings]);
+  return useSyncExternalStoreWithSelector(
+    subscribeClientSettings,
+    getClientSettingsSnapshot,
+    () => DEFAULT_CLIENT_SETTINGS,
+    selector ?? (selectClientSettings as (settings: ClientSettings) => T),
+    selector ? shallow : Object.is,
+  );
 }
 
 /** Read current settings for one environment, merged with client-local preferences. */
