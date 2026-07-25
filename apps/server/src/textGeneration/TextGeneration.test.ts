@@ -5,7 +5,7 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
@@ -29,6 +29,7 @@ const makeStubTextGeneration = (
 const makeStubInstance = (
   instanceId: ProviderInstanceId,
   textGeneration: TextGeneration.TextGeneration["Service"],
+  enabled = true,
 ): ProviderInstance =>
   ({
     instanceId,
@@ -38,7 +39,7 @@ const makeStubInstance = (
       continuationKey: `${instanceId}:test`,
     },
     displayName: undefined,
-    enabled: true,
+    enabled,
     snapshot: {} as ProviderInstance["snapshot"],
     adapter: {} as ProviderInstance["adapter"],
     textGeneration,
@@ -118,6 +119,136 @@ describe("makeTextGenerationFromRegistry", () => {
         expect(result.failure.operation).toBe("generateBranchName");
         expect(result.failure.detail).toContain("missing_instance");
       }
+    }),
+  );
+
+  it.effect(
+    "falls back to another enabled instance with its driver's default model when the selected instance fails",
+    () =>
+      Effect.gen(function* () {
+        const codex = makeStubInstance(
+          ProviderInstanceId.make("codex"),
+          makeStubTextGeneration({
+            generateThreadTitle: () =>
+              Effect.fail(
+                new TextGenerationError({
+                  operation: "generateThreadTitle",
+                  detail: "Codex CLI command failed: usage limit",
+                }),
+              ),
+          }),
+        );
+
+        const fallbackSelections: string[] = [];
+        const claude = makeStubInstance(
+          ProviderInstanceId.make("claudeAgent"),
+          makeStubTextGeneration({
+            generateThreadTitle: (input) => {
+              fallbackSelections.push(
+                `${input.modelSelection.instanceId}:${input.modelSelection.model}`,
+              );
+              return Effect.succeed({ title: "Fallback title" });
+            },
+          }),
+        );
+
+        const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([codex, claude]));
+
+        const result = yield* tg.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Redesign the merge PR button",
+          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4-mini"),
+        });
+
+        expect(result.title).toBe("Fallback title");
+        expect(fallbackSelections).toEqual(["claudeAgent:claude-haiku-4-5"]);
+      }),
+  );
+
+  it.effect("re-raises the original error when every fallback instance also fails", () =>
+    Effect.gen(function* () {
+      const codex = makeStubInstance(
+        ProviderInstanceId.make("codex"),
+        makeStubTextGeneration({
+          generateBranchName: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generateBranchName",
+                detail: "codex is out of credits",
+              }),
+            ),
+        }),
+      );
+      const claude = makeStubInstance(
+        ProviderInstanceId.make("claudeAgent"),
+        makeStubTextGeneration({
+          generateBranchName: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generateBranchName",
+                detail: "claude is down too",
+              }),
+            ),
+        }),
+      );
+
+      const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([codex, claude]));
+
+      const result = yield* tg
+        .generateBranchName({
+          cwd: process.cwd(),
+          message: "anything",
+          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4-mini"),
+        })
+        .pipe(Effect.result);
+
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure._tag).toBe("TextGenerationError");
+        expect(result.failure.detail).toContain("codex is out of credits");
+      }
+    }),
+  );
+
+  it.effect("skips disabled instances when falling back", () =>
+    Effect.gen(function* () {
+      const codex = makeStubInstance(
+        ProviderInstanceId.make("codex"),
+        makeStubTextGeneration({
+          generateBranchName: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generateBranchName",
+                detail: "codex is out of credits",
+              }),
+            ),
+        }),
+      );
+      const disabledClaude = makeStubInstance(
+        ProviderInstanceId.make("claudeAgent"),
+        makeStubTextGeneration({
+          generateBranchName: () => Effect.succeed({ branch: "should-not-happen" }),
+        }),
+        false,
+      );
+      const grok = makeStubInstance(
+        ProviderInstanceId.make("grok"),
+        makeStubTextGeneration({
+          generateBranchName: () => Effect.succeed({ branch: "grok-branch" }),
+        }),
+      );
+
+      const tg = TextGeneration.makeTextGenerationFromRegistry(
+        makeStubRegistry([codex, disabledClaude, grok]),
+      );
+
+      const result = yield* tg.generateBranchName({
+        cwd: process.cwd(),
+        message: "anything",
+        modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4-mini"),
+      });
+
+      expect(result.branch).toBe("grok-branch");
     }),
   );
 });

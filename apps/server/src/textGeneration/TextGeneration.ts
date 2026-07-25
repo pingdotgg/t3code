@@ -1,13 +1,19 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import type {
   AutoReviewFindings,
   ChatAttachment,
   ModelSelection,
+  ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { TextGenerationError } from "@t3tools/contracts";
+import {
+  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  DEFAULT_MODEL_BY_PROVIDER,
+  TextGenerationError,
+} from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
@@ -170,31 +176,96 @@ const resolveInstance = (
     ),
   );
 
+/**
+ * Best-effort default text-generation model for a fallback instance's driver.
+ * The requested model is provider-specific (e.g. a codex slug), so retrying
+ * another provider with it would fail; each driver gets its own cheap
+ * default instead. Drivers with no known default are skipped.
+ */
+const fallbackModelForDriver = (driverKind: ProviderDriverKind): string | undefined =>
+  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[driverKind] ??
+  DEFAULT_MODEL_BY_PROVIDER[driverKind];
+
 export const makeTextGenerationFromRegistry = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
-): TextGeneration["Service"] =>
-  TextGeneration.of({
+): TextGeneration["Service"] => {
+  /**
+   * Run an op against the selected instance and, when it fails (usage
+   * limits, missing CLI, provider outage), retry against every other
+   * enabled instance with that driver's default text-generation model.
+   * Background renames (thread titles, worktree branches) otherwise die
+   * silently and permanently when the configured provider is unavailable.
+   * The original error is re-raised when no fallback succeeds.
+   */
+  const withProviderFallback = <Input extends { readonly modelSelection: ModelSelection }, A>(
+    operation: TextGenerationOp,
+    input: Input,
+    invoke: (
+      textGeneration: TextGeneration["Service"],
+      input: Input,
+    ) => Effect.Effect<A, TextGenerationError>,
+  ): Effect.Effect<A, TextGenerationError> =>
+    resolveInstance(registry, operation, input.modelSelection.instanceId).pipe(
+      Effect.flatMap((textGeneration) => invoke(textGeneration, input)),
+      Effect.catch((primaryError) =>
+        Effect.gen(function* () {
+          const instances = yield* registry.listInstances;
+          const fallbacks = instances.filter(
+            (instance) =>
+              instance.enabled && instance.instanceId !== input.modelSelection.instanceId,
+          );
+          for (const instance of fallbacks) {
+            const model = fallbackModelForDriver(instance.driverKind);
+            if (model === undefined) continue;
+            const fallbackInput = {
+              ...input,
+              modelSelection: {
+                instanceId: instance.instanceId,
+                model,
+              } satisfies ModelSelection,
+            };
+            const attempted = yield* invoke(instance.textGeneration, fallbackInput).pipe(
+              Effect.result,
+            );
+            if (Result.isSuccess(attempted)) {
+              yield* Effect.logWarning("text generation fell back to another provider instance", {
+                operation,
+                selectedInstanceId: input.modelSelection.instanceId,
+                fallbackInstanceId: instance.instanceId,
+                fallbackModel: model,
+                cause: primaryError.detail,
+              });
+              return attempted.success;
+            }
+          }
+          return yield* primaryError;
+        }),
+      ),
+    );
+
+  return TextGeneration.of({
     generateCommitMessage: (input) =>
-      resolveInstance(registry, "generateCommitMessage", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
+      withProviderFallback("generateCommitMessage", input, (textGeneration, next) =>
+        textGeneration.generateCommitMessage(next),
       ),
     generatePrContent: (input) =>
-      resolveInstance(registry, "generatePrContent", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generatePrContent(input)),
+      withProviderFallback("generatePrContent", input, (textGeneration, next) =>
+        textGeneration.generatePrContent(next),
       ),
     generateBranchName: (input) =>
-      resolveInstance(registry, "generateBranchName", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
+      withProviderFallback("generateBranchName", input, (textGeneration, next) =>
+        textGeneration.generateBranchName(next),
       ),
     generateThreadTitle: (input) =>
-      resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+      withProviderFallback("generateThreadTitle", input, (textGeneration, next) =>
+        textGeneration.generateThreadTitle(next),
       ),
     generateAutoReviewFindings: (input) =>
-      resolveInstance(registry, "generateAutoReviewFindings", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateAutoReviewFindings(input)),
+      withProviderFallback("generateAutoReviewFindings", input, (textGeneration, next) =>
+        textGeneration.generateAutoReviewFindings(next),
       ),
   });
+};
 
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
