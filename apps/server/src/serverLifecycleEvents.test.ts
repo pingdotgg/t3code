@@ -46,8 +46,26 @@ it.effect(
       assertTrue(Option.isSome(ready));
       assert.equal(ready.value.sequence, 2);
 
+      const serviceUpdate = yield* lifecycleEvents.publish({
+        version: 1,
+        type: "serviceUpdate",
+        payload: {
+          status: "draining",
+          targetVersion: "0.0.29",
+          activeTurnCount: 2,
+          queuedTurnCount: 0,
+          queuedTurns: [],
+          startedAt: "2026-07-25T13:23:25.000Z",
+        },
+      });
+      assert.equal(serviceUpdate.sequence, 3);
+
       const snapshot = yield* lifecycleEvents.snapshot;
-      assert.equal(snapshot.sequence, 2);
-      assert.deepEqual(snapshot.events.map((event) => event.type).toSorted(), ["ready", "welcome"]);
+      assert.equal(snapshot.sequence, 3);
+      assert.deepEqual(snapshot.events.map((event) => event.type).toSorted(), [
+        "ready",
+        "serviceUpdate",
+        "welcome",
+      ]);
     }).pipe(Effect.provide(ServerLifecycleEvents.layer)),
 );

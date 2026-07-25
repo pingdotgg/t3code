@@ -219,6 +219,21 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("marks an exact user message as queued for a service update", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = buildUserTimelineEntry("Run after the update.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[entry]}
+        queuedMessageIds={new Set([entry.message.id])}
+      />,
+    );
+
+    expect(markup).toContain('data-message-service-update-state="queued"');
+    expect(markup).toContain("Queued until the service update completes.");
+  });
+
   it("keeps assistant changed-files headers sticky below the thread header", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const assistantMessageId = MessageId.make("message-assistant-with-files");

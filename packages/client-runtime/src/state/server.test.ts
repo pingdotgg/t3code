@@ -24,6 +24,7 @@ import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerConfigProjection,
   makeEnvironmentServerConfigState,
+  projectServiceUpdate,
   projectServerWelcome,
   resolveServerConfigValue,
 } from "./server.ts";
@@ -97,6 +98,35 @@ describe("server state projection", () => {
 
     expect(Option.getOrThrow(afterReady)).toBe(welcome);
     expect(emitted).toEqual([]);
+  });
+
+  it("projects service update state without treating it as server readiness", () => {
+    const draining = {
+      status: "draining" as const,
+      targetVersion: "0.0.29",
+      activeTurnCount: 3,
+      queuedTurnCount: 1,
+      queuedTurns: [
+        {
+          threadId: "thread-1" as never,
+          messageId: "message-1" as never,
+        },
+      ],
+      startedAt: "2026-07-25T13:23:25.000Z",
+    };
+    const [afterReady, readyEmitted] = projectServiceUpdate(
+      { status: "idle" },
+      { type: "ready", payload: {} },
+    );
+    const [afterDrain, drainEmitted] = projectServiceUpdate(afterReady, {
+      type: "serviceUpdate",
+      payload: draining,
+    });
+
+    expect(afterReady).toEqual({ status: "idle" });
+    expect(readyEmitted).toEqual([]);
+    expect(afterDrain).toBe(draining);
+    expect(drainEmitted).toEqual([draining]);
   });
 
   it("prefers an active session config over cache until a live event arrives", () => {

@@ -3,6 +3,7 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
+  type ServiceUpdateState,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -207,7 +208,7 @@ export function serverConfigStateChanges(environmentId: EnvironmentId) {
 export function projectServerWelcome(
   current: Option.Option<ServerLifecycleWelcomePayload>,
   event: {
-    readonly type: "welcome" | "ready";
+    readonly type: "welcome" | "ready" | "serviceUpdate";
     readonly payload: unknown;
   },
 ): readonly [
@@ -219,6 +220,22 @@ export function projectServerWelcome(
   }
   const welcome = event.payload as ServerLifecycleWelcomePayload;
   return [Option.some(welcome), [welcome]];
+}
+
+export const IDLE_SERVICE_UPDATE_STATE: ServiceUpdateState = { status: "idle" };
+
+export function projectServiceUpdate(
+  current: ServiceUpdateState,
+  event: {
+    readonly type: "welcome" | "ready" | "serviceUpdate";
+    readonly payload: unknown;
+  },
+): readonly [ServiceUpdateState, ReadonlyArray<ServiceUpdateState>] {
+  if (event.type !== "serviceUpdate") {
+    return [current, []];
+  }
+  const next = event.payload as ServiceUpdateState;
+  return [next, [next]];
 }
 
 export function resolveServerConfigValue(
@@ -307,6 +324,12 @@ export function createServerEnvironmentAtoms<R, E>(
           Stream.mapAccum(Option.none<ServerLifecycleWelcomePayload>, projectServerWelcome),
         ),
     }),
+    serviceUpdate: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:service-update",
+      tag: WS_METHODS.subscribeServerLifecycle,
+      transform: (stream) =>
+        stream.pipe(Stream.mapAccum(() => IDLE_SERVICE_UPDATE_STATE, projectServiceUpdate)),
+    }),
     refreshProviders: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-providers",
       tag: WS_METHODS.serverRefreshProviders,
@@ -326,6 +349,14 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverUpdateServer,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    cancelServiceUpdate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cancel-service-update",
+      tag: WS_METHODS.serverCancelServiceUpdate,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
     }),
     upsertKeybinding: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:upsert-keybinding",

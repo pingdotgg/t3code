@@ -4,6 +4,7 @@ import { ExecutionEnvironmentDescriptor, ServerSelfUpdateMethod } from "./enviro
 import { ServerAuthDescriptor } from "./auth.ts";
 import {
   IsoDateTime,
+  MessageId,
   NonNegativeInt,
   PositiveInt,
   ProjectId,
@@ -532,6 +533,34 @@ export const ServerLifecycleWelcomePayload = Schema.Struct({
 });
 export type ServerLifecycleWelcomePayload = typeof ServerLifecycleWelcomePayload.Type;
 
+export const ServiceUpdateQueuedTurn = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+});
+export type ServiceUpdateQueuedTurn = typeof ServiceUpdateQueuedTurn.Type;
+
+export const ServiceUpdateState = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("idle"),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("draining"),
+    targetVersion: TrimmedNonEmptyString,
+    activeTurnCount: NonNegativeInt,
+    queuedTurnCount: NonNegativeInt,
+    queuedTurns: Schema.Array(ServiceUpdateQueuedTurn),
+    startedAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("activating"),
+    targetVersion: TrimmedNonEmptyString,
+    queuedTurnCount: NonNegativeInt,
+    queuedTurns: Schema.Array(ServiceUpdateQueuedTurn),
+    startedAt: IsoDateTime,
+  }),
+]);
+export type ServiceUpdateState = typeof ServiceUpdateState.Type;
+
 export const ServerLifecycleStreamWelcomeEvent = Schema.Struct({
   version: Schema.Literal(1),
   sequence: NonNegativeInt,
@@ -548,11 +577,26 @@ export const ServerLifecycleStreamReadyEvent = Schema.Struct({
 });
 export type ServerLifecycleStreamReadyEvent = typeof ServerLifecycleStreamReadyEvent.Type;
 
+export const ServerLifecycleStreamServiceUpdateEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  sequence: NonNegativeInt,
+  type: Schema.Literal("serviceUpdate"),
+  payload: ServiceUpdateState,
+});
+export type ServerLifecycleStreamServiceUpdateEvent =
+  typeof ServerLifecycleStreamServiceUpdateEvent.Type;
+
 export const ServerLifecycleStreamEvent = Schema.Union([
   ServerLifecycleStreamWelcomeEvent,
   ServerLifecycleStreamReadyEvent,
+  ServerLifecycleStreamServiceUpdateEvent,
 ]);
 export type ServerLifecycleStreamEvent = typeof ServerLifecycleStreamEvent.Type;
+
+export const ServerCancelServiceUpdateResult = Schema.Struct({
+  cancelled: Schema.Boolean,
+});
+export type ServerCancelServiceUpdateResult = typeof ServerCancelServiceUpdateResult.Type;
 
 export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,

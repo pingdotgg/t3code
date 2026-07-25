@@ -1092,6 +1092,10 @@ const make = Effect.gen(function* () {
       }
       case "thread.turn-start-requested":
         if (yield* serviceUpdateCoordinator.isDraining) {
+          yield* serviceUpdateCoordinator.queueTurn({
+            threadId: event.payload.threadId,
+            messageId: event.payload.messageId,
+          });
           yield* Effect.logInfo("Queued turn start until the service update completes.", {
             threadId: event.payload.threadId,
             eventSequence: event.sequence,
@@ -1199,6 +1203,12 @@ const make = Effect.gen(function* () {
 
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
+    );
+    yield* serviceUpdateCoordinator.changes.pipe(
+      Stream.drop(1),
+      Stream.filter((state) => state.status === "idle"),
+      Stream.runForEach(() => replayPendingStarts),
+      Effect.forkScoped({ startImmediately: true }),
     );
     yield* replayPendingStarts;
   });
