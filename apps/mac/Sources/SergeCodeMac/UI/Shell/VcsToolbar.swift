@@ -1,20 +1,19 @@
 import AppKit
 import SwiftUI
 
-/// The git section under the chat header: a self-contained card that groups
+/// The git controls embedded in the chat header: an inline row that groups
 /// the branch dropdown, working-tree status chips, PR affordances, and the
-/// git-actions dropdown into one clearly bounded surface. The card and its
-/// dropdown triggers use the app's branded chrome (accent tiles, bordered
-/// pills, alpine-tinted material) instead of the native macOS toolbar look,
-/// so the section reads as a distinct, obviously interactive zone.
+/// git-actions dropdown directly into the top bar. There is no surrounding
+/// card — the triggers' own bordered-pill chrome keeps the controls legible
+/// on the header's transparent scenery backdrop.
 struct VcsToolbar: View {
     let model: AppModel
-    /// The thread this toolbar instance is scoped to. The call site keys
-    /// this view's identity to the same id (`.id(thread.id)`) so switching
-    /// threads tears down and remounts a fresh instance — otherwise
-    /// `branches`/`runningAction`/`pendingAction`/`commitMessage` below would
-    /// survive the switch and briefly show thread A's in-flight git state
-    /// over thread B.
+    /// The thread this toolbar instance is scoped to. The call site
+    /// (`ChatHeaderView`) keys this view's identity to the same id
+    /// (`.id(thread.id)`) so switching threads tears down and remounts a
+    /// fresh instance — otherwise `branches`/`runningAction`/`pendingAction`/
+    /// `commitMessage` below would survive the switch and briefly show
+    /// thread A's in-flight git state over thread B.
     let threadID: String
 
     @UIState private var branches: [BranchRef] = []
@@ -47,48 +46,16 @@ struct VcsToolbar: View {
     }
 
     private func vcsStrip(_ status: VcsStatus) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                branchMenu(status)
-                statusChips(status)
-                Spacer(minLength: 8)
-                prControls(status)
-                actionMenu(status)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-
+        HStack(spacing: 10) {
             if let outcome = model.lastGitActionOutcome(for: threadID) {
-                Divider()
-                    .opacity(0.4)
-                    .padding(.horizontal, 8)
-                outcomeBanner(outcome)
+                outcomePill(outcome)
                     .transition(Motion.banner)
             }
+            branchMenu(status)
+            statusChips(status)
+            prControls(status)
+            actionMenu(status)
         }
-        .background {
-            let shape = RoundedRectangle(
-                cornerRadius: AlpineTheme.Corners.card, style: .continuous)
-            ZStack {
-                shape.fill(.regularMaterial)
-                shape.fill(
-                    LinearGradient(
-                        colors: [
-                            AlpineTheme.accent.opacity(0.10),
-                            Color.clear,
-                            AlpineTheme.sky.opacity(0.06),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ))
-            }
-            .overlay {
-                shape.strokeBorder(.quaternary, lineWidth: 1)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 6)
-        .padding(.bottom, 6)
         .animation(Motion.reveal, value: model.lastGitActionOutcome(for: threadID))
         .animation(Motion.ambient, value: status)
         .alert("New branch", isPresented: $showNewBranchPrompt) {
@@ -120,7 +87,7 @@ struct VcsToolbar: View {
 
     // MARK: - Dropdown chrome
 
-    /// Shared chrome for the card's dropdown triggers: a bordered pill that is
+    /// Shared chrome for the toolbar's dropdown triggers: a bordered pill that is
     /// always visibly a button (fill + hairline, deepening on hover/open)
     /// with a chevron that flips while the popover is presented. `prominent`
     /// tints the pill with the alpine accent for the primary git-actions menu.
@@ -163,7 +130,7 @@ struct VcsToolbar: View {
         }
     }
 
-    /// Bordered capsule button for the card's inline actions (PR link,
+    /// Bordered capsule button for the toolbar's inline actions (PR link,
     /// comments, ready-for-review). A view (not a `ButtonStyle`) so the hover
     /// state can live in `@UIState`; the pill deepens under the pointer like
     /// the dropdown triggers do.
@@ -222,7 +189,9 @@ struct VcsToolbar: View {
         .buttonStyle(.plain)
         // No `.fixedSize()` here: it would counter-propose the label's ideal
         // width and defeat the middle-truncation for long branch names.
-        .frame(maxWidth: 260, alignment: .leading)
+        // Capped tighter than a standalone toolbar would allow so the header
+        // keeps room for the thread title on narrower windows.
+        .frame(maxWidth: 200, alignment: .leading)
         .onHover { branchMenuHovering = $0 }
         .animation(Motion.feedback, value: branchMenuHovering)
         .animation(Motion.feedback, value: showBranchMenu)
@@ -621,29 +590,22 @@ struct VcsToolbar: View {
         }
     }
 
-    // MARK: - Outcome banner
+    // MARK: - Outcome pill
 
-    private func outcomeBanner(_ outcome: GitActionOutcome) -> some View {
-        HStack(spacing: 8) {
+    /// Compact inline result of the last git action. The full detail string
+    /// (often a long error) rides in the tooltip so the header row never
+    /// grows a second line.
+    private func outcomePill(_ outcome: GitActionOutcome) -> some View {
+        HStack(spacing: 6) {
             Image(systemName: outcome.success ? "checkmark.circle.fill" : "xmark.octagon.fill")
                 .foregroundStyle(outcome.success ? .green : .red)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(outcome.title)
-                    .font(.caption)
-                if let detail = outcome.detail, !detail.isEmpty {
-                    Text(detail)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+            Text(outcome.title)
+                .lineLimit(1)
             if let prURL = outcome.prURL, let url = URL(string: prURL) {
                 Button("Open PR") { NSWorkspace.shared.open(url) }
-                    .font(.caption)
                     .buttonStyle(.plain)
                     .foregroundStyle(.tint)
             }
-            Spacer()
             Button {
                 // The flat compat setter clears whichever thread is
                 // currently selected — safe here because this toolbar only
@@ -657,8 +619,14 @@ struct VcsToolbar: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .font(.caption)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.primary.opacity(0.05), in: Capsule())
+        .overlay {
+            Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+        .help(outcome.detail ?? outcome.title)
     }
 }
 

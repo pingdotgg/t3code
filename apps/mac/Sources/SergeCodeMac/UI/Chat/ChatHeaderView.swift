@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// Single task-identity header. The task title leads; project scenery, branch,
-/// working-tree state, provider, and status remain compact supporting context.
+/// Single task-identity header. The task title leads; project scenery,
+/// provider, and status remain compact supporting context. The git controls
+/// (branch dropdown, working-tree chips, PR affordances, git actions) live
+/// inline on the trailing side — there is no separate git section below.
 /// Transparent by design: the full-page frosted scenery remains atmospheric
 /// behind this shallow identity band without adding another gray plate.
 struct ChatHeaderView: View {
@@ -25,24 +27,6 @@ struct ChatHeaderView: View {
 
                 HStack(spacing: 8) {
                     projectIdentity(names.primary)
-                    if let status = model.selectedVcsStatus(), status.isRepo {
-                        if let branch = status.branch {
-                            metadataDivider
-                            Label(branch, systemImage: "arrow.triangle.branch")
-                                .lineLimit(1)
-                        }
-                        if status.changedFileCount > 0 {
-                            metadataDivider
-                            Text(
-                                "^[\(status.changedFileCount) file](inflect: true) changed"
-                            )
-                            .monospacedDigit()
-                            // Mid-run count changes tick rather than pop.
-                            .contentTransition(
-                                Motion.reduceMotion ? .identity : .numericText())
-                            .animation(Motion.ambient, value: status.changedFileCount)
-                        }
-                    }
                     if model.isRemote {
                         metadataDivider
                         Label(model.deviceName ?? "Remote Mac", systemImage: "laptopcomputer")
@@ -53,7 +37,14 @@ struct ChatHeaderView: View {
                 .foregroundStyle(.primary.opacity(0.76))
             }
 
-            Spacer()
+            Spacer(minLength: 8)
+
+            // Git controls ride the header instead of a separate section
+            // below; the toolbar owns the repo-status gate and shows nothing
+            // for non-repo projects. Keyed per thread so in-flight git state
+            // never leaks across a thread switch (see VcsToolbar.threadID).
+            VcsToolbar(model: model, threadID: thread.id)
+                .id(thread.id)
 
             ProviderBadge(provider: thread.provider, modelID: thread.modelID)
             StatusBadge(status: thread.status, stalled: thread.isStalled)
