@@ -68,6 +68,7 @@ import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
+import { useTranslation } from "../i18n";
 import { readLocalApi } from "../localApi";
 import {
   deriveProjectGroupingOverrideKey,
@@ -996,6 +997,7 @@ function latestTurnDiff(
 }
 
 export default function SidebarV2() {
+  const { t } = useTranslation();
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
@@ -1270,7 +1272,11 @@ export default function SidebarV2() {
           environmentId: project.environmentId,
           input: {
             projectId: project.id,
-            ...(memberThreads.length > 0 ? { force: true } : {}),
+            // The confirmation above authorizes deleting every thread owned by
+            // this project. The sidebar snapshot can lag the server, so its
+            // local thread count must not decide whether that authorization is
+            // sent to the orchestration layer.
+            force: true,
           },
         });
         if (result._tag === "Failure") {
@@ -2223,14 +2229,14 @@ export default function SidebarV2() {
                   <SidebarMenuButton
                     size="sm"
                     type="button"
-                    aria-label="Search threads and commands"
+                    aria-label={t("sidebar.search")}
                     className="h-8 gap-2 rounded-md border-0 bg-transparent px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                     data-testid="command-palette-trigger"
                   />
                 }
               >
                 <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
-                <div className="flex-1 truncate text-left">Search</div>
+                <div className="flex-1 truncate text-left">{t("sidebar.search")}</div>
                 {commandPaletteShortcutLabel ? (
                   <Kbd className="h-4 min-w-0 rounded-sm bg-sidebar-control-surface px-1.5 text-[10px] text-sidebar-muted-foreground ring-1 ring-sidebar-border">
                     {commandPaletteShortcutLabel}
@@ -2248,7 +2254,7 @@ export default function SidebarV2() {
                       className="relative size-8 justify-center rounded-md border-0 bg-transparent p-0 text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                       onClick={handleNewThreadClick}
                       disabled={projects.length === 0}
-                      aria-label="New thread"
+                      aria-label={t("sidebar.newThread")}
                     />
                   }
                 >
@@ -2259,7 +2265,9 @@ export default function SidebarV2() {
                   />
                 </TooltipTrigger>
                 <TooltipPopup side="right">
-                  {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
+                  {newThreadShortcutLabel
+                    ? `${t("sidebar.newThread")} (${newThreadShortcutLabel})`
+                    : t("sidebar.newThread")}
                 </TooltipPopup>
               </Tooltip>
             </div>
@@ -2535,20 +2543,20 @@ export default function SidebarV2() {
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
                 <>
-                  <span>No projects yet</span>
+                  <span>{t("sidebar.noProjects")}</span>
                   <button
                     type="button"
                     onClick={openAddProjectCommandPalette}
                     className="inline-flex items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-[11px] font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                   >
                     <PlusIcon className="size-3" />
-                    Add project
+                    {t("sidebar.addProject")}
                   </button>
                 </>
               ) : scopedProjectGroup ? (
-                `No threads in ${scopedProjectGroup.displayName} yet`
+                t("sidebar.noThreadsInProject")
               ) : (
-                "No threads yet"
+                t("sidebar.noThreads")
               )}
             </div>
           ) : null}

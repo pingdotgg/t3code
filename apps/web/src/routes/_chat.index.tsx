@@ -19,6 +19,7 @@ import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
+import { useTranslation } from "~/i18n";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
@@ -84,18 +85,19 @@ function IndexDraftLanding() {
 }
 
 function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
+  const { t } = useTranslation();
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <Empty className="flex-1">
         <EmptyHeader className="max-w-md">
-          <EmptyTitle className="text-foreground text-xl">Couldn’t start a new thread</EmptyTitle>
+          <EmptyTitle className="text-foreground text-xl">{t("home.threadStartError")}</EmptyTitle>
           <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-            The project is still available. Try opening the draft again.
+            {t("home.threadStartErrorDescription")}
           </EmptyDescription>
           <div className="mt-5 flex justify-center">
             <Button size="sm" onClick={onRetry}>
               <RotateCcwIcon className="size-4" />
-              Try again
+              {t("home.tryAgain")}
             </Button>
           </div>
         </EmptyHeader>
@@ -106,6 +108,7 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
 
 function NoProjectsHero() {
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
+  const { t } = useTranslation();
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
@@ -114,15 +117,15 @@ function NoProjectsHero() {
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
               <EmptyTitle className="text-foreground text-2xl sm:text-3xl">
-                What should we work on?
+                {t("home.start")}
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-                Add a project to start your first thread.
+                {t("home.startDescription")}
               </EmptyDescription>
               <div className="mt-6 flex justify-center">
                 <Button size="sm" onClick={openAddProject}>
                   <PlusIcon className="size-4" />
-                  Add project
+                  {t("home.addProject")}
                 </Button>
               </div>
             </EmptyHeader>
@@ -139,6 +142,7 @@ export const Route = createFileRoute("/_chat/")({
 
 function HostedStaticOnboardingState() {
   const cloudEnabled = hasCloudPublicConfig();
+  const { t } = useTranslation();
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
@@ -162,18 +166,14 @@ function HostedStaticOnboardingState() {
               <div className="mx-auto mb-5 flex size-11 items-center justify-center rounded-xl border border-border/70 bg-background/70 text-muted-foreground">
                 <LinkIcon className="size-5" />
               </div>
-              <EmptyTitle className="text-foreground text-xl">
-                Connect an environment to get started
-              </EmptyTitle>
+              <EmptyTitle className="text-foreground text-xl">{t("home.connect")}</EmptyTitle>
               <EmptyDescription className="mt-2 text-sm leading-relaxed text-muted-foreground/78">
-                {cloudEnabled
-                  ? "Sign in to T3 Connect to connect a linked environment through its managed tunnel, or add a reachable backend manually."
-                  : "Add a reachable backend manually to start working from this browser."}
+                {cloudEnabled ? t("home.connectCloud") : t("home.connectManual")}
               </EmptyDescription>
               <div className="mt-6 flex justify-center">
                 <Button render={<Link to="/settings/connections" />} size="sm">
                   <PlusIcon className="size-4" />
-                  {cloudEnabled ? "Open Connections" : "Add environment"}
+                  {cloudEnabled ? t("home.openConnections") : t("home.addEnvironment")}
                 </Button>
               </div>
             </EmptyHeader>

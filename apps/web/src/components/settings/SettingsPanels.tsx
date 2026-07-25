@@ -98,6 +98,7 @@ import {
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useTranslation } from "../../i18n";
 
 const THEME_OPTIONS = [
   {
@@ -508,6 +509,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 
 export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
+  const { t } = useTranslation();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
@@ -554,10 +556,40 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="General">
+      <SettingsSection title={t("settings.general")}>
         <SettingsRow
-          title="Theme"
-          description="Choose how T3 Code looks across the app."
+          title={t("settings.language")}
+          description={t("settings.language.description")}
+          control={
+            <Select
+              value={settings.displayLanguage}
+              onValueChange={(value) => {
+                if (value === "en" || value === "zh-CN") {
+                  updateSettings({ displayLanguage: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Display language">
+                <SelectValue>
+                  {settings.displayLanguage === "zh-CN"
+                    ? t("settings.language.chinese")
+                    : t("settings.language.english")}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="en">
+                  {t("settings.language.english")}
+                </SelectItem>
+                <SelectItem hideIndicator value="zh-CN">
+                  {t("settings.language.chinese")}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title={t("settings.theme")}
+          description={t("settings.theme.description")}
           resetAction={
             theme !== "system" ? (
               <SettingResetButton label="theme" onClick={() => setTheme("system")} />
@@ -574,13 +606,21 @@ export function GeneralSettingsPanel() {
             >
               <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
                 <SelectValue>
-                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
+                  {theme === "system"
+                    ? t("settings.theme.system")
+                    : theme === "light"
+                      ? t("settings.theme.light")
+                      : t("settings.theme.dark")}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {THEME_OPTIONS.map((option) => (
                   <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
+                    {option.value === "system"
+                      ? t("settings.theme.system")
+                      : option.value === "light"
+                        ? t("settings.theme.light")
+                        : t("settings.theme.dark")}
                   </SelectItem>
                 ))}
               </SelectPopup>
@@ -635,8 +675,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Project Grouping"
-          description="Combine matching repositories across environments."
+          title={t("settings.projectGrouping")}
+          description={t("settings.projectGrouping.description")}
           resetAction={
             settings.sidebarProjectGroupingMode !==
             DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode ? (
@@ -671,8 +711,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Time format"
-          description="System default follows your browser or OS clock preference."
+          title={t("settings.timeFormat")}
+          description={t("settings.timeFormat.description")}
           resetAction={
             settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
               <SettingResetButton
@@ -713,8 +753,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Word wrap"
-          description="Wrap long lines in code blocks, tables, diffs, and file previews by default."
+          title={t("settings.wordWrap")}
+          description={t("settings.wordWrap.description")}
           resetAction={
             settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? (
               <SettingResetButton

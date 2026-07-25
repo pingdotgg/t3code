@@ -6,6 +6,7 @@ import { useCallback, useMemo } from "react";
 import { openCommandPalette } from "~/commandPaletteBus";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useClientSettings } from "~/hooks/useSettings";
+import { useTranslation } from "~/i18n";
 import { selectProjectGroupingSettings } from "~/logicalProject";
 import {
   buildSidebarProjectPickerEntries,
@@ -33,6 +34,7 @@ export function DraftHeroHeadline({
   activeProjectRef,
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
+  const { language, t } = useTranslation();
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments } = useEnvironments();
@@ -100,10 +102,10 @@ export function DraftHeroHeadline({
   const projectSelector = shouldShowProjectMenu ? (
     <Menu>
       <MenuTrigger
-        aria-label={hasResolvedProject ? "Change project" : "Choose a project"}
+        aria-label={hasResolvedProject ? t("composer.changeProject") : t("composer.chooseProject")}
         className="pointer-events-auto inline cursor-pointer border-current border-b border-dotted text-foreground underline-offset-8 transition-opacity hover:opacity-75 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {activeProjectDisplayName ?? "Choose a project"}
+        {activeProjectDisplayName ?? t("composer.chooseProject")}
       </MenuTrigger>
       <MenuPopup align="center" className="max-h-80 w-64 overflow-y-auto">
         <MenuRadioGroup
@@ -130,7 +132,7 @@ export function DraftHeroHeadline({
         <MenuSeparator />
         <MenuItem onClick={openAddProject}>
           <FolderPlusIcon />
-          New project
+          {t("draftHero.newProject")}
         </MenuItem>
       </MenuPopup>
     </Menu>
@@ -140,18 +142,31 @@ export function DraftHeroHeadline({
       onClick={openAddProject}
       className="pointer-events-auto inline cursor-pointer border-current border-b border-dotted text-muted-foreground/60 underline-offset-8 transition-opacity hover:opacity-75 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
     >
-      {activeProjectTitle ?? "Add a project"}
+      {activeProjectTitle ?? t("sidebar.addProject")}
     </button>
   );
 
   return (
     <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
       {hasResolvedProject ? (
-        <>What should we build in {projectSelector}?</>
+        language === "zh-CN" ? (
+          <>
+            {t("draftHero.whatToBuildPrefix")}
+            {projectSelector}
+            {t("draftHero.whatToBuildSuffix")}
+          </>
+        ) : (
+          <>
+            {t("draftHero.whatToBuildPrefix")} {projectSelector}
+            {t("draftHero.whatToBuildSuffix")}
+          </>
+        )
       ) : canChooseProject ? (
-        <>{projectSelector} to start</>
+        <>
+          {projectSelector} {t("draftHero.startSuffix")}
+        </>
       ) : (
-        <>Add a project to start</>
+        <>{t("draftHero.addProjectToStart")}</>
       )}
     </h1>
   );

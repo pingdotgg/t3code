@@ -3,6 +3,7 @@ import { memo } from "react";
 
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useTranslation } from "~/i18n";
 
 interface PanelLayoutControlsProps {
   terminalAvailable: boolean;
@@ -25,6 +26,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   onToggleTerminal,
   onToggleRightPanel,
 }: PanelLayoutControlsProps) {
+  const { t } = useTranslation();
   return (
     <div
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
@@ -37,7 +39,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={terminalOpen}
               onPressedChange={onToggleTerminal}
-              aria-label="Toggle terminal drawer"
+              aria-label={t("layout.toggleTerminal")}
               variant="ghost"
               size="sm"
               disabled={!terminalAvailable}
@@ -48,8 +50,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         />
         <TooltipPopup side="bottom">
           {terminalAvailable
-            ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
-            : "Terminal drawer is unavailable"}
+            ? `${t("layout.toggleTerminal")}${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
+            : t("layout.terminalUnavailable")}
         </TooltipPopup>
       </Tooltip>
       <Tooltip>
@@ -59,7 +61,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={rightPanelOpen}
               onPressedChange={onToggleRightPanel}
-              aria-label="Toggle right panel"
+              aria-label={t("layout.toggleRightPanel")}
               variant="ghost"
               size="sm"
               disabled={!rightPanelAvailable}
@@ -70,8 +72,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         />
         <TooltipPopup side="bottom">
           {rightPanelAvailable
-            ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
-            : "Right panel is unavailable"}
+            ? `${t("layout.toggleRightPanel")}${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
+            : t("layout.rightPanelUnavailable")}
         </TooltipPopup>
       </Tooltip>
     </div>

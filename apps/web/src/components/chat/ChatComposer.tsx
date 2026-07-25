@@ -33,6 +33,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "~/i18n";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -271,6 +272,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   onRuntimeModeChange: (mode: RuntimeMode) => void;
   onTogglePlanSidebar: () => void;
 }) {
+  const { t } = useTranslation();
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
   const interactionModeTooltip =
@@ -308,7 +310,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             <BotIcon />
           )}
           <span className="sr-only sm:not-sr-only">
-            {props.interactionMode === "plan" ? "Plan" : "Build"}
+            {props.interactionMode === "plan" ? t("composer.plan") : t("composer.build")}
           </span>
         </TooltipTrigger>
         <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
@@ -616,6 +618,7 @@ export interface ChatComposerProps {
 // --------------------------------------------------------------------------
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
+  const { t } = useTranslation();
   const {
     composerDraftTarget,
     environmentId,
@@ -1223,7 +1226,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectSelectionRequired ||
     environmentUnavailable !== null ||
     !composerSendState.hasSendableContent;
-  const collapsedComposerPrimaryActionLabel = "Send message";
+  const collapsedComposerPrimaryActionLabel = t("composer.send");
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -2573,7 +2576,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       : showPlanFollowUpPrompt && activeProposedPlan
                         ? "Add feedback to refine the plan, or leave this blank to implement it"
                         : projectSelectionRequired
-                          ? "Choose a project above to start a thread"
+                          ? t("composer.selectProjectPlaceholder")
                           : noProviderAvailable
                             ? "Enable a provider in Settings to send a message"
                             : phase === "disconnected"

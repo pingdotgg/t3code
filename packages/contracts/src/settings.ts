@@ -13,6 +13,11 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+/** The display language is local to each client, like theme and timestamp format. */
+export const DisplayLanguage = Schema.Literals(["en", "zh-CN"]);
+export type DisplayLanguage = typeof DisplayLanguage.Type;
+export const DEFAULT_DISPLAY_LANGUAGE: DisplayLanguage = "en";
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -67,6 +72,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  displayLanguage: DisplayLanguage.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_DISPLAY_LANGUAGE)),
+  ),
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
   ),
@@ -573,6 +581,7 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
+  displayLanguage: Schema.optionalKey(DisplayLanguage),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   favorites: Schema.optionalKey(
     Schema.Array(

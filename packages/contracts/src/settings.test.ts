@@ -33,6 +33,14 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings display language", () => {
+  it("defaults to English and accepts the supported Chinese locale", () => {
+    expect(decodeClientSettings({}).displayLanguage).toBe("en");
+    expect(decodeClientSettings({ displayLanguage: "zh-CN" }).displayLanguage).toBe("zh-CN");
+    expect(decodeClientSettingsPatch({ displayLanguage: "zh-CN" }).displayLanguage).toBe("zh-CN");
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

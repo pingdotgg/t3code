@@ -19,6 +19,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { cn } from "~/lib/utils";
+import { useTranslation } from "~/i18n";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -74,6 +75,7 @@ export const ChatHeader = memo(function ChatHeader({
   onUpdateProjectScript,
   onDeleteProjectScript,
 }: ChatHeaderProps) {
+  const { t } = useTranslation();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const fileScripts = useT3ProjectFileScripts(
     activeThreadEnvironmentId,
@@ -84,6 +86,8 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     primaryEnvironmentId,
   });
+  const displayThreadTitle =
+    activeThreadTitle === "New thread" ? t("sidebar.newThread") : activeThreadTitle;
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -111,14 +115,14 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipTrigger
             render={
               <h2
-                aria-label={activeThreadTitle}
+                aria-label={displayThreadTitle}
                 className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
               >
-                {activeThreadTitle}
+                {displayThreadTitle}
               </h2>
             }
           />
-          <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+          <TooltipPopup side="top">{displayThreadTitle}</TooltipPopup>
         </Tooltip>
       </div>
       <div
