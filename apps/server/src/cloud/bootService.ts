@@ -34,6 +34,7 @@ const BOOT_SERVICE_NAME = "t3code";
 export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const SERVICE_SUPERVISOR_ENV = "T3_SERVICE_SUPERVISOR";
+export const SERVICE_VERSION_ENV = "T3_SERVICE_VERSION";
 export const S6_SERVICE_DIR_ENV = "T3_S6_SERVICE_DIR";
 export const S6_SERVICE_USER_ENV = "T3_S6_SERVICE_USER";
 export const S6_SERVICE_GROUP_ENV = "T3_S6_SERVICE_GROUP";
@@ -93,6 +94,12 @@ export interface BootServicePlan {
   /** Optional JavaScript entry point. Empty for a standalone executable. */
   readonly t3EntryPath: string;
   readonly baseDir: string;
+  /** CLI version marker used to detect in-place executable upgrades. */
+  readonly cliVersion?: string;
+  /** Optional network interface persisted into the service environment. */
+  readonly serverHost?: string;
+  /** Optional fixed HTTP/WebSocket port persisted into the service environment. */
+  readonly serverPort?: number;
   readonly logPath: string;
   readonly unitPath: string;
 }
@@ -189,6 +196,15 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "Type=simple",
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
+    ...(plan.cliVersion === undefined
+      ? []
+      : [`Environment=${SERVICE_VERSION_ENV}=${quoteSystemdValue(plan.cliVersion)}`]),
+    ...(plan.serverHost === undefined
+      ? []
+      : [`Environment=T3CODE_HOST=${quoteSystemdValue(plan.serverHost)}`]),
+    ...(plan.serverPort === undefined
+      ? []
+      : [`Environment=T3CODE_PORT=${String(plan.serverPort)}`]),
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `Environment=${SERVICE_SUPERVISOR_ENV}=systemd`,
     `ExecStart=${serviceExecArgs(plan).map(quoteSystemdValue).join(" ")}`,
@@ -232,6 +248,12 @@ export function renderS6RunScript(plan: BootServicePlan): string {
     "#!/bin/sh",
     "set -eu",
     `export T3CODE_HOME=${quoteShellValue(plan.baseDir)}`,
+    ...(plan.serverHost === undefined
+      ? []
+      : [`export T3CODE_HOST=${quoteShellValue(plan.serverHost)}`]),
+    ...(plan.serverPort === undefined
+      ? []
+      : [`export T3CODE_PORT=${quoteShellValue(String(plan.serverPort))}`]),
     `export ${SERVICE_SUPERVISOR_ENV}=s6`,
     `export ${S6_SERVICE_DIR_ENV}=${quoteShellValue(pathForS6ServiceDir(plan.unitPath))}`,
     `export ${S6_SERVICE_USER_ENV}=${quoteShellValue(plan.serviceUser)}`,
@@ -274,6 +296,9 @@ export function renderS6LauncherScript(plan: BootServicePlan): string {
   return [
     "#!/bin/sh",
     "set -eu",
+    ...(plan.cliVersion === undefined
+      ? []
+      : [`export ${SERVICE_VERSION_ENV}=${quoteShellValue(plan.cliVersion)}`]),
     `exec ${serviceExecutableArgs(plan).map(quoteShellValue).join(" ")} "$@"`,
     "",
   ].join("\n");
@@ -377,6 +402,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
+  readonly serverHost?: string;
+  readonly serverPort?: number;
   readonly supervisor?: ServiceSupervisor;
   readonly s6ServiceDir?: string;
   readonly serviceUser?: string;
@@ -549,6 +576,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     nodePath: host.execPath,
     t3EntryPath: plannedEntryPath,
     baseDir: input.baseDir,
+    cliVersion: input.cliVersion,
+    ...(input.serverHost === undefined ? {} : { serverHost: input.serverHost }),
+    ...(input.serverPort === undefined ? {} : { serverPort: input.serverPort }),
     logPath,
     unitPath: definitionPath,
   };
@@ -853,6 +883,8 @@ export const layer = (input: {
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
+  readonly serverHost?: string;
+  readonly serverPort?: number;
   readonly supervisor?: ServiceSupervisor;
   readonly s6ServiceDir?: string;
   readonly serviceUser?: string;

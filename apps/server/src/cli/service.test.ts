@@ -39,6 +39,18 @@ it("preserves s6 selection in the repair command", () => {
   );
 });
 
+it("preserves an explicit service host and port in the repair command", () => {
+  assert.include(
+    formatServiceStatus({ ...status, current: false }, "0.0.29", {
+      supervisor: "s6",
+      s6ServiceDir: "/run/service/t3code",
+      serverHost: "0.0.0.0",
+      serverPort: 3773,
+    }),
+    "Next: Run `npx t3@latest service update --supervisor s6 --service-dir '/run/service/t3code' --host '0.0.0.0' --port 3773`.",
+  );
+});
+
 it("preserves an explicit s6 service identity in the repair command", () => {
   assert.include(
     formatServiceStatus({ ...status, current: false }, "0.0.29", {

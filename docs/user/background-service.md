@@ -54,6 +54,14 @@ t3 service install --supervisor s6 --service-dir /run/service/t3code \
 Installation reconciles the T3 Code state and log ownership to the selected identity so the service
 can keep writing across supervisor restarts.
 
+Pass `--host` and `--port` when the managed service needs a stable listening address. These values
+are persisted in the generated service definition:
+
+```sh
+t3 service install --supervisor s6 --service-dir /run/service/t3code \
+  --host 0.0.0.0 --port 3773
+```
+
 ## Automatic Service Updates
 
 Set **Settings** → **General** → **Service update repository** to an exact GitHub repository URL,

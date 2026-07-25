@@ -9,13 +9,15 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import type * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { hostFlag, portFlag, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 export const bootServiceLayer = (
   config: ServerConfig.ServerConfig["Service"],
   options?: {
     readonly supervisor?: BootService.ServiceSupervisor;
     readonly s6ServiceDir?: string;
+    readonly serverHost?: string;
+    readonly serverPort?: number;
     readonly serviceUser?: string;
     readonly serviceGroup?: string;
   },
@@ -26,6 +28,8 @@ export const bootServiceLayer = (
     cliVersion: packageJson.version,
     ...(options?.supervisor === undefined ? {} : { supervisor: options.supervisor }),
     ...(options?.s6ServiceDir === undefined ? {} : { s6ServiceDir: options.s6ServiceDir }),
+    ...(options?.serverHost === undefined ? {} : { serverHost: options.serverHost }),
+    ...(options?.serverPort === undefined ? {} : { serverPort: options.serverPort }),
     ...(options?.serviceUser === undefined ? {} : { serviceUser: options.serviceUser }),
     ...(options?.serviceGroup === undefined ? {} : { serviceGroup: options.serviceGroup }),
   }).pipe(Layer.provide(ProcessRunner.layer));
@@ -54,6 +58,8 @@ const serviceGroupFlag = Flag.string("service-group").pipe(
 
 const serviceFlags = {
   ...projectLocationFlags,
+  host: hostFlag,
+  port: portFlag,
   supervisor: supervisorFlag,
   s6ServiceDir: s6ServiceDirFlag,
   serviceUser: serviceUserFlag,
@@ -92,6 +98,8 @@ export function formatServiceStatus(
   options?: {
     readonly supervisor?: BootService.ServiceSupervisor;
     readonly s6ServiceDir?: string;
+    readonly serverHost?: string;
+    readonly serverPort?: number;
     readonly serviceUser?: string;
     readonly serviceGroup?: string;
   },
@@ -117,6 +125,12 @@ export function formatServiceStatus(
       );
     }
   }
+  if (options?.serverHost !== undefined) {
+    repairCommandParts.push(`--host ${BootService.quoteShellValue(options.serverHost)}`);
+  }
+  if (options?.serverPort !== undefined) {
+    repairCommandParts.push(`--port ${String(options.serverPort)}`);
+  }
   const repairCommand = repairCommandParts.join(" ");
   return [
     "T3 Code service",
@@ -130,6 +144,8 @@ export function formatServiceStatus(
 const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
   flags: {
     readonly baseDir: Parameters<typeof resolveCliAuthConfig>[0]["baseDir"];
+    readonly host: Option.Option<string>;
+    readonly port: Option.Option<number>;
     readonly supervisor: BootService.ServiceSupervisor;
     readonly s6ServiceDir: Option.Option<string>;
     readonly serviceUser: Option.Option<string>;
@@ -144,6 +160,8 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
       bootServiceLayer(config, {
         supervisor: flags.supervisor,
         ...(Option.isSome(flags.s6ServiceDir) ? { s6ServiceDir: flags.s6ServiceDir.value } : {}),
+        ...(Option.isSome(flags.host) ? { serverHost: flags.host.value } : {}),
+        ...(Option.isSome(flags.port) ? { serverPort: flags.port.value } : {}),
         ...(Option.isSome(flags.serviceUser) ? { serviceUser: flags.serviceUser.value } : {}),
         ...(Option.isSome(flags.serviceGroup) ? { serviceGroup: flags.serviceGroup.value } : {}),
       }),
@@ -222,6 +240,8 @@ const serviceStatusCommand = Command.make("status", serviceFlags).pipe(
             ...(Option.isSome(flags.s6ServiceDir)
               ? { s6ServiceDir: flags.s6ServiceDir.value }
               : {}),
+            ...(Option.isSome(flags.host) ? { serverHost: flags.host.value } : {}),
+            ...(Option.isSome(flags.port) ? { serverPort: flags.port.value } : {}),
             ...(Option.isSome(flags.serviceUser) ? { serviceUser: flags.serviceUser.value } : {}),
             ...(Option.isSome(flags.serviceGroup)
               ? { serviceGroup: flags.serviceGroup.value }

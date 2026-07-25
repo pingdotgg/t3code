@@ -22,6 +22,52 @@ hermes acp --check
 Then enable Hermes in T3 Code. Leave **Binary path** as `hermes`, or enter the absolute path to the
 Hermes executable.
 
+### Hermes plugin installation
+
+The T3 Code repository is also a Hermes plugin. Installing the repository root keeps Hermes' native
+Git-based plugin updater working:
+
+```bash
+hermes plugins install totalolage/t3code --enable
+```
+
+Restart the Hermes dashboard after the first install so it mounts the plugin's backend routes, then
+open the **T3 Code** tab. **Install and start** downloads the newest compatible standalone release,
+verifies its adjacent SHA-256 asset, and asks T3 Code to install its own s6 service at
+`/run/service/t3code`. The current release workflow publishes this companion binary for Linux x64;
+ARM64 Hermes hosts are rejected until a Linux ARM64 standalone artifact is available.
+
+The service listens on port `3773` by default. The plugin exposes that address from its Hermes
+dashboard tab and does not proxy T3 Code traffic through the Hermes dashboard API. Hermes plugin
+manifests do not control the container runtime's host-port mappings, so publish the port once in the
+container configuration:
+
+```yaml
+ports:
+  - "3773:3773"
+```
+
+Configuration overrides are environment variables:
+
+- `T3CODE_HERMES_PORT` and `T3CODE_HERMES_HOST`
+- `T3CODE_HERMES_SERVICE_USER` and `T3CODE_HERMES_SERVICE_GROUP` for custom root-run containers
+- `T3CODE_HERMES_PUBLIC_URL` when the browser-facing URL cannot be derived from the dashboard host
+- `T3CODE_HERMES_REPOSITORY` for a release fork, in `owner/repository` form
+- `T3CODE_HERMES_WATCH_INTERVAL_SECONDS` and `T3CODE_HERMES_WATCH_MISSES`
+
+T3 Code uses its normal pairing flow on first launch. The initial pairing URL is written to
+`$HERMES_HOME/t3code/data/userdata/logs/boot-service.log`.
+
+Hermes and T3 Code update independently. `hermes plugins update t3code` updates the plugin source;
+restart the dashboard when that update changes `plugin_api.py`. The dashboard tab's **Update**
+button downloads and checksum-verifies the latest compatible T3 Code binary, then asks T3 Code to
+rewrite and restart its own s6 service while preserving the configured host and port.
+
+The companion watchdog checks for `plugin.yaml` every 15 minutes by default. Two consecutive misses
+remove the T3 Code and watchdog s6 slots. This covers direct plugin-directory removal without making
+uninstallation immediate. T3 Code data and the downloaded binary remain under
+`$HERMES_HOME/t3code`; the dashboard's **Remove service** action likewise removes only supervision.
+
 ## Projects and execution
 
 Hermes is not a T3 remote environment. T3 Code launches one ACP subprocess for the selected project,

@@ -1,0 +1,9 @@
+name: t3code
+version: 0.1.0
+description: Run T3 Code beside Hermes with Hermes as the ACP provider.
+author: T3 Code contributors
+kind: standalone
+platforms:
+  - linux
+provides_tools: []
+provides_hooks: []
