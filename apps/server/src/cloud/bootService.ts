@@ -567,6 +567,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       }
     }
 
+    const previousUnit = yield* fs.exists(definitionPath).pipe(
+      Effect.flatMap((exists) =>
+        exists
+          ? fs.readFileString(definitionPath).pipe(Effect.map(Option.some))
+          : Effect.succeed(Option.none<string>()),
+      ),
+      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+    );
     const previousLauncher =
       supervisor === "s6" && serviceLauncherPath !== undefined
         ? yield* fs.exists(serviceLauncherPath).pipe(
@@ -579,48 +587,38 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           )
         : Option.none<string>();
 
-    if (supervisor === "s6" && serviceLauncherPath !== undefined) {
-      yield* fs.makeDirectory(path.dirname(serviceLauncherPath), { recursive: true }).pipe(
-        Effect.andThen(fs.writeFileString(serviceLauncherPath, renderS6LauncherScript(plan))),
-        Effect.andThen(fs.chmod(serviceLauncherPath, 0o755)),
+    yield* Effect.gen(function* () {
+      if (supervisor === "s6" && serviceLauncherPath !== undefined) {
+        yield* fs.makeDirectory(path.dirname(serviceLauncherPath), { recursive: true }).pipe(
+          Effect.andThen(fs.writeFileString(serviceLauncherPath, renderS6LauncherScript(plan))),
+          Effect.andThen(fs.chmod(serviceLauncherPath, 0o755)),
+          Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+        );
+      }
+
+      if (supervisor === "s6" && serviceIdentity !== undefined) {
+        const owner =
+          serviceIdentity.serviceGroup === undefined
+            ? serviceIdentity.serviceUser
+            : `${serviceIdentity.serviceUser}:${serviceIdentity.serviceGroup}`;
+        yield* runStep("reconciling s6 service state ownership", "chown", [
+          "-R",
+          "--",
+          owner,
+          ...new Set([input.baseDir, input.logsDir]),
+        ]);
+      }
+
+      const definition =
+        supervisor === "systemd" ? renderBootServiceUnit(plan) : renderS6RunScript(plan);
+      yield* fs.makeDirectory(unitDir, { recursive: true }).pipe(
+        Effect.andThen(fs.writeFileString(definitionPath, definition)),
+        Effect.andThen(supervisor === "s6" ? fs.chmod(definitionPath, 0o755) : Effect.void),
         Effect.mapError((cause) => new BootServiceInstallError({ cause })),
       );
-    }
 
-    if (supervisor === "s6" && serviceIdentity !== undefined) {
-      const owner =
-        serviceIdentity.serviceGroup === undefined
-          ? serviceIdentity.serviceUser
-          : `${serviceIdentity.serviceUser}:${serviceIdentity.serviceGroup}`;
-      yield* runStep("reconciling s6 service state ownership", "chown", [
-        "-R",
-        "--",
-        owner,
-        ...new Set([input.baseDir, input.logsDir]),
-      ]);
-    }
-
-    const previousUnit = yield* fs.exists(definitionPath).pipe(
-      Effect.flatMap((exists) =>
-        exists
-          ? fs.readFileString(definitionPath).pipe(Effect.map(Option.some))
-          : Effect.succeed(Option.none<string>()),
-      ),
-      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
-    );
-
-    const definition =
-      supervisor === "systemd" ? renderBootServiceUnit(plan) : renderS6RunScript(plan);
-    yield* fs.makeDirectory(unitDir, { recursive: true }).pipe(
-      Effect.andThen(fs.writeFileString(definitionPath, definition)),
-      Effect.andThen(supervisor === "s6" ? fs.chmod(definitionPath, 0o755) : Effect.void),
-      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
-    );
-
-    // If any activation step fails, remove the unit again: a leftover file
-    // would make service status report it as installed even though it was
-    // never enabled or lingered.
-    yield* Effect.gen(function* () {
+      // If any install or activation step fails after replacing a definition,
+      // restore both the previous unit and the mutable s6 launcher.
       if (supervisor === "systemd") {
         yield* runStep("reloading systemd user units", "systemctl", ["--user", "daemon-reload"]);
         yield* runStep("enabling the service", "systemctl", [

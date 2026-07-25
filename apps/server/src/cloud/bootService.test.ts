@@ -468,6 +468,40 @@ it.layer(NodeServices.layer)("BootService", (it) => {
     }),
   );
 
+  it.effect("restores the previous s6 launcher when ownership reconciliation fails", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const serviceDir = path.join(dirs.home, "service", "t3code");
+      const launcherPath = path.join(dirs.baseDir, "runtime", "s6-service-launcher");
+      const unitPath = path.join(serviceDir, "run");
+      yield* fs.makeDirectory(path.dirname(launcherPath), { recursive: true });
+      yield* fs.makeDirectory(serviceDir, { recursive: true });
+      yield* fs.writeFileString(launcherPath, '#!/bin/sh\nexec /previous/t3 "$@"\n');
+      yield* fs.writeFileString(unitPath, "#!/bin/sh\nexec /previous/launcher serve\n");
+
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        supervisor: "s6",
+        s6ServiceDir: serviceDir,
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(commands, { failCommand: "chown" })),
+        provideHostRefs(""),
+      );
+
+      const error = yield* service.install.pipe(Effect.flip);
+      assert.isTrue(isCommandError(error));
+      assert.equal(yield* fs.readFileString(launcherPath), '#!/bin/sh\nexec /previous/t3 "$@"\n');
+      assert.equal(
+        yield* fs.readFileString(unitPath),
+        "#!/bin/sh\nexec /previous/launcher serve\n",
+      );
+    }),
+  );
+
   it.effect("pins a runtime via npm install when running from the npx cache", () =>
     Effect.gen(function* () {
       const { dirs, fs, path } = yield* makeTestContext();
