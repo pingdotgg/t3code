@@ -39,9 +39,10 @@ def _target_suffix(machine: str | None = None) -> str:
     current = (machine or platform.machine()).lower()
     if current in {"x86_64", "amd64"}:
         return "linux-x64"
-    if current in {"aarch64", "arm64"}:
-        return "linux-arm64"
-    raise ReleaseError(f"unsupported Linux architecture: {current or 'unknown'}")
+    raise ReleaseError(
+        f"unsupported Linux architecture: {current or 'unknown'}; "
+        "the T3 Code release workflow currently publishes linux-x64 only"
+    )
 
 
 def _request_json(url: str) -> Any:

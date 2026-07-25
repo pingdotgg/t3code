@@ -69,8 +69,12 @@ class ReleaseResolutionTest(unittest.TestCase):
                 resolve_release(self.config, machine="x86_64")
 
     def test_rejects_unsupported_architecture(self) -> None:
-        with self.assertRaisesRegex(ReleaseError, "unsupported Linux architecture"):
-            resolve_release(self.config, machine="riscv64")
+        for machine in ("arm64", "riscv64"):
+            with self.subTest(machine=machine):
+                with self.assertRaisesRegex(
+                    ReleaseError, "currently publishes linux-x64 only"
+                ):
+                    resolve_release(self.config, machine=machine)
 
     def test_installs_only_a_checksum_verified_binary_with_matching_version(
         self,

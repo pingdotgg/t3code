@@ -34,7 +34,8 @@ hermes plugins install totalolage/t3code --enable
 Restart the Hermes dashboard after the first install so it mounts the plugin's backend routes, then
 open the **T3 Code** tab. **Install and start** downloads the newest compatible standalone release,
 verifies its adjacent SHA-256 asset, and asks T3 Code to install its own s6 service at
-`/run/service/t3code`.
+`/run/service/t3code`. The current release workflow publishes this companion binary for Linux x64;
+ARM64 Hermes hosts are rejected until a Linux ARM64 standalone artifact is available.
 
 The service listens on port `3773` by default. The plugin exposes that address from its Hermes
 dashboard tab and does not proxy T3 Code traffic through the Hermes dashboard API. Hermes plugin
