@@ -3508,8 +3508,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const ultracode = isClaudeUltracodeEffort(effort);
       const effectiveEffort = getEffectiveClaudeAgentEffort(effort, modelSelection?.model);
       const runtimeModeToPermission: Record<string, PermissionMode> = {
+        "approval-required": "default",
         "auto-accept-edits": "acceptEdits",
-        auto: "auto",
+        auto: "default",
         "full-access": "bypassPermissions",
       };
       const permissionMode = runtimeModeToPermission[input.runtimeMode];
