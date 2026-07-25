@@ -11,7 +11,9 @@ struct ComposerControlsRow: View {
         HStack(spacing: 10) {
             ModelRunProfileGroup(thread: thread, model: model)
             RuntimePlanModeGroup(thread: thread, model: model)
-            AutoPRToggle()
+            if !thread.hasStarted {
+                AutoPRToggle()
+            }
             Spacer()
             if let status = model.threadState(thread.id)?.contextWindow {
                 ContextMeterView(status: status)
@@ -143,10 +145,12 @@ private struct RuntimePlanModeGroup: View {
     }
 }
 
-/// Composer-level "create PR when done" toggle. When on, every sent message
-/// carries an extra instruction asking the agent to open a PR for the work
-/// once it finishes (see `CreatePRPrompt.messageSuffix`). Persisted globally
-/// in UserDefaults so the choice survives thread switches and relaunches.
+/// Composer-level "create PR when done" toggle. When on, the first message of
+/// a fresh thread carries an extra instruction asking the agent to open a PR
+/// for the work once it finishes (see `CreatePRPrompt.messageSuffix`). Only
+/// shown for threads that haven't started yet — once a thread has messages,
+/// the suffix no longer applies. Persisted globally in UserDefaults so the
+/// choice survives thread switches and relaunches.
 private struct AutoPRToggle: View {
     @AppStorage(CreatePRPrompt.autoCreateDefaultsKey) private var isOn = false
     @UIState private var isHovering = false

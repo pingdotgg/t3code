@@ -222,6 +222,10 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// True when the server has reported this thread's active turn as stalled.
     public var isStalled: Bool { health?.stalled ?? false }
 
+    /// True once the thread has its first user message. Gates the composer's
+    /// auto-PR toggle, which is only meaningful when starting a fresh thread.
+    public var hasStarted: Bool { latestUserMessageAt != nil }
+
     public init(
         id: String, projectID: String, title: String, provider: ProviderKind,
         status: ThreadStatus, createdAt: Date? = nil, updatedAt: Date,
