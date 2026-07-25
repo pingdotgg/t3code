@@ -54,7 +54,11 @@ export const workerLive = Layer.effectDiscard(
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
           createdBy: "agent",
-          creationSource: "provider",
+          // "provider" marks an adapter-buffered wake, which ClaudeAdapterV2
+          // detects to attach the buffered CLI output and drop this text. A
+          // message_text wake has no buffered output, so it must not carry that
+          // marker or the turn settles immediately having prompted nothing.
+          creationSource: request.delivery === "message_text" ? "server" : "provider",
         });
         if (request.dispatchIfCurrent === undefined) {
           yield* dispatch;
