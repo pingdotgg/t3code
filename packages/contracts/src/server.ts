@@ -110,6 +110,7 @@ export const ServerProviderUsageLimits = Schema.Struct({
     "codexAppServer",
     "claudeStatusProbe",
     "cursorAcp",
+    "cursorStatusProbe",
     "grokAcp",
     "grokStatusProbe",
     "opencodeManaged",
