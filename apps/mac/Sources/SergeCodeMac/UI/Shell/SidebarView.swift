@@ -32,6 +32,8 @@ struct SidebarView: View {
     @UIState private var expandedProjects: Set<String> = []
     /// Projects whose settled-thread disclosure is open.
     @UIState private var revealedSettled: Set<String> = []
+    /// Project whose settled disclosure row is hovered (reveals archive-all).
+    @UIState private var hoveredSettledGroup: String?
 
     @AppStorage("sidebarMachineScope") private var machineScopeStorage =
         SidebarMachineScope.allStorageValue
@@ -295,37 +297,61 @@ struct SidebarView: View {
         showMachine: Bool
     ) -> some View {
         let isRevealed = revealedSettled.contains(group.id)
-        Button {
-            withAnimation(Motion.structure) {
-                if isRevealed {
-                    revealedSettled.remove(group.id)
-                } else {
-                    revealedSettled.insert(group.id)
+        HStack(spacing: 6) {
+            Button {
+                withAnimation(Motion.structure) {
+                    if isRevealed {
+                        revealedSettled.remove(group.id)
+                    } else {
+                        revealedSettled.insert(group.id)
+                    }
                 }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isRevealed ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 12, height: 12)
+                        .contentTransition(Motion.reduceMotion ? .identity : .symbolEffect(.replace))
+                    Text("Settled")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("\(settled.count)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
             }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: isRevealed ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 12, height: 12)
-                    .contentTransition(Motion.reduceMotion ? .identity : .symbolEffect(.replace))
-                Text("Settled")
-                    .font(.caption)
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                isRevealed
+                    ? "Hide \(settled.count) settled sessions in \(group.name)"
+                    : "Show \(settled.count) settled sessions in \(group.name)")
+            Spacer()
+            // Hover-revealed like the project header actions so calm sections
+            // stay quiet; kept in the layout at 0 opacity so the row never
+            // resizes on hover.
+            Button {
+                Task { await archiveAllSettled(settled) }
+            } label: {
+                Image(systemName: "archivebox")
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
-                Text("\(settled.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                Spacer()
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .help("Archive \(settled.count) settled \(settled.count == 1 ? "session" : "sessions") in \(group.name)")
+            .accessibilityLabel("Archive all settled sessions in \(group.name)")
+            .opacity(hoveredSettledGroup == group.id ? 1 : 0)
+            .allowsHitTesting(hoveredSettledGroup == group.id)
+            .accessibilityHidden(hoveredSettledGroup != group.id)
         }
-        .buttonStyle(.plain)
         .padding(.vertical, 4)
-        .accessibilityLabel(
-            isRevealed
-                ? "Hide \(settled.count) settled sessions in \(group.name)"
-                : "Show \(settled.count) settled sessions in \(group.name)")
+        .onHover { hovering in
+            hoveredSettledGroup = hovering ? group.id : nil
+        }
+        .animation(Motion.feedback, value: hoveredSettledGroup)
         if isRevealed {
             ForEach(settled, id: \.id) { item in
                 threadRow(item, context: .project(showMachine: showMachine))
@@ -398,6 +424,26 @@ struct SidebarView: View {
                 }
                 .disabled(!item.isSelectable)
             }
+    }
+
+    /// Archives every settled session of a project. A group can span
+    /// machines, so threads are bucketed by their owning model and archived
+    /// with one bulk call per model.
+    private func archiveAllSettled(_ items: [SidebarThreadItem]) async {
+        var order: [String] = []
+        var byLocation: [String: (model: AppModel, threads: [ChatThread])] = [:]
+        for item in items {
+            let key = item.member.location.id.rawValue
+            if byLocation[key] == nil {
+                byLocation[key] = (item.member.location.model, [])
+                order.append(key)
+            }
+            byLocation[key]?.threads.append(item.thread)
+        }
+        for key in order {
+            guard let entry = byLocation[key] else { continue }
+            await entry.model.archiveThreads(entry.threads)
+        }
     }
 
     private func settle(_ item: SidebarThreadItem) {
