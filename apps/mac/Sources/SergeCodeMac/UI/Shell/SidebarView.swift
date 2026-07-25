@@ -271,7 +271,13 @@ struct SidebarView: View {
             if hiddenCount > 0 {
                 Button {
                     withAnimation(Motion.structure) {
-                        expandedProjects.insert(group.id)
+                        // `_ =`: as a single-expression closure this would
+                        // implicitly return Set.insert's (inserted,
+                        // memberAfterInsert) tuple, which the shipping
+                        // Xcode 26.5 toolchain rejects as conflicting with
+                        // a Void Result (failed the alpha.14/15 release
+                        // checks; newer toolchains accept it).
+                        _ = expandedProjects.insert(group.id)
                     }
                 } label: {
                     HStack {
