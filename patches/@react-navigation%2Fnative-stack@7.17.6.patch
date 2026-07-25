@@ -1,3 +1,5 @@
+diff --git a/lib/module/views/useHeaderConfigProps.js b/lib/module/views/useHeaderConfigProps.js
+index 0b75c70b4e0d233ee3b5faaf9cfbc40d4f8ed494..eb174e3fde91a7783f132b3fb16b01175ec19220 100644
 --- a/lib/module/views/useHeaderConfigProps.js
 +++ b/lib/module/views/useHeaderConfigProps.js
 @@ -19,6 +19,12 @@

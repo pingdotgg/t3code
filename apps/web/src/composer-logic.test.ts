@@ -8,8 +8,23 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
+  shouldSubmitComposerOnEnter,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+
+describe("shouldSubmitComposerOnEnter", () => {
+  it("submits plain Enter on desktop", () => {
+    expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: false })).toBe(true);
+  });
+
+  it("inserts a newline for plain Enter on mobile", () => {
+    expect(shouldSubmitComposerOnEnter({ isMobileViewport: true, shiftKey: false })).toBe(false);
+  });
+
+  it("inserts a newline for Shift+Enter", () => {
+    expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: true })).toBe(false);
+  });
+});
 
 describe("detectComposerTrigger", () => {
   it("detects @path trigger at cursor", () => {
@@ -231,12 +246,21 @@ describe("collapseExpandedComposerCursor", () => {
     );
   });
 
-  it("keeps replacement cursors aligned when another mention already exists earlier", () => {
+  it("keeps package-like text expanded when another mention already exists earlier", () => {
     const text = "open @AGENTS.md then @src/index.ts ";
     const expandedCursor = text.length;
     const collapsedCursor = collapseExpandedComposerCursor(text, expandedCursor);
 
-    expect(collapsedCursor).toBe("open ".length + 1 + " then ".length + 2);
+    expect(collapsedCursor).toBe("open ".length + 1 + " then @src/index.ts ".length);
+    expect(expandCollapsedComposerCursor(text, collapsedCursor)).toBe(expandedCursor);
+  });
+
+  it("collapses only genuine mentions when package-like text exists earlier", () => {
+    const text = "install @scope/pkg then @README.md ";
+    const expandedCursor = text.length;
+    const collapsedCursor = collapseExpandedComposerCursor(text, expandedCursor);
+
+    expect(collapsedCursor).toBe("install @scope/pkg then ".length + 1 + " ".length);
     expect(expandCollapsedComposerCursor(text, collapsedCursor)).toBe(expandedCursor);
   });
 

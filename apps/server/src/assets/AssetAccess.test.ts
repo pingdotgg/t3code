@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ThreadId } from "@t3tools/contracts";
+import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -10,6 +11,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
 
@@ -19,7 +21,10 @@ const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
 const testLayer = Layer.mergeAll(
   configLayer,
   WorkspacePaths.layer,
-  ProjectFaviconResolver.layer.pipe(Layer.provide(WorkspacePaths.layer)),
+  ProjectFaviconResolver.layer.pipe(
+    Layer.provide(WorkspacePaths.layer),
+    Layer.provide(T3ProjectFileLoader.layer),
+  ),
   ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -228,6 +233,7 @@ describe("AssetAccess", () => {
       const fallbackResult = yield* issueAssetUrl({
         resource: { _tag: "project-favicon", cwd: root },
       });
+      expect(fallbackResult.relativeUrl.endsWith(`/${PROJECT_FAVICON_FALLBACK_MARKER}`)).toBe(true);
       const fallbackSuffix = fallbackResult.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
       const fallbackSeparatorIndex = fallbackSuffix.indexOf("/");
       expect(
@@ -235,7 +241,7 @@ describe("AssetAccess", () => {
           fallbackSuffix.slice(0, fallbackSeparatorIndex),
           fallbackSuffix.slice(fallbackSeparatorIndex + 1),
         ),
-      ).toEqual({ kind: "project-favicon-fallback" });
+      ).toBeNull();
     }).pipe(Effect.provide(testLayer)),
   );
 

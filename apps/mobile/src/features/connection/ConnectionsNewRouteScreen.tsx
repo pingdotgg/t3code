@@ -3,10 +3,11 @@ import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/Stac
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { ConnectionSheetButton } from "./ConnectionSheetButton";
@@ -38,7 +39,6 @@ export function ConnectionsNewRouteScreen({
   const [scannerLocked, setScannerLocked] = useState(false);
 
   const headerIconColor = useThemeColor("--color-icon");
-  const placeholderColor = useThemeColor("--color-placeholder");
 
   const connectDisabled = isSubmitting || hostInput.trim().length === 0;
 
@@ -137,28 +137,50 @@ export function ConnectionsNewRouteScreen({
     <View collapsable={false} className="flex-1 bg-sheet">
       <NativeStackScreenOptions
         options={{
+          // Android renders its own in-screen header below instead of the native bar.
+          ...(Platform.OS === "android" ? { headerShown: false } : null),
           title: showScanner ? "Scan QR Code" : "Add Environment",
         }}
       />
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Button
-          icon={showScanner ? "xmark" : "qrcode.viewfinder"}
-          onPress={() => {
-            if (showScanner) {
-              closeScanner();
-            } else {
-              void openScanner();
-            }
-          }}
-          separateBackground
-          tintColor={headerIconColor}
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader
+          title={showScanner ? "Scan QR Code" : "Add Environment"}
+          onBack={() => navigation.goBack()}
+          actions={[
+            {
+              accessibilityLabel: showScanner ? "Close scanner" : "Scan QR code",
+              icon: showScanner ? "xmark" : "camera",
+              onPress: () => {
+                if (showScanner) {
+                  closeScanner();
+                } else {
+                  void openScanner();
+                }
+              },
+            },
+          ]}
         />
-      </NativeHeaderToolbar>
+      ) : (
+        <NativeHeaderToolbar placement="right">
+          <NativeHeaderToolbar.Button
+            icon={showScanner ? "xmark" : "qrcode.viewfinder"}
+            onPress={() => {
+              if (showScanner) {
+                closeScanner();
+              } else {
+                void openScanner();
+              }
+            }}
+            separateBackground
+            tintColor={headerIconColor}
+          />
+        </NativeHeaderToolbar>
+      )}
 
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
-        style={{ flex: 1 }}
+        className="flex-1"
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
           paddingHorizontal: 20,
@@ -168,10 +190,7 @@ export function ConnectionsNewRouteScreen({
         <View collapsable={false} className="gap-5">
           {showScanner ? (
             cameraPermission?.granted ? (
-              <View
-                className="overflow-hidden rounded-[24px]"
-                style={{ borderCurve: "continuous" }}
-              >
+              <View className="overflow-hidden rounded-[24px] border-continuous">
                 <CameraView
                   barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
                   onBarcodeScanned={handleQrScan}
@@ -179,10 +198,7 @@ export function ConnectionsNewRouteScreen({
                 />
               </View>
             ) : (
-              <View
-                className="items-center gap-3 rounded-[24px] bg-card px-5 py-8"
-                style={{ borderCurve: "continuous" }}
-              >
+              <View className="items-center gap-3 rounded-[24px] border-continuous bg-card px-5 py-8">
                 <Text className="text-center text-sm leading-normal text-foreground-muted">
                   Camera permission is required to scan a QR code.
                 </Text>
@@ -200,10 +216,7 @@ export function ConnectionsNewRouteScreen({
           ) : (
             <View collapsable={false} className="gap-4 rounded-[24px] bg-card p-4">
               <View collapsable={false} className="gap-1.5">
-                <Text
-                  className="text-2xs font-t3-bold uppercase text-foreground-muted"
-                  style={{ letterSpacing: 0.8 }}
-                >
+                <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
                   Host
                 </Text>
                 <TextInput
@@ -211,7 +224,6 @@ export function ConnectionsNewRouteScreen({
                   autoCorrect={false}
                   keyboardType="url"
                   placeholder="192.168.1.100:8080"
-                  placeholderTextColor={placeholderColor}
                   value={hostInput}
                   onChangeText={handleHostChange}
                   className="rounded-[14px] border border-input-border bg-input px-4 py-3.5 text-base text-foreground"
@@ -219,17 +231,13 @@ export function ConnectionsNewRouteScreen({
               </View>
 
               <View collapsable={false} className="gap-1.5">
-                <Text
-                  className="text-2xs font-t3-bold uppercase text-foreground-muted"
-                  style={{ letterSpacing: 0.8 }}
-                >
+                <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
                   Pairing code
                 </Text>
                 <TextInput
                   autoCapitalize="none"
                   autoCorrect={false}
                   placeholder="abc-123-xyz"
-                  placeholderTextColor={placeholderColor}
                   value={codeInput}
                   onChangeText={handleCodeChange}
                   className="rounded-[14px] border border-input-border bg-input px-4 py-3.5 text-base text-foreground"

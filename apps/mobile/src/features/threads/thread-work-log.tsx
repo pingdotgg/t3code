@@ -1,10 +1,11 @@
 import * as Haptics from "expo-haptics";
-import { SymbolView, type SFSymbol } from "expo-symbols";
+import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { LayoutAnimation, Pressable, ScrollView, useColorScheme, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
+import Animated, { FadeIn } from "react-native-reanimated";
 
 const WORK_LOG_LAYOUT_ANIMATION = {
   duration: 180,
@@ -39,33 +40,41 @@ function compactActivityDetail(detail: string | null): string | null {
   return cleaned.length > 0 ? cleaned : null;
 }
 
-function workRowSymbolName(icon: ThreadFeedActivity["icon"]): SFSymbol {
+function workRowSymbolName(icon: ThreadFeedActivity["icon"]): AppSymbolName {
   switch (icon) {
     case "agent":
-      return "sparkles";
+      return { ios: "sparkles", android: "auto_awesome" };
     case "alert":
-      return "exclamationmark.triangle";
+      return { ios: "exclamationmark.triangle", android: "error" };
     case "check":
-      return "checkmark";
+      return { ios: "checkmark", android: "check" };
     case "command":
-      return "terminal";
+      return { ios: "terminal", android: "terminal" };
     case "edit":
-      return "square.and.pencil";
+      return { ios: "square.and.pencil", android: "edit" };
     case "eye":
-      return "eye";
+      return { ios: "eye", android: "visibility" };
     case "globe":
-      return "globe";
+      return { ios: "globe", android: "public" };
     case "hammer":
-      return "hammer";
+      return { ios: "hammer", android: "construction" };
     case "message":
-      return "bubble.left";
+      return { ios: "bubble.left", android: "chat_bubble" };
     case "warning":
-      return "xmark";
+      return { ios: "xmark", android: "close" };
     case "wrench":
-      return "wrench";
+      return { ios: "wrench", android: "build" };
     case "zap":
-      return "bolt";
+      return { ios: "bolt", android: "bolt" };
   }
+}
+
+// Entering fades only for rows created moments ago: rows remount whenever the
+// list scrolls them back into view, and old rows must not replay an entrance.
+const FRESH_ROW_WINDOW_MS = 3_000;
+function isFreshRow(createdAt: string): boolean {
+  const timestamp = Date.parse(createdAt);
+  return Number.isFinite(timestamp) && Date.now() - timestamp < FRESH_ROW_WINDOW_MS;
 }
 
 export function ThreadWorkLog(props: {
@@ -104,7 +113,10 @@ export function ThreadWorkLog(props: {
           const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
 
           return (
-            <View key={row.id}>
+            <Animated.View
+              key={row.id}
+              {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
+            >
               <Pressable
                 accessibilityRole={canExpand ? "button" : undefined}
                 accessibilityLabel={displayText}
@@ -161,7 +173,11 @@ export function ThreadWorkLog(props: {
                     <View className="h-4 w-4 items-center justify-center">
                       {canExpand ? (
                         <SymbolView
-                          name={expanded ? "chevron.up" : "chevron.down"}
+                          name={
+                            expanded
+                              ? { ios: "chevron.up", android: "keyboard_arrow_up" }
+                              : { ios: "chevron.down", android: "keyboard_arrow_down" }
+                          }
                           size={11}
                           tintColor={props.iconSubtleColor}
                           type="monochrome"
@@ -173,10 +189,10 @@ export function ThreadWorkLog(props: {
                         <SymbolView
                           name={
                             row.status === "failure"
-                              ? "xmark"
+                              ? { ios: "xmark", android: "close" }
                               : row.status === "success"
-                                ? "checkmark"
-                                : "minus"
+                                ? { ios: "checkmark", android: "check" }
+                                : { ios: "minus", android: "remove" }
                           }
                           size={11}
                           tintColor={row.status === "failure" ? "#e11d48" : props.iconSubtleColor}
@@ -194,20 +210,19 @@ export function ThreadWorkLog(props: {
                     nestedScrollEnabled
                     directionalLockEnabled
                     showsVerticalScrollIndicator
-                    style={{ maxHeight: 240 }}
+                    className="max-h-60"
                     contentContainerStyle={{ paddingRight: 8 }}
                   >
                     <Text
                       selectable
-                      className="text-2xs leading-normal text-foreground-muted"
-                      style={{ fontFamily: "ui-monospace" }}
+                      className="font-mono text-2xs leading-normal text-foreground-muted"
                     >
                       {row.fullDetail}
                     </Text>
                   </ScrollView>
                 </View>
               ) : null}
-            </View>
+            </Animated.View>
           );
         })}
       </View>
@@ -254,7 +269,11 @@ export function ThreadWorkGroupToggle(props: {
       >
         <View className="h-[18px] w-5 items-center justify-center">
           <SymbolView
-            name={props.expanded ? "chevron.up" : "chevron.down"}
+            name={
+              props.expanded
+                ? { ios: "chevron.up", android: "keyboard_arrow_up" }
+                : { ios: "chevron.down", android: "keyboard_arrow_down" }
+            }
             size={12}
             tintColor={props.iconSubtleColor}
             type="monochrome"

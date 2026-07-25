@@ -137,7 +137,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     expect(AgentAwarenessRelay.eventThreadId(event)).toBe(threadId);
   });
 
-  it("does not publish streaming content or non-awareness activity events", () => {
+  it("does not publish start intents, streaming content, or non-awareness activity events", () => {
     const now = "2026-05-25T00:00:00.000Z";
     const base = {
       sequence: 1,
@@ -191,7 +191,16 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           streaming: false,
         },
       } as unknown as OrchestrationEvent),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        ...base,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: "thread-1" as ThreadId,
+        },
+      } as unknown as OrchestrationEvent),
+    ).toBe(false);
   });
 
   it("deduplicates awareness state updates whose only change is their event timestamp", () => {
@@ -296,6 +305,8 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
       session: null,
       latestUserMessageAt: null,
       hasPendingApprovals: false,
@@ -442,6 +453,8 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           createdAt: now,
           updatedAt: now,
           archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
           session: {
             threadId,
             status: "running",
@@ -461,6 +474,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           readEvents: () => Stream.empty,
           dispatch: () => Effect.succeed({ sequence: 1 }),
           streamDomainEvents: Stream.fromQueue(events),
+          latestSequence: Effect.succeed(0),
         } satisfies OrchestrationEngineShape;
 
         const snapshotQuery = {
@@ -597,6 +611,8 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           createdAt: now,
           updatedAt: now,
           archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
           session: {
             threadId,
             status: "running",
@@ -650,6 +666,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             readEvents: () => Stream.empty,
             dispatch: () => Effect.succeed({ sequence: 1 }),
             streamDomainEvents: Stream.fromQueue(events),
+            latestSequence: Effect.succeed(0),
           } satisfies OrchestrationEngineShape),
           Layer.succeed(ProjectionSnapshotQuery, {
             getShellSnapshot: () =>

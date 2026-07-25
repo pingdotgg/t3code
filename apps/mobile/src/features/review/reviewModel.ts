@@ -1,4 +1,5 @@
-import { parsePatchFiles, type ChangeTypes, type FileDiffMetadata } from "@pierre/diffs";
+import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
+import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
 import type { OrchestrationCheckpointSummary, ReviewDiffPreviewSource } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";

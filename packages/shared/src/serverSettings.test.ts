@@ -243,4 +243,33 @@ describe("serverSettings helpers", () => {
       }).projectSettings[projectId]?.actionEnvironment,
     ).toEqual({});
   });
+
+  it("keeps projectSettings entries omitted from a patch", () => {
+    const projectA = ProjectId.make("project-a");
+    const projectB = ProjectId.make("project-b");
+    const entryA = {
+      remoteOverride: null,
+      automaticGitFetchInterval: null,
+      actionEnvironment: { DEBUG: "1" },
+      disabledProviderInstanceIds: [],
+    };
+    const entryB = {
+      remoteOverride: null,
+      automaticGitFetchInterval: null,
+      actionEnvironment: { API_BASE_URL: "https://api.example.test" },
+      disabledProviderInstanceIds: [],
+    };
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettings: { [projectA]: entryA },
+    };
+
+    // A patch built from a snapshot that only knows about project B must not
+    // clobber project A's persisted settings.
+    const next = applyServerSettingsPatch(current, {
+      projectSettings: { [projectB]: entryB },
+    });
+    expect(next.projectSettings[projectA]).toEqual(entryA);
+    expect(next.projectSettings[projectB]).toEqual(entryB);
+  });
 });

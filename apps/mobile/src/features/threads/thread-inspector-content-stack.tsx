@@ -75,7 +75,7 @@ export function ThreadInspectorContentStack(props: {
   const Route = props.Route;
 
   return (
-    <View style={{ flex: 1 }}>
+    <View className="flex-1">
       <InspectorContentPane
         mounted={mountedModes.has("files") || props.mode === "files"}
         visible={props.mode === "files"}

@@ -1,5 +1,9 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
+import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   NavigationContext,
@@ -19,6 +23,7 @@ import {
 } from "react";
 import { useWindowDimensions, View } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
   deriveFileInspectorPaneLayout,
@@ -31,11 +36,12 @@ import {
 } from "../../lib/layout";
 import { resolveThreadSelectionNavigationAction } from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import {
   parseActiveThreadPath,
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
-import { HomeListOptionsProvider } from "../home/home-list-options";
+import { HomeListOptionsProvider, resolveProjectGroupingMode } from "../home/home-list-options";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
@@ -181,6 +187,31 @@ export function AdaptiveWorkspaceLayout(props: {
   readonly children: ReactNode;
   readonly pathname: string;
 }) {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  if (!AsyncResult.isSuccess(preferencesResult)) {
+    return AsyncResult.isFailure(preferencesResult) ? (
+      <AdaptiveWorkspaceLayoutContent {...props} projectGroupingMode="repository" />
+    ) : null;
+  }
+  return (
+    <AdaptiveWorkspaceLayoutContent
+      {...props}
+      projectGroupingMode={resolveProjectGroupingMode(
+        preferencesResult.value.projectGroupingEnabled,
+      )}
+    />
+  );
+}
+
+function AdaptiveWorkspaceLayoutContent(
+  props: {
+    readonly children: ReactNode;
+    readonly pathname: string;
+  } & {
+    readonly projectGroupingMode: SidebarProjectGroupingMode;
+  },
+) {
+  const projectGroupingMode = props.projectGroupingMode;
   const { width, height } = useWindowDimensions();
   const pathname = props.pathname;
   const navigation = useNavigation();
@@ -401,6 +432,20 @@ export function AdaptiveWorkspaceLayout(props: {
     navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" });
   }, [navigation]);
 
+  const handleNewThreadInProject = useCallback(
+    (project: EnvironmentProject) => {
+      navigation.navigate("NewTaskSheet", {
+        screen: "NewTaskDraft",
+        params: {
+          environmentId: String(project.environmentId),
+          projectId: String(project.id),
+          title: project.title,
+        },
+      });
+    },
+    [navigation],
+  );
+
   const renderedSidebarWidth = useSharedValue(
     panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0,
   );
@@ -457,18 +502,19 @@ export function AdaptiveWorkspaceLayout(props: {
   );
 
   return (
-    <HomeListOptionsProvider>
+    <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
       <AdaptiveWorkspaceContext.Provider value={contextValue}>
-        <View testID="adaptive-workspace-layout" style={{ flex: 1, flexDirection: "row" }}>
+        <View testID="adaptive-workspace-layout" className="flex-1 flex-row">
           {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (
             <Animated.View
+              className="self-stretch overflow-hidden"
               accessibilityElementsHidden={!panes.primarySidebarVisible}
               collapsable={false}
               importantForAccessibility={
                 panes.primarySidebarVisible ? "auto" : "no-hide-descendants"
               }
               pointerEvents={panes.primarySidebarVisible ? "auto" : "none"}
-              style={[{ alignSelf: "stretch", overflow: "hidden" }, sidebarAnimatedStyle]}
+              style={sidebarAnimatedStyle}
             >
               <ThreadNavigationSidebar
                 width={layout.listPaneWidth}
@@ -477,13 +523,14 @@ export function AdaptiveWorkspaceLayout(props: {
                 selectedThreadKey={selectedThreadKey}
                 onOpenSettings={handleOpenSettings}
                 onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
+                onNewThreadInProject={handleNewThreadInProject}
                 onSelectThread={handleSelectThread}
                 onSearchQueryChange={setPrimarySidebarSearchQuery}
                 searchQuery={primarySidebarSearchQuery}
               />
             </Animated.View>
           ) : null}
-          <View className="bg-screen" collapsable={false} style={{ flex: 1, overflow: "hidden" }}>
+          <View className="flex-1 overflow-hidden bg-screen" collapsable={false}>
             <View
               collapsable={false}
               style={

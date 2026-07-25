@@ -1195,7 +1195,7 @@ describe("composerDraftStore modelSelection", () => {
       }),
     );
     store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.5"), {
-      preserveExistingOptions: false,
+      replaceOptions: true,
     });
 
     expect(

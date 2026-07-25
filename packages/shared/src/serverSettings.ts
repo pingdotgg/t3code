@@ -87,7 +87,14 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
-    ...(patch.projectSettings !== undefined ? { projectSettings: patch.projectSettings } : {}),
+    // Each patched project entry is taken as fully-formed (same replace
+    // semantics as providerInstances), but entries omitted from the patch
+    // must survive: patches are built from possibly-stale snapshots, and a
+    // writer editing project A must not clobber a concurrent write to
+    // project B.
+    ...(patch.projectSettings !== undefined
+      ? { projectSettings: { ...current.projectSettings, ...patch.projectSettings } }
+      : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };
   if (!selectionPatch) {

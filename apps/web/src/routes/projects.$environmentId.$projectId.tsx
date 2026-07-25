@@ -72,6 +72,12 @@ import {
   resolveProjectProviderInstancePolicy,
   sortProviderInstanceEntries,
 } from "../providerInstances";
+import {
+  commitProviderSettingsThenDefaultModel,
+  confirmedProjectSettingsDraftKeys,
+  type ProjectSettingsDraft,
+  type ProjectSettingsDraftKey,
+} from "../projectSettingsCommit";
 import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
 import { TraitsPicker } from "../components/chat/TraitsPicker";
 import { ProviderInstanceIcon } from "../components/chat/ProviderInstanceIcon";
@@ -111,22 +117,6 @@ interface RemoteOverrideDraft {
   readonly webUrl: string;
 }
 
-interface ProjectSettingsDraft {
-  readonly projectKey: string;
-  readonly title?: string;
-  readonly overrideEnabled?: boolean;
-  readonly provider?: SourceControlProviderKind;
-  readonly remoteName?: string;
-  readonly remoteUrl?: string;
-  readonly webUrl?: string;
-  readonly defaultModelSelection?: ModelSelection | null;
-  readonly automaticGitFetchInterval?: number | null;
-  readonly actionEnvironment?: ProjectActionEnvironment;
-  readonly disabledProviderInstanceIds?: ProviderInstanceId[];
-}
-
-type ProjectSettingsDraftKey = keyof Omit<ProjectSettingsDraft, "projectKey">;
-
 const REMOTE_OVERRIDE_DRAFT_KEYS: readonly ProjectSettingsDraftKey[] = [
   "overrideEnabled",
   "provider",
@@ -139,6 +129,22 @@ interface ProjectMetaPatch {
   readonly title?: string;
   readonly defaultModelSelection?: ModelSelection | null;
 }
+
+interface ProjectSettingsCommitState {
+  readonly projectKey: string | null;
+  queue: Promise<void>;
+  inFlight: number;
+  readonly draftKeysAwaitingRefresh: Set<ProjectSettingsDraftKey>;
+}
+
+const createProjectSettingsCommitState = (
+  projectKey: string | null,
+): ProjectSettingsCommitState => ({
+  projectKey,
+  queue: Promise.resolve(),
+  inFlight: 0,
+  draftKeysAwaitingRefresh: new Set(),
+});
 
 function draftKeysForSettingsPatch(patch: ProjectSettingsPatch): ProjectSettingsDraftKey[] {
   const keys: ProjectSettingsDraftKey[] = [];
@@ -268,9 +274,14 @@ function ProjectRouteView() {
   );
 
   const [draft, setDraft] = useState<ProjectSettingsDraft | null>(null);
+  const [, bumpCommitSettledVersion] = useState(0);
   const details = projectDetails.data;
   const projectDraftKey = project && details ? `${project.environmentId}:${details.id}` : null;
   const currentDraft = draft?.projectKey === projectDraftKey ? draft : null;
+  const commitStateRef = useRef(createProjectSettingsCommitState(projectDraftKey));
+  if (commitStateRef.current.projectKey !== projectDraftKey) {
+    commitStateRef.current = createProjectSettingsCommitState(projectDraftKey);
+  }
   const override = details?.settings.remoteOverride ?? null;
   const title = currentDraft?.title ?? details?.title ?? "";
   const overrideEnabled = currentDraft?.overrideEnabled ?? Boolean(override);
@@ -358,61 +369,86 @@ function ProjectRouteView() {
     );
   }, []);
 
-  const settingsCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const inFlightCommitCountRef = useRef(0);
-  const draftKeysAwaitingRefreshRef = useRef<Set<ProjectSettingsDraftKey>>(new Set());
   const refreshProjectDetails = projectDetails.refresh;
 
-  const clearDraftKeys = useCallback((keys: Iterable<ProjectSettingsDraftKey>) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const next: Record<string, unknown> = { ...current };
-      let changed = false;
-      for (const key of keys) {
-        if (key in next) {
-          delete next[key];
-          changed = true;
+  const clearDraftKeys = useCallback(
+    (keys: Iterable<ProjectSettingsDraftKey>, expectedProjectKey: string | null) => {
+      setDraft((current) => {
+        if (!current || current.projectKey !== expectedProjectKey) return current;
+        const next: Record<string, unknown> = { ...current };
+        let changed = false;
+        for (const key of keys) {
+          if (key in next) {
+            delete next[key];
+            changed = true;
+          }
         }
-      }
-      if (!changed) return current;
-      // Only projectKey left means nothing is staged anymore.
-      return Object.keys(next).length <= 1 ? null : (next as unknown as ProjectSettingsDraft);
-    });
-  }, []);
-
-  // Drop staged values once the refresh that follows their successful commit
-  // has landed, so the UI resynchronizes with server-normalized data (trimmed
-  // strings, dropped empty keys) and later refreshes are not shadowed by the
-  // draft. Keys are held while any commit is still in flight to keep the
-  // optimistic value visible until the final refresh.
-  const detailsPending = projectDetails.isPending;
-  useEffect(() => {
-    if (detailsPending) return;
-    if (inFlightCommitCountRef.current > 0) return;
-    if (draftKeysAwaitingRefreshRef.current.size === 0) return;
-    const keys = [...draftKeysAwaitingRefreshRef.current];
-    draftKeysAwaitingRefreshRef.current.clear();
-    clearDraftKeys(keys);
-  }, [clearDraftKeys, details, detailsPending]);
-
-  const runCommit = useCallback((task: () => Promise<void>) => {
-    inFlightCommitCountRef.current += 1;
-    const nextCommit = settingsCommitQueueRef.current
-      .catch(() => undefined)
-      .then(task)
-      .finally(() => {
-        inFlightCommitCountRef.current -= 1;
+        if (!changed) return current;
+        // Only projectKey left means nothing is staged anymore.
+        return Object.keys(next).length <= 1 ? null : (next as unknown as ProjectSettingsDraft);
       });
-    settingsCommitQueueRef.current = nextCommit.catch(() => undefined);
-    return nextCommit;
+    },
+    [],
+  );
+
+  const detailsPending = projectDetails.isPending;
+  const detailsError = projectDetails.error;
+  useEffect(() => {
+    setDraft((current) => (current?.projectKey === projectDraftKey ? current : null));
+  }, [projectDraftKey]);
+
+  // Only release optimistic fields confirmed by the latest successful
+  // response. A stale or failed refresh must not reveal older server data.
+  useEffect(() => {
+    const state = commitStateRef.current;
+    if (
+      detailsPending ||
+      detailsError ||
+      !details ||
+      !currentDraft ||
+      state.projectKey !== projectDraftKey ||
+      state.inFlight > 0 ||
+      state.draftKeysAwaitingRefresh.size === 0
+    ) {
+      return;
+    }
+    const keys = confirmedProjectSettingsDraftKeys(
+      currentDraft,
+      details,
+      state.draftKeysAwaitingRefresh,
+    );
+    for (const key of keys) {
+      state.draftKeysAwaitingRefresh.delete(key);
+    }
+    clearDraftKeys(keys, projectDraftKey);
+  }, [clearDraftKeys, currentDraft, details, detailsError, detailsPending, projectDraftKey]);
+
+  const runCommit = useCallback(<T,>(task: (state: ProjectSettingsCommitState) => Promise<T>) => {
+    const state = commitStateRef.current;
+    state.inFlight += 1;
+    const result = state.queue
+      .catch(() => undefined)
+      .then(() => task(state))
+      .finally(() => {
+        state.inFlight -= 1;
+        if (commitStateRef.current === state) {
+          bumpCommitSettledVersion((version) => version + 1);
+        }
+      });
+    state.queue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }, []);
 
   const handleCommitFailure = useCallback(
-    (error: unknown) => {
+    (error: unknown, state: ProjectSettingsCommitState) => {
+      if (commitStateRef.current !== state) return;
       // Drop the optimistic draft so the UI falls back to the persisted
       // values instead of showing the rejected edit as saved.
-      setDraft(null);
-      draftKeysAwaitingRefreshRef.current.clear();
+      setDraft((current) => (current?.projectKey === state.projectKey ? null : current));
+      state.draftKeysAwaitingRefresh.clear();
       refreshProjectDetails();
       showProjectSettingsError("Failed to update project settings", error);
     },
@@ -421,8 +457,8 @@ function ProjectRouteView() {
 
   const commitProjectMeta = useCallback(
     (patch: ProjectMetaPatch) =>
-      runCommit(async () => {
-        if (!project) return;
+      runCommit(async (state) => {
+        if (!project || commitStateRef.current !== state) return false;
         const result = await updateProject({
           environmentId: project.environmentId,
           input: {
@@ -430,22 +466,24 @@ function ProjectRouteView() {
             ...patch,
           },
         });
+        if (commitStateRef.current !== state) return false;
         if (result._tag === "Failure") {
-          handleCommitFailure(squashAtomCommandFailure(result));
-          return;
+          handleCommitFailure(squashAtomCommandFailure(result), state);
+          return false;
         }
         for (const key of draftKeysForMetaPatch(patch)) {
-          draftKeysAwaitingRefreshRef.current.add(key);
+          state.draftKeysAwaitingRefresh.add(key);
         }
         refreshProjectDetails();
+        return true;
       }),
     [handleCommitFailure, project, refreshProjectDetails, runCommit, updateProject],
   );
 
   const commitProjectSettings = useCallback(
     (patch: ProjectSettingsPatch) =>
-      runCommit(async () => {
-        if (!project) return;
+      runCommit(async (state) => {
+        if (!project || commitStateRef.current !== state) return false;
         const result = await updateProjectSettings({
           environmentId: project.environmentId,
           input: {
@@ -453,14 +491,16 @@ function ProjectRouteView() {
             patch,
           },
         });
+        if (commitStateRef.current !== state) return false;
         if (result._tag === "Failure") {
-          handleCommitFailure(squashAtomCommandFailure(result));
-          return;
+          handleCommitFailure(squashAtomCommandFailure(result), state);
+          return false;
         }
         for (const key of draftKeysForSettingsPatch(patch)) {
-          draftKeysAwaitingRefreshRef.current.add(key);
+          state.draftKeysAwaitingRefresh.add(key);
         }
         refreshProjectDetails();
+        return true;
       }),
     [handleCommitFailure, project, refreshProjectDetails, runCommit, updateProjectSettings],
   );
@@ -479,7 +519,7 @@ function ProjectRouteView() {
       const trimmed = nextTitle.trim();
       if (!details) return;
       if (trimmed.length === 0) {
-        clearDraftKeys(["title"]);
+        clearDraftKeys(["title"], projectDraftKey);
         showProjectSettingsError(
           "Failed to update project settings",
           new Error("Project name cannot be empty."),
@@ -492,7 +532,15 @@ function ProjectRouteView() {
       stageDraft({ title: trimmed });
       void commitProjectMeta({ title: trimmed });
     },
-    [clearDraftKeys, commitProjectMeta, details, showProjectSettingsError, stageDraft, title],
+    [
+      clearDraftKeys,
+      commitProjectMeta,
+      details,
+      projectDraftKey,
+      showProjectSettingsError,
+      stageDraft,
+      title,
+    ],
   );
 
   const commitDefaultModelSelection = useCallback(
@@ -577,17 +625,22 @@ function ProjectRouteView() {
         .filter((id) => currentSet.has(id))
         .concat(current.filter((id) => !knownInstanceIds.has(id)));
       stageDraft({ disabledProviderInstanceIds: nextDisabledProviderInstanceIds });
-      void commitProjectSettings({
-        disabledProviderInstanceIds: nextDisabledProviderInstanceIds,
-      });
-      if (!allowed && defaultModelSelection?.instanceId === instanceId) {
-        // The default model pointed at the instance that was just disabled;
-        // clear it so new threads fall back to an allowed provider.
-        commitDefaultModelSelection(null);
+      const commitProviderSettings = () =>
+        commitProjectSettings({
+          disabledProviderInstanceIds: nextDisabledProviderInstanceIds,
+        });
+      if (allowed || defaultModelSelection?.instanceId !== instanceId) {
+        void commitProviderSettings();
+        return;
       }
+      // Clear the default only after its provider is confirmed disabled.
+      void commitProviderSettingsThenDefaultModel(commitProviderSettings, () => {
+        stageDraft({ defaultModelSelection: null });
+        return commitProjectMeta({ defaultModelSelection: null });
+      });
     },
     [
-      commitDefaultModelSelection,
+      commitProjectMeta,
       commitProjectSettings,
       defaultModelSelection,
       disabledProviderInstanceIds,

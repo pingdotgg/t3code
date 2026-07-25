@@ -67,7 +67,13 @@ export function eventThreadId(event: OrchestrationEvent): ThreadId | null {
 export function shouldPublishAgentAwarenessEvent(event: OrchestrationEvent): boolean {
   switch (event.type) {
     case "thread.message-sent":
-      return !event.payload.streaming;
+    case "thread.turn-start-requested":
+      // These events express intent to start work, but the shell still contains
+      // the previous turn's terminal state until the provider acknowledges the
+      // new turn. Publishing that snapshot can queue a fresh "Done" alert just
+      // before the real running state arrives. Provider lifecycle events publish
+      // the authoritative starting/running state instead.
+      return false;
     case "thread.proposed-plan-upserted":
     case "thread.runtime-mode-set":
     case "thread.interaction-mode-set":
@@ -203,6 +209,26 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
   return yield* signRelayAgentActivityPublishProof({ privateKey: input.privateKey, payload });
 });
 
+// Compact, log-safe view of the fields the awareness phase ladder reads.
+export function describeThreadShellForAwareness(
+  thread: Option.Option<OrchestrationThreadShell>,
+): Record<string, unknown> {
+  if (Option.isNone(thread)) {
+    return { found: false };
+  }
+  const shell = thread.value;
+  return {
+    found: true,
+    sessionStatus: shell.session?.status ?? null,
+    sessionActiveTurnId: shell.session?.activeTurnId ?? null,
+    latestTurnId: shell.latestTurn?.turnId ?? null,
+    latestTurnState: shell.latestTurn?.state ?? null,
+    latestTurnCompletedAt: shell.latestTurn?.completedAt ?? null,
+    hasPendingApprovals: shell.hasPendingApprovals,
+    hasPendingUserInput: shell.hasPendingUserInput,
+  };
+}
+
 export function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -306,6 +332,14 @@ export const make = Effect.gen(function* () {
       transformClient: relayEnvironmentClient(relayConfig.environmentCredential),
     }).pipe(Effect.provide(FetchHttpClient.layer));
 
+  // Deadlines for publishes that need confirmation (tombstones and
+  // first-state completions). The confirming publish is re-enqueued through
+  // the same drainable worker as every other publish, so a confirmed
+  // tombstone can never race an in-flight live update; a recovered state
+  // clears the deadline. Assigned after the worker exists.
+  const publishConfirmDeadlines = new Map<ThreadId, number>();
+  let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+
   const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
     const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
       Effect.orElseSucceed(() => false),
@@ -382,12 +416,61 @@ export const make = Effect.gen(function* () {
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (publishedStateByThread.get(threadId) === publishIdentity) {
+      // The projection is back at (or never left) the last published state, so
+      // any pending deferred confirmation is moot. Leaving the deadline in
+      // place would let a much later transient null find it already expired
+      // and publish a tombstone immediately, skipping the deferral window.
+      publishConfirmDeadlines.delete(threadId);
       yield* Effect.logDebug("agent activity publish skipped; projected state unchanged", {
         environmentId,
         threadId,
         reason: snapshot.reason,
       });
       return;
+    }
+
+    // Two projections need confirmation before publishing, because both can
+    // appear transiently while the projector is mid-write and publishing them
+    // immediately is destructive or noisy:
+    // - null (tombstone) while the previous published state was live: deletes
+    //   the thread from every armed card mid-conversation.
+    // - completed as the thread's FIRST published state: sessions boot at
+    //   "ready" before their first turn, which projects as completed for an
+    //   instant and sends a spurious Done notification at thread birth.
+    // Defer, schedule a re-publish through the ordinary worker queue, and
+    // only publish if the projection still holds when it drains.
+    const requiresConfirmation =
+      (snapshot.state === null &&
+        publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
+      (snapshot.state?.phase === "completed" && !publishedStateByThread.has(threadId));
+    if (requiresConfirmation) {
+      const nowMs = (yield* DateTime.now).epochMilliseconds;
+      const deadline = publishConfirmDeadlines.get(threadId);
+      if (deadline === undefined) {
+        publishConfirmDeadlines.set(threadId, nowMs + 5_000);
+        yield* Effect.logInfo("agent activity publish deferred pending confirmation", {
+          environmentId,
+          threadId,
+          reason: snapshot.reason,
+          statePhase: snapshot.state?.phase ?? null,
+          shell: describeThreadShellForAwareness(thread),
+        });
+        yield* schedulePublishConfirm(threadId);
+        return;
+      }
+      if (nowMs < deadline) {
+        return;
+      }
+      publishConfirmDeadlines.delete(threadId);
+      yield* Effect.logInfo("agent activity deferred publish confirmed", {
+        environmentId,
+        threadId,
+        reason: snapshot.reason,
+        statePhase: snapshot.state?.phase ?? null,
+        shell: describeThreadShellForAwareness(thread),
+      });
+    } else {
+      publishConfirmDeadlines.delete(threadId);
     }
 
     if (snapshot.reason === "thread-not-found") {
@@ -477,6 +560,19 @@ export const make = Effect.gen(function* () {
     });
 
   const worker = yield* makeDrainableWorker(publishThread);
+
+  schedulePublishConfirm = (threadId) =>
+    Effect.forkDetach(
+      Effect.sleep("5 seconds").pipe(
+        Effect.andThen(worker.enqueue(threadId)),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("deferred agent activity confirmation failed", {
+            threadId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      ),
+    ).pipe(Effect.asVoid);
 
   const start: AgentAwarenessRelay["Service"]["start"] = Effect.fn("AgentAwarenessRelay.start")(
     function* () {

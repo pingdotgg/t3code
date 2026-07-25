@@ -448,13 +448,9 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (input) {
     const normalizedInput = yield* normalizeStatusInput(refreshInputToStatusInput(input));
-    yield* Effect.all(
-      [
-        workflow.invalidateLocalStatus(normalizedInput.cwd),
-        workflow.invalidateRemoteStatus(normalizedInput.cwd),
-      ],
-      { concurrency: "unbounded", discard: true },
-    );
+    // invalidateStatus (not the two partial invalidations) so an explicit
+    // refresh also bypasses GitManager's slow PR-lookup cache.
+    yield* workflow.invalidateStatus(normalizedInput.cwd);
     const result = yield* refreshStatusForInput(normalizedInput);
     // A refresh must also update the sibling cache entries (bare-cwd and other
     // project-scoped keys) for the same repository, or subscribers under those

@@ -1065,6 +1065,53 @@ function shouldExcludeTerminalEnvKey(key: string): boolean {
   return TERMINAL_ENV_BLOCKLIST.has(normalizedKey);
 }
 
+// Marker variables the AppImage runtime injects into the process it launches.
+// They describe the AppImage itself, not the user's session, so terminals must
+// not inherit them.
+const APPIMAGE_RUNTIME_ENV_KEYS = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] as const;
+// PATH-style variables the AppImage runtime prepends with its temporary mount
+// (e.g. /tmp/.mount_T3-XXXX/usr/bin). Only the mount segments are dropped; the
+// user's real entries are preserved.
+const APPIMAGE_PATH_LIKE_ENV_KEYS = ["PATH", "LD_LIBRARY_PATH"] as const;
+
+function isPathSegmentUnderAppDir(segment: string, appDir: string): boolean {
+  return segment === appDir || segment.startsWith(`${appDir}/`);
+}
+
+// On Linux AppImage builds the runtime mounts the app under a temporary dir and
+// injects APPIMAGE/APPDIR/ARGV0/OWD plus mount entries on PATH/LD_LIBRARY_PATH.
+// The integrated terminal inherits the server process environment, so without
+// this scrub those leak into the PTY and tools resolve against the AppImage
+// mount instead of the user's real environment (e.g. `php` reporting
+// PHP_BINARY as the AppImage path). See issue #1699. The scrub is gated on an
+// actual AppImage launch so non-AppImage environments are left untouched.
+function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (env.APPIMAGE === undefined && env.APPDIR === undefined) return env;
+
+  const scrubbed: NodeJS.ProcessEnv = { ...env };
+  for (const key of APPIMAGE_RUNTIME_ENV_KEYS) {
+    delete scrubbed[key];
+  }
+
+  const appDir = env.APPDIR?.replace(/\/+$/, "");
+  if (appDir) {
+    for (const key of APPIMAGE_PATH_LIKE_ENV_KEYS) {
+      const value = scrubbed[key];
+      if (value === undefined) continue;
+      const kept = value
+        .split(":")
+        .filter((segment) => segment.length > 0 && !isPathSegmentUnderAppDir(segment, appDir));
+      if (kept.length > 0) {
+        scrubbed[key] = kept.join(":");
+      } else {
+        delete scrubbed[key];
+      }
+    }
+  }
+
+  return scrubbed;
+}
+
 function createTerminalSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
   runtimeEnv?: Record<string, string> | null,
@@ -1080,7 +1127,7 @@ function createTerminalSpawnEnv(
       spawnEnv[key] = value;
     }
   }
-  return spawnEnv;
+  return stripAppImageRuntimeEnv(spawnEnv);
 }
 
 function normalizedRuntimeEnv(

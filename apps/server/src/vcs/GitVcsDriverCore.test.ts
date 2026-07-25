@@ -6,6 +6,9 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
@@ -20,6 +23,21 @@ const TestLayer = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfigLayer),
   Layer.provideMerge(NodeServices.layer),
 );
+
+const makeNonRepositoryHandle = () =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(128)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.empty,
+    stderr: Stream.encodeText(Stream.make("fatal: not a git repository")),
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
 
 const makeTmpDir = (
   prefix = "git-vcs-driver-test-",
@@ -78,7 +96,62 @@ const initRepoWithCommit = (
     return { initialBranch };
   });
 
+it.effect("uses stable diagnostics for every parsed non-repository command", () => {
+  const commands: Array<{ readonly args: ReadonlyArray<string>; readonly lcAll?: string }> = [];
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.sync(() => {
+      if (!ChildProcess.isStandardCommand(command)) {
+        return assert.fail("expected a standard Git command");
+      }
+      commands.push({
+        args: command.args,
+        ...(command.options.env?.LC_ALL ? { lcAll: command.options.env.LC_ALL } : {}),
+      });
+      return makeNonRepositoryHandle();
+    }),
+  );
+  const nodeServicesLayer = Layer.merge(
+    NodeServices.layer,
+    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+  );
+  const layer = GitVcsDriver.layer.pipe(
+    Layer.provide(ServerConfigLayer),
+    Layer.provideMerge(nodeServicesLayer),
+  );
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const cwd = "/repo";
+
+    yield* driver.statusDetailsLocal(cwd);
+    yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false });
+    yield* driver.listRefs({ cwd });
+
+    assert.deepStrictEqual(commands, [
+      { args: ["status", "--porcelain=2", "--branch"], lcAll: "C" },
+      { args: ["rev-parse", "--abbrev-ref", "HEAD"], lcAll: "C" },
+      { args: ["branch", "--no-color", "--no-column"], lcAll: "C" },
+    ]);
+  }).pipe(Effect.provide(layer));
+});
+
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
+  describe("process environment", () => {
+    it.effect("preserves the caller locale for general Git subprocesses", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+
+        const locale = yield* git(
+          cwd,
+          ["-c", 'alias.print-locale=!printf "%s" "$LC_ALL"', "print-locale"],
+          { LC_ALL: "zh_CN.UTF-8" },
+        );
+
+        assert.equal(locale, "zh_CN.UTF-8");
+      }),
+    );
+  });
+
   describe("structured errors", () => {
     it.effect("preserves structured spawn context and the platform cause", () =>
       Effect.gen(function* () {
@@ -524,6 +597,26 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("marks the origin default ref as default when no local copy exists", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["remote", "set-head", "origin", initialBranch]);
+        yield* git(cwd, ["checkout", "-b", "feature/only-local"]);
+        yield* git(cwd, ["branch", "-D", initialBranch]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const refs = yield* driver.listRefs({ cwd });
+        const remoteDefault = refs.refs.find((ref) => ref.name === `origin/${initialBranch}`);
+        assert.equal(remoteDefault?.isRemote, true);
+        assert.equal(remoteDefault?.isDefault, true);
+      }),
+    );
+
     it.effect("creates, checks out, renames, and lists refs", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -598,6 +691,61 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
     );
   });
 
+  describe("remote operations", () => {
+    it.effect("ensureRemote reuses an existing remote across ssh/https transport variants", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* git(cwd, ["remote", "add", "origin", "https://github.com/pingdotgg/t3code.git"]);
+
+        const reusedForSsh = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "pingdotgg",
+          url: "git@github.com:pingdotgg/t3code.git",
+        });
+        assert.equal(reusedForSsh, "origin");
+
+        const reusedForSshScheme = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "pingdotgg",
+          url: "ssh://git@github.com/pingdotgg/t3code",
+        });
+        assert.equal(reusedForSshScheme, "origin");
+
+        const reusedForBareSshScheme = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "pingdotgg",
+          url: "ssh://github.com/pingdotgg/t3code",
+        });
+        assert.equal(reusedForBareSshScheme, "origin");
+
+        const reusedForSshPort = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "pingdotgg",
+          url: "ssh://git@github.com:22/pingdotgg/t3code",
+        });
+        assert.equal(reusedForSshPort, "origin");
+
+        const reusedForSshWithPort = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "pingdotgg",
+          url: "ssh://git@github.com:22/pingdotgg/t3code.git",
+        });
+        assert.equal(reusedForSshWithPort, "origin");
+
+        const addedForFork = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "octocat",
+          url: "git@github.com:octocat/t3code.git",
+        });
+        assert.equal(addedForFork, "octocat");
+        assert.equal(yield* git(cwd, ["remote"]), "octocat\norigin");
+      }),
+    );
+  });
+
   describe("commit context", () => {
     it.effect("stages selected files and commits only those files", () =>
       Effect.gen(function* () {
@@ -619,6 +767,24 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const status = yield* git(cwd, ["status", "--porcelain"]);
         assert.include(status, "?? b.txt");
         assert.notInclude(status, "a.txt");
+      }),
+    );
+
+    it.effect("treats selected file paths literally", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* writeTextFile(cwd, "selected[1].txt", "literal\n");
+        yield* writeTextFile(cwd, "selected1.txt", "pattern match\n");
+
+        yield* driver.prepareCommitContext(cwd, ["selected[1].txt"]);
+
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "selected[1].txt");
+
+        const status = yield* git(cwd, ["status", "--porcelain"]);
+        assert.include(status, "?? selected1.txt");
       }),
     );
   });

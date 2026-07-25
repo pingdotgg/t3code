@@ -112,6 +112,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     registerDevice: () => Effect.die("unused"),
     unregisterDevice: () => Effect.die("unused"),
     registerLiveActivity: () => Effect.die("unused"),
+    getAgentActivitySnapshot: () => Effect.die("unused"),
     resetTokenCache: Effect.void,
   } satisfies ManagedRelay.ManagedRelayClient["Service"]);
   const connectivity = Connectivity.Connectivity.of({
@@ -261,6 +262,7 @@ describe("RelayEnvironmentDiscovery", () => {
             new ManagedRelay.ManagedRelayRequestTimeoutError({
               activity: "Relay environment listing",
               timeoutMs: ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS,
+              traceId: null,
             }),
           ),
         getEnvironmentStatus: () => Effect.die("unused"),
@@ -272,6 +274,7 @@ describe("RelayEnvironmentDiscovery", () => {
         registerDevice: () => Effect.die("unused"),
         unregisterDevice: () => Effect.die("unused"),
         registerLiveActivity: () => Effect.die("unused"),
+        getAgentActivitySnapshot: () => Effect.die("unused"),
         resetTokenCache: Effect.void,
       } satisfies ManagedRelay.ManagedRelayClient["Service"]);
       const layer = RelayEnvironmentDiscovery.layer.pipe(
@@ -335,6 +338,55 @@ describe("RelayEnvironmentDiscovery", () => {
         const failed = yield* SubscriptionRef.get(discovery.state);
         expect(failed.environments.size).toBe(0);
         expect(Option.isSome(failed.error)).toBe(true);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("refreshes proactively when credentials change before any manual refresh", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+
+        // Let the scoped wakeup subscription start before emitting, mirroring
+        // a real sign-in which always happens long after service start.
+        yield* Effect.yieldNow;
+
+        // Sign-in activates the session and emits credentials-changed; the
+        // list must populate without any screen having asked for a refresh.
+        yield* harness.wake("credentials-changed");
+        const populated = yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter(
+            (state) => state.environments.size === environments.length && !state.refreshing,
+          ),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        expect(Option.isNone(populated.error)).toBe(true);
+        expect(yield* Ref.get(harness.listCalls)).toBe(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("settles to a clean empty state when refreshed while signed out", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        yield* Ref.set(harness.clerkToken, null);
+        yield* discovery.refresh;
+
+        const state = yield* SubscriptionRef.get(discovery.state);
+        expect(state.environments.size).toBe(0);
+        expect(state.refreshing).toBe(false);
+        expect(Option.isNone(state.error)).toBe(true);
       }).pipe(Effect.provide(harness.layer));
     }),
   );

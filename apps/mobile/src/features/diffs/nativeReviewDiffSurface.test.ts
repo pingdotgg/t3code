@@ -4,18 +4,12 @@ const expoMocks = vi.hoisted(() => ({
   requireNativeView: vi.fn(),
 }));
 const nativeView = () => null;
-type ExpoTestGlobal = Omit<typeof globalThis, "expo"> & {
-  expo?: {
-    getViewConfig?: (moduleName: string) => unknown;
-  };
-};
-const expoGlobal = globalThis as ExpoTestGlobal;
-const originalExpo = expoGlobal.expo;
+const originalExpo = globalThis.expo;
 
 function setExpoViewConfigAvailable() {
-  expoGlobal.expo = {
+  globalThis.expo = {
     getViewConfig: vi.fn().mockReturnValue({ validAttributes: {}, directEventTypes: {} }),
-  };
+  } as unknown as typeof globalThis.expo;
 }
 
 vi.mock("expo", () => ({
@@ -26,11 +20,11 @@ describe("resolveNativeReviewDiffView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    expoGlobal.expo = undefined;
+    globalThis.expo = undefined as unknown as typeof globalThis.expo;
   });
 
   afterEach(() => {
-    expoGlobal.expo = originalExpo;
+    globalThis.expo = originalExpo;
   });
 
   it("returns null when the native review diff view config is unavailable", async () => {
@@ -51,14 +45,14 @@ describe("resolveNativeReviewDiffView", () => {
   });
 
   it("does not fall back to stale legacy native review diff view names", async () => {
-    expoGlobal.expo = {
+    globalThis.expo = {
       getViewConfig: vi.fn().mockImplementation((moduleName: string) => {
         if (moduleName === "T3ReviewDiffView") {
           return { validAttributes: {}, directEventTypes: {} };
         }
         return null;
       }),
-    };
+    } as unknown as typeof globalThis.expo;
     expoMocks.requireNativeView.mockReturnValue(nativeView);
     const { resolveNativeReviewDiffView } = await import("./nativeReviewDiffSurface");
     expect(resolveNativeReviewDiffView()).toBeNull();
@@ -102,5 +96,22 @@ describe("isPendingNativeViewRegistration", () => {
         new Error("Unable to find the 'T3ReviewDiffView' view for this native tag"),
       ),
     ).toBe(false);
+    expect(
+      isPendingNativeViewRegistration(
+        new Error(
+          "Unable to find the class expo.modules.t3reviewdiff.T3ReviewDiffView view with tag 1150",
+        ),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("isNativeReviewDiffDrawEvent", () => {
+  it("accepts only native events emitted after diff rows draw", async () => {
+    const { isNativeReviewDiffDrawEvent } = await import("./nativeReviewDiffSurface");
+
+    expect(isNativeReviewDiffDrawEvent({ message: "draw-metrics" })).toBe(true);
+    expect(isNativeReviewDiffDrawEvent({ message: "visible-range" })).toBe(true);
+    expect(isNativeReviewDiffDrawEvent({ message: "rows-decoded" })).toBe(false);
   });
 });

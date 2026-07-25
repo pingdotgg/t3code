@@ -1,5 +1,3 @@
-// @effect-diagnostics anyUnknownInErrorContext:off - Alchemy Axiom resource helpers expose framework-owned broad channels.
-
 import * as Alchemy from "alchemy";
 import * as Axiom from "alchemy/Axiom";
 import * as Output from "alchemy/Output";

@@ -1,6 +1,4 @@
 import * as Alchemy from "alchemy";
-// @effect-diagnostics anyUnknownInErrorContext:off - Alchemy Cloudflare clients expose framework-owned broad error channels at the binding boundary.
-
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
@@ -226,11 +224,6 @@ export class ManagedEndpointDnsClientError extends Schema.TaggedErrorClass<Manag
     return `Managed endpoint DNS provider '${this.operation}' request failed${target === undefined ? "" : ` for '${target}'`}`;
   }
 }
-
-type ManagedEndpointDnsRecord = {
-  readonly id?: string | null;
-  readonly name?: string | null;
-};
 
 export class ManagedEndpointDnsClient extends Context.Service<
   ManagedEndpointDnsClient,
@@ -783,13 +776,8 @@ export const layerCloudflareBindings = (
             dnsClient.listDnsRecords({ search: hostname }).pipe(
               Effect.map((response) =>
                 response.result.filter(
-                  (
-                    record: ManagedEndpointDnsRecord,
-                  ): record is ManagedEndpointDnsRecord & {
-                    readonly id: string;
-                  } =>
+                  (record): record is typeof record & { readonly id: string } =>
                     typeof record.id === "string" &&
-                    typeof record.name === "string" &&
                     normalizeHostname(record.name) === normalizeHostname(hostname),
                 ),
               ),

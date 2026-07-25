@@ -35,7 +35,7 @@ function cloudEnvironment(environmentId: string): RelayClientEnvironmentRecord {
 }
 
 describe("mobile environment settings sections", () => {
-  it("keeps saved relay-managed connections under T3 Cloud", () => {
+  it("keeps saved relay-managed connections under T3 Connect", () => {
     const local = connectedEnvironment({
       environmentId: "environment-local",
       isRelayManaged: false,

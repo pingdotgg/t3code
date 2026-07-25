@@ -68,7 +68,7 @@ import {
   RELAY_URL_SECRET,
 } from "./config.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
-import { setCliDesiredCloudLink } from "./CliState.ts";
+import { readCliDesiredLinkMode, setCliDesiredCloudLink } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
@@ -299,8 +299,23 @@ function isAllowedEndpointOrigin(input: {
   return input.origin.localHttpPort === endpointRequestPort(url);
 }
 
-function providerKindMatchesRequestedLinkScopes(request: RelayLinkProofRequest): boolean {
-  return request.endpoint.providerKind === "cloudflare_tunnel";
+// A managed (Cloudflare tunnel) endpoint is provisioned by the relay and must
+// point at a loopback origin. A manual endpoint is reached out of band (e.g.
+// Tailscale) or not advertised at all for publish-only links, so it is not
+// tied to the managed-tunnel scope.
+export function isSupportedLinkProviderKind(request: RelayLinkProofRequest): boolean {
+  return (
+    request.endpoint.providerKind === "cloudflare_tunnel" ||
+    request.endpoint.providerKind === "manual"
+  );
+}
+
+export function linkProofScopes(
+  request: RelayLinkProofRequest,
+): RelayEnvironmentLinkProofPayload["scopes"] {
+  return request.endpoint.providerKind === "cloudflare_tunnel"
+    ? ["agent_activity_notifications", "managed_tunnels"]
+    : ["agent_activity_notifications"];
 }
 
 function hasExactScope(input: {
@@ -352,7 +367,7 @@ const makeCloudLinkProof = Effect.fn("environment.cloud.makeLinkProof")(function
 ) {
   const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(dependencies.secrets);
   if (
-    !providerKindMatchesRequestedLinkScopes(request) ||
+    !isSupportedLinkProviderKind(request) ||
     !isAllowedEndpointOrigin({
       origin: request.origin,
       requestUrl,
@@ -379,7 +394,7 @@ const makeCloudLinkProof = Effect.fn("environment.cloud.makeLinkProof")(function
     environmentPublicKey: normalizePemForSignedPayload(keyPair.publicKey),
     endpoint: request.endpoint,
     origin: request.origin,
-    scopes: ["agent_activity_notifications", "managed_tunnels"],
+    scopes: linkProofScopes(request),
   } satisfies RelayEnvironmentLinkProofPayload;
   return yield* signRelayJwt({
     privateKey: keyPair.privateKey,
@@ -537,6 +552,8 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
         }),
       ),
     );
+    const mode = yield* readCliDesiredLinkMode;
+    const managedTunnelsEnabled = mode !== "publish_only";
     const relayUrl = yield* requireRelayUrl;
     const challenge = yield* relayClientRequest(dependencies, {
       url: `${relayUrl}/v1/client/environment-link-challenges`,
@@ -544,7 +561,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       payload: {
         notificationsEnabled: true,
         liveActivitiesEnabled: true,
-        managedTunnelsEnabled: true,
+        managedTunnelsEnabled,
       },
       schema: RelayEnvironmentLinkChallengeResponse,
     });
@@ -556,7 +573,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
         endpoint: {
           httpBaseUrl: localOrigin,
           wsBaseUrl: localWsOrigin,
-          providerKind: "cloudflare_tunnel",
+          providerKind: managedTunnelsEnabled ? "cloudflare_tunnel" : "manual",
         },
         origin: {
           localHttpHost: localUrl.hostname,
@@ -572,11 +589,11 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
         proof,
         notificationsEnabled: true,
         liveActivitiesEnabled: true,
-        managedTunnelsEnabled: true,
+        managedTunnelsEnabled,
       },
       schema: RelayEnvironmentLinkResponse,
     });
-    yield* setCliDesiredCloudLink(true);
+    yield* setCliDesiredCloudLink(true, mode);
     return yield* applyCloudRelayConfig(dependencies, {
       relayUrl,
       relayIssuer: link.relayIssuer,
@@ -608,20 +625,25 @@ export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileD
 const readCloudLinkState = Effect.fn("environment.cloud.readLinkState")(function* (
   dependencies: CloudHttpDependencies,
 ) {
-  const [cloudUserId, relayUrl, relayIssuer, publishAgentActivity] = yield* Effect.all(
-    [
-      dependencies.secrets.get(CLOUD_LINKED_USER_ID),
-      dependencies.secrets.get(RELAY_URL_SECRET),
-      dependencies.secrets.get(RELAY_ISSUER_SECRET),
-      dependencies.secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
-    ],
-    { concurrency: 4 },
-  );
+  const [cloudUserId, relayUrl, relayIssuer, endpointRuntimeConfig, publishAgentActivity] =
+    yield* Effect.all(
+      [
+        dependencies.secrets.get(CLOUD_LINKED_USER_ID),
+        dependencies.secrets.get(RELAY_URL_SECRET),
+        dependencies.secrets.get(RELAY_ISSUER_SECRET),
+        dependencies.secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+        dependencies.secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
+      ],
+      { concurrency: 5 },
+    );
   return {
     linked: Option.isSome(cloudUserId),
     cloudUserId: Option.isSome(cloudUserId) ? bytesToString(cloudUserId.value) : null,
     relayUrl: Option.isSome(relayUrl) ? bytesToString(relayUrl.value) : null,
     relayIssuer: Option.isSome(relayIssuer) ? bytesToString(relayIssuer.value) : null,
+    // The managed tunnel runtime config is only stored for managed links; a
+    // publish-only link leaves it absent.
+    managedTunnelActive: Option.isSome(endpointRuntimeConfig),
     publishAgentActivity: Option.isSome(publishAgentActivity)
       ? bytesToString(publishAgentActivity.value) === "true"
       : false,

@@ -31,7 +31,7 @@
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
     "cross-env": "^10.1.0",
-    "electron-builder": "26.8.1",
+    "electron-builder": "26.15.6",
     "tailwindcss": "^4.0.0",
     "vite-plus": "catalog:"
   },

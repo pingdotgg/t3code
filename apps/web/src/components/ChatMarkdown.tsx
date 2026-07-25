@@ -35,6 +35,7 @@ import React, {
 import ReactMarkdown, {
   defaultUrlTransform,
   type Components as ReactMarkdownComponents,
+  type Options as ReactMarkdownOptions,
 } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -43,6 +44,10 @@ import remarkGfm from "remark-gfm";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import {
+  resolveExternalWebLinkHost,
+  showExternalLinkContextMenu,
+} from "./chat/externalLinkContextMenu";
 import { hasSpecificPierreIconForFileName, syntheticFileNameForLanguageId } from "../pierre-icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
@@ -61,6 +66,7 @@ import {
   serializeTableElementToCsv,
   serializeTableElementToMarkdown,
 } from "../markdown-clipboard";
+import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
 import {
   normalizeMarkdownLinkDestination,
   resolveMarkdownFileLinkMeta,
@@ -76,6 +82,7 @@ import { usePreparedConnection } from "../state/session";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
   isBrowserPreviewFile,
@@ -164,6 +171,24 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     href: [...(defaultSchema.protocols?.href ?? []), "file"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
+
+const CHAT_MARKDOWN_REMARK_PLUGINS = [
+  remarkGfm,
+  remarkNormalizeListItemIndentation,
+  remarkPreserveCodeMeta,
+] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+
+const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
+  remarkGfm,
+  remarkNormalizeListItemIndentation,
+  remarkBreaks,
+  remarkPreserveCodeMeta,
+] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+
+const CHAT_MARKDOWN_REHYPE_PLUGINS = [
+  rehypeRaw,
+  [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
@@ -836,17 +861,6 @@ const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
 /** Hosts whose favicon request already failed this session — skip straight to the globe. */
 const failedFaviconHosts = new Set<string>();
 
-function resolveExternalLinkHost(href: string | undefined): string | null {
-  if (!href) return null;
-  try {
-    const url = new URL(href);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    return url.hostname || null;
-  } catch {
-    return null;
-  }
-}
-
 const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: string }) {
   const [failedHost, setFailedHost] = useState<string | null>(null);
   return (
@@ -1398,7 +1412,7 @@ function ChatMarkdown({
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
         const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
         if (!fileLinkMeta) {
-          const faviconHost = resolveExternalLinkHost(href);
+          const faviconHost = resolveExternalWebLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
           const onClick = props.onClick;
           const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
@@ -1415,37 +1429,30 @@ function ChatMarkdown({
                 }
               }}
               onContextMenu={(event) => {
-                if (!canOpenInPreview || !href) return;
+                if (!canOpenInPreview || !href || !faviconHost) return;
                 event.preventDefault();
                 event.stopPropagation();
                 const api = readLocalApi();
                 if (!api) return;
-                void (async () => {
-                  let operation = "show-link-context-menu";
-                  try {
-                    const clicked = await api.contextMenu.show(
-                      [
-                        { id: "open-in-browser", label: "Open in integrated browser" },
-                        { id: "open-external", label: "Open in system browser" },
-                      ] as const,
-                      { x: event.clientX, y: event.clientY },
-                    );
-                    if (clicked === "open-in-browser") {
-                      operation = "open-link-in-preview";
-                      const result = await openExternalLinkInPreview(href);
-                      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-                        reportMarkdownActionFailure({ operation, target: href }, result.cause);
-                      }
-                      return;
+                void showExternalLinkContextMenu({
+                  href,
+                  position: { x: event.clientX, y: event.clientY },
+                  showContextMenu: (items, position) => api.contextMenu.show(items, position),
+                  openInPreview: async (target) => {
+                    const result = await openExternalLinkInPreview(target);
+                    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                      reportMarkdownActionFailure(
+                        { operation: "open-link-in-preview", target },
+                        result.cause,
+                      );
                     }
-                    if (clicked === "open-external") {
-                      operation = "open-link-external";
-                      await api.shell.openExternal(href);
-                    }
-                  } catch (cause) {
+                  },
+                  openExternal: (target) => api.shell.openExternal(target),
+                  copyLink: (target) => writeTextToClipboard(target, "link"),
+                  reportFailure: (operation, cause) => {
                     reportMarkdownActionFailure({ operation, target: href }, cause);
-                  }
-                })();
+                  },
+                });
               }}
             >
               {faviconHost ? (
@@ -1569,11 +1576,9 @@ function ChatMarkdown({
     >
       <ReactMarkdown
         remarkPlugins={
-          lineBreaks
-            ? [remarkGfm, remarkBreaks, remarkPreserveCodeMeta]
-            : [remarkGfm, remarkPreserveCodeMeta]
+          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
         }
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA]]}
+        rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
         components={markdownComponents as unknown as ReactMarkdownComponents}
         urlTransform={markdownUrlTransform}
       >

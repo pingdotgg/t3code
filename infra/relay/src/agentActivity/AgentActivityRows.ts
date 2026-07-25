@@ -7,7 +7,7 @@ import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayAgentActivityRows, relayEnvironmentLinks } from "../persistence/schema.ts";
@@ -38,6 +38,18 @@ export class AgentActivityRowDeletePersistenceError extends Schema.TaggedErrorCl
   }
 }
 
+export class AgentActivityRowPruneTerminalPersistenceError extends Schema.TaggedErrorClass<AgentActivityRowPruneTerminalPersistenceError>()(
+  "AgentActivityRowPruneTerminalPersistenceError",
+  {
+    updatedBefore: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to prune terminal agent activity rows updated before ${this.updatedBefore}.`;
+  }
+}
+
 export class AgentActivityRowListPersistenceError extends Schema.TaggedErrorClass<AgentActivityRowListPersistenceError>()(
   "AgentActivityRowListPersistenceError",
   {
@@ -57,6 +69,9 @@ export class AgentActivityRows extends Context.Service<
       readonly environmentPublicKey: string;
       readonly state: RelayAgentActivityState;
     }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
+    readonly pruneTerminal: (input: {
+      readonly updatedBefore: string;
+    }) => Effect.Effect<void, AgentActivityRowPruneTerminalPersistenceError>;
     readonly remove: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
@@ -68,6 +83,11 @@ export class AgentActivityRows extends Context.Service<
       ReadonlyArray<RelayAgentActivityState>,
       AgentActivityRowListPersistenceError
     >;
+    readonly getForUserThread: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly threadId: string;
+    }) => Effect.Effect<RelayAgentActivityState | null, AgentActivityRowListPersistenceError>;
   }
 >()("t3code-relay/agentActivity/AgentActivityRows") {}
 
@@ -163,6 +183,29 @@ export const make = Effect.gen(function* () {
         );
     }),
 
+    pruneTerminal: Effect.fn("relay.agent_activity_rows.prune_terminal")(function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.agent_activity_prune.before": input.updatedBefore,
+      });
+      yield* db
+        .delete(relayAgentActivityRows)
+        .where(
+          and(
+            sql`${relayAgentActivityRows.stateJson} ->> 'phase' IN ('completed', 'failed')`,
+            lt(relayAgentActivityRows.updatedAt, input.updatedBefore),
+          ),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new AgentActivityRowPruneTerminalPersistenceError({
+                updatedBefore: input.updatedBefore,
+                cause,
+              }),
+          ),
+        );
+    }),
+
     listForUser: Effect.fn("relay.agent_activity_rows.list_for_user")(function* (input) {
       return yield* db
         .select({ stateJson: relayAgentActivityRows.stateJson })
@@ -194,6 +237,54 @@ export const make = Effect.gen(function* () {
           Effect.map((rows) =>
             rows.flatMap((row) => Option.toArray(decodeRelayAgentActivityStateJson(row))),
           ),
+          Effect.mapError(
+            (cause) =>
+              new AgentActivityRowListPersistenceError({
+                userId: input.userId,
+                cause,
+              }),
+          ),
+        );
+    }),
+
+    getForUserThread: Effect.fn("relay.agent_activity_rows.get_for_user_thread")(function* (input) {
+      return yield* db
+        .select({ stateJson: relayAgentActivityRows.stateJson })
+        .from(relayAgentActivityRows)
+        .innerJoin(
+          relayEnvironmentLinks,
+          and(
+            eq(relayEnvironmentLinks.environmentId, relayAgentActivityRows.environmentId),
+            eq(
+              relayEnvironmentLinks.environmentPublicKey,
+              relayAgentActivityRows.environmentPublicKey,
+            ),
+          ),
+        )
+        .where(
+          and(
+            eq(relayEnvironmentLinks.userId, input.userId),
+            isNull(relayEnvironmentLinks.revokedAt),
+            eq(relayAgentActivityRows.environmentId, input.environmentId),
+            eq(relayAgentActivityRows.threadId, input.threadId),
+          ),
+        )
+        .orderBy(desc(relayAgentActivityRows.updatedAt))
+        .pipe(
+          Effect.flatMap((rows) =>
+            Effect.forEach(rows, (row) => encodeJsonValue(row.stateJson), {
+              concurrency: "unbounded",
+            }),
+          ),
+          Effect.map((rows) => {
+            for (const row of rows) {
+              const decoded = decodeRelayAgentActivityStateJson(row);
+              if (Option.isSome(decoded)) {
+                return decoded.value;
+              }
+            }
+            return null;
+          }),
           Effect.mapError(
             (cause) =>
               new AgentActivityRowListPersistenceError({

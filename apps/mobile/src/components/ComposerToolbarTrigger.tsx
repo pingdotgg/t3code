@@ -1,4 +1,3 @@
-import { SymbolView } from "expo-symbols";
 import type { ComponentProps, ReactNode } from "react";
 import { useCallback, useMemo, useState } from "react";
 import {
@@ -16,6 +15,7 @@ import {
 import { useThemeColor } from "../lib/useThemeColor";
 import { cn } from "../lib/cn";
 import { AppText as Text } from "./AppText";
+import { SymbolView } from "./AppSymbol";
 
 export const COMPOSER_TOOLBAR_CONTROL_HEIGHT = 44;
 export const COMPOSER_TOOLBAR_GAP = 8;
@@ -31,11 +31,9 @@ export function ComposerToolbarRow(props: {
 }) {
   return (
     <View
+      className="flex-row items-center gap-1.5"
       style={[
         {
-          alignItems: "center",
-          flexDirection: "row",
-          gap: 6,
           paddingBottom: props.paddingBottom ?? 8,
           paddingHorizontal: props.paddingHorizontal ?? 6,
           paddingTop: props.paddingTop ?? 8,
@@ -89,7 +87,7 @@ export function ComposerToolbarScroller(props: {
   }, []);
 
   return (
-    <View className="min-w-0 flex-1" style={{ position: "relative" }}>
+    <View className="relative min-w-0 flex-1">
       <ScrollView
         horizontal
         keyboardShouldPersistTaps="always"
@@ -150,6 +148,7 @@ export function ComposerToolbarButton(props: {
   readonly showChevron?: boolean;
   readonly textTransform?: "none" | "uppercase";
   readonly variant?: "default" | "primary" | "danger";
+  readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {
   const isDarkMode = useColorScheme() === "dark";
@@ -183,7 +182,11 @@ export function ComposerToolbarButton(props: {
       disabled={props.disabled}
       onPress={props.onPress}
       className={cn(
-        "h-11 flex-row items-center justify-center rounded-full active:opacity-70",
+        // Default width cap lives in the class chain (not the inline style)
+        // so callers can lift it with max-w-full — flex-filling pills in the
+        // thread composer stretch to the row's edge. The numeric maxWidth
+        // prop still wins via the inline style below.
+        "h-11 max-w-[172px] flex-row items-center justify-center rounded-full active:opacity-70",
         isCircle ? "w-11" : "gap-2 px-3.5",
         variant === "primary"
           ? props.disabled
@@ -194,6 +197,7 @@ export function ComposerToolbarButton(props: {
             : props.active
               ? "bg-subtle-strong"
               : "bg-subtle",
+        props.className,
       )}
       style={({ pressed }) => [
         {
@@ -204,7 +208,7 @@ export function ComposerToolbarButton(props: {
                 : defaultBorderColor
               : filledBorderColor,
           borderWidth: 1,
-          maxWidth: props.maxWidth ?? 172,
+          maxWidth: props.maxWidth,
           minWidth: props.minWidth,
           opacity: props.disabled ? 0.55 : pressed ? 0.72 : 1,
           shadowColor: "#000",

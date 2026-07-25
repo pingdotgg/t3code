@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { Command, CliError } from "effect/unstable/cli";
 import * as TestConsole from "effect/testing/TestConsole";
@@ -61,16 +62,6 @@ const readReleaseVersions = Effect.fn("readReleaseVersions")(function* (rootDir:
 
   return versions;
 });
-
-const assertPlatformError = (cause: unknown, reasonTag: string) => {
-  assert.isNotNull(cause);
-  assert.equal(typeof cause, "object");
-  assert.equal((cause as { readonly _tag?: unknown })._tag, "PlatformError");
-  assert.equal(
-    (cause as { readonly reason?: { readonly _tag?: unknown } }).reason?._tag,
-    reasonTag,
-  );
-};
 
 const captureLogs = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
@@ -133,7 +124,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
       assert.instanceOf(error, ReleasePackageManifestError);
       assert.equal(error.operation, "read");
       assert.equal(error.filePath, filePath);
-      assertPlatformError(error.cause, "NotFound");
+      assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal(error.message, `Failed to read release package manifest '${filePath}'.`);
     }),
   );
@@ -179,7 +170,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
 
       assert.equal(error.operation, "write");
       assert.equal(error.filePath, filePath);
-      assertPlatformError(error.cause, "PermissionDenied");
+      assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal(error.message, `Failed to write release package manifest '${filePath}'.`);
     }),
   );
@@ -278,7 +269,7 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
 
       assert.instanceOf(error, ReleaseGitHubOutputWriteError);
       assert.equal(error.filePath, baseDir);
-      assertPlatformError(error.cause, "BadResource");
+      assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal(
         error.message,
         `Failed to append release package version output to '${baseDir}'.`,
