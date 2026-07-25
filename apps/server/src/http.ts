@@ -38,6 +38,7 @@ import {
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 import {
+  contentCacheKey,
   isCompressibleContentType,
   makeStaticCompressionCache,
   negotiateStaticEncoding,
@@ -275,10 +276,9 @@ export const staticAndDevRouteLayer = HttpRouter.add(
     const fileInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
     if (!fileInfo || fileInfo.type !== "File") {
       const indexPath = path.resolve(staticRoot, "index.html");
-      const [indexInfo, indexData] = yield* Effect.all([
-        fileSystem.stat(indexPath).pipe(Effect.orElseSucceed(() => null)),
-        fileSystem.readFile(indexPath).pipe(Effect.orElseSucceed(() => null)),
-      ]);
+      const indexData = yield* fileSystem
+        .readFile(indexPath)
+        .pipe(Effect.orElseSucceed(() => null));
       if (!indexData) {
         return HttpServerResponse.text("Not Found", { status: 404 });
       }
@@ -287,10 +287,12 @@ export const staticAndDevRouteLayer = HttpRouter.add(
         contentType: "text/html; charset=utf-8",
         // The SPA fallback always revalidates so a new build is picked up.
         cacheControl: resolveStaticCacheControl("index.html"),
-        // Every deep link lands here, so the document is worth compressing
-        // too; without a stat to key on, serve it as-is rather than risk
-        // returning a stale compression.
-        cacheKey: indexInfo ? staticCacheKey(indexPath, indexInfo) : null,
+        // Every deep link lands here, so the document is worth compressing.
+        // This is the one path whose file keeps a stable name across builds,
+        // so it is keyed by content: metadata read separately from the bytes
+        // could describe a different build than the one being served. The
+        // document is small enough for hashing it to be cheap.
+        cacheKey: contentCacheKey(indexData),
         acceptEncoding: request.headers["accept-encoding"],
       });
     }
@@ -312,9 +314,12 @@ export const staticAndDevRouteLayer = HttpRouter.add(
 );
 
 /**
- * Identifies a file's exact contents for the compression cache. Mtime and
- * size together mean a dev-server rebuild is recompressed rather than served
- * from the previous build's entry.
+ * Identifies a build of a file for the compression cache, without hashing
+ * payloads that can run to megabytes. The stat is taken before the bytes are
+ * read, so a rebuild landing between the two can only orphan an entry under
+ * the superseded key, never publish those bytes under the newer one. Files
+ * whose contents change without their name are keyed by content instead; the
+ * rest carry a content hash in their filename already.
  */
 function staticCacheKey(filePath: string, info: FileSystem.File.Info): string {
   const mtimeMs = info.mtime.pipe(

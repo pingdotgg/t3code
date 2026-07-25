@@ -1,11 +1,30 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  contentCacheKey,
   isCompressibleContentType,
   makeStaticCompressionCache,
   negotiateStaticEncoding,
   resolveStaticCacheControl,
 } from "./staticAssetDelivery.ts";
+
+describe("contentCacheKey", () => {
+  const encode = (value: string) => new TextEncoder().encode(value);
+
+  it("keys identical content the same way", () => {
+    expect(contentCacheKey(encode("<html>a</html>"))).toBe(
+      contentCacheKey(encode("<html>a</html>")),
+    );
+  });
+
+  it("separates content of the same length", () => {
+    // A rebuild can reuse a filename, a size, and even a timestamp, so the
+    // key has to come from the bytes themselves.
+    expect(contentCacheKey(encode("<html>a</html>"))).not.toBe(
+      contentCacheKey(encode("<html>b</html>")),
+    );
+  });
+});
 
 describe("resolveStaticCacheControl", () => {
   it("marks content-hashed bundle assets immutable", () => {

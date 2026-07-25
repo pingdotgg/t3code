@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import * as NodeZlib from "node:zlib";
 import * as NodeUtil from "node:util";
 
@@ -42,6 +43,17 @@ export function resolveStaticCacheControl(relativePath: string): string {
   return normalized.startsWith("assets/") && HASHED_ASSET_PATTERN.test(normalized)
     ? IMMUTABLE_CACHE_CONTROL
     : REVALIDATE_CACHE_CONTROL;
+}
+
+/**
+ * Cache key derived from the bytes being served rather than from file
+ * metadata. Used where the served content and the metadata could otherwise
+ * disagree, which would let one request's compression be reused for
+ * different content. Only worth it for small payloads, since it hashes the
+ * whole buffer on every request.
+ */
+export function contentCacheKey(data: Uint8Array): string {
+  return NodeCrypto.createHash("sha1").update(data).digest("hex");
 }
 
 export function isCompressibleContentType(contentType: string): boolean {
