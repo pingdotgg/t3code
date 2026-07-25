@@ -20,6 +20,7 @@ import {
   ProviderInstanceId,
   ServerSettings,
   type ServerProvider,
+  type ServerProviderModel,
   type ServerProviderSlashCommand,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
@@ -31,7 +32,8 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
-import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkClaudeProviderStatus, getClaudeModelCapabilities } from "./ClaudeProvider.ts";
+import { parseClaudeSdkDiscoveredModels } from "../claudeModelDiscovery.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
 import {
@@ -100,6 +102,7 @@ type TestClaudeCapabilities = {
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -1706,6 +1709,81 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   stderr: "",
                   code: 0,
                 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("merges models discovered from the claude initialization result", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              discoveredModels: parseClaudeSdkDiscoveredModels([
+                {
+                  value: "claude-registry-test-opus[1m]",
+                  displayName: "Opus",
+                  supportsEffort: true,
+                  supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+                  supportsFastMode: true,
+                },
+              ]),
+            }),
+          );
+
+          assert.strictEqual(status.status, "ready");
+          const slugs = new Set(status.models.map((model) => model.slug));
+          assert.ok(slugs.has("claude-registry-test-opus"));
+          // The mocked CLI reports v1.0.0, so version-gated built-ins stay hidden.
+          assert.ok(!slugs.has("claude-fable-5"));
+          // Discovered capabilities are registered for the runtime lookup used
+          // by the adapter and text generation at session start.
+          const capabilities = getClaudeModelCapabilities("claude-registry-test-opus");
+          const effort = capabilities.optionDescriptors?.find(
+            (descriptor) => descriptor.id === "effort",
+          );
+          assert.strictEqual(effort?.type, "select");
+          if (effort?.type === "select") {
+            assert.deepStrictEqual(
+              effort.options.map((option) => option.id),
+              ["low", "medium", "high", "xhigh", "max"],
+            );
+          }
+          assert.ok(
+            capabilities.optionDescriptors?.some((descriptor) => descriptor.id === "fastMode"),
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("includes version-gated built-ins the CLI reports via discovery", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              discoveredModels: parseClaudeSdkDiscoveredModels([
+                { value: "claude-fable-5[1m]", displayName: "Fable", supportsEffort: true },
+              ]),
+            }),
+          );
+
+          const slugs = status.models.map((model) => model.slug);
+          // Gated out by the mocked v1.0.0 CLI version, but the CLI itself
+          // reported it, so it is included with its curated capabilities.
+          assert.ok(slugs.includes("claude-fable-5"));
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
               throw new Error(`Unexpected args: ${joined}`);
             }),
           ),
