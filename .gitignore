@@ -32,6 +32,5 @@ apps/mobile/.showcase/
 artifacts/app-store/screenshots/
 node_modules/
 .alchemy/
-*.log
 .env*
 !.env.example

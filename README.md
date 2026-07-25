@@ -61,7 +61,7 @@ There's no public docs site yet, checkout the miscellaneous markdown files in [d
 - [Operations](./docs/operations/ci.md)
 - [Reference](./docs/reference/encyclopedia.md)
 
-## If you REALLY want to contribute still.... read this first
+## If you REALLY want to contribute still... read this first
 
 ### Install `vp`
 
