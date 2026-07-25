@@ -95,8 +95,8 @@ describe("isMergeReady", () => {
   });
 
   it("ignores reviewLifecycle for merge readiness, like mac MergeReadiness", () => {
-    // The review lifecycle gates the "Fix Reviews" follow-up (mac
-    // ReviewFollowUp), never the merge predicate — keep that parity.
+    // The review lifecycle is review-UX state, never part of the merge
+    // predicate — keep that parity with mac MergeReadiness.
     expect(isMergeReady(statusWith({ reviewLifecycle: "review-in-progress" }))).toBe(true);
     expect(isMergeReady(statusWith({ reviewLifecycle: "actionable-comments" }))).toBe(true);
   });
