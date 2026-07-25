@@ -1,13 +1,15 @@
 import SwiftUI
 
-/// File-first changes inspector with an optional checkpoint activity history.
-/// Selecting a file or activity row opens main-area review mode.
+/// Unified agent activity inspector: one continuous feed of what the agent
+/// is doing right now, what changed in the working tree, and the checkpoint
+/// history — no mode switcher. Live rows reuse the chat's tool-activity
+/// visual language (`ActivityIconChip`, shimmer, pulse) so the panel reads
+/// as the same stream as the timeline. Selecting a file or checkpoint opens
+/// main-area review mode.
 public struct ChangesTimelineView: View {
-    private enum Mode: String, CaseIterable, Identifiable {
-        case files = "Files"
-        case activity = "Activity"
-
-        var id: Self { self }
+    /// Scroll targets for the probe harness and deep links.
+    private enum FeedAnchor: String {
+        case now, changes, history
     }
 
     private let model: AppModel
@@ -17,7 +19,9 @@ public struct ChangesTimelineView: View {
     @UIState private var isConfirmingRestore = false
     @UIState private var expandedFileCheckpoints: Set<String> = []
     @UIState private var hoveredCheckpointID: String?
-    @UIState private var mode: Mode = .files
+    @UIState private var hoveredFilePath: String?
+    @UIState private var changesCollapsed = false
+    @UIState private var historyCollapsed = false
 
     public init(model: AppModel, threadID: String) {
         self.model = model
@@ -42,83 +46,139 @@ public struct ChangesTimelineView: View {
         model.threadState(threadID)?.reviewScope
     }
 
+    private var isRunning: Bool {
+        model.threads.first { $0.id == threadID }?.status == .running
+    }
+
+    /// The agent's most recent tool calls, newest first — the "now" card's
+    /// content while a turn is in flight.
+    private var recentToolEvents: [RecentToolEvent] {
+        let timeline = model.threadState(threadID)?.timeline ?? []
+        let events = timeline.compactMap { item -> RecentToolEvent? in
+            guard
+                case .toolEvent(let id, let name, let detail, let kind, let status, _, _, _) = item
+            else { return nil }
+            return RecentToolEvent(id: id, name: name, detail: detail, kind: kind, status: status)
+        }
+        return Array(events.suffix(3).reversed())
+    }
+
+    private var showsNow: Bool {
+        isRunning || recentToolEvents.contains { $0.status == .running }
+    }
+
+    private var isEmpty: Bool {
+        fullDiff.isEmpty && checkpoints.isEmpty && !showsNow
+    }
+
     public var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    switch mode {
-                    case .files:
-                        filesList
-                    case .activity:
-                        allChangesRow
-                        if !checkpoints.isEmpty {
-                            timelineSpine
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                header
+                Divider()
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        if showsNow {
+                            nowSection
+                                .id(FeedAnchor.now)
+                                .transition(Motion.materialize)
+                        }
+                        if isEmpty {
+                            emptyState
+                        } else {
+                            if !fullDiff.isEmpty {
+                                changesSection
+                                    .id(FeedAnchor.changes)
+                            }
+                            if !checkpoints.isEmpty {
+                                historySection
+                                    .id(FeedAnchor.history)
+                            }
                         }
                     }
+                    .padding(.vertical, 12)
+                    .animation(Motion.structure, value: showsNow)
+                    .animation(Motion.structure, value: isEmpty)
+                    .entranceWindow(resetOn: threadID)
                 }
-                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .accessibilityIdentifier("changes-timeline")
-        .task(id: threadID) {
-            await model.refreshDiff(threadID: threadID)
-            await model.refreshCheckpoints(threadID: threadID)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
-            guard let key = note.object as? String else { return }
-            // Legacy harness key: open full-thread review (rail has no collapse).
-            if key == "checkpoints" {
-                DispatchQueue.main.async { openAllChanges() }
-                return
+            .accessibilityIdentifier("changes-timeline")
+            .task(id: threadID) {
+                await model.refreshDiff(threadID: threadID)
+                await model.refreshCheckpoints(threadID: threadID)
             }
-            #if DEBUG
-                if key == "activity" {
-                    DispatchQueue.main.async {
-                        withAnimation(Motion.reveal) { mode = .activity }
-                    }
-                } else if key == "files" {
-                    DispatchQueue.main.async {
-                        withAnimation(Motion.reveal) { mode = .files }
-                    }
+            .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
+                guard let key = note.object as? String else { return }
+                // Legacy harness key: open full-thread review.
+                if key == "checkpoints" {
+                    DispatchQueue.main.async { openAllChanges() }
+                    return
                 }
-            #endif
-        }
-        .confirmationDialog(
-            "Restore Checkpoint?",
-            isPresented: $isConfirmingRestore,
-            presenting: pendingRestore
-        ) { checkpoint in
-            Button("Restore", role: .destructive) {
-                Task { await model.restoreCheckpoint(checkpoint) }
+                #if DEBUG
+                    // The unified feed has no tabs; the legacy keys scroll to
+                    // their section instead of switching a segment.
+                    if key == "activity" {
+                        DispatchQueue.main.async {
+                            withAnimation(Motion.structure) {
+                                proxy.scrollTo(FeedAnchor.history, anchor: .top)
+                            }
+                        }
+                    } else if key == "files" {
+                        DispatchQueue.main.async {
+                            withAnimation(Motion.structure) {
+                                proxy.scrollTo(FeedAnchor.changes, anchor: .top)
+                            }
+                        }
+                    }
+                #endif
             }
-            Button("Cancel", role: .cancel) {}
-        } message: { checkpoint in
-            Text(
-                "This restores the thread to \"\(checkpoint.label)\". Changes made since then will be lost."
-            )
+            .confirmationDialog(
+                "Restore Checkpoint?",
+                isPresented: $isConfirmingRestore,
+                presenting: pendingRestore
+            ) { checkpoint in
+                Button("Restore", role: .destructive) {
+                    Task { await model.restoreCheckpoint(checkpoint) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { checkpoint in
+                Text(
+                    "This restores the thread to \"\(checkpoint.label)\". Changes made since then will be lost."
+                )
+            }
         }
     }
 
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Changes", systemImage: "arrow.left.arrow.right")
-                    .font(.headline)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                refreshButton
+        HStack(spacing: 8) {
+            Label("Activity", systemImage: "waveform.path.ecg")
+                .font(.headline)
+                .lineLimit(1)
+            if isRunning {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(AlpineTheme.accent)
+                        .frame(width: 6, height: 6)
+                        .pulseGlow(isActive: true)
+                    Text("Working")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+                .transition(.opacity)
             }
-
-            AlpineSegmentedControl(selection: $mode, height: 26)
-                .accessibilityLabel("Changes view")
+            Spacer(minLength: 4)
+            if !fullDiff.isEmpty {
+                let totals = DiffPresentation.aggregateCounts(in: fullDiff)
+                changeCounts(additions: totals.additions, deletions: totals.deletions)
+            }
+            refreshButton
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .animation(Motion.ambient, value: isRunning)
     }
 
     /// Quiet inspector-surface refresh control: flat hover wash, no glass.
@@ -137,106 +197,119 @@ public struct ChangesTimelineView: View {
         }
     }
 
-    // MARK: - Files
+    // MARK: - Now
 
-    private var filesList: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            if fullDiff.isEmpty {
-                ContentUnavailableView(
-                    "No Changes",
-                    systemImage: "checkmark.circle",
-                    description: Text("Working-tree changes will appear here."))
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 32)
-            } else {
-                let totals = DiffPresentation.aggregateCounts(in: fullDiff)
-                HStack(spacing: 8) {
-                    Text("^[\(fullDiff.count) changed file](inflect: true)")
-                    Spacer()
-                    changeCounts(additions: totals.additions, deletions: totals.deletions)
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 6)
+    /// Live card: the agent's latest tool calls while a turn is in flight.
+    /// The shimmer border marks the card as live; settled rows stay still.
+    private var nowSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionLabel("Now")
 
-                ForEach(Array(fullDiff.enumerated()), id: \.element.id) { index, file in
-                    Button {
-                        withAnimation(Motion.structure) {
-                            model.openReview(
-                                threadID: threadID, scope: .allChanges, focusPath: file.path)
-                        }
-                    } label: {
-                        changedFileRow(file)
+            VStack(alignment: .leading, spacing: 2) {
+                if recentToolEvents.isEmpty {
+                    nowRow(
+                        chipStyle: ToolActivityStyle(
+                            symbolName: "sparkles", tint: AlpineTheme.accent),
+                        title: "Working",
+                        detail: nil,
+                        status: .running
+                    )
+                } else {
+                    ForEach(recentToolEvents) { event in
+                        nowRow(
+                            chipStyle: event.kind.activityStyle,
+                            title: event.name,
+                            detail: event.detail.isEmpty ? nil : event.detail,
+                            status: event.status
+                        )
                     }
-                    .buttonStyle(.plain)
-                    .entrance(.row, index: index)
                 }
             }
-        }
-    }
-
-    private func changedFileRow(_ file: DiffFile) -> some View {
-        let counts = DiffPresentation.aggregateCounts(in: [file])
-        return HStack(spacing: 8) {
-            Label(fileStatusLabel(file.status), systemImage: fileStatusGlyph(file.status))
-                .labelStyle(.iconOnly)
-                .foregroundStyle(fileStatusColor(file.status))
-                .frame(width: 16)
-                .accessibilityLabel(fileStatusLabel(file.status))
-            Text(file.path)
-                .font(SurgeTypography.technicalMetadata)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: 6)
-            changeCounts(additions: counts.additions, deletions: counts.deletions)
+            .padding(6)
+            .background(
+                Color.primary.opacity(0.045),
+                in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+            .shimmerBorder(
+                color: AlpineTheme.accent, isActive: isRunning,
+                cornerRadius: AlpineTheme.Corners.card)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .contentShape(Rectangle())
     }
 
-    private func changeCounts(additions: Int, deletions: Int) -> some View {
-        HStack(spacing: 5) {
-            if additions > 0 {
-                Text("+\(additions)").foregroundStyle(.green)
+    private func nowRow(
+        chipStyle: ToolActivityStyle, title: String, detail: String?, status: ToolEventStatus
+    ) -> some View {
+        HStack(spacing: 10) {
+            ActivityIconChip(style: chipStyle, size: 24)
+                .pulseGlow(isActive: status == .running)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(SurgeTypography.toolTitle)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if let detail {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
-            if deletions > 0 {
-                Text("−\(deletions)").foregroundStyle(.red)
+            Spacer(minLength: 6)
+            switch status {
+            case .failed:
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            case .succeeded:
+                Image(systemName: "checkmark")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            case .running:
+                EmptyView()
             }
         }
-        .font(.caption2.monospacedDigit())
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .accessibilityElement(children: .combine)
     }
 
-    private func fileStatusGlyph(_ status: DiffFileStatus) -> String {
-        switch status {
-        case .added: "plus.circle"
-        case .modified: "pencil.circle"
-        case .deleted: "minus.circle"
-        case .renamed: "arrow.right.circle"
+    // MARK: - Changes
+
+    private var changesSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionHeader(
+                "Changed Files",
+                count: fullDiff.count,
+                isCollapsed: $changesCollapsed
+            )
+            .padding(.horizontal, 12)
+
+            if !changesCollapsed {
+                VStack(alignment: .leading, spacing: 2) {
+                    allChangesRow
+                    ForEach(Array(fullDiff.enumerated()), id: \.element.id) { index, file in
+                        Button {
+                            withAnimation(Motion.structure) {
+                                model.openReview(
+                                    threadID: threadID, scope: .allChanges, focusPath: file.path)
+                            }
+                        } label: {
+                            changedFileRow(file)
+                        }
+                        .buttonStyle(.plain)
+                        .entrance(.row, index: index)
+                    }
+                }
+                .transition(Motion.unfold)
+            }
         }
     }
 
-    private func fileStatusLabel(_ status: DiffFileStatus) -> String {
-        switch status {
-        case .added: "Added"
-        case .modified: "Modified"
-        case .deleted: "Deleted"
-        case .renamed: "Renamed"
-        }
-    }
-
-    private func fileStatusColor(_ status: DiffFileStatus) -> Color {
-        switch status {
-        case .added: .green
-        case .modified: .secondary
-        case .deleted: .red
-        case .renamed: AlpineTheme.accent
-        }
-    }
-
-    // MARK: - All Changes
-
+    /// Card-style entry into the full working-tree review.
     private var allChangesRow: some View {
         let counts = DiffPresentation.aggregateCounts(in: fullDiff)
         let selected =
@@ -249,14 +322,14 @@ public struct ChangesTimelineView: View {
         return Button {
             openAllChanges()
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.left.arrow.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("All Changes")
-                        .font(.body.weight(.medium))
+            HStack(spacing: 10) {
+                ActivityIconChip(
+                    style: ToolActivityStyle(
+                        symbolName: "arrow.left.arrow.right", tint: AlpineTheme.accent),
+                    size: 24)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Review All Changes")
+                        .font(SurgeTypography.toolTitle)
                         .lineLimit(1)
                     HStack(spacing: 6) {
                         Text("\(fullDiff.count) file\(fullDiff.count == 1 ? "" : "s")")
@@ -274,15 +347,78 @@ public struct ChangesTimelineView: View {
                     .lineLimit(1)
                 }
                 Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? AlpineTheme.accent.opacity(0.12) : Color.clear)
+            .background(
+                selected ? AlpineTheme.accent.opacity(0.12) : Color.clear,
+                in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .padding(.horizontal, 4)
         .accessibilityIdentifier("timeline-all-changes")
+    }
+
+    private func changedFileRow(_ file: DiffFile) -> some View {
+        let counts = DiffPresentation.aggregateCounts(in: [file])
+        let hovered = hoveredFilePath == file.path
+        return HStack(spacing: 10) {
+            ActivityIconChip(style: fileStatusStyle(file.status), size: 20)
+                .accessibilityLabel(fileStatusLabel(file.status))
+            Text(file.path)
+                .font(SurgeTypography.technicalMetadata)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 6)
+            changeCounts(additions: counts.additions, deletions: counts.deletions)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            Color.primary.opacity(hovered ? 0.05 : 0),
+            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.compact, style: .continuous))
+        .contentShape(Rectangle())
+        .padding(.horizontal, 4)
+        .onHover { hovering in
+            hoveredFilePath = hovering ? file.path : (hoveredFilePath == file.path ? nil : hoveredFilePath)
+        }
+        .animation(Motion.feedback, value: hovered)
+    }
+
+    private func changeCounts(additions: Int, deletions: Int) -> some View {
+        HStack(spacing: 5) {
+            if additions > 0 {
+                Text("+\(additions)").foregroundStyle(.green)
+            }
+            if deletions > 0 {
+                Text("−\(deletions)").foregroundStyle(.red)
+            }
+        }
+        .font(.caption2.monospacedDigit())
+    }
+
+    private func fileStatusStyle(_ status: DiffFileStatus) -> ToolActivityStyle {
+        switch status {
+        case .added: ToolActivityStyle(symbolName: "plus", tint: AlpineTheme.meadow)
+        case .modified: ToolActivityStyle(symbolName: "pencil", tint: AlpineTheme.sky)
+        case .deleted: ToolActivityStyle(symbolName: "minus", tint: AlpineTheme.clay)
+        case .renamed: ToolActivityStyle(symbolName: "arrow.right", tint: AlpineTheme.lavender)
+        }
+    }
+
+    private func fileStatusLabel(_ status: DiffFileStatus) -> String {
+        switch status {
+        case .added: "Added"
+        case .modified: "Modified"
+        case .deleted: "Deleted"
+        case .renamed: "Renamed"
+        }
     }
 
     private func openAllChanges() {
@@ -291,7 +427,23 @@ public struct ChangesTimelineView: View {
         }
     }
 
-    // MARK: - Timeline spine
+    // MARK: - History
+
+    private var historySection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionHeader(
+                "History",
+                count: checkpoints.count,
+                isCollapsed: $historyCollapsed
+            )
+            .padding(.horizontal, 12)
+
+            if !historyCollapsed {
+                timelineSpine
+                    .transition(Motion.unfold)
+            }
+        }
+    }
 
     private var timelineSpine: some View {
         let toolCounts = CheckpointMapping.toolCounts(
@@ -339,14 +491,17 @@ public struct ChangesTimelineView: View {
             .padding(.trailing, 10)
             .padding(.bottom, 10)
         }
-        .background(selected ? AlpineTheme.accent.opacity(0.08) : Color.clear)
+        .background(
+            selected ? AlpineTheme.accent.opacity(0.08) : Color.clear,
+            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
         .accessibilityIdentifier("timeline-checkpoint-\(checkpoint.turnCount)")
     }
 
     private func checkpointHeader(
         _ checkpoint: Checkpoint, previousTurn: Int
     ) -> some View {
-        HStack(spacing: 6) {
+        let hovered = hoveredCheckpointID == checkpoint.id
+        return HStack(spacing: 6) {
             Button {
                 openCheckpoint(checkpoint, previousTurn: previousTurn, focusPath: nil)
             } label: {
@@ -369,16 +524,20 @@ public struct ChangesTimelineView: View {
             .buttonStyle(.plain)
 
             restoreButton(checkpoint)
-                .opacity(hoveredCheckpointID == checkpoint.id ? 1 : 0)
+                .opacity(hovered ? 1 : 0)
         }
-        .padding(.top, 6)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .background(
+            Color.primary.opacity(hovered ? 0.05 : 0),
+            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.compact, style: .continuous))
         .onHover { hovering in
             hoveredCheckpointID = hovering ? checkpoint.id : (
                 hoveredCheckpointID == checkpoint.id ? nil : hoveredCheckpointID
             )
         }
-        // Fades the restore button in rather than flicking it to full opacity.
-        .animation(Motion.feedback, value: hoveredCheckpointID == checkpoint.id)
+        // Fades the restore button and hover wash in rather than flicking.
+        .animation(Motion.feedback, value: hovered)
         .contextMenu {
             Button("Restore…") {
                 pendingRestore = checkpoint
@@ -438,57 +597,52 @@ public struct ChangesTimelineView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .padding(.leading, 2)
+                    .padding(.leading, 8)
             } else {
                 EmptyView()
             }
-        } else if files.count > 6 && !expandedFileCheckpoints.contains(checkpoint.id) {
-            Button {
-                withAnimation(Motion.feedback) {
-                    _ = expandedFileCheckpoints.insert(checkpoint.id)
-                }
-            } label: {
-                Text("\(files.count) files")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .buttonStyle(.plain)
-            .padding(.leading, 2)
         } else {
+            let expanded = expandedFileCheckpoints.contains(checkpoint.id)
+            let visibleFiles = expanded ? files : Array(files.prefix(6))
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(files.enumerated()), id: \.element.id) { index, file in
+                ForEach(Array(visibleFiles.enumerated()), id: \.element.id) { index, file in
                     Button {
                         openCheckpoint(
                             checkpoint, previousTurn: previousTurn, focusPath: file.path)
                     } label: {
-                        fileRow(file)
+                        checkpointFileRow(file)
                     }
                     .buttonStyle(.plain)
                     .entrance(.row, index: index)
                 }
                 if files.count > 6 {
                     Button {
-                        withAnimation(Motion.feedback) {
-                            _ = expandedFileCheckpoints.remove(checkpoint.id)
+                        withAnimation(Motion.structure) {
+                            if expanded {
+                                expandedFileCheckpoints.remove(checkpoint.id)
+                            } else {
+                                expandedFileCheckpoints.insert(checkpoint.id)
+                            }
                         }
                     } label: {
-                        Text("Show less")
+                        Text(expanded ? "Show less" : "Show \(files.count - 6) more")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                     .buttonStyle(.plain)
+                    .padding(.leading, 8)
                 }
             }
         }
     }
 
-    private func fileRow(_ file: CheckpointFile) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: kindGlyph(file.kind))
+    private func checkpointFileRow(_ file: CheckpointFile) -> some View {
+        let style = checkpointKindStyle(file.kind)
+        return HStack(spacing: 6) {
+            Image(systemName: style.symbolName)
                 .font(.caption2)
-                .foregroundStyle(kindColor(file.kind))
+                .foregroundStyle(style.tint)
                 .frame(width: 12)
             Text(file.path)
                 .font(SurgeTypography.technicalMetadata)
@@ -508,24 +662,20 @@ public struct ChangesTimelineView: View {
                     .lineLimit(1)
             }
         }
+        .padding(.leading, 8)
         .contentShape(Rectangle())
     }
 
-    private func kindGlyph(_ kind: String) -> String {
+    private func checkpointKindStyle(_ kind: String) -> ToolActivityStyle {
         switch kind.lowercased() {
-        case "added", "add", "a": return "plus.circle"
-        case "deleted", "delete", "d": return "minus.circle"
-        case "renamed", "rename", "r": return "arrow.right.circle"
-        default: return "pencil.circle"
-        }
-    }
-
-    private func kindColor(_ kind: String) -> Color {
-        switch kind.lowercased() {
-        case "added", "add", "a": return .green
-        case "deleted", "delete", "d": return .red
-        case "renamed", "rename", "r": return .blue
-        default: return .orange
+        case "added", "add", "a":
+            ToolActivityStyle(symbolName: "plus", tint: AlpineTheme.meadow)
+        case "deleted", "delete", "d":
+            ToolActivityStyle(symbolName: "minus", tint: AlpineTheme.clay)
+        case "renamed", "rename", "r":
+            ToolActivityStyle(symbolName: "arrow.right", tint: AlpineTheme.lavender)
+        default:
+            ToolActivityStyle(symbolName: "pencil", tint: AlpineTheme.sky)
         }
     }
 
@@ -559,6 +709,69 @@ public struct ChangesTimelineView: View {
             )
         }
     }
+
+    // MARK: - Sections
+
+    /// Uppercase eyebrow labeling a feed zone ("Now").
+    private func sectionLabel(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+
+    /// Collapsible section header: chevron, eyebrow label, and a count pill.
+    /// Collapse is the only "mode" the feed has — everything stays in one
+    /// scroll, the section just folds away.
+    private func sectionHeader(
+        _ title: String, count: Int, isCollapsed: Binding<Bool>
+    ) -> some View {
+        Button {
+            withAnimation(Motion.structure) {
+                isCollapsed.wrappedValue.toggle()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(isCollapsed.wrappedValue ? 0 : 90))
+                sectionLabel(title)
+                Text("\(count)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title), \(count)")
+        .accessibilityHint(isCollapsed.wrappedValue ? "Expand" : "Collapse")
+    }
+
+    // MARK: - Empty state
+
+    private var emptyState: some View {
+        ContentUnavailableView(
+            "No Activity Yet",
+            systemImage: "waveform.path.ecg",
+            description: Text("Agent activity and file changes will appear here as you work."))
+            .frame(maxWidth: .infinity)
+            .padding(.top, 32)
+            .transition(Motion.materialize)
+    }
+}
+
+/// A recent tool call summarized for the "Now" card.
+private struct RecentToolEvent: Identifiable {
+    let id: String
+    let name: String
+    let detail: String
+    let kind: ToolEventKind
+    let status: ToolEventStatus
 }
 
 /// 26×26 icon button for inspector surfaces: transparent at rest, flat hover
