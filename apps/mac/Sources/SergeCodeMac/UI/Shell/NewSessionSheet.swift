@@ -196,6 +196,13 @@ struct NewSessionSheet: View {
         .onChange(of: model.configuredProviderKinds) {
             syncProviderSelection()
         }
+        .onChange(of: model.activeSceneThreadKeys) {
+            // Keep the preview aligned with what createSceneThread will
+            // commit: re-peek when occupancy changes. The store keeps the
+            // pending pick while it is still unoccupied, so unrelated
+            // thread activity leaves the preview untouched.
+            nextScene = scenery.peekNextScene(excludingThreadKeys: model.activeSceneThreadKeys)
+        }
     }
 
     /// Native directory chooser; fills the path field with the selection.
