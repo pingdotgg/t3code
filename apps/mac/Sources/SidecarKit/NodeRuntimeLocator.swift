@@ -48,6 +48,33 @@ public struct SemanticVersion: Equatable, Sendable {
 /// environment. PATH repair beyond that is the server's own job
 /// (`os-jank.ts fixPath()`), not this locator's.
 public struct NodeRuntimeLocator: Sendable {
+    /// Path of the bundled Node runtime relative to the bundle's resource
+    /// directory. Kept in sync with `apps/mac/scripts/make-app.sh`.
+    public static let bundledNodeResourcePath = "SergeCodeNode/node"
+
+    /// The Node runtime embedded in the app bundle (staged by
+    /// `apps/mac/scripts/stage-sidecar.sh` and copied in by `make-app.sh`),
+    /// or `nil` when the bundle does not embed one (dev builds). The staged
+    /// runtime is version-pinned, so no version probe is needed — only an
+    /// executable-bit check. Pass an explicit `resourceURL` in tests;
+    /// production callers use the `bundle:` overload.
+    public static func bundledNodePath(
+        resourceURL: URL?,
+        fileManager: FileManager = .default
+    ) -> String? {
+        guard let resourceURL else { return nil }
+        let candidate = resourceURL.appendingPathComponent(bundledNodeResourcePath)
+        return fileManager.isExecutableFile(atPath: candidate.path) ? candidate.path : nil
+    }
+
+    /// `Bundle.main` overload of `bundledNodePath(resourceURL:fileManager:)`.
+    public static func bundledNodePath(
+        bundle: Bundle = .main,
+        fileManager: FileManager = .default
+    ) -> String? {
+        bundledNodePath(resourceURL: bundle.resourceURL, fileManager: fileManager)
+    }
+
     public struct LocatedNode: Sendable, Equatable {
         public let path: String
         public let version: SemanticVersion

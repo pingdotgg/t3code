@@ -322,30 +322,41 @@ public actor LiveBackend: BackendService {
 
         let nodePath: String
         let locateStartedAt = PerfLog.now()
-        do {
-            let nodePathCacheKey = Self.nodePathCacheKey
-            let cachedNodePath = UserDefaults.standard.string(forKey: nodePathCacheKey)
-            nodePath = try NodeRuntimeLocator(
-                cachedPath: cachedNodePath,
-                onLocated: { path in
-                    UserDefaults.standard.set(path, forKey: nodePathCacheKey)
-                }
-            ).locate().path
+        if let bundledNodePath = NodeRuntimeLocator.bundledNodePath() {
+            // Packaged build: the app embeds a version-pinned Node runtime,
+            // so skip the login-shell probe and version validation entirely.
+            nodePath = bundledNodePath
             PerfLog.event(
                 "startup.locate-node",
                 ms: PerfLog.elapsedMilliseconds(since: locateStartedAt),
-                details: "result=success")
-        } catch {
-            PerfLog.event(
-                "startup.locate-node",
-                ms: PerfLog.elapsedMilliseconds(since: locateStartedAt),
-                details: "result=failure")
-            emit(.connection(.failed("Could not locate a compatible Node.js runtime: \(error)")))
-            return
+                details: "result=bundled")
+        } else {
+            do {
+                let nodePathCacheKey = Self.nodePathCacheKey
+                let cachedNodePath = UserDefaults.standard.string(forKey: nodePathCacheKey)
+                nodePath = try NodeRuntimeLocator(
+                    cachedPath: cachedNodePath,
+                    onLocated: { path in
+                        UserDefaults.standard.set(path, forKey: nodePathCacheKey)
+                    }
+                ).locate().path
+                PerfLog.event(
+                    "startup.locate-node",
+                    ms: PerfLog.elapsedMilliseconds(since: locateStartedAt),
+                    details: "result=success")
+            } catch {
+                PerfLog.event(
+                    "startup.locate-node",
+                    ms: PerfLog.elapsedMilliseconds(since: locateStartedAt),
+                    details: "result=failure")
+                emit(.connection(.failed("Could not locate a compatible Node.js runtime: \(error)")))
+                return
+            }
         }
 
         let entryPath =
             ProcessInfo.processInfo.environment["SERGECODE_SERVER_ENTRY"]
+            ?? SidecarEntryPathResolver.bundledEntryPath()
             ?? SidecarEntryPathResolver.devDefaultEntryPath()
 
         let sidecarConfig: SidecarConfig

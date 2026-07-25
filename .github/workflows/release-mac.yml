@@ -126,6 +126,13 @@ jobs:
       - name: Build server sidecar
         run: vp run build:server
 
+      - name: Stage Node runtime and server sidecar
+        # Downloads the pinned darwin-arm64 Node runtime (curl --fail,
+        # checksum- and extraction-verified) and assembles the production
+        # server payload into apps/mac/dist/sidecar/ for make-app.sh to embed.
+        # The Node version is pinned in the script so local and CI builds match.
+        run: ./apps/mac/scripts/stage-sidecar.sh
+
       - name: Build macOS app
         run: ./apps/mac/scripts/make-app.sh
 
