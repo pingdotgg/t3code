@@ -25,8 +25,8 @@ enum ProviderBrand: String, Equatable, Sendable {
         }
 
         return switch provider {
-        case .claudeWork: .claude
-        case .claudex, .codex: .codex
+        case .claudeWork, .claudex: .claude
+        case .codex: .codex
         case .grok: .grok
         case .kimi: .kimi
         case .legacyCursor: .cursor

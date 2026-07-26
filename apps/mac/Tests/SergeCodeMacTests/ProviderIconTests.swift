@@ -17,7 +17,7 @@ struct ProviderIconTests {
     @Test("Provider fallback covers every configured provider")
     func providerFallbacks() {
         #expect(ProviderBrand.resolve(provider: .claudeWork) == .claude)
-        #expect(ProviderBrand.resolve(provider: .claudex) == .codex)
+        #expect(ProviderBrand.resolve(provider: .claudex) == .claude)
         #expect(ProviderBrand.resolve(provider: .codex) == .codex)
         #expect(ProviderBrand.resolve(provider: .grok) == .grok)
         #expect(ProviderBrand.resolve(provider: .kimi) == .kimi)
