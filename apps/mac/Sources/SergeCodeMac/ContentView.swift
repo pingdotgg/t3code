@@ -116,6 +116,21 @@ struct RootView: View {
                 scenery: scenery,
                 isPresented: $showNewSessionSheet)
         }
+        // PR-merge celebration: full-window confetti + badge, non-interactive,
+        // self-dismissing. Keyed to the celebration id so back-to-back merges
+        // each get their own burst.
+        .overlay {
+            if let celebration = model.mergeCelebration {
+                MergeCelebrationOverlay(celebration: celebration) {
+                    model.clearMergeCelebration(id: celebration.id)
+                }
+                .id(celebration.id)
+                .transition(.opacity)
+            }
+        }
+        // Cross-fades the celebration in and (when its timer clears it) out,
+        // so the confetti never hard-cuts on unmount.
+        .animation(Motion.reveal, value: model.mergeCelebration)
     }
 
     /// Primary click opens the scalable chooser. The chevron's Alpine popover

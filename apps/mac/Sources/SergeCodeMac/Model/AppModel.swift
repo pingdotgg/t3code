@@ -47,6 +47,20 @@ public final class AppModel {
         lastGitActionOutcomeByThread[threadID]
     }
 
+    /// One-shot window-level celebration for a successful PR merge. Set when a
+    /// `mergePR` action succeeds; the root view renders the confetti overlay
+    /// and clears it via `clearMergeCelebration()` once it has played out.
+    /// Not per-thread: merging is rare and the overlay covers the whole window.
+    public private(set) var mergeCelebration: MergeCelebration?
+
+    /// Dismisses the merge celebration, but only if it is still the one the
+    /// overlay was showing — a second merge during the first celebration must
+    /// not be dismissed by the first celebration's timer.
+    public func clearMergeCelebration(id: MergeCelebration.ID) {
+        guard mergeCelebration?.id == id else { return }
+        mergeCelebration = nil
+    }
+
     /// Compatibility accessor for the currently selected thread. The UI call
     /// sites (VcsToolbar) still read/clear this flat name; a later batch
     /// rewires them to the per-thread accessor above.
@@ -2057,6 +2071,9 @@ public final class AppModel {
             let outcome = try await backend.runGitAction(
                 threadID: threadID, action: action, commitMessage: commitMessage)
             lastGitActionOutcomeByThread[threadID] = outcome
+            if action == .mergePR, outcome.success {
+                mergeCelebration = MergeCelebration(title: outcome.title)
+            }
             // Merge (and other actions that change remote PR state) need a
             // fresh VCS snapshot so dedicated buttons disappear promptly.
             if (action == .mergePR || action == .readyPR), outcome.success {
