@@ -1572,7 +1572,29 @@ private actor MockState {
             updatedAt: now.addingTimeInterval(-14_400)
         )
 
-        for thread in [thread1, thread2, thread3, thread4, thread5, thread6] {
+        // A live turn parked on a running tool: the state the activity dock
+        // exists for, and the one the seed had no way to reach before.
+        let thread7 = ChatThread(
+            id: "thread-7",
+            projectID: projectA.id,
+            title: "Port the diff parser",
+            provider: .claude,
+            status: .running,
+            updatedAt: now.addingTimeInterval(-15)
+        )
+        // Auto-review in flight: summons the review pet.
+        let thread8 = ChatThread(
+            id: "thread-8",
+            projectID: projectA.id,
+            title: "Tighten approval copy",
+            provider: .codex,
+            status: .reviewing,
+            updatedAt: now.addingTimeInterval(-45),
+            modelInstanceID: "provider-codex",
+            modelID: "gpt-5.2-codex"
+        )
+
+        for thread in [thread1, thread2, thread3, thread4, thread5, thread6, thread7, thread8] {
             threadsByID[thread.id] = thread
         }
 
@@ -1580,6 +1602,8 @@ private actor MockState {
         timelinesByThread[thread2.id] = MockState.timelineForApprovalThread(at: now)
         timelinesByThread[thread3.id] = MockState.timelineForPricingThread(at: now)
         timelinesByThread[thread4.id] = MockState.timelineForErrorThread(at: now)
+        timelinesByThread[thread7.id] = MockState.timelineForRunningToolThread(at: now)
+        timelinesByThread[thread8.id] = MockState.timelineForAutoReviewThread(at: now)
 
         let sidebarDiff = MockState.diffForSidebarThread()
         let longLineDiff = MockState.diffForLongLineFile()
@@ -1705,6 +1729,54 @@ private actor MockState {
             .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         return slug.isEmpty ? "variant" : slug
+    }
+
+    /// A turn whose tail is a still-running command, so `AgentActivityDock`
+    /// renders its tool phase (orb, verb, live clock, and a tape of the
+    /// finished calls behind it).
+    private static func timelineForRunningToolThread(at now: Date) -> [TimelineItem] {
+        [
+            .userMessage(
+                id: "t7-u1",
+                text: "Port the unified diff parser to the shared package and run the tests.",
+                attachments: [], at: now.addingTimeInterval(-95)),
+            .toolEvent(
+                id: "t7-tool-1", name: "read_file",
+                detail: "apps/mac/Sources/SergeCodeMac/UI/Diff/IntralineDiff.swift",
+                kind: .fileRead, status: .succeeded, at: now.addingTimeInterval(-88),
+                output: nil, outputIsError: false),
+            .toolEvent(
+                id: "t7-tool-2", name: "edit_file",
+                detail: "packages/shared/src/unifiedDiff.ts",
+                kind: .fileChange, status: .succeeded, at: now.addingTimeInterval(-70),
+                output: nil, outputIsError: false),
+            .toolEvent(
+                id: "t7-tool-3", name: "web_search", detail: "unified diff hunk header grammar",
+                kind: .webSearch, status: .succeeded, at: now.addingTimeInterval(-52),
+                output: nil, outputIsError: false),
+            .toolEvent(
+                id: "t7-tool-4", name: "run_command", detail: "pnpm vitest run unifiedDiff",
+                kind: .command, status: .running, at: now.addingTimeInterval(-31),
+                output: nil, outputIsError: false),
+        ]
+    }
+
+    /// A thread whose PR is being auto-reviewed on the server. Nothing is
+    /// running locally, so the transcript is quiet and the review pet is the
+    /// only thing narrating.
+    private static func timelineForAutoReviewThread(at now: Date) -> [TimelineItem] {
+        [
+            .userMessage(
+                id: "t8-u1", text: "Soften the approval prompt copy and open a PR.",
+                attachments: [], at: now.addingTimeInterval(-900)),
+            .assistantMessage(
+                id: "t8-a1",
+                markdown: """
+                Reworded the approval prompts to sentence case and pushed \
+                `sergecode/approval-copy`. Opened PR #42.
+                """,
+                isStreaming: false, at: now.addingTimeInterval(-420)),
+        ]
     }
 
     private static func timelineForSidebarThread(at now: Date) -> [TimelineItem] {

@@ -108,6 +108,7 @@
             // session.exited stderr disclosure.
             await probeSubagentStability(model: model, multi: multi, dir: dir)
             await probeGitActionFailure(model: model, dir: dir)
+            await probeLiveActivitySurfaces(model: model, multi: multi, dir: dir)
 
             if let remote = multi.remoteSessions.first {
                 await probeRemoteDevice(
@@ -649,6 +650,62 @@
             }
             print("UIProbe: session-exit row present=\(hasSessionExit)")
             snapshot("2d-session-stderr", dir: dir)
+        }
+
+        /// The two live-turn surfaces that only exist while something is
+        /// working, so no other scene can reach them: the activity dock on a
+        /// thread parked on a running tool (mock `thread-7`), and the
+        /// auto-review pet on a thread whose PR is under review (`thread-8`).
+        ///
+        /// Both assert their gate in the log as well as the PNG — the pet in
+        /// particular is a corner overlay that a full-window capture can
+        /// easily *look* right without actually having mounted.
+        private static func probeLiveActivitySurfaces(
+            model: AppModel, multi: MultiDeviceModel, dir: String
+        ) async {
+            let previousThreadID = model.selectedThreadID
+
+            if model.threads.contains(where: { $0.id == "thread-7" }) {
+                multi.select(threadID: "thread-7", on: model.deviceID)
+                try? await Task.sleep(for: .seconds(1.5))
+                let activity = AgentActivityPresentation.activity(
+                    threadStatus: model.thread(threadID: "thread-7")?.status,
+                    isStalled: false,
+                    items: model.timeline(threadID: "thread-7"))
+                let phase: String
+                switch activity?.phase {
+                case .tool(let tool): phase = "tool(\(tool.kind.rawValue))"
+                case .thinking: phase = "thinking"
+                case .stalled: phase = "stalled"
+                case nil: phase = "none"
+                }
+                print(
+                    "UIProbe: activity dock phase=\(phase) "
+                        + "tape=\(activity?.recentToolKinds.count ?? 0) "
+                        + "playful=\(PlayfulMotionPreferences.isEnabled)")
+                snapshot("18-activity-dock", dir: dir)
+            } else {
+                print("UIProbe: activity dock skipped (live backend run)")
+            }
+
+            if model.threads.contains(where: { $0.id == "thread-8" }) {
+                multi.select(threadID: "thread-8", on: model.deviceID)
+                // Long enough for the pet's entrance spring to settle.
+                try? await Task.sleep(for: .seconds(2))
+                let status = model.thread(threadID: "thread-8")?.status
+                let petPhase = status.flatMap(ReviewPetPhase.init(status:))
+                print(
+                    "UIProbe: review pet status=\(status?.rawValue ?? "nil") "
+                        + "phase=\(petPhase?.rawValue ?? "none")")
+                snapshot("19-review-pet", dir: dir)
+            } else {
+                print("UIProbe: review pet skipped (live backend run)")
+            }
+
+            if let previousThreadID {
+                multi.select(threadID: previousThreadID, on: model.deviceID)
+                try? await Task.sleep(for: .seconds(1))
+            }
         }
 
         /// Renders the VCS failure pill: every mock git action succeeds unless
