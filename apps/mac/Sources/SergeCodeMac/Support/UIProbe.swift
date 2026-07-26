@@ -694,9 +694,20 @@
                 try? await Task.sleep(for: .seconds(2))
                 let status = model.thread(threadID: "thread-8")?.status
                 let petPhase = status.flatMap(ReviewPetPhase.init(status:))
+                // `ThreadStatus.reviewing` (the server's auto-review phase)
+                // and `ThreadState.isReviewing` (the local diff-review pane)
+                // are unrelated despite the names, and only the latter routes
+                // ChatScreen away from the timeline the pet hangs off. Assert
+                // it, so a future change that couples the two fails here
+                // instead of quietly capturing the wrong surface.
+                let onChatSurface = model.threadState("thread-8")?.isReviewing != true
                 print(
                     "UIProbe: review pet status=\(status?.rawValue ?? "nil") "
-                        + "phase=\(petPhase?.rawValue ?? "none")")
+                        + "phase=\(petPhase?.rawValue ?? "none") "
+                        + "chatSurface=\(onChatSurface)")
+                if !onChatSurface {
+                    print("UIProbe: FAIL review pet captured the diff pane, not the chat surface")
+                }
                 snapshot("19-review-pet", dir: dir)
             } else {
                 print("UIProbe: review pet skipped (live backend run)")
