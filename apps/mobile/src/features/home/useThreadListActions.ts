@@ -230,7 +230,9 @@ export function useArchivedThreadListActions(
   );
   const executeAction = useThreadActionExecutor(handleCompleted);
   const unarchiveThread = useCallback(
-    (thread: EnvironmentThreadShell) => executeAction("unarchive", thread),
+    async (thread: EnvironmentThreadShell) => {
+      await executeAction("unarchive", thread);
+    },
     [executeAction],
   );
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
