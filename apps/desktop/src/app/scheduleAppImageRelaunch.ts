@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Detached AppImage re-exec must outlive the Effect runtime and process exit path; Effect ChildProcess is scope-bound.
-import { spawn } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 
 import {
   buildAppImageRelaunchShellCommand,
@@ -18,10 +18,14 @@ export function scheduleAppImageRelaunch(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   const command = buildAppImageRelaunchShellCommand(plan);
-  const child = spawn("/bin/sh", ["-c", command], {
+  const child = NodeChildProcess.spawn("/bin/sh", ["-c", command], {
     detached: true,
     stdio: "ignore",
     env,
+    // The current working directory can live inside the AppImage FUSE mount,
+    // which is unmounted while this helper sleeps. Anchor the helper (and the
+    // relaunched AppImage that inherits its cwd) outside the mount.
+    cwd: "/",
   });
   child.unref();
 }

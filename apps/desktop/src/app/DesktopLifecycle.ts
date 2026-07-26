@@ -29,10 +29,7 @@ export class DesktopLifecycleRelaunchError extends Schema.TaggedErrorClass<Deskt
   }
 }
 
-export {
-  resolveDesktopRelaunchOptions,
-  resolveDesktopRelaunchPlan,
-} from "./resolveDesktopRelaunchOptions.ts";
+export { resolveDesktopRelaunchPlan } from "./resolveDesktopRelaunchOptions.ts";
 
 export type DesktopLifecycleRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment

@@ -475,14 +475,15 @@ export const make = Effect.gen(function* () {
   // Cache the `tailscale status` spawn for the TTL. On macOS, the Mac App
   // Store Tailscale CLI lives inside Tailscale's sandbox container, so each
   // spawn re-triggers the "Other apps" TCC prompt.
-  const cachedReadMagicDnsName = yield* Effect.cachedWithTTL(
-    readTailscaleStatus.pipe(
-      Effect.map((status) => status.magicDnsName),
-      Effect.orElseSucceed(() => null),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-    ),
-    TAILSCALE_STATUS_CACHE_TTL,
-  );
+  const [cachedReadMagicDnsName, invalidateCachedMagicDnsName] =
+    yield* Effect.cachedInvalidateWithTTL(
+      readTailscaleStatus.pipe(
+        Effect.map((status) => status.magicDnsName),
+        Effect.orElseSucceed(() => null),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+      ),
+      TAILSCALE_STATUS_CACHE_TTL,
+    );
 
   const readNetworkInterfaces = networkInterfaces.read;
 
@@ -595,7 +596,14 @@ export const make = Effect.gen(function* () {
             });
           }),
         );
-        preflightedServePort = servePort;
+        // Only roll back a binding this preflight actually created. When Serve
+        // was already enabled on the same port, `tailscale serve --bg` is a
+        // no-op and disabling it on a persistence failure would tear down a
+        // working HTTPS endpoint that settings still record as enabled.
+        preflightedServePort =
+          current.tailscaleServeEnabled && current.tailscaleServePort === servePort
+            ? null
+            : servePort;
       }
 
       const result = yield* desktopSettings
@@ -680,6 +688,11 @@ export const make = Effect.gen(function* () {
 
   const resolveTailscaleHttpsEndpoint = Effect.gen(function* () {
     const state = yield* Ref.get(stateRef);
+    // This resolve is explicitly user-initiated ("turn on Tailscale HTTPS"), and
+    // the failure toast tells the user to start Tailscale and retry. Serving a
+    // stale cached miss for the rest of the TTL would make that retry fail for
+    // no reason, so force a fresh `tailscale status` here.
+    yield* invalidateCachedMagicDnsName;
     const tailscaleEndpoints = yield* resolveTailscaleEndpoints({ state });
     return (
       tailscaleEndpoints.find(

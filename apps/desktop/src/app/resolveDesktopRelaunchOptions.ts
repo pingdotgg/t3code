@@ -14,12 +14,6 @@ export interface DesktopAppImageRelaunchPlan {
 
 export type DesktopRelaunchPlan = DesktopElectronRelaunchPlan | DesktopAppImageRelaunchPlan;
 
-/** @deprecated Prefer DesktopRelaunchPlan / resolveDesktopRelaunchPlan. */
-export type DesktopRelaunchOptions = {
-  readonly execPath: string;
-  readonly args: string[];
-};
-
 export const DEFAULT_APPIMAGE_RELAUNCH_DELAY_MS = 1_000;
 
 /**
@@ -55,25 +49,6 @@ export function resolveDesktopRelaunchPlan(input: {
     kind: "electron",
     execPath: input.execPath,
     args: input.argv.slice(1),
-  };
-}
-
-/** @deprecated Prefer resolveDesktopRelaunchPlan. */
-export function resolveDesktopRelaunchOptions(input: {
-  readonly appImagePath?: string | null | undefined;
-  readonly execPath: string;
-  readonly argv: readonly string[];
-}): DesktopRelaunchOptions {
-  const plan = resolveDesktopRelaunchPlan(input);
-  if (plan.kind === "appimage-delayed") {
-    return {
-      execPath: plan.appImagePath,
-      args: plan.args,
-    };
-  }
-  return {
-    execPath: plan.execPath,
-    args: plan.args,
   };
 }
 

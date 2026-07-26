@@ -140,7 +140,7 @@ const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 
 /** Matches the admin URL Tailscale CLI prints when Serve is disabled on the tailnet. */
 const TAILSCALE_SERVE_CONFIGURE_URL_PATTERN =
-  /https:\/\/login\.tailscale\.com\/f\/serve\?[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/i;
+  /https:\/\/login\.tailscale\.com\/f\/serve\?[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/i;
 
 function extractTailscaleServeConfigureUrl(text: string): string | null {
   const match = text.match(TAILSCALE_SERVE_CONFIGURE_URL_PATTERN);
@@ -391,6 +391,23 @@ function formatDesktopSshConnectionError(error: unknown): string {
   );
   const withoutTaggedErrorPrefix = withoutIpcPrefix.replace(/^Ssh[A-Za-z]+Error:\s*/u, "");
   return withoutTaggedErrorPrefix.trim() || fallback;
+}
+
+const IPC_INVOKE_ERROR_PREFIX_PATTERN = /^Error invoking remote method '[^']*':\s*/u;
+const TAGGED_ERROR_PREFIX_PATTERN = /^[A-Z][A-Za-z0-9]*Error:\s*/u;
+
+/**
+ * Electron rejects `ipcRenderer.invoke` with `Error invoking remote method
+ * '<channel>': <TaggedError>: <message>`. Strip that machinery so the toast
+ * shows the CLI guidance (and setup URL) the main process derived.
+ */
+function formatDesktopTailscaleServeError(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  let message = error.message.replace(IPC_INVOKE_ERROR_PREFIX_PATTERN, "").trim();
+  while (TAGGED_ERROR_PREFIX_PATTERN.test(message)) {
+    message = message.replace(TAGGED_ERROR_PREFIX_PATTERN, "").trim();
+  }
+  return message || fallback;
 }
 
 const ENDPOINT_ROW_CLASSNAME = "rounded-xl px-3 py-2.5 sm:px-4";
@@ -2001,8 +2018,10 @@ export function ConnectionsSettings() {
       refreshDesktopNetworkAccessState();
       setPendingTailscaleServeEndpoint(null);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to configure Tailscale HTTPS.";
+      const message = formatDesktopTailscaleServeError(
+        error,
+        "Failed to configure Tailscale HTTPS.",
+      );
       setDesktopServerExposureMutationError(message);
       const configureUrl = extractTailscaleServeConfigureUrl(message);
       toastManager.add(
@@ -2016,9 +2035,16 @@ export function ConnectionsSettings() {
                 actionProps: {
                   children: "Open setup",
                   onClick: () => {
-                    void desktopBridge.openExternal(configureUrl).catch(() => {
-                      window.open(configureUrl, "_blank", "noopener,noreferrer");
-                    });
+                    // openExternal resolves `false` instead of rejecting when the
+                    // shell refuses the URL, so branch on the result too.
+                    void desktopBridge
+                      .openExternal(configureUrl)
+                      .catch(() => false)
+                      .then((opened) => {
+                        if (!opened) {
+                          window.open(configureUrl, "_blank", "noopener,noreferrer");
+                        }
+                      });
                   },
                 },
               }
@@ -2052,7 +2078,7 @@ export function ConnectionsSettings() {
       refreshDesktopNetworkAccessState();
       setDisableTailscaleServeDialogOpen(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to disable Tailscale HTTPS.";
+      const message = formatDesktopTailscaleServeError(error, "Failed to disable Tailscale HTTPS.");
       setDesktopServerExposureMutationError(message);
       toastManager.add(
         stackedThreadToast({
@@ -2359,8 +2385,10 @@ export function ConnectionsSettings() {
       handleStartTailscaleServeSetup(endpoint);
       refreshDesktopNetworkAccessState();
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to resolve Tailscale HTTPS endpoint.";
+      const message = formatDesktopTailscaleServeError(
+        error,
+        "Failed to resolve Tailscale HTTPS endpoint.",
+      );
       setDesktopServerExposureMutationError(message);
       toastManager.add(
         stackedThreadToast({
