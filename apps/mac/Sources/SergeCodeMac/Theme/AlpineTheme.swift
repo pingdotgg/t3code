@@ -71,6 +71,12 @@ enum AlpineTheme {
         // so small status glyphs keep ≥4:1 contrast on near-white cards.
         return NSColor(red: 0.267, green: 0.541, blue: 0.349, alpha: 1)
     })
+    /// Destructive-action tint for the app's own menus and rows. The system
+    /// red rather than a palette tone: delete is the one action that should
+    /// not blend into the alpine surroundings, and `Button(role:)` styling is
+    /// unavailable outside native menus and alerts.
+    static let destructive = Color(nsColor: .systemRed)
+
     static let sky = Color(red: 0.57, green: 0.75, blue: 0.78)
     static let clay = Color(red: 0.82, green: 0.60, blue: 0.49)
     static let lichen = Color(red: 0.82, green: 0.76, blue: 0.52)
