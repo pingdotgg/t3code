@@ -209,7 +209,7 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
-  it.effect("persists tailscale serve preferences atomically and reports no-op updates", () =>
+  it.effect("persists tailscale serve preferences atomically after a successful preflight", () =>
     withHarness(
       emptyNetworkInterfaces,
       Effect.gen(function* () {
@@ -227,11 +227,14 @@ describe("DesktopServerExposure", () => {
         assert.equal(changed.state.tailscaleServeEnabled, true);
         assert.equal(changed.state.tailscaleServePort, 8443);
 
-        const unchanged = yield* serverExposure.setTailscaleServeEnabled({
+        // Re-enabling still relaunches so the child server re-binds Serve to
+        // its listen port, even when the preference document is unchanged.
+        const reenabled = yield* serverExposure.setTailscaleServeEnabled({
           enabled: true,
           port: 8443,
         });
-        assert.equal(unchanged.requiresRelaunch, false);
+        assert.equal(reenabled.requiresRelaunch, true);
+        assert.equal(reenabled.state.tailscaleServeEnabled, true);
 
         const persisted = yield* settings.get;
         assert.equal(persisted.tailscaleServeEnabled, true);
@@ -239,6 +242,72 @@ describe("DesktopServerExposure", () => {
       }),
     ),
   );
+
+  it.effect("fails enablement with CLI guidance when Tailscale Serve is not available", () => {
+    const configureUrl = "https://login.tailscale.com/f/serve?node=nExampleNodeIdForTests";
+    const failingSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        const childProcess = command as unknown as {
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+        };
+        const isServe = childProcess.args[0] === "serve";
+        const stderr = isServe
+          ? [
+              "Serve is not enabled on your tailnet.",
+              "To enable, visit:",
+              "",
+              `         ${configureUrl}`,
+            ].join("\n")
+          : "";
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(isServe ? 1 : 0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(encoder.encode(isServe ? "" : "{}")),
+            stderr: Stream.make(encoder.encode(stderr)),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
+    );
+
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.load;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const error = yield* serverExposure
+          .setTailscaleServeEnabled({ enabled: true, port: 443 })
+          .pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopServerExposure.DesktopTailscaleServeConfigureError);
+        assert.isTrue(DesktopServerExposure.isDesktopServerExposureSetTailscaleServeError(error));
+        assert.isTrue(DesktopServerExposure.isDesktopServerExposureError(error));
+        assert.equal(error.configureUrl, configureUrl);
+        assert.equal(
+          error.message,
+          `Serve is not enabled on your tailnet. To enable, visit: ${configureUrl}`,
+        );
+
+        const persisted = yield* settings.get;
+        assert.equal(persisted.tailscaleServeEnabled, false);
+      }),
+      {},
+      failingSpawner,
+    );
+  });
 
   it.effect("preserves persistence request context and the settings failure chain", () => {
     const diskFailure = new Error("disk exploded");

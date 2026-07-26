@@ -9,7 +9,11 @@ import {
   type DesktopServerExposureMode,
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
-import { readTailscaleStatus } from "@t3tools/tailscale";
+import {
+  ensureTailscaleServe,
+  formatTailscaleServeUserMessage,
+  readTailscaleStatus,
+} from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -239,6 +243,21 @@ export class DesktopTailscaleServePersistenceError extends Schema.TaggedErrorCla
   }
 }
 
+export class DesktopTailscaleServeConfigureError extends Schema.TaggedErrorClass<DesktopTailscaleServeConfigureError>()(
+  "DesktopTailscaleServeConfigureError",
+  {
+    enabled: Schema.Boolean,
+    port: Schema.NullOr(Schema.Number),
+    localPort: Schema.Number,
+    reason: Schema.String,
+    configureUrl: Schema.NullOr(Schema.String),
+  },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
 export const DesktopServerExposureSetModeError = Schema.Union([
   DesktopServerExposureNoNetworkAddressError,
   DesktopServerExposureModePersistenceError,
@@ -246,10 +265,21 @@ export const DesktopServerExposureSetModeError = Schema.Union([
 export type DesktopServerExposureSetModeError = typeof DesktopServerExposureSetModeError.Type;
 export const isDesktopServerExposureSetModeError = Schema.is(DesktopServerExposureSetModeError);
 
+export const DesktopServerExposureSetTailscaleServeError = Schema.Union([
+  DesktopTailscaleServePersistenceError,
+  DesktopTailscaleServeConfigureError,
+]);
+export type DesktopServerExposureSetTailscaleServeError =
+  typeof DesktopServerExposureSetTailscaleServeError.Type;
+export const isDesktopServerExposureSetTailscaleServeError = Schema.is(
+  DesktopServerExposureSetTailscaleServeError,
+);
+
 export const DesktopServerExposureError = Schema.Union([
   DesktopServerExposureNoNetworkAddressError,
   DesktopServerExposureModePersistenceError,
   DesktopTailscaleServePersistenceError,
+  DesktopTailscaleServeConfigureError,
 ]);
 export type DesktopServerExposureError = typeof DesktopServerExposureError.Type;
 export const isDesktopServerExposureError = Schema.is(DesktopServerExposureError);
@@ -281,7 +311,7 @@ export class DesktopServerExposure extends Context.Service<
     readonly setTailscaleServeEnabled: (input: {
       readonly enabled: boolean;
       readonly port?: number;
-    }) => Effect.Effect<DesktopServerExposureChange, DesktopTailscaleServePersistenceError>;
+    }) => Effect.Effect<DesktopServerExposureChange, DesktopServerExposureSetTailscaleServeError>;
     readonly getAdvertisedEndpoints: Effect.Effect<readonly AdvertisedEndpoint[]>;
   }
 >()("@t3tools/desktop/backend/DesktopServerExposure") {}
@@ -492,6 +522,44 @@ export const make = Effect.gen(function* () {
         enabled: input.enabled,
         ...(input.port === undefined ? {} : { port: input.port }),
       });
+
+      // Preflight Serve configuration before persisting so Enable can fail loudly
+      // with the same CLI guidance (including the admin setup URL) instead of a
+      // silent restart that leaves the toggle unchecked.
+      if (input.enabled) {
+        const current = yield* Ref.get(stateRef);
+        const servePort = input.port ?? current.tailscaleServePort;
+        const localPort = current.port;
+        if (localPort <= 0) {
+          return yield* new DesktopTailscaleServeConfigureError({
+            enabled: true,
+            port: servePort,
+            localPort,
+            reason: "Local backend is not ready yet. Try again in a moment.",
+            configureUrl: null,
+          });
+        }
+
+        yield* ensureTailscaleServe({
+          localPort,
+          servePort,
+          localHost: "127.0.0.1",
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          Effect.mapError((cause) => {
+            const configureUrl =
+              cause._tag === "TailscaleCommandExitError" ? (cause.configureUrl ?? null) : null;
+            return new DesktopTailscaleServeConfigureError({
+              enabled: true,
+              port: servePort,
+              localPort,
+              reason: formatTailscaleServeUserMessage(cause),
+              configureUrl,
+            });
+          }),
+        );
+      }
+
       const result = yield* desktopSettings
         .setTailscaleServe({
           enabled: input.enabled,
@@ -516,7 +584,9 @@ export const make = Effect.gen(function* () {
 
       return {
         state: toContractState(nextState),
-        requiresRelaunch: result.changed,
+        // Always relaunch after a successful enable preflight so the child
+        // server re-binds Serve to its current listen port (which may change).
+        requiresRelaunch: result.changed || input.enabled,
       };
     },
   );
