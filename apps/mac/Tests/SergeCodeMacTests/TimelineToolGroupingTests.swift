@@ -186,4 +186,56 @@ struct TimelineToolGroupingTests {
         }
         #expect(summary.toolCount == TimelineToolGrouping.liveAutoCollapseToolThreshold)
     }
+
+    // MARK: - Receive detection
+
+    @Test("a single tool joining a group reports its kind")
+    func receiveReportsNewestToolKind() {
+        let items = tools(count: 8) + [tool(id: "tool-9", kind: .webSearch, offset: 9)]
+
+        #expect(
+            ToolGroupAbsorption.receivedKind(previousItemCount: 8, items: items) == .webSearch)
+    }
+
+    @Test("a tool arriving behind reasoning still reports the tool kind")
+    func receiveSkipsTrailingReasoning() {
+        let items =
+            tools(count: 8) + [
+                tool(id: "tool-9", kind: .fileChange, offset: 9),
+                .reasoning(id: "think-1", text: "considering", at: baseDate.addingTimeInterval(10)),
+            ]
+
+        #expect(
+            ToolGroupAbsorption.receivedKind(previousItemCount: 8, items: items) == .fileChange)
+    }
+
+    @Test("a reasoning-only addition is not a receive")
+    func receiveIgnoresReasoningOnlyAddition() {
+        let items =
+            tools(count: 8) + [
+                .reasoning(id: "think-1", text: "considering", at: baseDate.addingTimeInterval(9))
+            ]
+
+        #expect(ToolGroupAbsorption.receivedKind(previousItemCount: 8, items: items) == nil)
+    }
+
+    @Test("a first render is not a receive")
+    func receiveIgnoresFirstRender() {
+        #expect(ToolGroupAbsorption.receivedKind(previousItemCount: 0, items: tools(count: 8)) == nil)
+    }
+
+    @Test("an unchanged or shrinking group is not a receive")
+    func receiveIgnoresShrink() {
+        let items = tools(count: 8)
+
+        #expect(ToolGroupAbsorption.receivedKind(previousItemCount: 8, items: items) == nil)
+        #expect(ToolGroupAbsorption.receivedKind(previousItemCount: 12, items: items) == nil)
+    }
+
+    @Test("a wholesale regroup is not a receive")
+    func receiveIgnoresWholesaleRegroup() {
+        let items = tools(count: 8 + ToolGroupAbsorption.maxReceivedItems + 1)
+
+        #expect(ToolGroupAbsorption.receivedKind(previousItemCount: 8, items: items) == nil)
+    }
 }

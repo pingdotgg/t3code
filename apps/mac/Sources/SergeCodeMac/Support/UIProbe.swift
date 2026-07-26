@@ -37,6 +37,9 @@
             case "glass":
                 await GlassLayeringProbe.run(multi: multi, scenery: scenery, dir: dir)
                 return
+            case "tool-group-receive":
+                await runToolGroupReceive(model: model, multi: multi, dir: dir)
+                return
             default:
                 break
             }
@@ -552,6 +555,98 @@
             NSApp.terminate(nil)
         }
 
+        /// Window-relative band (bottom-left origin, points) covering the last
+        /// collapsed tool group in the default 1653x720 probe window. Fixed
+        /// rather than measured: the probe drives a fixed fixture, so the row
+        /// lands in the same place every run.
+        private static let toolGroupBand = NSRect(x: 400, y: 195, width: 900, height: 170)
+
+        /// Drives a live tool burst past `liveAutoCollapseToolThreshold` so the
+        /// mid-turn collapse kicks in, then feeds one more finished tool and
+        /// captures the collapsed group across the receive flight.
+        ///
+        /// The flight is a `KeyframeAnimator`, which re-evaluates the SwiftUI
+        /// body at each interpolated value rather than handing a CoreAnimation
+        /// layer to the render server — so an in-process `cacheDisplay` really
+        /// does capture the deck mid-open instead of snapping to the end state.
+        private static func runToolGroupReceive(
+            model: AppModel, multi: MultiDeviceModel, dir: String
+        ) async {
+            try? await Task.sleep(for: .seconds(2))
+            guard let mock = model.backendForShutdown as? MockBackend else {
+                print("UIProbe: tool-group-receive skipped (live backend run)")
+                NSApp.terminate(nil)
+                return
+            }
+            guard
+                let threadID = model.threads.first(where: { $0.id == "thread-1" })?.id
+                    ?? model.threads.first?.id
+            else {
+                print("UIProbe: tool-group-receive failed: no thread")
+                NSApp.terminate(nil)
+                return
+            }
+            multi.select(threadID: threadID, on: model.deviceID)
+            try? await Task.sleep(for: .seconds(2))
+
+            let burst: [(String, String, ToolEventKind)] = [
+                ("read_file", "Sources/App/Model.swift", .fileRead),
+                ("run_command", "swift build", .command),
+                ("edit_file", "Sources/App/View.swift", .fileChange),
+                ("read_file", "Sources/App/Theme.swift", .fileRead),
+                ("web_search", "swiftui keyframe animator", .webSearch),
+                ("run_command", "swift test", .command),
+                ("edit_file", "Sources/App/Row.swift", .fileChange),
+                ("mcp_call", "linear.issue", .mcpCall),
+                ("read_file", "Package.swift", .fileRead),
+            ]
+            for (name, detail, kind) in burst {
+                await mock.probeAppendRunningToolEvent(
+                    threadID: threadID, name: name, detail: detail, kind: kind)
+                try? await Task.sleep(for: .milliseconds(120))
+            }
+            try? await Task.sleep(for: .seconds(1))
+            print("UIProbe: tool-group-receive \(describeToolGroup(model: model, threadID: threadID))")
+            snapshot("tg-0-collapsed-at-rest", dir: dir)
+
+            // One more finished tool: the row below vanishes into the summary,
+            // and the deck should fan open to take its chip in. Captured
+            // back-to-back and named by measured elapsed time — a window
+            // `cacheDisplay` costs enough that a fixed sleep cadence samples
+            // the flight far later than it claims to.
+            let started = Date()
+            await mock.probeAppendRunningToolEvent(
+                threadID: threadID, name: "run_command", detail: "swift build --package-path apps/mac",
+                kind: .command)
+            for index in 0..<24 {
+                let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+                snapshotRegion(
+                    "tg-frame-\(String(format: "%02d", index))-\(elapsed)ms",
+                    rect: Self.toolGroupBand, dir: dir)
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            print("UIProbe: tool-group-receive \(describeToolGroup(model: model, threadID: threadID))")
+            print("UIProbe: tool-group-receive done")
+            NSApp.terminate(nil)
+        }
+
+        /// Shape of the selected thread's display rows, for the probe log:
+        /// how many rows render, and the collapsed group's headline count.
+        private static func describeToolGroup(model: AppModel, threadID: String) -> String {
+            let settled = model.thread(threadID: threadID)?.status.isSettled ?? false
+            let display = model.timeline(threadID: threadID)
+                .groupedForDisplay(threadIsSettled: settled, includeSeparators: false)
+            let groups = display.compactMap { item -> Int? in
+                guard case .toolGroup(_, _, let summary) = item else { return nil }
+                return summary.toolCount
+            }
+            let liveRows = display.count { item in
+                guard case .single(let single) = item, case .toolEvent = single else { return false }
+                return true
+            }
+            return "rows=\(display.count) groupToolCounts=\(groups) liveToolRows=\(liveRows)"
+        }
+
         private static func probeRemoteDevice(
             _ session: RemoteDeviceSession,
             multi: MultiDeviceModel,
@@ -896,6 +991,24 @@
                 return
             }
             snapshot(name, window: window, dir: dir)
+        }
+
+        /// Captures just `rect` of the main window (view coordinates, so the
+        /// origin is bottom-left). A full-window `cacheDisplay` costs ~230 ms,
+        /// which is more than a whole transition lasts; a narrow band is cheap
+        /// enough to sample an animation frame by frame.
+        private static func snapshotRegion(_ name: String, rect: NSRect, dir: String) {
+            guard let window = NSApp.windows.first(where: { $0.isVisible }),
+                let view = window.contentView?.superview ?? window.contentView,
+                let rep = view.bitmapImageRepForCachingDisplay(in: rect)
+            else {
+                print("UIProbe: region snapshot \(name) failed (no window)")
+                return
+            }
+            view.cacheDisplay(in: rect, to: rep)
+            guard let data = rep.representation(using: .png, properties: [:]) else { return }
+            let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).png")
+            try? data.write(to: url)
         }
 
         private static func snapshot(_ name: String, window: NSWindow, dir: String) {

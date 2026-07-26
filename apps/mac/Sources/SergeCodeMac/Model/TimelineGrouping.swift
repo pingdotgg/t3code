@@ -138,6 +138,39 @@ public enum TimelineToolGrouping {
     public static let liveAutoCollapseToolThreshold = 8
 }
 
+/// Recognises a collapsed group taking in a row that just finished.
+///
+/// Mid-turn the finished prefix keeps growing: each tool that completes while
+/// the agent works leaves the transcript and joins the summary above it. The
+/// rule for "is this one row arriving, or did the whole run regroup?" is pure
+/// so it stays testable without a view.
+public enum ToolGroupAbsorption {
+    /// How many newly joined rows still read as one tool arriving. A larger
+    /// jump means the entire run regrouped at once (a settle flip, a display
+    /// cache miss), which is a re-render rather than a receive — animating it
+    /// would fire a flight for work the user never watched happen.
+    public static let maxReceivedItems = 3
+
+    /// Kind of the newest tool row that just joined a collapsed group, or nil
+    /// when the change was not a receive. Groups only ever grow at the tail —
+    /// they are the finished prefix of a still-running burst — so a first
+    /// render, a shrink, and a reasoning-only addition all report nothing.
+    public static func receivedKind(
+        previousItemCount: Int,
+        items: [TimelineItem]
+    ) -> ToolEventKind? {
+        guard previousItemCount > 0, items.count > previousItemCount else { return nil }
+        let added = items[previousItemCount...]
+        guard added.count <= maxReceivedItems else { return nil }
+        for item in added.reversed() {
+            if case .toolEvent(_, _, _, let kind, _, _, _, _) = item {
+                return kind
+            }
+        }
+        return nil
+    }
+}
+
 extension Array where Element == TimelineItem {
     /// Collapses each maximal run of consecutive tool-event/reasoning rows
     /// into a `toolGroup` when either:

@@ -72,6 +72,14 @@ public final class MockBackend: BackendService, @unchecked Sendable {
             await state.appendSessionExit(
                 threadID: threadID, summary: summary, stderrTail: stderrTail)
         }
+
+        /// Probe hook: append one finished tool row to a mid-turn thread.
+        public func probeAppendRunningToolEvent(
+            threadID: String, name: String, detail: String, kind: ToolEventKind
+        ) async {
+            await state.appendRunningToolEvent(
+                threadID: threadID, name: name, detail: detail, kind: kind)
+        }
     #endif
 
     public func providers() async throws -> [ProviderInstance] {
@@ -892,6 +900,27 @@ private actor MockState {
     func appendSessionExit(threadID: String, summary: String, stderrTail: String) {
         let item = TimelineItem.sessionExit(
             id: nextID("exit"), summary: summary, stderrTail: stderrTail, at: Date())
+        timelinesByThread[threadID, default: []].append(item)
+        emit(.timelineAppended(threadID: threadID, item: item))
+    }
+
+    /// Holds a thread mid-turn and appends one finished tool event, as if the
+    /// agent had closed a tool's lifecycle while still working. Repeated calls
+    /// reproduce the live tool burst that drives `liveAutoCollapseToolThreshold`
+    /// collapse and the collapsed group's receive animation.
+    func appendRunningToolEvent(
+        threadID: String, name: String, detail: String, kind: ToolEventKind
+    ) {
+        let now = Date()
+        if var thread = threadsByID[threadID], thread.status != .running {
+            thread.status = .running
+            thread.updatedAt = now
+            threadsByID[threadID] = thread
+            emit(.threadUpserted(thread))
+        }
+        let item = TimelineItem.toolEvent(
+            id: nextID("tool"), name: name, detail: detail, kind: kind,
+            status: .succeeded, at: now, output: nil, outputIsError: false)
         timelinesByThread[threadID, default: []].append(item)
         emit(.timelineAppended(threadID: threadID, item: item))
     }
