@@ -1129,22 +1129,6 @@ private struct ToolEventRow: View {
     }
 }
 
-extension ToolEventKind {
-    /// Round-trip back to the wire item type for `ParsedToolDetail`'s hint.
-    fileprivate var wireItemType: String? {
-        switch self {
-        case .command: "command_execution"
-        case .fileChange: "file_change"
-        case .fileRead: "file_read"
-        case .webSearch: "web_search"
-        case .mcpCall: "mcp_tool_call"
-        case .subagent: "collab_agent_tool_call"
-        case .imageView: "image_view"
-        case .skill, .computerUse, .other: nil
-        }
-    }
-}
-
 /// Inline diff body for a file-change tool row: file path header with +/-
 /// counts, then the edit's old lines (red) and new lines (green). Long diffs
 /// are capped — the Diff inspector remains the full view.

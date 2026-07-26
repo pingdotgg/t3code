@@ -10,21 +10,59 @@ struct ToolActivityStyle: Sendable {
 }
 
 extension ToolEventKind {
+    /// Glyph for this kind, split out from the tint so presentation code that
+    /// cannot name a `Color` (the pure `AgentActivityPresentation` policy)
+    /// still points at the same symbol the chip draws.
+    var activitySymbolName: String {
+        switch self {
+        case .command: "terminal"
+        case .fileChange: "square.and.pencil"
+        case .fileRead: "eye"
+        case .webSearch: "globe"
+        case .mcpCall: "wrench.adjustable"
+        case .skill: "wand.and.stars"
+        case .computerUse: "desktopcomputer"
+        case .subagent: "person.2"
+        case .imageView: "photo"
+        case .other: "hammer"
+        }
+    }
+
     /// Palette assignment keeps related actions in related hues: filesystem
     /// work in greens, network/research in lavender, shell/system in sky,
     /// integrations and imagery in clay.
-    var activityStyle: ToolActivityStyle {
+    var activityTint: Color {
         switch self {
-        case .command: ToolActivityStyle(symbolName: "terminal", tint: AlpineTheme.sky)
-        case .fileChange: ToolActivityStyle(symbolName: "square.and.pencil", tint: AlpineTheme.meadow)
-        case .fileRead: ToolActivityStyle(symbolName: "eye", tint: AlpineTheme.lichen)
-        case .webSearch: ToolActivityStyle(symbolName: "globe", tint: AlpineTheme.lavender)
-        case .mcpCall: ToolActivityStyle(symbolName: "wrench.adjustable", tint: AlpineTheme.clay)
-        case .skill: ToolActivityStyle(symbolName: "wand.and.stars", tint: AlpineTheme.accent)
-        case .computerUse: ToolActivityStyle(symbolName: "desktopcomputer", tint: AlpineTheme.sky)
-        case .subagent: ToolActivityStyle(symbolName: "person.2", tint: AlpineTheme.lavender)
-        case .imageView: ToolActivityStyle(symbolName: "photo", tint: AlpineTheme.clay)
-        case .other: ToolActivityStyle(symbolName: "hammer", tint: .secondary)
+        case .command: AlpineTheme.sky
+        case .fileChange: AlpineTheme.meadow
+        case .fileRead: AlpineTheme.lichen
+        case .webSearch: AlpineTheme.lavender
+        case .mcpCall: AlpineTheme.clay
+        case .skill: AlpineTheme.accent
+        case .computerUse: AlpineTheme.sky
+        case .subagent: AlpineTheme.lavender
+        case .imageView: AlpineTheme.clay
+        case .other: .secondary
+        }
+    }
+
+    var activityStyle: ToolActivityStyle {
+        ToolActivityStyle(symbolName: activitySymbolName, tint: activityTint)
+    }
+
+    /// Round-trip back to the wire item type for `ParsedToolDetail`'s hint.
+    /// Shared by the transcript row and the live activity dock, which parse
+    /// the same detail string for the same reason.
+    var wireItemType: String? {
+        switch self {
+        case .command: "command_execution"
+        case .fileChange: "file_change"
+        case .fileRead: "file_read"
+        case .webSearch: "web_search"
+        case .mcpCall: "mcp_tool_call"
+        case .subagent: "collab_agent_tool_call"
+        case .imageView: "image_view"
+        case .skill, .computerUse, .other: nil
         }
     }
 }
