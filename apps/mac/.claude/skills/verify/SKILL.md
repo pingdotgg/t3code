@@ -50,12 +50,16 @@ That is a capture artifact, not an app bug — judge opaque regions
   CLT keeps the swift-testing runtime outside every dyld search path and
   `DYLD_FRAMEWORK_PATH` is SIP-stripped. Bake rpaths at link time:
   ```bash
-  swift test --package-path apps/mac \
+  swift test --package-path apps/mac --no-parallel \
     -Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing \
     -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/Frameworks \
     -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/usr/lib \
     -Xlinker -rpath -Xlinker '@loader_path/../../..'
   ```
+  `--no-parallel` matches CI: the timeline caches are process-wide statics, so
+  one suite's `resetForTesting()` can land inside another suite's counter
+  assertions and flake `AppModelTimelineEvictionTests`. Parallelism buys
+  nothing here — the MainActor tests already serialize on the main thread.
   The third rpath is what lets the app test bundle find
   `Sparkle.framework` next to it in `Products/Debug`; without it
   `SergeCodeMacTests` dies with "Failed to open test bundle" and only the

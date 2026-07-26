@@ -2045,7 +2045,16 @@ public final class AppModel {
     /// failed, which is the signal the Settings tabs use to roll their
     /// optimistic draft back. A superseded save returns true even if it threw:
     /// a stale failure must never clobber a newer draft.
-    @discardableResult
+    ///
+    /// Deliberately NOT `@discardableResult`: every caller writes an optimistic
+    /// draft first, so one that drops the result leaves the UI showing a value
+    /// the server rejected.
+    ///
+    /// That alone does not catch the case that actually slipped through —
+    /// `Task { await model.saveSettings(next) }` is a single-expression
+    /// closure, so the `Bool` becomes the task's return type and is never
+    /// "unused". `SettingsSaveHandlingTests` covers that shape by scanning the
+    /// call sites directly.
     public func saveSettings(_ new: AppSettings) async -> Bool {
         // The settings UI can fire one unawaited save per keystroke; whichever
         // RESPONSE lands last would otherwise win regardless of order. Gate the

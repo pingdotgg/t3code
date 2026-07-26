@@ -16,8 +16,12 @@ Hard rules (build breaks otherwise — no Xcode on this machine, CLT only):
   test helper, so they must be linked in — and the third, `@loader_path/../../..`,
   points the app test bundle at `Sparkle.framework` in `Products/Debug`; without
   it `SergeCodeMacTests` fails to load and only the T3Kit/SidecarKit suites run,
-  while the command still looks like it passed):
-  `swift test --package-path apps/mac -Xswiftc -plugin-path -Xswiftc
+  while the command still looks like it passed). Also pass `--no-parallel`, as
+  CI does: the timeline caches are process-wide statics, so one suite's
+  `resetForTesting()` can land inside another suite's counter assertions and
+  flake `AppModelTimelineEvictionTests`. Parallelism buys nothing here anyway —
+  the MainActor tests already serialize on the main thread:
+  `swift test --package-path apps/mac --no-parallel -Xswiftc -plugin-path -Xswiftc
 /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing
 -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/Frameworks
 -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/usr/lib

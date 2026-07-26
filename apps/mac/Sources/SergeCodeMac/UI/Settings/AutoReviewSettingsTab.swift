@@ -331,7 +331,9 @@ struct AutoReviewSettingsTab: View {
                             default: next.autoReview.projectOverrides[index].enabled = nil
                             }
                             draft = next
-                            Task { await model.saveSettings(next) }
+                            Task {
+                                if await model.saveSettings(next) == false { rollbackDraft() }
+                            }
                         })
                 ) {
                     Text("Inherit").tag("inherit")
