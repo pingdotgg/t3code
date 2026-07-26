@@ -22,6 +22,32 @@ If a command fails with `vp: command not found`,
 the missing install and not your change. Run `pnpm run setup` and retry —
 do not start debugging the error itself.
 
+### Never run `git stash`
+
+Every worktree shares one stash stack with every other worktree and with the
+main checkout. A stash you push here can be popped by a different agent
+working somewhere else, and the work is then gone from both. 24 threads in the
+archive used it and at least one lost work to it.
+
+If you need a clean tree, commit to your branch instead — a commit is
+recoverable and private to your branch. If you have already stashed and lost
+something, `git fsck --unreachable` plus `git stash store <sha>` can recover
+it.
+
+### Start from current `main`
+
+Worktrees are created from whatever `main` pointed at when the thread started,
+and long threads drift. Before you begin substantial work, and again before
+opening the PR, run `git fetch origin && git merge origin/main` (or rebase).
+34 threads in the archive needed a user-prompted "fix the merge conflicts"
+turn, and one bad resolution clobbered `main`.
+
+### Finish the job
+
+A task is not done at the commit. Unless the user said otherwise, push the
+branch and open the PR against `SergeSerb2/SergeCode` in the same turn —
+17 threads stopped after committing and had to be told "push + pr please".
+
 ## Task Completion Requirements
 
 ### Verify the change, not the monorepo
@@ -45,6 +71,10 @@ while working.
 Vite+ test command and `vp run test` when you specifically need the `test`
 package script.
 
+"Pass" means exit code 0. `vp check` reports a standing baseline of ~22 lint
+warnings that predate your change; they are not errors and not yours. Compare
+the error count, not the warning count.
+
 ### Do not re-run a check that cannot have changed
 
 Across the archived threads, 63% of all build/test/check runs happened with no
@@ -64,8 +94,14 @@ Use `pnpm run test:mac` (`apps/mac/scripts/swift-test.sh`). A bare
 missing `TestingMacros` plugin, then missing `lib_TestingInterop.dylib`, then
 missing `Sparkle.framework` — and the flags that fix it differ between
 Command Line Tools and Xcode. The wrapper resolves them from the active
-toolchain and applies `--no-parallel`. It forwards arguments, so
-`pnpm run test:mac --filter SidebarPresentationTests` scopes the run.
+toolchain and applies `--no-parallel`.
+
+It forwards arguments, so `pnpm run test:mac --filter SidebarPresentationTests`
+narrows the run — but do not expect much from that. Roughly 90% of a Swift
+test run is compilation and ~10% is execution (509 tests run in 9.8s inside a
+44s invocation), so `--filter` mostly buys you shorter output, not a shorter
+wait. The way to make Swift work cheaper is to run it less often, not to
+narrow it.
 
 ## macOS App Versioning and Release Policy
 
