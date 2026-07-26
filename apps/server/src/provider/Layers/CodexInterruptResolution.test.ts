@@ -75,12 +75,13 @@ describe("resolveCodexInterruptTurnId", () => {
   it.effect("requests turns when resolving an interrupt without a projected turn id", () => {
     let requestedParams: CodexRpc.ClientRequestParamsByMethod["thread/read"] | undefined;
     let readThreadCallCount = 0;
+    const noActiveTurnId: TurnId | undefined = undefined;
 
     return Effect.gen(function* () {
       const turnId = yield* resolveCodexInterruptTurnId({
         providerThreadId: "provider-thread-1",
         requestedTurnId: undefined,
-        readSessionActiveTurnId: Effect.succeed(undefined),
+        readSessionActiveTurnId: Effect.succeed(noActiveTurnId),
         readThread: (params) => {
           readThreadCallCount += 1;
           requestedParams = params;
