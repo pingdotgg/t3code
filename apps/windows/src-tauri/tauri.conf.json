@@ -1,0 +1,72 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SurgeCode",
+  "version": "../version.json",
+  "identifier": "dev.sergecode.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "SurgeCode",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 720,
+        "minHeight": 480,
+        "resizable": true,
+        "theme": "Dark",
+        "transparent": true,
+        "decorations": true,
+        "dragDropEnabled": true,
+        "windowEffects": {
+          "effects": ["mica"],
+          "state": "followsWindowActiveState"
+        }
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob: https://images.unsplash.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:* https://api.unsplash.com",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/SergeCode/scenery/**"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "publisher": "SergeCode",
+    "copyright": "SergeCode",
+    "category": "DeveloperTool",
+    "shortDescription": "Native Windows client for coding agents",
+    "longDescription": "SurgeCode is a native Windows client for coding agents such as Codex and Claude. It supervises a local SergeCode server and speaks its effect-RPC protocol over a loopback WebSocket.",
+    "resources": {
+      "../dist-sidecar/SergeCodeNode": "SergeCodeNode/",
+      "../dist-sidecar/SergeCodeServer": "SergeCodeServer/"
+    },
+    "createUpdaterArtifacts": false,
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "languages": ["English"]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/SergeSerb2/SergeCode/releases/latest/download/latest.json"],
+      "pubkey": "",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}
