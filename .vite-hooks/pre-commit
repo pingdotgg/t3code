@@ -1,1 +1,18 @@
+# A thread gets a fresh git worktree, and a worktree that has not been
+# bootstrapped has no node_modules. `core.hooksPath` is an absolute path into
+# the main checkout, so this hook still fires there, but `vp staged` loads THIS
+# worktree's vite.config.ts and dies with "Cannot find package 'vite-plus'" —
+# failing commits of files `vp fmt` would never have touched, Swift included.
+#
+# `.vite-hooks/post-checkout` bootstraps new worktrees, but it cannot reach the
+# ones that already exist. Degrade to a no-op rather than blocking the commit:
+# a false failure here is what taught agents to reach for `git commit
+# --no-verify`, and that habit costs the repo formatting on every commit after.
+root=$(git rev-parse --show-toplevel 2>/dev/null) || root=.
+if [ ! -d "$root/node_modules/vite-plus" ]; then
+  echo "[pre-commit] no node_modules in this worktree; skipping 'vp staged'." >&2
+  echo "[pre-commit] run 'pnpm run setup' to restore formatting on commit." >&2
+  exit 0
+fi
+
 vp staged
