@@ -47,14 +47,28 @@ struct ChatHeaderView: View {
         var containerWidth: CGFloat = 0
         var contentOffsetX: CGFloat = 0
 
-        /// Half a point of slack throughout: content and container widths land
-        /// on fractional values and would otherwise flicker at the seam.
+        /// Half a point of slack for the overflow test: content and container
+        /// widths land on fractional values and would otherwise flicker at the
+        /// seam.
         private static let slack: CGFloat = 0.5
+
+        /// How far off the trailing edge still counts as anchored. Wider than
+        /// `slack` because a scroll view settles against fractional widths: on
+        /// a fresh mount the strip lands up to 4pt short across probe runs, and
+        /// chasing that residue only makes the strip re-scroll itself. The
+        /// drift worth catching was 21pt — enough to cut into the git actions
+        /// menu — and anything at that scale still fails the check.
+        private static let anchorTolerance: CGFloat = 6
 
         var overflow: GitStripOverflow {
             GitStripOverflow(
                 isOverflowing: contentWidth > containerWidth + Self.slack,
                 isScrolled: contentOffsetX > Self.slack)
+        }
+
+        /// The offset at which the strip's trailing end meets the container's.
+        var trailingEdgeOffset: CGFloat {
+            max(0, contentWidth - containerWidth)
         }
 
         /// Whether the strip sits at its trailing edge — the position it is
@@ -63,7 +77,7 @@ struct ChatHeaderView: View {
         /// leading edge instead, hiding the git actions menu.
         var isAtTrailingEdge: Bool {
             guard contentWidth > containerWidth + Self.slack else { return true }
-            return contentOffsetX >= contentWidth - containerWidth - Self.slack
+            return contentOffsetX >= trailingEdgeOffset - Self.anchorTolerance
         }
     }
 
@@ -161,8 +175,14 @@ struct ChatHeaderView: View {
             // Hold the trailing edge while the strip is still the app's to
             // place: the header keeps re-measuring as the window settles, and
             // a stale offset leaves part of the git actions menu off-screen.
+            //
+            // By explicit offset, not `scrollTo(edge: .trailing)`: the position
+            // already reads as trailing from its own initial value, so asking
+            // for that edge again is a no-op and the strip kept the offset it
+            // was placed at against a wider container — measured 4pt short on
+            // every thread, eating into the git actions menu.
             if !gitStripUserScrolled, !metrics.isAtTrailingEdge {
-                gitStripPosition.scrollTo(edge: .trailing)
+                gitStripPosition.scrollTo(x: metrics.trailingEdgeOffset)
             }
             #if DEBUG
                 UIProbeGitStrip.record(metrics, threadID: thread.id)

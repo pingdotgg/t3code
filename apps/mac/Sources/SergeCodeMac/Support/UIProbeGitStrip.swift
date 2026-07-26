@@ -16,6 +16,22 @@
             latestThreadID = threadID
         }
 
+        /// Drops the cached reading. Probe checks call this before the state
+        /// they are about to measure changes, so a strip that never reports
+        /// fresh geometry reads as "no geometry" instead of silently passing on
+        /// the previous thread's numbers.
+        static func reset() {
+            latest = nil
+            latestThreadID = nil
+        }
+
+        /// The current reading, but only when it came from `threadID`. A stale
+        /// reading from another thread is not evidence about this one.
+        static func metrics(for threadID: String) -> ChatHeaderView.GitStripMetrics? {
+            guard latestThreadID == threadID else { return nil }
+            return latest
+        }
+
         /// One-line summary for probe logs: overflow, offset, and whether the
         /// strip is sitting at its trailing edge.
         static func describe() -> String {

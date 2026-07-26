@@ -49,12 +49,23 @@ struct ChatHeaderGitStripTests {
         #expect(!metrics.isAtTrailingEdge)
     }
 
-    @Test("sub-point differences do not count as off-anchor")
-    func fractionalSlackIsTolerated() {
-        // Widths land on fractional values; without slack the strip would chase
-        // its own anchor every layout pass.
-        let metrics = Metrics(contentWidth: 472.4, containerWidth: 177.1, contentOffsetX: 295)
+    @Test("settling residue does not count as off-anchor")
+    func settlingResidueIsTolerated() {
+        // A scroll view settling against fractional widths lands a few points
+        // short; measured up to 4pt across probe runs. Treating that as
+        // off-anchor would have the strip re-scrolling itself forever.
+        let metrics = Metrics(contentWidth: 472.4, containerWidth: 177.1, contentOffsetX: 291)
         #expect(metrics.isAtTrailingEdge)
+    }
+
+    @Test("the tolerance stays well under the drift it has to catch")
+    func toleranceIsNarrowerThanRealDrift() {
+        // 21pt short must fail even though 4pt passes — otherwise the check
+        // stops being evidence of anything.
+        let settling = Metrics(contentWidth: 472, containerWidth: 177, contentOffsetX: 291)
+        let drifted = Metrics(contentWidth: 472, containerWidth: 177, contentOffsetX: 274)
+        #expect(settling.isAtTrailingEdge)
+        #expect(!drifted.isAtTrailingEdge)
     }
 
     @Test("overflow needs more than a sub-point of extra content")

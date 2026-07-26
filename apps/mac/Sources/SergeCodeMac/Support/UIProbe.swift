@@ -833,7 +833,7 @@
                 log("after-close-review")
             }
 
-            await probeGitStripAnchor(multi: multi, dir: dir)
+            await probeGitStripAnchor(multi: multi, dir: dir, window: window)
 
             snapshot("window-size-final", window: window, dir: dir)
             NSApp.terminate(nil)
@@ -845,7 +845,7 @@
         /// has silently landed at the leading edge, which would bury the git
         /// actions behind a long branch name.
         private static func probeGitStripAnchor(
-            multi: MultiDeviceModel, dir: String
+            multi: MultiDeviceModel, dir: String, window: NSWindow
         ) async {
             let model = multi.local
             let threadIDs = model.threads.prefix(3).map(\.id)
@@ -853,20 +853,59 @@
                 print("UIProbe: git-strip no threads to check")
                 return
             }
+            var checks = 0
             var failures = 0
-            for threadID in threadIDs {
-                multi.select(threadID: threadID, on: model.deviceID)
+
+            /// Reads the strip's geometry for `threadID` only, after clearing
+            /// the previous reading: a strip that never reports must fail the
+            /// check rather than inherit the last thread's numbers.
+            func check(_ label: String, threadID: String) async {
                 try? await Task.sleep(for: .seconds(2))
-                print("UIProbe: \(UIProbeGitStrip.describe())")
-                if let metrics = UIProbeGitStrip.latest, !metrics.isAtTrailingEdge {
+                checks += 1
+                guard let metrics = UIProbeGitStrip.metrics(for: threadID) else {
                     failures += 1
-                    print("UIProbe: git-strip FAIL not at trailing edge (thread=\(threadID))")
+                    print(
+                        "UIProbe: git-strip FAIL \(label) no fresh geometry for \(threadID) "
+                            + "(last reading from \(UIProbeGitStrip.latestThreadID ?? "nothing"))")
+                    return
+                }
+                print("UIProbe: \(label) \(UIProbeGitStrip.describe())")
+                if !metrics.isAtTrailingEdge {
+                    failures += 1
+                    print("UIProbe: git-strip FAIL \(label) not at trailing edge (\(threadID))")
                 }
             }
+
+            // Thread switches: every thread starts at the trailing edge. The
+            // selection is cleared first so re-selecting the already-selected
+            // thread is still a real change — otherwise nothing re-renders and
+            // the check would read as "no geometry" rather than measuring.
+            for threadID in threadIDs {
+                multi.selection = nil
+                try? await Task.sleep(for: .seconds(0.5))
+                UIProbeGitStrip.reset()
+                multi.select(threadID: threadID, on: model.deviceID)
+                await check("thread-switch", threadID: threadID)
+            }
+
+            // Header width changes: the case where a scroll view keeps a stale
+            // offset and drifts off the trailing edge. Each resize re-measures
+            // from scratch, so an unhonored `scrollTo(edge:)` shows up here.
+            // Widths only grow, so none of them can be refused by the window
+            // minimum (a refused resize would emit no geometry at all).
+            if let threadID = model.selectedThreadID {
+                let base = window.frame.width
+                for delta in [80.0, 320.0, 200.0] {
+                    UIProbeGitStrip.reset()
+                    window.setContentSize(NSSize(width: base + delta, height: 600))
+                    await check("resize-\(Int(base + delta))", threadID: threadID)
+                }
+            }
+
             print(
                 failures == 0
-                    ? "UIProbe: git-strip anchor OK across \(threadIDs.count) threads"
-                    : "UIProbe: git-strip anchor FAILED on \(failures) of \(threadIDs.count)")
+                    ? "UIProbe: git-strip anchor OK across \(checks) checks"
+                    : "UIProbe: git-strip anchor FAILED on \(failures) of \(checks) checks")
             snapshot("window-size-git-strip", dir: dir)
         }
 
