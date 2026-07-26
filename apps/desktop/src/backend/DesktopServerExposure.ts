@@ -336,6 +336,13 @@ export class DesktopServerExposure extends Context.Service<
       readonly port?: number;
     }) => Effect.Effect<DesktopServerExposureChange, DesktopServerExposureSetTailscaleServeError>;
     readonly getAdvertisedEndpoints: Effect.Effect<readonly AdvertisedEndpoint[]>;
+    /**
+     * User-initiated MagicDNS resolve for the Tailscale HTTPS setup flow.
+     * Spawns `tailscale status` (cached). Unlike getAdvertisedEndpoints, this
+     * runs even when network access is local-only and Serve is still off so
+     * Settings can offer the toggle without probing on every panel mount.
+     */
+    readonly resolveTailscaleHttpsEndpoint: Effect.Effect<AdvertisedEndpoint | null>;
   }
 >()("@t3tools/desktop/backend/DesktopServerExposure") {}
 
@@ -634,32 +641,53 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const resolveTailscaleEndpoints = Effect.fn("desktop.serverExposure.resolveTailscaleEndpoints")(
+    function* (input: { readonly state: RuntimeState }) {
+      const currentNetworkInterfaces = yield* readNetworkInterfaces;
+      return yield* resolveTailscaleAdvertisedEndpoints({
+        port: input.state.port,
+        serveEnabled: input.state.tailscaleServeEnabled,
+        servePort: input.state.tailscaleServePort,
+        networkInterfaces: currentNetworkInterfaces,
+        readMagicDnsName: cachedReadMagicDnsName,
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+    },
+  );
+
   const getAdvertisedEndpoints = Effect.gen(function* () {
     const state = yield* Ref.get(stateRef);
-    const currentNetworkInterfaces = yield* readNetworkInterfaces;
     const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
       port: state.port,
       exposure: toResolvedExposure(state),
       customHttpsEndpointUrls: config.desktopHttpsEndpointUrls,
     });
 
-    // Tailscale HTTPS (MagicDNS + Serve) is independent of LAN "network
-    // access": Serve only proxies to loopback. Always resolve Tailscale
-    // endpoints so the settings toggle can appear while the backend is still
-    // local-only. `tailscale status` is cached (see cachedReadMagicDnsName) to
-    // avoid looping macOS "Other apps" TCC prompts on App Store Tailscale.
-    const tailscaleEndpoints = yield* resolveTailscaleAdvertisedEndpoints({
-      port: state.port,
-      serveEnabled: state.tailscaleServeEnabled,
-      servePort: state.tailscaleServePort,
-      networkInterfaces: currentNetworkInterfaces,
-      readMagicDnsName: cachedReadMagicDnsName,
-    }).pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-    );
+    // Don't spawn the Tailscale CLI on every Connections panel mount when the
+    // user hasn't opted into network exposure or Serve yet. MAS Tailscale's
+    // CLI lives in a sandbox, so each spawn re-fires the "Other apps" TCC
+    // prompt (#2745). Tailscale HTTPS setup uses resolveTailscaleHttpsEndpoint
+    // on explicit user interaction instead (Serve is independent of LAN bind).
+    if (state.mode !== "network-accessible" && !state.tailscaleServeEnabled) {
+      return coreEndpoints;
+    }
+
+    const tailscaleEndpoints = yield* resolveTailscaleEndpoints({ state });
     return [...coreEndpoints, ...tailscaleEndpoints];
   }).pipe(Effect.withSpan("desktop.serverExposure.getAdvertisedEndpoints"));
+
+  const resolveTailscaleHttpsEndpoint = Effect.gen(function* () {
+    const state = yield* Ref.get(stateRef);
+    const tailscaleEndpoints = yield* resolveTailscaleEndpoints({ state });
+    return (
+      tailscaleEndpoints.find(
+        (endpoint) =>
+          endpoint.provider.id === "tailscale" && endpoint.httpBaseUrl.startsWith("https:"),
+      ) ?? null
+    );
+  }).pipe(Effect.withSpan("desktop.serverExposure.resolveTailscaleHttpsEndpoint"));
 
   return DesktopServerExposure.of({
     getState,
@@ -668,6 +696,7 @@ export const make = Effect.gen(function* () {
     setMode,
     setTailscaleServeEnabled,
     getAdvertisedEndpoints,
+    resolveTailscaleHttpsEndpoint,
   });
 });
 

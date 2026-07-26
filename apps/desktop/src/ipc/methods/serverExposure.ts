@@ -67,3 +67,13 @@ export const getAdvertisedEndpoints = DesktopIpc.makeIpcMethod({
     return yield* serverExposure.getAdvertisedEndpoints;
   }),
 });
+
+export const resolveTailscaleHttpsEndpoint = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.RESOLVE_TAILSCALE_HTTPS_ENDPOINT_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(AdvertisedEndpoint),
+  handler: Effect.fn("desktop.ipc.serverExposure.resolveTailscaleHttpsEndpoint")(function* () {
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+    return yield* serverExposure.resolveTailscaleHttpsEndpoint;
+  }),
+});

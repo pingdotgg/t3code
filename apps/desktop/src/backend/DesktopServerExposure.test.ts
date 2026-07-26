@@ -439,9 +439,8 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
-  it.effect("resolves Tailscale HTTPS independently of LAN network access", () => {
-    const statusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
-    return withHarness(
+  it.effect("does not spawn the tailscale CLI while server exposure is local-only", () =>
+    withHarness(
       lanNetworkInterfaces,
       Effect.gen(function* () {
         const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
@@ -449,25 +448,40 @@ describe("DesktopServerExposure", () => {
         // mode stays at default "local-only", tailscaleServeEnabled stays false.
 
         const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        // Only the loopback endpoint; no tailscale spawn means dieOnSpawn would
+        // crash if the passive gate were missing.
         assert.deepEqual(
-          endpoints.map((endpoint) => ({
-            httpBaseUrl: endpoint.httpBaseUrl,
-            status: endpoint.status,
-            label: endpoint.label,
-          })),
-          [
-            {
-              httpBaseUrl: "http://127.0.0.1:4173/",
-              status: "available",
-              label: "This machine",
-            },
-            {
-              httpBaseUrl: "https://desktop.tail.ts.net/",
-              status: "unavailable",
-              label: "Tailscale HTTPS",
-            },
-          ],
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/"],
         );
+      }),
+      {},
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.die("unexpected tailscale spawn")),
+      ),
+    ),
+  );
+
+  it.effect("resolves Tailscale HTTPS on demand while remaining local-only", () => {
+    const statusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
+    return withHarness(
+      lanNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const passive = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          passive.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/"],
+        );
+
+        const endpoint = yield* serverExposure.resolveTailscaleHttpsEndpoint;
+        assert.isNotNull(endpoint);
+        assert.equal(endpoint?.httpBaseUrl, "https://desktop.tail.ts.net/");
+        assert.equal(endpoint?.status, "unavailable");
+        assert.equal(endpoint?.label, "Tailscale HTTPS");
       }),
       {},
       mockSpawnerLayer(statusJson),

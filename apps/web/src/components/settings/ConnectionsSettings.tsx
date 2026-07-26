@@ -2329,6 +2329,55 @@ export function ConnectionsSettings() {
     () => desktopAdvertisedEndpoints.find(isTailscaleHttpsEndpoint) ?? null,
     [desktopAdvertisedEndpoints],
   );
+
+  const handleEnableTailscaleHttps = useCallback(async () => {
+    if (!desktopBridge) return;
+    if (tailscaleHttpsEndpoint) {
+      handleStartTailscaleServeSetup(tailscaleHttpsEndpoint);
+      return;
+    }
+
+    // MagicDNS is resolved only on explicit opt-in so local-only Connections
+    // mounts do not spawn `tailscale status` (macOS MAS TCC; #2745).
+    setIsUpdatingTailscaleServe(true);
+    setDesktopServerExposureMutationError(null);
+    try {
+      const endpoint = await desktopBridge.resolveTailscaleHttpsEndpoint();
+      if (!endpoint) {
+        const message =
+          "Tailscale is not running or has no MagicDNS name. Start Tailscale and try again.";
+        setDesktopServerExposureMutationError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not set up Tailscale HTTPS",
+            description: message,
+          }),
+        );
+        return;
+      }
+      handleStartTailscaleServeSetup(endpoint);
+      refreshDesktopNetworkAccessState();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to resolve Tailscale HTTPS endpoint.";
+      setDesktopServerExposureMutationError(message);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not set up Tailscale HTTPS",
+          description: message,
+        }),
+      );
+    } finally {
+      setIsUpdatingTailscaleServe(false);
+    }
+  }, [
+    desktopBridge,
+    handleStartTailscaleServeSetup,
+    refreshDesktopNetworkAccessState,
+    tailscaleHttpsEndpoint,
+  ]);
   const visibleDesktopNetworkAdvertisedEndpoints = useMemo(
     () =>
       isLocalBackendNetworkAccessible
@@ -2905,23 +2954,22 @@ export function ConnectionsSettings() {
           ? tailscaleHttpsEndpoint.status === "available"
             ? tailscaleHttpsEndpoint.httpBaseUrl
             : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
-          : "Start Tailscale to set up HTTPS access through MagicDNS."
+          : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL. Independent of LAN network access."
       }
       control={
-        tailscaleHttpsEndpoint ? (
-          <Switch
-            checked={tailscaleHttpsEndpoint.status === "available"}
-            disabled={isUpdatingTailscaleServe}
-            onCheckedChange={(checked) => {
-              if (checked) {
-                handleStartTailscaleServeSetup(tailscaleHttpsEndpoint);
-                return;
-              }
-              handleStartTailscaleServeDisable(tailscaleHttpsEndpoint);
-            }}
-            aria-label="Enable Tailscale HTTPS"
-          />
-        ) : null
+        <Switch
+          checked={tailscaleHttpsEndpoint?.status === "available"}
+          disabled={isUpdatingTailscaleServe}
+          onCheckedChange={(checked) => {
+            if (checked) {
+              void handleEnableTailscaleHttps();
+              return;
+            }
+            // Disable confirmation does not require a resolved MagicDNS endpoint.
+            setDisableTailscaleServeDialogOpen(true);
+          }}
+          aria-label="Enable Tailscale HTTPS"
+        />
       }
     />
   );
