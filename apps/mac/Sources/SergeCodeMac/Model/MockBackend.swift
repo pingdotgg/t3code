@@ -10,12 +10,14 @@ private enum MockBackendError: Error, LocalizedError {
     case threadNotFound(String)
     case taskNotFound(threadID: String, taskId: String)
     case unknownAttachment(String)
+    case diffFailed(String)
     var errorDescription: String? {
         switch self {
         case .threadNotFound(let id): "Thread not found: \(id)."
         case .taskNotFound(let threadID, let taskId):
             "Task '\(taskId)' not found on thread \(threadID)."
         case .unknownAttachment(let id): "Attachment not found: \(id)."
+        case .diffFailed(let message): message
         }
     }
 }
@@ -78,6 +80,12 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         /// Probe hook: make the next `runGitAction` report failure once.
         public func probeSetNextGitActionFailure(_ title: String) async {
             await state.setNextGitActionFailure(title)
+        }
+
+        /// Probe hook: make the next `diff(threadID:)` throw once, so the
+        /// review pane's load-failure state is reachable under the mock.
+        public func probeSetNextDiffFailure(_ message: String) async {
+            await state.setNextDiffFailure(message)
         }
 
         /// Probe hook: append one finished tool row to a mid-turn thread.
@@ -366,7 +374,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
     }
 
     public func diff(threadID: String) async throws -> [DiffFile] {
-        await state.diff(threadID: threadID)
+        if let message = await state.consumeNextDiffFailure() {
+            throw MockBackendError.diffFailed(message)
+        }
+        return await state.diff(threadID: threadID)
     }
 
     public func diff(threadID: String, fromTurn: Int, toTurn: Int) async throws -> [DiffFile] {
@@ -435,6 +446,8 @@ private actor MockState {
     private(set) var recordedSettleThreadIDs: [String] = []
     /// One-shot git failure armed through the DEBUG probe seam.
     private var nextGitActionFailure: String?
+    /// One-shot review-diff load failure armed through the DEBUG probe seam.
+    private var nextDiffFailure: String?
 
     private struct StreamingKey: Hashable {
         let threadID: String
@@ -948,6 +961,18 @@ private actor MockState {
     func consumeNextGitActionFailure() -> String? {
         defer { nextGitActionFailure = nil }
         return nextGitActionFailure
+    }
+
+    /// Arms a one-shot `diff(threadID:)` throw, so the review pane's load
+    /// failure — which otherwise needs a dead sidecar to reach — has a
+    /// reachable state.
+    func setNextDiffFailure(_ message: String) {
+        nextDiffFailure = message
+    }
+
+    func consumeNextDiffFailure() -> String? {
+        defer { nextDiffFailure = nil }
+        return nextDiffFailure
     }
 
     /// Holds a thread mid-turn and appends one finished tool event, as if the

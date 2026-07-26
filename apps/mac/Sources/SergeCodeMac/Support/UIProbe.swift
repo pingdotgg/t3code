@@ -207,6 +207,24 @@
             try? await Task.sleep(for: .seconds(2))
             snapshot("3-review-all-changes", dir: dir)
 
+            // A failed review-diff load must not read as "No Changes". Drive
+            // the real path (mock throws -> loadReviewDiff catches -> the pane
+            // renders it), because review mode hides the composer that would
+            // otherwise be the only place this error appeared.
+            if let threadID = model.selectedThreadID,
+                let mock = model.backendForShutdown as? MockBackend
+            {
+                await mock.probeSetNextDiffFailure("The sidecar closed the connection.")
+                await model.loadReviewDiff(threadID: threadID)
+                let shown = model.reviewDiffError(for: threadID)
+                print("UIProbe: review-diff-error rendered=\(shown != nil) message=\(shown ?? "-")")
+                if shown == nil { probeFailures.append("review-diff-error") }
+                try? await Task.sleep(for: .seconds(1))
+                snapshot("3b-review-diff-error", dir: dir)
+                // Restore a good diff so later steps see the normal pane.
+                await model.loadReviewDiff(threadID: threadID)
+            }
+
             // Checkpoint-scoped review if available.
             if let threadID = model.selectedThreadID,
                 let ckpt = model.threadState(threadID)?.checkpoints?.first
@@ -329,6 +347,18 @@
                 await snapshotSettings(
                     tab: .dictation, name: "11-settings-dictation", model: model, scenery: scenery,
                     dir: dir)
+                // The download is started from this window and the composer's
+                // banner self-dismisses behind it, so this row is the only
+                // place a failed download stays visible.
+                model.dictation.probeSetDownloadError(
+                    "Download failed: the network connection was lost.")
+                await snapshotSettings(
+                    tab: .dictation, name: "11b-settings-dictation-error", model: model,
+                    scenery: scenery, dir: dir)
+                let downloadErrorShown = model.dictation.lastDownloadError != nil
+                print("UIProbe: dictation-download-error rendered=\(downloadErrorShown)")
+                if !downloadErrorShown { probeFailures.append("dictation-download-error") }
+                model.dictation.probeSetDownloadError(nil)
                 await snapshotSettings(
                     tab: .scenery, name: "12-settings-scenery", model: model, scenery: scenery,
                     dir: dir)

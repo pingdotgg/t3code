@@ -1250,11 +1250,14 @@ public final class AppModel {
             }
         } catch {
             guard reviewDiffLoadTokens[threadID] == token, ts.reviewScope == scope else { return }
-            lastError = String(describing: error)
+            // The review pane is the only surface for this one — review mode
+            // hides the composer — so it gets the readable form, not the enum.
+            let message = Self.revertErrorMessage(error)
+            lastError = message
             // Leave `reviewDiff` alone: a failed `.diffInvalidated` reload must
             // not blank a diff the user is reading, and an empty array here is
             // indistinguishable from a scope with no changes.
-            reviewDiffErrorByThread[threadID] = String(describing: error)
+            reviewDiffErrorByThread[threadID] = message
         }
         if reviewDiffLoadTokens[threadID] == token {
             ts.isLoadingReviewDiff = false
@@ -1891,8 +1894,18 @@ public final class AppModel {
     /// `LiveBackendError` is not a `LocalizedError`, so a failed revert would
     /// otherwise reach the user as `revertFailed("Timed out waiting…")`. Its
     /// payload is already a written-for-humans sentence — show only that.
+    /// Best readable text for an error the user will see with no other
+    /// context. `String(describing:)` renders an enum case verbatim —
+    /// `diffFailed("The sidecar closed the connection.")` — so prefer a
+    /// `LocalizedError`'s own sentence, and unwrap `revertFailed`, which
+    /// carries its message but does not conform.
     private static func revertErrorMessage(_ error: any Error) -> String {
         if case LiveBackendError.revertFailed(let message) = error { return message }
+        if let localized = error as? any LocalizedError,
+            let description = localized.errorDescription
+        {
+            return description
+        }
         return String(describing: error)
     }
 

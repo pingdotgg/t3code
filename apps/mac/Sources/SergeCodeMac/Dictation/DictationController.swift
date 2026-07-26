@@ -426,6 +426,14 @@ public final class DictationController {
             let cleaned = await cleaner.clean(raw)
             return (raw, cleaned)
         }
+
+        /// UIProbe hook: stage the persistent download failure. Reaching it for
+        /// real means starting a ~2.5 GB download and killing the network
+        /// mid-flight, so the Settings row that renders it would otherwise
+        /// have no capturable state.
+        public func probeSetDownloadError(_ message: String?) {
+            lastDownloadError = message
+        }
     #endif
 
     // MARK: - Errors
