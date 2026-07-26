@@ -24,15 +24,18 @@ jobs:
     name: Build, publish, and update appcast
     runs-on: macos-latest
     timeout-minutes: 45
-    # Releases only ship when a PR carrying the "release" label is merged
-    # into main (or via manual workflow_dispatch). Plain merges and bot
-    # commits never trigger a release. The semver bump is chosen by an
-    # optional release:major / release:minor / release:patch label on the
-    # same PR; a bare "release" label defaults to patch.
+    # Releases ship when a merged PR carries any release label: "release"
+    # alone means a default patch bump, and a release:patch / release:minor /
+    # release:major qualifier is sufficient on its own (it implies a release
+    # and picks the bump size). Plain merges and bot commits never trigger a
+    # release. Manual workflow_dispatch releases the exact version.json.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.merged == true &&
-        contains(github.event.pull_request.labels.*.name, 'release'))
+        (contains(github.event.pull_request.labels.*.name, 'release') ||
+          contains(github.event.pull_request.labels.*.name, 'release:patch') ||
+          contains(github.event.pull_request.labels.*.name, 'release:minor') ||
+          contains(github.event.pull_request.labels.*.name, 'release:major')))
 
     steps:
       - name: Checkout merged main
@@ -57,15 +60,11 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
         run: |
           set -euo pipefail
-          # Semver bump from the PR's release:* qualifier label; a bare
-          # "release" label means a bug-fix-scale change and defaults to
-          # patch. Major wins if several qualifiers are present.
-          BUMP_TYPE=patch
-          case " $PR_LABELS " in
-            *" release:major "*) BUMP_TYPE=major ;;
-            *" release:minor "*) BUMP_TYPE=minor ;;
-            *" release:patch "*) BUMP_TYPE=patch ;;
-          esac
+          # Semver bump from the PR's release:* qualifier label (see
+          # apps/mac/scripts/release-bump-type.sh; tested in
+          # scripts/release-bump-type.test.ts). No qualifier means a
+          # bug-fix-scale change and defaults to patch.
+          BUMP_TYPE="$(apps/mac/scripts/release-bump-type.sh "$PR_LABELS")"
           echo "Bump type: $BUMP_TYPE (PR labels: $PR_LABELS)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

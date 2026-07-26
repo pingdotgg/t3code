@@ -50,10 +50,11 @@ struct ChatHeaderView: View {
             StatusBadge(status: thread.status, stalled: thread.isStalled)
         }
         .padding(.horizontal, 16)
-        // Fixed band height shared with the inspector Activity header so
-        // the dividers under both headers line up (see
-        // AlpineTheme.contentHeaderHeight).
-        .frame(height: AlpineTheme.contentHeaderHeight)
+        // Floor height shared with the inspector Activity header so the
+        // dividers under both headers line up; a floor (not a fixed height)
+        // so the header can grow instead of clipping if its content ever
+        // exceeds the band (see AlpineTheme.contentHeaderHeight).
+        .frame(minHeight: AlpineTheme.contentHeaderHeight)
     }
 
     private var projectPrefs: ProjectSceneryPrefs? {

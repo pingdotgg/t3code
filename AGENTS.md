@@ -18,17 +18,19 @@ SergeCode (github.com/SergeSerb2/SergeCode) is a **permanent hard fork** of `pin
 ## macOS App Versioning and Release Policy
 
 Releases are automated but opt-in: **merging a PR into `main` only triggers
-the `Release macOS App` workflow when that PR carries the `release` label**.
-Plain merges never ship an update. When triggered, the workflow bumps the
-version and `buildNumber` in `apps/mac/version.json`, builds and signs the
-app, publishes a GitHub Release, and commits the updated Sparkle appcast back
-to `main`. The bump size comes from an optional qualifier label on the same
-PR — `release:patch` for bug fixes (the default when only `release` is
-present), `release:minor` for features or larger PRs, and `release:major`
-for big releases. Installed apps then see the update via Sparkle. Bot
-commits pushed by the workflow carry `[skip release]` in their message —
-never remove that marker from automation commits, and never cherry-pick a
-bot commit without keeping the marker.
+the `Release macOS App` workflow when that PR carries a release label** —
+either `release` (ships a default patch bump) or any `release:patch` /
+`release:minor` / `release:major` qualifier, which is sufficient on its own
+and picks the bump size (`release:patch` for bug fixes, `release:minor` for
+features or larger PRs, `release:major` for big releases; `release:major`
+wins if several are present). Plain merges never ship an update. When
+triggered, the workflow bumps the version and `buildNumber` in
+`apps/mac/version.json`, builds and signs the app, publishes a GitHub
+Release, and commits the updated Sparkle appcast back to `main`. Installed
+apps then see the update via Sparkle. Bot commits pushed by the workflow
+carry `[skip release]` in their message — never remove that marker from
+automation commits, and never cherry-pick a bot commit without keeping the
+marker.
 
 Before _manually_ changing `apps/mac/version.json`, tagging a release,
 generating an appcast entry, or running the macOS release workflow by hand,
@@ -44,8 +46,8 @@ changes (major/minor/patch) and manual release actions.
 
 - **Rolling/pending version:** keep both `version` and `buildNumber` in
   `apps/mac/version.json` unchanged in the PR. The automation bumps the
-  version on merge (patch by default; add `release:minor` or
-  `release:major` to the PR for a bigger bump).
+  version on merge when the PR carries a release label (patch by default;
+  `release:minor` or `release:major` selects a bigger bump).
 - **New version/release (manual semver bump):** get the user's desired semver
   bump (major, minor, patch, or prerelease), increment `buildNumber`
   monotonically, and update `apps/mac/version.json` in a PR targeting `main`.
