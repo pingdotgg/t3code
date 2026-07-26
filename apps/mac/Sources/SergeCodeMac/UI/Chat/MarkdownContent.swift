@@ -696,6 +696,39 @@ func markdownBlockAllowsHighlight(
     return !isStreaming || sourceKey != lastSourceKey
 }
 
+/// Chooses between the smooth streaming reveal and the settled full-document
+/// render for one assistant message.
+///
+/// Pure and SwiftUI-free so `AssistantMarkdownView` can take the decision
+/// exactly once — in `init`, next to the parse that has to match it — and so
+/// the rule is directly testable.
+///
+/// Taking it once is the whole point. `hasPendingReveal` is time-varying
+/// global state that flips false on a display tick when the reveal store
+/// finishes draining. `init` skips the Markdown parse whenever this returns
+/// true, so re-asking the same question later in `body` (which SwiftUI
+/// re-evaluates without re-running `init` — a hover, an `@AppStorage` write,
+/// the stream-settle opacity cue) could answer false against a view that
+/// holds no parsed blocks, and render a finished message as nothing at all.
+enum AssistantMarkdownRenderPlan {
+    static func usesStreamingReveal(
+        style: MarkdownRenderStyle,
+        messageID: String,
+        isStreaming: Bool,
+        reduceMotion: Bool,
+        hasPendingReveal: @autoclosure () -> Bool
+    ) -> Bool {
+        guard style == .assistant, !messageID.isEmpty else { return false }
+        if isStreaming { return true }
+        // Stream over: stay on the reveal path only while the store still
+        // holds buffered text, so the remainder glides out instead of
+        // popping in. Under Reduce Motion the reveal never lags, so there is
+        // never anything to drain.
+        guard !reduceMotion else { return false }
+        return hasPendingReveal()
+    }
+}
+
 @MainActor
 struct AssistantMarkdownView: View {
     // Default to Finder to avoid errors when Cursor is not installed
@@ -724,21 +757,11 @@ struct AssistantMarkdownView: View {
     /// whose stream has just ended stays on this path while the reveal store
     /// still holds unrevealed backlog, so the buffered remainder glides out
     /// instead of popping in at once.
-    private var usesStreamingReveal: Bool {
-        style == .assistant && !messageID.isEmpty
-            && (isStreaming || hasPendingRevealAfterStreamEnd)
-    }
-
-    /// True when the stream is over but the reveal store still has buffered
-    /// text for this message. Under Reduce Motion the reveal never lags, so
-    /// there is nothing to drain and the settled path renders directly.
-    private var hasPendingRevealAfterStreamEnd: Bool {
-        !isStreaming
-            && !Motion.reduceMotion
-            && StreamingRevealStore.hasPendingReveal(
-                threadID: model.scopedThreadKey(threadID), messageID: messageID,
-                target: markdown)
-    }
+    ///
+    /// Stored, not computed: it must stay pinned to whatever `init` decided,
+    /// because `renderedBlocks` is empty exactly when it is true. See
+    /// `AssistantMarkdownRenderPlan`.
+    private let usesStreamingReveal: Bool
 
     init(
         markdown: String,
@@ -758,14 +781,15 @@ struct AssistantMarkdownView: View {
         self.at = at
         self.style = style
         self.showsRoleChrome = showsRoleChrome
-        // Uses the raw parameters: `usesStreamingReveal` can't run here because
-        // `renderedBlocks` isn't initialized yet. Keep the two in sync.
-        let streamingReveal = style == .assistant && !messageID.isEmpty
-            && (isStreaming
-                || (!Motion.reduceMotion
-                    && StreamingRevealStore.hasPendingReveal(
-                        threadID: model.scopedThreadKey(threadID), messageID: messageID,
-                        target: markdown)))
+        let streamingReveal = AssistantMarkdownRenderPlan.usesStreamingReveal(
+            style: style,
+            messageID: messageID,
+            isStreaming: isStreaming,
+            reduceMotion: Motion.reduceMotion,
+            hasPendingReveal: StreamingRevealStore.hasPendingReveal(
+                threadID: model.scopedThreadKey(threadID), messageID: messageID,
+                target: markdown))
+        self.usesStreamingReveal = streamingReveal
         if streamingReveal {
             // Streaming text renders through `StreamingMarkdownBlocks`, which
             // reveals the incoming markdown a few bytes per display frame
@@ -791,9 +815,28 @@ struct AssistantMarkdownView: View {
 
     @UIState private var isHovering = false
     @UIState private var streamSettleOpacity: Double = 1
+    /// Full-document parse taken when the reveal finished draining, so a
+    /// message that entered on the streaming path still ends up on the
+    /// settled renderer without waiting for the row to be rebuilt. Keyed by
+    /// byte count because `@UIState` outlives the view value: a resumed
+    /// stream re-inits with longer markdown and must not reuse this.
+    @UIState private var drainedRender: DrainedRender?
     @Environment(\.openSelectText) private var openSelectText
 
+    private struct DrainedRender {
+        let byteCount: Int
+        let blocks: [MarkdownRenderedBlock]
+    }
+
+    /// Blocks captured when the reveal drained, or nil when they belong to an
+    /// older, shorter version of this message.
+    private var drainedBlocks: [MarkdownRenderedBlock]? {
+        guard let drainedRender, drainedRender.byteCount == markdown.utf8.count else { return nil }
+        return drainedRender.blocks
+    }
+
     var body: some View {
+        let settledBlocks = drainedBlocks
         AnyLayout(
             MarkdownContentLayout(maxWidth: style == .userBubble ? 560 : nil)
         ) {
@@ -801,7 +844,7 @@ struct AssistantMarkdownView: View {
                 if showsRoleChrome && style == .assistant {
                     assistantRoleLine
                 }
-                if usesStreamingReveal {
+                if usesStreamingReveal, settledBlocks == nil {
                     StreamingMarkdownBlocks(
                         markdown: markdown,
                         threadID: threadID,
@@ -809,10 +852,11 @@ struct AssistantMarkdownView: View {
                         model: model,
                         style: style,
                         isStreaming: isStreaming,
-                        showsStreamingIndicator: showsRoleChrome)
+                        showsStreamingIndicator: showsRoleChrome,
+                        onRevealDrained: handleRevealDrained)
                 } else {
                     MarkdownBlocksView(
-                        renderedBlocks: renderedBlocks,
+                        renderedBlocks: settledBlocks ?? renderedBlocks,
                         style: style,
                         isStreaming: isStreaming,
                         showsStreamingIndicator: showsRoleChrome
@@ -890,6 +934,25 @@ struct AssistantMarkdownView: View {
             }
             return .handled
         })
+    }
+
+    /// The reveal has emptied its backlog: retire the streaming session and
+    /// hand the finished text to the normal full-document parser. Without
+    /// this the message would keep rendering through the incremental
+    /// streaming cache — which knowingly trades a small correctness gap for
+    /// speed (see `StreamingMarkdownCache`) — until some unrelated timeline
+    /// mutation happened to rebuild the row.
+    private func handleRevealDrained() {
+        let byteCount = markdown.utf8.count
+        guard drainedRender?.byteCount != byteCount else { return }
+        let threadKey = model.scopedThreadKey(threadID)
+        StreamingMarkdownCache.finish(threadID: threadKey, messageID: messageID)
+        StreamingRevealStore.finish(threadID: threadKey, messageID: messageID)
+        drainedRender = DrainedRender(
+            byteCount: byteCount,
+            blocks: MarkdownBlocksView.renderedBlocks(
+                from: MarkdownBlockCache.document(
+                    for: markdown, messageID: messageID.isEmpty ? nil : messageID)))
     }
 
     @ViewBuilder
@@ -1107,6 +1170,10 @@ private struct StreamingMarkdownBlocks: View {
     /// indicator is already gone.
     let isStreaming: Bool
     let showsStreamingIndicator: Bool
+    /// Called on the tick where the backlog empties after the stream ended.
+    /// The owner then swaps to the settled full-document render; this view
+    /// cannot do it itself because the reveal store is not observable.
+    let onRevealDrained: () -> Void
 
     /// Bumped when the store's revealed text changes; the store itself is not
     /// observable, so this is what re-renders the blocks on a tick.
@@ -1125,25 +1192,34 @@ private struct StreamingMarkdownBlocks: View {
         let blocks = MarkdownBlocksView.renderedBlocks(
             from: StreamingMarkdownCache.document(
                 threadID: threadKey, messageID: messageID, markdown: revealed))
+        let isDraining = revealed != markdown
 
-        TimelineView(.animation(paused: reduceMotion || revealed == markdown)) { timeline in
+        TimelineView(.animation(paused: reduceMotion || !isDraining)) { timeline in
             MarkdownBlocksView(
                 renderedBlocks: blocks,
                 style: style,
-                // Stays true while draining after stream end so the still-
-                // growing tail block keeps deferring its syntax highlight.
-                isStreaming: true,
+                // True while text is still arriving on screen — the stream
+                // itself, or the buffered remainder draining after it ended —
+                // so the growing tail block keeps deferring its syntax
+                // highlight until it stops changing.
+                isStreaming: isStreaming || isDraining,
                 showsStreamingIndicator: showsStreamingIndicator && isStreaming)
                 .onChange(of: timeline.date, initial: true) { _, date in
-                    guard StreamingRevealStore.advance(
+                    if StreamingRevealStore.advance(
                         threadID: threadKey,
                         messageID: messageID,
                         target: markdown,
                         at: date,
                         policy: StreamingRevealPolicy(
                             reduceMotion: reduceMotion, isFinal: !isStreaming))
+                    {
+                        revealGeneration += 1
+                    }
+                    guard !isStreaming,
+                        !StreamingRevealStore.hasPendingReveal(
+                            threadID: threadKey, messageID: messageID, target: markdown)
                     else { return }
-                    revealGeneration += 1
+                    onRevealDrained()
                 }
         }
     }
