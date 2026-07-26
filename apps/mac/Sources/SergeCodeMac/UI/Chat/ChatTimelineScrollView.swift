@@ -125,12 +125,18 @@ struct ChatTimelineScrollView: View {
             projectRoot: model.projectPath(forScopedThreadKey: threadKey),
             activeDecisionCardID: items.activeDecisionCardID,
             isConnectionReady: model.connection == .ready)
-        // Single ephemeral row, not a timeline entry: long silent reasoning
-        // must never stack repeated "Thinking" items into the transcript.
-        let showThinking = ParentThinkingPresentation.shouldShow(
+        // Single ephemeral row, not a timeline entry: a long working stretch
+        // must never stack repeated status items into the transcript. Covers
+        // both gaps a live turn leaves at the tail — silent reasoning and an
+        // in-flight tool call whose own row has scrolled out of view.
+        let activity = AgentActivityPresentation.activity(
             threadStatus: thread?.status,
             isStalled: thread?.isStalled ?? false,
             items: items)
+        // Parsed once here, not inside the dock: the dock re-renders on its
+        // own 30fps clock and must never re-enter the parse cache from a
+        // decorative frame.
+        let activitySubject = activity.flatMap(Self.subject(for:))
 
         // Cold load: spinner instead of an empty LazyVStack, which bypasses
         // the autoscroll machinery and avoids a blank flash before the first
@@ -178,9 +184,9 @@ struct ChatTimelineScrollView: View {
                                 // streaming tick.
                                 .entrance(.row)
                         }
-                        if showThinking {
-                            ThinkingIndicator()
-                                .id("thinking-indicator")
+                        if let activity {
+                            AgentActivityDock(activity: activity, subject: activitySubject)
+                                .id("agent-activity-dock")
                                 .transition(Motion.rise)
                                 .entrance(.row)
                         }
@@ -213,12 +219,15 @@ struct ChatTimelineScrollView: View {
                             transaction.animation = nil
                         }
                     }
-                    // The thinking indicator only ever appears/disappears
-                    // mid-run, when the suppressor above has cleared the
-                    // ambient animation. Re-arm a narrow reveal keyed to its
-                    // flip so it rises/fades instead of popping. Placed after
-                    // `.transaction` — downstream transaction modifiers win.
-                    .animation(Motion.reveal, value: showThinking)
+                    // The activity dock only ever appears/disappears mid-run,
+                    // when the suppressor above has cleared the ambient
+                    // animation. Re-arm a narrow reveal keyed to its mount
+                    // flip so it rises/fades instead of popping. Keyed on
+                    // presence, not on the activity value: the phase changes
+                    // several times a turn and the dock animates those itself.
+                    // Placed after `.transaction` — downstream transaction
+                    // modifiers win.
+                    .animation(Motion.reveal, value: activity != nil)
                     // A LazyVStack realizes rows as they scroll into view, so
                     // without this every row would fade in under the pointer on
                     // the way past. Entrance is for content arriving, not for
@@ -322,6 +331,35 @@ struct ChatTimelineScrollView: View {
         // Cold load → first snapshot swaps the spinner for the whole
         // ScrollView; crossfade it so a thread open never hard-cuts.
         .animation(Motion.structure, value: showColdLoader)
+    }
+
+    /// What the activity dock names after its verb: the command being run,
+    /// the file being touched, the tool being called. Resolved here, through
+    /// the shared parse cache, so the pure `AgentActivityPresentation` policy
+    /// stays a string function and the dock never parses JSON per frame.
+    ///
+    /// Deliberately the bare file name rather than `PathDisplay.short`: the
+    /// dock is a one-line glance beside a live clock, and the row that owns
+    /// the full project-relative path is already in the transcript above.
+    private static func subject(for activity: AgentActivity) -> String? {
+        guard case .tool(let tool) = activity.phase else { return nil }
+        switch ToolDetailParseCache.parsed(
+            detail: tool.detail, itemType: tool.kind.wireItemType)
+        {
+        case .command(let command):
+            return command
+        case .fileChange(let path, _):
+            let trimmed = path.trimmingCharacters(in: .whitespaces)
+            return trimmed.split(separator: "/").last.map(String.init) ?? trimmed
+        case .plain(let text):
+            // `fileRead` details arrive as a bare path often enough to be
+            // worth the same treatment; anything else is free-form and goes
+            // through as-is for `clip` to bound.
+            if tool.kind == .fileRead, text.contains("/"), !text.contains(" ") {
+                return text.split(separator: "/").last.map(String.init)
+            }
+            return text
+        }
     }
 
     /// True only for phases a person drives (drag, scroll wheel, momentum) —
