@@ -142,16 +142,23 @@ struct RootView: View {
         .animation(Motion.reveal, value: model.mergeCelebration)
         // Probe hook: the structural columns can't be driven through AX from
         // the same process (see UIProbeHooks.swift), so probe runs flip them
-        // through the same notification the collapsible sections use. Both
-        // toggles are deferred a runloop turn for the same reason the toolbar
-        // buttons above are: a notification can land mid-layout, and flipping
-        // the inspector or re-vending the sidebar toolbar item from inside a
-        // layout pass trips AppKit's layout-feedback-loop guard.
+        // through the same notification the collapsible sections use.
+        //
+        // The whole handler is deferred a runloop turn, not the individual
+        // cases: a notification can be posted from anywhere, including
+        // mid-layout, and both structural toggles re-vend toolbar items, which
+        // trips AppKit's layout-feedback-loop guard from inside a layout pass
+        // (same crash class the toolbar buttons above defer around). Deferring
+        // once here keeps that invariant in one place instead of relying on
+        // each callee to defer for itself.
         .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
-            switch note.object as? String {
-            case "inspector": DispatchQueue.main.async { showInspector.toggle() }
-            case "sidebar": toggleSidebar()
-            default: break
+            let section = note.object as? String
+            DispatchQueue.main.async {
+                switch section {
+                case "inspector": showInspector.toggle()
+                case "sidebar": toggleSidebar()
+                default: break
+                }
             }
         }
     }
