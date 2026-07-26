@@ -63,6 +63,7 @@ const BASE_THREAD: OrchestrationThread = {
   runtimeMode: "full-access",
   interactionMode: "default",
   executorModelSelection: null,
+  executorMaxSubAgents: 3,
   branch: "main",
   worktreePath: null,
   parentThreadId: null,

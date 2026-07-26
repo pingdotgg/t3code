@@ -1,6 +1,7 @@
 import { pipe } from "effect/Function";
 import * as Arr from "effect/Array";
 import * as O from "effect/Order";
+import { DEFAULT_EXECUTOR_MAX_SUB_AGENTS } from "@t3tools/contracts";
 import type {
   MessageId,
   OrchestrationCheckpointSummary,
@@ -67,6 +68,7 @@ export function applyThreadDetailEvent(
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
           executorModelSelection: event.payload.executorModelSelection ?? null,
+          executorMaxSubAgents: DEFAULT_EXECUTOR_MAX_SUB_AGENTS,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
           parentThreadId: event.payload.parentThreadId ?? null,
@@ -170,6 +172,7 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           executorModelSelection: event.payload.executorModelSelection,
+          executorMaxSubAgents: event.payload.executorMaxSubAgents,
           updatedAt: event.payload.updatedAt,
         },
       };

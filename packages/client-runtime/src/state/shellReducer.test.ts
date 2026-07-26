@@ -31,6 +31,7 @@ const stubThread = {
   runtimeMode: "full-access" as const,
   interactionMode: "default" as const,
   executorModelSelection: null,
+  executorMaxSubAgents: 3,
   branch: null,
   worktreePath: null,
   parentThreadId: null,
