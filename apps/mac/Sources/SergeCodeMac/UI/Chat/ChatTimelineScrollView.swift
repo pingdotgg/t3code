@@ -205,14 +205,23 @@ struct ChatTimelineScrollView: View {
                     // the way past. Entrance is for content arriving, not for
                     // content being revealed by scrolling.
                     .entranceSuppressed(isUserScrolling)
-                    // Swaps the stock NSScroller for the slim capsule knob.
-                    // Lives inside the scrolled content so the installer can
-                    // walk up to the enclosing NSScrollView; zero-size, so it
-                    // takes no part in layout.
-                    .background(alignment: .top) {
-                        ModernScrollbarInstaller()
-                            .frame(width: 0, height: 0)
-                            .accessibilityHidden(true)
+                }
+                // Turn navigation replaces the scrollbar: indicators are
+                // hidden and the leading-edge rail jumps between turns.
+                .scrollIndicators(.hidden)
+                .overlay(alignment: .leading) {
+                    ChatTurnRail(turns: ChatTurnRailModel.turns(from: displayItems)) { rowID in
+                        // Jumping to a turn is explicit navigation away from
+                        // the tail: unpin first, or the next content growth
+                        // (streaming delta) would re-anchor to the bottom and
+                        // yank the viewport back. The programmatic animated
+                        // scrollTo reports an `.animating` phase, which the
+                        // pin policy treats as non-user and leaves alone;
+                        // normal scrolling re-pins near the bottom as usual.
+                        isPinnedToBottom = false
+                        withAnimation(Motion.structure) {
+                            proxy.scrollTo(rowID, anchor: .top)
+                        }
                     }
                 }
                 // Intentionally no `.defaultScrollAnchor(.bottom)`. That modifier
