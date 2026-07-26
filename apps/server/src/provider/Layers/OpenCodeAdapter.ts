@@ -801,6 +801,9 @@ export function makeOpenCodeAdapter(
         return false;
       }
       attempt.terminalClaimed = true;
+      if (context.interruptAttempt === attempt) {
+        context.interruptAttempt = undefined;
+      }
       context.recentlyInterruptedTurnId = attempt.turnId;
       if (context.activeTurnId === attempt.turnId) {
         context.activeTurnId = undefined;
@@ -1508,9 +1511,6 @@ export function makeOpenCodeAdapter(
       // the active turn id is reused instead of opening a new turn.
       const steeringTurnId = context.activeTurnId;
       const turnId = steeringTurnId ?? TurnId.make(`opencode-turn-${yield* randomUUIDv4}`);
-      if (steeringTurnId === undefined) {
-        context.recentlyInterruptedTurnId = undefined;
-      }
       const modelSelection =
         input.modelSelection ??
         (context.session.model
@@ -1552,6 +1552,9 @@ export function makeOpenCodeAdapter(
       const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
 
+      if (steeringTurnId === undefined) {
+        context.recentlyInterruptedTurnId = undefined;
+      }
       context.activeTurnId = turnId;
       // Build and plan are OpenCode's built-in interaction modes, not model
       // traits. Plan mode always wins; default mode also repairs stale model
@@ -1707,10 +1710,6 @@ export function makeOpenCodeAdapter(
               yield* completeInterruptedTurn(context, ownedAttempt);
             }
 
-            if (context.interruptAttempt === ownedAttempt) {
-              context.interruptAttempt = undefined;
-            }
-
             if (Exit.isFailure(abortExit) && !ownedAttempt.terminalClaimed) {
               if (ownedAttempt.pendingCommandError) {
                 yield* failDetachedCommand(
@@ -1719,10 +1718,16 @@ export function makeOpenCodeAdapter(
                   ownedAttempt.pendingCommandError,
                 );
               }
+              if (context.interruptAttempt === ownedAttempt) {
+                context.interruptAttempt = undefined;
+              }
               yield* Deferred.failCause(ownedAttempt.completion, abortExit.cause);
               return;
             }
 
+            if (context.interruptAttempt === ownedAttempt) {
+              context.interruptAttempt = undefined;
+            }
             yield* Deferred.succeed(ownedAttempt.completion, undefined);
           });
 
