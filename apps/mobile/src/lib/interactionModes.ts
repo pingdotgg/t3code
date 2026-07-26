@@ -44,6 +44,31 @@ export function interactionModeDetail(mode: ProviderInteractionMode): string {
   return INTERACTION_MODE_DETAILS[mode];
 }
 
+/**
+ * Copy for the `/default`, `/plan` and `/advisor` rows in the composer's
+ * slash-command menu. Shorter than the picker detail because the menu row is a
+ * single line.
+ */
+const INTERACTION_MODE_SLASH_DESCRIPTIONS: Record<ProviderInteractionMode, string> = {
+  default: "Switch to default mode",
+  plan: "Switch to plan mode",
+  advisor: "Switch to advisor mode — plan and delegate to executor sub-agents",
+};
+
+export function interactionModeSlashDescription(mode: ProviderInteractionMode): string {
+  return INTERACTION_MODE_SLASH_DESCRIPTIONS[mode];
+}
+
+/**
+ * The interaction mode a built-in slash command switches to, or null when the
+ * command is not a mode command (`/model`, provider commands). The composer
+ * builds its mode rows from the same table it decodes selections with, so a
+ * mode can never appear in the menu without a working selection path.
+ */
+export function interactionModeForSlashCommand(command: string): ProviderInteractionMode | null {
+  return INTERACTION_MODES.find((mode) => mode === command) ?? null;
+}
+
 export const RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
   "approval-required",
   "auto-accept-edits",

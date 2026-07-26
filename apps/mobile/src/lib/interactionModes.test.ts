@@ -7,8 +7,11 @@ import {
   buildRuntimeModeMenuAction,
   clampMaxSubAgents,
   executorModelLabel,
+  interactionModeForSlashCommand,
+  interactionModeSlashDescription,
   parseComposerMenuEvent,
   subAgentChoices,
+  INTERACTION_MODES,
 } from "./interactionModes";
 import type { ModelOption } from "./modelOptions";
 
@@ -62,6 +65,25 @@ describe("interaction mode menu", () => {
       "Advisor/Planner",
     ]);
     expect(action.subtitle).toBe("Advisor/Planner");
+  });
+});
+
+describe("interaction mode slash commands", () => {
+  it("decodes every mode the composer lists, so none can be shown without a handler", () => {
+    for (const mode of INTERACTION_MODES) {
+      expect(interactionModeForSlashCommand(mode)).toBe(mode);
+      expect(interactionModeSlashDescription(mode).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("switches into advisor mode rather than inserting text", () => {
+    expect(interactionModeForSlashCommand("advisor")).toBe("advisor");
+  });
+
+  it("leaves non-mode commands to the text-insertion path", () => {
+    expect(interactionModeForSlashCommand("model")).toBeNull();
+    expect(interactionModeForSlashCommand("compact")).toBeNull();
+    expect(interactionModeForSlashCommand("")).toBeNull();
   });
 });
 

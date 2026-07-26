@@ -51,7 +51,10 @@ import {
   buildInteractionModeMenuAction,
   buildRuntimeModeMenuAction,
   clampMaxSubAgents,
+  interactionModeForSlashCommand,
+  interactionModeSlashDescription,
   parseComposerMenuEvent,
+  INTERACTION_MODES,
 } from "../../lib/interactionModes";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
@@ -389,6 +392,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
     if (composerTrigger.kind === "slash-command") {
       const q = composerTrigger.query.toLowerCase();
+      // Mode rows are generated from INTERACTION_MODES, the same table
+      // handleCommandSelect decodes them with, so a mode can never be listed
+      // here without a working selection path.
       const allBuiltIn = [
         {
           id: "cmd:model",
@@ -397,27 +403,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           label: "/model",
           description: "Switch model",
         },
-        {
-          id: "cmd:plan",
+        ...INTERACTION_MODES.map((mode) => ({
+          id: `cmd:${mode}`,
           type: "slash-command" as const,
-          command: "plan",
-          label: "/plan",
-          description: "Switch to plan mode",
-        },
-        {
-          id: "cmd:advisor",
-          type: "slash-command" as const,
-          command: "advisor",
-          label: "/advisor",
-          description: "Switch to advisor mode — plan and delegate to executor sub-agents",
-        },
-        {
-          id: "cmd:default",
-          type: "slash-command" as const,
-          command: "default",
-          label: "/default",
-          description: "Switch to default mode",
-        },
+          command: mode,
+          label: `/${mode}`,
+          description: interactionModeSlashDescription(mode),
+        })),
       ];
       const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
 
@@ -553,10 +545,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     (item: ComposerCommandItem) => {
       if (!composerTrigger) return;
 
-      if (
-        item.type === "slash-command" &&
-        (item.command === "plan" || item.command === "default" || item.command === "advisor")
-      ) {
+      const interactionModeCommand =
+        item.type === "slash-command" ? interactionModeForSlashCommand(item.command) : null;
+      if (interactionModeCommand !== null) {
         const result = replaceTextRange(
           draftMessage,
           composerTrigger.rangeStart,
@@ -565,7 +556,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         );
         setComposerSelection({ start: result.cursor, end: result.cursor });
         onChangeDraftMessage(result.text);
-        onUpdateInteractionMode(item.command);
+        onUpdateInteractionMode(interactionModeCommand);
         return;
       }
 
