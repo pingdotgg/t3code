@@ -4,6 +4,7 @@ import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 
+import { claimThreadsForBatch, releaseThreadKeys } from "../../lib/inFlightThreadKeys";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -41,7 +42,22 @@ function actionFailureTitle(action: ThreadListAction): string {
   return "Could not delete thread";
 }
 
+/**
+ * Thread keys with a mutation in flight, shared by the single-thread actions
+ * and the group archive so neither can submit a second command for a thread
+ * the other is already acting on. `thread.archive` is not idempotent — the
+ * decider rejects it via `requireThreadNotArchived` — and the command
+ * scheduler serializes per thread, so an unguarded overlap does not race, it
+ * deterministically fails the second submission.
+ */
+type InFlightThreadKeys = { readonly current: Set<string> };
+
+function useInFlightThreadKeys(): InFlightThreadKeys {
+  return useRef(new Set<string>());
+}
+
 function useThreadActionExecutor(
+  inFlightThreadKeys: InFlightThreadKeys,
   onCompleted?: (action: ThreadListAction, thread: EnvironmentThreadShell) => void,
 ) {
   const archiveMutation = useAtomCommand(threadEnvironment.archive, { reportFailure: false });
@@ -49,7 +65,6 @@ function useThreadActionExecutor(
   const settleMutation = useAtomCommand(threadEnvironment.settle, { reportFailure: false });
   const unsettleMutation = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
   const deleteMutation = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
-  const inFlightThreadKeys = useRef(new Set<string>());
 
   const executeAction = useCallback(
     async (action: ThreadListAction, thread: EnvironmentThreadShell) => {
@@ -94,6 +109,7 @@ function useThreadActionExecutor(
     [
       archiveMutation,
       deleteMutation,
+      inFlightThreadKeys,
       onCompleted,
       settleMutation,
       unarchiveMutation,
@@ -134,21 +150,21 @@ function useConfirmDeleteThread(
  * and the outcome is reported once instead of one alert per thread. A group
  * can span environments, so each thread carries its own environment id.
  */
-function useConfirmArchiveThreads() {
+function useConfirmArchiveThreads(inFlightThreadKeys: InFlightThreadKeys) {
   const archiveMutation = useAtomCommand(threadEnvironment.archive, { reportFailure: false });
-  const inFlight = useRef(false);
 
   const archiveThreads = useCallback(
     async (threads: ReadonlyArray<EnvironmentThreadShell>) => {
-      if (inFlight.current || threads.length === 0) {
+      const claimed = claimThreadsForBatch(threads, inFlightThreadKeys.current);
+      if (claimed.length === 0) {
         return;
       }
-      inFlight.current = true;
+
       selectionHaptic();
       try {
         let failures = 0;
         let firstFailure: string | null = null;
-        for (const thread of threads) {
+        for (const { thread } of claimed) {
           const result = await archiveMutation({
             environmentId: thread.environmentId,
             input: { threadId: thread.id },
@@ -161,16 +177,16 @@ function useConfirmArchiveThreads() {
         if (firstFailure !== null) {
           Alert.alert(
             actionFailureTitle("archive"),
-            failures === threads.length
+            failures === claimed.length
               ? firstFailure
-              : `Failed to archive ${failures} of ${threads.length} threads: ${firstFailure}`,
+              : `Failed to archive ${failures} of ${claimed.length} threads: ${firstFailure}`,
           );
         }
       } finally {
-        inFlight.current = false;
+        releaseThreadKeys(claimed, inFlightThreadKeys.current);
       }
     },
-    [archiveMutation],
+    [archiveMutation, inFlightThreadKeys],
   );
 
   return useCallback(
@@ -203,7 +219,10 @@ export function useThreadListActions(): {
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly confirmArchiveThreads: (threads: ReadonlyArray<EnvironmentThreadShell>) => void;
 } {
-  const executeAction = useThreadActionExecutor();
+  // One in-flight set for both paths: the group archive and the swipe/context
+  // actions must not both submit for the same thread.
+  const inFlightThreadKeys = useInFlightThreadKeys();
+  const executeAction = useThreadActionExecutor(inFlightThreadKeys);
 
   const archiveThread = useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -227,7 +246,7 @@ export function useThreadListActions(): {
   );
 
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
-  const confirmArchiveThreads = useConfirmArchiveThreads();
+  const confirmArchiveThreads = useConfirmArchiveThreads(inFlightThreadKeys);
 
   return {
     archiveThread,
@@ -279,7 +298,9 @@ export function useArchivedThreadListActions(
     },
     [onCompleted],
   );
-  const executeAction = useThreadActionExecutor(handleCompleted);
+  // The archive list has no group archive to coordinate with, so it keeps its
+  // own set rather than sharing the thread list's.
+  const executeAction = useThreadActionExecutor(useInFlightThreadKeys(), handleCompleted);
   const unarchiveThread = useCallback(
     (thread: EnvironmentThreadShell) => {
       void executeAction("unarchive", thread);
