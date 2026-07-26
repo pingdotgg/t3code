@@ -1,9 +1,19 @@
 import * as Schema from "effect/Schema";
-import { type PointerEvent as ReactPointerEvent, useCallback, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useRef,
+  useState,
+} from "react";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
 
 const WidthSchema = Schema.Finite;
+
+/** Arrow-key step, and the coarse step held Shift gives you. */
+const KEYBOARD_STEP = 8;
+const KEYBOARD_COARSE_STEP = 48;
 
 export interface UseResizableWidthOptions {
   /** localStorage key the persisted width is stored under. */
@@ -24,6 +34,47 @@ export interface ResizableWidthHandlers {
   readonly onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
+  /**
+   * Arrow keys nudge the handle, Shift makes the step coarse, Home/End park it
+   * at either extreme. Without this the handle is mouse-only — the panel width
+   * would be the one part of the layout a keyboard user cannot reach.
+   */
+  readonly onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
+}
+
+/**
+ * Width a key press asks for, or `null` if the key is not ours to handle.
+ *
+ * Keys are spatial: ArrowLeft always moves the handle left. Whether that
+ * widens or narrows the panel depends on which edge the handle sits on — so
+ * the same key does opposite things on a left- and a right-anchored panel,
+ * and that is correct.
+ *
+ * Pure and exported so the direction/step rules can be tested without a DOM.
+ */
+export function nextWidthForKey(input: {
+  readonly key: string;
+  readonly shiftKey: boolean;
+  readonly width: number;
+  readonly minWidth: number;
+  readonly maxWidth: number;
+  readonly edge: "left" | "right";
+}): number | null {
+  const { key, shiftKey, width, minWidth, maxWidth, edge } = input;
+  const widerToTheLeft = edge === "left";
+  const step = shiftKey ? KEYBOARD_COARSE_STEP : KEYBOARD_STEP;
+  switch (key) {
+    case "ArrowLeft":
+      return widerToTheLeft ? width + step : width - step;
+    case "ArrowRight":
+      return widerToTheLeft ? width - step : width + step;
+    case "Home":
+      return widerToTheLeft ? maxWidth : minWidth;
+    case "End":
+      return widerToTheLeft ? minWidth : maxWidth;
+    default:
+      return null;
+  }
 }
 
 /**
@@ -133,13 +184,10 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     [clamp, edge],
   );
 
-  const onPointerUp = useCallback(
-    (event: ReactPointerEvent<HTMLElement>) => {
-      const state = dragStateRef.current;
-      if (!state || state.pointerId !== event.pointerId) return;
-      const finalWidth = clamp(state.pending);
-      releasePointer(event.pointerId);
-      // Commit once at drag-end to avoid 60Hz localStorage writes.
+  /** Persist and apply in one go — the end of a drag, or a single key press. */
+  const commit = useCallback(
+    (value: number) => {
+      const finalWidth = clamp(value);
       try {
         setLocalStorageItem(storageKey, finalWidth, WidthSchema);
       } catch (error) {
@@ -147,7 +195,19 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       }
       setWidth(finalWidth);
     },
-    [clamp, releasePointer, storageKey],
+    [clamp, storageKey],
+  );
+
+  const onPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      const state = dragStateRef.current;
+      if (!state || state.pointerId !== event.pointerId) return;
+      const pending = state.pending;
+      releasePointer(event.pointerId);
+      // Commit once at drag-end to avoid 60Hz localStorage writes.
+      commit(pending);
+    },
+    [commit, releasePointer],
   );
 
   const onPointerCancel = useCallback(
@@ -161,8 +221,27 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     [releasePointer],
   );
 
+  const onKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLElement>) => {
+      // Modified presses belong to the browser or the app, not to the handle.
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      const next = nextWidthForKey({
+        key: event.key,
+        shiftKey: event.shiftKey,
+        width: clampedWidth,
+        minWidth,
+        maxWidth,
+        edge,
+      });
+      if (next === null) return;
+      event.preventDefault();
+      commit(next);
+    },
+    [clampedWidth, commit, edge, maxWidth, minWidth],
+  );
+
   return {
     width: clampedWidth,
-    handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+    handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onKeyDown },
   };
 }
