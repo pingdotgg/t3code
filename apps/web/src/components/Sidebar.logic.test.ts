@@ -13,6 +13,7 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  partitionSidebarProjectsByHiddenState,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -28,6 +29,7 @@ import {
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  updateSidebarHiddenProjectKeys,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -1422,5 +1424,96 @@ describe("sortLogicalProjectsForSidebar", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+});
+
+describe("partitionSidebarProjectsByHiddenState", () => {
+  const visibleProjectId = ProjectId.make("project-visible");
+  const groupedProjectId = ProjectId.make("project-grouped");
+  const hiddenProjectId = ProjectId.make("project-hidden");
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+  const projects = [
+    {
+      ...makeProject({ id: visibleProjectId, title: "Visible" }),
+      projectKey: "logical-visible",
+      memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: visibleProjectId }],
+    },
+    {
+      ...makeProject({ id: hiddenProjectId, title: "Hidden" }),
+      projectKey: "logical-hidden",
+      memberProjectRefs: [
+        { environmentId: localEnvironmentId, projectId: hiddenProjectId },
+        { environmentId: remoteEnvironmentId, projectId: groupedProjectId },
+      ],
+    },
+  ];
+
+  it("partitions only projects whose every grouped member is hidden", () => {
+    expect(
+      partitionSidebarProjectsByHiddenState({
+        projects,
+        threads: [],
+        hiddenProjectKeys: [
+          `${localEnvironmentId}:${hiddenProjectId}`,
+          `${remoteEnvironmentId}:${groupedProjectId}`,
+        ],
+      }),
+    ).toEqual({
+      visibleProjects: [projects[0]],
+      hiddenProjects: [projects[1]],
+    });
+  });
+
+  it("promotes a hidden project while one of its chats is running", () => {
+    const threads = [
+      makeThread({
+        environmentId: remoteEnvironmentId,
+        projectId: groupedProjectId,
+        archivedAt: null,
+        session: {
+          threadId: ThreadId.make("thread-running"),
+          status: "running",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-03-09T10:11:00.000Z",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerName: null,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+        },
+      }),
+    ];
+
+    expect(
+      partitionSidebarProjectsByHiddenState({
+        projects,
+        threads,
+        hiddenProjectKeys: [
+          `${localEnvironmentId}:${hiddenProjectId}`,
+          `${remoteEnvironmentId}:${groupedProjectId}`,
+        ],
+      }),
+    ).toEqual({ visibleProjects: projects, hiddenProjects: [] });
+  });
+
+  it("updates grouped project keys without disturbing other hidden projects", () => {
+    const otherProjectKey = `${localEnvironmentId}:project-other`;
+    const projectRefs = projects[1]!.memberProjectRefs;
+    const hiddenProjectKeys = updateSidebarHiddenProjectKeys({
+      hiddenProjectKeys: [otherProjectKey],
+      projectRefs,
+      hidden: true,
+    });
+    expect(hiddenProjectKeys).toEqual([
+      otherProjectKey,
+      `${localEnvironmentId}:${hiddenProjectId}`,
+      `${remoteEnvironmentId}:${groupedProjectId}`,
+    ]);
+    expect(
+      updateSidebarHiddenProjectKeys({
+        hiddenProjectKeys,
+        projectRefs,
+        hidden: false,
+      }),
+    ).toEqual([otherProjectKey]);
   });
 });
