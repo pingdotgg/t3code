@@ -39,6 +39,11 @@ public final class DictationController {
     public private(set) var modelStatus: DictationModelStatus
     /// Transient user-facing failure, auto-dismissed after a few seconds.
     public private(set) var lastError: String?
+    /// The last model download failure, kept until the next download attempt.
+    /// The download is normally started from the Settings window, which stays
+    /// frontmost for the whole download and never sees the composer's
+    /// self-dismissing banner.
+    public private(set) var lastDownloadError: String?
     public var micPermissionDenied = false
 
     // MARK: Live preview
@@ -146,48 +151,55 @@ public final class DictationController {
 
     private func startRecording(threadID: String) {
         lastError = nil
-        Task {
+        Task { [weak self] in
             guard await AudioRecorder.requestPermission() else {
-                micPermissionDenied = true
+                self?.micPermissionDenied = true
                 return
             }
-            guard state == .idle else { return }
-            // Tap buffers flow into an ordered, unbounded stream. While the
-            // models are still loading they simply accumulate here, so speech
-            // from the very first second is never lost; once the streaming
-            // session is up it drains the backlog and keeps up in real time.
-            let (audioStream, audioContinuation) = AsyncStream<AVAudioPCMBuffer>.makeStream()
-            self.audioContinuation = audioContinuation
-            confirmedTranscript = ""
-            volatileTranscript = ""
-            audioLevel = 0
-            recorder.onBuffer = { [weak self] buffer, level in
-                audioContinuation.yield(buffer)
-                Task { @MainActor [weak self] in
-                    self?.audioLevel = Double(level)
-                }
+            self?.beginCapture(threadID: threadID)
+        }
+    }
+
+    /// The capture setup, split out of the permission task so the tap and
+    /// streaming closures below capture `self` weakly for real — a `[weak
+    /// self]` nested inside a strongly-capturing task closure is defeated.
+    private func beginCapture(threadID: String) {
+        guard state == .idle else { return }
+        // Tap buffers flow into an ordered, unbounded stream. While the
+        // models are still loading they simply accumulate here, so speech
+        // from the very first second is never lost; once the streaming
+        // session is up it drains the backlog and keeps up in real time.
+        let (audioStream, audioContinuation) = AsyncStream<AVAudioPCMBuffer>.makeStream()
+        self.audioContinuation = audioContinuation
+        confirmedTranscript = ""
+        volatileTranscript = ""
+        audioLevel = 0
+        recorder.onBuffer = { [weak self] buffer, level in
+            audioContinuation.yield(buffer)
+            Task { @MainActor in
+                self?.audioLevel = Double(level)
             }
-            do {
-                try recorder.start()
-            } catch {
-                recorder.onBuffer = nil
-                audioContinuation.finish()
-                self.audioContinuation = nil
-                presentError("Could not start the microphone.")
-                return
-            }
-            recordingInsertHandler = insertHandler
-            recordingReplaceHandler = replaceHandler
-            recordingThreadID = threadID
-            state = .recording
-            // Warm both models while the user is speaking: the cleanup model
-            // so polish is quick, and the ASR models for the streaming
-            // preview (and, by extension, the batch pass at the end).
-            if cleanupEnabled { cleaner.prewarm() }
-            streamingTask = Task { [weak self] in
-                guard let self else { return nil }
-                return await self.runStreamingSession(audioStream: audioStream)
-            }
+        }
+        do {
+            try recorder.start()
+        } catch {
+            recorder.onBuffer = nil
+            audioContinuation.finish()
+            self.audioContinuation = nil
+            presentError("Could not start the microphone.")
+            return
+        }
+        recordingInsertHandler = insertHandler
+        recordingReplaceHandler = replaceHandler
+        recordingThreadID = threadID
+        state = .recording
+        // Warm both models while the user is speaking: the cleanup model
+        // so polish is quick, and the ASR models for the streaming
+        // preview (and, by extension, the batch pass at the end).
+        if cleanupEnabled { cleaner.prewarm() }
+        streamingTask = Task { [weak self] in
+            guard let self else { return nil }
+            return await self.runStreamingSession(audioStream: audioStream)
         }
     }
 
@@ -304,16 +316,25 @@ public final class DictationController {
             volatileTranscript = ""
 
             guard cleanupEnabled, let recordingThreadID else { return }
-            polishTask?.cancel()
-            isPolishing = true
-            polishTask = Task { [weak self] in
-                guard let self else { return }
-                let cleaned = await self.cleaner.clean(raw)
-                guard !Task.isCancelled else { return }
-                self.isPolishing = false
-                guard cleaned != raw else { return }
-                recordingReplaceHandler?(recordingThreadID, raw, cleaned)
-            }
+            startPolish(
+                raw: raw, threadID: recordingThreadID, replace: recordingReplaceHandler)
+        }
+    }
+
+    /// Split out of `finishRecording` so the polish task's `[weak self]` is not
+    /// nested inside a task closure that already holds `self` strongly.
+    private func startPolish(
+        raw: String, threadID: String, replace: ((String, String, String) -> Void)?
+    ) {
+        polishTask?.cancel()
+        isPolishing = true
+        polishTask = Task { [weak self] in
+            guard let self else { return }
+            let cleaned = await self.cleaner.clean(raw)
+            guard !Task.isCancelled else { return }
+            self.isPolishing = false
+            guard cleaned != raw else { return }
+            replace?(threadID, raw, cleaned)
         }
     }
 
@@ -327,21 +348,28 @@ public final class DictationController {
     public func downloadModel() {
         guard modelStatus == .notDownloaded else { return }
         modelStatus = .downloading(0)
+        lastDownloadError = nil
+        // Built here rather than inline in the task below so `[weak self]` is a
+        // real weak capture instead of one nested in a strong outer capture.
+        let onProgress: DownloadUtils.ProgressHandler = { [weak self] progress in
+            let fraction = progress.fractionCompleted
+            Task { @MainActor in
+                guard let self, case .downloading = self.modelStatus else { return }
+                self.modelStatus = .downloading(fraction)
+            }
+        }
         Task {
             do {
-                let models = try await AsrModels.downloadAndLoad(version: .v3) { progress in
-                    let fraction = progress.fractionCompleted
-                    Task { @MainActor [weak self] in
-                        guard let self, case .downloading = self.modelStatus else { return }
-                        self.modelStatus = .downloading(fraction)
-                    }
-                }
+                let models = try await AsrModels.downloadAndLoad(
+                    version: .v3, progressHandler: onProgress)
                 asrModels = models
                 batchManager = nil  // rebuilt lazily from the fresh models
                 modelStatus = .ready
             } catch {
                 modelStatus = .notDownloaded
-                presentError("Model download failed. Check your connection and try again.")
+                let message = "Model download failed. Check your connection and try again."
+                lastDownloadError = message
+                presentError(message)
             }
         }
     }

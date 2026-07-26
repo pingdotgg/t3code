@@ -14,13 +14,21 @@ final class AudioRecorder: @unchecked Sendable {
     /// Called from the realtime audio thread with each captured tap buffer
     /// (native input format) and a smoothed peak level in 0...1 for UI
     /// metering. Must be cheap and non-blocking.
-    var onBuffer: (@Sendable (AVAudioPCMBuffer, Float) -> Void)?
+    ///
+    /// Lock-backed because callers clear it while the tap is still installed:
+    /// an unsynchronized store would race the audio thread's load of a
+    /// refcounted closure value.
+    var onBuffer: (@Sendable (AVAudioPCMBuffer, Float) -> Void)? {
+        get { lock.withLock { _onBuffer } }
+        set { lock.withLock { _onBuffer = newValue } }
+    }
 
     private let engine = AVAudioEngine()
-    // Guards `samples`/`sampleRate`/`smoothedLevel`: the tap block appends
-    // from a realtime audio thread while start/stop run on the caller's
-    // executor.
+    // Guards `_onBuffer`/`samples`/`sampleRate`/`smoothedLevel`: the tap block
+    // reads and appends from a realtime audio thread while start/stop run on
+    // the caller's executor.
     private let lock = NSLock()
+    private var _onBuffer: (@Sendable (AVAudioPCMBuffer, Float) -> Void)?
     private var samples: [Float] = []
     private var sampleRate: Double = 0
     private var smoothedLevel: Float = 0
@@ -65,7 +73,14 @@ final class AudioRecorder: @unchecked Sendable {
     func stop() -> AVAudioPCMBuffer? {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        let (captured, rate) = lock.withLock { (samples, sampleRate) }
+        // Hand the samples off rather than copying them: the recorder outlives
+        // every recording, so keeping the array would pin the whole utterance
+        // until the next `start()`.
+        let (captured, rate) = lock.withLock { () -> ([Float], Double) in
+            let captured = (samples, sampleRate)
+            samples = []
+            return captured
+        }
         guard !captured.isEmpty, rate > 0,
             let format = AVAudioFormat(
                 commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: 1,
@@ -104,12 +119,14 @@ final class AudioRecorder: @unchecked Sendable {
             }
         }
         // Peak-hold with decay so the meter feels responsive on attack but
-        // doesn't strobe between tap buffers.
-        let level = lock.withLock {
+        // doesn't strobe between tap buffers. The handler is snapshotted in the
+        // same critical section so it can never be released out from under us.
+        let (level, handler) = lock.withLock {
+            () -> (Float, (@Sendable (AVAudioPCMBuffer, Float) -> Void)?) in
             smoothedLevel = max(peak, smoothedLevel * 0.72)
             samples.append(contentsOf: mono)
-            return smoothedLevel
+            return (smoothedLevel, _onBuffer)
         }
-        onBuffer?(buffer, level)
+        handler?(buffer, level)
     }
 }
