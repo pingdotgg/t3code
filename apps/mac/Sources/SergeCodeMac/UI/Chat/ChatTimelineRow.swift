@@ -146,11 +146,14 @@ struct ChatTimelineRowView: View, Equatable {
                 threadStatus: context.threadStatus, at: at,
                 projectRoot: context.projectRoot)
         case .subagentTask(let task):
-            // A command that reaches the transcript is a backgrounded one
-            // (foreground commands live entirely in their tool row), and it
-            // reads as shell work, not as a delegated agent.
+            // Commands are shell work whatever their detach state, so they
+            // never take the delegated-agent card. In practice only a
+            // backgrounded one gets this far — `producesTimelineRow` drops a
+            // foreground command's task row, since its tool row already tells
+            // the whole story — and the card labels itself off
+            // `task.isBackgrounded` rather than assuming the flag.
             if task.entityKind == .command {
-                BackgroundCommandCard(
+                CommandTaskCard(
                     task: task,
                     stopError: model.subagentStopErrors[task.taskId],
                     onStop: {

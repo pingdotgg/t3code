@@ -3,42 +3,42 @@ import Testing
 
 @testable import SergeCodeMac
 
-@Suite("Background command presentation")
+@Suite("Command task presentation")
 @MainActor
-struct BackgroundCommandPresentationTests {
+struct CommandTaskPresentationTests {
     private let now = Date(timeIntervalSince1970: 1_000)
 
     @Test("title falls back to a command label, never a sub-agent one")
     func titleFallsBackToCommandLabel() {
         var task = backgroundCommand()
-        #expect(BackgroundCommandPresentation.title(for: task) == "Run full mac test suite")
+        #expect(CommandTaskPresentation.title(for: task) == "Run full mac test suite")
 
         task.description = "   "
-        #expect(BackgroundCommandPresentation.title(for: task) == "Background command")
+        #expect(CommandTaskPresentation.title(for: task) == "Background command")
     }
 
     @Test("streamed chunks concatenate into the process output")
     func outputJoinsProgressChunks() throws {
         let task = backgroundCommand(progress: ["Building for debugging...", "Test Suite started"])
 
-        let output = try #require(BackgroundCommandPresentation.output(for: task))
+        let output = try #require(CommandTaskPresentation.output(for: task))
         #expect(output == "Building for debugging...\nTest Suite started")
     }
 
     @Test("a task with no streamed output has no output block")
     func noOutputWithoutProgress() {
-        #expect(BackgroundCommandPresentation.output(for: backgroundCommand()) == nil)
+        #expect(CommandTaskPresentation.output(for: backgroundCommand()) == nil)
     }
 
     @Test("output keeps the tail and reports the dropped line count")
     func outputTailKeepsTheEnd() {
         let text = (1...10).map { "line \($0)" }.joined(separator: "\n")
 
-        let tail = BackgroundCommandPresentation.outputTail(text, limit: 3)
+        let tail = CommandTaskPresentation.outputTail(text, limit: 3)
 
         #expect(tail.text == "line 8\nline 9\nline 10")
         #expect(tail.hiddenLines == 7)
-        #expect(BackgroundCommandPresentation.outputTail(text, limit: 20).hiddenLines == 0)
+        #expect(CommandTaskPresentation.outputTail(text, limit: 20).hiddenLines == 0)
     }
 
     @Test("status line reads as shell work, not agent chatter")
@@ -46,16 +46,30 @@ struct BackgroundCommandPresentationTests {
         var task = backgroundCommand()
         task.lastActivityAt = now.addingTimeInterval(-30)
         #expect(
-            BackgroundCommandPresentation.statusLine(for: task, at: now)
+            CommandTaskPresentation.statusLine(for: task, at: now)
                 == "Running in background · last activity 30s ago")
 
         task.state = .completed
-        #expect(BackgroundCommandPresentation.statusLine(for: task, at: now) == "Finished")
+        #expect(CommandTaskPresentation.statusLine(for: task, at: now) == "Finished")
 
         task.state = .failed
         task.error = "exited with code 1"
         #expect(
-            BackgroundCommandPresentation.statusLine(for: task, at: now) == "exited with code 1")
+            CommandTaskPresentation.statusLine(for: task, at: now) == "exited with code 1")
+    }
+
+    @Test("a command without the detach flag is never labelled backgrounded")
+    func attachedCommandDropsBackgroundLabelling() {
+        var task = backgroundCommand()
+        task.isBackgrounded = false
+        task.lastActivityAt = now.addingTimeInterval(-30)
+
+        #expect(
+            CommandTaskPresentation.statusLine(for: task, at: now)
+                == "Running · last activity 30s ago")
+
+        task.description = nil
+        #expect(CommandTaskPresentation.title(for: task) == "Command")
     }
 
     private func backgroundCommand(progress: [String] = []) -> SubagentTaskItem {

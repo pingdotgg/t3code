@@ -59,7 +59,7 @@
             try? await Task.sleep(for: .seconds(2))
             snapshot("1-inspector-timeline", dir: dir)
             await probeChatTurnRail(model: model, dir: dir)
-            await probeBackgroundCommandCard(model: model, dir: dir)
+            await probeCommandTaskCard(model: model, dir: dir)
 
             // Unified activity panel: scroll to the checkpoint history, then
             // back up to the changed-files section (legacy section keys).
@@ -722,11 +722,11 @@
             snapshot("1c-chat-turn-rail", dir: dir)
         }
 
-        /// Backgrounded commands render as shell work, not as delegated
-        /// agents, and foreground commands render no task card at all (their
-        /// tool row is the whole story). The card only appears mid-transcript,
-        /// so host it directly instead of scrolling the chat to it.
-        private static func probeBackgroundCommandCard(model: AppModel, dir: String) async {
+        /// Command tasks render as shell work, not as delegated agents, and a
+        /// foreground command renders no task card at all (its tool row is the
+        /// whole story). The card only appears mid-transcript, so host it
+        /// directly instead of scrolling the chat to it.
+        private static func probeCommandTaskCard(model: AppModel, dir: String) async {
             let threadID = model.selectedThreadID
             let items = threadID.map { model.timeline(threadID: $0) } ?? []
             let commandCards = items.filter {
@@ -764,15 +764,24 @@
             finished.duration = 214
             finished.lastActivityAt = now.addingTimeInterval(-30)
 
+            // Defensive shape: a command row that somehow arrives without the
+            // detach flag must not claim to be backgrounded.
+            var attached = running
+            attached.taskId = "probe-command-attached"
+            attached.description = "Compile the sidecar"
+            attached.isBackgrounded = false
+
             let hosting = NSHostingView(
                 rootView: VStack(alignment: .leading, spacing: 12) {
-                    BackgroundCommandCard(
+                    CommandTaskCard(
                         task: running, stopError: nil, onStop: {}, onClearStopError: {})
-                    BackgroundCommandCard(
+                    CommandTaskCard(
                         task: finished, stopError: nil, onStop: {}, onClearStopError: {})
+                    CommandTaskCard(
+                        task: attached, stopError: nil, onStop: {}, onClearStopError: {})
                 }
                 .padding(16))
-            let frame = NSRect(x: 0, y: 0, width: 720, height: 420)
+            let frame = NSRect(x: 0, y: 0, width: 720, height: 620)
             hosting.frame = frame
             let window = NSWindow(
                 contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
@@ -780,7 +789,7 @@
             window.contentView = hosting
             window.orderFront(nil)
             try? await Task.sleep(for: .seconds(1))
-            snapshot("1d-background-command", window: window, dir: dir)
+            snapshot("1d-command-task-cards", window: window, dir: dir)
             window.orderOut(nil)
         }
 

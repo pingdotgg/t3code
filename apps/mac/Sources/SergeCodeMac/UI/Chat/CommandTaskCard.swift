@@ -1,21 +1,27 @@
 import AppKit
 import SwiftUI
 
-/// Presentation rules for a backgrounded shell command's transcript row.
+/// Presentation rules for a shell command's transcript row.
 ///
-/// A background command is not delegated work, so it deliberately shares
-/// nothing with the sub-agent card beyond card geometry: no model/effort
-/// identity badge, no "Working…" agent chatter, no person glyph. What matters
-/// is the shell language — what is running, how long it has been running, and
-/// the tail of what it printed.
-enum BackgroundCommandPresentation {
+/// A command is not delegated work, so it deliberately shares nothing with the
+/// sub-agent card beyond card geometry: no model/effort identity badge, no
+/// "Working…" agent chatter, no person glyph. What matters is the shell
+/// language — what is running, how long it has been running, and the tail of
+/// what it printed.
+///
+/// Backgrounded-ness is a property of the task, not of the card: every label
+/// here reads `task.isBackgrounded` rather than assuming it, so a command row
+/// that reaches the transcript without the detach flag (an older snapshot, a
+/// provider that never sends one) is not mislabelled as detached.
+enum CommandTaskPresentation {
     /// Visible tail of the streamed output while collapsed.
     static let collapsedOutputLines = 6
     /// Visible tail once expanded; background jobs can print a lot.
     static let expandedOutputLines = 40
 
     static func title(for task: SubagentTaskItem) -> String {
-        SubagentTaskPresentation.nonEmpty(task.description) ?? "Background command"
+        SubagentTaskPresentation.nonEmpty(task.description)
+            ?? (task.isBackgrounded ? "Background command" : "Command")
     }
 
     /// Streamed process output, oldest first. The provider slices the output
@@ -36,11 +42,13 @@ enum BackgroundCommandPresentation {
     }
 
     /// One-line state summary under the title. Running rows say how long the
-    /// job has been quiet rather than pretending to narrate it.
+    /// job has been quiet rather than pretending to narrate it, and only claim
+    /// "in background" when the task actually detached.
     static func statusLine(for task: SubagentTaskItem, at now: Date) -> String {
         switch task.state {
         case .running:
-            return "Running in background · \(SubagentTaskPresentation.lastActivityLabel(task: task, at: now))"
+            let lead = task.isBackgrounded ? "Running in background" : "Running"
+            return "\(lead) · \(SubagentTaskPresentation.lastActivityLabel(task: task, at: now))"
         case .paused:
             return "Paused"
         case .completed:
@@ -62,14 +70,18 @@ enum BackgroundCommandPresentation {
     }
 }
 
-/// Transcript row for a command the agent detached with `run_in_background`.
+/// Transcript row for a command task — in practice, one the agent detached
+/// with `run_in_background`.
 ///
-/// Foreground commands never reach this view: their tool row already tells the
-/// whole story, and a second card would duplicate it. A backgrounded command
-/// is different — its tool row settles the instant the process is detached, so
-/// this card is the only place its lifetime and streamed output are visible.
+/// A foreground command normally never reaches this view: its tool row already
+/// tells the whole story, so `T3SubagentTaskItem.producesTimelineRow` drops the
+/// task row entirely. A backgrounded command is different — its tool row
+/// settles the instant the process detaches, so this card is the only place
+/// its lifetime and streamed output are visible. Should a command row arrive
+/// without the detach flag anyway, it still renders as shell work (never as a
+/// sub-agent), just without the background labelling it hasn't earned.
 @MainActor
-struct BackgroundCommandCard: View {
+struct CommandTaskCard: View {
     let task: SubagentTaskItem
     /// Transient stop-RPC failure (not part of the provider task payload).
     let stopError: String?
@@ -79,7 +91,7 @@ struct BackgroundCommandCard: View {
     @UIState private var isExpanded = false
     @UIState private var isHovering = false
 
-    private var output: String? { BackgroundCommandPresentation.output(for: task) }
+    private var output: String? { CommandTaskPresentation.output(for: task) }
 
     private var hasExpandableContent: Bool {
         output != nil || SubagentTaskPresentation.nonEmpty(task.error) != nil
@@ -134,9 +146,9 @@ struct BackgroundCommandCard: View {
             }
         }
         .transcriptCard(
-            fill: BackgroundCommandPresentation.tint(for: task).opacity(0.08),
+            fill: CommandTaskPresentation.tint(for: task).opacity(0.08),
             showRail: true,
-            railColor: BackgroundCommandPresentation.tint(for: task))
+            railColor: CommandTaskPresentation.tint(for: task))
         .shimmerBorder(
             color: AlpineTheme.sky,
             isActive: task.state == .running,
@@ -165,14 +177,16 @@ struct BackgroundCommandCard: View {
                 .pulseGlow(isActive: task.state == .running)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 7) {
-                    Text(BackgroundCommandPresentation.title(for: task))
+                    Text(CommandTaskPresentation.title(for: task))
                         .font(SurgeTypography.toolTitle)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    TranscriptPill(
-                        "background",
-                        tint: AlpineTheme.sky,
-                        fill: AnyShapeStyle(AlpineTheme.sky.opacity(0.14)))
+                    if task.isBackgrounded {
+                        TranscriptPill(
+                            "background",
+                            tint: AlpineTheme.sky,
+                            fill: AnyShapeStyle(AlpineTheme.sky.opacity(0.14)))
+                    }
                     Spacer(minLength: 8)
                     SubagentTaskDurationLabel(task: task)
                     if hasExpandableContent {
@@ -182,7 +196,7 @@ struct BackgroundCommandCard: View {
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     }
                 }
-                Text(BackgroundCommandPresentation.statusLine(for: task, at: now))
+                Text(CommandTaskPresentation.statusLine(for: task, at: now))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -205,11 +219,11 @@ struct BackgroundCommandCard: View {
 
     @ViewBuilder
     private func outputBlock(_ output: String) -> some View {
-        let tail = BackgroundCommandPresentation.outputTail(
+        let tail = CommandTaskPresentation.outputTail(
             output,
             limit: isExpanded
-                ? BackgroundCommandPresentation.expandedOutputLines
-                : BackgroundCommandPresentation.collapsedOutputLines)
+                ? CommandTaskPresentation.expandedOutputLines
+                : CommandTaskPresentation.collapsedOutputLines)
         VStack(alignment: .leading, spacing: 4) {
             if tail.hiddenLines > 0 {
                 Text("… \(tail.hiddenLines) earlier line\(tail.hiddenLines == 1 ? "" : "s")")
