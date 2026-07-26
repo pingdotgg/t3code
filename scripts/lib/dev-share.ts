@@ -309,14 +309,16 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
 });
 
 /**
- * Claims cleanup ownership only after the tailnet mapping exists. A failed
- * replacement must leave the prior runner as the owner so its finalizer can
- * still remove any mapping that survived the attempt.
+ * Claims cleanup ownership before publishing, then cleans up immediately if
+ * publishing fails. This keeps the handoff atomic from the runners' point of
+ * view: the prior runner can stop cleaning as soon as the successor claims,
+ * because that successor owns both the attempted mapping and its rollback.
  */
 export const acquireDevShare = Effect.fn("devShare.acquireDevShare")(function* (
   lease: DevShareLease,
 ) {
-  const shared = yield* shareDevServer({ webPort: lease.webPort });
   yield* claimDevShareLease(lease);
-  return shared;
+  return yield* shareDevServer({ webPort: lease.webPort }).pipe(
+    Effect.tapError(() => cleanupOwnedDevShare(lease)),
+  );
 });
