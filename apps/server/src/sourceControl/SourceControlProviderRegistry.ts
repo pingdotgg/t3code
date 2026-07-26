@@ -162,9 +162,14 @@ function selectProviderContext(
     }
   }
 
+  const hasKnownProvider = (candidate: SourceControlProvider.SourceControlProviderContext) =>
+    candidate.provider.kind !== "unknown";
   return (
+    candidates.find(
+      (candidate) => candidate.remoteName === "origin" && hasKnownProvider(candidate),
+    ) ??
+    candidates.find(hasKnownProvider) ??
     candidates.find((candidate) => candidate.remoteName === "origin") ??
-    candidates.find((candidate) => candidate.provider.kind !== "unknown") ??
     candidates[0] ??
     null
   );
@@ -239,18 +244,20 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         // of failing every source-control operation; the warning keeps the
         // skipped override visible, and the cache is invalidated on the next
         // settings change.
-        const settingsForOverrideLookup = serverSettings.getSettings.pipe(
-          Effect.tapError((error) =>
-            Effect.logWarning("project remote override lookup skipped: settings unavailable", {
-              cause: error,
-            }),
-          ),
-          Effect.catch(() => Effect.succeed(null)),
-        );
+        const projectOverride = (overrideProjectId: ProjectId) =>
+          serverSettings.getProjectSettings(overrideProjectId).pipe(
+            Effect.map((settings) => settings.remoteOverride ?? null),
+            Effect.tapError((error) =>
+              Effect.logWarning("project remote override lookup skipped: settings unavailable", {
+                projectId: overrideProjectId,
+                cause: error,
+              }),
+            ),
+            Effect.orElseSucceed(() => null),
+          );
 
         if (projectId) {
-          const settings = yield* settingsForOverrideLookup;
-          const override = settings?.projectSettings[projectId]?.remoteOverride ?? null;
+          const override = yield* projectOverride(projectId);
           const overrideContext = override ? providerContextFromOverride(override) : null;
           if (overrideContext) {
             return { context: overrideContext, source: "override" as const };
@@ -283,9 +290,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
             Effect.catch(() => Effect.succeed(Option.none())),
           );
         if (!projectId && Option.isSome(projectOption)) {
-          const settings = yield* settingsForOverrideLookup;
-          const override =
-            settings?.projectSettings[projectOption.value.id]?.remoteOverride ?? null;
+          const override = yield* projectOverride(projectOption.value.id);
           const overrideContext = override ? providerContextFromOverride(override) : null;
           if (overrideContext) {
             return { context: overrideContext, source: "override" as const };

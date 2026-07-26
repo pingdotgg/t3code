@@ -429,7 +429,23 @@ export const make = Effect.gen(function* () {
       yield* workflow.invalidateRemoteStatus(input.cwd);
     }
     const remote = yield* workflow.remoteStatus(input, options);
-    return yield* updateCachedRemoteStatus(statusCacheKey(input), remote, { publish: true });
+    const result = yield* updateCachedRemoteStatus(statusCacheKey(input), remote, {
+      publish: true,
+    });
+    const siblingInputs = yield* cachedSiblingInputsForCwd(input);
+    yield* Effect.forEach(
+      siblingInputs,
+      (siblingInput) =>
+        workflow.remoteStatus(siblingInput, { refreshUpstream: false }).pipe(
+          Effect.flatMap((siblingRemote) =>
+            updateCachedRemoteStatus(statusCacheKey(siblingInput), siblingRemote, {
+              publish: true,
+            }),
+          ),
+        ),
+      { concurrency: "unbounded", discard: true },
+    );
+    return result;
   });
 
   const refreshStatusForInput = Effect.fn("VcsStatusBroadcaster.refreshStatusForInput")(function* (

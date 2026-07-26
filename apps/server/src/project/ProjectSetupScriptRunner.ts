@@ -135,17 +135,16 @@ export const make = Effect.gen(function* () {
 
     const terminalId = input.preferredTerminalId ?? `setup-${script.id}`;
     const cwd = input.worktreePath;
-    const settings = yield* serverSettings.getSettings.pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProjectSetupScriptOperationError({
-            ...errorContext,
-            operation: "readSettings",
-            cause,
-          }),
+    const actionEnvironment = yield* serverSettings.getProjectSettings(project.id).pipe(
+      Effect.map((settings) => settings.actionEnvironment),
+      Effect.tapError((cause) =>
+        Effect.logWarning("project setup action environment unavailable", {
+          projectId: project.id,
+          cause,
+        }),
       ),
+      Effect.orElseSucceed(() => ({})),
     );
-    const actionEnvironment = settings.projectSettings[project.id]?.actionEnvironment ?? {};
     const env = projectScriptRuntimeEnv({
       project: { cwd: project.workspaceRoot },
       worktreePath: input.worktreePath,

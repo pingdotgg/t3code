@@ -382,8 +382,13 @@ function detectedRemotesFromGitRemoteVerboseOutput(stdout: string): ProjectDetec
   );
 }
 
-function effectiveRemoteFromOverride(override: ProjectRemoteOverride): ProjectEffectiveRemote {
+function effectiveRemoteFromOverride(
+  override: ProjectRemoteOverride,
+): ProjectEffectiveRemote | null {
   const providerInfo = providerInfoFromOverride(override);
+  if (!providerInfo) {
+    return null;
+  }
   return {
     source: "override",
     provider: override.provider,
@@ -1123,7 +1128,11 @@ const makeWsRpcLayer = (
             ? Option.none()
             : yield* projectionSnapshotQuery
                 .getThreadShellById(command.threadId)
-                .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+                .pipe(
+                  Effect.mapError((cause) =>
+                    toDispatchCommandError(cause, "Failed to read thread project settings"),
+                  ),
+                );
           const projectId = bootstrapProjectId ?? Option.getOrUndefined(thread)?.projectId;
           const modelSelection =
             command.modelSelection ??
@@ -1267,12 +1276,7 @@ const makeWsRpcLayer = (
         );
 
       const getProjectSettings = (projectId: ProjectId) =>
-        serverSettings.getSettings.pipe(
-          Effect.map(
-            (settings) =>
-              settings.projectSettings[projectId] ?? ServerSettings.emptyProjectSettings,
-          ),
-        );
+        serverSettings.getProjectSettings(projectId);
 
       const automaticGitFetchIntervalForProject = (projectId: ProjectId | undefined) =>
         projectId
@@ -1857,7 +1861,8 @@ const makeWsRpcLayer = (
                 { concurrency: "unbounded" },
               );
               const remote = settings.remoteOverride
-                ? effectiveRemoteFromOverride(settings.remoteOverride)
+                ? (effectiveRemoteFromOverride(settings.remoteOverride) ??
+                  effectiveRemoteFromDetected(detected.primaryRemote))
                 : effectiveRemoteFromDetected(detected.primaryRemote);
 
               return {

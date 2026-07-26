@@ -564,6 +564,7 @@ const buildAppUnderTest = (options?: {
           start: Effect.void,
           ready: Effect.void,
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+          getProjectSettings: () => Effect.succeed(ServerSettings.emptyProjectSettings),
           updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
           updateProjectSettings: () =>
             Effect.succeed({
@@ -4867,21 +4868,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               ),
           },
           serverSettings: {
-            getSettings: Effect.succeed({
-              ...DEFAULT_SERVER_SETTINGS,
-              projectSettings: {
-                [defaultProjectId]: {
-                  remoteOverride: {
-                    provider: "gitlab" as const,
-                    remoteUrl: "https://gitlab.com/acme/widgets.git",
-                    webUrl: "https://gitlab.com/acme/widgets",
-                  },
-                  automaticGitFetchInterval: null,
-                  actionEnvironment: {},
-                  disabledProviderInstanceIds: [],
+            getProjectSettings: () =>
+              Effect.succeed({
+                remoteOverride: {
+                  provider: "gitlab" as const,
+                  remoteUrl: "https://gitlab.com/acme/widgets.git",
+                  webUrl: "https://gitlab.com/acme/widgets",
                 },
-              },
-            }),
+                automaticGitFetchInterval: null,
+                actionEnvironment: {},
+                disabledProviderInstanceIds: [],
+              }),
           },
           gitVcsDriver: {
             execute: () =>
@@ -4917,6 +4914,71 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(details.effective.remote?.remoteName, "origin");
       assert.equal(details.effective.remote?.remoteUrl, "https://gitlab.com/acme/widgets.git");
       assert.equal(details.effective.remote?.webUrl, "https://gitlab.com/acme/widgets");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("falls back to the detected remote when a saved override is unusable", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getProjectShellById: () =>
+              Effect.succeed(
+                Option.some({
+                  id: defaultProjectId,
+                  title: "Default Project",
+                  workspaceRoot: "/tmp/default-project",
+                  repositoryIdentity: null,
+                  defaultModelSelection,
+                  scripts: [],
+                  createdAt: now,
+                  updatedAt: now,
+                }),
+              ),
+          },
+          serverSettings: {
+            getProjectSettings: () =>
+              Effect.succeed({
+                remoteOverride: {
+                  provider: "github",
+                  remoteUrl: "not-a-remote-url",
+                },
+                automaticGitFetchInterval: null,
+                actionEnvironment: {},
+                disabledProviderInstanceIds: [],
+              }),
+          },
+          gitVcsDriver: {
+            execute: (input) =>
+              Effect.succeed({
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdout:
+                  input.operation === "projects.getDetails.gitRoot"
+                    ? "/tmp/default-project\n"
+                    : input.operation === "projects.getDetails.branch"
+                      ? "main\n"
+                      : "origin\tgit@github.com:acme/widgets.git (fetch)\n",
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const details = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsGetDetails]({ projectId: defaultProjectId }),
+        ),
+      );
+
+      assert.equal(details.settings.remoteOverride?.remoteUrl, "not-a-remote-url");
+      assert.equal(details.effective.remote?.source, "detected");
+      assert.equal(details.effective.remote?.provider, "github");
+      assert.equal(details.effective.remote?.remoteUrl, "git@github.com:acme/widgets.git");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -5114,6 +5176,66 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "At least one provider must stay enabled for this project.",
       );
       assert.equal(updateProjectSettingsCalled, false);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects thread.turn.start when the existing thread cannot be loaded", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+          },
+          projectionSnapshotQuery: {
+            getThreadShellById: () =>
+              Effect.fail(
+                new PersistenceSqlError({
+                  operation: "getThreadShellById",
+                  detail: "projection unavailable",
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-turn-start-thread-lookup-failed"),
+            threadId: defaultThreadId,
+            message: {
+              messageId: MessageId.make("msg-thread-lookup-failed"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      if (
+        result._tag !== "Failure" ||
+        result.failure._tag !== "OrchestrationDispatchCommandError"
+      ) {
+        assert.fail("Expected an OrchestrationDispatchCommandError");
+      }
+      assert.equal(
+        result.failure.message,
+        "SQL error in getThreadShellById: projection unavailable",
+      );
+      assert.deepEqual(dispatchedCommands, []);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -4,8 +4,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { ProjectId, VcsRepositoryDetectionError } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  ServerSettingsError,
+  VcsRepositoryDetectionError,
+} from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -44,6 +50,7 @@ function makeRegistry(input: {
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
   readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
+  readonly serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
 }) {
   const driver = {
     detectRepository: () =>
@@ -97,6 +104,18 @@ function makeRegistry(input: {
     run: () => Effect.succeed(processOutput("")),
     ...input.process,
   });
+  const serverSettingsLayer = input.serverSettings
+    ? Layer.mock(ServerSettings.ServerSettingsService)({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        getProjectSettings: () => Effect.succeed(ServerSettings.emptyProjectSettings),
+        updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        updateProjectSettings: () => Effect.succeed(ServerSettings.emptyProjectSettings),
+        streamChanges: Stream.empty,
+        ...input.serverSettings,
+      })
+    : ServerSettings.layerTest(input.settings);
 
   return SourceControlProviderRegistry.make.pipe(
     Effect.provide(
@@ -110,7 +129,7 @@ function makeRegistry(input: {
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
         }),
-        ServerSettings.layerTest(input.settings),
+        serverSettingsLayer,
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-registry-test-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),
@@ -159,6 +178,44 @@ it.effect("uses project-specific remote overrides when a project id is supplied"
             },
           },
         },
+      },
+    });
+
+    const handle = yield* registry.resolveHandle({ cwd: "/repo", projectId });
+
+    assert.strictEqual(handle.contextSource, "override");
+    assert.strictEqual(handle.provider.kind, "gitlab");
+    assert.strictEqual(handle.context?.remoteName, "upstream");
+  }),
+);
+
+it.effect("uses a project override when the full settings read is unavailable", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project-secret-failure");
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@github.com:pingdotgg/t3code.git" }],
+      serverSettings: {
+        getSettings: Effect.fail(
+          new ServerSettingsError({
+            settingsPath: "/tmp/settings.json",
+            operation: "read-secret",
+            providerInstanceId: "claudeAgent",
+            environmentVariable: "API_KEY",
+            cause: new Error("secret unavailable"),
+          }),
+        ),
+        getProjectSettings: (requestedProjectId) =>
+          Effect.succeed({
+            ...ServerSettings.emptyProjectSettings,
+            remoteOverride:
+              requestedProjectId === projectId
+                ? {
+                    provider: "gitlab",
+                    remoteName: "upstream",
+                    remoteUrl: "https://gitlab.example.test/group/project.git",
+                  }
+                : null,
+          }),
       },
     });
 
@@ -321,5 +378,21 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "azure-devops");
+  }),
+);
+
+it.effect("prefers a known non-origin provider over an unknown origin remote", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [
+        { name: "origin", url: "https://source.example.test/acme/project.git" },
+        { name: "upstream", url: "https://github.com/acme/project.git" },
+      ],
+    });
+
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+
+    assert.strictEqual(handle.provider.kind, "github");
+    assert.strictEqual(handle.context?.remoteName, "upstream");
   }),
 );

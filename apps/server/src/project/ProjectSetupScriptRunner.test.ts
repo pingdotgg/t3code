@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import { type OrchestrationProject, ProjectId } from "@t3tools/contracts";
+import { type OrchestrationProject, ProjectId, ServerSettingsError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -172,6 +172,74 @@ describe("ProjectSetupScriptRunner", () => {
           ),
         ),
       );
+    },
+  );
+
+  it.effect(
+    "runs the setup script without optional variables when settings are unavailable",
+    () => {
+      const open = vi.fn(() =>
+        Effect.succeed({
+          threadId: "thread-1",
+          terminalId: "setup-setup",
+          cwd: "/repo/worktrees/a",
+          worktreePath: "/repo/worktrees/a",
+          status: "running" as const,
+          pid: 123,
+          history: "",
+          exitCode: null,
+          exitSignal: null,
+          label: "setup-setup",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      const write = vi.fn(() => Effect.void);
+      const project = makeProject([
+        {
+          id: "setup",
+          name: "Setup",
+          command: "bun install",
+          icon: "configure",
+          runOnWorktreeCreate: true,
+        },
+      ]);
+      const unavailableSettingsLayer = Layer.mock(ServerSettings.ServerSettingsService)({
+        getProjectSettings: () =>
+          Effect.fail(
+            new ServerSettingsError({
+              settingsPath: "/tmp/settings.json",
+              operation: "read-file",
+              cause: new Error("settings unavailable"),
+            }),
+          ),
+      });
+      const layer = ProjectSetupScriptRunner.layer.pipe(
+        Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
+        Layer.provideMerge(unavailableSettingsLayer),
+        Layer.provideMerge(makeTerminalManagerLayer({ open, write })),
+      );
+
+      return Effect.gen(function* () {
+        const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+        const result = yield* runner.runForThread({
+          threadId: "thread-1",
+          projectId: "project-1",
+          worktreePath: "/repo/worktrees/a",
+        });
+
+        expect(result.status).toBe("started");
+        expect(open).toHaveBeenCalledWith({
+          threadId: "thread-1",
+          terminalId: "setup-setup",
+          cwd: "/repo/worktrees/a",
+          worktreePath: "/repo/worktrees/a",
+          env: {
+            T3CODE_PROJECT_ROOT: "/repo/project",
+            T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
+          },
+        });
+        expect(write).toHaveBeenCalled();
+      }).pipe(Effect.provide(layer));
     },
   );
 

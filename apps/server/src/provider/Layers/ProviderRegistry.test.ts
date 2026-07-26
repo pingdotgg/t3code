@@ -297,6 +297,18 @@ function makeMutableServerSettingsService(
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
+      getProjectSettings: (projectId) =>
+        Ref.get(settingsRef).pipe(
+          Effect.map(
+            (settings) =>
+              settings.projectSettings[projectId] ?? {
+                remoteOverride: null,
+                automaticGitFetchInterval: null,
+                actionEnvironment: {},
+                disabledProviderInstanceIds: [],
+              },
+          ),
+        ),
       updateSettings: (patch) => commitSettings(() => patch),
       updateProjectSettings: (projectId, patch) =>
         commitSettings((settings) => ({

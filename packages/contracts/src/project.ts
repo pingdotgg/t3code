@@ -245,6 +245,13 @@ const ProjectActionEnvironmentKey = Schema.String.check(
     Schema.makeFilter((key) =>
       key.startsWith("T3CODE_") ? "T3CODE_* environment variables are reserved." : true,
     ),
+  )
+  .check(
+    Schema.makeFilter((key) =>
+      key === "__proto__" || key === "constructor" || key === "prototype"
+        ? "This environment variable name is reserved."
+        : true,
+    ),
   );
 const ProjectActionEnvironmentValue = Schema.String.check(Schema.isMaxLength(8_192));
 const ProjectAutomaticGitFetchIntervalMs = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));

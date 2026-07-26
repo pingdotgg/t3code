@@ -2128,7 +2128,7 @@ export default function SidebarV2() {
                             type="button"
                             aria-label={`Project actions for ${project.displayName}`}
                             title={`Project actions for ${project.displayName}`}
-                            className="pointer-events-none ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 opacity-0 outline-none hover:bg-accent hover:text-foreground focus-visible:pointer-events-auto focus-visible:bg-accent focus-visible:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/project-scope:pointer-events-auto group-hover/project-scope:opacity-100"
+                            className="pointer-events-none ml-auto inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/55 opacity-0 outline-none hover:bg-accent hover:text-foreground focus-visible:pointer-events-auto focus-visible:bg-accent focus-visible:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/project-scope:pointer-events-auto group-hover/project-scope:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100"
                             onPointerDown={(event) => event.stopPropagation()}
                             onClick={(event) => {
                               void handleProjectActions(event, project);

@@ -129,6 +129,11 @@ export class ServerSettingsService extends Context.Service<
     /** Read the current settings. */
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /** Read one project's persisted settings without materializing provider secrets. */
+    readonly getProjectSettings: (
+      projectId: ProjectId,
+    ) => Effect.Effect<ProjectSettings, ServerSettingsError>;
+
     /** Patch settings and persist. Returns the new full settings object. */
     readonly updateSettings: (
       patch: ServerSettingsPatch,
@@ -176,6 +181,10 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(currentSettingsRef),
+      getProjectSettings: (projectId) =>
+        Ref.get(currentSettingsRef).pipe(
+          Effect.map((settings) => settings.projectSettings[projectId] ?? emptyProjectSettings),
+        ),
       updateSettings: (patch) => commitSettings(() => patch),
       updateProjectSettings: (projectId, patch) =>
         commitSettings((settings) => ({
@@ -614,6 +623,10 @@ const make = Effect.gen(function* () {
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
+    getProjectSettings: (projectId) =>
+      getSettingsFromCache.pipe(
+        Effect.map((settings) => settings.projectSettings[projectId] ?? emptyProjectSettings),
+      ),
     updateSettings: (patch) => commitSettings(() => patch),
     updateProjectSettings: (projectId, patch) =>
       commitSettings((settings) => ({

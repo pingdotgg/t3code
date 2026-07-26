@@ -193,7 +193,12 @@ function isValidActionEnvironmentKey(key: string): boolean {
 }
 
 function isReservedActionEnvironmentKey(key: string): boolean {
-  return key.startsWith(ACTION_ENVIRONMENT_RESERVED_PREFIX);
+  return (
+    key.startsWith(ACTION_ENVIRONMENT_RESERVED_PREFIX) ||
+    key === "__proto__" ||
+    key === "constructor" ||
+    key === "prototype"
+  );
 }
 
 function millisecondsToSeconds(milliseconds: number): number {
@@ -348,7 +353,7 @@ function ProjectRouteView() {
     commitStateRef.current = createProjectSettingsCommitState(projectDraftKey);
   }
   const override = details?.settings.remoteOverride ?? null;
-  const title = currentDraft?.title ?? details?.title ?? "";
+  const title = currentDraft?.title ?? details?.title ?? project?.title ?? "";
   const overrideEnabled = currentDraft?.overrideEnabled ?? Boolean(override);
   const provider =
     currentDraft?.provider ??
@@ -665,7 +670,7 @@ function ProjectRouteView() {
       if (reservedKey) {
         showProjectSettingsError(
           "Failed to update action environment",
-          new Error(`"${reservedKey}" is reserved for T3Code runtime variables.`),
+          new Error(`"${reservedKey}" is a reserved environment variable name.`),
         );
         return;
       }
@@ -748,6 +753,14 @@ function ProjectRouteView() {
         : 0,
     [project, threads],
   );
+  const projectGroupThreadCount = useMemo(() => {
+    const projectKeys = new Set(
+      projectLocations.map((location) => `${location.environmentId}\0${location.id}`),
+    );
+    return threads.filter((thread) =>
+      projectKeys.has(`${thread.environmentId}\0${thread.projectId}`),
+    ).length;
+  }, [projectLocations, threads]);
   const persistProjectScripts = async (input: {
     nextScripts: ProjectScript[];
     keybinding?: string | null;
@@ -866,6 +879,7 @@ function ProjectRouteView() {
   };
 
   const [removeProjectPending, setRemoveProjectPending] = useState(false);
+  const [removeProjectEverywherePending, setRemoveProjectEverywherePending] = useState(false);
   const removeProject = useCallback(async () => {
     if (!project || removeProjectPending) return;
     setRemoveProjectPending(true);
@@ -914,6 +928,63 @@ function ProjectRouteView() {
     }
   }, [deleteProject, navigate, project, projectThreadCount, removeProjectPending]);
 
+  const removeProjectEverywhere = useCallback(async () => {
+    if (projectLocations.length < 2 || removeProjectEverywherePending) return;
+    setRemoveProjectEverywherePending(true);
+    try {
+      const confirmed = await ensureLocalApi().dialogs.confirm(
+        [
+          `Remove all ${projectLocations.length} grouped project entries?`,
+          projectGroupThreadCount > 0
+            ? `This permanently deletes ${projectGroupThreadCount} related thread${
+                projectGroupThreadCount === 1 ? "" : "s"
+              } and their conversation history.`
+            : "No threads will be deleted.",
+          "This action cannot be undone.",
+        ].join("\n"),
+      );
+      if (!confirmed) return;
+
+      const results = await Promise.all(
+        projectLocations.map((location) =>
+          deleteProject({
+            environmentId: location.environmentId,
+            input: {
+              projectId: location.id,
+              force: true,
+            },
+          }),
+        ),
+      );
+      for (const result of results) {
+        if (result._tag === "Failure") {
+          throw squashAtomCommandFailure(result);
+        }
+      }
+      toastManager.add({
+        type: "success",
+        title: "Project removed from all environments",
+      });
+      void navigate({ to: "/" });
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to remove grouped project",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    } finally {
+      setRemoveProjectEverywherePending(false);
+    }
+  }, [
+    deleteProject,
+    navigate,
+    projectGroupThreadCount,
+    projectLocations,
+    removeProjectEverywherePending,
+  ]);
+
   const effectiveRemote = projectDetails.data?.effective.remote ?? null;
   const defaultModelSelectionAllowed =
     defaultModelSelection === null ||
@@ -928,8 +999,66 @@ function ProjectRouteView() {
     projectProviderInstanceEntries.find(
       (entry) => entry.instanceId === displayedModelSelection.instanceId,
     ) ?? null;
+  const projectIdentityHeader = project ? (
+    <section className="px-4 sm:px-5">
+      <div className="flex min-h-9 min-w-0 items-center justify-between gap-4">
+        <h1 className="min-w-0 flex-1 truncate text-2xl font-semibold leading-none tracking-tight">
+          {title}
+        </h1>
+        {projectLocations.length > 1 ? (
+          <Select
+            value={`${project.environmentId}:${project.id}`}
+            onValueChange={(value) => {
+              const nextProject = projectLocations.find(
+                (candidate) => `${candidate.environmentId}:${candidate.id}` === value,
+              );
+              if (!nextProject) return;
+              void navigate({
+                to: "/projects/$environmentId/$projectId",
+                params: {
+                  environmentId: nextProject.environmentId,
+                  projectId: nextProject.id,
+                },
+              });
+            }}
+          >
+            <SelectTrigger
+              variant="ghost"
+              size="sm"
+              className="h-8 w-auto max-w-full px-2 font-medium"
+              aria-label="Project environment"
+            >
+              <SelectValue>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <ServerIcon className="size-3.5 shrink-0" />
+                  <span className="truncate">{currentEnvironmentLabel}</span>
+                </span>
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="start" alignItemWithTrigger={false}>
+              {projectLocations.map((location) => (
+                <SelectItem
+                  key={`${location.environmentId}:${location.id}`}
+                  value={`${location.environmentId}:${location.id}`}
+                >
+                  <span className="truncate">
+                    {location.environmentLabel ?? "Current environment"}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        ) : (
+          <div className="flex h-8 min-w-0 shrink-0 items-center gap-1.5 text-sm font-medium text-muted-foreground">
+            <ServerIcon className="size-3.5 shrink-0" />
+            <span className="truncate">{currentEnvironmentLabel}</span>
+          </div>
+        )}
+      </div>
+    </section>
+  ) : null;
   return (
-    <SidebarInset className="isolate h-dvh min-h-0 overflow-hidden overscroll-y-none bg-[#0A0A0A] text-foreground">
+    <SidebarInset className="isolate h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <div className="flex min-h-0 flex-1 flex-col">
         <header className="flex h-12 shrink-0 items-center gap-2 px-3 sm:px-5">
           <SidebarTrigger className="size-7 shrink-0 md:hidden" />
@@ -957,76 +1086,22 @@ function ProjectRouteView() {
         </header>
 
         {project && projectDetails.isPending && !projectDetails.data ? (
-          <ProjectSettingsLoading />
+          <SettingsPageContainer className="max-w-4xl gap-8">
+            {projectIdentityHeader}
+            <ProjectSettingsLoading />
+          </SettingsPageContainer>
         ) : (
           <SettingsPageContainer className="max-w-4xl gap-8">
             {!project ? (
               <ProjectNotice title="Project not found" description="This project is not loaded." />
             ) : projectDetails.error !== null ? (
-              <ProjectNotice title="Unable to load project" description={projectDetails.error} />
+              <>
+                {projectIdentityHeader}
+                <ProjectNotice title="Unable to load project" description={projectDetails.error} />
+              </>
             ) : projectDetails.data ? (
               <>
-                <section className="px-4 sm:px-5">
-                  <div className="flex min-h-9 min-w-0 items-center justify-between gap-4">
-                    <h1 className="min-w-0 flex-1 truncate text-2xl font-semibold leading-none tracking-tight">
-                      {title}
-                    </h1>
-                    {projectLocations.length > 1 ? (
-                      <Select
-                        value={`${project.environmentId}:${project.id}`}
-                        onValueChange={(value) => {
-                          const nextProject = projectLocations.find(
-                            (candidate) => `${candidate.environmentId}:${candidate.id}` === value,
-                          );
-                          if (!nextProject) return;
-                          void navigate({
-                            to: "/projects/$environmentId/$projectId",
-                            params: {
-                              environmentId: nextProject.environmentId,
-                              projectId: nextProject.id,
-                            },
-                          });
-                        }}
-                      >
-                        <SelectTrigger
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-auto max-w-full px-2 font-medium"
-                          aria-label="Project environment"
-                        >
-                          <SelectValue>
-                            <span className="flex min-w-0 items-center gap-1.5">
-                              <ServerIcon className="size-3.5 shrink-0" />
-                              <span className="truncate">{currentEnvironmentLabel}</span>
-                            </span>
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectPopup align="start" alignItemWithTrigger={false}>
-                          {projectLocations.map((location) => (
-                            <SelectItem
-                              key={`${location.environmentId}:${location.id}`}
-                              value={`${location.environmentId}:${location.id}`}
-                            >
-                              <span className="flex min-w-0 flex-col">
-                                <span className="truncate">
-                                  {location.environmentLabel ?? "Current environment"}
-                                </span>
-                                <span className="truncate font-mono text-xs text-muted-foreground">
-                                  {location.workspaceRoot}
-                                </span>
-                              </span>
-                            </SelectItem>
-                          ))}
-                        </SelectPopup>
-                      </Select>
-                    ) : (
-                      <div className="flex h-8 min-w-0 shrink-0 items-center gap-1.5 text-sm font-medium text-muted-foreground">
-                        <ServerIcon className="size-3.5 shrink-0" />
-                        <span className="truncate">{currentEnvironmentLabel}</span>
-                      </div>
-                    )}
-                  </div>
-                </section>
+                {projectIdentityHeader}
 
                 <SettingsSection title="General">
                   <ProjectSettingRow
@@ -1423,6 +1498,28 @@ function ProjectRouteView() {
                     Remove
                   </Button>
                 </div>
+                {projectLocations.length > 1 ? (
+                  <div className="flex min-w-0 items-center justify-between gap-4 rounded-lg px-3 py-3 sm:px-4">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-foreground">
+                        Remove project everywhere
+                      </div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        Deletes all {projectLocations.length} grouped entries and their conversation
+                        history.
+                      </div>
+                    </div>
+                    <Button
+                      variant="destructive-outline"
+                      size="sm"
+                      disabled={removeProjectEverywherePending}
+                      onClick={() => void removeProjectEverywhere()}
+                    >
+                      <Trash2Icon className="size-3.5" />
+                      Remove all
+                    </Button>
+                  </div>
+                ) : null}
               </>
             ) : null}
           </SettingsPageContainer>
@@ -1641,7 +1738,7 @@ function ActionEnvironmentEditor({
         stackedThreadToast({
           type: "error",
           title: "Failed to update action environment",
-          description: `"${trimmedNextKey}" is reserved for T3Code runtime variables.`,
+          description: `"${trimmedNextKey}" is a reserved environment variable name.`,
         }),
       );
       return;

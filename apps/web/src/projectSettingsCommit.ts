@@ -39,12 +39,16 @@ const draftKeyMatchesDetails = (
     case "overrideEnabled":
       return draft.overrideEnabled === Boolean(override);
     case "provider":
+      if (draft.overrideEnabled === false && override === null) return true;
       return draft.provider === override?.provider;
     case "remoteName":
+      if (draft.overrideEnabled === false && override === null) return true;
       return draft.remoteName === override?.remoteName;
     case "remoteUrl":
+      if (draft.overrideEnabled === false && override === null) return true;
       return draft.remoteUrl === override?.remoteUrl;
     case "webUrl":
+      if (draft.overrideEnabled === false && override === null) return true;
       return (draft.webUrl || undefined) === override?.webUrl;
     case "defaultModelSelection":
       return valuesEqual(draft.defaultModelSelection, details.defaultModelSelection);

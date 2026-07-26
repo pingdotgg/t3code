@@ -66,6 +66,10 @@ describe("project settings commit state", () => {
     const draft = {
       projectKey: "environment-1:project-1",
       overrideEnabled: false,
+      provider: "github",
+      remoteName: "origin",
+      remoteUrl: "https://github.com/acme/project.git",
+      webUrl: "https://github.com/acme/project",
     } satisfies ProjectSettingsDraft;
     const pendingKeys = [
       "overrideEnabled",

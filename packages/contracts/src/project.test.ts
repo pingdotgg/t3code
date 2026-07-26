@@ -115,4 +115,12 @@ describe("ProjectDetails", () => {
       }),
     ).toThrow(/reserved/);
   });
+
+  it("rejects object prototype keys in action environments", () => {
+    for (const key of ["__proto__", "constructor", "prototype"]) {
+      expect(() => decodeProjectActionEnvironment(JSON.parse(`{"${key}":"unsafe"}`))).toThrow(
+        /reserved/,
+      );
+    }
+  });
 });

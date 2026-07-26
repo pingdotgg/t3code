@@ -223,6 +223,68 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
+  it.effect("propagates periodic remote refreshes to sibling project cache entries", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      remoteStatusRefreshUpstreamValues: [] as Array<boolean | undefined>,
+    };
+    const projectOne = ProjectId.make("project-one");
+    const projectTwo = ProjectId.make("project-two");
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo", projectId: projectOne });
+      yield* broadcaster.getStatus({ cwd: "/repo", projectId: projectTwo });
+
+      state.currentRemoteStatus = {
+        ...baseRemoteStatus,
+        behindCount: 3,
+      };
+
+      const scope = yield* Scope.make();
+      const snapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
+      const remoteUpdatedDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
+      yield* Stream.runForEach(
+        broadcaster.streamStatus(
+          { cwd: "/repo", projectId: projectOne },
+          { automaticRemoteRefreshInterval: Effect.succeed(Duration.minutes(1)) },
+        ),
+        (event) => {
+          if (event._tag === "snapshot") {
+            return Deferred.succeed(snapshotDeferred, event).pipe(Effect.ignore);
+          }
+          if (event._tag === "remoteUpdated") {
+            return Deferred.succeed(remoteUpdatedDeferred, event).pipe(Effect.ignore);
+          }
+          return Effect.void;
+        },
+      ).pipe(Effect.forkIn(scope));
+
+      yield* Deferred.await(snapshotDeferred);
+      yield* TestClock.adjust(Duration.minutes(1));
+      yield* Deferred.await(remoteUpdatedDeferred);
+
+      const siblingStatus = yield* broadcaster.getStatus({
+        cwd: "/repo",
+        projectId: projectTwo,
+      });
+      assert.equal(siblingStatus.behindCount, 3);
+      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [
+        undefined,
+        undefined,
+        true,
+        false,
+      ]);
+
+      yield* Scope.close(scope, Exit.void);
+    }).pipe(Effect.provide(Layer.merge(makeTestLayer(state), TestClock.layer())));
+  });
+
   it.effect("refreshes the cached snapshot after explicit invalidation", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
