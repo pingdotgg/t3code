@@ -75,12 +75,32 @@
                     remote, multi: multi, scenery: scenery, dir: dir)
             }
 
-            // Plan strip above the composer: expand, snapshot, collapse.
+            // Plan strip above the composer: collapsed rail (it shares the
+            // credit row with the Unsplash pill), then expand, snapshot,
+            // collapse. The mock seeds plan progress on thread-1, but the
+            // rail only mounts while a run is live — start one if needed and
+            // hand the thread back idle afterwards.
+            let planRunStarted = model.selectedThread?.status != .running
+            if planRunStarted {
+                // `send` only returns when the mock finishes streaming, so
+                // fire it off and snapshot while the turn is still live. The
+                // padded text lengthens the canned reply enough to keep the
+                // thread running across both snapshots (80ms per chunk).
+                let filler = String(repeating: "keep the run alive ", count: 40)
+                Task { @MainActor in await model.send(text: "Probe: plan rail \(filler)") }
+            }
+            try? await Task.sleep(for: .seconds(1.5))
+            print("UIProbe: plan rail status=\(model.selectedThread?.status.rawValue ?? "nil")")
+            snapshot("2-plan-rail", dir: dir)
             toggleSection("plan")
             try? await Task.sleep(for: .seconds(1))
             snapshot("2-plan-expanded", dir: dir)
             toggleSection("plan")
             try? await Task.sleep(for: .seconds(1))
+            if planRunStarted {
+                await model.cancelCurrentTurn()
+                try? await Task.sleep(for: .seconds(1))
+            }
 
             // Open main-area review (All Changes) via the timeline harness hook.
             if let threadID = model.selectedThreadID {

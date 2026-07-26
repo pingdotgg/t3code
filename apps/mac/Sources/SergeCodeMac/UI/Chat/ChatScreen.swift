@@ -25,6 +25,21 @@ public struct ChatScreen: View {
         } ?? false
     }
 
+    /// Whether the plan rail occupies the credit row for `thread`. Mirrors
+    /// PlanProgressStrip's own guard: a live run with at least one step. The
+    /// row needs the answer up front so it can drop in a `Spacer` and keep
+    /// the credit pill on the right edge when there is no plan to show.
+    /// Written as statements, not one expression — see
+    /// `selectedThreadIsActive` on the Swift 6.2 type-checker limit.
+    private func showsPlanRail(_ thread: ChatThread) -> Bool {
+        guard thread.status == .running || thread.status == .backgroundWork else {
+            return false
+        }
+        let steps = model.threadState(thread.id)?.planProgress?.steps
+        guard let steps else { return false }
+        return !steps.isEmpty
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             if let thread = model.selectedThread {
@@ -48,29 +63,27 @@ public struct ChatScreen: View {
                         )
                         .id(thread.id)
                         ChatFollowUpBar(model: model)
-                        if thread.status == .running || thread.status == .backgroundWork {
-                            PlanProgressStrip(model: model)
-                                // Compact card, right-anchored to the same
-                                // 1040pt column as the Unsplash credit below
-                                // it, instead of spanning the full composer
-                                // width.
-                                .frame(maxWidth: 440, alignment: .trailing)
-                                .frame(maxWidth: 1040, alignment: .trailing)
-                                .padding(.horizontal, 20)
-                                .padding(.top, 8)
-                        }
-                        // Unsplash credit rides in the layout flow above the
-                        // composer, right-aligned to the same 1040pt column.
-                        // A floating corner overlay used to overlap the
-                        // composer glass on narrower windows.
-                        if let photo = scenery.photo(for: threadKey) {
-                            HStack {
-                                Spacer(minLength: 0)
-                                SceneryAttributionTag(photo: photo)
+                        // One shared row above the composer: the plan rail
+                        // takes all the free width on the left, the Unsplash
+                        // credit keeps the right edge of the same 1040pt
+                        // column. (The credit rides in the layout flow rather
+                        // than a floating corner overlay, which used to
+                        // overlap the composer glass on narrow windows.)
+                        let photo = scenery.photo(for: threadKey)
+                        if showsPlanRail(thread) || photo != nil {
+                            HStack(alignment: .bottom, spacing: 10) {
+                                if showsPlanRail(thread) {
+                                    PlanProgressStrip(model: model)
+                                } else {
+                                    Spacer(minLength: 0)
+                                }
+                                if let photo {
+                                    SceneryAttributionTag(photo: photo)
+                                }
                             }
                             .frame(maxWidth: 1040)
                             .padding(.horizontal, 20)
-                            .padding(.top, 6)
+                            .padding(.top, 8)
                         }
                         ComposerBar(
                             model: model,
