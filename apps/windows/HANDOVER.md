@@ -256,20 +256,34 @@ cd apps\windows
 corepack pnpm exec tauri signer generate -w %USERPROFILE%\.tauri\sergecode.key
 ```
 
+Give it a **non-empty passphrase** when it prompts. The workflow requires one:
+an unset repository secret and one set to the empty string are
+indistinguishable in Actions, so "no passphrase" cannot be told apart from
+"misconfigured", and an unencrypted minisign key sitting in a repository
+secret is the worse of the two failure modes.
+
 Then:
 
 1. Put the **public** key in `tauri.conf.json` ▸ `plugins.updater.pubkey`.
 2. Add repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
-   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Both, or neither — see below.
 3. Publish `latest.json` alongside the installer on the GitHub Release; the
    endpoint is already configured. The release workflow does not generate it
    yet — that is the last piece.
 
 Leave `bundle.createUpdaterArtifacts` at `false` in `tauri.conf.json`. The
 release workflow turns it on with a `--config` override when it sees the
-signing secret, and keys the uploaded artifact list off the same decision, so
-the two can never disagree. Setting the secret without the public key fails
-early with a pointer back to this section rather than deep inside the build.
+signing secrets, and keys the uploaded artifact list off the same decision, so
+the two can never disagree.
+
+Every half-configured combination fails in the `Resolve updater signing` step
+with a message pointing back here, rather than deep inside `tauri build`:
+
+| State                          | Without the guard                                       |
+| ------------------------------ | ------------------------------------------------------- |
+| key, no passphrase             | `tauri build` waits on a prompt no runner can answer    |
+| passphrase, no key             | silently ships an unsigned installer                    |
+| both, but `pubkey` still empty | Tauri refuses to emit updater artifacts, late and vague |
 
 Authenticode is separate and worth doing — without it SmartScreen warns on
 every install. It needs an OV/EV certificate and `bundle.windows.certificateThumbprint`.

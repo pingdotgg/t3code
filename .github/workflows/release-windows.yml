@@ -107,14 +107,38 @@ jobs:
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           $bundle = "apps/windows/src-tauri/target/release/bundle/nsis"
-          $enabled = -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)
+          $hasKey = -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)
 
+          # Signing needs both secrets, and a half-configured pair is always a
+          # mistake rather than a valid state. Caught here because both halves
+          # fail badly later otherwise: a key without its password sends
+          # `tauri build` looking for an interactive passphrase prompt that a
+          # runner cannot answer, and a password without a key silently
+          # produces an unsigned installer even though the operator plainly
+          # meant to sign one.
+          #
+          # An unset secret and one set to the empty string are
+          # indistinguishable here, so this also fixes the policy: the signing
+          # key must be generated *with* a passphrase. An unencrypted minisign
+          # key sitting in a repository secret is the worse failure mode.
+          if ($hasKey -ne $hasPassword) {
+            $present = if ($hasKey) { "TAURI_SIGNING_PRIVATE_KEY" } else { "TAURI_SIGNING_PRIVATE_KEY_PASSWORD" }
+            $missing = if ($hasKey) { "TAURI_SIGNING_PRIVATE_KEY_PASSWORD" } else { "TAURI_SIGNING_PRIVATE_KEY" }
+            Write-Error ("$present is configured but $missing is not. " +
+              "Updater signing needs both; the key must be generated with a " +
+              "passphrase. See apps/windows/HANDOVER.md section 7.")
+            exit 1
+          }
+
+          $enabled = $hasKey
           if ($enabled) {
             # Tauri refuses to emit updater artifacts without a public key to
-            # verify them against, and fails late in the build. Catch the
-            # half-configured case here, where the message is actionable.
+            # verify them against, and fails late in the build. Catch this
+            # half-configured case here too, where the message is actionable.
             $pubkey = (Get-Content apps/windows/src-tauri/tauri.conf.json -Raw |
               ConvertFrom-Json).plugins.updater.pubkey
             if ([string]::IsNullOrWhiteSpace($pubkey)) {
@@ -125,7 +149,7 @@ jobs:
             }
             $files = "$bundle/*.exe`n$bundle/*.sig"
           } else {
-            Write-Host "No signing key configured: building an installer with no update feed."
+            Write-Host "No signing secrets configured: building an installer with no update feed."
             $files = "$bundle/*.exe"
           }
 
