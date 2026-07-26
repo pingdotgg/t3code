@@ -1,5 +1,6 @@
 import { CommandId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -32,6 +33,9 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
     const directory = yield* ProviderSessionDirectory;
     const orchestrationEngine = yield* OrchestrationEngineService;
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const crypto = yield* Crypto.Crypto;
+    const serverCommandId = (tag: string) =>
+      crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
 
     const inactivityThresholdMs = Math.max(
       1,
@@ -75,9 +79,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
         yield* orchestrationEngine
           .dispatch({
             type: "thread.session.set",
-            commandId: CommandId.make(
-              `server:provider-session-reconcile:${binding.threadId}:${binding.lastSeenAt}`,
-            ),
+            commandId: yield* serverCommandId("provider-session-reconcile"),
             threadId: binding.threadId,
             expectedSessionUpdatedAt: session.updatedAt,
             session: {
