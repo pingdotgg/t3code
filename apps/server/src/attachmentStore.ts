@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
 
 import type { ChatAttachment } from "@t3tools/contracts";
 
@@ -74,6 +75,19 @@ export function resolveAttachmentPath(input: {
     attachmentsDir: input.attachmentsDir,
     relativePath: attachmentRelativePath(input.attachment),
   });
+}
+
+/**
+ * `file:` URL for a resolved attachment path.
+ *
+ * Providers that hand attachments to an external agent by reference need a URI
+ * rather than a bare path. `pathToFileURL` is used rather than string
+ * concatenation because it escapes `#` and `?` — which would otherwise
+ * truncate the path on the way back through `fileURLToPath` — and handles
+ * Windows drive letters.
+ */
+export function attachmentFileUrl(attachmentPath: string): string {
+  return NodeURL.pathToFileURL(attachmentPath).href;
 }
 
 export function resolveAttachmentPathById(input: {

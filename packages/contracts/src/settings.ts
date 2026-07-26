@@ -339,6 +339,64 @@ export const GrokSettings = makeProviderSettingsSchema(
 );
 export type GrokSettings = typeof GrokSettings.Type;
 
+export const AntigravitySettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("agy").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Antigravity CLI binary.",
+        providerSettingsForm: { placeholder: "agy", clearWhenEmpty: "omit" },
+      }),
+    ),
+    // Antigravity has no native agent protocol, so every turn runs through
+    // `agy --print`. A turn holds one process open for its whole duration;
+    // the default matches the bridge's own ceiling.
+    printTimeout: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Print timeout",
+        description: "Max duration for a single turn, passed to `agy --print-timeout`.",
+        providerSettingsForm: { placeholder: "2h", clearWhenEmpty: "omit" },
+      }),
+    ),
+    // Trajectory discovery reads this root only when the Stop hook does not
+    // report a conversation id. Overridable for non-default AGY installs.
+    appDataDir: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "App data directory",
+        description: "Overrides ~/.gemini/antigravity-cli for conversation discovery.",
+        providerSettingsForm: { placeholder: "~/.gemini/antigravity-cli", clearWhenEmpty: "omit" },
+      }),
+    ),
+    // Print mode cannot prompt, so `agy` runs with permissions skipped and the
+    // bridge's PreToolUse hook becomes the gate instead: it blocks the tool
+    // until T3 Code answers, and a denial is reported back to the model.
+    // On by default: without it nothing stands between the model and an
+    // auto-approved tool, and a gate that has to be discovered protects no one.
+    requireToolApproval: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Ask before running tools",
+        description:
+          "Approve each tool call before Antigravity runs it. Turns block until you answer.",
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath", "printTimeout", "appDataDir", "requireToolApproval"],
+  },
+);
+export type AntigravitySettings = typeof AntigravitySettings.Type;
+
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -433,6 +491,7 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -528,6 +587,15 @@ const GrokSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const AntigravitySettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  printTimeout: Schema.optionalKey(TrimmedString),
+  appDataDir: Schema.optionalKey(TrimmedString),
+  requireToolApproval: Schema.optionalKey(Schema.Boolean),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 const OpenCodeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -558,6 +626,7 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      antigravity: Schema.optionalKey(AntigravitySettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual

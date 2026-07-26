@@ -21,6 +21,31 @@
 - `packages/shared`: Shared runtime utilities consumed by both server and client applications. Uses explicit subpath exports (e.g. `@t3tools/shared/git`) — no barrel index.
 - `packages/client-runtime`: Shared runtime package for sharing client code across web and mobile.
 
+## Antigravity provider
+
+The `antigravity` driver wraps the Antigravity CLI (`agy`), which has **no native agent
+protocol**. `apps/server/src/provider/acp/antigravity/agyBridge.ts` presents the ACP surface
+`AcpSessionRuntime` needs and runs each turn through `agy --print`, shipping as hidden
+subcommands of the server binary (`t3 agy-acp`, `t3 agy-hook`).
+
+A live event stream is reconstructed from two documented Antigravity sources that correlate on
+step index (`stepIdx` in a hook == `step_index` in the transcript):
+
+- **Hooks** (`PreToolUse`/`PostToolUse`/`Stop`) give tool name, arguments, and status. The bridge
+  registers them via a throwaway `--add-dir` workspace so nothing is written into the user's repo.
+  Both the session cwd and that hook workspace must be passed — `--add-dir` replaces the workspace
+  rather than adding to cwd, so passing only the hook dir hides the project from the agent.
+- **The trajectory transcript** (`transcript.jsonl`) gives assistant text and real tool output as
+  the turn runs. Its record format is undocumented, so parsing degrades to emitting nothing.
+
+Known constraints, all inherent to print mode:
+
+- Tools are auto-approved (`--dangerously-skip-permissions`); no approval flow is possible.
+- No image attachments, and no session modes.
+- The model binds when the bridge spawns `agy`, so `sessionModelSwitch` is `"unsupported"`.
+- Any `agy` subcommand spawned for a probe must set `stdin: "ignore"`. `agy` starts a language
+  server and will not emit output while stdin stays open, so the default `"pipe"` hangs it.
+
 ## Reference Repos
 
 - Open-source Codex repo: https://github.com/openai/codex

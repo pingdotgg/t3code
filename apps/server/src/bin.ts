@@ -7,6 +7,7 @@ import * as CliError from "effect/unstable/cli/CliError";
 
 import * as NetService from "@t3tools/shared/Net";
 import packageJson from "../package.json" with { type: "json" };
+import { agyAcpCommand, agyHookCommand } from "./cli/agy.ts";
 import { authCommand } from "./cli/auth.ts";
 import { connectCommand } from "./cli/connect.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
@@ -49,13 +50,15 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       authCommand,
       projectCommand,
       serviceCommand,
+      agyAcpCommand,
+      agyHookCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );
 
 export const cli = makeCli();
 
-if (import.meta.main) {
+if (import.meta.main || (process.argv[1] && process.argv[1].includes("bin.ts"))) {
   Command.run(cli, { version: packageJson.version }).pipe(
     Effect.scoped,
     Effect.provide(CliRuntimeLayer),
