@@ -116,4 +116,33 @@ struct ChatTimelineScrollPolicyTests {
                 oldHeight: 0,
                 newHeight: 1))
     }
+
+    @Test("mid-run flattening spares entrance and disclosure transactions")
+    func animationFlattening() {
+        // Settled timeline: nothing is flattened.
+        #expect(
+            !ChatTimelineScrollPolicy.shouldFlattenAnimation(
+                suppressLayoutAnimation: false,
+                isIntentionalDisclosure: false,
+                isEntranceAnimation: false))
+        // Mid-run, unmarked updates (streaming churn, regroups) flatten.
+        #expect(
+            ChatTimelineScrollPolicy.shouldFlattenAnimation(
+                suppressLayoutAnimation: true,
+                isIntentionalDisclosure: false,
+                isEntranceAnimation: false))
+        // Row entrances pierce the suppressor — without this, arriving tool
+        // rows pop in mid-run instead of animating.
+        #expect(
+            !ChatTimelineScrollPolicy.shouldFlattenAnimation(
+                suppressLayoutAnimation: true,
+                isIntentionalDisclosure: false,
+                isEntranceAnimation: true))
+        // User-initiated disclosure toggles keep their animation too.
+        #expect(
+            !ChatTimelineScrollPolicy.shouldFlattenAnimation(
+                suppressLayoutAnimation: true,
+                isIntentionalDisclosure: true,
+                isEntranceAnimation: false))
+    }
 }
