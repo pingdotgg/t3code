@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
+import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
@@ -19,7 +20,9 @@ import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybi
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
+import { Route as SettingsBetaRouteImport } from './routes/settings.beta'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
+import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -31,6 +34,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const PairRoute = PairRouteImport.update({
   id: '/pair',
   path: '/pair',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConnectRoute = ConnectRouteImport.update({
+  id: '/connect',
+  path: '/connect',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ChatRoute = ChatRouteImport.update({
@@ -72,10 +80,20 @@ const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
   path: '/connections',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsBetaRoute = SettingsBetaRouteImport.update({
+  id: '/beta',
+  path: '/beta',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   id: '/archived',
   path: '/archived',
   getParentRoute: () => SettingsRoute,
+} as any)
+const ConnectCallbackRoute = ConnectCallbackRouteImport.update({
+  id: '/connect_/callback',
+  path: '/connect/callback',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
@@ -91,9 +109,12 @@ const ChatEnvironmentIdThreadIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
+  '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/connect/callback': typeof ConnectCallbackRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/beta': typeof SettingsBetaRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -104,9 +125,12 @@ export interface FileRoutesByFullPath {
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
 export interface FileRoutesByTo {
+  '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/connect/callback': typeof ConnectCallbackRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/beta': typeof SettingsBetaRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -120,9 +144,12 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_chat': typeof ChatRouteWithChildren
+  '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/connect_/callback': typeof ConnectCallbackRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/beta': typeof SettingsBetaRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -137,9 +164,12 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/connect'
     | '/pair'
     | '/settings'
+    | '/connect/callback'
     | '/settings/archived'
+    | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -150,9 +180,12 @@ export interface FileRouteTypes {
     | '/draft/$draftId'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/connect'
     | '/pair'
     | '/settings'
+    | '/connect/callback'
     | '/settings/archived'
+    | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -165,9 +198,12 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_chat'
+    | '/connect'
     | '/pair'
     | '/settings'
+    | '/connect_/callback'
     | '/settings/archived'
+    | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -181,8 +217,10 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
+  ConnectRoute: typeof ConnectRoute
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  ConnectCallbackRoute: typeof ConnectCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -199,6 +237,13 @@ declare module '@tanstack/react-router' {
       path: '/pair'
       fullPath: '/pair'
       preLoaderRoute: typeof PairRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/connect': {
+      id: '/connect'
+      path: '/connect'
+      fullPath: '/connect'
+      preLoaderRoute: typeof ConnectRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_chat': {
@@ -257,12 +302,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsConnectionsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/beta': {
+      id: '/settings/beta'
+      path: '/beta'
+      fullPath: '/settings/beta'
+      preLoaderRoute: typeof SettingsBetaRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/archived': {
       id: '/settings/archived'
       path: '/archived'
       fullPath: '/settings/archived'
       preLoaderRoute: typeof SettingsArchivedRouteImport
       parentRoute: typeof SettingsRoute
+    }
+    '/connect_/callback': {
+      id: '/connect_/callback'
+      path: '/connect/callback'
+      fullPath: '/connect/callback'
+      preLoaderRoute: typeof ConnectCallbackRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
@@ -297,6 +356,7 @@ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 interface SettingsRouteChildren {
   SettingsArchivedRoute: typeof SettingsArchivedRoute
+  SettingsBetaRoute: typeof SettingsBetaRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
@@ -307,6 +367,7 @@ interface SettingsRouteChildren {
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsArchivedRoute: SettingsArchivedRoute,
+  SettingsBetaRoute: SettingsBetaRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
@@ -321,8 +382,10 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
+  ConnectRoute: ConnectRoute,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  ConnectCallbackRoute: ConnectCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

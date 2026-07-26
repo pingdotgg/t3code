@@ -16,6 +16,7 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 
+import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
 interface FileBrowserPanelProps {
@@ -137,6 +138,14 @@ export default function FileBrowserPanel({
     showEntryContextMenuRef.current = showEntryContextMenu;
   });
 
+  const treeModelRef = useRef<ReturnType<typeof useFileTree>["model"] | null>(null);
+  const dragMention = useMemo(
+    () =>
+      createFileTreeDragMentionController({
+        deselect: (path) => treeModelRef.current?.getItem(path)?.deselect(),
+      }),
+    [],
+  );
   const { model } = useFileTree({
     composition: {
       contextMenu: {
@@ -146,12 +155,21 @@ export default function FileBrowserPanel({
         },
       },
     },
+    // Rows only need to be draggable so entries can be dropped into the chat
+    // composer; rearranging files inside the tree stays off.
+    dragAndDrop: { canDrop: () => false },
     density: "compact",
     fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: true,
     initialExpansion: 1,
     icons: T3_PIERRE_ICONS,
     onSelectionChange: (selectedPaths) => {
+      dragMention.handleSelectionChange(selectedPaths);
+      // Starting a drag selects the dragged row; that selection is a side
+      // effect of the gesture, not a request to open the file.
+      if (dragMention.isDragInProgress()) {
+        return;
+      }
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
       if (selectedPath && entryKindsRef.current.get(selectedPath) === "file") {
         onOpenFile(selectedPath);
@@ -174,8 +192,34 @@ export default function FileBrowserPanel({
     [entries],
   );
 
+  // Tag tree drags with the composer mention payload. The row is read from
+  // the composed event path (the tree's shadow root is open), so this does
+  // not depend on running after the tree's own dragstart handler; the drag
+  // data store is writable for every dragstart listener in the dispatch.
+  // The capture phase runs before the tree's own dragstart handler selects
+  // the dragged row, so the drag flag is up before that selection emits.
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    treeModelRef.current = model;
+  }, [model]);
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (panel === null) {
+      return;
+    }
+    const handleDragStart = (event: DragEvent) => dragMention.handleDragStart(event);
+    const handleDragEnd = () => dragMention.handleDragEnd();
+    panel.addEventListener("dragstart", handleDragStart, true);
+    panel.addEventListener("dragend", handleDragEnd);
+    return () => {
+      panel.removeEventListener("dragstart", handleDragStart, true);
+      panel.removeEventListener("dragend", handleDragEnd);
+    };
+  }, [dragMention]);
+
   return (
     <div
+      ref={panelRef}
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
     >

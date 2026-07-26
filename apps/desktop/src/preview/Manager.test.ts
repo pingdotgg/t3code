@@ -365,6 +365,79 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("emulates prefers-color-scheme and re-applies it across webview swaps", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const makeWebContents = (id: number) => {
+          const sendCommand = vi.fn(async () => undefined);
+          return {
+            sendCommand,
+            wc: {
+              id,
+              isDestroyed: () => false,
+              isDevToolsOpened: () => false,
+              getType: () => "webview",
+              getURL: () => "https://example.com",
+              getTitle: () => "Example",
+              isLoading: () => false,
+              getZoomFactor: () => 1,
+              setZoomFactor: vi.fn(),
+              on: vi.fn(),
+              off: vi.fn(),
+              ipc: { on: vi.fn(), off: vi.fn() },
+              send: webviewSend,
+              navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+              setWindowOpenHandler: vi.fn(),
+              debugger: {
+                isAttached: () => false,
+                attach: vi.fn(),
+                sendCommand,
+                on: vi.fn(),
+                off: vi.fn(),
+              },
+            } as never,
+          };
+        };
+        const first = makeWebContents(42);
+        fromId.mockReturnValue(first.wc);
+        const states: PreviewManager.PreviewTabState[] = [];
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.createTab("tab_scheme");
+        yield* manager.registerWebview("tab_scheme", 42);
+        yield* Effect.yieldNow;
+
+        yield* manager.setColorScheme("tab_scheme", "dark");
+
+        expect(first.sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
+          features: [{ name: "prefers-color-scheme", value: "dark" }],
+        });
+        expect(states.at(-1)?.colorScheme).toBe("dark");
+
+        const replacement = makeWebContents(43);
+        fromId.mockReturnValue(replacement.wc);
+        yield* manager.registerWebview("tab_scheme", 43);
+        yield* Effect.yieldNow;
+
+        expect(replacement.sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
+          features: [{ name: "prefers-color-scheme", value: "dark" }],
+        });
+        expect(states.at(-1)?.colorScheme).toBe("dark");
+
+        yield* manager.setColorScheme("tab_scheme", "system");
+
+        expect(replacement.sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
+          features: [{ name: "prefers-color-scheme", value: "" }],
+        });
+        expect(states.at(-1)?.colorScheme).toBe("system");
+      }),
+    ),
+  );
+
   effectIt.effect("keeps a main-frame load failure visible until a retry starts", () =>
     withManager((manager) =>
       Effect.gen(function* () {

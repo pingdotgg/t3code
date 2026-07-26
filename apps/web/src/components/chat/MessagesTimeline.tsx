@@ -32,7 +32,6 @@ import {
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
-import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -62,8 +61,8 @@ import {
 import { Button } from "../ui/button";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
-import { ChangedFilesTree } from "./ChangedFilesTree";
-import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
+import { ChangedFilesCard } from "./ChangedFilesTree";
+import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
@@ -73,7 +72,9 @@ import {
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapHeightStyle,
+  resolveTimelineMinimapHitStripWidth,
   resolveTimelineMinimapIndexFromPointer,
+  resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
@@ -140,11 +141,13 @@ interface TimelineRowActivityState {
   isWorking: boolean;
   isRevertingCheckpoint: boolean;
   activeTurnInProgress: boolean;
+  latestTurnId: TurnId | null;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
+const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 
@@ -180,6 +183,7 @@ interface MessagesTimelineProps {
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
+  topFadeEnabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +218,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onIsAtEndChange,
   onManualNavigation,
   hideEmptyPlaceholder = false,
+  topFadeEnabled = false,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
@@ -324,6 +329,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     null,
   );
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
+  const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const handleAnchorReady = useCallback(
     (info: { anchorIndex: number | undefined }) => {
       if (anchorMessageId !== null && info.anchorIndex !== undefined) {
@@ -395,6 +401,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       setMinimapHasPersistentGutter((current) =>
         current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
       );
+      setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth));
     };
 
     const frame = requestAnimationFrame(measure);
@@ -444,8 +451,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isWorking,
       isRevertingCheckpoint,
       activeTurnInProgress,
+      latestTurnId: latestTurn?.turnId ?? null,
     }),
-    [activeTurnInProgress, isRevertingCheckpoint, isWorking],
+    [activeTurnInProgress, isRevertingCheckpoint, isWorking, latestTurn?.turnId],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -503,14 +511,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               size: false,
             }}
             onScroll={handleScroll}
-            className="scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5"
-            ListHeaderComponent={TIMELINE_LIST_HEADER}
+            className={cn(
+              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
+              topFadeEnabled && "chat-timeline-scroll-fade",
+            )}
+            ListHeaderComponent={topFadeEnabled ? TIMELINE_LIST_FADE_HEADER : TIMELINE_LIST_HEADER}
             ListFooterComponent={TIMELINE_LIST_FOOTER}
           />
           <TimelineMinimap
             items={minimapItems}
             bottomInset={contentInsetEndAdjustment}
             hasPersistentGutter={minimapHasPersistentGutter}
+            hitStripWidth={minimapHitStripWidth}
             stripMap={minimapStripMap}
             onSelect={(item) => {
               onManualNavigation();
@@ -605,15 +617,21 @@ function resolveTimelineRowHeight(state: TimelinePositionState, rowIndex: number
   return typeof height === "number" && Number.isFinite(height) ? height : null;
 }
 
+function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
+  return target instanceof Element && target.closest("[data-minimap-preview]") !== null;
+}
+
 function TimelineMinimap({
   bottomInset,
   hasPersistentGutter,
+  hitStripWidth,
   items,
   stripMap,
   onSelect,
 }: {
   bottomInset: number;
   hasPersistentGutter: boolean;
+  hitStripWidth: number;
   items: ReadonlyArray<TimelineMinimapItem>;
   stripMap: Map<string, HTMLSpanElement>;
   onSelect: (item: TimelineMinimapItem) => void;
@@ -676,7 +694,7 @@ function TimelineMinimap({
   return (
     <div
       className={cn(
-        "group/minimap pointer-events-auto absolute top-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
+        "group/minimap pointer-events-none absolute top-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
         hasPersistentGutter
           ? "opacity-100"
           : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
@@ -688,9 +706,17 @@ function TimelineMinimap({
       <div className="relative h-full w-full select-none">
         <button
           aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
-          className="pointer-events-auto absolute top-1/2 left-3 w-10 -translate-y-1/2 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+          className={cn(
+            "absolute top-1/2 left-3 -translate-y-1/2 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
+            // The strip is width-capped to the side gutter so it never overlays
+            // the centered content column; with no usable gutter it goes inert.
+            hitStripWidth > 0 ? "pointer-events-auto" : "pointer-events-none",
+          )}
           onBlur={() => setActiveIndex(null)}
           onClick={(event) => {
+            if (timelineMinimapEventTargetsPreview(event.target)) {
+              return;
+            }
             const nextIndex = resolveActiveIndexFromPointer(event);
             const nextItem = nextIndex === null ? null : (items[nextIndex] ?? null);
             if (nextItem) {
@@ -722,9 +748,15 @@ function TimelineMinimap({
           onMouseLeave={() => setActiveIndex(null)}
           onMouseMove={updateActiveIndexFromPointer}
           onMouseDown={(event) => {
+            if (timelineMinimapEventTargetsPreview(event.target)) {
+              return;
+            }
             event.preventDefault();
           }}
-          style={{ height: resolveTimelineMinimapHeightStyle(items.length) }}
+          style={{
+            height: resolveTimelineMinimapHeightStyle(items.length),
+            width: resolveTimelineMinimapInteractiveWidth(hitStripWidth, activeItem !== null),
+          }}
           type="button"
         >
           <div className="absolute top-0 left-3 h-full w-px bg-border/15" />
@@ -761,27 +793,31 @@ function TimelineMinimap({
           })}
           {activeItem ? (
             <span
-              className="pointer-events-none absolute left-8 w-80 rounded-xl border border-border/70 bg-popover/95 p-3 text-left text-popover-foreground shadow-xl shadow-black/25 backdrop-blur"
+              className="pointer-events-auto absolute left-8 w-80 cursor-text select-text"
+              data-minimap-preview
+              onMouseMove={(event) => event.stopPropagation()}
               style={{
                 top: `${activeTopPercent}%`,
                 transform: `translateY(${activeTooltipTranslate})`,
               }}
             >
-              <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
-                {activeItem.userText ?? "User message"}
-              </span>
-              {activeItem.assistantText ? (
-                <span
-                  className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
-                  style={{
-                    display: "-webkit-box",
-                    WebkitBoxOrient: "vertical",
-                    WebkitLineClamp: 3,
-                  }}
-                >
-                  {activeItem.assistantText}
+              <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
+                <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
+                  {activeItem.userText ?? "User message"}
                 </span>
-              ) : null}
+                {activeItem.assistantText ? (
+                  <span
+                    className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
+                    style={{
+                      display: "-webkit-box",
+                      WebkitBoxOrient: "vertical",
+                      WebkitLineClamp: 3,
+                    }}
+                  >
+                    {activeItem.assistantText}
+                  </span>
+                ) : null}
+              </span>
             </span>
           ) : null}
         </button>
@@ -854,7 +890,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   return (
     <div className="group flex flex-col items-end gap-1">
-      <div className="relative max-w-[80%] rounded-2xl border border-border bg-secondary p-3">
+      <div className="relative max-w-[80%] rounded-2xl bg-accent p-3">
         {regularImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
             {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
@@ -1157,7 +1193,13 @@ function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
-  const labelNoun = row.onlyToolEntries ? "tool call" : "log entry";
+  const labelNoun = row.onlyToolEntries
+    ? row.hiddenCount === 1
+      ? "tool call"
+      : "tool calls"
+    : row.hiddenCount === 1
+      ? "log entry"
+      : "log entries";
 
   return (
     <button
@@ -1185,7 +1227,6 @@ function WorkGroupToggleTimelineRow({
       ) : (
         <span className="font-medium text-foreground/82">
           +{row.hiddenCount} previous {labelNoun}
-          {row.hiddenCount === 1 ? "" : "s"}
         </span>
       )}
     </button>
@@ -1235,54 +1276,32 @@ function AssistantChangedFilesSectionInner({
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
-  const allDirectoriesExpanded = useUiStateStore(
-    (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.turnId] ?? true,
+  const activity = use(TimelineRowActivityCtx);
+  const isLatestTurn = activity.latestTurnId === turnSummary.turnId;
+  const persistedExpanded = useUiStateStore(
+    (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.turnId],
   );
   const setExpanded = useUiStateStore((store) => store.setThreadChangedFilesExpanded);
-  const summaryStat = summarizeTurnDiffStats(checkpointFiles);
-  const changedFileCountLabel = String(checkpointFiles.length);
+  const [autoExpanded] = useState(() =>
+    shouldAutoExpandChangedFiles(checkpointFiles, isLatestTurn),
+  );
+  const [allDirectoriesExpanded, setAllDirectoriesExpanded] = useState(autoExpanded);
+  const expanded = persistedExpanded ?? (isLatestTurn && autoExpanded);
 
   return (
-    <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
-      <div className="sticky top-2 z-10 mb-1.5 flex items-center justify-between gap-2 bg-[color-mix(in_srgb,var(--card)_45%,var(--background))] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-[color-mix(in_srgb,var(--card)_45%,var(--background))] before:content-['']">
-        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-          <span>Changed files ({changedFileCountLabel})</span>
-          {hasNonZeroStat(summaryStat) && (
-            <>
-              <span className="mx-1">•</span>
-              <DiffStatLabel additions={summaryStat.additions} deletions={summaryStat.deletions} />
-            </>
-          )}
-        </p>
-        <div className="flex items-center gap-1.5">
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            data-scroll-anchor-ignore
-            onClick={() => setExpanded(routeThreadKey, turnSummary.turnId, !allDirectoriesExpanded)}
-          >
-            {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            onClick={() => onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)}
-          >
-            View diff
-          </Button>
-        </div>
-      </div>
-      <ChangedFilesTree
-        key={`changed-files-tree:${turnSummary.turnId}`}
-        turnId={turnSummary.turnId}
-        files={checkpointFiles}
-        allDirectoriesExpanded={allDirectoriesExpanded}
-        resolvedTheme={resolvedTheme}
-        onOpenTurnDiff={onOpenTurnDiff}
-      />
-    </div>
+    <ChangedFilesCard
+      turnId={turnSummary.turnId}
+      files={checkpointFiles}
+      expanded={expanded}
+      showCompactPreview={isLatestTurn}
+      allDirectoriesExpanded={allDirectoriesExpanded}
+      resolvedTheme={resolvedTheme}
+      onExpandedChange={(nextExpanded) =>
+        setExpanded(routeThreadKey, turnSummary.turnId, nextExpanded)
+      }
+      onToggleAllDirectories={() => setAllDirectoriesExpanded((current) => !current)}
+      onOpenTurnDiff={onOpenTurnDiff}
+    />
   );
 }
 

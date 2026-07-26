@@ -99,6 +99,11 @@ type RawThreadFeedEntry =
 export type ThreadFeedEntry =
   | Extract<RawThreadFeedEntry, { type: "message" }>
   | {
+      readonly type: "working";
+      readonly id: string;
+      readonly createdAt: string;
+    }
+  | {
       readonly type: "activity-group";
       readonly id: string;
       readonly createdAt: string;
@@ -1105,9 +1110,11 @@ export function deriveThreadFeedPresentation(
   latestTurn: ThreadFeedLatestTurn | null,
   expandedTurnIds: ReadonlySet<TurnId>,
   expandedWorkGroupIds: ReadonlySet<string> = new Set(),
+  activeWorkStartedAt: string | null = null,
 ): ThreadFeedEntry[] {
   const sourceFeed = feed.filter(
-    (entry) => entry.type !== "turn-fold" && entry.type !== "work-toggle",
+    (entry) =>
+      entry.type !== "turn-fold" && entry.type !== "work-toggle" && entry.type !== "working",
   );
   const foldsByAnchorId = deriveThreadFeedTurnFolds(sourceFeed, latestTurn);
   const collapsedEntryIds = new Set<string>();
@@ -1136,12 +1143,19 @@ export function deriveThreadFeedPresentation(
       appendPresentedFeedEntry(result, entry, expandedWorkGroupIds);
     }
   }
+  if (activeWorkStartedAt !== null) {
+    result.push({
+      type: "working",
+      id: "working-indicator-row",
+      createdAt: activeWorkStartedAt,
+    });
+  }
   return result;
 }
 
 function appendPresentedFeedEntry(
   result: ThreadFeedEntry[],
-  entry: Exclude<ThreadFeedEntry, { readonly type: "turn-fold" | "work-toggle" }>,
+  entry: Exclude<ThreadFeedEntry, { readonly type: "turn-fold" | "work-toggle" | "working" }>,
   expandedWorkGroupIds: ReadonlySet<string>,
 ): void {
   if (entry.type !== "activity-group") {
