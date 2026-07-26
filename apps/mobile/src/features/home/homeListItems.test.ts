@@ -10,6 +10,7 @@ import {
   DEFAULT_GROUP_DISPLAY_STATE,
   HOME_INITIAL_VISIBLE_THREADS,
   HOME_SHOW_MORE_STEP,
+  homeListItemsAreEqual,
   nextGroupDisplayState,
   type HomeGroupDisplayState,
   type HomeListItem,
@@ -249,6 +250,31 @@ describe("buildHomeListLayout", () => {
     });
 
     expect(itemTypes(layout.items)).toEqual(["header"]);
+  });
+
+  it("carries the group's settled threads so archive-all can act on them", () => {
+    const group = makeGroup("alpha", 1, 3);
+    const layout = buildHomeListLayout({ groups: [group], displayStates: displayStates({}) });
+    const toggle = layout.items.at(-1);
+
+    if (toggle?.type !== "settled-toggle") {
+      throw new Error("expected a settled-toggle item");
+    }
+    expect(toggle.settledThreads).toBe(group.settledThreads);
+    expect(toggle.settledThreads.map((thread) => thread.id)).toEqual([
+      "alpha-settled-0",
+      "alpha-settled-1",
+      "alpha-settled-2",
+    ]);
+
+    // The thread array is stable across unrelated toggles, so rows carrying it
+    // must not be treated as changed on every collapse/show-more tap.
+    const rebuilt = buildHomeListLayout({ groups: [group], displayStates: displayStates({}) });
+    const rebuiltToggle = rebuilt.items.at(-1);
+    if (!rebuiltToggle) {
+      throw new Error("expected a rebuilt settled-toggle item");
+    }
+    expect(homeListItemsAreEqual(toggle, rebuiltToggle)).toBe(true);
   });
 
   it("toggles settledRevealed via nextGroupDisplayState", () => {

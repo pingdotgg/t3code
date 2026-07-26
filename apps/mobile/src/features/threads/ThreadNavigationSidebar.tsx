@@ -169,8 +169,13 @@ function ThreadNavigationSidebarPane(
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const headerIsOverContentRef = useRef(false);
   const sidebarScrollGesture = useMemo(() => Gesture.Native(), []);
-  const { archiveThread, settleThread, unsettleThread, confirmDeleteThread } =
-    useThreadListActions();
+  const {
+    archiveThread,
+    settleThread,
+    unsettleThread,
+    confirmDeleteThread,
+    confirmArchiveThreads,
+  } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -470,7 +475,9 @@ function ThreadNavigationSidebarPane(
               settledCount={item.settledCount}
               revealed={item.revealed}
               groupKey={item.groupKey}
+              settledThreads={item.settledThreads}
               onGroupAction={updateGroupDisplay}
+              onArchiveSettled={confirmArchiveThreads}
             />
           );
         case "show-more":
@@ -487,6 +494,7 @@ function ThreadNavigationSidebarPane(
     },
     [
       archiveThread,
+      confirmArchiveThreads,
       confirmDeletePendingTask,
       confirmDeleteThread,
       handleSelectThread,

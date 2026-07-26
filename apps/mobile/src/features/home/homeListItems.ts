@@ -60,6 +60,12 @@ export interface HomeSettledToggleListItem {
   readonly groupKey: string;
   readonly settledCount: number;
   readonly revealed: boolean;
+  /**
+   * The group's settled threads, so the row's archive-all action can act on
+   * them without the screen re-deriving the group from its key. A group can
+   * span environments, so the batch carries each thread's own environment id.
+   */
+  readonly settledThreads: ReadonlyArray<EnvironmentThreadShell>;
 }
 
 export type HomeListItem =
@@ -136,7 +142,8 @@ export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem
         previous.type === "settled-toggle" &&
         previous.groupKey === item.groupKey &&
         previous.settledCount === item.settledCount &&
-        previous.revealed === item.revealed
+        previous.revealed === item.revealed &&
+        previous.settledThreads === item.settledThreads
       );
   }
 }
@@ -221,6 +228,7 @@ export function buildHomeListLayout(input: {
         groupKey: group.key,
         settledCount: group.settledThreads.length,
         revealed: settledRevealed,
+        settledThreads: group.settledThreads,
       });
       if (settledRevealed) {
         for (const [settledIndex, thread] of group.settledThreads.entries()) {

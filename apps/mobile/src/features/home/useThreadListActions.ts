@@ -127,11 +127,80 @@ function useConfirmDeleteThread(
   );
 }
 
+/**
+ * Batch archive, used by the settled disclosure's archive-all action (mac
+ * `AppModel.archiveThreads` parity). Individual failures do not stop the run,
+ * and the outcome is reported once instead of one alert per thread. A group
+ * can span environments, so each thread carries its own environment id.
+ */
+function useConfirmArchiveThreads() {
+  const archiveMutation = useAtomCommand(threadEnvironment.archive, { reportFailure: false });
+  const inFlight = useRef(false);
+
+  const archiveThreads = useCallback(
+    async (threads: ReadonlyArray<EnvironmentThreadShell>) => {
+      if (inFlight.current || threads.length === 0) {
+        return;
+      }
+      inFlight.current = true;
+      selectionHaptic();
+      try {
+        let failures = 0;
+        let firstFailure: string | null = null;
+        for (const thread of threads) {
+          const result = await archiveMutation({
+            environmentId: thread.environmentId,
+            input: { threadId: thread.id },
+          });
+          if (result._tag === "Failure") {
+            failures += 1;
+            firstFailure ??= actionFailureMessage("archive", result.cause);
+          }
+        }
+        if (firstFailure !== null) {
+          Alert.alert(
+            actionFailureTitle("archive"),
+            failures === threads.length
+              ? firstFailure
+              : `Failed to archive ${failures} of ${threads.length} threads: ${firstFailure}`,
+          );
+        }
+      } finally {
+        inFlight.current = false;
+      }
+    },
+    [archiveMutation],
+  );
+
+  return useCallback(
+    (threads: ReadonlyArray<EnvironmentThreadShell>) => {
+      if (threads.length === 0) {
+        return;
+      }
+      Alert.alert(
+        `Archive ${threads.length} settled thread${threads.length === 1 ? "" : "s"}?`,
+        "They move to Archive and can be unarchived from there.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Archive",
+            onPress: () => {
+              void archiveThreads(threads);
+            },
+          },
+        ],
+      );
+    },
+    [archiveThreads],
+  );
+}
+
 export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => void;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
+  readonly confirmArchiveThreads: (threads: ReadonlyArray<EnvironmentThreadShell>) => void;
 } {
   const executeAction = useThreadActionExecutor();
 
@@ -157,8 +226,15 @@ export function useThreadListActions(): {
   );
 
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
+  const confirmArchiveThreads = useConfirmArchiveThreads();
 
-  return { archiveThread, settleThread, unsettleThread, confirmDeleteThread };
+  return {
+    archiveThread,
+    settleThread,
+    unsettleThread,
+    confirmDeleteThread,
+    confirmArchiveThreads,
+  };
 }
 
 export function useArchivedThreadListActions(

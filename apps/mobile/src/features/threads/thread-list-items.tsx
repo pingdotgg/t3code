@@ -198,15 +198,27 @@ export const ThreadListSettledToggleRow = memo(function ThreadListSettledToggleR
   readonly settledCount: number;
   readonly revealed: boolean;
   readonly groupKey: string;
+  readonly settledThreads: ReadonlyArray<EnvironmentThreadShell>;
   readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
+  /**
+   * Archives every settled thread in the group at once. macOS reveals the
+   * equivalent button on hover; with no hover on iOS it sits inline and always
+   * visible, and confirms before running so the row's own tap target (the
+   * disclosure) cannot trigger a bulk archive by accident.
+   */
+  readonly onArchiveSettled?: (threads: ReadonlyArray<EnvironmentThreadShell>) => void;
 }) {
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const separatorColor = useThemeColor("--color-separator");
   const compact = props.variant === "compact";
-  const { groupKey, onGroupAction } = props;
+  const { groupKey, onArchiveSettled, onGroupAction, settledThreads } = props;
   const handleToggle = useCallback(
     () => onGroupAction(groupKey, "toggle-settled"),
     [groupKey, onGroupAction],
+  );
+  const handleArchiveSettled = useCallback(
+    () => onArchiveSettled?.(settledThreads),
+    [onArchiveSettled, settledThreads],
   );
 
   return (
@@ -255,6 +267,22 @@ export const ThreadListSettledToggleRow = memo(function ThreadListSettledToggleR
         >
           {props.settledCount}
         </Text>
+        {onArchiveSettled && props.settledCount > 0 ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Archive all ${props.settledCount} settled threads`}
+            hitSlop={8}
+            onPress={handleArchiveSettled}
+            style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}
+          >
+            <SymbolView
+              name="archivebox"
+              size={compact ? 13 : 11}
+              tintColor={iconSubtleColor}
+              type="monochrome"
+            />
+          </Pressable>
+        ) : null}
         <SymbolView
           name={props.revealed ? "chevron.down" : "chevron.right"}
           size={compact ? 12 : 10}

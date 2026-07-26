@@ -74,6 +74,8 @@ interface HomeScreenProps {
   readonly onStartNewTask: () => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
+  /** Archives every settled thread in one project group at once. */
+  readonly onArchiveSettledThreads: (threads: ReadonlyArray<EnvironmentThreadShell>) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
@@ -306,7 +308,9 @@ export function HomeScreen(props: HomeScreenProps) {
               settledCount={item.settledCount}
               revealed={item.revealed}
               groupKey={item.groupKey}
+              settledThreads={item.settledThreads}
               onGroupAction={updateGroupDisplay}
+              onArchiveSettled={props.onArchiveSettledThreads}
             />
           );
         case "show-more":
@@ -325,6 +329,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableClose,
       handleSwipeableWillOpen,
       projectCwdByKey,
+      props.onArchiveSettledThreads,
       props.onArchiveThread,
       props.onDeletePendingTask,
       props.onDeleteThread,
