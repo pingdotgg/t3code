@@ -220,19 +220,6 @@ struct NewSessionSheet: View {
 
     private var existingProjectContent: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Search projects", text: $projectSearch)
-                    .textFieldStyle(.plain)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-
-            Rectangle()
-                .fill(Color.primary.opacity(0.08))
-                .frame(height: 1)
-
             if model.projects.isEmpty {
                 ContentUnavailableView {
                     Label(
@@ -249,6 +236,19 @@ struct NewSessionSheet: View {
                 }
                 .frame(height: 150)
             } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search projects", text: $projectSearch)
+                        .textFieldStyle(.plain)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+
+                Rectangle()
+                    .fill(Color.primary.opacity(0.08))
+                    .frame(height: 1)
+
                 ProjectChoiceList(
                     projects: model.projects,
                     selectedProjectID: $selectedProjectID,
