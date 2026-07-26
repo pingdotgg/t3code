@@ -5342,7 +5342,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                     session: {
                       threadId,
                       status: "ready",
-                      providerName: "claudeAgent",
+                      providerName: "claudex",
                       runtimeMode: "full-access",
                       activeTurnId: null,
                       lastError: null,
@@ -5420,7 +5420,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                         session: {
                           threadId,
                           status: "ready",
-                          providerName: "claudeAgent",
+                          providerName: "claudex",
                           runtimeMode: "full-access",
                           activeTurnId: null,
                           lastError: null,
@@ -5544,7 +5544,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                       session: {
                         threadId,
                         status: "stopped",
-                        providerName: "claudeAgent",
+                        providerName: "claudex",
                         runtimeMode: "full-access",
                         activeTurnId: null,
                         lastError: null,
@@ -5617,7 +5617,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                     session: {
                       threadId,
                       status: "ready",
-                      providerName: "claudeAgent",
+                      providerName: "claudex",
                       runtimeMode: "full-access",
                       activeTurnId: null,
                       lastError: null,
@@ -5689,7 +5689,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                     session: {
                       threadId,
                       status: "ready",
-                      providerName: "claudeAgent",
+                      providerName: "claudex",
                       runtimeMode: "full-access",
                       activeTurnId: null,
                       lastError: null,

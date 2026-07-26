@@ -66,9 +66,9 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const codexInstanceId = ProviderInstanceId.make("codex");
-const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
+const claudexInstanceId = ProviderInstanceId.make("claudex");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
-const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
+const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudex");
 const GROK_DRIVER = ProviderDriverKind.make("grok");
 
 type LegacyProviderRuntimeEvent = {
@@ -283,7 +283,7 @@ function makeProviderServiceLayer(options?: {
   const grok = makeFakeCodexAdapter(GROK_DRIVER);
   const registry = makeAdapterRegistryMock({
     [ProviderDriverKind.make("codex")]: codex.adapter,
-    [ProviderDriverKind.make("claudeAgent")]: claude.adapter,
+    [ProviderDriverKind.make("claudex")]: claude.adapter,
     [ProviderDriverKind.make("grok")]: grok.adapter,
   });
 
@@ -387,7 +387,7 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
     const registry: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] = {
       ...registryBase,
       getInstanceInfo: (instanceId) =>
-        instanceId === claudeAgentInstanceId
+        instanceId === claudexInstanceId
           ? Effect.succeed({
               instanceId,
               driverKind: CLAUDE_AGENT_DRIVER,
@@ -395,7 +395,7 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
               enabled: false,
               continuationIdentity: {
                 driverKind: CLAUDE_AGENT_DRIVER,
-                continuationKey: "claudeAgent:instance:claudeAgent",
+                continuationKey: "claudex:instance:claudex",
               },
             })
           : registryBase.getInstanceInfo(instanceId),
@@ -425,8 +425,8 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
       Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
         return yield* provider.startSession(asThreadId("thread-disabled"), {
-          provider: ProviderDriverKind.make("claudeAgent"),
-          providerInstanceId: claudeAgentInstanceId,
+          provider: ProviderDriverKind.make("claudex"),
+          providerInstanceId: claudexInstanceId,
           threadId: asThreadId("thread-disabled"),
           runtimeMode: "full-access",
         });
@@ -434,7 +434,7 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
     );
 
     assert.instanceOf(failure, ProviderValidationError);
-    assert.include(failure.issue, "Provider instance 'claudeAgent' is disabled");
+    assert.include(failure.issue, "Provider instance 'claudex' is disabled");
     assert.equal(claude.startSession.mock.calls.length, 0);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -1030,19 +1030,19 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("routes explicit claudeAgent provider session starts to the claude adapter", () =>
+  it.effect("routes explicit claudex provider session starts to the claude adapter", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
 
       const session = yield* provider.startSession(asThreadId("thread-claude"), {
-        provider: ProviderDriverKind.make("claudeAgent"),
-        providerInstanceId: claudeAgentInstanceId,
+        provider: ProviderDriverKind.make("claudex"),
+        providerInstanceId: claudexInstanceId,
         threadId: asThreadId("thread-claude"),
         cwd: "/tmp/project-claude",
         runtimeMode: "full-access",
       });
 
-      assert.equal(session.provider, "claudeAgent");
+      assert.equal(session.provider, "claudex");
       assert.equal(routing.claude.startSession.mock.calls.length, 1);
       const startInput = routing.claude.startSession.mock.calls[0]?.[0];
       assert.equal(typeof startInput === "object" && startInput !== null, true);
@@ -1052,8 +1052,8 @@ routing.layer("ProviderServiceLive routing", (it) => {
           providerInstanceId?: ProviderInstanceId;
           cwd?: string;
         };
-        assert.equal(startPayload.provider, "claudeAgent");
-        assert.equal(startPayload.providerInstanceId, claudeAgentInstanceId);
+        assert.equal(startPayload.provider, "claudex");
+        assert.equal(startPayload.providerInstanceId, claudexInstanceId);
         assert.equal(startPayload.cwd, "/tmp/project-claude");
       }
     }),
@@ -1074,8 +1074,8 @@ routing.layer("ProviderServiceLive routing", (it) => {
       });
       yield* directory.upsert({
         threadId,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        providerInstanceId: claudeAgentInstanceId,
+        provider: ProviderDriverKind.make("claudex"),
+        providerInstanceId: claudexInstanceId,
         runtimeMode: "full-access",
       });
 
@@ -1107,15 +1107,15 @@ routing.layer("ProviderServiceLive routing", (it) => {
       routing.claude.stopSession.mockClear();
 
       const claudeSession = yield* provider.startSession(threadId, {
-        provider: ProviderDriverKind.make("claudeAgent"),
-        providerInstanceId: claudeAgentInstanceId,
+        provider: ProviderDriverKind.make("claudex"),
+        providerInstanceId: claudexInstanceId,
         threadId,
         cwd: "/tmp/project-provider-replacement",
         runtimeMode: "full-access",
       });
 
       assert.equal(codexSession.provider, "codex");
-      assert.equal(claudeSession.provider, "claudeAgent");
+      assert.equal(claudeSession.provider, "claudex");
       assert.deepEqual(routing.codex.stopSession.mock.calls, [[threadId]]);
       assert.equal(routing.claude.stopSession.mock.calls.length, 0);
 
@@ -1124,7 +1124,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         sessions
           .filter((session) => session.threadId === threadId)
           .map((session) => session.provider),
-        ["claudeAgent"],
+        ["claudex"],
       );
     }),
   );
@@ -1170,17 +1170,17 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("recovers stale claudeAgent sessions for sendTurn using persisted cwd", () =>
+  it.effect("recovers stale claudex sessions for sendTurn using persisted cwd", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
 
       const initial = yield* provider.startSession(asThreadId("thread-claude-send-turn"), {
-        provider: ProviderDriverKind.make("claudeAgent"),
-        providerInstanceId: claudeAgentInstanceId,
+        provider: ProviderDriverKind.make("claudex"),
+        providerInstanceId: claudexInstanceId,
         threadId: asThreadId("thread-claude-send-turn"),
         cwd: "/tmp/project-claude-send-turn",
         modelSelection: createModelSelection(
-          ProviderInstanceId.make("claudeAgent"),
+          ProviderInstanceId.make("claudex"),
           "claude-opus-4-6",
           [{ id: "effort", value: "max" }],
         ),
@@ -1208,11 +1208,11 @@ routing.layer("ProviderServiceLive routing", (it) => {
           resumeCursor?: unknown;
           threadId?: string;
         };
-        assert.equal(startPayload.provider, "claudeAgent");
+        assert.equal(startPayload.provider, "claudex");
         assert.equal(startPayload.cwd, "/tmp/project-claude-send-turn");
         assert.deepEqual(
           startPayload.modelSelection,
-          createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-opus-4-6", [
+          createModelSelection(ProviderInstanceId.make("claudex"), "claude-opus-4-6", [
             { id: "effort", value: "max" },
           ]),
         );
@@ -1306,7 +1306,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       const firstClaude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
       const firstRegistry = makeAdapterRegistryMock({
-        [ProviderDriverKind.make("claudeAgent")]: firstClaude.adapter,
+        [ProviderDriverKind.make("claudex")]: firstClaude.adapter,
       });
       const firstDirectoryLayer = ProviderSessionDirectoryLive.pipe(
         Layer.provide(runtimeRepositoryLayer),
@@ -1329,8 +1329,8 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const initial = yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
         return yield* provider.startSession(asThreadId("thread-claude-start"), {
-          provider: ProviderDriverKind.make("claudeAgent"),
-          providerInstanceId: claudeAgentInstanceId,
+          provider: ProviderDriverKind.make("claudex"),
+          providerInstanceId: claudexInstanceId,
           threadId: asThreadId("thread-claude-start"),
           cwd: "/tmp/project-claude-start",
           runtimeMode: "full-access",
@@ -1344,7 +1344,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       const secondClaude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
       const secondRegistry = makeAdapterRegistryMock({
-        [ProviderDriverKind.make("claudeAgent")]: secondClaude.adapter,
+        [ProviderDriverKind.make("claudex")]: secondClaude.adapter,
       });
       const secondDirectoryLayer = ProviderSessionDirectoryLive.pipe(
         Layer.provide(runtimeRepositoryLayer),
@@ -1369,8 +1369,8 @@ routing.layer("ProviderServiceLive routing", (it) => {
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
         yield* provider.startSession(initial.threadId, {
-          provider: ProviderDriverKind.make("claudeAgent"),
-          providerInstanceId: claudeAgentInstanceId,
+          provider: ProviderDriverKind.make("claudex"),
+          providerInstanceId: claudexInstanceId,
           threadId: initial.threadId,
           cwd: "/tmp/project-claude-start",
           runtimeMode: "full-access",
@@ -1387,7 +1387,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           resumeCursor?: unknown;
           threadId?: string;
         };
-        assert.equal(startPayload.provider, "claudeAgent");
+        assert.equal(startPayload.provider, "claudex");
         assert.equal(startPayload.cwd, "/tmp/project-claude-start");
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
         assert.equal(startPayload.threadId, initial.threadId);
@@ -1412,7 +1412,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
         const firstClaude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
         const firstRegistry = makeAdapterRegistryMock({
-          [ProviderDriverKind.make("claudeAgent")]: firstClaude.adapter,
+          [ProviderDriverKind.make("claudex")]: firstClaude.adapter,
         });
         const firstDirectoryLayer = ProviderSessionDirectoryLive.pipe(
           Layer.provide(runtimeRepositoryLayer),
@@ -1435,8 +1435,8 @@ routing.layer("ProviderServiceLive routing", (it) => {
         const initial = yield* Effect.gen(function* () {
           const provider = yield* ProviderService.ProviderService;
           return yield* provider.startSession(asThreadId("thread-claude-cwd"), {
-            provider: ProviderDriverKind.make("claudeAgent"),
-            providerInstanceId: claudeAgentInstanceId,
+            provider: ProviderDriverKind.make("claudex"),
+            providerInstanceId: claudexInstanceId,
             threadId: asThreadId("thread-claude-cwd"),
             cwd: "/tmp/project-claude-cwd",
             runtimeMode: "full-access",
@@ -1445,7 +1445,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
         const secondClaude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
         const secondRegistry = makeAdapterRegistryMock({
-          [ProviderDriverKind.make("claudeAgent")]: secondClaude.adapter,
+          [ProviderDriverKind.make("claudex")]: secondClaude.adapter,
         });
         const secondDirectoryLayer = ProviderSessionDirectoryLive.pipe(
           Layer.provide(runtimeRepositoryLayer),
@@ -1470,8 +1470,8 @@ routing.layer("ProviderServiceLive routing", (it) => {
         yield* Effect.gen(function* () {
           const provider = yield* ProviderService.ProviderService;
           yield* provider.startSession(initial.threadId, {
-            provider: ProviderDriverKind.make("claudeAgent"),
-            providerInstanceId: claudeAgentInstanceId,
+            provider: ProviderDriverKind.make("claudex"),
+            providerInstanceId: claudexInstanceId,
             threadId: initial.threadId,
             runtimeMode: "full-access",
           });
@@ -1487,7 +1487,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
             resumeCursor?: unknown;
             threadId?: string;
           };
-          assert.equal(startPayload.provider, "claudeAgent");
+          assert.equal(startPayload.provider, "claudex");
           assert.equal(startPayload.cwd, "/tmp/project-claude-cwd");
           assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
           assert.equal(startPayload.threadId, initial.threadId);
@@ -1679,8 +1679,8 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       const provider = yield* ProviderService.ProviderService;
 
       const session = yield* provider.startSession(asThreadId("thread-metrics"), {
-        provider: ProviderDriverKind.make("claudeAgent"),
-        providerInstanceId: claudeAgentInstanceId,
+        provider: ProviderDriverKind.make("claudex"),
+        providerInstanceId: claudexInstanceId,
         threadId: asThreadId("thread-metrics"),
         cwd: "/tmp/project",
         runtimeMode: "full-access",
@@ -1709,7 +1709,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
 
       assert.equal(
         hasMetricSnapshot(snapshots, "t3_provider_turns_total", {
-          provider: ProviderDriverKind.make("claudeAgent"),
+          provider: ProviderDriverKind.make("claudex"),
           operation: "interrupt",
           outcome: "success",
         }),
@@ -1717,7 +1717,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       );
       assert.equal(
         hasMetricSnapshot(snapshots, "t3_provider_turns_total", {
-          provider: ProviderDriverKind.make("claudeAgent"),
+          provider: ProviderDriverKind.make("claudex"),
           operation: "approval-response",
           outcome: "success",
         }),
@@ -1725,7 +1725,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       );
       assert.equal(
         hasMetricSnapshot(snapshots, "t3_provider_turns_total", {
-          provider: ProviderDriverKind.make("claudeAgent"),
+          provider: ProviderDriverKind.make("claudex"),
           operation: "user-input-response",
           outcome: "success",
         }),
@@ -1733,7 +1733,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       );
       assert.equal(
         hasMetricSnapshot(snapshots, "t3_provider_turns_total", {
-          provider: ProviderDriverKind.make("claudeAgent"),
+          provider: ProviderDriverKind.make("claudex"),
           operation: "rollback",
           outcome: "success",
         }),
@@ -1741,7 +1741,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       );
       assert.equal(
         hasMetricSnapshot(snapshots, "t3_provider_sessions_total", {
-          provider: ProviderDriverKind.make("claudeAgent"),
+          provider: ProviderDriverKind.make("claudex"),
           operation: "stop",
           outcome: "success",
         }),
@@ -1757,8 +1757,8 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         const provider = yield* ProviderService.ProviderService;
 
         const session = yield* provider.startSession(asThreadId("thread-send-metrics"), {
-          provider: ProviderDriverKind.make("claudeAgent"),
-          providerInstanceId: claudeAgentInstanceId,
+          provider: ProviderDriverKind.make("claudex"),
+          providerInstanceId: claudexInstanceId,
           threadId: asThreadId("thread-send-metrics"),
           cwd: "/tmp/project-send-metrics",
           runtimeMode: "full-access",
@@ -1774,7 +1774,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
 
         assert.equal(
           hasMetricSnapshot(snapshots, "t3_provider_turns_total", {
-            provider: ProviderDriverKind.make("claudeAgent"),
+            provider: ProviderDriverKind.make("claudex"),
             operation: "send",
             outcome: "success",
           }),
@@ -1782,7 +1782,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         );
         assert.equal(
           hasMetricSnapshot(snapshots, "t3_provider_turn_duration", {
-            provider: ProviderDriverKind.make("claudeAgent"),
+            provider: ProviderDriverKind.make("claudex"),
             operation: "send",
           }),
           true,
@@ -1807,7 +1807,7 @@ liveness.layer("ProviderServiceLive liveness", (it) => {
 
       const cases = [
         [liveness.codex, CODEX_DRIVER, codexInstanceId],
-        [liveness.claude, CLAUDE_AGENT_DRIVER, claudeAgentInstanceId],
+        [liveness.claude, CLAUDE_AGENT_DRIVER, claudexInstanceId],
         [liveness.grok, GROK_DRIVER, ProviderInstanceId.make("grok")],
       ] as const;
 
@@ -1874,7 +1874,7 @@ validation.layer("ProviderServiceLive validation", (it) => {
       const failure = yield* Effect.flip(
         provider.startSession(asThreadId("thread-instance-mismatch"), {
           provider: ProviderDriverKind.make("codex"),
-          providerInstanceId: claudeAgentInstanceId,
+          providerInstanceId: claudexInstanceId,
           threadId: asThreadId("thread-instance-mismatch"),
           runtimeMode: "full-access",
         }),
@@ -1883,7 +1883,7 @@ validation.layer("ProviderServiceLive validation", (it) => {
       assert.instanceOf(failure, ProviderValidationError);
       assert.include(
         failure.issue,
-        "Provider instance 'claudeAgent' belongs to driver 'claudeAgent', not 'codex'.",
+        "Provider instance 'claudex' belongs to driver 'claudex', not 'codex'.",
       );
       assert.equal(validation.codex.startSession.mock.calls.length, 0);
       assert.equal(validation.claude.startSession.mock.calls.length, 0);

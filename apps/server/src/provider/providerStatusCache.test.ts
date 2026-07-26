@@ -21,7 +21,7 @@ import {
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
-const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
+const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudex");
 const GROK_DRIVER = ProviderDriverKind.make("grok");
 
 const makeProvider = (
@@ -95,7 +95,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       });
       const claudePath = yield* resolveProviderStatusCachePath({
         cacheDir: tempDir,
-        instanceId: defaultInstanceIdForDriver(ProviderDriverKind.make("claudeAgent")),
+        instanceId: defaultInstanceIdForDriver(ProviderDriverKind.make("claudex")),
       });
       const grokPath = yield* resolveProviderStatusCachePath({
         cacheDir: tempDir,

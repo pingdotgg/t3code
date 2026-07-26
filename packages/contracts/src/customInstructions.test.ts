@@ -106,7 +106,7 @@ describe("CustomInstructionsConfig", () => {
           {
             id: "investigator",
             name: "investigator",
-            target: { kind: "driver", driver: "claudeAgent" },
+            target: { kind: "driver", driver: "claudex" },
             prompt: "Investigate the issue and summarize the evidence.",
           },
         ],

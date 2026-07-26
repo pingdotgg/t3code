@@ -260,7 +260,7 @@ export function detectClaudeUsageLimit(input: {
   }
 
   return buildUsageLimitDetail({
-    provider: "claudeAgent",
+    provider: "claudex",
     source: input.source,
     message: input.message,
     raw: input.raw,

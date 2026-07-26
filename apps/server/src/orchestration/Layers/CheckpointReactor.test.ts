@@ -601,7 +601,7 @@ describe("CheckpointReactor", () => {
   it("captures pre-turn and completion checkpoints for claude runtime events", async () => {
     const harness = await createHarness({
       seedFilesystemCheckpoints: false,
-      providerName: ProviderDriverKind.make("claudeAgent"),
+      providerName: ProviderDriverKind.make("claudex"),
     });
     const createdAt = "2026-01-01T00:00:00.000Z";
 
@@ -613,7 +613,7 @@ describe("CheckpointReactor", () => {
         session: {
           threadId: ThreadId.make("thread-1"),
           status: "ready",
-          providerName: "claudeAgent",
+          providerName: "claudex",
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
@@ -626,7 +626,7 @@ describe("CheckpointReactor", () => {
     harness.provider.emit({
       type: "turn.started",
       eventId: EventId.make("evt-turn-started-claude-1"),
-      provider: ProviderDriverKind.make("claudeAgent"),
+      provider: ProviderDriverKind.make("claudex"),
       createdAt: "2026-01-01T00:00:00.000Z",
       threadId: ThreadId.make("thread-1"),
       turnId: asTurnId("turn-claude-1"),
@@ -640,7 +640,7 @@ describe("CheckpointReactor", () => {
     harness.provider.emit({
       type: "turn.completed",
       eventId: EventId.make("evt-turn-completed-claude-1"),
-      provider: ProviderDriverKind.make("claudeAgent"),
+      provider: ProviderDriverKind.make("claudex"),
       createdAt: "2026-01-01T00:00:00.000Z",
       threadId: ThreadId.make("thread-1"),
       turnId: asTurnId("turn-claude-1"),
@@ -978,7 +978,7 @@ describe("CheckpointReactor", () => {
   });
 
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {
-    const harness = await createHarness({ providerName: ProviderDriverKind.make("claudeAgent") });
+    const harness = await createHarness({ providerName: ProviderDriverKind.make("claudex") });
     const createdAt = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
@@ -989,7 +989,7 @@ describe("CheckpointReactor", () => {
         session: {
           threadId: ThreadId.make("thread-1"),
           status: "ready",
-          providerName: "claudeAgent",
+          providerName: "claudex",
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,

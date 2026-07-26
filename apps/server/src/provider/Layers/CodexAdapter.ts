@@ -96,7 +96,8 @@ export interface CodexAdapterLiveOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
   /** Map low-level Responses API completed items into canonical events.
    * Disabled for plain Codex to avoid duplicate messages when high-level item
-   * deltas are already emitted; enabled by Fugu, which may only surface these.
+   * deltas are already emitted; Codex-backed drivers whose runtime may only
+   * surface these low-level items can enable it.
    */
   readonly mapRawResponseItems?: boolean;
 }

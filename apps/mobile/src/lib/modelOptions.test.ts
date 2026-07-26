@@ -85,7 +85,6 @@ describe("mobile model options", () => {
         makeProvider("chatgpt", "chatgpt"),
         makeProvider("kimi", "kimi"),
         makeProvider("grok", "grok"),
-        makeProvider("fugu", "fugu"),
         makeProvider("some-future-driver", "future-instance"),
       ],
     } as unknown as ServerConfig;
@@ -93,11 +92,10 @@ describe("mobile model options", () => {
     const groups = groupByProvider(buildModelOptions(config, null));
     const labels = new Map(groups.map((group) => [group.providerKey, group.providerLabel]));
 
-    expect(labels.get("claudex")).toBe("Claudex");
+    expect(labels.get("claudex")).toBe("Claude Code");
     expect(labels.get("chatgpt")).toBe("ChatGPT");
     expect(labels.get("kimi")).toBe("Kimi");
     expect(labels.get("grok")).toBe("Grok");
-    expect(labels.get("fugu")).toBe("Fugu");
     expect(labels.get("future-instance")).toBe("future-instance");
   });
 
