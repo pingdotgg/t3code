@@ -616,7 +616,7 @@ export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArra
   return [
     ...(appData ? [`${appData}\\npm`] : []),
     ...(localAppData ? [`${localAppData}\\Programs\\nodejs`, `${localAppData}\\Volta\\bin`] : []),
-    ...(localAppData ? [`${localAppData}\\pnpm`] : []),
+    ...(localAppData ? [`${localAppData}\\pnpm`, `${localAppData}\\cursor-agent`] : []),
     ...(userProfile ? [`${userProfile}\\.bun\\bin`, `${userProfile}\\scoop\\shims`] : []),
   ];
 }
