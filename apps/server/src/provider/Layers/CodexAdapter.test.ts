@@ -244,7 +244,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
       const adapter = yield* CodexAdapter;
       const result = yield* adapter
         .startSession({
-          provider: ProviderDriverKind.make("claudeAgent"),
+          provider: ProviderDriverKind.make("claudex"),
           threadId: asThreadId("thread-1"),
           runtimeMode: "full-access",
         })
@@ -256,7 +256,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
         new ProviderAdapterValidationError({
           provider: ProviderDriverKind.make("codex"),
           operation: "startSession",
-          issue: "Expected provider 'codex' but received 'claudeAgent'.",
+          issue: "Expected provider 'codex' but received 'claudex'.",
         }),
       );
       NodeAssert.equal(validationRuntimeFactory.factory.mock.calls.length, 0);
@@ -289,15 +289,15 @@ validationLayer("CodexAdapterLive validation", (it) => {
     }),
   );
   it.effect("stamps Codex-backed alternate drivers with the adapter provider", () => {
-    const fuguRuntimeFactory = makeRuntimeFactory();
-    const fuguLayer = Layer.effect(
+    const altRuntimeFactory = makeRuntimeFactory();
+    const altLayer = Layer.effect(
       CodexAdapter,
       Effect.gen(function* () {
         const codexConfig = decodeCodexSettings({});
         return yield* makeCodexAdapter(codexConfig, {
-          driverKind: ProviderDriverKind.make("fugu"),
-          instanceId: ProviderInstanceId.make("fugu"),
-          makeRuntime: fuguRuntimeFactory.factory,
+          driverKind: ProviderDriverKind.make("altcodex"),
+          instanceId: ProviderInstanceId.make("altcodex"),
+          makeRuntime: altRuntimeFactory.factory,
         });
       }),
     ).pipe(
@@ -310,32 +310,32 @@ validationLayer("CodexAdapterLive validation", (it) => {
     return Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
       const session = yield* adapter.startSession({
-        provider: ProviderDriverKind.make("fugu"),
-        threadId: asThreadId("thread-fugu"),
+        provider: ProviderDriverKind.make("altcodex"),
+        threadId: asThreadId("thread-altcodex"),
         runtimeMode: "full-access",
       });
 
-      NodeAssert.equal(session.provider, ProviderDriverKind.make("fugu"));
-      NodeAssert.equal(adapter.provider, ProviderDriverKind.make("fugu"));
+      NodeAssert.equal(session.provider, ProviderDriverKind.make("altcodex"));
+      NodeAssert.equal(adapter.provider, ProviderDriverKind.make("altcodex"));
       NodeAssert.equal(
-        fuguRuntimeFactory.factory.mock.calls[0]?.[0].provider,
-        ProviderDriverKind.make("fugu"),
+        altRuntimeFactory.factory.mock.calls[0]?.[0].provider,
+        ProviderDriverKind.make("altcodex"),
       );
-    }).pipe(Effect.provide(fuguLayer));
+    }).pipe(Effect.provide(altLayer));
   });
 
   it.effect("uses the alternate driver default for missing or disallowed reasoning effort", () => {
-    const fuguRuntimeFactory = makeRuntimeFactory();
-    const fuguLayer = Layer.effect(
+    const altRuntimeFactory = makeRuntimeFactory();
+    const altLayer = Layer.effect(
       CodexAdapter,
       Effect.gen(function* () {
         const codexConfig = decodeCodexSettings({});
         return yield* makeCodexAdapter(codexConfig, {
-          driverKind: ProviderDriverKind.make("fugu"),
-          instanceId: ProviderInstanceId.make("fugu"),
+          driverKind: ProviderDriverKind.make("altcodex"),
+          instanceId: ProviderInstanceId.make("altcodex"),
           defaultReasoningEffort: "high",
           allowedReasoningEfforts: ["high", "xhigh", "max"],
-          makeRuntime: fuguRuntimeFactory.factory,
+          makeRuntime: altRuntimeFactory.factory,
         });
       }),
     ).pipe(
@@ -348,26 +348,26 @@ validationLayer("CodexAdapterLive validation", (it) => {
     return Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
       yield* adapter.startSession({
-        provider: ProviderDriverKind.make("fugu"),
-        threadId: asThreadId("thread-fugu-effort"),
+        provider: ProviderDriverKind.make("altcodex"),
+        threadId: asThreadId("thread-altcodex-effort"),
         runtimeMode: "full-access",
       });
-      const runtime = fuguRuntimeFactory.lastRuntime;
+      const runtime = altRuntimeFactory.lastRuntime;
       NodeAssert.ok(runtime);
 
       yield* adapter.sendTurn({
-        threadId: asThreadId("thread-fugu-effort"),
+        threadId: asThreadId("thread-altcodex-effort"),
         input: "hello",
-        modelSelection: createModelSelection(ProviderInstanceId.make("fugu"), "fugu", [
+        modelSelection: createModelSelection(ProviderInstanceId.make("altcodex"), "alt-model", [
           { id: "reasoningEffort", value: "medium" },
         ]),
         attachments: [],
       });
 
       yield* adapter.sendTurn({
-        threadId: asThreadId("thread-fugu-effort"),
+        threadId: asThreadId("thread-altcodex-effort"),
         input: "again",
-        modelSelection: createModelSelection(ProviderInstanceId.make("fugu"), "fugu", [
+        modelSelection: createModelSelection(ProviderInstanceId.make("altcodex"), "alt-model", [
           { id: "reasoningEffort", value: "max" },
         ]),
         attachments: [],
@@ -375,15 +375,15 @@ validationLayer("CodexAdapterLive validation", (it) => {
 
       NodeAssert.deepStrictEqual(runtime.sendTurnImpl.mock.calls[0]?.[0], {
         input: "hello",
-        model: "fugu",
+        model: "alt-model",
         effort: "high",
       });
       NodeAssert.deepStrictEqual(runtime.sendTurnImpl.mock.calls[1]?.[0], {
         input: "again",
-        model: "fugu",
+        model: "alt-model",
         effort: "max",
       });
-    }).pipe(Effect.provide(fuguLayer));
+    }).pipe(Effect.provide(altLayer));
   });
 });
 

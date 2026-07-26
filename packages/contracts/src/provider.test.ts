@@ -55,10 +55,10 @@ describe("ProviderSessionStartInput", () => {
   it("accepts claude runtime knobs", () => {
     const parsed = decodeProviderSessionStartInput({
       threadId: "thread-1",
-      provider: "claudeAgent",
+      provider: "claudex",
       cwd: "/tmp/workspace",
       modelSelection: {
-        provider: "claudeAgent",
+        provider: "claudex",
         model: "claude-sonnet-4-6",
         options: [
           { id: "thinking", value: true },
@@ -68,8 +68,8 @@ describe("ProviderSessionStartInput", () => {
       },
       runtimeMode: "full-access",
     });
-    expect(parsed.provider).toBe("claudeAgent");
-    expect(parsed.modelSelection?.instanceId).toBe("claudeAgent");
+    expect(parsed.provider).toBe("claudex");
+    expect(parsed.modelSelection?.instanceId).toBe("claudex");
     expect(parsed.modelSelection?.model).toBe("claude-sonnet-4-6");
     expect(getOptionValue(parsed.modelSelection?.options, "thinking")).toBe(true);
     expect(getOptionValue(parsed.modelSelection?.options, "effort")).toBe("max");
@@ -120,7 +120,7 @@ describe("ProviderSendTurnInput", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",
       modelSelection: {
-        provider: "claudeAgent",
+        provider: "claudex",
         model: "claude-sonnet-4-6",
         options: [
           { id: "effort", value: "ultrathink" },
@@ -129,7 +129,7 @@ describe("ProviderSendTurnInput", () => {
       },
     });
 
-    expect(parsed.modelSelection?.instanceId).toBe("claudeAgent");
+    expect(parsed.modelSelection?.instanceId).toBe("claudex");
     expect(getOptionValue(parsed.modelSelection?.options, "effort")).toBe("ultrathink");
     expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
   });

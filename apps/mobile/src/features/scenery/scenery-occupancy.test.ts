@@ -56,6 +56,7 @@ function makeThread(input: {
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    autoReviewPhase: null,
   };
 }
 

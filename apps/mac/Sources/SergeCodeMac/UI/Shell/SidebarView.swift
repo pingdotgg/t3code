@@ -11,6 +11,13 @@ private enum SidebarRowContext {
 struct SidebarView: View {
     let multi: MultiDeviceModel
     let scenery: SceneryStore
+    /// Collapses the sidebar column. Lives here (not in the window toolbar)
+    /// so the close control sits inside the sidebar it acts on. No-op default
+    /// keeps standalone hosts (UIProbe) unchanged. `var`, not `let`: on current
+    /// Swift a `let` with an initial value is excluded from the memberwise
+    /// initializer entirely (SE-0242's defaulted-`let` parameters never
+    /// shipped — verified against the toolchain that builds this target).
+    var onToggleSidebar: () -> Void = {}
 
     private struct ProjectActionTarget {
         let model: AppModel
@@ -78,7 +85,8 @@ struct SidebarView: View {
                 projectGroups: allProjectGroups,
                 projectScopeID: projectScopeID,
                 onSelectScope: setMachineScope,
-                onSelectProject: { projectScopeID = $0 })
+                onSelectProject: { projectScopeID = $0 },
+                onToggleSidebar: onToggleSidebar)
 
             List(selection: Binding(
                 get: { multi.selection },
@@ -557,12 +565,20 @@ private struct SidebarCommandBar: View {
     let projectScopeID: String
     let onSelectScope: (SidebarMachineScope) -> Void
     let onSelectProject: (String) -> Void
+    let onToggleSidebar: () -> Void
 
     @UIState private var isScopePresented = false
     @UIState private var isProjectScopePresented = false
 
     var body: some View {
         HStack(spacing: 7) {
+            // Same 28×28 glass chrome as the window-toolbar controls; lives
+            // inside the sidebar it closes rather than in the detail header.
+            Button(action: onToggleSidebar) {
+                Label("Close Sidebar", systemImage: "sidebar.leading")
+            }
+            .buttonStyle(AlpineToolbarIconButtonStyle())
+            .help("Close Sidebar")
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.caption)
@@ -583,6 +599,10 @@ private struct SidebarCommandBar: View {
             .padding(.horizontal, 8)
             .frame(height: 28)
             .background(.quaternary.opacity(0.7), in: RoundedRectangle(cornerRadius: 7))
+            // Search wins space over the project/machine filter labels (they
+            // truncate first) so the close button's 28pt doesn't squeeze the
+            // field at min/ideal sidebar widths.
+            .layoutPriority(1)
 
             Button {
                 isProjectScopePresented.toggle()
@@ -1126,6 +1146,10 @@ private struct SidebarThreadStatus: View {
         case .error: return .red
         case .archived: return .gray
         case .settled: return .secondary
+        case .done: return .secondary
+        case .reviewing: return AlpineTheme.sky
+        case .fixing: return AlpineTheme.accent
+        case .readyToMerge: return AlpineTheme.lichen
         }
     }
 
@@ -1142,6 +1166,10 @@ private struct SidebarThreadStatus: View {
         case .error: return "xmark.octagon.fill"
         case .archived: return "archivebox.fill"
         case .settled: return "checkmark.circle"
+        case .done: return "checkmark"
+        case .reviewing: return "magnifyingglass"
+        case .fixing: return "wrench.and.screwdriver"
+        case .readyToMerge: return "checkmark.seal"
         }
     }
 }

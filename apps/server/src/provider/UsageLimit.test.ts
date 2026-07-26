@@ -10,7 +10,7 @@ describe("UsageLimit", () => {
     });
 
     expect(detail?.kind).toBe("usage-limit");
-    expect(detail?.provider).toBe("claudeAgent");
+    expect(detail?.provider).toBe("claudex");
     expect(detail?.resetsAtEpochSeconds).toBe(1783549200);
   });
 
