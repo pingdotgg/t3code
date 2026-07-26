@@ -189,7 +189,10 @@ public struct ChangesTimelineView: View {
             refreshButton
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        // Fixed band height shared with the chat identity header so the
+        // dividers under both headers line up (see
+        // AlpineTheme.contentHeaderHeight).
+        .frame(height: AlpineTheme.contentHeaderHeight)
         .animation(Motion.ambient, value: isRunning)
     }
 

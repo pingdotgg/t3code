@@ -104,6 +104,16 @@ enum AlpineTheme {
         static let hero: CGFloat = 16
     }
 
+    // MARK: - Layout
+
+    /// Shared height of the content-header bands: the chat identity header
+    /// (ChatHeaderView) and the inspector Activity header
+    /// (ChangesTimelineView). Both pin to this exact height so the divider
+    /// under each header stays horizontally aligned across the
+    /// chat/inspector boundary instead of drifting with each header's
+    /// content.
+    static let contentHeaderHeight: CGFloat = 61
+
     /// Duotone washes sampled from Dolomites conditions: dawn limestone,
     /// glacier melt, high meadow, larch dusk, scree, spruce shade.
     static let dolomitesGradientPairs: [GradientPair] = [
