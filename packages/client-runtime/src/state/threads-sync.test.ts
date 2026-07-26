@@ -527,6 +527,27 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("does not retry a missing thread after archive eviction", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+      yield* Queue.offer(harness.inputs, archived());
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.archivedAt !== null,
+      );
+
+      yield* Queue.offer(harness.inputs, new Error("thread was moved to cold storage"));
+      yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.error));
+      yield* TestClock.adjust("250 millis");
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+    }),
+  );
+
   it.effect("removes cached data when an archived thread arrives in a snapshot", () =>
     Effect.gen(function* () {
       const archivedThread = {

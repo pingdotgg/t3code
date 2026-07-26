@@ -128,6 +128,14 @@ export function cachedThreadGeneration(
   return existingThreadCacheState(cache, environmentId, threadId)?.generation ?? 0;
 }
 
+export function isCachedThreadEvicted(
+  cache: EnvironmentCacheStore["Service"],
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): boolean {
+  return existingThreadCacheState(cache, environmentId, threadId)?.evicted === true;
+}
+
 export const persistCachedThread = Effect.fn("EnvironmentThreadCache.persist")(function* (
   cache: EnvironmentCacheStore["Service"],
   environmentId: EnvironmentId,
