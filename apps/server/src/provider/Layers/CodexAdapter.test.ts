@@ -244,7 +244,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
       const adapter = yield* CodexAdapter;
       const result = yield* adapter
         .startSession({
-          provider: ProviderDriverKind.make("claudex"),
+          provider: ProviderDriverKind.make("claudeAgent"),
           threadId: asThreadId("thread-1"),
           runtimeMode: "full-access",
         })
@@ -256,7 +256,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
         new ProviderAdapterValidationError({
           provider: ProviderDriverKind.make("codex"),
           operation: "startSession",
-          issue: "Expected provider 'codex' but received 'claudex'.",
+          issue: "Expected provider 'codex' but received 'claudeAgent'.",
         }),
       );
       NodeAssert.equal(validationRuntimeFactory.factory.mock.calls.length, 0);

@@ -1006,11 +1006,11 @@ private actor MockState {
         return [
             ModelOption(
                 instanceID: "provider-claude", modelID: "claude-fable-5",
-                displayName: "Fable 5", provider: .claudex, isDefault: true,
+                displayName: "Fable 5", provider: .claude, isDefault: true,
                 effortOptionID: "effort", effortChoices: claudeEfforts),
             ModelOption(
                 instanceID: "provider-claude", modelID: "claude-opus-4-8",
-                displayName: "Opus 4.8", provider: .claudex, isDefault: false,
+                displayName: "Opus 4.8", provider: .claude, isDefault: false,
                 effortOptionID: "effort", effortChoices: claudeEfforts),
             ModelOption(
                 instanceID: "provider-codex", modelID: "gpt-5.2-codex",
@@ -1514,7 +1514,7 @@ private actor MockState {
         projectsByID[projectB.id] = projectB
 
         let providerList: [ProviderInstance] = [
-            ProviderInstance(id: "provider-claude", kind: .claudex, availability: .available, version: "1.4.2"),
+            ProviderInstance(id: "provider-claude", kind: .claude, availability: .available, version: "1.4.2"),
             ProviderInstance(id: "provider-codex", kind: .codex, availability: .available, version: "0.9.0"),
             ProviderInstance(id: "provider-grok", kind: .grok, availability: .available, version: "0.2.91"),
             ProviderInstance(id: "provider-kimi", kind: .kimi, availability: .available, version: "0.29.0"),
@@ -1524,7 +1524,7 @@ private actor MockState {
             id: "thread-1",
             projectID: projectA.id,
             title: "Fix sidebar scroll jank",
-            provider: .claudex,
+            provider: .claude,
             status: .backgroundWork,
             updatedAt: now.addingTimeInterval(-60),
             backgroundAgentCount: 1

@@ -34,14 +34,16 @@ import T3Kit
 //
 // ── Mapping decisions (wire -> UI) — best-effort, documented, never silent ────
 //  * ProviderKind: derived from ServerProvider.driver by substring match
-//    (claudex/codex/cursor/grok/kimi), with exact instance mappings for
-//    separately selectable profiles such as `claude-work`.
-//    Drivers with no ProviderKind equivalent are dropped from providers() —
-//    ProviderKind is a closed enum with no `.other`. See
-//    `providerKind(fromDriver:)` and `providerKind(for:)`.
+//    (claudeAgent/codex/cursor/grok/kimi), with exact instance mappings for
+//    separately selectable profiles such as `claude-work`. That override runs
+//    before the general Claude mapping so it stays a distinct profile. The
+//    removed `claudex` driver still appears in persisted threads, so it also
+//    maps onto Claude Code. Drivers with no ProviderKind equivalent are
+//    dropped from providers() — ProviderKind is a closed enum with no
+//    `.other`. See `providerKindForServerProvider` and `providerKind(for:)`.
 //  * A thread's ProviderKind is resolved from its modelSelection.instanceId via
 //    the ServerConfig provider table, falling back to session.providerName, then
-//    to `.claudex`. Documented in `resolveProviderKind`.
+//    to `.claude`. Documented in `resolveProviderKind`.
 //  * ThreadStatus is a projection of session.status + latestTurn.state +
 //    hasPendingApprovals + archivedAt + active subagent task count (see
 //    `mapStatus`); the shell subscription remains the source of truth for the
@@ -3338,27 +3340,48 @@ public actor LiveBackend: BackendService {
         }
         // Fallback for a thread whose provider can't be resolved (e.g. its
         // instance is gone from the config, or an unmapped driver).
-        return .claudex
+        return .claude
     }
 
     private func providerKind(fromDriver driver: String) -> ProviderKind? {
-        let lowered = driver.lowercased()
-        if lowered.contains("claudex") { return .claudex }
-        if lowered.contains("codex") { return .codex }
-        if lowered.contains("grok") { return .grok }
-        if lowered.contains("kimi") { return .kimi }
-        if lowered.contains("cursor") { return .legacyCursor }
+        Self.providerKindForServerProvider(driver: driver)
+    }
+
+    /// Pure server-provider mapping kept internal so catalog tests can verify
+    /// the precedence between exact instance overrides and driver matching
+    /// without constructing a full LiveBackend actor or wire provider.
+    nonisolated static func providerKindForServerProvider(
+        instanceID: String? = nil,
+        driver: String,
+        displayName: String? = nil
+    ) -> ProviderKind? {
+        let loweredInstanceID = instanceID?.lowercased()
+        let loweredDisplayName = displayName?.lowercased()
+
+        // Claude Work's driver has no ProviderKind of its own, so preserve its
+        // exact instance identity before the general Claude-family mapping.
+        if loweredInstanceID == "claude-work" || loweredDisplayName == "claude work" {
+            return .claudeWork
+        }
+        let loweredDriver = driver.lowercased()
+        // `claudex` was removed as a driver; persisted threads and sessions
+        // still name it, so keep mapping it onto Claude Code rather than
+        // dropping those threads from the provider filter.
+        if loweredDriver.contains("claudeagent") || loweredDriver.contains("claudex") {
+            return .claude
+        }
+        if loweredDriver.contains("codex") { return .codex }
+        if loweredDriver.contains("grok") { return .grok }
+        if loweredDriver.contains("kimi") { return .kimi }
+        if loweredDriver.contains("cursor") { return .legacyCursor }
         return nil
     }
 
     private func providerKind(for provider: ServerProvider) -> ProviderKind? {
-        let instanceId = provider.instanceId.lowercased()
-        let displayName = provider.displayName?.lowercased() ?? ""
-        // Claude Work's driver has no ProviderKind of its own, so preserve its
-        // instance identity before falling back to driver mapping.
-        if instanceId == "claude-work" || displayName == "claude work" { return .claudeWork }
-        if instanceId == "claudex" || displayName == "claudex" { return .claudex }
-        return providerKind(fromDriver: provider.driver)
+        Self.providerKindForServerProvider(
+            instanceID: provider.instanceId,
+            driver: provider.driver,
+            displayName: provider.displayName)
     }
 
     private func currentProviderList() -> [ProviderInstance] {

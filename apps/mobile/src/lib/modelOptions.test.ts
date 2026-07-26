@@ -81,7 +81,7 @@ describe("mobile model options", () => {
     });
     const config = {
       providers: [
-        makeProvider("claudex", "claudex"),
+        makeProvider("claudeAgent", "claudeAgent"),
         makeProvider("chatgpt", "chatgpt"),
         makeProvider("kimi", "kimi"),
         makeProvider("grok", "grok"),
@@ -92,7 +92,7 @@ describe("mobile model options", () => {
     const groups = groupByProvider(buildModelOptions(config, null));
     const labels = new Map(groups.map((group) => [group.providerKey, group.providerLabel]));
 
-    expect(labels.get("claudex")).toBe("Claude Code");
+    expect(labels.get("claudeAgent")).toBe("Claude Code");
     expect(labels.get("chatgpt")).toBe("ChatGPT");
     expect(labels.get("kimi")).toBe("Kimi");
     expect(labels.get("grok")).toBe("Grok");

@@ -194,7 +194,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             binaryPath: "/usr/local/bin/codex",
             homePath: "/Users/julius/.codex",
           },
-          claudex: {
+          claudeAgent: {
             binaryPath: "/usr/local/bin/claude",
             customModels: ["claude-custom"],
           },
@@ -231,7 +231,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         shadowHomePath: "",
         customModels: [],
       });
-      assert.deepEqual(next.providers.claudex, {
+      assert.deepEqual(next.providers.claudeAgent, {
         enabled: true,
         binaryPath: "/usr/local/bin/claude",
         homePath: "",
@@ -259,11 +259,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       // Start with Claude text generation selection
       yield* serverSettings.updateSettings({
         textGenerationModelSelection: {
-          instanceId: ProviderInstanceId.make("claudex"),
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-sonnet-4-6",
-          options: createModelSelection(ProviderInstanceId.make("claudex"), "claude-sonnet-4-6", [
-            { id: "effort", value: "high" },
-          ]).options!,
+          options: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            "claude-sonnet-4-6",
+            [{ id: "effort", value: "high" }],
+          ).options!,
         },
       });
 
@@ -295,7 +297,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const next = yield* serverSettings.updateSettings({
         providerInstances: {
           [ProviderInstanceId.make("claude_openrouter")]: {
-            driver: ProviderDriverKind.make("claudex"),
+            driver: ProviderDriverKind.make("claudeAgent"),
             enabled: true,
             config: { customModels: ["openai/gpt-5.5"] },
           },
@@ -322,13 +324,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
         const next = yield* serverSettings.updateSettings({
           providers: {
-            claudex: {
+            claudeAgent: {
               enabled: false,
             },
           },
           providerInstances: {
             [instanceId]: {
-              driver: ProviderDriverKind.make("claudex"),
+              driver: ProviderDriverKind.make("claudeAgent"),
               enabled: true,
               config: { customModels: ["openai/gpt-5.5"] },
             },
@@ -452,7 +454,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             binaryPath: "  /opt/homebrew/bin/codex  ",
             homePath: "   ",
           },
-          claudex: {
+          claudeAgent: {
             binaryPath: "  /opt/homebrew/bin/claude  ",
           },
           grok: {
@@ -468,7 +470,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         shadowHomePath: "",
         customModels: [],
       });
-      assert.deepEqual(next.providers.claudex, {
+      assert.deepEqual(next.providers.claudeAgent, {
         enabled: true,
         binaryPath: "/opt/homebrew/bin/claude",
         homePath: "",
@@ -512,14 +514,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           codex: {
             binaryPath: "   ",
           },
-          claudex: {
+          claudeAgent: {
             binaryPath: "",
           },
         },
       });
 
       assert.equal(next.providers.codex.binaryPath, "codex");
-      assert.equal(next.providers.claudex.binaryPath, "claudex");
+      assert.equal(next.providers.claudeAgent.binaryPath, "claude");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 

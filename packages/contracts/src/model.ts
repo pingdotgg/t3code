@@ -128,7 +128,7 @@ export const ModelCapabilities = Schema.Struct({
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
 const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
-const CLAUDEX_DRIVER_KIND = ProviderDriverKind.make("claudex");
+const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const KIMI_DRIVER_KIND = ProviderDriverKind.make("kimi");
 const CHATGPT_DRIVER_KIND = ProviderDriverKind.make("chatgpt");
@@ -138,7 +138,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
-  [CLAUDEX_DRIVER_KIND]: "claudex-luna",
+  [CLAUDE_DRIVER_KIND]: "claude-sonnet-5",
   [GROK_DRIVER_KIND]: "grok-4.5",
   [KIMI_DRIVER_KIND]: "kimi-code/k3",
   [CHATGPT_DRIVER_KIND]: "chatgpt",
@@ -149,6 +149,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   Record<ProviderDriverKind, string>
 > = {
   [CODEX_DRIVER_KIND]: DEFAULT_GIT_TEXT_GENERATION_MODEL,
+  [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [KIMI_DRIVER_KIND]: "kimi-code/kimi-for-coding-highspeed",
   [CHATGPT_DRIVER_KIND]: "chatgpt",
 };
@@ -175,9 +176,30 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "gpt-5.6-terra": "gpt-5.6-terra",
     terra: "gpt-5.6-terra",
   },
-  [CLAUDEX_DRIVER_KIND]: {
-    luna: "claudex-luna",
-    sol: "claudex-sol",
+  [CLAUDE_DRIVER_KIND]: {
+    opus: "claude-opus-5",
+    "opus-5": "claude-opus-5",
+    "claude-opus-5": "claude-opus-5",
+    "opus-4.8": "claude-opus-4-8",
+    "claude-opus-4.8": "claude-opus-4-8",
+    "opus-4.7": "claude-opus-4-7",
+    "claude-opus-4.7": "claude-opus-4-7",
+    "opus-4.6": "claude-opus-4-6",
+    "claude-opus-4.6": "claude-opus-4-6",
+    "claude-opus-4-6-20251117": "claude-opus-4-6",
+    fable: "claude-fable-5",
+    "fable-5": "claude-fable-5",
+    sonnet: "claude-sonnet-5",
+    "sonnet-5": "claude-sonnet-5",
+    "claude-sonnet-5.0": "claude-sonnet-5",
+    "claude-sonnet-5-0": "claude-sonnet-5",
+    "sonnet-4.6": "claude-sonnet-4-6",
+    "claude-sonnet-4.6": "claude-sonnet-4-6",
+    "claude-sonnet-4-6-20251117": "claude-sonnet-4-6",
+    haiku: "claude-haiku-4-5",
+    "haiku-4.5": "claude-haiku-4-5",
+    "claude-haiku-4.5": "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001": "claude-haiku-4-5",
   },
   [GROK_DRIVER_KIND]: {
     "grok-4-5": "grok-4.5",
@@ -199,7 +221,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
 
 export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: "Codex",
-  [CLAUDEX_DRIVER_KIND]: "Claude Code",
+  [CLAUDE_DRIVER_KIND]: "Claude Code",
   [GROK_DRIVER_KIND]: "Grok",
   [KIMI_DRIVER_KIND]: "Kimi",
   [CHATGPT_DRIVER_KIND]: "ChatGPT",

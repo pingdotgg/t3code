@@ -25,7 +25,7 @@ struct ModelPickerCatalogTests {
         let options = [
             option(instance: "codex-a", modelID: "gpt-5", name: "GPT-5", provider: .codex),
             option(instance: "codex-b", modelID: "gpt-5", name: "GPT-5", provider: .codex),
-            option(instance: "claude-a", modelID: "sonnet", name: "Sonnet", provider: .claudex),
+            option(instance: "claude-a", modelID: "sonnet", name: "Sonnet", provider: .claude),
         ]
 
         let items = ModelPickerCatalog.items(
@@ -60,12 +60,51 @@ struct ModelPickerCatalogTests {
         #expect(item?.option.instanceID == "codex-a")
     }
 
+    @Test("maps Claude drivers and keeps legacy Claudex threads in the Claude Code filter")
+    func claudeDriversShareProviderKind() {
+        #expect(
+            LiveBackend.providerKindForServerProvider(
+                instanceID: "claudeAgent", driver: "claudeAgent") == .claude)
+        // `claudex` is a removed driver that persisted threads still name.
+        #expect(
+            LiveBackend.providerKindForServerProvider(
+                instanceID: "claudex", driver: "claudex") == .claude)
+
+        let items = ModelPickerCatalog.items(
+            from: [
+                option(
+                    instance: "claudeAgent", modelID: "sonnet", name: "Sonnet",
+                    provider: .claude),
+                option(
+                    instance: "claudex", modelID: "claude-sonnet-5", name: "Legacy Sonnet",
+                    provider: .claude),
+            ],
+            selectedInstanceID: nil,
+            selectedModelID: nil)
+
+        let claudeCodeItems = ModelPickerCatalog.filteredItems(
+            items,
+            providerFilter: .provider(.claude),
+            query: "")
+
+        #expect(claudeCodeItems.count == 2)
+        #expect(
+            Set(claudeCodeItems.map(\.option.instanceID)) == Set(["claudeAgent", "claudex"]))
+    }
+
+    @Test("preserves Claude Work instance override before general Claude mapping")
+    func claudeWorkInstanceOverrideWins() {
+        #expect(
+            LiveBackend.providerKindForServerProvider(
+                instanceID: "claude-work", driver: "claudeAgent") == .claudeWork)
+    }
+
     @Test("filters by provider and searches names, ids, and providers")
     func filtersAndSearches() {
         let items = ModelPickerCatalog.items(
             from: [
                 option(instance: "codex", modelID: "gpt-5", name: "GPT-5", provider: .codex),
-                option(instance: "claude", modelID: "sonnet-5", name: "Sonnet 5", provider: .claudex),
+                option(instance: "claude", modelID: "sonnet-5", name: "Sonnet 5", provider: .claude),
             ],
             selectedInstanceID: nil,
             selectedModelID: nil
@@ -73,7 +112,7 @@ struct ModelPickerCatalogTests {
 
         let providerResults = ModelPickerCatalog.filteredItems(
             items,
-            providerFilter: .provider(.claudex),
+            providerFilter: .provider(.claude),
             query: ""
         )
         let searchResults = ModelPickerCatalog.filteredItems(

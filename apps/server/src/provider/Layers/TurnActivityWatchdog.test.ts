@@ -20,7 +20,7 @@ import {
 
 const threadId = ThreadId.make("thread-1");
 const turnId = TurnId.make("turn-1");
-const provider = ProviderDriverKind.make("claudex");
+const provider = ProviderDriverKind.make("claudeAgent");
 
 const event = (
   type:

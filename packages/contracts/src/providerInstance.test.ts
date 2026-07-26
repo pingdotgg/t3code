@@ -23,7 +23,7 @@ describe("provider slug validation (shared by driver + instance ids)", () => {
 
   for (const { schemaName, decode } of cases) {
     describe(schemaName, () => {
-      it.each(["codex", "codex_personal", "codex-work", "claudex", "x", "abc123", "ollama"])(
+      it.each(["codex", "codex_personal", "codex-work", "claudeAgent", "x", "abc123", "ollama"])(
         "accepts %s",
         (id) => {
           expect(decode(id)).toBe(id);
@@ -127,7 +127,7 @@ describe("ProviderInstanceConfig", () => {
 
   it("decodes generic environment variables on the instance envelope", () => {
     const decoded = decodeProviderInstanceConfig({
-      driver: "claudex",
+      driver: "claudeAgent",
       environment: [
         { name: "ANTHROPIC_BASE_URL", value: "https://openrouter.ai/api", sensitive: false },
         { name: "OPENROUTER_API_KEY", value: "sk-or-test", sensitive: true },
@@ -185,11 +185,11 @@ describe("ProviderInstanceConfigMap", () => {
         driver: "codex",
         config: { homePath: "~/.codex_work" },
       },
-      claudex: { driver: "claudex" },
+      claudeAgent: { driver: "claudeAgent" },
       ollama_local: { driver: "ollama", config: { endpoint: "http://localhost:11434" } },
     });
     expect(new Set(Object.keys(decoded))).toEqual(
-      new Set(["claudex", "codex_personal", "codex_work", "ollama_local"]),
+      new Set(["claudeAgent", "codex_personal", "codex_work", "ollama_local"]),
     );
     expect(decoded[ProviderInstanceId.make("codex_personal")]?.driver).toBe("codex");
     expect(decoded[ProviderInstanceId.make("codex_work")]?.config).toEqual({

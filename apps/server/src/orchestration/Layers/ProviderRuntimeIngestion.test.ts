@@ -530,7 +530,7 @@ describe("ProviderRuntimeIngestion", () => {
         session: {
           threadId: ThreadId.make("thread-1"),
           status: "ready",
-          providerName: "claudex",
+          providerName: "claudeAgent",
           runtimeMode: "approval-required",
           activeTurnId: null,
           updatedAt: seededAt,
@@ -543,7 +543,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-claude-placeholder"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: "2026-01-01T00:00:00.000Z",
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-claude-placeholder"),
@@ -559,7 +559,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-claude-placeholder"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: "2026-01-01T00:00:00.000Z",
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-claude-placeholder"),
@@ -1465,7 +1465,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-skill-completed"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-skill"),
@@ -1503,7 +1503,7 @@ describe("ProviderRuntimeIngestion", () => {
         origin: "plugin",
         pluginName: "caveman",
         skillName: "cavecrew",
-        provider: "claudex",
+        provider: "claudeAgent",
       },
     });
   });
@@ -1515,7 +1515,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-mcp-completed"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-mcp"),
@@ -3495,7 +3495,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "session.health",
       eventId: asEventId("evt-session-health-stalled"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: "2026-01-01T00:02:00.000Z",
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-health"),
@@ -3997,7 +3997,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "thread.token-usage.updated",
       eventId: asEventId("evt-thread-token-usage-updated-claude-window"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       payload: {
@@ -4142,7 +4142,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-compaction-completed-rich"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-1"),
@@ -4157,7 +4157,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "thread.state.changed",
       eventId: asEventId("evt-compaction-fallback-after-item"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-1"),
@@ -4513,7 +4513,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "task.started",
       eventId: asEventId("evt-task-meta-started"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-meta"),
@@ -4531,7 +4531,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "task.updated",
       eventId: asEventId("evt-task-meta-updated"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-meta"),
@@ -4548,7 +4548,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "task.completed",
       eventId: asEventId("evt-task-meta-completed"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-meta"),
@@ -4721,21 +4721,21 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "thread.started",
       eventId: asEventId("evt-task-patch-thread"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
     });
     harness.emit({
       type: "session.started",
       eventId: asEventId("evt-task-patch-session"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
     });
     harness.emit({
       type: "task.started",
       eventId: asEventId("evt-task-patch-started"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-patch"),
@@ -4751,7 +4751,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "task.updated",
       eventId: asEventId("evt-task-patch-a"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: "2026-01-01T00:00:01.000Z",
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-patch"),
@@ -4764,7 +4764,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "task.updated",
       eventId: asEventId("evt-task-patch-b"),
-      provider: ProviderDriverKind.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: "2026-01-01T00:00:01.050Z",
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-patch"),

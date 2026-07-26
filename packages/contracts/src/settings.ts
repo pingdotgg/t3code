@@ -256,50 +256,6 @@ export const ClaudeSettings = makeProviderSettingsSchema(
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
-export const ClaudexSettings = makeProviderSettingsSchema(
-  {
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("claudex").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Claudex binary used by this instance.",
-        providerSettingsForm: { placeholder: "claudex", clearWhenEmpty: "omit" },
-      }),
-    ),
-    homePath: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Claudex HOME path",
-        description:
-          "Custom HOME used when running this Claudex instance. Leave blank to use the normal HOME.",
-        providerSettingsForm: { placeholder: "~", clearWhenEmpty: "omit" },
-      }),
-    ),
-    customModels: Schema.Array(Schema.String).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    launchArgs: Schema.String.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Launch arguments",
-        description: "Additional CLI arguments passed on session start.",
-        providerSettingsForm: {
-          placeholder: "e.g. --chrome",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-  },
-  {
-    order: ["binaryPath", "homePath", "launchArgs"],
-  },
-);
-export type ClaudexSettings = typeof ClaudexSettings.Type;
-
 export const GrokSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -552,7 +508,7 @@ export const ServerSettings = Schema.Struct({
   // is removed entirely.
   providers: Schema.Struct({
     codex: CodexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    claudex: ClaudexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     kimi: KimiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     chatgpt: ChatGptBrowserSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -640,7 +596,7 @@ const CodexSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
-const ClaudexSettingsPatch = Schema.Struct({
+const ClaudeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
   homePath: Schema.optionalKey(TrimmedString),
@@ -692,7 +648,7 @@ export const ServerSettingsPatch = Schema.Struct({
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
-      claudex: Schema.optionalKey(ClaudexSettingsPatch),
+      claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       kimi: Schema.optionalKey(KimiSettingsPatch),
       chatgpt: Schema.optionalKey(ChatGptBrowserSettingsPatch),

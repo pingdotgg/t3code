@@ -38,7 +38,6 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
-import { getClaudexModelCapabilities, withClaudexModelCapabilities } from "../claudexModels.ts";
 import {
   getClaudeDiscoveredModelCapabilities,
   mergeClaudeDiscoveredModels,
@@ -50,12 +49,12 @@ const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabili
   optionDescriptors: [],
 });
 
-const PROVIDER = ProviderDriverKind.make("claudex");
+const PROVIDER = ProviderDriverKind.make("claudeAgent");
 
 /**
  * Presentation and messaging identity for a Claude-backed provider.
  *
- * Lets Claude-backed drivers (such as Claudex) share the probe/snapshot
+ * Lets Claude-backed drivers share the probe/snapshot
  * logic while customizing their driver kind, display name, and status/error
  * messages.
  */
@@ -410,7 +409,6 @@ export function getClaudeModelCapabilities(model: string | null | undefined): Mo
   const slug = model?.trim();
   return (
     BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
-    getClaudexModelCapabilities(slug) ??
     getClaudeDiscoveredModelCapabilities(slug) ??
     DEFAULT_CLAUDE_MODEL_CAPABILITIES
   );
@@ -454,8 +452,7 @@ export function normalizeClaudeCliEffort(
     model !== "claude-opus-5" &&
     model !== "claude-fable-5" &&
     model !== "claude-opus-4-8" &&
-    model !== "claude-sonnet-5" &&
-    !getClaudexModelCapabilities(model ?? undefined)
+    model !== "claude-sonnet-5"
   ) {
     return "max";
   }
@@ -763,8 +760,7 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
  * Probe a Claude-backed provider and build its server-provider snapshot.
  *
  * `identity` customizes provider kind, display name, and status messages so
- * shared Claude probing can be reused by independent Claude-backed providers
- * such as Claudex.
+ * shared Claude probing can be reused by independent Claude-backed providers.
  *
  * @param claudeSettings - Effective Claude runtime settings.
  * @param resolveCapabilities - Optional account/slash-command capability probe.
@@ -786,13 +782,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const allModels = withClaudexModelCapabilities(
-    providerModelsFromSettings(
-      BUILT_IN_MODELS,
-      identity.provider,
-      claudeSettings.customModels,
-      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-    ),
+  const allModels = providerModelsFromSettings(
+    BUILT_IN_MODELS,
+    identity.provider,
+    claudeSettings.customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
 
   if (!claudeSettings.enabled) {
@@ -883,13 +877,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = withClaudexModelCapabilities(
-    providerModelsFromSettings(
-      getBuiltInClaudeModelsForVersion(parsedVersion),
-      identity.provider,
-      claudeSettings.customModels,
-      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-    ),
+  const models = providerModelsFromSettings(
+    getBuiltInClaudeModelsForVersion(parsedVersion),
+    identity.provider,
+    claudeSettings.customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
   const versionUpgradeMessage = supportsClaudeOpus5(parsedVersion)
     ? undefined
@@ -919,19 +911,17 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
   const resolvedModels =
     discoveredModels.length > 0
-      ? withClaudexModelCapabilities(
-          providerModelsFromSettings(
-            mergeClaudeDiscoveredModels(
-              getBuiltInClaudeModelsForVersion(
-                parsedVersion,
-                new Set(discoveredModels.map((model) => model.slug)),
-              ),
-              discoveredModels,
+      ? providerModelsFromSettings(
+          mergeClaudeDiscoveredModels(
+            getBuiltInClaudeModelsForVersion(
+              parsedVersion,
+              new Set(discoveredModels.map((model) => model.slug)),
             ),
-            identity.provider,
-            claudeSettings.customModels,
-            DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+            discoveredModels,
           ),
+          identity.provider,
+          claudeSettings.customModels,
+          DEFAULT_CLAUDE_MODEL_CAPABILITIES,
         )
       : models;
 
@@ -994,13 +984,11 @@ export const makePendingClaudeProvider = (
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
-    const models = withClaudexModelCapabilities(
-      providerModelsFromSettings(
-        BUILT_IN_MODELS,
-        identity.provider,
-        claudeSettings.customModels,
-        DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-      ),
+    const models = providerModelsFromSettings(
+      BUILT_IN_MODELS,
+      identity.provider,
+      claudeSettings.customModels,
+      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
     );
 
     if (!claudeSettings.enabled) {
