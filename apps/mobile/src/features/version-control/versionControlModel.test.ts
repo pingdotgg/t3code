@@ -16,6 +16,7 @@ import {
   selectedFileStats,
   snapshotForCwd,
   snapshotIsPendingForCwd,
+  snapshotRequestIsCurrent,
   stashIdentityKey,
   visibleRemoteBranches,
   workingTreeDiffIsStaged,
@@ -223,6 +224,12 @@ describe("native Version Control model", () => {
     expect(snapshotIsPendingForCwd(null, "/repo/one", "/repo/one")).toBe(false);
     expect(snapshotIsPendingForCwd(snapshot(), "/repo/one", null)).toBe(false);
     expect(snapshotIsPendingForCwd(null, null, null)).toBe(false);
+  });
+
+  it("accepts a snapshot response only for the latest request and current cwd", () => {
+    expect(snapshotRequestIsCurrent(2, 2, "/repo/one", "/repo/one")).toBe(true);
+    expect(snapshotRequestIsCurrent(1, 2, "/repo/one", "/repo/one")).toBe(false);
+    expect(snapshotRequestIsCurrent(2, 2, "/repo/one", "/repo/two")).toBe(false);
   });
 
   it("clears only the shared banner for the resolved detail error", () => {

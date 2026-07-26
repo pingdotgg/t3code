@@ -151,6 +151,15 @@ export function snapshotIsPendingForCwd(
   return cwd != null && snapshot === null && settledSnapshotCwd !== cwd;
 }
 
+export function snapshotRequestIsCurrent(
+  requestId: number,
+  latestRequestId: number,
+  requestedCwd: string,
+  currentCwd: string | null | undefined,
+): boolean {
+  return requestId === latestRequestId && requestedCwd === currentCwd;
+}
+
 export function clearResolvedDetailError(
   currentError: string | null,
   resolvedDetailError: string | null,

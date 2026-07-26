@@ -10,7 +10,7 @@ import type {
 import { EnvironmentId } from "@t3tools/contracts";
 import { panelBranchOperationCwd, panelBranchSyncState } from "@t3tools/shared/sourceControl";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Alert, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -35,6 +35,7 @@ import {
   selectedFileStats,
   snapshotForCwd,
   snapshotIsPendingForCwd,
+  snapshotRequestIsCurrent,
   stashIdentityKey,
   workingTreeDiffIsStaged,
   workingTreeEnrichmentRequests,
@@ -125,8 +126,13 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
   const [publishRequest, setPublishRequest] = useState<PublishRequest | null>(null);
   const initiallyFetchedCwds = useRef(new Set<string>());
   const snapshotRequestId = useRef(0);
+  const selectedThreadCwdRef = useRef(selectedThreadCwd);
   const snapshotRevision = useRef(0);
   const snapshotFingerprint = useRef<string | null>(null);
+
+  useLayoutEffect(() => {
+    selectedThreadCwdRef.current = selectedThreadCwd;
+  }, [selectedThreadCwd]);
 
   useEffect(() => {
     expandedRowsRef.current = expandedRows;
@@ -168,9 +174,11 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
         readonly refresh?: "full" | "working-tree";
       } = {},
     ) => {
+      const requestCwd = selectedThreadCwd;
+      if (requestCwd !== selectedThreadCwdRef.current) return;
       const requestId = ++snapshotRequestId.current;
       setRefreshing(options.pull === true);
-      if (!selectedThreadCwd) {
+      if (!requestCwd) {
         if (requestId === snapshotRequestId.current) {
           setSettledSnapshotCwd(null);
           setLoading(false);
@@ -178,28 +186,46 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
         }
         return;
       }
-      setSettledSnapshotCwd((current) => (current === selectedThreadCwd ? null : current));
+      setSettledSnapshotCwd((current) => (current === requestCwd ? null : current));
       try {
         const rawSnapshot = await api.snapshot({
-          cwd: selectedThreadCwd,
+          cwd: requestCwd,
           refresh: options.refresh ?? "full",
         });
-        if (requestId !== snapshotRequestId.current) return;
+        if (
+          !snapshotRequestIsCurrent(
+            requestId,
+            snapshotRequestId.current,
+            requestCwd,
+            selectedThreadCwdRef.current,
+          )
+        ) {
+          return;
+        }
         const enrichmentResults = await Promise.allSettled(
-          workingTreeEnrichmentRequests(rawSnapshot, selectedThreadCwd).map(
+          workingTreeEnrichmentRequests(rawSnapshot, requestCwd).map(
             async (request) => [request.cwd, await api.enrichWorkingTreeFiles(request)] as const,
           ),
         );
         const enrichmentEntries = enrichmentResults.flatMap((result) =>
           result.status === "fulfilled" ? [result.value] : [],
         );
-        if (requestId !== snapshotRequestId.current) return;
+        if (
+          !snapshotRequestIsCurrent(
+            requestId,
+            snapshotRequestId.current,
+            requestCwd,
+            selectedThreadCwdRef.current,
+          )
+        ) {
+          return;
+        }
         const next = applyWorkingTreeEnrichments(
           rawSnapshot,
-          selectedThreadCwd,
+          requestCwd,
           new Map(enrichmentEntries),
         );
-        const nextFingerprint = `${selectedThreadCwd}\0${JSON.stringify(next)}`;
+        const nextFingerprint = `${requestCwd}\0${JSON.stringify(next)}`;
         if (snapshotFingerprint.current !== nextFingerprint) {
           snapshotFingerprint.current = nextFingerprint;
           snapshotRevision.current += 1;
@@ -219,19 +245,31 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
               ),
           );
         }
-        setScopedSnapshot({ cwd: selectedThreadCwd, snapshot: next });
-        syncSelections(next, selectedThreadCwd);
+        setScopedSnapshot({ cwd: requestCwd, snapshot: next });
+        syncSelections(next, requestCwd);
         setError(null);
       } catch (cause) {
         if (
-          requestId === snapshotRequestId.current &&
+          snapshotRequestIsCurrent(
+            requestId,
+            snapshotRequestId.current,
+            requestCwd,
+            selectedThreadCwdRef.current,
+          ) &&
           !(cause instanceof VersionControlCommandInterrupted)
         ) {
           setError(errorMessage(cause));
         }
       } finally {
-        if (requestId === snapshotRequestId.current) {
-          setSettledSnapshotCwd(selectedThreadCwd);
+        if (
+          snapshotRequestIsCurrent(
+            requestId,
+            snapshotRequestId.current,
+            requestCwd,
+            selectedThreadCwdRef.current,
+          )
+        ) {
+          setSettledSnapshotCwd(requestCwd);
           setLoading(false);
           setRefreshing(false);
         }
