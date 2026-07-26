@@ -55,12 +55,43 @@ struct WindowSizingTests {
 
     @Test("the maximum probe passes the content's stretch through")
     func maximumProbeUsesContent() {
+        // Deliberately NOT clamped: this branch becomes the window's maximum
+        // size. Capping it to the floor would forbid the user from resizing
+        // the window larger, which is not what the clamp is for — window
+        // growth came from the minimum, not the maximum.
         let unbounded = CGFloat.infinity
         let size = resolved(
             .infinity,
             natural: CGSize(width: unbounded, height: unbounded))
         #expect(size.width == unbounded)
         #expect(size.height == unbounded)
+    }
+
+    @Test("content that outgrows the floor cannot raise the reported minimum")
+    func growingContentDoesNotRaiseTheMinimum() {
+        // The whole point, stated as a property: whatever the content's ideal
+        // does — the git strip measured 472pt growing to 1121pt when a long
+        // branch name, a draft PR, conflicts, and review counts landed — the
+        // minimum probe keeps answering the floor, and that is the number
+        // AppKit enforces by growing the window.
+        for naturalWidth in [472.0, 938.0, 1121.0, 4000.0] {
+            let natural = CGSize(width: naturalWidth, height: 1412)
+            #expect(resolved(.zero, natural: natural).width == floorWidth)
+            #expect(
+                resolved(ProposedViewSize(width: 100, height: 100), natural: natural).width
+                    == floorWidth)
+        }
+    }
+
+    @Test("the ideal reports the content's own size, floored")
+    func idealIsNotCapped() {
+        // Also deliberate: the ideal is what NavigationSplitView distributes
+        // column width from. Capping it would understate the detail column
+        // against the sidebar and inspector, and it is not a growth path —
+        // AppKit sizes the window from contentMinSize, verified at runtime by
+        // the `window-size` probe's content-growth check.
+        let natural = CGSize(width: 1121, height: 400)
+        #expect(resolved(ProposedViewSize(width: nil, height: nil), natural: natural).width == 1121)
     }
 
     @Test("mixed proposals resolve each axis independently")

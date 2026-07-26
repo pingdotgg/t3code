@@ -834,9 +834,109 @@
             }
 
             await probeGitStripAnchor(multi: multi, dir: dir, window: window)
+            await probeContentGrowthDoesNotResizeWindow(
+                multi: multi, dir: dir, window: window, log: log)
 
             snapshot("window-size-final", window: window, dir: dir)
             NSApp.terminate(nil)
+        }
+
+        /// The regression this whole change exists to prevent: repository state
+        /// growing the git strip must not move the window. Shrinks the window
+        /// to its minimum, then injects a deliberately oversized VCS status (a
+        /// very long branch name, five-figure diff counts, a draft PR with
+        /// conflicts and review comments) and checks the frame, the AppKit
+        /// minimum, and the AppKit maximum against the values from before.
+        private static func probeContentGrowthDoesNotResizeWindow(
+            multi: MultiDeviceModel,
+            dir: String,
+            window: NSWindow,
+            log: (String) -> Void
+        ) async {
+            let model = multi.local
+            guard let mock = model.backendForShutdown as? MockBackend else {
+                print("UIProbe: content-growth skipped (live backend run)")
+                return
+            }
+            guard let threadID = model.selectedThreadID else {
+                print("UIProbe: content-growth no selected thread")
+                return
+            }
+
+            // Sit at the window minimum: the state where AppKit used to grow
+            // the window the moment the content wanted more room.
+            window.setContentSize(NSSize(width: 1, height: 1))
+            try? await Task.sleep(for: .seconds(1.5))
+            let frameBefore = window.frame
+            let minBefore = window.contentMinSize
+            let maxBefore = window.contentMaxSize
+            let stripBefore = UIProbeGitStrip.metrics(for: threadID)?.contentWidth ?? 0
+            log("content-growth-before")
+            print(
+                "UIProbe: content-growth maxBefore="
+                    + "\(Int(min(maxBefore.width, 99999)))x\(Int(min(maxBefore.height, 99999))) "
+                    + "stripContent=\(Int(stripBefore))")
+
+            UIProbeGitStrip.reset()
+            await mock.injectVcsStatus(
+                threadID: threadID,
+                status: VcsStatus(
+                    isRepo: true,
+                    branch: "sergecode/a-deliberately-enormous-branch-name-that-will-not-fit-anywhere",
+                    isDefaultBranch: false,
+                    changedFileCount: 12345,
+                    insertions: 67890,
+                    deletions: 54321,
+                    aheadCount: 999,
+                    behindCount: 888,
+                    hasUpstream: true,
+                    hasPrimaryRemote: true,
+                    prNumber: 26777,
+                    prTitle: "A pull request whose title is also far too long for the header band",
+                    prURL: "https://github.com/SergeSerb2/SergeCode/pull/26777",
+                    prState: .open,
+                    isDraftPR: true,
+                    unresolvedReviewThreadCount: 4321,
+                    prMergeStateStatus: "dirty"))
+            try? await mock.refreshVcsStatus(threadID: threadID)
+            try? await Task.sleep(for: .seconds(2.5))
+
+            let frameAfter = window.frame
+            let minAfter = window.contentMinSize
+            let stripAfter = UIProbeGitStrip.metrics(for: threadID)?.contentWidth ?? 0
+            log("content-growth-after")
+            print("UIProbe: content-growth stripContent=\(Int(stripAfter))")
+
+            var failures: [String] = []
+            if stripAfter <= stripBefore {
+                failures.append(
+                    "strip did not grow (\(Int(stripBefore)) -> \(Int(stripAfter))); "
+                        + "the check proves nothing")
+            }
+            if frameAfter.size != frameBefore.size {
+                failures.append(
+                    "window resized \(Int(frameBefore.width))x\(Int(frameBefore.height)) -> "
+                        + "\(Int(frameAfter.width))x\(Int(frameAfter.height))")
+            }
+            if minAfter != minBefore {
+                failures.append(
+                    "window minimum moved \(Int(minBefore.width)) -> \(Int(minAfter.width))")
+            }
+            if maxBefore.width < 10000 || maxBefore.height < 10000 {
+                failures.append(
+                    "window maximum is capped at "
+                        + "\(Int(maxBefore.width))x\(Int(maxBefore.height)); resizing is blocked")
+            }
+            if failures.isEmpty {
+                print(
+                    "UIProbe: content-growth OK strip \(Int(stripBefore)) -> \(Int(stripAfter))pt, "
+                        + "window and minimum unchanged")
+            } else {
+                for failure in failures {
+                    print("UIProbe: content-growth FAIL \(failure)")
+                }
+            }
+            snapshot("window-size-content-growth", window: window, dir: dir)
         }
 
         /// Checks that the chat header's git strip starts at its trailing edge
