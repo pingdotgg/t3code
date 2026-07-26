@@ -2892,12 +2892,12 @@ describe("ProviderRuntimeIngestion", () => {
     expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
   });
 
-  it("applies provider thread.metadata.updated when thread title is the default", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
+  effectIt.effect("applies provider thread.metadata.updated when thread title is the default", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
-      harness.engine.dispatch({
+      yield* harness.engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make("cmd-thread-create-default"),
         threadId: ThreadId.make("thread-default"),
@@ -2912,76 +2912,82 @@ describe("ProviderRuntimeIngestion", () => {
         branch: null,
         worktreePath: null,
         createdAt: now,
+      });
+
+      harness.emit({
+        type: "thread.metadata.updated",
+        eventId: asEventId("evt-thread-metadata-default"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-default"),
+        payload: {
+          name: "Provider default title",
+          metadata: { source: "provider" },
+        },
+      });
+
+      yield* Effect.promise(() => harness.drain());
+
+      const thread = yield* Effect.promise(() =>
+        waitForThread(
+          harness.readModel,
+          (entry) => entry.title === "Provider default title",
+          2000,
+          asThreadId("thread-default"),
+        ),
+      );
+
+      expect(thread.title).toBe("Provider default title");
+    }),
+  );
+
+  effectIt.effect(
+    "rejects provider thread.metadata.updated when thread title is already customized",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-thread-custom-title"),
+          threadId: ThreadId.make("thread-1"),
+          title: "My custom title",
+        });
+
+        harness.emit({
+          type: "thread.metadata.updated",
+          eventId: asEventId("evt-thread-metadata-custom"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: now,
+          threadId: asThreadId("thread-1"),
+          payload: {
+            name: "Provider override attempt",
+            metadata: { source: "provider" },
+          },
+        });
+
+        yield* Effect.promise(() => harness.drain());
+
+        yield* Effect.promise(() =>
+          waitForThread(
+            harness.readModel,
+            (entry) => entry.id === "thread-1" && entry.title === "My custom title",
+          ),
+        );
+
+        const readModel = yield* Effect.promise(() => harness.readModel());
+        const thread = readModel.threads.find((entry) => entry.id === "thread-1");
+        expect(thread?.title).toBe("My custom title");
       }),
-    );
+  );
 
-    harness.emit({
-      type: "thread.metadata.updated",
-      eventId: asEventId("evt-thread-metadata-default"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-default"),
-      payload: {
-        name: "Provider default title",
-        metadata: { source: "provider" },
-      },
-    });
+  effectIt.effect("skips provider thread.metadata.updated when payload.name is missing", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
 
-    await harness.drain();
-
-    const thread = await waitForThread(
-      harness.readModel,
-      (entry) => entry.title === "Provider default title",
-      2000,
-      asThreadId("thread-default"),
-    );
-
-    expect(thread.title).toBe("Provider default title");
-  });
-
-  it("rejects provider thread.metadata.updated when thread title is already customized", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-custom-title"),
-        threadId: ThreadId.make("thread-1"),
-        title: "My custom title",
-      }),
-    );
-
-    harness.emit({
-      type: "thread.metadata.updated",
-      eventId: asEventId("evt-thread-metadata-custom"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      payload: {
-        name: "Provider override attempt",
-        metadata: { source: "provider" },
-      },
-    });
-
-    await harness.drain();
-
-    await waitForThread(
-      harness.readModel,
-      (entry) => entry.id === "thread-1" && entry.title === "My custom title",
-    );
-
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === "thread-1");
-    expect(thread?.title).toBe("My custom title");
-  });
-
-  it("skips provider thread.metadata.updated when payload.name is missing", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
+      yield* harness.engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make("cmd-thread-create-no-name"),
         threadId: ThreadId.make("thread-no-name"),
@@ -2996,31 +3002,31 @@ describe("ProviderRuntimeIngestion", () => {
         branch: null,
         worktreePath: null,
         createdAt: now,
-      }),
-    );
+      });
 
-    harness.emit({
-      type: "thread.metadata.updated",
-      eventId: asEventId("evt-thread-metadata-no-name"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-no-name"),
-      payload: {},
-    });
+      harness.emit({
+        type: "thread.metadata.updated",
+        eventId: asEventId("evt-thread-metadata-no-name"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-no-name"),
+        payload: {},
+      });
 
-    await harness.drain();
+      yield* Effect.promise(() => harness.drain());
 
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === "thread-no-name");
-    expect(thread?.title).toBe("New thread");
-  });
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === "thread-no-name");
+      expect(thread?.title).toBe("New thread");
+    }),
+  );
 
-  it("skips provider thread.metadata.updated when payload.name is empty string", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
+  effectIt.effect("skips provider thread.metadata.updated when payload.name is empty string", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
-      harness.engine.dispatch({
+      yield* harness.engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make("cmd-thread-create-empty"),
         threadId: ThreadId.make("thread-empty-name"),
@@ -3035,67 +3041,69 @@ describe("ProviderRuntimeIngestion", () => {
         branch: null,
         worktreePath: null,
         createdAt: now,
-      }),
-    );
+      });
 
-    harness.emit({
-      type: "thread.metadata.updated",
-      eventId: asEventId("evt-thread-metadata-empty"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-empty-name"),
-      payload: {
-        name: "",
-      },
-    });
-
-    await harness.drain();
-
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === "thread-empty-name");
-    expect(thread?.title).toBe("New thread");
-  });
-
-  it("skips provider thread.metadata.updated when payload.name sanitizes to empty", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-create-whitespace"),
-        threadId: ThreadId.make("thread-whitespace-name"),
-        projectId: asProjectId("project-1"),
-        title: "New thread",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
+      harness.emit({
+        type: "thread.metadata.updated",
+        eventId: asEventId("evt-thread-metadata-empty"),
+        provider: ProviderDriverKind.make("codex"),
         createdAt: now,
+        threadId: asThreadId("thread-empty-name"),
+        payload: {
+          name: "",
+        },
+      });
+
+      yield* Effect.promise(() => harness.drain());
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === "thread-empty-name");
+      expect(thread?.title).toBe("New thread");
+    }),
+  );
+
+  effectIt.effect(
+    "skips provider thread.metadata.updated when payload.name sanitizes to empty",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-create-whitespace"),
+          threadId: ThreadId.make("thread-whitespace-name"),
+          projectId: asProjectId("project-1"),
+          title: "New thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        });
+
+        harness.emit({
+          type: "thread.metadata.updated",
+          eventId: asEventId("evt-thread-metadata-whitespace"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: now,
+          threadId: asThreadId("thread-whitespace-name"),
+          payload: {
+            name: "   ",
+          },
+        });
+
+        yield* Effect.promise(() => harness.drain());
+
+        const readModel = yield* Effect.promise(() => harness.readModel());
+        const thread = readModel.threads.find((entry) => entry.id === "thread-whitespace-name");
+        expect(thread?.title).toBe("New thread");
       }),
-    );
-
-    harness.emit({
-      type: "thread.metadata.updated",
-      eventId: asEventId("evt-thread-metadata-whitespace"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-whitespace-name"),
-      payload: {
-        name: "   ",
-      },
-    });
-
-    await harness.drain();
-
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === "thread-whitespace-name");
-    expect(thread?.title).toBe("New thread");
-  });
+  );
 
   it("projects context window updates into normalized thread activities", async () => {
     const harness = await createHarness();
