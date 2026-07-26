@@ -44,6 +44,7 @@ import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { TerminalSurface } from "./NativeTerminalSurface";
+import { TerminalLinkBar } from "./TerminalLinkBar";
 import { getPierreTerminalTheme } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
 import {
@@ -1217,6 +1218,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           />
         ) : (
           <>
+            <TerminalLinkBar buffer={terminal.buffer} theme={terminalTheme} />
             <View className="flex-1" style={{ paddingBottom: terminalBottomInset }}>
               <TerminalSurface
                 autoFocus={!SHOWCASE_ENABLED}

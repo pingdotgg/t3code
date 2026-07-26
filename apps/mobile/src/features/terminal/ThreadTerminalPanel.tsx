@@ -8,6 +8,7 @@ import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAttachedTerminalSession } from "../../state/use-terminal-session";
 import { TerminalSurface } from "./NativeTerminalSurface";
+import { TerminalLinkBar } from "./TerminalLinkBar";
 import { hasNativeTerminalSurface } from "./nativeTerminalModule";
 import {
   buildThreadTerminalAttachInput,
@@ -238,6 +239,7 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
           </Pressable>
         </View>
       </View>
+      <TerminalLinkBar buffer={terminal.buffer} />
       <TerminalSurface
         terminalKey={terminalKey}
         buffer={terminal.buffer}
