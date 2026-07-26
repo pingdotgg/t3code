@@ -597,6 +597,10 @@ private struct SidebarCommandBar: View {
             .padding(.horizontal, 8)
             .frame(height: 28)
             .background(.quaternary.opacity(0.7), in: RoundedRectangle(cornerRadius: 7))
+            // Search wins space over the project/machine filter labels (they
+            // truncate first) so the close button's 28pt doesn't squeeze the
+            // field at min/ideal sidebar widths.
+            .layoutPriority(1)
 
             Button {
                 isProjectScopePresented.toggle()
