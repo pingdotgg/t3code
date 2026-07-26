@@ -707,8 +707,24 @@ public actor LiveBackend: BackendService {
                 await self.failSnapshotWaiters(threadID: threadID, error: error)
                 await self.failRevertWaiters(threadID: threadID, error: error)
             }
+            // A single stream can die on its own (a per-item decode failure
+            // fails only that request id while the socket stays healthy), and
+            // `timeline(threadID:)` refuses to re-subscribe while the registry
+            // still holds this now-finished task — the chat would freeze for
+            // good. Deregister so the next timeline() re-subscribes.
+            await self.clearThreadSubscriptionIfSelfOwned(threadID: threadID)
         }
         threadSubscriptions[threadID] = task
+    }
+
+    /// Every replacement/teardown path cancels the task before touching the
+    /// registry, so a task still uncancelled once it reaches the actor is the
+    /// sole owner of this slot and may clear it. Checking after the actor hop
+    /// (not before) is what closes the race against a replacement subscription
+    /// registered while this body was suspended.
+    private func clearThreadSubscriptionIfSelfOwned(threadID: String) {
+        guard !Task.isCancelled else { return }
+        threadSubscriptions[threadID] = nil
     }
 
     private func cancelAllThreadSubscriptions() {
@@ -836,6 +852,7 @@ public actor LiveBackend: BackendService {
             task.cancel()
         }
         vcsSubscriptions.removeAll()
+        vcsRetryAttempts.removeAll()
     }
 
     private func handleThreadItem(threadID: String, item: OrchestrationThreadStreamItem) {
@@ -1015,6 +1032,14 @@ public actor LiveBackend: BackendService {
             // are consumed into dedicated events, not generic timeline rows.
             if consumeSpecialActivity(activity, threadID: threadID, at: at, appendToTimeline: true) {
                 return
+            }
+            // A failed revert is the server's terminal answer to
+            // `thread.checkpoint.revert`: `thread.reverted` will never arrive,
+            // so release the waiter here. No `return` — the error row still
+            // belongs in the transcript.
+            if activity.kind == "checkpoint.revert.failed" {
+                failRevertWaiters(
+                    threadID: threadID, error: LiveBackendError.revertFailed(activity.summary))
             }
             switch activity.kind {
             case ActivityKind.approvalRequested:
@@ -1502,6 +1527,7 @@ public actor LiveBackend: BackendService {
         clearVcsSubscription(threadID: threadID)
         vcsLocal[threadID] = nil
         vcsRemote[threadID] = nil
+        vcsRetryAttempts[threadID] = nil
     }
 
     /// Full teardown for a thread that no longer exists server-side (removed
@@ -1530,6 +1556,7 @@ public actor LiveBackend: BackendService {
         // Checkpoint list + diff turn cursor.
         checkpointsByThread[threadID] = nil
         currentTurnCount[threadID] = nil
+        revertGeneration[threadID] = nil
 
         // Route maps: drop every entry that dispatches to this thread so
         // stale ids can't be resolved after the thread is gone.
@@ -2101,6 +2128,7 @@ public actor LiveBackend: BackendService {
                     await self.applyRevertProjection(threadID: threadID, turnCount: turnCount)
                     await self.emitOrdered(
                         threadID: threadID, event: .diffInvalidated(threadID: threadID))
+                    await self.scheduleRevertWaiterTimeout(threadID: threadID)
                 } catch {
                     await self.failRevertWaiters(threadID: threadID, error: error)
                 }
@@ -2108,8 +2136,41 @@ public actor LiveBackend: BackendService {
         }
     }
 
+    private static let revertEventTimeout: Duration = .seconds(20)
+
+    /// Bumped every time a thread's waiter list is drained. A timeout armed for
+    /// one revert must not fail the waiters of a later one: editing two
+    /// messages within the timeout window is ordinary use, and the second
+    /// revert would otherwise inherit the first's expiry.
+    private var revertGeneration: [String: Int] = [:]
+
+    /// Backstop for a revert the server accepted but never finished announcing
+    /// (`thread.reverted` never arrives). Failing — rather than resolving — is
+    /// deliberate: edit-resend would otherwise send the replacement message on
+    /// top of an un-reverted thread. `failRevertWaiters` removes the entry, so
+    /// a late `thread.reverted` is a harmless no-op.
+    private func scheduleRevertWaiterTimeout(threadID: String) {
+        guard !(revertWaiters[threadID]?.isEmpty ?? true) else { return }
+        let generation = revertGeneration[threadID] ?? 0
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.revertEventTimeout)
+            await self?.failRevertWaitersIfCurrent(
+                threadID: threadID,
+                generation: generation,
+                error: LiveBackendError.revertFailed(
+                    "Timed out waiting for the checkpoint revert to complete."))
+        }
+    }
+
+    private func failRevertWaitersIfCurrent(threadID: String, generation: Int, error: Error) {
+        guard (revertGeneration[threadID] ?? 0) == generation else { return }
+        failRevertWaiters(threadID: threadID, error: error)
+    }
+
     private func resolveRevertWaiters(threadID: String) {
         let waiters = revertWaiters.removeValue(forKey: threadID) ?? []
+        guard !waiters.isEmpty else { return }
+        revertGeneration[threadID, default: 0] += 1
         for waiter in waiters {
             waiter.resume()
         }
@@ -2117,13 +2178,16 @@ public actor LiveBackend: BackendService {
 
     private func failRevertWaiters(threadID: String, error: Error) {
         let waiters = revertWaiters.removeValue(forKey: threadID) ?? []
+        guard !waiters.isEmpty else { return }
+        revertGeneration[threadID, default: 0] += 1
         for waiter in waiters {
             waiter.resume(throwing: error)
         }
     }
 
     private func failAllRevertWaiters(error: Error) {
-        for waiters in revertWaiters.values {
+        for (threadID, waiters) in revertWaiters {
+            revertGeneration[threadID, default: 0] += 1
             for waiter in waiters {
                 waiter.resume(throwing: error)
             }
@@ -2219,6 +2283,10 @@ public actor LiveBackend: BackendService {
     /// The cwd each live subscription is watching — compared against the
     /// thread's current cwd to notice a worktree switching underneath it.
     private var vcsWatchedCwd: [String: String] = [:]
+    /// Consecutive failed re-arms per thread, so a stream that keeps dying
+    /// (worktree removed, persistent non-repo state) backs off instead of
+    /// spinning. Reset by the first event of a healthy stream.
+    private var vcsRetryAttempts: [String: Int] = [:]
     /// Last combined local+remote projection per thread.
     private var vcsLocal: [String: VcsStatusLocal] = [:]
     private var vcsRemote: [String: VcsStatusRemote] = [:]
@@ -2233,6 +2301,7 @@ public actor LiveBackend: BackendService {
         vcsWatchedCwd[threadID] = cwd
         let task = Task { [weak self] in
             guard let self else { return }
+            var streamFailed = false
             do {
                 let stream = await client.subscribeVcsStatus(cwd: cwd)
                 for try await event in stream {
@@ -2241,6 +2310,7 @@ public actor LiveBackend: BackendService {
             } catch {
                 // Stream ended (socket drop or non-repo error): forget the
                 // subscription so the next watch call re-establishes it.
+                streamFailed = true
             }
             // Only forget the registration when the stream died on its own.
             // Every replacement/teardown path (restartVcsWatchIfStale,
@@ -2250,9 +2320,43 @@ public actor LiveBackend: BackendService {
             // NEWER watch's live registration and orphan its task.
             if !Task.isCancelled {
                 await self.clearVcsSubscription(threadID: threadID)
+                // A per-stream git failure kills only this feed while the
+                // socket stays healthy, so nothing else ever re-arms it and
+                // VcsToolbar keeps rendering the last projection as if live.
+                if streamFailed {
+                    await self.scheduleVcsWatchRetry(threadID: threadID)
+                }
             }
         }
         vcsSubscriptions[threadID] = task
+    }
+
+    private static let maxVcsWatchRetries = 4
+
+    private func scheduleVcsWatchRetry(threadID: String) {
+        guard watchedVcsThreadIDs.contains(threadID), currentClient != nil else { return }
+        let attempt = vcsRetryAttempts[threadID] ?? 0
+        guard attempt < Self.maxVcsWatchRetries else { return }
+        vcsRetryAttempts[threadID] = attempt + 1
+        let delay = ServerProcess.backoffDelay(forAttempt: attempt)
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.retryVcsWatch(threadID: threadID)
+        }
+    }
+
+    private func retryVcsWatch(threadID: String) async {
+        guard watchedVcsThreadIDs.contains(threadID), currentClient != nil,
+            vcsSubscriptions[threadID] == nil
+        else { return }
+        try? await watchVcsStatus(threadID: threadID)
+        // Even when the watch can't be re-established (thread has no repo /
+        // no worktree), a one-shot refresh replaces the frozen projection so
+        // the toolbar is never left claiming stale branch and PR state.
+        if vcsSubscriptions[threadID] == nil {
+            try? await refreshVcsStatus(threadID: threadID)
+        }
     }
 
     /// One-shot status fetch without registering a persistent watch: the
@@ -2337,6 +2441,9 @@ public actor LiveBackend: BackendService {
     }
 
     private func applyVcsEvent(threadID: String, event: VcsStatusStreamEvent) {
+        // Any event proves the stream is healthy again, so the next failure
+        // gets a full retry budget rather than inheriting the old backoff.
+        vcsRetryAttempts[threadID] = nil
         switch event {
         case .snapshot(let local, let remote):
             vcsLocal[threadID] = local
@@ -2699,7 +2806,14 @@ public actor LiveBackend: BackendService {
     private func mirrorTimelineCache(threadID: String, event: BackendEvent) {
         switch event {
         case .timelineAppended(_, let item):
-            latestTimeline[threadID, default: []].upsertTimelineItem(item)
+            // `default: []` would fabricate a one-row "loaded" transcript for a
+            // thread no snapshot ever populated (mapThread emits subagent rows
+            // for unsubscribed archived/errored threads), and
+            // `timeline(threadID:)` hands any non-nil entry to the UI as the
+            // whole timeline. applyThreadSnapshot seeds the entry before any
+            // event, so every subscribed thread is already non-nil here.
+            guard latestTimeline[threadID] != nil else { return }
+            latestTimeline[threadID]?.upsertTimelineItem(item)
         case .timelineReset(_, let items):
             latestTimeline[threadID] = items
         case .assistantCompleted(_, let messageID, let markdown):
@@ -3396,6 +3510,9 @@ public enum LiveBackendError: Error, Sendable {
     /// `assets.createUrl` returned a relative URL that could not be joined
     /// to the server HTTP base.
     case invalidAssetURL
+    /// A checkpoint revert the server accepted never completed — either it
+    /// reported `checkpoint.revert.failed` or `thread.reverted` never arrived.
+    case revertFailed(String)
 }
 
 // MARK: - Unified diff parsing (getFullThreadDiff string -> [DiffFile])
@@ -3442,7 +3559,13 @@ enum UnifiedDiffParser {
             hunks = []
         }
 
-        for raw in diff.split(separator: "\n", omittingEmptySubsequences: false) {
+        // `git diff` output is newline-terminated, so the split yields a
+        // trailing empty element that would otherwise land in the last hunk as
+        // a phantom context row numbered one line past EOF.
+        var rawLines = diff.split(separator: "\n", omittingEmptySubsequences: false)
+        if rawLines.last?.isEmpty == true { rawLines.removeLast() }
+
+        for (index, raw) in rawLines.enumerated() {
             let line = String(raw)
             if line.hasPrefix("diff --git") {
                 flushFile()
@@ -3464,11 +3587,16 @@ enum UnifiedDiffParser {
                 // A binary change carries no textual hunks; flag it so the UI
                 // can show a distinct state instead of an empty text diff.
                 isBinary = true
-            } else if line.hasPrefix("--- ") {
+            } else if line.hasPrefix("--- "), index + 1 < rawLines.count,
+                rawLines[index + 1].hasPrefix("+++ ")
+            {
                 // A bare unified diff with no `diff --git` header: treat a `---`
                 // that arrives while we already have a file as a new file start.
+                // The `+++`/`---` adjacency check is what keeps a deleted source
+                // line that itself starts with `-- ` (SQL/Lua/Haskell comment)
+                // from being eaten as a file header mid-hunk.
                 if path != nil && hunkHeader != nil { flushFile() }
-            } else if line.hasPrefix("+++ ") {
+            } else if line.hasPrefix("+++ "), index > 0, rawLines[index - 1].hasPrefix("--- ") {
                 let candidate = stripPathPrefix(String(line.dropFirst(4)))
                 if candidate != "/dev/null" { path = candidate }
             } else if line.hasPrefix("@@") {
@@ -3544,7 +3672,11 @@ enum UnifiedDiffParser {
     private static func hunkStarts(from header: String) -> (old: Int, new: Int) {
         var old = 0
         var new = 0
-        let tokens = header.split(separator: " ")
+        // Stop at the closing `@@`: git appends an optional section heading
+        // whose tokens (`->`, `+=`, a lone `+`) parse to nil and would reset
+        // the already-correct starts to 0 on the last write.
+        let tokens = header.split(separator: " ").drop { $0.hasPrefix("@@") }
+            .prefix { !$0.hasPrefix("@@") }
         for token in tokens {
             if token.hasPrefix("-") {
                 old = Int(token.dropFirst().split(separator: ",").first ?? "") ?? 0
