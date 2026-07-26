@@ -859,14 +859,11 @@ private struct AvailabilityBadge: View {
 private extension ProviderKind {
     var cliCommand: String {
         switch self {
-        case .claude: "claude"
         case .claudeWork: "claude"
         case .claudex: "claudex"
-        case .claudeSynthero: "claude"
         case .codex: "codex"
         case .grok: "grok"
         case .kimi: "kimi"
-        case .fugu: "codex-fugu"
         case .legacyCursor: "cursor"
         }
     }

@@ -47,7 +47,7 @@ export const SUBAGENT_TASK_MAX_PROGRESS_LOG_ENTRIES = 200;
 /** Expanded log shows the tail; older entries are summarized above it. */
 export const SUBAGENT_TASK_MAX_VISIBLE_LOG_ENTRIES = 30;
 /** No progress for this long marks a running task as stalled. */
-export const SUBAGENT_TASK_STALLED_THRESHOLD_MS = 3 * 60 * 1000;
+export const SUBAGENT_TASK_STALLED_THRESHOLD_MS = 15 * 60 * 1000;
 
 export interface SubagentTaskThreadHealth {
   readonly stalled: boolean;

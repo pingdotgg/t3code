@@ -4,28 +4,25 @@ import Foundation
 // them. Keep UI code independent of wire-shape churn.
 
 public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable {
-    case claude, claudeWork, claudex, claudeSynthero, codex, grok, kimi, fugu
+    case claudeWork, claudex, codex, grok, kimi
     /// Decodes persisted threads created by the removed Cursor provider. This
     /// case is intentionally excluded from `allCases` so it is never offered
     /// for new sessions.
     case legacyCursor = "cursor"
 
     public static let allCases: [ProviderKind] = [
-        .claude, .claudeWork, .claudex, .claudeSynthero, .codex, .grok, .kimi, .fugu,
+        .claudeWork, .claudex, .codex, .grok, .kimi,
     ]
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
-        case .claude: "Claude Code"
         case .claudeWork: "Claude Work"
-        case .claudex: "Claudex"
-        case .claudeSynthero: "Claude Synthero"
+        case .claudex: "Claude Code"
         case .codex: "Codex"
         case .grok: "Grok"
         case .kimi: "Kimi"
-        case .fugu: "Fugu"
         case .legacyCursor: "Cursor (Unsupported)"
         }
     }
@@ -50,11 +47,13 @@ public struct Project: Identifiable, Hashable, Sendable {
 
 public enum ThreadStatus: String, Sendable {
     case idle, running, waiting, waitingApproval, waitingInput, backgroundWork, error, archived, settled
+    case done, reviewing, fixing, readyToMerge
 
     public var isSettled: Bool {
         switch self {
-        case .idle, .archived, .error, .settled: true
-        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork: false
+        case .idle, .archived, .error, .settled, .done, .readyToMerge: true
+        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork, .reviewing, .fixing:
+            false
         }
     }
 }

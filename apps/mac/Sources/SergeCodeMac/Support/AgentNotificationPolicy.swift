@@ -90,7 +90,7 @@ public enum AgentNotificationPolicy {
             switch next.status {
             case .error:
                 return .failed
-            case .idle, .settled:
+            case .idle, .settled, .done, .readyToMerge:
                 if isActivelyWorking(previous.status) {
                     return .finished
                 }
@@ -102,7 +102,7 @@ public enum AgentNotificationPolicy {
                 if previous.status != .waitingInput {
                     return .needsInput
                 }
-            case .running, .waiting, .backgroundWork, .archived:
+            case .running, .waiting, .backgroundWork, .archived, .reviewing, .fixing:
                 break
             }
         }
@@ -172,9 +172,10 @@ public enum AgentNotificationPolicy {
 
     public static func isActivelyWorking(_ status: ThreadStatus) -> Bool {
         switch status {
-        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork:
+        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork,
+            .reviewing, .fixing:
             return true
-        case .idle, .error, .archived, .settled:
+        case .idle, .error, .archived, .settled, .done, .readyToMerge:
             return false
         }
     }

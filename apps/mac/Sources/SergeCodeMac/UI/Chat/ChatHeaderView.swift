@@ -122,6 +122,10 @@ private struct StatusBadge: View {
         case .error: return "Error"
         case .archived: return "Archived"
         case .settled: return "Settled"
+        case .done: return "Done"
+        case .reviewing: return "Reviewing"
+        case .fixing: return "Fixing"
+        case .readyToMerge: return "Ready to merge"
         }
     }
 
@@ -137,6 +141,10 @@ private struct StatusBadge: View {
         case .error: return "xmark.octagon.fill"
         case .archived: return "archivebox.fill"
         case .settled: return "checkmark.circle"
+        case .done: return "checkmark"
+        case .reviewing: return "magnifyingglass"
+        case .fixing: return "wrench.and.screwdriver"
+        case .readyToMerge: return "checkmark.seal"
         }
     }
 
@@ -152,6 +160,10 @@ private struct StatusBadge: View {
         case .error: return .red
         case .archived: return .secondary
         case .settled: return .secondary
+        case .done: return .secondary
+        case .reviewing: return AlpineTheme.sky
+        case .fixing: return AlpineTheme.accent
+        case .readyToMerge: return AlpineTheme.lichen
         }
     }
 }

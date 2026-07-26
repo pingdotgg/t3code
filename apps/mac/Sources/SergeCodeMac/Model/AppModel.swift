@@ -1560,8 +1560,7 @@ public final class AppModel {
     /// Provider kinds that have at least one available provider instance with
     /// at least one selectable model. New-session entry points use this list
     /// instead of `ProviderKind.allCases` so unavailable/auth-required
-    /// providers such as an unconfigured Claude Synthero cannot be selected
-    /// and then fail with `noProviderForKind`.
+    /// providers cannot be selected and then fail with `noProviderForKind`.
     public var runnableProviderKinds: [ProviderKind] {
         let availableInstanceIDs = Set(
             providers
@@ -1577,7 +1576,7 @@ public final class AppModel {
     /// Provider kinds that exist in the current server provider list. This is
     /// intentionally broader than `runnableProviderKinds`: new-session pickers
     /// should still show configured but auth-required providers (for example
-    /// Claude Synthero before its token is entered) with a disabled action and
+    /// one whose token has not been entered yet) with a disabled action and
     /// a clear readiness hint instead of disappearing entirely.
     public var configuredProviderKinds: [ProviderKind] {
         ProviderKind.allCases.filter { kind in

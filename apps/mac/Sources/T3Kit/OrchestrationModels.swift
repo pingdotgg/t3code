@@ -639,12 +639,15 @@ public struct OrchestrationThread: Codable, Sendable {
     public var activities: [OrchestrationThreadActivity]
     public var checkpoints: [OrchestrationCheckpointSummary]
     public var session: OrchestrationSession?
+    /// Server-streamed auto-review lifecycle phase ("reviewing" | "fixing" |
+    /// "readyToMerge"); absent on older servers.
+    public var autoReviewPhase: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, projectId, title, modelSelection, runtimeMode, interactionMode,
             executorModelSelection, branch, worktreePath, parentThreadId, latestTurn, createdAt,
             updatedAt, archivedAt, deletedAt, messages, proposedPlans, activities, checkpoints,
-            session
+            session, autoReviewPhase
     }
 
     public init(from decoder: Decoder) throws {
@@ -672,6 +675,7 @@ public struct OrchestrationThread: Codable, Sendable {
         activities = try c.decode([OrchestrationThreadActivity].self, forKey: .activities)
         checkpoints = try c.decode([OrchestrationCheckpointSummary].self, forKey: .checkpoints)
         session = try c.decode(OrchestrationSession?.self, forKey: .session, default: nil)
+        autoReviewPhase = try c.decodeIfPresent(String.self, forKey: .autoReviewPhase)
     }
 }
 
@@ -731,12 +735,15 @@ public struct OrchestrationThreadShell: Codable, Sendable {
     public var hasPendingApprovals: Bool
     public var hasPendingUserInput: Bool
     public var hasActionableProposedPlan: Bool
+    /// Server-streamed auto-review lifecycle phase ("reviewing" | "fixing" |
+    /// "readyToMerge"); absent on older servers.
+    public var autoReviewPhase: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case id, projectId, title, modelSelection, runtimeMode, interactionMode,
             executorModelSelection, branch, worktreePath, parentThreadId, latestTurn, createdAt,
             updatedAt, archivedAt, settledOverride, settledAt, session, latestUserMessageAt,
-            hasPendingApprovals, hasPendingUserInput, hasActionableProposedPlan
+            hasPendingApprovals, hasPendingUserInput, hasActionableProposedPlan, autoReviewPhase
     }
 
     public init(from decoder: Decoder) throws {
@@ -764,6 +771,7 @@ public struct OrchestrationThreadShell: Codable, Sendable {
         hasPendingApprovals = try c.decode(Bool.self, forKey: .hasPendingApprovals)
         hasPendingUserInput = try c.decode(Bool.self, forKey: .hasPendingUserInput)
         hasActionableProposedPlan = try c.decode(Bool.self, forKey: .hasActionableProposedPlan)
+        autoReviewPhase = try c.decodeIfPresent(String.self, forKey: .autoReviewPhase)
     }
 }
 

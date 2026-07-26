@@ -77,6 +77,7 @@ export function applyThreadDetailEvent(
           settledOverride: null,
           settledAt: null,
           deletedAt: null,
+          autoReviewPhase: null,
           messages: [],
           proposedPlans: [],
           activities: [],

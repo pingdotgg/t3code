@@ -34,14 +34,14 @@ import T3Kit
 //
 // ── Mapping decisions (wire -> UI) — best-effort, documented, never silent ────
 //  * ProviderKind: derived from ServerProvider.driver by substring match
-//    (claude/claude-synthero/codex/cursor/grok/kimi/fugu), with exact instance
-//    mappings for separately selectable profiles such as `claude-work`.
+//    (claudex/codex/cursor/grok/kimi), with exact instance mappings for
+//    separately selectable profiles such as `claude-work`.
 //    Drivers with no ProviderKind equivalent are dropped from providers() —
 //    ProviderKind is a closed enum with no `.other`. See
 //    `providerKind(fromDriver:)` and `providerKind(for:)`.
 //  * A thread's ProviderKind is resolved from its modelSelection.instanceId via
 //    the ServerConfig provider table, falling back to session.providerName, then
-//    to `.claude`. Documented in `resolveProviderKind`.
+//    to `.claudex`. Documented in `resolveProviderKind`.
 //  * ThreadStatus is a projection of session.status + latestTurn.state +
 //    hasPendingApprovals + archivedAt + active subagent task count (see
 //    `mapStatus`); the shell subscription remains the source of truth for the
@@ -1918,7 +1918,7 @@ public actor LiveBackend: BackendService {
     }
 
     /// Effort-style select descriptors go by different ids per driver
-    /// (claudeAgent: "effort"; codex: "reasoningEffort").
+    /// ("effort" on Claude-family drivers; "reasoningEffort" on codex).
     private static let effortOptionIDs: Set<String> = ["effort", "reasoningEffort", "reasoning"]
     private static let serviceTierOptionID = "serviceTier"
 
@@ -2785,7 +2785,8 @@ public actor LiveBackend: BackendService {
             settledOverride: shell.settledOverride,
             hasPendingApprovals: shell.hasPendingApprovals,
             hasPendingUserInput: shell.hasPendingUserInput,
-            activeSubagentCount: activeSubagentCount)
+            activeSubagentCount: activeSubagentCount,
+            autoReviewPhase: shell.autoReviewPhase)
         let presentedStatus =
             status == .running
             && staleRunningTurnKeys[shell.id] == runningLivenessTurnKey(for: shell)
@@ -2851,12 +2852,14 @@ public actor LiveBackend: BackendService {
 
     private func mapStatus(
         session: OrchestrationSession?, latestTurn: OrchestrationLatestTurn?, archivedAt: String?,
-        settledOverride: String?, hasPendingApprovals: Bool, hasPendingUserInput: Bool = false, activeSubagentCount: Int
+        settledOverride: String?, hasPendingApprovals: Bool, hasPendingUserInput: Bool = false,
+        activeSubagentCount: Int, autoReviewPhase: String? = nil
     ) -> ThreadStatus {
         switch ThreadStatusProjection.project(
             session: session, latestTurn: latestTurn, archivedAt: archivedAt,
             settledOverride: settledOverride, hasPendingApprovals: hasPendingApprovals,
-            hasPendingUserInput: hasPendingUserInput, activeSubagentCount: activeSubagentCount)
+            hasPendingUserInput: hasPendingUserInput, activeSubagentCount: activeSubagentCount,
+            autoReviewPhase: autoReviewPhase)
         {
         case .idle: return .idle
         case .running: return .running
@@ -2867,6 +2870,10 @@ public actor LiveBackend: BackendService {
         case .error: return .error
         case .archived: return .archived
         case .settled: return .settled
+        case .done: return .done
+        case .reviewing: return .reviewing
+        case .fixing: return .fixing
+        case .readyToMerge: return .readyToMerge
         }
     }
 
@@ -3129,18 +3136,15 @@ public actor LiveBackend: BackendService {
         }
         // Fallback for a thread whose provider can't be resolved (e.g. its
         // instance is gone from the config, or an unmapped driver).
-        return .claude
+        return .claudex
     }
 
     private func providerKind(fromDriver driver: String) -> ProviderKind? {
         let lowered = driver.lowercased()
         if lowered.contains("claudex") { return .claudex }
-        if lowered.contains("synthero") { return .claudeSynthero }
-        if lowered.contains("claude") { return .claude }
         if lowered.contains("codex") { return .codex }
         if lowered.contains("grok") { return .grok }
         if lowered.contains("kimi") { return .kimi }
-        if lowered.contains("fugu") { return .fugu }
         if lowered.contains("cursor") { return .legacyCursor }
         return nil
     }
@@ -3148,8 +3152,8 @@ public actor LiveBackend: BackendService {
     private func providerKind(for provider: ServerProvider) -> ProviderKind? {
         let instanceId = provider.instanceId.lowercased()
         let displayName = provider.displayName?.lowercased() ?? ""
-        // Claude Work shares the claudeAgent driver with personal Claude, so
-        // preserve its instance identity before falling back to driver mapping.
+        // Claude Work's driver has no ProviderKind of its own, so preserve its
+        // instance identity before falling back to driver mapping.
         if instanceId == "claude-work" || displayName == "claude work" { return .claudeWork }
         if instanceId == "claudex" || displayName == "claudex" { return .claudex }
         return providerKind(fromDriver: provider.driver)

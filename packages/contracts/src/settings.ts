@@ -300,74 +300,6 @@ export const ClaudexSettings = makeProviderSettingsSchema(
 );
 export type ClaudexSettings = typeof ClaudexSettings.Type;
 
-export const ClaudeSyntheroSettings = makeProviderSettingsSchema(
-  {
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("claude").pipe(
-      Schema.annotateKey({
-        title: "Claude binary path",
-        description: "Path to the Claude Code binary used by this Synthero instance.",
-        providerSettingsForm: { placeholder: "claude", clearWhenEmpty: "omit" },
-      }),
-    ),
-    homePath: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("~/.claude-synthero")),
-      Schema.annotateKey({
-        title: "Claude HOME path",
-        description:
-          "Dedicated HOME used only for Claude Synthero. Keeps it separate from your normal Claude login and setup.",
-        providerSettingsForm: { placeholder: "~/.claude-synthero", clearWhenEmpty: "omit" },
-      }),
-    ),
-    baseURL: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("https://api.synterolink.com")),
-      Schema.annotateKey({
-        title: "Synthero base URL",
-        description: "Anthropic-compatible endpoint passed to Claude Code as ANTHROPIC_BASE_URL.",
-        providerSettingsForm: {
-          placeholder: "https://api.synterolink.com",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    authToken: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Synthero auth token",
-        description:
-          "Stored in plain text on disk. Leave blank to read SYNTHERO_AUTH_TOKEN or ANTHROPIC_AUTH_TOKEN from the provider environment.",
-        providerSettingsForm: {
-          control: "password",
-          placeholder: "sk-...",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    customModels: Schema.Array(Schema.String).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    launchArgs: Schema.String.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Launch arguments",
-        description: "Additional Claude Code CLI arguments passed on session start.",
-        providerSettingsForm: {
-          placeholder: "e.g. --chrome",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-  },
-  {
-    order: ["binaryPath", "homePath", "baseURL", "authToken", "launchArgs"],
-  },
-);
-export type ClaudeSyntheroSettings = typeof ClaudeSyntheroSettings.Type;
-
 export const GrokSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -421,52 +353,6 @@ export const KimiSettings = makeProviderSettingsSchema(
   },
 );
 export type KimiSettings = typeof KimiSettings.Type;
-
-/**
- * Sakana AI Fugu via the real OpenAI Codex binary + a dedicated CODEX_HOME.
- *
- * binaryPath defaults to `codex` (not `codex-fugu`): the Sakana wrapper is a
- * bash profile launcher (`codex -p fugu`) and rejects `--profile` for the
- * `app-server` subcommand SergeCode spawns. Fugu runs `codex app-server` with
- * CODEX_HOME pointed at a home that contains the Sakana provider config and
- * model catalog (bootstrapped on first use when missing).
- */
-export const FuguSettings = makeProviderSettingsSchema(
-  {
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("codex").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description:
-          "Path to the real OpenAI Codex binary. Do not use codex-fugu — that wrapper cannot run app-server.",
-        providerSettingsForm: { placeholder: "codex", clearWhenEmpty: "omit" },
-      }),
-    ),
-    homePath: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("~/.codex/fugu-home")),
-      Schema.annotateKey({
-        title: "CODEX_HOME path",
-        description:
-          "Dedicated Codex home for Fugu. SergeCode writes config.toml here on first use when missing.",
-        providerSettingsForm: {
-          placeholder: "~/.codex/fugu-home",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    customModels: Schema.Array(Schema.String).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: ["binaryPath", "homePath"],
-  },
-);
-export type FuguSettings = typeof FuguSettings.Type;
 
 export const ChatGptBrowserSettings = makeProviderSettingsSchema(
   {
@@ -666,12 +552,9 @@ export const ServerSettings = Schema.Struct({
   // is removed entirely.
   providers: Schema.Struct({
     codex: CodexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    "claude-synthero": ClaudeSyntheroSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     claudex: ClaudexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     kimi: KimiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    fugu: FuguSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     chatgpt: ChatGptBrowserSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
@@ -757,24 +640,6 @@ const CodexSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
-const ClaudeSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  homePath: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
-  launchArgs: Schema.optionalKey(TrimmedString),
-});
-
-const ClaudeSyntheroSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  homePath: Schema.optionalKey(TrimmedString),
-  baseURL: Schema.optionalKey(TrimmedString),
-  authToken: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
-  launchArgs: Schema.optionalKey(TrimmedString),
-});
-
 const ClaudexSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -792,13 +657,6 @@ const GrokSettingsPatch = Schema.Struct({
 const KimiSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
-});
-
-const FuguSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  homePath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
@@ -834,12 +692,9 @@ export const ServerSettingsPatch = Schema.Struct({
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
-      claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
-      "claude-synthero": Schema.optionalKey(ClaudeSyntheroSettingsPatch),
       claudex: Schema.optionalKey(ClaudexSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       kimi: Schema.optionalKey(KimiSettingsPatch),
-      fugu: Schema.optionalKey(FuguSettingsPatch),
       chatgpt: Schema.optionalKey(ChatGptBrowserSettingsPatch),
     }),
   ),

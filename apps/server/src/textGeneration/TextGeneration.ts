@@ -18,7 +18,7 @@ import {
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 
-export type TextGenerationProvider = "codex" | "claudeAgent" | "grok";
+export type TextGenerationProvider = "codex" | "claudex" | "grok";
 
 export interface CommitMessageGenerationInput {
   cwd: string;
