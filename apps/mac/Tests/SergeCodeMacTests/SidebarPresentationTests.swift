@@ -247,6 +247,41 @@ struct SidebarPresentationTests {
         #expect(split.settled.isEmpty)
     }
 
+    @Test("display tier is the row-motion key and agrees with the section order")
+    func displayTierMatchesSectionRanking() {
+        let suffix = UUID().uuidString
+        let projectID = "project-\(suffix)"
+        let pinned = makeThread(
+            id: "pinned-\(suffix)", projectID: projectID, status: .idle, at: 2)
+        let approval = makeThread(
+            id: "approval-\(suffix)", projectID: projectID, status: .waitingApproval, at: 4)
+        let running = makeThread(
+            id: "running-\(suffix)", projectID: projectID, status: .running, at: 6)
+        let recent = makeThread(
+            id: "recent-\(suffix)", projectID: projectID, status: .idle, at: 7)
+        let local = makeModel(
+            projects: [Project(id: projectID, name: "Project", path: "/project")],
+            threads: [recent, running, approval, pinned])
+        local.togglePinned(pinned)
+        defer { local.togglePinned(pinned) }
+        let groups = SidebarProjection.projectGroups(
+            in: MultiDeviceModel(local: local), scope: .all)
+
+        let split = SidebarProjection.groupThreads(groups[0])
+        let tiers = split.active.map { SidebarProjection.displayTier($0) }
+        let byThread = Dictionary(
+            uniqueKeysWithValues: zip(split.active.map(\.thread.id), tiers))
+
+        #expect(byThread[pinned.id] == 0)
+        #expect(byThread[approval.id] == 1)
+        #expect(byThread[running.id] == 2)
+        #expect(byThread[recent.id] == 3)
+        // The sidebar row's move trail fires on a tier change, so the tier has
+        // to stay monotonic down a rendered section — otherwise a row could
+        // flash without having moved.
+        #expect(tiers == tiers.sorted())
+    }
+
     @Test("group threads split settled sessions into the disclosure list")
     func groupThreadsSplitSettled() {
         let projectID = "project-settled"

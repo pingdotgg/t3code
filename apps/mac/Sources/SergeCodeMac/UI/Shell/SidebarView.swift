@@ -11,13 +11,23 @@ private enum SidebarRowContext {
 struct SidebarView: View {
     let multi: MultiDeviceModel
     let scenery: SceneryStore
-    /// Collapses the sidebar column. Lives here (not in the window toolbar)
-    /// so the close control sits inside the sidebar it acts on. No-op default
-    /// keeps standalone hosts (UIProbe) unchanged. `var`, not `let`: on current
-    /// Swift a `let` with an initial value is excluded from the memberwise
-    /// initializer entirely (SE-0242's defaulted-`let` parameters never
-    /// shipped — verified against the toolchain that builds this target).
-    var onToggleSidebar: () -> Void = {}
+
+    /// One project section as it will be rendered: the group plus its
+    /// active/settled split. Built once per body pass so the rows and the
+    /// signature that animates them can never disagree, and so the split is
+    /// not recomputed for each of them.
+    @MainActor
+    private struct RenderedSection: Identifiable {
+        let id: String
+        let group: SidebarProjectGroup
+        let isCollapsed: Bool
+        /// Nil exactly when `isCollapsed`. A collapsed section renders no
+        /// rows and contributes only its own id to the signature, so its
+        /// ranking is never computed — otherwise every project on every
+        /// paired machine would re-rank on each multi-device tick for
+        /// sections nobody can see.
+        let split: SidebarGroupThreads?
+    }
 
     private struct ProjectActionTarget {
         let model: AppModel
@@ -68,37 +78,63 @@ struct SidebarView: View {
         SidebarProjection.activeThreads(in: projectGroups)
     }
 
-    private var searchResults: [SidebarThreadItem] {
-        SidebarProjection.searchResults(in: projectGroups, query: searchText)
-    }
-
     private var isSearching: Bool {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
+        // Projected once per pass: `allProjectGroups` re-runs the whole
+        // cross-machine grouping, and the rows, the section splits and the
+        // order signature that animates them all read from the same snapshot.
+        let allGroups = allProjectGroups
+        let groups = projectScopeID == "all"
+            ? allGroups
+            : allGroups.filter { $0.id == projectScopeID }
+        let searching = isSearching
+        let results = searching
+            ? SidebarProjection.searchResults(in: groups, query: searchText)
+            : []
+        let sections = searching
+            ? []
+            : groups.map { group -> RenderedSection in
+                let isCollapsed = collapsedProjects.contains(group.id)
+                return RenderedSection(
+                    id: group.id,
+                    group: group,
+                    isCollapsed: isCollapsed,
+                    split: isCollapsed ? nil : SidebarProjection.groupThreads(group))
+            }
+
         VStack(spacing: 0) {
             SidebarCommandBar(
                 searchText: $searchText,
                 locations: locations,
                 scope: machineScope,
-                projectGroups: allProjectGroups,
+                projectGroups: allGroups,
                 projectScopeID: projectScopeID,
                 onSelectScope: setMachineScope,
-                onSelectProject: { projectScopeID = $0 },
-                onToggleSidebar: onToggleSidebar)
+                onSelectProject: { projectScopeID = $0 })
 
             List(selection: Binding(
                 get: { multi.selection },
                 set: { multi.selection = $0 }
             )) {
-                if isSearching {
-                    searchSection
+                if searching {
+                    searchSection(results)
                 } else {
-                    projectSections
+                    projectSections(sections)
                 }
             }
             .listStyle(.sidebar)
+            // Thread updates stream in from the backend outside any
+            // transaction, so a re-sort (a thread starts running, needs
+            // approval, settles) snapped rows to their new slots. The
+            // signature gives the list a transaction to move, insert and
+            // remove rows with, while tints, titles and badges keep their own
+            // finer-grained curves.
+            .animation(
+                Motion.structure,
+                value: rowSignature(sections: sections, results: results))
 
             Divider()
             SidebarConnectionsFooter(
@@ -201,21 +237,81 @@ struct SidebarView: View {
         }
     }
 
+    /// What the list animates on: which rows are on screen, in which section
+    /// and which bucket, at which sort tier — deliberately *not* their exact
+    /// order, and never their status, title or badge state.
+    ///
+    /// A full render-order fingerprint was too eager a key. Active rows also
+    /// re-sort within a tier by `updatedAt`, and a handful of chatty
+    /// streaming threads churn that permutation constantly; keying on it ran
+    /// `Motion.structure` across the whole list on every recency bump, which
+    /// reads as fidgeting rather than motion. A set changes for the moves
+    /// worth watching — a thread promoted or demoted between tiers, moved
+    /// into or out of the settled disclosure, arriving, or leaving — and
+    /// stays put for a pure recency swap, which then applies untransacted
+    /// exactly as it did before any of this animated.
+    ///
+    /// Project sections re-sort by recency for the same reason and are keyed
+    /// the same way: a section arriving or leaving animates, a section
+    /// overtaking another does not.
+    private func rowSignature(
+        sections: [RenderedSection],
+        results: [SidebarThreadItem]
+    ) -> Set<String> {
+        var signature: Set<String> = []
+        for item in results {
+            signature.insert("search/\(tieredRowKey(item))")
+        }
+        for section in sections {
+            signature.insert("section:\(section.id)")
+            guard let split = section.split else { continue }
+            for item in visibleActive(split, sectionID: section.id) {
+                signature.insert("\(section.id)/active/\(tieredRowKey(item))")
+            }
+            guard revealedSettled.contains(section.id) else { continue }
+            // The disclosure orders purely by how recently each thread
+            // settled, so membership alone decides whether it animates.
+            for item in split.settled {
+                signature.insert("\(section.id)/settled/\(rowKey(item))")
+            }
+        }
+        return signature
+    }
+
+    /// Stable across machines: the same thread id can appear twice when one
+    /// backend is paired as both the local server and a remote device.
+    private func rowKey(_ item: SidebarThreadItem) -> String {
+        "\(item.member.location.id.rawValue)/\(item.thread.id)"
+    }
+
+    private func tieredRowKey(_ item: SidebarThreadItem) -> String {
+        "\(rowKey(item))#\(SidebarProjection.displayTier(item))"
+    }
+
+    private func visibleActive(
+        _ split: SidebarGroupThreads,
+        sectionID: String
+    ) -> [SidebarThreadItem] {
+        expandedProjects.contains(sectionID)
+            ? split.active
+            : Array(split.active.prefix(Self.visibleThreadCap))
+    }
+
     @ViewBuilder
-    private var searchSection: some View {
+    private func searchSection(_ results: [SidebarThreadItem]) -> some View {
         Section {
-            if searchResults.isEmpty {
+            if results.isEmpty {
                 SidebarEmptyRow(
                     title: "No matching tasks",
                     systemImage: "magnifyingglass",
                     detail: "Try a task, project, branch, or machine name.")
             } else {
-                ForEach(searchResults, id: \.id) { item in
+                ForEach(results, id: \.id) { item in
                     threadRow(item, context: .search)
                 }
             }
         } header: {
-            SidebarSectionLabel(title: "Results", count: searchResults.count)
+            SidebarSectionLabel(title: "Results", count: results.count)
         }
     }
 
@@ -223,8 +319,8 @@ struct SidebarView: View {
     private static let visibleThreadCap = 5
 
     @ViewBuilder
-    private var projectSections: some View {
-        if projectGroups.isEmpty {
+    private func projectSections(_ sections: [RenderedSection]) -> some View {
+        if sections.isEmpty {
             Section {
                 SidebarEmptyRow(
                     title: "No projects yet",
@@ -234,17 +330,17 @@ struct SidebarView: View {
                 SidebarSectionLabel(title: "Projects")
             }
         } else {
-            ForEach(projectGroups) { group in
-                let isCollapsed = collapsedProjects.contains(group.id)
+            ForEach(sections) { section in
+                let group = section.group
                 Section {
-                    if !isCollapsed {
-                        projectSectionContent(group)
+                    if let split = section.split {
+                        projectSectionContent(section, split: split)
                     }
                 } header: {
                     ProjectSectionHeader(
                         group: group,
                         scenery: scenery,
-                        isCollapsed: isCollapsed,
+                        isCollapsed: section.isCollapsed,
                         machineBadge: machineBadge(for: group),
                         onToggleCollapse: { toggleProjectCollapse(group.id) },
                         onNewSession: createThread,
@@ -260,8 +356,11 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private func projectSectionContent(_ group: SidebarProjectGroup) -> some View {
-        let split = SidebarProjection.groupThreads(group)
+    private func projectSectionContent(
+        _ section: RenderedSection,
+        split: SidebarGroupThreads
+    ) -> some View {
+        let group = section.group
         let showMachine = group.members.count > 1
         if split.active.isEmpty && split.settled.isEmpty {
             SidebarEmptyRow(
@@ -269,13 +368,11 @@ struct SidebarView: View {
                 systemImage: "bubble.left",
                 detail: "Use + above to start a session in this project.")
         } else {
-            let isExpanded = expandedProjects.contains(group.id)
-            let visibleActive =
-                isExpanded ? split.active : Array(split.active.prefix(Self.visibleThreadCap))
-            ForEach(visibleActive, id: \.id) { item in
+            let visible = visibleActive(split, sectionID: section.id)
+            ForEach(visible, id: \.id) { item in
                 threadRow(item, context: .project(showMachine: showMachine))
             }
-            let hiddenCount = split.active.count - visibleActive.count
+            let hiddenCount = split.active.count - visible.count
             if hiddenCount > 0 {
                 Button {
                     Haptics.play(.toggle)
@@ -572,20 +669,12 @@ private struct SidebarCommandBar: View {
     let projectScopeID: String
     let onSelectScope: (SidebarMachineScope) -> Void
     let onSelectProject: (String) -> Void
-    let onToggleSidebar: () -> Void
 
     @UIState private var isScopePresented = false
     @UIState private var isProjectScopePresented = false
 
     var body: some View {
         HStack(spacing: 7) {
-            // Same 28×28 glass chrome as the window-toolbar controls; lives
-            // inside the sidebar it closes rather than in the detail header.
-            Button(action: onToggleSidebar) {
-                Label("Close Sidebar", systemImage: "sidebar.leading")
-            }
-            .buttonStyle(AlpineToolbarIconButtonStyle())
-            .help("Close Sidebar")
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.caption)
@@ -607,8 +696,8 @@ private struct SidebarCommandBar: View {
             .frame(height: 28)
             .background(.quaternary.opacity(0.7), in: RoundedRectangle(cornerRadius: 7))
             // Search wins space over the project/machine filter labels (they
-            // truncate first) so the close button's 28pt doesn't squeeze the
-            // field at min/ideal sidebar widths.
+            // truncate first) so the field stays usable at min/ideal sidebar
+            // widths.
             .layoutPriority(1)
 
             Button {
@@ -894,13 +983,19 @@ private struct ProjectSectionHeader: View {
                     .background(.quaternary, in: Capsule())
             }
             Spacer(minLength: 4)
+            // The counts tick as threads move between tiers below; the digit
+            // rolls and the badge swaps in place rather than popping.
             if group.attentionThreadCount > 0 {
                 Label("\(group.attentionThreadCount)", systemImage: "exclamationmark.circle.fill")
                     .foregroundStyle(AlpineTheme.clay)
+                    .contentTransition(.numericText())
+                    .transition(Motion.pop(from: .trailing))
                     .help("\(group.attentionThreadCount) need attention")
             } else if group.activeThreadCount > 0 {
                 Label("\(group.activeThreadCount)", systemImage: "bolt.fill")
                     .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+                    .transition(Motion.pop(from: .trailing))
                     .help("\(group.activeThreadCount) in progress")
             }
             HStack(spacing: 2) {
@@ -947,6 +1042,8 @@ private struct ProjectSectionHeader: View {
         .onHover { isHovering = $0 }
         .animation(Motion.structure, value: isCollapsed)
         .animation(Motion.feedback, value: isHovering)
+        .animation(Motion.ambient, value: group.attentionThreadCount)
+        .animation(Motion.ambient, value: group.activeThreadCount)
         .contextMenu {
             projectMenuContent
         }
@@ -1082,6 +1179,7 @@ private struct SidebarThreadRow: View {
                             .font(.system(size: 8, weight: .semibold))
                             .foregroundStyle(.tint)
                             .accessibilityLabel("Pinned")
+                            .transition(Motion.pop(from: .leading))
                     }
                 }
                 Text(secondaryText)
@@ -1097,10 +1195,18 @@ private struct SidebarThreadRow: View {
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(.quaternary, in: Capsule())
+                    .contentTransition(.numericText())
+                    .transition(Motion.pop(from: .trailing))
                     .help("Background agents and commands")
             }
         }
         .padding(.vertical, 2)
+        .animation(Motion.reveal, value: item.isPinned)
+        .animation(Motion.ambient, value: item.thread.backgroundAgentCount)
+        .modifier(
+            SidebarRowMoveTrail(
+                tier: SidebarProjection.displayTier(item),
+                tint: item.statusTint))
         .accessibilityElement(children: .combine)
     }
 
@@ -1131,24 +1237,57 @@ private struct SidebarThreadRow: View {
     }
 }
 
-private struct SidebarThreadStatus: View {
-    let item: SidebarThreadItem
+/// A brief status-tinted wash behind a row that just changed sort tier. The
+/// list animates the geometry of a re-sort; this is what makes it legible —
+/// several rows slide at once and nothing otherwise says which one earned its
+/// new slot.
+///
+/// Keyed to the tier rather than the row's index, which is not the same thing
+/// (see `SidebarProjection.displayTier`): bystanders displaced by someone
+/// else's promotion stay quiet, a within-tier recency swap passes without a
+/// wash, and a lone row can wash without visibly moving. Purely decorative,
+/// so Reduce Motion skips it and the row simply moves.
+private struct SidebarRowMoveTrail: ViewModifier {
+    let tier: Int
+    let tint: Color
 
-    var body: some View {
-        Image(systemName: symbolName)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(tint)
-            .frame(width: 14, height: 14)
-            .accessibilityLabel(item.statusLabel)
-            .help(item.statusLabel)
-            .contentTransition(Motion.reduceMotion ? .identity : .symbolEffect(.replace))
-            .animation(Motion.ambient, value: item.thread.status)
+    @UIState private var beat = 0
+    @UIState private var intensity: Double = 0
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(tint.opacity(0.2 * intensity))
+                    .padding(.horizontal, -7)
+                    .padding(.vertical, -1)
+                    .allowsHitTesting(false)
+            }
+            .onChange(of: tier) { _, _ in
+                guard Motion.profile.allowsDecorativeEffects else { return }
+                beat += 1
+            }
+            // `.task(id:)` rather than a detached Task: a second promotion
+            // arriving mid-wash cancels the pending fade-out and restarts,
+            // so rapid changes read as one sustained glow instead of a
+            // stutter of overlapping fades.
+            .task(id: beat) {
+                guard beat > 0 else { return }
+                withAnimation(Motion.feedback) { intensity = 1 }
+                try? await Task.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled else { return }
+                withAnimation(Motion.scenery) { intensity = 0 }
+            }
     }
+}
 
-    private var tint: Color {
-        if item.hasConnectionIssue { return item.member.location.connection.statusColor }
-        if item.thread.isStalled { return AlpineTheme.clay }
-        switch item.thread.status {
+extension SidebarThreadItem {
+    /// Colour of the row's status glyph. Also tints the move trail, so the
+    /// wash a promoted row leaves behind says *why* it moved.
+    @MainActor var statusTint: Color {
+        if hasConnectionIssue { return member.location.connection.statusColor }
+        if thread.isStalled { return AlpineTheme.clay }
+        switch thread.status {
         case .idle: return .secondary
         case .running: return AlpineTheme.accent
         case .waiting: return AlpineTheme.sky
@@ -1165,10 +1304,10 @@ private struct SidebarThreadStatus: View {
         }
     }
 
-    private var symbolName: String {
-        if item.hasConnectionIssue { return item.member.location.connection.symbolName }
-        if item.thread.isStalled { return "exclamationmark.circle.fill" }
-        switch item.thread.status {
+    var statusSymbol: String {
+        if hasConnectionIssue { return member.location.connection.symbolName }
+        if thread.isStalled { return "exclamationmark.circle.fill" }
+        switch thread.status {
         case .backgroundWork: return "person.2.fill"
         case .idle: return "circle.fill"
         case .running: return "bolt.fill"
@@ -1183,6 +1322,21 @@ private struct SidebarThreadStatus: View {
         case .fixing: return "wrench.and.screwdriver"
         case .readyToMerge: return "checkmark.seal"
         }
+    }
+}
+
+private struct SidebarThreadStatus: View {
+    let item: SidebarThreadItem
+
+    var body: some View {
+        Image(systemName: item.statusSymbol)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(item.statusTint)
+            .frame(width: 14, height: 14)
+            .accessibilityLabel(item.statusLabel)
+            .help(item.statusLabel)
+            .contentTransition(Motion.reduceMotion ? .identity : .symbolEffect(.replace))
+            .animation(Motion.ambient, value: item.thread.status)
     }
 }
 

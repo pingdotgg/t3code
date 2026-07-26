@@ -58,6 +58,7 @@
             // Let the inspector timeline present and the diff refresh land.
             try? await Task.sleep(for: .seconds(2))
             snapshot("1-inspector-timeline", dir: dir)
+            probeToolbarNavigationAccessibility(phase: model.connection)
             await probeChatTurnRail(model: model, dir: dir)
             await probeCommandTaskCard(model: model, dir: dir)
 
@@ -1095,6 +1096,74 @@
                 found += textViews(in: subview)
             }
             return found
+        }
+
+        /// The sidebar toggle and the connection pill share one `ToolbarItem`
+        /// so the toggle cannot hop when the column collapses. Grouping two
+        /// controls into one item can quietly squeeze a hit target, so this
+        /// measures what the toolbar actually vends.
+        ///
+        /// `Inspector` is the baseline: one bare
+        /// `AlpineToolbarIconButtonStyle` button, so its size *is* that
+        /// style's pinned 28x28. Against it the shared item must
+        ///
+        /// - match in height and exceed in width, so the pill is still in
+        ///   there rather than dropped or overlapped, and
+        /// - still contain a subview a whole icon button in size, so the
+        ///   toggle's focusable region was not squeezed. On macOS 26 that is
+        ///   the `_FocusRingView` / `KeyViewProxy` pair AppKit lays over the
+        ///   button; matched by size, not by those private class names.
+        ///
+        /// What this cannot check is whether the two controls stay separate
+        /// accessibility elements. SwiftUI builds its accessibility children
+        /// lazily and vends none without a live assistive client, which an
+        /// in-process probe is not: the hosting view reports zero AX children
+        /// and an AX walk down from the window element finds neither control.
+        ///
+        /// The hosting view's own `accessibilityRole()` is *not* a substitute.
+        /// It reads `AXGroup` either way — verified by injecting
+        /// `.accessibilityElement(children: .combine)` on the `HStack`, which
+        /// merges the controls for VoiceOver yet leaves the role untouched.
+        /// Asserting on it would look like a merge check while testing
+        /// nothing, so the verdict deliberately excludes it and the gap is
+        /// reported instead.
+        private static func probeToolbarNavigationAccessibility(phase: ConnectionPhase) {
+            guard let window = NSApp.windows.first(where: { $0.isVisible }),
+                let toolbar = window.toolbar
+            else {
+                print("UIProbe: toolbar-a11y INCONCLUSIVE (no window toolbar)")
+                return
+            }
+
+            let items = toolbar.items
+            guard let navigation = items.first(where: { $0.label.contains("Sidebar") }),
+                let baseline = items.first(where: { $0.label == "Inspector" }),
+                let navigationView = navigation.view,
+                let baselineSize = baseline.view?.frame.size
+            else {
+                print(
+                    "UIProbe: toolbar-a11y INCONCLUSIVE (labels="
+                        + items.map { "\"\($0.label)\"" }.joined(separator: ",") + ")")
+                return
+            }
+
+            let navigationSize = navigationView.frame.size
+            let keepsControlRegion = navigationView.subviews.contains {
+                $0.frame.size == baselineSize
+            }
+            let heightHeld = navigationSize.height == baselineSize.height
+            let carriesPill = navigationSize.width > baselineSize.width
+
+            let verdict = keepsControlRegion && heightHeld && carriesPill ? "PASS" : "FAIL"
+            print(
+                "UIProbe: toolbar-a11y \(verdict) navItem=\"\(navigation.label)\" "
+                    + "size=\(Int(navigationSize.width))x\(Int(navigationSize.height)) "
+                    + "iconBaseline=\(Int(baselineSize.width))x\(Int(baselineSize.height)) "
+                    + "controlRegion=\(keepsControlRegion) pill=\"\(phase.statusText)\"")
+            print(
+                "UIProbe: toolbar-a11y UNVERIFIED voiceover-element-separation "
+                    + "(SwiftUI vends no AX children without a live assistive client; "
+                    + "needs a human VoiceOver pass)")
         }
 
         /// SwiftUI's hosting view may expose Text through native text views,

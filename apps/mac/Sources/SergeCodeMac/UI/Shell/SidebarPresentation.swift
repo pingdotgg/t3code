@@ -287,8 +287,8 @@ enum SidebarProjection {
         }
 
         let ranked = active.enumerated().sorted { lhs, rhs in
-            let leftTier = groupDisplayTier(lhs.element)
-            let rightTier = groupDisplayTier(rhs.element)
+            let leftTier = displayTier(lhs.element)
+            let rightTier = displayTier(rhs.element)
             if leftTier != rightTier { return leftTier < rightTier }
             switch leftTier {
             case 0:
@@ -307,7 +307,17 @@ enum SidebarProjection {
     }
 
     /// 0 = pinned, 1 = needs attention, 2 = in progress, 3 = everything else.
-    private static func groupDisplayTier(_ item: SidebarThreadItem) -> Int {
+    /// The primary sort key for a project section, and the value the sidebar
+    /// row's move trail watches.
+    ///
+    /// It is a proxy for "this row's standing changed", not for "this row's
+    /// index changed", and the two come apart in both directions: rows also
+    /// re-sort within a tier by recency (no tier change, so no trail), and
+    /// the only row in its section can change tier without moving at all
+    /// (trail, but no visible move). Both are deliberate — the trail marks
+    /// the state change that earns a new slot, which is the part worth
+    /// following; a neighbour merely being displaced is not.
+    static func displayTier(_ item: SidebarThreadItem) -> Int {
         if item.isPinned { return 0 }
         if item.needsAttention { return 1 }
         if item.belongsInRunning { return 2 }
