@@ -210,6 +210,10 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// Advisor/Planner executor model (instance + slug); nil means advise only.
     public var executorModelInstanceID: String?
     public var executorModelID: String?
+    /// Default cap applied at the UI boundary when the wire payload carries no
+    /// value (payloads that predate the field). Wire models keep the field
+    /// optional so older data never fabricates an explicit cap.
+    public static let defaultExecutorMaxSubAgents = 3
     /// Cap on concurrently spawned executor sub-agents in advisor mode (1...10).
     public var executorMaxSubAgents: Int
     /// Explicit reasoning-effort choice id from the thread's modelSelection
@@ -247,7 +251,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         interactionMode: ThreadInteractionMode = .normal,
         modelInstanceID: String? = nil, modelID: String? = nil,
         executorModelInstanceID: String? = nil, executorModelID: String? = nil,
-        executorMaxSubAgents: Int = 3,
+        executorMaxSubAgents: Int = ChatThread.defaultExecutorMaxSubAgents,
         reasoningEffort: String? = nil, serviceTier: String? = nil,
         backgroundAgentCount: Int = 0, parentThreadId: String? = nil,
         health: ThreadHealth? = nil

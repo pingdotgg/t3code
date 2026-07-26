@@ -613,7 +613,9 @@ public struct OrchestrationThread: Codable, Sendable {
     /// Advisor/Planner executor model; nil means advise only.
     public var executorModelSelection: ModelSelection?
     /// Cap on concurrently spawned executor sub-agents in advisor mode (1...10).
-    public var executorMaxSubAgents: Int
+    /// Optional on the wire: payloads that predate the field must not decode as
+    /// if a cap had been explicitly set. The UI boundary applies the default.
+    public var executorMaxSubAgents: Int?
     public var branch: String?
     public var worktreePath: String?
     /// Parent thread when this is a nested sub-agent; nil for top-level threads.
@@ -647,7 +649,7 @@ public struct OrchestrationThread: Codable, Sendable {
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
         executorModelSelection = try c.decodeIfPresent(
             ModelSelection.self, forKey: .executorModelSelection)
-        executorMaxSubAgents = try c.decodeIfPresent(Int.self, forKey: .executorMaxSubAgents) ?? 3
+        executorMaxSubAgents = try c.decodeIfPresent(Int.self, forKey: .executorMaxSubAgents)
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
         worktreePath = try c.decode(String?.self, forKey: .worktreePath, default: nil)
         parentThreadId = try c.decode(String?.self, forKey: .parentThreadId, default: nil)
@@ -707,7 +709,9 @@ public struct OrchestrationThreadShell: Codable, Sendable {
     public var interactionMode: ProviderInteractionMode
     public var executorModelSelection: ModelSelection?
     /// Cap on concurrently spawned executor sub-agents in advisor mode (1...10).
-    public var executorMaxSubAgents: Int
+    /// Optional on the wire: payloads that predate the field must not decode as
+    /// if a cap had been explicitly set. The UI boundary applies the default.
+    public var executorMaxSubAgents: Int?
     public var branch: String?
     public var worktreePath: String?
     /// Parent thread when this is a nested sub-agent; nil for top-level threads.
@@ -743,7 +747,7 @@ public struct OrchestrationThreadShell: Codable, Sendable {
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
         executorModelSelection = try c.decodeIfPresent(
             ModelSelection.self, forKey: .executorModelSelection)
-        executorMaxSubAgents = try c.decodeIfPresent(Int.self, forKey: .executorMaxSubAgents) ?? 3
+        executorMaxSubAgents = try c.decodeIfPresent(Int.self, forKey: .executorMaxSubAgents)
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
         worktreePath = try c.decode(String?.self, forKey: .worktreePath, default: nil)
         parentThreadId = try c.decode(String?.self, forKey: .parentThreadId, default: nil)
@@ -1634,7 +1638,9 @@ public struct ThreadCreatedPayload: Decodable, Sendable {
     public var interactionMode: ProviderInteractionMode
     public var executorModelSelection: ModelSelection?
     /// Cap on concurrently spawned executor sub-agents in advisor mode (1...10).
-    public var executorMaxSubAgents: Int
+    /// Optional on the wire: payloads that predate the field must not decode as
+    /// if a cap had been explicitly set. The UI boundary applies the default.
+    public var executorMaxSubAgents: Int?
     public var branch: String?
     public var worktreePath: String?
     public var parentThreadId: String?
@@ -1658,7 +1664,7 @@ public struct ThreadCreatedPayload: Decodable, Sendable {
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
         executorModelSelection = try c.decodeIfPresent(
             ModelSelection.self, forKey: .executorModelSelection)
-        executorMaxSubAgents = try c.decodeIfPresent(Int.self, forKey: .executorMaxSubAgents) ?? 3
+        executorMaxSubAgents = try c.decodeIfPresent(Int.self, forKey: .executorMaxSubAgents)
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
         worktreePath = try c.decode(String?.self, forKey: .worktreePath, default: nil)
         parentThreadId = try c.decode(String?.self, forKey: .parentThreadId, default: nil)
@@ -1717,7 +1723,9 @@ public struct ThreadInteractionModeSetPayload: Decodable, Sendable {
 public struct ThreadExecutorModelSetPayload: Decodable, Sendable {
     public var threadId: String
     public var executorModelSelection: ModelSelection?
-    public var executorMaxSubAgents: Int
+    /// Absent in events that predate the field; consumers leave the current
+    /// cap untouched rather than fabricating one.
+    public var executorMaxSubAgents: Int?
     public var updatedAt: String
 
     private enum CodingKeys: String, CodingKey {
@@ -1729,7 +1737,7 @@ public struct ThreadExecutorModelSetPayload: Decodable, Sendable {
         threadId = try c.decode(String.self, forKey: .threadId)
         executorModelSelection = try c.decodeIfPresent(
             ModelSelection.self, forKey: .executorModelSelection)
-        executorMaxSubAgents = try c.decodeIfPresent(Int.self, forKey: .executorMaxSubAgents) ?? 3
+        executorMaxSubAgents = try c.decodeIfPresent(Int.self, forKey: .executorMaxSubAgents)
         updatedAt = try c.decode(String.self, forKey: .updatedAt)
     }
 }

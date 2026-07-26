@@ -130,7 +130,7 @@ struct OrchestrationModelCodingTests {
         #expect(mode == .advisor)
     }
 
-    @Test("ThreadExecutorModelSetPayload defaults executorMaxSubAgents to 3 when absent")
+    @Test("ThreadExecutorModelSetPayload decodes a missing executorMaxSubAgents as nil")
     func executorModelSetPayloadDefaultsMaxSubAgents() throws {
         let json = #"""
         {"threadId":"thr-1","executorModelSelection":null,"updatedAt":"2026-01-01T00:00:00Z"}
@@ -139,7 +139,8 @@ struct OrchestrationModelCodingTests {
             ThreadExecutorModelSetPayload.self, from: Data(json.utf8))
         #expect(payload.threadId == "thr-1")
         #expect(payload.executorModelSelection == nil)
-        #expect(payload.executorMaxSubAgents == 3)
+        // Events from before the field existed must not fabricate a cap.
+        #expect(payload.executorMaxSubAgents == nil)
     }
 
     @Test("ThreadExecutorModelSetPayload decodes a present executorMaxSubAgents")
@@ -154,7 +155,7 @@ struct OrchestrationModelCodingTests {
         #expect(payload.executorMaxSubAgents == 8)
     }
 
-    @Test("OrchestrationThreadShell defaults executorMaxSubAgents to 3 when absent")
+    @Test("OrchestrationThreadShell decodes a missing executorMaxSubAgents as nil")
     func threadShellDefaultsMaxSubAgents() throws {
         let json = #"""
         {"id":"thr-1","projectId":"prj-1","title":"T",
@@ -168,6 +169,7 @@ struct OrchestrationModelCodingTests {
             OrchestrationThreadShell.self, from: Data(json.utf8))
         #expect(shell.interactionMode == .advisor)
         #expect(shell.executorModelSelection == nil)
-        #expect(shell.executorMaxSubAgents == 3)
+        // The wire model stays optional; the UI boundary applies the default.
+        #expect(shell.executorMaxSubAgents == nil)
     }
 }

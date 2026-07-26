@@ -1157,7 +1157,11 @@ public actor LiveBackend: BackendService {
             updateCachedThread(threadID) {
                 $0.executorModelInstanceID = payload.executorModelSelection?.instanceId
                 $0.executorModelID = payload.executorModelSelection?.model
-                $0.executorMaxSubAgents = payload.executorMaxSubAgents
+                // Events replayed from before the field existed carry no cap;
+                // leave the current value instead of fabricating one.
+                if let maxSubAgents = payload.executorMaxSubAgents {
+                    $0.executorMaxSubAgents = maxSubAgents
+                }
             }
 
         // Status is projected from the shell subscription; the remaining events
@@ -2842,7 +2846,8 @@ public actor LiveBackend: BackendService {
             modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model,
             executorModelInstanceID: shell.executorModelSelection?.instanceId,
             executorModelID: shell.executorModelSelection?.model,
-            executorMaxSubAgents: shell.executorMaxSubAgents,
+            // Wire-optional: default only here, at the UI boundary.
+            executorMaxSubAgents: shell.executorMaxSubAgents ?? ChatThread.defaultExecutorMaxSubAgents,
             reasoningEffort: Self.effortValue(of: shell.modelSelection),
             serviceTier: Self.serviceTierValue(of: shell.modelSelection),
             backgroundAgentCount: activeSubagentCount,
