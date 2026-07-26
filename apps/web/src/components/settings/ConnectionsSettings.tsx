@@ -71,6 +71,7 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { QRCodeSvg } from "../ui/qr-code";
 import { Spinner } from "../ui/spinner";
@@ -408,6 +409,44 @@ function formatDesktopTailscaleServeError(error: unknown, fallback: string): str
     message = message.replace(TAGGED_ERROR_PREFIX_PATTERN, "").trim();
   }
   return message || fallback;
+}
+
+/**
+ * Inline failure for the Tailscale HTTPS dialogs. Both dialogs stay open when
+ * the CLI call fails, so the reason has to be visible inside them — a toast
+ * behind a modal is easy to miss, and the admin setup link is the actual fix.
+ */
+function TailscaleServeErrorAlert({
+  message,
+  title,
+  onOpenConfigureUrl,
+}: {
+  readonly message: string;
+  readonly title: string;
+  readonly onOpenConfigureUrl: (configureUrl: string) => void;
+}) {
+  const configureUrl = extractTailscaleServeConfigureUrl(message);
+  // The button carries the link, so keep the bare URL out of the prose — it
+  // wraps badly in a narrow dialog.
+  const description = configureUrl ? message.split(configureUrl).join("").trim() : message;
+  return (
+    <Alert variant="error">
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription>{description}</AlertDescription>
+      {configureUrl ? (
+        <AlertAction>
+          <Button
+            variant="outline"
+            onClick={() => {
+              onOpenConfigureUrl(configureUrl);
+            }}
+          >
+            Open setup
+          </Button>
+        </AlertAction>
+      ) : null}
+    </Alert>
+  );
 }
 
 const ENDPOINT_ROW_CLASSNAME = "rounded-xl px-3 py-2.5 sm:px-4";
@@ -2005,6 +2044,26 @@ export function ConnectionsSettings() {
     void handleDesktopServerExposureChange(checked);
   }, [handleDesktopServerExposureChange, pendingDesktopServerExposureMode]);
 
+  const openTailscaleServeConfigureUrl = useCallback(
+    (configureUrl: string) => {
+      // openExternal resolves `false` instead of rejecting when the shell
+      // refuses the URL, so branch on the result too.
+      if (!desktopBridge) {
+        window.open(configureUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      void desktopBridge
+        .openExternal(configureUrl)
+        .catch(() => false)
+        .then((opened) => {
+          if (!opened) {
+            window.open(configureUrl, "_blank", "noopener,noreferrer");
+          }
+        });
+    },
+    [desktopBridge],
+  );
+
   const handleConfirmTailscaleServeSetup = useCallback(async () => {
     if (!desktopBridge) return;
     if (!isTailscaleServePortValid) return;
@@ -2035,16 +2094,7 @@ export function ConnectionsSettings() {
                 actionProps: {
                   children: "Open setup",
                   onClick: () => {
-                    // openExternal resolves `false` instead of rejecting when the
-                    // shell refuses the URL, so branch on the result too.
-                    void desktopBridge
-                      .openExternal(configureUrl)
-                      .catch(() => false)
-                      .then((opened) => {
-                        if (!opened) {
-                          window.open(configureUrl, "_blank", "noopener,noreferrer");
-                        }
-                      });
+                    openTailscaleServeConfigureUrl(configureUrl);
                   },
                 },
               }
@@ -2054,13 +2104,21 @@ export function ConnectionsSettings() {
     } finally {
       setIsUpdatingTailscaleServe(false);
     }
-  }, [desktopBridge, isTailscaleServePortValid, parsedTailscaleServePort]);
+  }, [
+    desktopBridge,
+    isTailscaleServePortValid,
+    openTailscaleServeConfigureUrl,
+    parsedTailscaleServePort,
+  ]);
 
   const handleStartTailscaleServeSetup = useCallback(
     (endpoint: AdvertisedEndpoint) => {
       setTailscaleServePortInput(
         String(desktopServerExposureState?.tailscaleServePort ?? DEFAULT_TAILSCALE_SERVE_PORT),
       );
+      // The dialog surfaces this inline, so a failure from a previous attempt
+      // must not be sitting there when it reopens.
+      setDesktopServerExposureMutationError(null);
       setPendingTailscaleServeEndpoint(endpoint);
     },
     [desktopServerExposureState?.tailscaleServePort],
@@ -2092,9 +2150,18 @@ export function ConnectionsSettings() {
     }
   }, [desktopBridge, desktopServerExposureState?.tailscaleServePort]);
 
-  const handleStartTailscaleServeDisable = useCallback((_endpoint: AdvertisedEndpoint) => {
+  const openTailscaleServeDisableDialog = useCallback(() => {
+    // The dialog surfaces this inline; clear any previous attempt's failure.
+    setDesktopServerExposureMutationError(null);
     setDisableTailscaleServeDialogOpen(true);
   }, []);
+
+  const handleStartTailscaleServeDisable = useCallback(
+    (_endpoint: AdvertisedEndpoint) => {
+      openTailscaleServeDisableDialog();
+    },
+    [openTailscaleServeDisableDialog],
+  );
 
   const handleRevokeDesktopPairingLink = useCallback(async (id: string) => {
     setRevokingDesktopPairingLinkId(id);
@@ -2985,19 +3052,29 @@ export function ConnectionsSettings() {
           : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL. Independent of LAN network access."
       }
       control={
-        <Switch
-          checked={tailscaleHttpsEndpoint?.status === "available"}
-          disabled={isUpdatingTailscaleServe}
-          onCheckedChange={(checked) => {
-            if (checked) {
-              void handleEnableTailscaleHttps();
-              return;
-            }
-            // Disable confirmation does not require a resolved MagicDNS endpoint.
-            setDisableTailscaleServeDialogOpen(true);
-          }}
-          aria-label="Enable Tailscale HTTPS"
-        />
+        // Enabling resolves MagicDNS over the tailscale CLI before any dialog
+        // opens, so the dimmed switch alone leaves that wait unexplained.
+        <div className="inline-flex items-center gap-2">
+          {isUpdatingTailscaleServe ? (
+            <Spinner
+              aria-label="Updating Tailscale HTTPS"
+              className="size-3.5 text-muted-foreground"
+            />
+          ) : null}
+          <Switch
+            checked={tailscaleHttpsEndpoint?.status === "available"}
+            disabled={isUpdatingTailscaleServe}
+            onCheckedChange={(checked) => {
+              if (checked) {
+                void handleEnableTailscaleHttps();
+                return;
+              }
+              // Disable confirmation does not require a resolved MagicDNS endpoint.
+              openTailscaleServeDisableDialog();
+            }}
+            aria-label="Enable Tailscale HTTPS"
+          />
+        </div>
       }
     />
   );
@@ -3324,6 +3401,13 @@ export function ConnectionsSettings() {
                   T3 Code will restart the local backend without Tailscale Serve.
                 </AlertDialogDescription>
               </AlertDialogHeader>
+              {desktopServerExposureMutationError ? (
+                <TailscaleServeErrorAlert
+                  message={desktopServerExposureMutationError}
+                  onOpenConfigureUrl={openTailscaleServeConfigureUrl}
+                  title="Could not disable Tailscale HTTPS"
+                />
+              ) : null}
               <AlertDialogFooter>
                 <AlertDialogClose
                   disabled={isUpdatingTailscaleServe}
@@ -3390,6 +3474,13 @@ export function ConnectionsSettings() {
                     {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
                   </p>
                 </div>
+                {desktopServerExposureMutationError ? (
+                  <TailscaleServeErrorAlert
+                    message={desktopServerExposureMutationError}
+                    onOpenConfigureUrl={openTailscaleServeConfigureUrl}
+                    title="Could not enable Tailscale HTTPS"
+                  />
+                ) : null}
               </DialogPanel>
               <DialogFooter>
                 <DialogClose
