@@ -73,12 +73,15 @@ struct WindowContentSizeClamp: Layout {
         // Minimum probe: report the floor, not the content's minimum. This is
         // the only path the clamp exists to change.
         if proposed <= floor { return floor }
-        // Unbounded probe: this answer becomes `NSWindow.contentMaxSize`, so
-        // the content's stretch is forwarded verbatim — no floor, no ceiling of
-        // ours. The clamp must never be what stops a window expanding, so it
-        // does not participate in this answer at all. A flexible detail column
-        // answers `.infinity` here and the window stays unbounded.
-        guard proposed.isFinite else { return natural }
+        // Unbounded probe: this answer becomes `NSWindow.contentMaxSize`, and
+        // it is unconditionally unbounded. Not the floor (that would cap the
+        // window at 280pt) and not the content's own answer either: the detail
+        // column measures whatever the repository state currently makes it, so
+        // forwarding that number would hand the window a maximum that moves
+        // with the git strip — the mirror image of the minimum bug this whole
+        // change exists to fix. The column fills whatever it is given, so
+        // there is no width at which the window should refuse to grow.
+        guard proposed.isFinite else { return .infinity }
         // A concrete offer is the window: fill it exactly.
         return proposed
     }

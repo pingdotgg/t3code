@@ -77,7 +77,7 @@ struct WindowSizingTests {
         let stretchy = CGFloat.infinity
         for naturalIdeal in [472.0, 1062.0, 4000.0] as [CGFloat] {
             let unbounded = resolved(
-                .infinity, natural: CGSize(width: stretchy, height: stretchy))
+                .infinity, natural: CGSize(width: naturalIdeal, height: stretchy))
             #expect(unbounded.width == stretchy)
             // The ideal probe, for the same content, is a separate answer.
             let ideal = resolved(
@@ -87,27 +87,36 @@ struct WindowSizingTests {
         }
     }
 
-    @Test("the floor never participates in the unbounded answer")
-    func expansionIgnoresTheFloorEntirely() {
-        // Even a content maximum below the floor passes through untouched: the
-        // clamp does not get a vote on how large a window may become, in either
-        // direction. AppKit reconciles a maximum under the minimum itself.
-        let tiny = resolved(.infinity, natural: CGSize(width: 100, height: 90))
-        #expect(tiny.width == 100)
-        #expect(tiny.height == 90)
+    @Test("the unbounded answer is unbounded whatever the content measures")
+    func expansionIsNeverDataDependent() {
+        // The property that matters: nothing the content reports can become the
+        // window's ceiling. A narrow answer, a wide one, and an infinite one
+        // all resolve to unbounded, so the maximum cannot move with the git
+        // strip the way the minimum used to.
+        let unbounded = CGFloat.infinity
+        let naturals: [CGSize] = [
+            CGSize(width: 100, height: 90),
+            CGSize(width: 2400, height: 1600),
+            CGSize(width: unbounded, height: unbounded),
+        ]
+        for natural in naturals {
+            let size = resolved(.infinity, natural: natural)
+            #expect(size.width == unbounded)
+            #expect(size.height == unbounded)
+        }
     }
 
-    @Test("a finite content maximum is forwarded as-is")
-    func finiteMaximumIsForwarded() {
-        // Current intent, written down: if a subview ever answers a finite max
-        // to an unbounded proposal, the clamp forwards it rather than
-        // substituting a floor or an infinity of its own. Nothing here should
-        // be "tightened" into a hard window maximum while chasing minimums —
-        // the runtime guard is the `window-size` probe, which fails the run if
-        // `contentMaxSize` ever comes back capped.
+    @Test("a finite content maximum does not become the window's ceiling")
+    func finiteContentMaximumDoesNotCapTheWindow() {
+        // Superseded intent, kept as an explicit case: an earlier revision
+        // forwarded a finite content maximum. That made `contentMaxSize` track
+        // whatever the detail column happened to measure, which is the minimum
+        // bug in mirror image. The detail column fills what it is given, so the
+        // window has no content-derived ceiling.
+        let unbounded = CGFloat.infinity
         let size = resolved(.infinity, natural: CGSize(width: 2400, height: 1600))
-        #expect(size.width == 2400)
-        #expect(size.height == 1600)
+        #expect(size.width == unbounded)
+        #expect(size.height == unbounded)
     }
 
     @Test("content that outgrows the floor cannot raise the reported minimum")
