@@ -2572,7 +2572,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: ProviderDriverKind.make("claudex"),
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
       yield* adapter.sendTurn({ threadId: THREAD_ID, input: "spawn a reviewer", attachments: [] });
@@ -2660,7 +2660,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: ProviderDriverKind.make("claudex"),
+        provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
       yield* adapter.sendTurn({ threadId: THREAD_ID, input: "sweep the repo", attachments: [] });
