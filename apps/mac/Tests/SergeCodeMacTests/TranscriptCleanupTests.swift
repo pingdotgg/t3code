@@ -119,6 +119,51 @@ struct TranscriptCleanupTests {
         #expect(TranscriptCleanup.accepted(candidate: candidate, raw: raw) == candidate)
     }
 
+    @Test("an appended clause is rejected even when every spoken word survives")
+    func rejectsAppendedClause() {
+        // Nothing is dropped and the tail is short, so an unordered overlap
+        // budget clears this: 100% retained, and the five added words are
+        // under 40% of the reply. Only the run of inserted words gives it
+        // away as an answer rather than a tidy-up.
+        let raw = "add a login button to the settings page"
+        let appended = "Add a login button to the settings page and tell me which framework."
+        #expect(TranscriptCleanup.accepted(candidate: appended, raw: raw) == nil)
+    }
+
+    @Test("a clause spliced into the middle is rejected")
+    func rejectsSplicedClause() {
+        let raw = "the deploy failed last night"
+        let spliced = "The deploy failed last night because the certificate expired."
+        #expect(TranscriptCleanup.accepted(candidate: spliced, raw: raw) == nil)
+    }
+
+    @Test("a single stray word is still allowed through")
+    func acceptsSingleInsertedWord() {
+        // The allowance the run rule is calibrated against: one added
+        // article is a plausible tidy-up, a clause is not.
+        let raw = "i need to go to store before it closes"
+        let candidate = "I need to go to the store before it closes."
+        #expect(TranscriptCleanup.accepted(candidate: candidate, raw: raw) == candidate)
+    }
+
+    @Test("a one-word assistant opener is caught by the veto, not the word checks")
+    func openerVetoCoversTheInsertionAllowance() {
+        // "Sure" is a single inserted word, so it sits inside the allowance
+        // above and clears isRewrite outright — this pins why the opener
+        // veto is a separate rule rather than a tighter ratio.
+        #expect(
+            TranscriptCleanup.accepted(candidate: "Sure, make it blue.", raw: "make it blue")
+                == nil)
+    }
+
+    @Test("reordering the utterance is rejected")
+    func rejectsReordering() {
+        // Every word is present, so an unordered check sees a perfect match.
+        let raw = "ship the release before you write the changelog"
+        let reordered = "Write the changelog before you ship the release."
+        #expect(TranscriptCleanup.accepted(candidate: reordered, raw: raw) == nil)
+    }
+
     @Test("a summary that throws most of the utterance away is rejected")
     func rejectsSummary() {
         let raw = """

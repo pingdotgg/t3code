@@ -12,10 +12,11 @@ import Foundation
 ///
 /// 1. `prompt(for:)` — the transcript is delimited data inside a turn that
 ///    restates the task, rather than being the turn itself.
-/// 2. `accepted(candidate:raw:)` — anything that isn't recognizably a
-///    rewrite of the same utterance is rejected, and the raw transcript
-///    stands. Losing a polish pass is invisible; replacing what the user
-///    said with a chatbot reply is not.
+/// 2. `accepted(candidate:raw:)` — the reply has to align against the
+///    utterance as a pure tidy-up, deleting words but not adding them, and
+///    must not open the way an assistant does. Anything else is rejected and
+///    the raw transcript stands. Losing a polish pass is invisible;
+///    replacing what the user said with a chatbot reply is not.
 enum TranscriptCleanup {
     /// System-level framing for the cleanup session.
     static let instructions = """
@@ -87,12 +88,13 @@ enum TranscriptCleanup {
     /// use — "Sure, …", "You can …", "I'm sorry, …".
     ///
     /// `strippingPreamble` only catches the labelled form, which needs a
-    /// colon. The bare form carries no punctuation to key off and, on a
-    /// short transcript, is small enough next to the echoed words to clear
-    /// both ratios: "can you make it blue" answered with "Sure, I can make
-    /// it blue." retains 80% and invents only 33%. So this is a veto rather
-    /// than something to strip — dropping the opener off an answer still
-    /// leaves an answer, and the raw transcript is the safe result.
+    /// colon. The bare form carries no punctuation to key off, and a
+    /// one-word opener fits inside the insertion allowance `isRewrite` has
+    /// to leave for stray articles — "make it blue" answered with "Sure,
+    /// make it blue." is a single inserted word and passes every check
+    /// there. So this is a veto rather than something to strip: dropping the
+    /// opener off an answer still leaves an answer, and the raw transcript
+    /// is the safe result.
     ///
     /// Gated on the speaker not having opened that way themselves, which is
     /// what keeps a dictated "Okay, so…" or "You should check the logs"
@@ -106,25 +108,84 @@ enum TranscriptCleanup {
         }
     }
 
-    /// Whether `candidate` still reads as the same utterance: most of what
-    /// was said survives, and little of the reply is words that were never
-    /// said.
+    /// Whether `candidate` is a rewrite of the utterance rather than a reply
+    /// to it.
+    ///
+    /// An unordered overlap budget is too weak on its own: "add a login
+    /// button to the settings page" answered with that plus "and tell me
+    /// which framework" echoes every spoken word and appends only a short
+    /// tail, so it clears any percentage you could reasonably set. What
+    /// separates the two is *where* the extra words are, not how many.
+    ///
+    /// So the candidate is aligned against the utterance in order — each
+    /// word matched to the earliest occurrence still ahead of the previous
+    /// match — and any candidate word with no place left in the utterance
+    /// counts as an insertion. The cleanup pass only ever deletes: it never
+    /// heard the audio, so there is nothing it can legitimately add. Every
+    /// accepted case in the tests aligns with zero or one insertion, and the
+    /// allowance below is sized for a stray article or a corrected
+    /// mis-hearing — never a clause.
     private static func isRewrite(_ candidate: String, of reference: [String]) -> Bool {
         let words = normalizedWords(candidate)
         guard !candidate.isEmpty, !words.isEmpty else { return false }
-        let shared = sharedWordCount(reference, words)
-        let retained = Double(shared) / Double(reference.count)
-        let invented = Double(words.count - shared) / Double(words.count)
-        return retained >= minimumRetainedFraction && invented <= maximumInventedFraction
+        let alignment = align(words, to: reference)
+        let retained = Double(alignment.matched) / Double(reference.count)
+        guard retained >= minimumRetainedFraction else { return false }
+        let allowance = max(
+            minimumInsertedAllowance, Int(Double(words.count) * maximumInsertedFraction))
+        return alignment.inserted <= allowance
+            && alignment.longestInsertedRun <= maximumInsertedRun
     }
 
-    /// How much of what the speaker actually said has to survive. Below this
-    /// the model dropped or replaced the utterance rather than tidying it.
+    /// Walks the candidate against the spoken words in order, matching each
+    /// candidate word to the earliest occurrence not already used or passed.
+    /// Anything left unmatched is an insertion; the runs of them are tracked
+    /// because one stray word and a spliced-in clause are the same count at
+    /// different lengths.
+    private static func align(_ candidate: [String], to reference: [String])
+        -> (matched: Int, inserted: Int, longestInsertedRun: Int)
+    {
+        var occurrences: [String: [Int]] = [:]
+        for (index, word) in reference.enumerated() { occurrences[word, default: []].append(index) }
+        // Both `cursor` and each word's scan position only ever move
+        // forward, so this stays linear in the two word counts.
+        var cursor = 0
+        var scanned: [String: Int] = [:]
+        var matched = 0, inserted = 0, run = 0, longestRun = 0
+        for word in candidate {
+            var position: Int?
+            if let places = occurrences[word] {
+                var next = scanned[word] ?? 0
+                while next < places.count, places[next] < cursor { next += 1 }
+                scanned[word] = next < places.count ? next + 1 : next
+                if next < places.count { position = places[next] }
+            }
+            if let position {
+                matched += 1
+                cursor = position + 1
+                run = 0
+            } else {
+                inserted += 1
+                run += 1
+                longestRun = max(longestRun, run)
+            }
+        }
+        return (matched, inserted, longestRun)
+    }
+
+    /// How much of what the speaker actually said has to survive, matched in
+    /// the order it was said. Below this the model dropped or replaced the
+    /// utterance rather than tidying it.
     static let minimumRetainedFraction = 0.6
-    /// How much of the reply is allowed to be words the speaker never said.
-    /// Catches the common failure where the model echoes the transcript and
-    /// then appends an answer to it.
-    static let maximumInventedFraction = 0.4
+    /// How much of the reply may be words with no place in the utterance.
+    static let maximumInsertedFraction = 0.15
+    /// Always allow one, so a stray article or a corrected mis-hearing
+    /// doesn't sink a short transcript that is otherwise a clean rewrite.
+    static let minimumInsertedAllowance = 1
+    /// The longest unbroken run of inserted words. This is the rule that
+    /// separates a tidy-up from an answer: an appended or spliced-in clause
+    /// runs long, while the legitimate edits above are a word at a time.
+    static let maximumInsertedRun = 2
 
     private static let fillerWords: Set<String> = [
         "um", "uh", "uhm", "umm", "erm", "er", "ah", "hmm", "hm", "mhm", "mm",
@@ -237,17 +298,4 @@ enum TranscriptCleanup {
         return result
     }
 
-    /// Multiset intersection size — how many of `reference`'s words the
-    /// candidate still has, counting duplicates only as often as they appear
-    /// in both.
-    private static func sharedWordCount(_ reference: [String], _ candidate: [String]) -> Int {
-        var available: [String: Int] = [:]
-        for word in candidate { available[word, default: 0] += 1 }
-        var shared = 0
-        for word in reference where (available[word] ?? 0) > 0 {
-            available[word]! -= 1
-            shared += 1
-        }
-        return shared
-    }
 }
