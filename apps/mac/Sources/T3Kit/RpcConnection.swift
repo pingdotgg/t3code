@@ -39,7 +39,9 @@
 //    exactly once. On teardown, `failAllPending` runs *before* the outbound
 //    stream is finished, so a residual request frame's `.failPending`
 //    handler is a no-op (its pending entry is already gone) — no
-//    continuation is resumed twice.
+//    continuation is resumed twice. `interrupt` is likewise
+//    remove-then-resume, so a cancellation racing an arriving `Exit` resolves
+//    the awaiter exactly once.
 //
 // D. Real backpressure (§2.3). A chunk's `Ack` is sent only when the consumer
 //    has *drained that whole chunk* out of `StreamState` (see
@@ -54,7 +56,9 @@
 //    drains the finished outbound stream; sends fail on the cancelled
 //    socket); a consumer parked inside `nextStreamValue` is woken (via
 //    `StreamState.termination` or task cancellation) and throws rather than
-//    hanging; the sole abandonment signal for an `unfolding` stream is task
+//    hanging, and a unary awaiter parked in `request` is woken the same way
+//    by its cancellation handler's `interrupt`; the sole abandonment signal
+//    for an `unfolding` stream is task
 //    cancellation, which `T3Client.streamCall` guarantees by converting its
 //    outer stream's termination into a `task.cancel()`. The loop tasks hold
 //    no actor reference (static bodies + weak hops), so dropping the actor
@@ -349,7 +353,9 @@ public actor RpcConnection {
     /// Invokes a non-streaming RPC and awaits its terminal `Exit`. Resolves
     /// with the decoded success value, or throws `T3Error.rpc` for a typed
     /// `Exit.Failure` (§2.2) — scope errors (`EnvironmentAuthorizationError`)
-    /// arrive this way too and are not connection-fatal (§risk9).
+    /// arrive this way too and are not connection-fatal (§risk9). If the
+    /// calling `Task` is cancelled the awaiter throws `CancellationError` and
+    /// the request is `Interrupt`ed on the wire (§2.4).
     public func request(
         tag: String,
         payload: JSONValue,
@@ -357,14 +363,24 @@ public actor RpcConnection {
         traceId: String? = nil
     ) async throws -> JSONValue {
         let id = allocateRequestId()
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<JSONValue, Error>) in
-            // Register before the frame is ever enqueued so a reentrant
-            // `Exit`/`Chunk` always finds its pending entry (§note B). Both
-            // steps are synchronous — no suspension in between — and the
-            // synchronous enqueue pins wire order to call order (§note A).
-            teardownState.pending[id] = .unary(continuation)
-            enqueue(.request(id: id, tag: tag, payload: payload, headers: headers, traceId: traceId),
-                    onResult: .failPending(id: id))
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<JSONValue, Error>) in
+                // Register before the frame is ever enqueued so a reentrant
+                // `Exit`/`Chunk` always finds its pending entry (§note B). Both
+                // steps are synchronous — no suspension in between — and the
+                // synchronous enqueue pins wire order to call order (§note A).
+                teardownState.pending[id] = .unary(continuation)
+                enqueue(.request(id: id, tag: tag, payload: payload, headers: headers, traceId: traceId),
+                        onResult: .failPending(id: id))
+            }
+        } onCancel: {
+            // Without this the awaiter parks forever and the server keeps
+            // working: only socket teardown would ever free it. `interrupt`
+            // is the same primitive the streaming path uses (§2.4) and is a
+            // no-op if the `Exit` already won the race. The hop is safe even
+            // if it lands before registration — registration is synchronous
+            // on this actor, so it always precedes any reentrant hop.
+            Task { [weak self] in await self?.interrupt(requestId: id) }
         }
     }
 
