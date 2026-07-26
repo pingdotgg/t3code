@@ -371,10 +371,15 @@ const runVerify = Effect.fn("runVerify")(function* (options: {
       ...scope.packages,
       ...(scope.touchesMac ? ["apps/mac (Swift)"] : []),
       ...(scope.touchesMobileNative ? ["mobile native sources"] : []),
+      // Formattable files with no owning package still need `vp check`, so say
+      // so rather than reporting "nothing" next to a plan that runs something.
+      ...(scope.packages.length === 0 && scope.checkPaths.length > 0
+        ? ["formatting/lint only"]
+        : []),
     ];
     yield* Console.log(
       `Scope: ${files.length} changed file(s) vs ${options.base} → ` +
-        (affected.length > 0 ? affected.join(", ") : "nothing checkable"),
+        (affected.length > 0 ? affected.join(", ") : "nothing to check"),
     );
   }
 
