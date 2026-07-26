@@ -14,6 +14,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+import { resolveDesktopRelaunchOptions } from "./resolveDesktopRelaunchOptions.ts";
 
 export class DesktopLifecycleRelaunchError extends Schema.TaggedErrorClass<DesktopLifecycleRelaunchError>()(
   "DesktopLifecycleRelaunchError",
@@ -26,6 +27,8 @@ export class DesktopLifecycleRelaunchError extends Schema.TaggedErrorClass<Deskt
     return `Desktop relaunch failed for reason "${this.reason}".`;
   }
 }
+
+export { resolveDesktopRelaunchOptions } from "./resolveDesktopRelaunchOptions.ts";
 
 export type DesktopLifecycleRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
@@ -154,10 +157,19 @@ export const make = DesktopLifecycle.of({
         yield* electronApp.exit(75);
         return;
       }
-      yield* electronApp.relaunch({
+      const relaunchOptions = resolveDesktopRelaunchOptions({
+        // AppImage runtime injects APPIMAGE; see resolveDesktopRelaunchOptions.
+        appImagePath: process.env.APPIMAGE,
         execPath: process.execPath,
-        args: process.argv.slice(1),
+        argv: process.argv,
       });
+      yield* logLifecycleInfo("desktop relaunch exec", {
+        reason,
+        execPath: relaunchOptions.execPath,
+        argumentCount: relaunchOptions.args?.length ?? 0,
+        isAppImage: Boolean(process.env.APPIMAGE?.trim()),
+      });
+      yield* electronApp.relaunch(relaunchOptions);
       yield* electronApp.exit(0);
     }).pipe(
       Effect.catchCause((cause) => {
