@@ -17,7 +17,11 @@
 import { type ModelCapabilities, type ServerProviderModel } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
-import { buildBooleanOptionDescriptor, buildSelectOptionDescriptor } from "./providerSnapshot.ts";
+import {
+  buildBooleanOptionDescriptor,
+  buildSelectOptionDescriptor,
+  mergeProviderModels,
+} from "./providerSnapshot.ts";
 
 /**
  * Model aliases reported by the Claude Code CLI (`sonnet`, `haiku`, …),
@@ -214,9 +218,7 @@ export function mergeClaudeDiscoveredModels(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   discoveredModels: ReadonlyArray<ServerProviderModel>,
 ): ReadonlyArray<ServerProviderModel> {
-  if (discoveredModels.length === 0) return builtInModels;
-  const builtInSlugs = new Set(builtInModels.map((model) => model.slug));
-  return [...builtInModels, ...discoveredModels.filter((model) => !builtInSlugs.has(model.slug))];
+  return mergeProviderModels(builtInModels, discoveredModels);
 }
 
 /**

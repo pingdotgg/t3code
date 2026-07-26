@@ -1,8 +1,8 @@
 /**
  * ClaudexDriver — Claudex models routed through the Claude Code harness.
  *
- * Claudex intentionally reuses the Claude adapter and provider probe while
- * exposing only the two models served by the `claudex` CLI.
+ * Claudex reuses the Claude adapter and provider probe while adding the GPT
+ * models served by the `claudex` CLI to the standard Claude Code catalog.
  *
  * @module provider/Drivers/ClaudexDriver
  */
@@ -30,7 +30,9 @@ import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
 import {
   checkClaudeProviderStatus,
+  getClaudeModelCapabilities,
   makePendingClaudeProvider,
+  normalizeClaudeCliEffort,
   probeClaudeCapabilities,
   type ClaudeProviderIdentity,
 } from "../Layers/ClaudeProvider.ts";
@@ -42,12 +44,11 @@ import {
   type ProviderInstance,
 } from "../ProviderDriver.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import { nonEmptyTrimmed, type ServerProviderDraft } from "../providerSnapshot.ts";
 import {
   CLAUDEX_DEFAULT_MODEL,
-  CLAUDEX_MODELS,
   CLAUDEX_MODEL_SLUGS,
-  getClaudexModelCapabilities,
+  mergeClaudexModels,
   normalizeClaudexEffort,
 } from "../claudexModels.ts";
 import {
@@ -73,14 +74,21 @@ export function normalizeClaudexModelSelection(
   if (modelSelection === undefined) return undefined;
   return {
     ...modelSelection,
-    model: CLAUDEX_MODEL_SLUGS.has(modelSelection.model)
-      ? modelSelection.model
-      : CLAUDEX_DEFAULT_MODEL,
+    model: nonEmptyTrimmed(modelSelection.model) ?? CLAUDEX_DEFAULT_MODEL,
   };
 }
 
 function normalizeRequiredClaudexModelSelection(modelSelection: ModelSelection): ModelSelection {
   return normalizeClaudexModelSelection(modelSelection)!;
+}
+
+export function normalizeClaudexProviderEffort(
+  effort: string | null | undefined,
+  model: string | null | undefined,
+): string | undefined {
+  return CLAUDEX_MODEL_SLUGS.has(model ?? "")
+    ? normalizeClaudexEffort(effort, model)
+    : normalizeClaudeCliEffort(effort, model);
 }
 
 const CLAUDEX_IDENTITY: ClaudeProviderIdentity = {
@@ -125,7 +133,7 @@ export function normalizeClaudexProviderSnapshot(
 ): ServerProviderDraft {
   return {
     ...snapshot,
-    models: CLAUDEX_MODELS,
+    models: mergeClaudexModels(snapshot.models),
   };
 }
 
@@ -193,8 +201,8 @@ export const ClaudexDriver: ProviderDriver<ClaudexSettingsType, ClaudexDriverEnv
         instanceId,
         driverKind: DRIVER_KIND,
         environment: processEnv,
-        getModelCapabilities: getClaudexModelCapabilities,
-        normalizeEffort: normalizeClaudexEffort,
+        getModelCapabilities: getClaudeModelCapabilities,
+        normalizeEffort: normalizeClaudexProviderEffort,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const adapter = {
@@ -215,8 +223,8 @@ export const ClaudexDriver: ProviderDriver<ClaudexSettingsType, ClaudexDriverEnv
           }),
       } satisfies typeof rawAdapter;
       const rawTextGeneration = yield* makeClaudeTextGeneration(claudeSettings, processEnv, {
-        getModelCapabilities: getClaudexModelCapabilities,
-        normalizeEffort: normalizeClaudexEffort,
+        getModelCapabilities: getClaudeModelCapabilities,
+        normalizeEffort: normalizeClaudexProviderEffort,
       });
       const textGeneration = {
         ...rawTextGeneration,

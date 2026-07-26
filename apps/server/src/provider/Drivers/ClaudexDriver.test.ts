@@ -15,6 +15,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import {
   makeClaudexContinuationGroupKey,
   normalizeClaudexModelSelection,
+  normalizeClaudexProviderEffort,
   normalizeClaudexProviderSnapshot,
 } from "./ClaudexDriver.ts";
 import {
@@ -102,14 +103,38 @@ describe("ClaudexDriver", () => {
     expect(settings.binaryPath).toBe("claudex");
   });
 
-  it("normalizes every provider snapshot to the two Claudex models", () => {
-    const normalized = normalizeClaudexProviderSnapshot(claudexDraft);
+  it("adds Claudex models to the Claude Code provider catalog", () => {
+    const duplicateLuna = {
+      slug: "claudex-luna",
+      name: "Duplicate Luna",
+      isCustom: true,
+      capabilities: claudeCatalogCapabilities,
+    } satisfies ServerProviderModel;
+    const normalized = normalizeClaudexProviderSnapshot({
+      ...claudexDraft,
+      models: [...claudexDraft.models, duplicateLuna],
+    });
     const defaultModel = DEFAULT_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudex")];
 
-    expect(normalized.models.map((model) => model.slug)).toEqual(["claudex-luna", "claudex-sol"]);
+    expect(normalized.models.map((model) => model.slug)).toEqual([
+      "claudex-luna",
+      "claudex-sol",
+      ...CLAUDE_MODEL_SLUGS,
+      "my-custom-claude-model",
+    ]);
     expect(normalized.models[0]?.slug).toBe(defaultModel);
+    expect(normalized.models.filter((model) => model.slug === "claudex-luna")).toHaveLength(1);
+    expect(normalized.models.find((model) => model.slug === "claude-fable-5")?.capabilities).toBe(
+      claudeCatalogCapabilities,
+    );
+    expect(
+      normalized.models.find((model) => model.slug === "my-custom-claude-model"),
+    ).toMatchObject({
+      isCustom: true,
+      capabilities: claudeCatalogCapabilities,
+    });
 
-    for (const model of normalized.models) {
+    for (const model of normalized.models.slice(0, 2)) {
       const descriptors = model.capabilities?.optionDescriptors ?? [];
       expect(descriptors.map(({ id }) => id)).toEqual(["effort"]);
       expect(descriptors[0]).toMatchObject({
@@ -132,7 +157,7 @@ describe("ClaudexDriver", () => {
     }
   });
 
-  it("keeps valid Claudex model selections and coerces unknown models to the default", () => {
+  it("keeps every non-empty Claude Code model selection and defaults blank models", () => {
     const instanceId = ProviderInstanceId.make("claudex");
 
     expect(normalizeClaudexModelSelection({ instanceId, model: "claudex-sol" })).toEqual({
@@ -147,8 +172,18 @@ describe("ClaudexDriver", () => {
       }),
     ).toEqual({
       instanceId,
-      model: "claudex-luna",
+      model: "claude-fable-5",
       options: [{ id: "effort", value: "xhigh" }],
+    });
+    expect(
+      normalizeClaudexModelSelection({
+        instanceId,
+        model: "my-custom-claude-model",
+      }),
+    ).toEqual({ instanceId, model: "my-custom-claude-model" });
+    expect(normalizeClaudexModelSelection({ instanceId, model: "  " })).toEqual({
+      instanceId,
+      model: "claudex-luna",
     });
   });
 
@@ -174,7 +209,7 @@ describe("ClaudexDriver", () => {
     );
   });
 
-  it("normalizes only the effort values supported by Claudex", () => {
+  it("uses model-family capabilities and effort normalization", () => {
     for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
       expect(normalizeClaudexEffort(effort)).toBe(effort);
     }
@@ -182,6 +217,13 @@ describe("ClaudexDriver", () => {
     for (const effort of [undefined, "ultrathink", "garbage"]) {
       expect(normalizeClaudexEffort(effort)).toBeUndefined();
     }
+
+    expect(normalizeClaudexProviderEffort("ultracode", "claudex-luna")).toBe("xhigh");
+    expect(normalizeClaudexProviderEffort("ultrathink", "claudex-luna")).toBeUndefined();
+    expect(normalizeClaudexProviderEffort("ultracode", "claude-opus-5")).toBe("xhigh");
+    expect(normalizeClaudexProviderEffort("ultrathink", "claude-opus-5")).toBeUndefined();
+    expect(normalizeClaudexProviderEffort("xhigh", "claude-opus-4-6")).toBe("max");
+
     expect(normalizeClaudeCliEffort("xhigh", "claudex-luna")).toBe("xhigh");
     expect(getClaudeModelCapabilities("claudex-luna")).toBe(
       getClaudexModelCapabilities("claudex-luna"),

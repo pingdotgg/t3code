@@ -138,6 +138,15 @@ export function parseGenericCliVersion(output: string): string | null {
   return match?.[1] ?? null;
 }
 
+export function mergeProviderModels(
+  primaryModels: ReadonlyArray<ServerProviderModel>,
+  additionalModels: ReadonlyArray<ServerProviderModel>,
+): ReadonlyArray<ServerProviderModel> {
+  if (additionalModels.length === 0) return primaryModels;
+  const primarySlugs = new Set(primaryModels.map((model) => model.slug));
+  return [...primaryModels, ...additionalModels.filter((model) => !primarySlugs.has(model.slug))];
+}
+
 export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   provider: ProviderDriverKind,
