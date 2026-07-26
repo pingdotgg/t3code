@@ -95,6 +95,52 @@ struct HapticsThrottleTests {
         ])
         #expect(played == [false, true])
     }
+
+    @Test("an outcome's trailing tap plays when nothing intervened")
+    func outcomeTailUndisturbed() {
+        var throttle = HapticsThrottle()
+        let leading = throttle.admits(.success, at: 100, profile: profile)
+        let ticket = throttle.admittedCount
+        let tail = throttle.admitsOutcomeTail(
+            .success, ticket: ticket, at: 100.12, profile: profile)
+        #expect(leading)
+        #expect(tail)
+    }
+
+    @Test("a trailing tap is dropped once the preference is off")
+    func outcomeTailAfterDisabling() {
+        var throttle = HapticsThrottle()
+        _ = throttle.admits(.failure, at: 100, profile: profile)
+        let ticket = throttle.admittedCount
+        let tail = throttle.admitsOutcomeTail(
+            .failure, ticket: ticket, at: 100.12,
+            profile: HapticsProfile(isEnabled: false))
+        #expect(!tail)
+    }
+
+    @Test("a tap during the delay cancels the trailing tap instead of stacking on it")
+    func outcomeTailAfterInterveningTap() {
+        var throttle = HapticsThrottle()
+        _ = throttle.admits(.success, at: 100, profile: profile)
+        let ticket = throttle.admittedCount
+        let intervening = throttle.admits(.commit, at: 100.06, profile: profile)
+        let tail = throttle.admitsOutcomeTail(
+            .success, ticket: ticket, at: 100.12, profile: profile)
+        #expect(intervening)
+        #expect(!tail)
+    }
+
+    @Test("a delivered trailing tap still spaces whatever comes next")
+    func outcomeTailConsumesTheWindow() {
+        var throttle = HapticsThrottle()
+        _ = throttle.admits(.success, at: 100, profile: profile)
+        let ticket = throttle.admittedCount
+        _ = throttle.admitsOutcomeTail(.success, ticket: ticket, at: 100.12, profile: profile)
+        let immediatelyAfter = throttle.admits(.selection, at: 100.125, profile: profile)
+        let later = throttle.admits(.selection, at: 100.3, profile: profile)
+        #expect(!immediatelyAfter)
+        #expect(later)
+    }
 }
 
 @Suite("Thread status haptics")
@@ -187,6 +233,61 @@ struct HapticsPlaybackTests {
         HapticsPreferences.isEnabled = true
         Haptics.play(.commit, at: 2_001)
         #expect(count == 1)
+    }
+
+    @Test("an outcome plays twice end to end")
+    func outcomePlaysTwice() async throws {
+        var played: [NSHapticFeedbackManager.FeedbackPattern] = []
+        Haptics.resetThrottleForTesting()
+        Haptics.actuator = { pattern, _ in played.append(pattern) }
+        defer { Haptics.actuator = nil }
+        HapticsPreferences.isEnabled = true
+
+        Haptics.play(.success)
+        #expect(played.count == 1)
+
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(played == [.levelChange, .levelChange])
+    }
+
+    @Test("switching haptics off during the delay drops the trailing tap")
+    func outcomeTailStopsWhenDisabledMidDelay() async throws {
+        var played = 0
+        Haptics.resetThrottleForTesting()
+        Haptics.actuator = { _, _ in played += 1 }
+        defer {
+            Haptics.actuator = nil
+            HapticsPreferences.isEnabled = true
+        }
+        HapticsPreferences.isEnabled = true
+
+        Haptics.play(.failure)
+        #expect(played == 1)
+        HapticsPreferences.isEnabled = false
+
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(played == 1)
+    }
+
+    @Test("turning the preference off still confirms itself, and turning it on does too")
+    func preferenceAcknowledgement() {
+        var played = 0
+        Haptics.actuator = { _, _ in played += 1 }
+        defer {
+            Haptics.actuator = nil
+            HapticsPreferences.isEnabled = true
+        }
+
+        HapticsPreferences.isEnabled = true
+        Haptics.resetThrottleForTesting()
+        Haptics.setPreference(enabled: false)
+        #expect(played == 1)
+        #expect(!HapticsPreferences.isEnabled)
+
+        Haptics.resetThrottleForTesting()
+        Haptics.setPreference(enabled: true)
+        #expect(played == 2)
+        #expect(HapticsPreferences.isEnabled)
     }
 
     @Test("conditional play skips when the action did nothing")

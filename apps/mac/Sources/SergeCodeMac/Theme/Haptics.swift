@@ -78,6 +78,10 @@ struct HapticsProfile: Equatable, Sendable {
 struct HapticsThrottle: Equatable {
     private var lastByEvent: [HapticEvent: TimeInterval] = [:]
     private var lastAny: TimeInterval?
+    /// Counts admitted taps. A two-tap outcome takes a ticket with its leading
+    /// tap and presents it again for the trailing one, so anything felt in
+    /// between cancels the tail rather than stacking a third tap on top.
+    private(set) var admittedCount = 0
 
     init() {}
 
@@ -89,9 +93,29 @@ struct HapticsThrottle: Equatable {
         guard profile.isEnabled else { return false }
         if let lastAny, now - lastAny < profile.eventFloor { return false }
         if let last = lastByEvent[event], now - last < profile.repeatFloor { return false }
+        record(event, at: now)
+        return true
+    }
+
+    /// Admission for the trailing tap of a two-tap outcome, decided at
+    /// delivery rather than at scheduling: the preference can be switched off
+    /// during the delay, and any tap admitted in the meantime means the
+    /// outcome's feedback window already belongs to something else.
+    ///
+    /// Deliberately no floor check — the delay is chosen by the profile, and
+    /// `ticket` already proves nothing else has been felt since.
+    mutating func admitsOutcomeTail(
+        _ event: HapticEvent, ticket: Int, at now: TimeInterval, profile: HapticsProfile
+    ) -> Bool {
+        guard profile.isEnabled, admittedCount == ticket else { return false }
+        record(event, at: now)
+        return true
+    }
+
+    private mutating func record(_ event: HapticEvent, at now: TimeInterval) {
         lastByEvent[event] = now
         lastAny = now
-        return true
+        admittedCount += 1
     }
 }
 
@@ -121,10 +145,25 @@ enum Haptics {
         let pattern = profile.pattern(for: event)
         actuate(pattern, profile.performanceTime(for: event))
         guard profile.tapCount(for: event) > 1 else { return }
+        let ticket = throttle.admittedCount
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(profile.outcomeTapDelay))
-            actuate(pattern, .now)
+            playOutcomeTail(event, ticket: ticket)
         }
+    }
+
+    /// Trailing tap of a two-tap outcome. Every gate is re-evaluated here
+    /// rather than inherited from the leading tap: `outcomeTapDelay` is long
+    /// enough for the user to switch haptics off, or for another action to
+    /// claim the feedback window, between the two halves.
+    static func playOutcomeTail(
+        _ event: HapticEvent, ticket: Int,
+        at now: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) {
+        let profile = profile
+        guard throttle.admitsOutcomeTail(event, ticket: ticket, at: now, profile: profile)
+        else { return }
+        actuate(profile.pattern(for: event), .now)
     }
 
     /// `play` for the very common "only if the action actually did something"
@@ -137,6 +176,22 @@ enum Haptics {
     /// Plays `success` or `failure` from a boolean outcome.
     static func playOutcome(success: Bool) {
         play(success ? .success : .failure)
+    }
+
+    /// Persists a change to the haptics preference and acknowledges it.
+    ///
+    /// The tap is played on whichever side of the write still has haptics
+    /// enabled, so switching *off* gets one last confirmation instead of the
+    /// switch going silent under the finger — the preference demonstrates
+    /// itself in both directions.
+    static func setPreference(enabled: Bool) {
+        if enabled {
+            HapticsPreferences.isEnabled = true
+            play(.toggle)
+        } else {
+            play(.toggle)
+            HapticsPreferences.isEnabled = false
+        }
     }
 
     /// Drops recorded taps so a test starts from a clean throttle.
