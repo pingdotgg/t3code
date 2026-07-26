@@ -15,6 +15,7 @@ PR policy reminders (delete this comment before submitting):
 <!-- Check all that apply. -->
 
 - [ ] `apps/mac` — native macOS app
+- [ ] `apps/windows` — Windows desktop app
 - [ ] `apps/mobile` — iPhone companion app
 - [ ] `apps/server` — backend server
 - [ ] Shared packages (`packages/contracts`, `packages/shared`, `packages/client-runtime`, …) or relay (`infra/relay`)
