@@ -81,6 +81,13 @@ interface CollapsedDiffFilesState {
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
+/**
+ * Height of the file header rendered by `DIFF_PANEL_UNSAFE_CSS` below, in pixels. The diffs
+ * virtualizer reserves scroll space per file from `itemMetrics.diffHeaderHeight`, so the two have to
+ * agree: over-reserving leaves phantom scroll space that shows up as a gap above the first file.
+ */
+const DIFF_FILE_HEADER_HEIGHT = 33;
+
 const DIFF_PANEL_UNSAFE_CSS = `
 [data-diffs-header],
 [data-diff],
@@ -133,7 +140,9 @@ const DIFF_PANEL_UNSAFE_CSS = `
   font-family: var(--font-sans) !important;
   font-size: 12px !important;
   line-height: 1 !important;
-  min-height: 32px !important;
+  box-sizing: border-box !important;
+  height: ${DIFF_FILE_HEADER_HEIGHT}px !important;
+  min-height: ${DIFF_FILE_HEADER_HEIGHT}px !important;
   padding-block: 6px !important;
 }
 
@@ -915,7 +924,8 @@ export default function DiffPanel({
                     themeType: resolvedTheme as DiffThemeType,
                     unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                     stickyHeaders: true,
-                    layout: { paddingTop: 8, paddingBottom: 8, gap: 8 },
+                    itemMetrics: { diffHeaderHeight: DIFF_FILE_HEADER_HEIGHT },
+                    layout: { paddingTop: 0, paddingBottom: 8, gap: 8 },
                   }}
                 />
               </div>
