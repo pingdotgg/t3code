@@ -9,6 +9,50 @@ import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelSto
 
 import { PreviewAutomationBackgroundPresentationTimeoutError } from "./previewAutomationErrors";
 
+interface PreviewAutomationBackgroundPresentationInput {
+  readonly threadRef: ScopedThreadRef;
+  readonly requestId: string;
+  readonly tabId: string;
+  readonly timeoutMs: number;
+}
+
+function backgroundPresentationTimeoutError(
+  input: PreviewAutomationBackgroundPresentationInput,
+): PreviewAutomationBackgroundPresentationTimeoutError {
+  return new PreviewAutomationBackgroundPresentationTimeoutError({
+    requestId: input.requestId,
+    environmentId: input.threadRef.environmentId,
+    threadId: input.threadRef.threadId,
+    tabId: input.tabId,
+    timeoutMs: input.timeoutMs,
+  });
+}
+
+async function waitForPreviewAutomationCompositorFrame(
+  deadline: number,
+  timeoutError: () => PreviewAutomationBackgroundPresentationTimeoutError,
+): Promise<void> {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) throw timeoutError();
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let animationFrameId: number | undefined;
+    const timer = globalThis.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (animationFrameId !== undefined) window.cancelAnimationFrame?.(animationFrameId);
+      reject(timeoutError());
+    }, remainingMs);
+    animationFrameId = window.requestAnimationFrame(() => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
 export function revealPreviewAutomationTab(ref: ScopedThreadRef, tabId: string): void {
   setActivePreviewTab(ref, tabId);
   useRightPanelStore.getState().openBrowser(ref, tabId);
@@ -23,13 +67,11 @@ export function isPreviewAutomationTabPresented(ref: ScopedThreadRef, tabId: str
   );
 }
 
-export async function waitForPreviewAutomationBackgroundPresentation(input: {
-  readonly threadRef: ScopedThreadRef;
-  readonly requestId: string;
-  readonly tabId: string;
-  readonly timeoutMs: number;
-}): Promise<void> {
+export async function waitForPreviewAutomationBackgroundPresentation(
+  input: PreviewAutomationBackgroundPresentationInput,
+): Promise<void> {
   const deadline = Date.now() + input.timeoutMs;
+  const timeoutError = () => backgroundPresentationTimeoutError(input);
   while (true) {
     if (isPreviewAutomationTabPresented(input.threadRef, input.tabId)) return;
 
@@ -44,8 +86,8 @@ export async function waitForPreviewAutomationBackgroundPresentation(input: {
       // Force the staged wrapper through layout, then allow Chromium two
       // compositor frames before asking the guest WebContents for pixels.
       void wrapper.offsetWidth;
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await waitForPreviewAutomationCompositorFrame(deadline, timeoutError);
+      await waitForPreviewAutomationCompositorFrame(deadline, timeoutError);
       return;
     }
 
@@ -54,13 +96,7 @@ export async function waitForPreviewAutomationBackgroundPresentation(input: {
     await new Promise<void>((resolve) => window.setTimeout(resolve, Math.min(16, remainingMs)));
   }
 
-  throw new PreviewAutomationBackgroundPresentationTimeoutError({
-    requestId: input.requestId,
-    environmentId: input.threadRef.environmentId,
-    threadId: input.threadRef.threadId,
-    tabId: input.tabId,
-    timeoutMs: input.timeoutMs,
-  });
+  throw timeoutError();
 }
 
 export async function withPreviewAutomationBackgroundPresentation<A>(
@@ -70,45 +106,31 @@ export async function withPreviewAutomationBackgroundPresentation<A>(
   timeoutMs: number,
   use: (background: boolean) => Promise<A>,
 ): Promise<A> {
-  const background = !(useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false);
+  const background = !isPreviewAutomationTabPresented(threadRef, tabId);
   if (!background) return await use(false);
 
-  const timeoutError = () =>
-    new PreviewAutomationBackgroundPresentationTimeoutError({
-      requestId,
-      environmentId: threadRef.environmentId,
-      threadId: threadRef.threadId,
-      tabId,
-      timeoutMs,
-    });
+  const input = { threadRef, requestId, tabId, timeoutMs };
+  const timeoutError = () => backgroundPresentationTimeoutError(input);
+  const deadline = Date.now() + timeoutMs;
   const releaseCapture = acquireBrowserSurfaceBackgroundCapture(tabId);
-  let timedOut = false;
+  let captureStarted = false;
   let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    timer = globalThis.setTimeout(() => {
-      timedOut = true;
-      reject(timeoutError());
-    }, timeoutMs);
-  });
-  const operation = (async () => {
-    try {
-      await waitForPreviewAutomationBackgroundPresentation({
-        threadRef,
-        requestId,
-        tabId,
-        timeoutMs,
-      });
-      if (timedOut) throw timeoutError();
-      const stillBackground = !(useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false);
-      return await use(stillBackground);
-    } finally {
-      releaseCapture();
-    }
-  })();
 
   try {
-    return await Promise.race([operation, deadline]);
+    await waitForPreviewAutomationBackgroundPresentation(input);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw timeoutError();
+
+    const stillBackground = !isPreviewAutomationTabPresented(threadRef, tabId);
+    const capture = use(stillBackground);
+    captureStarted = true;
+    const operation = capture.finally(releaseCapture);
+    const captureDeadline = new Promise<never>((_resolve, reject) => {
+      timer = globalThis.setTimeout(() => reject(timeoutError()), remainingMs);
+    });
+    return await Promise.race([operation, captureDeadline]);
   } finally {
     if (timer !== undefined) globalThis.clearTimeout(timer);
+    if (!captureStarted) releaseCapture();
   }
 }

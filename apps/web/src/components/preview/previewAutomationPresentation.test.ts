@@ -119,6 +119,103 @@ describe("preview automation presentation", () => {
     }
   });
 
+  it("stages a visible surface when another right-panel surface is selected", async () => {
+    vi.stubGlobal("document", {
+      querySelectorAll: () => [
+        {
+          dataset: {
+            previewViewport: "tab-background",
+            previewBackgroundCapture: "true",
+          },
+          offsetWidth: 800,
+        },
+      ],
+    });
+    vi.stubGlobal("window", {
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      },
+    });
+    const surface = acquireBrowserSurface("tab-background");
+    try {
+      surface.present({ x: 0, y: 0, width: 800, height: 600 }, true);
+      revealPreviewAutomationTab(threadRef, "tab-foreground");
+
+      const background = await withPreviewAutomationBackgroundPresentation(
+        threadRef,
+        "request-background",
+        "tab-background",
+        40,
+        async (isBackground) => {
+          expect(
+            useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+          ).toBe(1);
+          return isBackground;
+        },
+      );
+
+      expect(background).toBe(true);
+      expect(
+        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+      ).toBeUndefined();
+    } finally {
+      surface.release();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("releases a background capture lease when compositor frames remain paused", async () => {
+    vi.useFakeTimers();
+    const cancelAnimationFrame = vi.fn();
+    vi.stubGlobal("document", {
+      querySelectorAll: () => [
+        {
+          dataset: {
+            previewViewport: "tab-background",
+            previewBackgroundCapture: "true",
+          },
+          offsetWidth: 800,
+        },
+      ],
+    });
+    vi.stubGlobal("window", {
+      requestAnimationFrame: () => 1,
+      cancelAnimationFrame,
+    });
+    const use = vi.fn();
+    try {
+      const operation = withPreviewAutomationBackgroundPresentation(
+        threadRef,
+        "request-paused-frame",
+        "tab-background",
+        40,
+        use,
+      );
+      const rejection = expect(operation).rejects.toMatchObject({
+        _tag: "PreviewAutomationBackgroundPresentationTimeoutError",
+        requestId: "request-paused-frame",
+        tabId: "tab-background",
+        timeoutMs: 40,
+      });
+      expect(
+        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+      ).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(40);
+      await rejection;
+
+      expect(use).not.toHaveBeenCalled();
+      expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
+      expect(
+        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+      ).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
   it("retains a background capture lease until a timed-out operation settles", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("document", {
