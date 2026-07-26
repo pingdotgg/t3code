@@ -10,9 +10,26 @@ on:
   pull_request:
     branches:
       - main
+    # Everything this job's result actually depends on:
+    #   apps/windows      the app itself
+    #   packages          what the renderer imports (contracts, client-runtime,
+    #                     shared) — a schema change breaks the typecheck here
+    #   apps/server       the sidecar contract the Rust shell mirrors by hand.
+    #                     `sidecar/bootstrap.rs` asserts the exact JSON keys the
+    #                     server decodes off the bootstrap fd, and its CLI flags
+    #                     are hard-coded in `sidecar/process.rs`, so a server
+    #                     change is exactly when those tests need to re-run.
+    #   manifests         the lockfile and root config decide what the install,
+    #                     typecheck, lint, and renderer build actually resolve
     paths:
       - "apps/windows/**"
+      - "apps/server/**"
       - "packages/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
+      - "vite.config.ts"
       - ".github/workflows/ci-windows.yml"
   workflow_dispatch:
 

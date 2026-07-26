@@ -259,11 +259,17 @@ corepack pnpm exec tauri signer generate -w %USERPROFILE%\.tauri\sergecode.key
 Then:
 
 1. Put the **public** key in `tauri.conf.json` ▸ `plugins.updater.pubkey`.
-2. Set `bundle.createUpdaterArtifacts` to `true`.
-3. Add repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
+2. Add repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
    `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
-4. Publish `latest.json` alongside the installer on the GitHub Release; the
-   endpoint is already configured.
+3. Publish `latest.json` alongside the installer on the GitHub Release; the
+   endpoint is already configured. The release workflow does not generate it
+   yet — that is the last piece.
+
+Leave `bundle.createUpdaterArtifacts` at `false` in `tauri.conf.json`. The
+release workflow turns it on with a `--config` override when it sees the
+signing secret, and keys the uploaded artifact list off the same decision, so
+the two can never disagree. Setting the secret without the public key fails
+early with a pointer back to this section rather than deep inside the build.
 
 Authenticode is separate and worth doing — without it SmartScreen warns on
 every install. It needs an OV/EV certificate and `bundle.windows.certificateThumbprint`.
