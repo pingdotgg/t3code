@@ -20,21 +20,7 @@ public struct ChatScreen: View {
     /// tipped the Swift 6.2 (Xcode 26.x) type checker over its limit in
     /// release builds (`circular reference` / type-check timeout on CI).
     private var selectedThreadIsActive: Bool {
-        model.selectedThread.map {
-            $0.status == .running || $0.status == .backgroundWork
-        } ?? false
-    }
-
-    /// Whether the plan rail occupies the credit row for `thread`: the whole
-    /// live turn, not just the part of it that has steps. The row needs the
-    /// answer up front so it can drop in a `Spacer` and keep the credit pill
-    /// on the right edge when there is no run — and keying on the run alone
-    /// means the rail (PlanProgressStrip shows its own waiting state until
-    /// the plan lands) never blinks out mid-turn while steps hydrate.
-    /// Written as statements, not one expression — see
-    /// `selectedThreadIsActive` on the Swift 6.2 type-checker limit.
-    private func showsPlanRail(_ thread: ChatThread) -> Bool {
-        thread.status == .running || thread.status == .backgroundWork
+        model.selectedThread?.status.isLiveTurn ?? false
     }
 
     public var body: some View {
@@ -66,10 +52,15 @@ public struct ChatScreen: View {
                         // column. (The credit rides in the layout flow rather
                         // than a floating corner overlay, which used to
                         // overlap the composer glass on narrow windows.)
+                        // The rail is keyed on the live turn alone, never on
+                        // whether steps have hydrated yet: PlanProgressStrip
+                        // reserves the slot until the plan lands, so the row
+                        // holds one size for the whole turn.
                         let photo = scenery.photo(for: threadKey)
-                        if showsPlanRail(thread) || photo != nil {
+                        let showsPlanRail = thread.status.isLiveTurn
+                        if showsPlanRail || photo != nil {
                             HStack(alignment: .bottom, spacing: 10) {
-                                if showsPlanRail(thread) {
+                                if showsPlanRail {
                                     PlanProgressStrip(model: model)
                                 } else {
                                     Spacer(minLength: 0)

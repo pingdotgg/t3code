@@ -11,10 +11,11 @@ import SwiftUI
 /// filled region while the run is live. Expanded, the full step list unfolds
 /// upward on an opaque reading plate.
 ///
-/// The plan lands after the turn starts, so the strip owns its own waiting
-/// state: while a live turn has no steps yet it holds the same rail with an
-/// indeterminate sweep. ChatScreen keys the row on the run alone, and the
-/// slot (and the credit pill beside it) stays put across hydration.
+/// The plan lands after the turn starts (and most turns never send one at
+/// all), so the strip owns that gap itself: while a live turn has no steps it
+/// reserves the rail's height and draws nothing. ChatScreen keys the row on
+/// the run alone, so the row holds its size across hydration without putting
+/// placeholder chrome on screen for turns that never plan.
 struct PlanProgressStrip: View {
     let model: AppModel
 
@@ -29,13 +30,11 @@ struct PlanProgressStrip: View {
         return model.threadState(threadID)?.planProgress
     }
 
-    /// Whether the selected thread has a turn in flight. Matches ChatScreen's
-    /// mount condition, so the waiting rail covers exactly the window between
-    /// the run starting and the first `turn.plan.updated` arriving.
+    /// Whether the selected thread has a turn in flight — the same predicate
+    /// ChatScreen mounts the row with, so the reserved slot covers exactly
+    /// the window between the run starting and the plan arriving.
     private var isLive: Bool {
-        model.selectedThread.map {
-            $0.status == .running || $0.status == .backgroundWork
-        } ?? false
+        model.selectedThread?.status.isLiveTurn ?? false
     }
 
     var body: some View {
@@ -59,75 +58,19 @@ struct PlanProgressStrip: View {
             // transitions handle them without reanimating the whole strip.
             .transition(Motion.banner)
         } else if isLive {
-            waitingRail
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .transition(Motion.banner)
+            reservedSlot
         }
     }
 
-    // MARK: - Waiting rail
-
-    /// The same capsule as the real rail, with an indeterminate band instead
-    /// of a fill: the row holds its size from the moment the turn starts, so
-    /// nothing jumps when the first steps land. Not a button — there is
-    /// nothing to expand yet.
-    private var waitingRail: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "checklist")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(AlpineTheme.accent)
-                .pulseGlow(isActive: true)
-            Text("Planning…")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.white.opacity(0.75))
-            Spacer(minLength: 8)
-        }
-        .padding(.horizontal, 8)
-        .frame(height: Self.railHeight)
-        .frame(maxWidth: .infinity)
-        .background { waitingTrack }
-        .clipShape(Capsule())
-        .overlay {
-            Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 1)
-        }
-        .sceneryChrome()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Plan progress")
-        .accessibilityValue("Waiting for the plan")
-    }
-
-    private var waitingTrack: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.black.opacity(0.32))
-                indeterminateBand(width: proxy.size.width)
-            }
-        }
-    }
-
-    /// Accent band cruising the full track while there is no fraction to show.
-    /// Reduce Motion gets a static wash instead — the waiting state still
-    /// reads, nothing moves.
-    @ViewBuilder
-    private func indeterminateBand(width: CGFloat) -> some View {
-        let band: CGFloat = 120
-        if Motion.profile.allowsDecorativeEffects, width > 0 {
-            TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
-                let period = 1.8
-                let elapsed = context.date.timeIntervalSinceReferenceDate
-                let phase = elapsed.truncatingRemainder(dividingBy: period) / period
-                LinearGradient(
-                    colors: [.clear, AlpineTheme.accent.opacity(0.45), .clear],
-                    startPoint: .leading, endPoint: .trailing
-                )
-                .frame(width: band)
-                .offset(x: -band + CGFloat(phase) * (width + band))
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .allowsHitTesting(false)
-        } else {
-            Capsule().fill(AlpineTheme.accent.opacity(0.16))
-        }
+    /// Nothing to draw yet — most turns never send a plan at all, so a
+    /// placeholder rail would put permanent chrome on screen for them. Hold
+    /// the rail's height instead: the credit row keeps one size for the whole
+    /// turn and the real rail fades in beside a pill that never moved.
+    private var reservedSlot: some View {
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.railHeight)
+            .accessibilityHidden(true)
     }
 
     // MARK: - Rail

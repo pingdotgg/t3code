@@ -376,6 +376,16 @@ public final class MockBackend: BackendService, @unchecked Sendable {
 // MARK: - Actor-isolated mutable state + demo data
 
 private actor MockState {
+    /// The in-turn todo list the primary thread works through. Re-emitted at
+    /// the start of every one of its turns (see `sendMessage`).
+    static let planFixture = PlanProgress(
+        steps: [
+            PlanStep(id: 0, title: "Reproduce the scroll jump", status: .completed),
+            PlanStep(id: 1, title: "Pin sort to explicit reorder", status: .inProgress),
+            PlanStep(id: 2, title: "Verify with 200-thread seed", status: .pending),
+        ],
+        explanation: nil)
+
     private let seedVariant: String?
     private let primaryThreadID: String
 
@@ -486,16 +496,7 @@ private actor MockState {
             .contextWindowUpdated(
                 threadID: primaryThreadID,
                 status: ContextWindowStatus(usedTokens: 72_000, maxTokens: 200_000)))
-        emit(
-            .planProgressUpdated(
-                threadID: primaryThreadID,
-                progress: PlanProgress(
-                    steps: [
-                        PlanStep(id: 0, title: "Reproduce the scroll jump", status: .completed),
-                        PlanStep(id: 1, title: "Pin sort to explicit reorder", status: .inProgress),
-                        PlanStep(id: 2, title: "Verify with 200-thread seed", status: .pending),
-                    ],
-                    explanation: nil)))
+        emit(.planProgressUpdated(threadID: primaryThreadID, progress: Self.planFixture))
         lifecycleTask = Task { await self.runSubagentLifecycleDemo() }
         if seedVariant != nil {
             connectionWobbleTask = Task { await self.runConnectionWobble() }
@@ -765,6 +766,13 @@ private actor MockState {
         thread.updatedAt = Date()
         threadsByID[threadID] = thread
         emit(.threadUpserted(thread))
+
+        // A plan belongs to the turn that produced it — the app drops plan
+        // progress when a thread settles — so the fixture has to arrive with
+        // each new turn, the way a real provider streams `turn.plan.updated`.
+        if threadID == primaryThreadID {
+            emit(.planProgressUpdated(threadID: threadID, progress: Self.planFixture))
+        }
 
         let messageID = nextID("asst")
         let key = StreamingKey(threadID: threadID, messageID: messageID)

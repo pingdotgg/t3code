@@ -56,6 +56,20 @@ public enum ThreadStatus: String, Sendable {
             false
         }
     }
+
+    /// The agent is working this turn: the statuses in-turn chrome (the plan
+    /// rail above the composer) mounts for. Narrower than `!isSettled`, which
+    /// also covers the waiting-on-a-human and review states. One definition
+    /// so ChatScreen, PlanProgressStrip, and the turn-boundary bookkeeping in
+    /// AppModel cannot drift apart when a status is added.
+    public var isLiveTurn: Bool {
+        switch self {
+        case .running, .backgroundWork: true
+        case .idle, .waiting, .waitingApproval, .waitingInput, .error, .archived, .settled,
+            .done, .reviewing, .fixing, .readyToMerge:
+            false
+        }
+    }
 }
 
 /// UI mirror of the wire `RuntimeMode` (how much the agent may do unprompted).

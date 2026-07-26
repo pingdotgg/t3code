@@ -79,57 +79,71 @@
             // credit row with the Unsplash pill), then expand, snapshot,
             // collapse. The mock seeds plan progress on thread-1, but the
             // rail only mounts while a run is live — start one if needed and
-            // hand the thread back idle afterwards. "Live" means the same two
-            // statuses ChatScreen mounts the rail for: a `.backgroundWork`
+            // hand the thread back idle afterwards. `isLiveTurn` is the same
+            // predicate ChatScreen mounts the rail with: a `.backgroundWork`
             // thread is already active, so synthesizing a send there would
             // mutate seeded probe state for no reason.
-            let planTurnIsLive =
-                model.selectedThread.map {
-                    $0.status == .running || $0.status == .backgroundWork
-                } ?? false
-            let planRunStarted = !planTurnIsLive
+            let planRunStarted = !(model.selectedThread?.status.isLiveTurn ?? false)
             if planRunStarted {
                 // `send` only returns when the mock finishes streaming, so
                 // fire it off and snapshot while the turn is still live. The
-                // padded text lengthens the canned reply enough to keep the
-                // thread running across both snapshots (80ms per chunk).
+                // padded text lengthens the canned reply enough that the turn
+                // outlives both snapshots (80ms per chunk) — a backstop for
+                // the waits below, not the guarantee.
                 let filler = String(repeating: "keep the run alive ", count: 40)
                 Task { @MainActor in await model.send(text: "Probe: plan rail \(filler)") }
             }
-            try? await Task.sleep(for: .seconds(1.5))
-            print("UIProbe: plan rail status=\(model.selectedThread?.status.rawValue ?? "nil")")
+            // Capture the rail in the state it is meant to show: live turn,
+            // steps hydrated. Both snapshots re-check liveness, since a turn
+            // that ended early would leave a credit-only row behind.
+            _ = await waitUntil("plan rail is live with steps") {
+                guard model.selectedThread?.status.isLiveTurn == true else { return false }
+                guard let threadID = model.selectedThreadID else { return false }
+                return model.threadState(threadID)?.planProgress?.steps.isEmpty == false
+            }
             snapshot("2-plan-rail", dir: dir)
             toggleSection("plan")
-            try? await Task.sleep(for: .seconds(1))
+            _ = await waitUntil("plan rail still live when expanded") {
+                model.selectedThread?.status.isLiveTurn == true
+            }
+            try? await Task.sleep(for: .seconds(0.5))
             snapshot("2-plan-expanded", dir: dir)
             toggleSection("plan")
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .seconds(0.5))
             if planRunStarted {
                 await model.cancelCurrentTurn()
-                try? await Task.sleep(for: .seconds(1))
+                _ = await waitUntil("plan thread settled after cancel") {
+                    model.selectedThread?.status.isLiveTurn == false
+                }
             }
 
-            // Waiting rail: a live turn on a thread the mock never seeds a
-            // plan for (thread-2), so the strip must hold the row with its
-            // indeterminate state instead of leaving the credit pill alone.
+            // Reserved slot: a live turn on a thread the mock never seeds a
+            // plan for (thread-2). The strip draws nothing there but holds
+            // the rail's height, so the credit pill keeps the exact position
+            // it has in `2-plan-rail` above.
             if let planlessThread = model.threads.first(where: { $0.id == "thread-2" }) {
                 let restoreThreadID = model.selectedThreadID
                 multi.select(threadID: planlessThread.id, on: model.deviceID)
-                try? await Task.sleep(for: .seconds(1))
+                _ = await waitUntil("planless thread selected") {
+                    model.selectedThreadID == planlessThread.id
+                }
                 let filler = String(repeating: "keep the run alive ", count: 40)
-                Task { @MainActor in await model.send(text: "Probe: waiting rail \(filler)") }
-                try? await Task.sleep(for: .seconds(1.5))
-                let hasSteps = model.selectedThreadID
-                    .flatMap { model.threadState($0)?.planProgress?.steps.isEmpty == false } ?? false
-                print(
-                    "UIProbe: waiting rail status=\(model.selectedThread?.status.rawValue ?? "nil") "
-                        + "hasSteps=\(hasSteps)")
-                snapshot("2a-plan-rail-waiting", dir: dir)
+                Task { @MainActor in await model.send(text: "Probe: reserved slot \(filler)") }
+                _ = await waitUntil("planless turn is live without steps") {
+                    guard model.selectedThread?.status.isLiveTurn == true else { return false }
+                    guard let threadID = model.selectedThreadID else { return false }
+                    return model.threadState(threadID)?.planProgress?.steps.isEmpty != false
+                }
+                snapshot("2a-plan-row-reserved", dir: dir)
                 await model.cancelCurrentTurn()
-                try? await Task.sleep(for: .seconds(0.5))
+                _ = await waitUntil("planless thread settled after cancel") {
+                    model.selectedThread?.status.isLiveTurn == false
+                }
                 if let restoreThreadID {
                     multi.select(threadID: restoreThreadID, on: model.deviceID)
-                    try? await Task.sleep(for: .seconds(1))
+                    _ = await waitUntil("previous thread reselected") {
+                        model.selectedThreadID == restoreThreadID
+                    }
                 }
             }
 
@@ -810,6 +824,30 @@
         private static func toggleSection(_ key: String) {
             NotificationCenter.default.post(name: .uiProbeToggleSection, object: key)
             print("UIProbe: toggled section '\(key)'")
+        }
+
+        /// Polls `condition` until it holds, then returns true. A fixed sleep
+        /// snapshots whatever the app happens to be doing at that instant —
+        /// this makes the intended state a precondition of the capture and
+        /// prints a FAIL line (rather than silently shooting the wrong frame)
+        /// when it never arrives.
+        private static func waitUntil(
+            _ label: String,
+            timeout: Duration = .seconds(8),
+            _ condition: @MainActor () -> Bool
+        ) async -> Bool {
+            let step = Duration.milliseconds(50)
+            var waited = Duration.zero
+            while waited < timeout {
+                if condition() {
+                    print("UIProbe: PASS \(label) after \(waited)")
+                    return true
+                }
+                try? await Task.sleep(for: step)
+                waited += step
+            }
+            print("UIProbe: FAIL \(label) still false after \(timeout)")
+            return false
         }
 
         private static func userMessageCount(_ model: AppModel) -> Int {

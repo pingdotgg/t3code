@@ -779,6 +779,7 @@ public final class AppModel {
                 previousStatus: previousStatus,
                 previousStalled: previousStalled,
                 thread: thread)
+            clearPlanProgressOnSettle(previousStatus: previousStatus, thread: thread)
             updateProjectPathIndex(for: thread)
             // No VCS event fires when a watched PR's thread merely goes
             // idle — re-evaluate the cached merged/closed state so the
@@ -1459,6 +1460,27 @@ public final class AppModel {
 
     private func projectName(forThreadID threadID: String) -> String? {
         threads.first { $0.id == threadID }.flatMap { projectName(for: $0) }
+    }
+
+    /// A plan belongs to the turn that produced it. `turn.plan.updated` only
+    /// ever carries steps — there is no "plan cleared" event — so without
+    /// this, a finished plan stays in thread state and the next turn opens
+    /// showing the previous turn's steps (usually a full "Plan complete"
+    /// bar) until, or unless, a new plan lands.
+    ///
+    /// Cleared on the settle edge rather than the start edge on purpose: a
+    /// `turn.plan.updated` that races just ahead of the `running` upsert must
+    /// survive, and by the time a turn settles nothing renders the progress
+    /// any more (the rail is mounted for live turns only).
+    ///
+    /// The edge is `isSettled`, not `isLiveTurn`: a turn that pauses on an
+    /// approval or an input request leaves the live statuses but is not over,
+    /// and its plan has to come back with it.
+    private func clearPlanProgressOnSettle(previousStatus: ThreadStatus?, thread: ChatThread) {
+        guard let previousStatus, !previousStatus.isSettled, thread.status.isSettled else {
+            return
+        }
+        threadStates[thread.id]?.planProgress = nil
     }
 
     private func considerAgentNotification(
