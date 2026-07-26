@@ -60,8 +60,14 @@ public enum ThreadStatus: String, Sendable {
     /// The agent is working this turn: the statuses in-turn chrome (the plan
     /// rail above the composer) mounts for. Narrower than `!isSettled`, which
     /// also covers the waiting-on-a-human and review states. One definition
-    /// so ChatScreen, PlanProgressStrip, and the turn-boundary bookkeeping in
-    /// AppModel cannot drift apart when a status is added.
+    /// so ChatScreen and PlanProgressStrip cannot drift apart when a status
+    /// is added.
+    ///
+    /// This is a *rendering* predicate, not a turn-lifecycle one. Discarding
+    /// per-turn state (`AppModel.clearPlanProgressOnSettle`) keys on
+    /// `isSettled` instead, on purpose: a turn that pauses on an approval
+    /// leaves the live statuses without being over, so clearing on this edge
+    /// would wipe its plan while the user answers the prompt.
     public var isLiveTurn: Bool {
         switch self {
         case .running, .backgroundWork: true

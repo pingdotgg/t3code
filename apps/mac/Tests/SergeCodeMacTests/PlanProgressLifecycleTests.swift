@@ -71,6 +71,24 @@ struct PlanProgressLifecycleTests {
         #expect(model.threadState("t-race")?.planProgress?.steps.count == 2)
     }
 
+    @Test("an empty plan reserves the rail's slot only when a credit shares the row")
+    func emptyPlanOnlyReservesBesideACredit() {
+        // With a credit pill on the row: mounted for the whole live turn, so
+        // the pill cannot move when steps land.
+        #expect(PlanRailPolicy.showsRail(isLiveTurn: true, hasPhoto: true, hasSteps: false))
+        #expect(PlanRailPolicy.showsRail(isLiveTurn: true, hasPhoto: true, hasSteps: true))
+
+        // With no credit the row exists only for the rail: reserving height
+        // for a plan that may never arrive would push the composer down for
+        // the whole run and snap back on settle.
+        #expect(PlanRailPolicy.showsRail(isLiveTurn: true, hasPhoto: false, hasSteps: false) == false)
+        #expect(PlanRailPolicy.showsRail(isLiveTurn: true, hasPhoto: false, hasSteps: true))
+
+        // A settled thread never shows the rail, plan or not.
+        #expect(PlanRailPolicy.showsRail(isLiveTurn: false, hasPhoto: true, hasSteps: true) == false)
+        #expect(PlanRailPolicy.showsRail(isLiveTurn: false, hasPhoto: false, hasSteps: true) == false)
+    }
+
     @Test("waiting on an approval is not a settle")
     func approvalWaitKeepsPlanProgress() {
         let model = makeModel("t-approval")

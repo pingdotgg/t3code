@@ -1,5 +1,22 @@
 import SwiftUI
 
+/// Whether the plan rail takes part in the credit row above the composer, and
+/// on what terms. Pulled out of the view so the layout rule is testable: the
+/// difference between the two cases is invisible in a screenshot of a chat
+/// that has a scenery photo, which is every chat with an Unsplash key set.
+enum PlanRailPolicy {
+    /// - With a photo the row is on screen for the credit anyway, so the rail
+    ///   mounts for the whole live turn and holds its height while the plan
+    ///   hydrates: the credit pill cannot shift when steps land.
+    /// - With no photo the row exists only for the rail, so it waits for real
+    ///   steps. Reserving height there would be empty space pushing the
+    ///   composer down for every run, including the many that never plan.
+    static func showsRail(isLiveTurn: Bool, hasPhoto: Bool, hasSteps: Bool) -> Bool {
+        guard isLiveTurn else { return false }
+        return hasPhoto || hasSteps
+    }
+}
+
 /// The agent's live in-turn todo list (`turn.plan.updated` activities),
 /// docked above the composer as a single-row progress rail that shares its
 /// row with the Unsplash credit pill (see ChatScreen): the rail takes all the
@@ -11,13 +28,20 @@ import SwiftUI
 /// filled region while the run is live. Expanded, the full step list unfolds
 /// upward on an opaque reading plate.
 ///
-/// The plan lands after the turn starts (and most turns never send one at
-/// all), so the strip owns that gap itself: while a live turn has no steps it
-/// reserves the rail's height and draws nothing. ChatScreen keys the row on
-/// the run alone, so the row holds its size across hydration without putting
-/// placeholder chrome on screen for turns that never plan.
+/// The plan lands after the turn starts and most turns never send one at all,
+/// so what the strip does with an empty plan depends on whether the row it
+/// lives in exists for another reason: with a credit pill beside it
+/// (`reservesSlotWhileEmpty`) it holds the rail's height so the pill cannot
+/// move when steps land; with no pill there is nothing to keep aligned, so it
+/// draws nothing and ChatScreen keeps the row out of the layout entirely.
 struct PlanProgressStrip: View {
     let model: AppModel
+
+    /// Whether an empty plan should still hold the rail's height. True only
+    /// when the row is already on screen for the scenery credit — reserving
+    /// space in an otherwise empty row would push the composer down for every
+    /// live turn, plan or not.
+    var reservesSlotWhileEmpty: Bool = false
 
     @UIState private var isExpanded = false
 
@@ -57,15 +81,15 @@ struct PlanProgressStrip: View {
             // Live todo updates stream in from the agent; row-local content
             // transitions handle them without reanimating the whole strip.
             .transition(Motion.banner)
-        } else if isLive {
+        } else if isLive, reservesSlotWhileEmpty {
             reservedSlot
         }
     }
 
-    /// Nothing to draw yet — most turns never send a plan at all, so a
-    /// placeholder rail would put permanent chrome on screen for them. Hold
-    /// the rail's height instead: the credit row keeps one size for the whole
-    /// turn and the real rail fades in beside a pill that never moved.
+    /// Nothing to draw yet — a placeholder rail would put permanent chrome on
+    /// screen for every turn that never plans. Hold the rail's height
+    /// instead, so the credit row keeps one size for the whole turn and the
+    /// real rail fades in beside a pill that never moved.
     private var reservedSlot: some View {
         Color.clear
             .frame(maxWidth: .infinity)

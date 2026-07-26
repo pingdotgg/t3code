@@ -23,6 +23,16 @@ public struct ChatScreen: View {
         model.selectedThread?.status.isLiveTurn ?? false
     }
 
+    /// `PlanRailPolicy.showsRail` for `thread` — see that type for the rule.
+    /// Written as statements, not one expression — see
+    /// `selectedThreadIsActive` on the Swift 6.2 type-checker limit.
+    private func showsPlanRail(_ thread: ChatThread, hasPhoto: Bool) -> Bool {
+        let steps = model.threadState(thread.id)?.planProgress?.steps
+        let hasSteps = !(steps?.isEmpty ?? true)
+        return PlanRailPolicy.showsRail(
+            isLiveTurn: thread.status.isLiveTurn, hasPhoto: hasPhoto, hasSteps: hasSteps)
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             if let thread = model.selectedThread {
@@ -52,16 +62,19 @@ public struct ChatScreen: View {
                         // column. (The credit rides in the layout flow rather
                         // than a floating corner overlay, which used to
                         // overlap the composer glass on narrow windows.)
-                        // The rail is keyed on the live turn alone, never on
-                        // whether steps have hydrated yet: PlanProgressStrip
-                        // reserves the slot until the plan lands, so the row
-                        // holds one size for the whole turn.
+                        // With a credit on the row, the rail mounts for the
+                        // whole live turn and holds its height while the plan
+                        // hydrates, so the pill never moves. With no credit
+                        // the row exists only for the rail, so it waits for
+                        // actual steps rather than reserving empty space that
+                        // would push the composer down for every run.
                         let photo = scenery.photo(for: threadKey)
-                        let showsPlanRail = thread.status.isLiveTurn
+                        let showsPlanRail = showsPlanRail(thread, hasPhoto: photo != nil)
                         if showsPlanRail || photo != nil {
                             HStack(alignment: .bottom, spacing: 10) {
                                 if showsPlanRail {
-                                    PlanProgressStrip(model: model)
+                                    PlanProgressStrip(
+                                        model: model, reservesSlotWhileEmpty: photo != nil)
                                 } else {
                                     Spacer(minLength: 0)
                                 }

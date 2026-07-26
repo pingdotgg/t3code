@@ -94,22 +94,35 @@
                 Task { @MainActor in await model.send(text: "Probe: plan rail \(filler)") }
             }
             // Capture the rail in the state it is meant to show: live turn,
-            // steps hydrated. Both snapshots re-check liveness, since a turn
-            // that ended early would leave a credit-only row behind.
-            _ = await waitUntil("plan rail is live with steps") {
+            // steps hydrated. The snapshots are gated on that precondition —
+            // a PNG written from the wrong state is worse than a missing one,
+            // because it looks like evidence.
+            let planRailReady = await waitUntil("plan rail is live with steps") {
                 guard model.selectedThread?.status.isLiveTurn == true else { return false }
                 guard let threadID = model.selectedThreadID else { return false }
                 return model.threadState(threadID)?.planProgress?.steps.isEmpty == false
             }
-            snapshot("2-plan-rail", dir: dir)
-            toggleSection("plan")
-            _ = await waitUntil("plan rail still live when expanded") {
-                model.selectedThread?.status.isLiveTurn == true
+            if planRailReady {
+                snapshot("2-plan-rail", dir: dir)
+                toggleSection("plan")
+                // Re-checked, since a turn that ended between the shots would
+                // leave a credit-only row behind.
+                let stillLive = await waitUntil("plan rail still live when expanded") {
+                    model.selectedThread?.status.isLiveTurn == true
+                }
+                try? await Task.sleep(for: .seconds(0.5))
+                if stillLive {
+                    snapshot("2-plan-expanded", dir: dir)
+                } else {
+                    print("UIProbe: FAIL skipped 2-plan-expanded — turn ended before the capture")
+                }
+                toggleSection("plan")
+                try? await Task.sleep(for: .seconds(0.5))
+            } else {
+                print(
+                    "UIProbe: FAIL skipped 2-plan-rail and 2-plan-expanded — "
+                        + "the rail never reached its live+steps state")
             }
-            try? await Task.sleep(for: .seconds(0.5))
-            snapshot("2-plan-expanded", dir: dir)
-            toggleSection("plan")
-            try? await Task.sleep(for: .seconds(0.5))
             if planRunStarted {
                 await model.cancelCurrentTurn()
                 _ = await waitUntil("plan thread settled after cancel") {
@@ -129,12 +142,18 @@
                 }
                 let filler = String(repeating: "keep the run alive ", count: 40)
                 Task { @MainActor in await model.send(text: "Probe: reserved slot \(filler)") }
-                _ = await waitUntil("planless turn is live without steps") {
+                let reservedReady = await waitUntil("planless turn is live without steps") {
                     guard model.selectedThread?.status.isLiveTurn == true else { return false }
                     guard let threadID = model.selectedThreadID else { return false }
                     return model.threadState(threadID)?.planProgress?.steps.isEmpty != false
                 }
-                snapshot("2a-plan-row-reserved", dir: dir)
+                if reservedReady {
+                    snapshot("2a-plan-row-reserved", dir: dir)
+                } else {
+                    print(
+                        "UIProbe: FAIL skipped 2a-plan-row-reserved — "
+                            + "the planless turn never went live")
+                }
                 await model.cancelCurrentTurn()
                 _ = await waitUntil("planless thread settled after cancel") {
                     model.selectedThread?.status.isLiveTurn == false
