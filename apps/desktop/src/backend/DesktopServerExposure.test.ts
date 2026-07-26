@@ -295,9 +295,16 @@ describe("DesktopServerExposure", () => {
         assert.instanceOf(error, DesktopServerExposure.DesktopTailscaleServeConfigureError);
         assert.isTrue(DesktopServerExposure.isDesktopServerExposureSetTailscaleServeError(error));
         assert.isTrue(DesktopServerExposure.isDesktopServerExposureError(error));
+        assert.equal(error.detail, "Serve is not enabled on your tailnet.");
         assert.equal(error.configureUrl, configureUrl);
+        assert.equal(error.cause?._tag, "TailscaleCommandExitError");
         assert.equal(
           error.message,
+          `Serve is not enabled on your tailnet. To enable, visit: ${configureUrl}`,
+        );
+        // Wrapper message is structural; underlying CLI error remains on cause.
+        assert.equal(
+          error.cause?.message,
           `Serve is not enabled on your tailnet. To enable, visit: ${configureUrl}`,
         );
 
