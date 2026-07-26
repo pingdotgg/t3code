@@ -38,6 +38,12 @@ import {
 import { ServerConfig } from "../config.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+/**
+ * `git worktree add` runs the repository's `post-checkout` hook, which for a
+ * JavaScript monorepo usually means installing dependencies. That is minutes,
+ * not seconds, on a cold package store.
+ */
+export const WORKTREE_ADD_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
@@ -2254,6 +2260,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       : ["worktree", "add", worktreePath, input.refName];
 
     yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
+      // `git worktree add` fires post-checkout in the new worktree, and this
+      // repo's hook bootstraps it — a `pnpm install` runs inside this command.
+      // That is ~10s against a warm pnpm store and minutes against a cold one,
+      // so the 30s default would fail thread creation with "Git command timed
+      // out." and leave a registered, half-set-up worktree behind. A hook is a
+      // normal thing for a repo to have; the timeout has to allow for one.
+      timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
       fallbackErrorDetail: "git worktree add failed",
     });
 
