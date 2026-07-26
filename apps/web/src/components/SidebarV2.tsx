@@ -294,11 +294,11 @@ function SnoozePopoverButton(props: {
             aria-label="Snooze thread"
             onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
-            className="inline-flex h-full cursor-pointer items-center gap-0.5 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
+            className="inline-flex h-full cursor-pointer items-center justify-center rounded-md bg-transparent px-1 text-xs text-muted-foreground hover:text-foreground"
           />
         }
       >
-        <ClockIcon className="size-3" />
+        <ClockIcon aria-hidden className="size-3" />
       </PopoverTrigger>
       <PopoverPopup side="bottom" align="end" className="w-56" viewportClassName="p-1">
         {presets.map((preset) => (
@@ -823,7 +823,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               role="button"
               tabIndex={0}
               data-testid="sidebar-v2-row-card"
-              className={rowSurfaceClassName}
+              className={cn(rowSurfaceClassName, "sidebar-v2-thread-card")}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}
@@ -832,7 +832,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
           }
         >
           <div className="relative z-10 h-[4.875rem] px-2.5 py-2">
-            <div className="flex h-5 min-w-0 items-center gap-1.5">
+            <div className="flex h-5 min-w-0 items-center gap-1">
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={props.projectCwd ?? ""}
@@ -850,7 +850,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               ) : (
                 <span className="flex-1" />
               )}
-              <span className="relative ml-auto flex h-5 min-w-8 shrink-0 items-center justify-end pl-1 text-xs">
+              <span className="sidebar-v2-thread-actions-slot relative ml-auto flex h-5 shrink-0 items-center justify-end text-xs">
                 <span
                   className={cn(
                     "tabular-nums text-muted-foreground/65 transition-opacity group-hover/v2-row:opacity-0",
@@ -888,7 +888,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 {props.settlementSupported || showSnoozeButton ? (
                   <span
                     className={cn(
-                      "absolute inset-y-0 right-0 flex items-stretch gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
+                      "absolute inset-y-0 right-0 flex items-stretch gap-0 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
                       snoozeMenuOpen && "opacity-100",
                     )}
                   >
@@ -905,9 +905,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                         aria-label="Settle thread"
                         title="Settle thread"
                         onClick={handleSettleClick}
-                        className="inline-flex h-full cursor-pointer items-center justify-center rounded-md bg-transparent px-1.5 text-muted-foreground hover:text-foreground"
+                        className="inline-flex h-full cursor-pointer items-center justify-center gap-1 rounded-md bg-transparent px-1 text-muted-foreground hover:text-foreground"
                       >
                         <CheckIcon aria-hidden className="size-3" />
+                        <span className="sidebar-v2-settle-label leading-none">Settle</span>
                       </button>
                     ) : null}
                   </span>
