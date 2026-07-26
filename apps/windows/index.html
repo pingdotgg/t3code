@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en" class="surge-root">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SurgeCode</title>
+  </head>
+  <body>
+    <!--
+      The window is transparent so DWM composites Mica behind it (see
+      src-tauri/src/window.rs). Nothing in the document may paint an opaque
+      background above that; the layer stack is owned by GlassLayering.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

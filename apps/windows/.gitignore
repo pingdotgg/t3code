@@ -1,0 +1,17 @@
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.tsbuildinfo
+
+# The staged sidecar payload (pinned node.exe + the server bundle) is produced
+# by scripts/stage-sidecar.mjs before a release build. The two directories
+# themselves stay tracked: tauri.conf.json declares them as bundle resources
+# and Tauri fails the build if a declared resource path is missing, so a fresh
+# clone has to be buildable without staging.
+dist-sidecar/*
+!dist-sidecar/SergeCodeNode/
+!dist-sidecar/SergeCodeServer/
+dist-sidecar/SergeCodeNode/*
+dist-sidecar/SergeCodeServer/*
+!dist-sidecar/SergeCodeNode/.gitkeep
+!dist-sidecar/SergeCodeServer/.gitkeep
