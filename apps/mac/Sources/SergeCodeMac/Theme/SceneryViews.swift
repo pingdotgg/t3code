@@ -83,7 +83,13 @@ struct SceneryImageView: View {
     }
 
     private var taskKey: String {
-        "\(setId ?? "-")/\(photo?.id ?? "-")/\(variant.rawValue)"
+        // Load state is part of the id so a mounted view whose image vanished
+        // from the store (eviction) re-requests it instead of sitting on the
+        // fallback gradient until it is remounted. Not a poll: the id only
+        // changes when the store's answer changes, and the re-run is a no-op
+        // once cached because `ensureImage` early-returns on a hit.
+        let loaded = loadedPhotoID == nil ? "0" : "1"
+        return "\(setId ?? "-")/\(photo?.id ?? "-")/\(variant.rawValue)/\(loaded)"
     }
 }
 

@@ -96,10 +96,21 @@ public final class MultiDeviceModel: AgentNotificationSelectionHandler {
     }
 
     /// Restart one already-mounted backend session.
+    ///
+    /// The local sidecar is included: when `LiveBackend.start()` fails
+    /// terminally (node runtime, sidecar config) it emits `.failed` and keeps
+    /// no process or socket to recover from, so shutdown + start is the only
+    /// retry — and `AppModel.start()` re-subscribes to the event stream that
+    /// `shutdown()` deliberately drops.
     public func reconnect(id: DeviceID) async {
-        guard hasStarted, let session = remoteSessions.first(where: { $0.id == id }) else {
+        guard hasStarted else { return }
+        if id == .local {
+            await local.shutdown()
+            guard hasStarted else { return }
+            local.start()
             return
         }
+        guard let session = remoteSessions.first(where: { $0.id == id }) else { return }
         await session.model.shutdown()
         guard hasStarted, remoteSessions.contains(where: { $0 === session }) else { return }
         session.model.start()

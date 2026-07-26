@@ -11,6 +11,11 @@ import SwiftUI
 /// frozen; both the stagger and the float collapse to a plain fade under
 /// Reduce Motion.
 struct EmptyStateView: View {
+    /// The model Quick Chat runs against, purely so its `lastError` has a
+    /// renderer here: the composer is the only other one and it isn't mounted
+    /// while this hero is on screen. Optional so the screenshot probe can
+    /// still render the hero standalone.
+    var model: AppModel?
     let scenery: SceneryStore
     var onQuickChat: () -> Void
     var onNewSession: () -> Void
@@ -86,7 +91,14 @@ struct EmptyStateView: View {
                     .help("Choose a project and provider")
                 }
                 .padding(.top, 26)
+
+                if let model, let lastError = model.lastError {
+                    quickChatErrorBanner(model, message: lastError)
+                        .padding(.top, 18)
+                        .transition(Motion.rise)
+                }
             }
+            .animation(Motion.reveal, value: model?.lastError)
             .padding(.horizontal, 36)
             .padding(.vertical, 32)
             .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.hero))
@@ -102,6 +114,48 @@ struct EmptyStateView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Quiet, dismissible failure line under the action cards — deliberately
+    /// not an alert, since the hero's actions are cheap to retry once the
+    /// message says what to fix.
+    @ViewBuilder
+    private func quickChatErrorBanner(_ model: AppModel, message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(AlpineTheme.clay)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.85))
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button {
+                model.lastError = nil
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss error")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        // Matches the two action cards' combined width so the banner reads as
+        // part of the same block rather than stretching the hero card.
+        .frame(width: 392, alignment: .leading)
+        .background(
+            AlpineTheme.clay.opacity(0.16),
+            in: .rect(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(
+                cornerRadius: AlpineTheme.Corners.card, style: .continuous
+            )
+            .stroke(AlpineTheme.clay.opacity(0.32), lineWidth: 1)
+        }
     }
 
     private var greeting: String {

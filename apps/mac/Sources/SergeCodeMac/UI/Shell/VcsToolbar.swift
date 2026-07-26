@@ -577,7 +577,11 @@ struct VcsToolbar: View {
                 }
             HStack {
                 Spacer()
+                // `.cancel` role only wires Escape up inside alerts, so the
+                // sheet needs the shortcut spelled out to be dismissible from
+                // the focused message editor.
                 Button("Cancel", role: .cancel) { pendingAction = nil }
+                    .keyboardShortcut(.cancelAction)
                 Button("Run") {
                     let action = pendingAction
                     pendingAction = nil
@@ -643,6 +647,10 @@ struct VcsToolbar: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
+            // The pill's `.help` sits on the enclosing HStack, so the
+            // icon-only button needs its own name.
+            .help("Dismiss")
+            .accessibilityLabel("Dismiss git result")
         }
         .font(.caption)
         .padding(.horizontal, 8)

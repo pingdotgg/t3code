@@ -198,7 +198,33 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
             from: items,
             projectRoot: projectRoot,
             threadIsSettled: threadIsSettled)
-        textView.textStorage?.setAttributedString(attributed)
+        // `setAttributedString` collapses `selectedRanges`, and the timeline
+        // version bumps ~30 Hz while a turn streams, so an unguarded swap wipes
+        // the user's selection once per throttle window. Skip the swap outright
+        // when the flattened text is identical, and otherwise re-apply only the
+        // ranges whose text didn't move — a growing tool row shifts offsets, and
+        // blindly restoring them would silently select different content.
+        let previousText = textView.textStorage?.string as NSString?
+        if previousText?.isEqual(to: attributed.string) != true {
+            let previousSelection = textView.selectedRanges
+            let previousSlices = previousSelection.map { value -> String in
+                let range = value.rangeValue
+                guard let previousText, NSMaxRange(range) <= previousText.length else { return "" }
+                return previousText.substring(with: range)
+            }
+            textView.textStorage?.setAttributedString(attributed)
+            if let newText = textView.textStorage?.string as NSString? {
+                let restored = zip(previousSelection, previousSlices)
+                    .compactMap { value, slice -> NSValue? in
+                        let range = value.rangeValue
+                        guard range.length > 0, NSMaxRange(range) <= newText.length,
+                            newText.substring(with: range) == slice
+                        else { return nil }
+                        return NSValue(range: range)
+                    }
+                if !restored.isEmpty { textView.selectedRanges = restored }
+            }
+        }
         coordinator.appliedKey = contentKey
         coordinator.lastRebuild = ContinuousClock.now
 

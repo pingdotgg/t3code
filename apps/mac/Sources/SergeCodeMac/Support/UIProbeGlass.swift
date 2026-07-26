@@ -118,10 +118,17 @@
         }
 
         private static func write(_ data: Data?, to dir: String, name: String) {
-            guard let data else { return }
+            guard let data else {
+                print("UIProbe: FAIL encode \(name)")
+                return
+            }
             let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).png")
-            try? data.write(to: url)
-            print("UIProbe: wrote \(url.path)")
+            do {
+                try data.write(to: url)
+                print("UIProbe: wrote \(url.path)")
+            } catch {
+                print("UIProbe: FAIL write \(url.path): \(error)")
+            }
         }
 
         // MARK: - Coverage

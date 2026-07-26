@@ -47,6 +47,17 @@ public final class AppModel {
         lastGitActionOutcomeByThread[threadID]
     }
 
+    /// Why the last review-diff load failed, per thread. Review mode replaces
+    /// the whole chat column — composer included — so `lastError`'s only
+    /// renderer is off-screen exactly when this fires; the review pane renders
+    /// this itself instead of showing "No Changes" for a failed load.
+    public private(set) var reviewDiffErrorByThread: [String: String] = [:]
+
+    /// The review-diff load failure for `threadID`, if the last load failed.
+    public func reviewDiffError(for threadID: String) -> String? {
+        reviewDiffErrorByThread[threadID]
+    }
+
     /// One-shot window-level celebration for a successful PR merge. Set when a
     /// `mergePR` action succeeds; the root view renders the confetti overlay
     /// and clears it via `clearMergeCelebration()` once it has played out.
@@ -76,6 +87,11 @@ public final class AppModel {
     /// timeline subscriptions (selected + 3 most recently selected others).
     public var selectedThreadID: String? {
         didSet {
+            // `lastError` is flat but every renderer of it sits under a
+            // thread's composer, so an error raised on thread A would follow
+            // the user into thread B and imply B is broken. Cleared before the
+            // deselect guard so the `threadRemoved` path clears it too.
+            if oldValue != selectedThreadID { lastError = nil }
             guard let id = selectedThreadID else { return }
             recentlySelected.removeAll { $0 == id }
             recentlySelected.insert(id, at: 0)
@@ -809,6 +825,7 @@ public final class AppModel {
             // load tokens, the streaming-index cursor, git outcome, and any
             // interaction routes pointing at this id.
             reviewDiffLoadTokens[id] = nil
+            reviewDiffErrorByThread[id] = nil
             refreshDiffTokens[id] = nil
             refreshCheckpointsTokens[id] = nil
             streamingIndex[id] = nil
@@ -1017,7 +1034,13 @@ public final class AppModel {
             self.threads = refreshedThreads
             rebuildProjectPathIndex()
             let liveThreadIDs = Set(refreshedThreads.map(\.id))
-            if pinnedThreadIDs.intersection(liveThreadIDs) != pinnedThreadIDs {
+            // An empty refresh is not evidence that the pinned threads are
+            // gone: the `.connection(.ready)` refresh races the first shell
+            // snapshot, so a cold launch legitimately sees zero threads and
+            // would otherwise persist an empty pin set forever.
+            if !refreshedThreads.isEmpty,
+                pinnedThreadIDs.intersection(liveThreadIDs) != pinnedThreadIDs
+            {
                 pinnedThreadIDs.formIntersection(liveThreadIDs)
                 persistPinnedThreadIDs()
             }
@@ -1044,7 +1067,10 @@ public final class AppModel {
             }
             // The archive list loads on demand when its settings tab appears
             // (ArchiveSettingsTab's .task) — not on every app refresh.
-            if !didRunClosedPrSettleSweep {
+            // Arm the one-shot sweep only once a refresh actually carried
+            // threads — the launch refresh races the shell snapshot, so an
+            // empty one would burn the single attempt on no candidates.
+            if !didRunClosedPrSettleSweep, !refreshedThreads.isEmpty {
                 didRunClosedPrSettleSweep = true
                 Task { await sweepClosedPullRequestSettles() }
             }
@@ -1166,6 +1192,7 @@ public final class AppModel {
         ts.isReviewing = true
         ts.reviewDiff = nil
         ts.isLoadingReviewDiff = true
+        reviewDiffErrorByThread[threadID] = nil
         Task { await loadReviewDiff(threadID: threadID) }
     }
 
@@ -1178,6 +1205,7 @@ public final class AppModel {
         ts.reviewSelectedPath = nil
         ts.reviewDiff = nil
         ts.isLoadingReviewDiff = false
+        reviewDiffErrorByThread[threadID] = nil
     }
 
     public func closeReview() {
@@ -1211,6 +1239,7 @@ public final class AppModel {
                     threadID: threadID, fromTurn: fromTurn, toTurn: toTurn)
             }
             guard reviewDiffLoadTokens[threadID] == token, ts.reviewScope == scope else { return }
+            reviewDiffErrorByThread[threadID] = nil
             ts.reviewDiff = files
             if let path = ts.reviewSelectedPath,
                 files.contains(where: { $0.path == path })
@@ -1221,8 +1250,14 @@ public final class AppModel {
             }
         } catch {
             guard reviewDiffLoadTokens[threadID] == token, ts.reviewScope == scope else { return }
-            lastError = String(describing: error)
-            ts.reviewDiff = []
+            // The review pane is the only surface for this one — review mode
+            // hides the composer — so it gets the readable form, not the enum.
+            let message = Self.revertErrorMessage(error)
+            lastError = message
+            // Leave `reviewDiff` alone: a failed `.diffInvalidated` reload must
+            // not blank a diff the user is reading, and an empty array here is
+            // indistinguishable from a scope with no changes.
+            reviewDiffErrorByThread[threadID] = message
         }
         if reviewDiffLoadTokens[threadID] == token {
             ts.isLoadingReviewDiff = false
@@ -1384,7 +1419,9 @@ public final class AppModel {
                 replacingMessageThreadID: replacingMessageThreadID)
             return true
         } catch {
-            lastError = String(describing: error)
+            // Edit/resend reverts before it sends, so this path also carries
+            // `revertFailed`.
+            lastError = Self.revertErrorMessage(error)
             return false
         }
     }
@@ -1850,8 +1887,26 @@ public final class AppModel {
             try await backend.restoreCheckpoint(
                 threadID: checkpoint.threadID, turnCount: checkpoint.turnCount)
         } catch {
-            lastError = String(describing: error)
+            lastError = Self.revertErrorMessage(error)
         }
+    }
+
+    /// `LiveBackendError` is not a `LocalizedError`, so a failed revert would
+    /// otherwise reach the user as `revertFailed("Timed out waiting…")`. Its
+    /// payload is already a written-for-humans sentence — show only that.
+    /// Best readable text for an error the user will see with no other
+    /// context. `String(describing:)` renders an enum case verbatim —
+    /// `diffFailed("The sidecar closed the connection.")` — so prefer a
+    /// `LocalizedError`'s own sentence, and unwrap `revertFailed`, which
+    /// carries its message but does not conform.
+    private static func revertErrorMessage(_ error: any Error) -> String {
+        if case LiveBackendError.revertFailed(let message) = error { return message }
+        if let localized = error as? any LocalizedError,
+            let description = localized.errorDescription
+        {
+            return description
+        }
+        return String(describing: error)
     }
 
     public func addProject(path: String) async {
@@ -1986,7 +2041,21 @@ public final class AppModel {
         }
     }
 
-    public func saveSettings(_ new: AppSettings) async {
+    /// Returns false only when this save was still the newest one AND it
+    /// failed, which is the signal the Settings tabs use to roll their
+    /// optimistic draft back. A superseded save returns true even if it threw:
+    /// a stale failure must never clobber a newer draft.
+    ///
+    /// Deliberately NOT `@discardableResult`: every caller writes an optimistic
+    /// draft first, so one that drops the result leaves the UI showing a value
+    /// the server rejected.
+    ///
+    /// That alone does not catch the case that actually slipped through —
+    /// `Task { await model.saveSettings(next) }` is a single-expression
+    /// closure, so the `Bool` becomes the task's return type and is never
+    /// "unused". `SettingsSaveHandlingTests` covers that shape by scanning the
+    /// call sites directly.
+    public func saveSettings(_ new: AppSettings) async -> Bool {
         // The settings UI can fire one unawaited save per keystroke; whichever
         // RESPONSE lands last would otherwise win regardless of order. Gate the
         // `settings =` assignment on a monotonic token so only the latest
@@ -1995,11 +2064,13 @@ public final class AppModel {
         let token = settingsSaveToken
         do {
             let updated = try await backend.updateSettings(new)
-            guard token == settingsSaveToken else { return }
+            guard token == settingsSaveToken else { return true }
             settings = updated
+            return true
         } catch {
-            guard token == settingsSaveToken else { return }
+            guard token == settingsSaveToken else { return true }
             lastError = String(describing: error)
+            return false
         }
     }
 
@@ -2193,6 +2264,11 @@ public final class AppModel {
     public func archiveThread(_ thread: ChatThread) async {
         do {
             try await backend.archiveThread(id: thread.id)
+            // Archiving upserts the thread as `.archived` rather than removing
+            // it, so the `threadRemoved` selection cleanup never runs — but the
+            // sidebar filters archived rows out, leaving the selection pointing
+            // at a row that no longer exists.
+            if selectedThreadID == thread.id { selectedThreadID = nil }
             await releaseTimeline(threadID: thread.id)
             await refreshArchivedThreads()
         } catch {
@@ -2207,14 +2283,22 @@ public final class AppModel {
     public func archiveThreads(_ threads: [ChatThread]) async {
         var failures = 0
         var firstError: String?
+        var archivedIDs: Set<String> = []
         for thread in threads {
             do {
                 try await backend.archiveThread(id: thread.id)
+                archivedIDs.insert(thread.id)
                 await releaseTimeline(threadID: thread.id)
             } catch {
                 failures += 1
                 if firstError == nil { firstError = String(describing: error) }
             }
+        }
+        // Only drop the selection if the selected thread actually archived —
+        // its sidebar row is gone (archived rows are filtered out), while a
+        // failed archive keeps its row and must keep the selection.
+        if let selected = selectedThreadID, archivedIDs.contains(selected) {
+            selectedThreadID = nil
         }
         await refreshArchivedThreads()
         if let firstError {

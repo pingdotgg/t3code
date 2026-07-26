@@ -26,10 +26,37 @@
             Task { await run(multi: multi, scenery: scenery, dir: dir) }
         }
 
+        /// Fires if the probe wedges on an await (live sidecar stalls have no
+        /// timeout of their own); kept static so every terminate site can
+        /// disarm it.
+        private static var watchdog: Task<Void, Never>?
+
+        private static func armWatchdog() {
+            let budget =
+                ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE_TIMEOUT"]
+                .flatMap(Double.init) ?? 300
+            watchdog = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(budget))
+                guard !Task.isCancelled else { return }
+                print("UIProbe: done FAIL=timeout-after-\(budget)s")
+                NSApp.terminate(nil)
+            }
+        }
+
         private static func run(multi: MultiDeviceModel, scenery: SceneryStore, dir: String) async {
             let model = multi.local
-            try? FileManager.default.createDirectory(
-                atPath: dir, withIntermediateDirectories: true)
+            // Soft failures collected during the run; reported on the exit line.
+            var probeFailures: [String] = []
+            do {
+                try FileManager.default.createDirectory(
+                    atPath: dir, withIntermediateDirectories: true)
+            } catch {
+                print("UIProbe: FAIL mkdir \(dir): \(error)")
+            }
+            // Concurrent probe runs use distinct directories, so echo the one
+            // in use — it identifies which captures belong to this process.
+            print("UIProbe: dir \(dir)")
+            armWatchdog()
             switch ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE_SCENARIO"] {
             case "stream-perf":
                 await runStreamPerf(model: model, dir: dir)
@@ -80,6 +107,7 @@
             // synthetic session.health stall, clears on active) and the
             // session.exited stderr disclosure.
             await probeSubagentStability(model: model, multi: multi, dir: dir)
+            await probeGitActionFailure(model: model, dir: dir)
 
             if let remote = multi.remoteSessions.first {
                 await probeRemoteDevice(
@@ -185,6 +213,24 @@
             }
             try? await Task.sleep(for: .seconds(2))
             snapshot("3-review-all-changes", dir: dir)
+
+            // A failed review-diff load must not read as "No Changes". Drive
+            // the real path (mock throws -> loadReviewDiff catches -> the pane
+            // renders it), because review mode hides the composer that would
+            // otherwise be the only place this error appeared.
+            if let threadID = model.selectedThreadID,
+                let mock = model.backendForShutdown as? MockBackend
+            {
+                await mock.probeSetNextDiffFailure("The sidecar closed the connection.")
+                await model.loadReviewDiff(threadID: threadID)
+                let shown = model.reviewDiffError(for: threadID)
+                print("UIProbe: review-diff-error rendered=\(shown != nil) message=\(shown ?? "-")")
+                if shown == nil { probeFailures.append("review-diff-error") }
+                try? await Task.sleep(for: .seconds(1))
+                snapshot("3b-review-diff-error", dir: dir)
+                // Restore a good diff so later steps see the normal pane.
+                await model.loadReviewDiff(threadID: threadID)
+            }
 
             // Checkpoint-scoped review if available.
             if let threadID = model.selectedThreadID,
@@ -308,6 +354,18 @@
                 await snapshotSettings(
                     tab: .dictation, name: "11-settings-dictation", model: model, scenery: scenery,
                     dir: dir)
+                // The download is started from this window and the composer's
+                // banner self-dismisses behind it, so this row is the only
+                // place a failed download stays visible.
+                model.dictation.probeSetDownloadError(
+                    "Download failed: the network connection was lost.")
+                await snapshotSettings(
+                    tab: .dictation, name: "11b-settings-dictation-error", model: model,
+                    scenery: scenery, dir: dir)
+                let downloadErrorShown = model.dictation.lastDownloadError != nil
+                print("UIProbe: dictation-download-error rendered=\(downloadErrorShown)")
+                if !downloadErrorShown { probeFailures.append("dictation-download-error") }
+                model.dictation.probeSetDownloadError(nil)
                 await snapshotSettings(
                     tab: .scenery, name: "12-settings-scenery", model: model, scenery: scenery,
                     dir: dir)
@@ -471,7 +529,10 @@
                     + "unknownSyntaxNil=\(unknownHighlight == nil) "
                     + "rendered=\(markdownProbeOK) viewHeight=\(markdownFittingHeight) "
                     + "viewEvidence=\(markdownViewEvidence) viewVerified=\(markdownViewOK)")
-            assert(markdownProbeOK, "Markdown UI probe failed")
+            // A trap here would kill the run before its remaining captures and
+            // the clean terminate; record the failure and carry it to the exit
+            // line instead.
+            if !markdownProbeOK { probeFailures.append("markdown") }
 
             // Select Text overlay: use the pricing thread (thread-3) — earlier
             // probe steps mutate thread-1's timeline (queue/retry), so a still-
@@ -530,7 +591,12 @@
             toggleSection("select-text-done")
             try? await Task.sleep(for: .seconds(0.5))
 
-            print("UIProbe: done")
+            if probeFailures.isEmpty {
+                print("UIProbe: done")
+            } else {
+                print("UIProbe: done FAIL=\(probeFailures.joined(separator: ","))")
+            }
+            watchdog?.cancel()
             NSApp.terminate(nil)
         }
 
@@ -585,6 +651,34 @@
             snapshot("2d-session-stderr", dir: dir)
         }
 
+        /// Renders the VCS failure pill: every mock git action succeeds unless
+        /// the one-shot failure seam is armed, so this is the only reachable
+        /// state for the red outcome layout.
+        private static func probeGitActionFailure(model: AppModel, dir: String) async {
+            guard let mock = model.backendForShutdown as? MockBackend else {
+                print("UIProbe: git-failure skipped (live backend run)")
+                return
+            }
+            guard let threadID = model.selectedThreadID else {
+                print("UIProbe: git-failure no selected thread")
+                return
+            }
+
+            await mock.probeSetNextGitActionFailure("Push rejected")
+            await model.runGitAction(.push, commitMessage: nil)
+            try? await Task.sleep(for: .seconds(1))
+            let outcome = model.lastGitActionOutcome(for: threadID)
+            print(
+                "UIProbe: git-failure success=\(outcome?.success ?? true) "
+                    + "title=\(outcome?.title ?? "none")")
+            snapshot("2e-git-action-failed", dir: dir)
+
+            // Clear it again so the remaining captures aren't dressed with a
+            // stale failure banner.
+            model.lastGitActionOutcome = nil
+            try? await Task.sleep(for: .seconds(0.5))
+        }
+
         /// Every string the main window currently renders (text views plus the
         /// SwiftUI accessibility tree) — enough to assert a view is on screen.
         private static func mainWindowText() -> String {
@@ -603,6 +697,7 @@
 
             guard let threadID = model.selectedThreadID else {
                 print("UIProbe: stream-perf failed: no thread")
+                watchdog?.cancel()
                 NSApp.terminate(nil)
                 return
             }
@@ -644,6 +739,7 @@
             try? report.write(to: reportURL, atomically: true, encoding: .utf8)
             print(report)
             print("UIProbe: stream-perf done")
+            watchdog?.cancel()
             NSApp.terminate(nil)
         }
 
@@ -972,11 +1068,7 @@
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
             {
                 view.cacheDisplay(in: view.bounds, to: rep)
-                if let data = rep.representation(using: .png, properties: [:]) {
-                    let url = URL(fileURLWithPath: dir).appendingPathComponent("16-about.png")
-                    try? data.write(to: url)
-                    print("UIProbe: wrote \(url.path)")
-                }
+                writePNG(rep, name: "16-about", dir: dir)
             }
             aboutWindow.orderOut(nil)
 
@@ -994,11 +1086,7 @@
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
             {
                 view.cacheDisplay(in: view.bounds, to: rep)
-                if let data = rep.representation(using: .png, properties: [:]) {
-                    let url = URL(fileURLWithPath: dir).appendingPathComponent("17-empty-state.png")
-                    try? data.write(to: url)
-                    print("UIProbe: wrote \(url.path)")
-                }
+                writePNG(rep, name: "17-empty-state", dir: dir)
             }
             emptyWindow.orderOut(nil)
             print("UIProbe: brand about+empty snapshots captured")
@@ -1027,11 +1115,7 @@
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
             {
                 view.cacheDisplay(in: view.bounds, to: rep)
-                if let data = rep.representation(using: .png, properties: [:]) {
-                    let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).png")
-                    try? data.write(to: url)
-                    print("UIProbe: wrote \(url.path)")
-                }
+                writePNG(rep, name: name, dir: dir)
             }
             window.orderOut(nil)
         }
@@ -1886,10 +1970,23 @@
                 return
             }
             view.cacheDisplay(in: view.bounds, to: rep)
-            guard let data = rep.representation(using: .png, properties: [:]) else { return }
+            writePNG(rep, name: name, dir: dir)
+        }
+
+        /// The "wrote <path>" line is the only signal an agent has that a
+        /// capture landed, so an encode or write failure must never print it.
+        private static func writePNG(_ rep: NSBitmapImageRep, name: String, dir: String) {
+            guard let data = rep.representation(using: .png, properties: [:]) else {
+                print("UIProbe: FAIL encode \(name)")
+                return
+            }
             let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).png")
-            try? data.write(to: url)
-            print("UIProbe: wrote \(url.path)")
+            do {
+                try data.write(to: url)
+                print("UIProbe: wrote \(url.path)")
+            } catch {
+                print("UIProbe: FAIL write \(url.path): \(error)")
+            }
         }
     }
 #endif

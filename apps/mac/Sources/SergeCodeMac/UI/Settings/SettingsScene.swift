@@ -98,8 +98,15 @@ public struct SettingsScene: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 paneHeader
+                // The composer is the only other renderer of the global
+                // `lastError`, and this window never hosts one — without this
+                // banner every failed save/refresh started here is silent.
+                if let lastError = model.lastError {
+                    errorBanner(lastError)
+                }
                 settingsDetail
             }
+            .animation(Motion.reveal, value: model.lastError)
             .padding(.horizontal, 22)
             .padding(.vertical, 20)
             .frame(maxWidth: 560, alignment: .leading)
@@ -112,6 +119,35 @@ public struct SettingsScene: View {
         .entrance(.pane)
         .id(selectedTab)
         .animation(Motion.structure, value: selectedTab)
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.red)
+                .textSelection(.enabled)
+            Spacer(minLength: 8)
+            Button {
+                model.lastError = nil
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss error")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.red.opacity(0.12),
+            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
+        .transition(Motion.rise)
     }
 
     /// Accent-tile icon + tab title, mirroring the composer picker header.
@@ -151,7 +187,7 @@ public struct SettingsScene: View {
         case .remoteMacs:
             RemoteMacsSettingsTab(multi: multi)
         case .connection:
-            ConnectionSettingsTab(model: model)
+            ConnectionSettingsTab(model: model, multi: multi)
         }
     }
 }
@@ -161,6 +197,7 @@ public struct SettingsScene: View {
 private struct GeneralSettingsTab: View {
     let model: AppModel
     @UIState private var draft: AppSettings?
+    @UIState private var loadError: String?
     @FocusState private var projectsDirectoryFocused: Bool
 
     @UIState private var notificationsMasterEnabled = AgentNotificationPreferences.isMasterEnabled
@@ -169,6 +206,7 @@ private struct GeneralSettingsTab: View {
     @UIState private var notifyApproval = AgentNotificationPreferences.isEnabled(.needsApproval)
     @UIState private var notifyInput = AgentNotificationPreferences.isEnabled(.needsInput)
     @UIState private var notifyFailed = AgentNotificationPreferences.isEnabled(.failed)
+    @UIState private var notificationsDenied = false
     @UIState private var hapticsEnabled = HapticsPreferences.isEnabled
 
     var body: some View {
@@ -214,7 +252,22 @@ private struct GeneralSettingsTab: View {
             } else {
                 SettingsSection {
                     SettingsCardRow {
-                        if model.connection == .ready {
+                        if let loadError {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label(
+                                    "Could not load settings",
+                                    systemImage: "exclamationmark.triangle"
+                                )
+                                .foregroundStyle(.red)
+                                Text(loadError)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Button("Try Again") {
+                                    Task { await loadDraft() }
+                                }
+                                .controlSize(.small)
+                            }
+                        } else if model.connection == .ready {
                             ProgressView()
                                 .frame(maxWidth: .infinity)
                         } else {
@@ -240,6 +293,27 @@ private struct GeneralSettingsTab: View {
             }
 
             SettingsSection(header: "Notifications") {
+                // Every toggle below is a no-op while macOS is refusing to
+                // deliver, and the toggles keep reading ON — say so, and offer
+                // the one place that can change it.
+                if notificationsDenied {
+                    SettingsCardRow {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(
+                                "macOS is blocking notifications for SurgeCode, so these settings have no effect.",
+                                systemImage: "exclamationmark.triangle.fill"
+                            )
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                            Button("Open Notification Settings") {
+                                openNotificationSettings()
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                    SettingsDivider()
+                }
                 SettingsToggleRow(
                     title: "Agent notifications",
                     description:
@@ -308,9 +382,16 @@ private struct GeneralSettingsTab: View {
         }
         // Loaded settings fade in over the placeholder spinner.
         .animation(Motion.reveal, value: draft == nil)
+        // A tab opened while the sidecar is still booting would load nothing
+        // and never retry, so key the task on the connection phase. Gated on
+        // `.ready` because `.reconnecting(attempt:)` bumps on every restart
+        // attempt and each of those loads could only fail again.
+        .task(id: model.connection) {
+            guard draft == nil, model.connection == .ready else { return }
+            await loadDraft()
+        }
         .task {
-            await model.loadSettings()
-            draft = model.settings
+            notificationsDenied = await AgentNotificationService.shared.isAuthorizationDenied()
         }
         // Blur (not just Return) also commits — clicking another field, a
         // tab, or closing the window shouldn't silently drop the edit.
@@ -334,7 +415,11 @@ private struct GeneralSettingsTab: View {
                 var next = draft ?? current
                 next[keyPath: keyPath] = newValue
                 draft = next
-                Task { await model.saveSettings(next) }
+                // A rejected save must not leave the row showing a value the
+                // server never accepted.
+                Task {
+                    if await model.saveSettings(next) == false { draft = model.settings }
+                }
             })
     }
 
@@ -353,9 +438,30 @@ private struct GeneralSettingsTab: View {
             })
     }
 
+    /// `loadSettings()` swallows its throw into the global `lastError` and
+    /// leaves `settings` untouched, so a still-nil `settings` afterwards is
+    /// the only signal that the load failed — without it the tab would sit on
+    /// an indeterminate spinner forever.
+    private func loadDraft() async {
+        loadError = nil
+        await model.loadSettings()
+        draft = model.settings
+        if draft == nil {
+            loadError = model.lastError ?? "The server did not return settings."
+        }
+    }
+
+    private func openNotificationSettings() {
+        let url = URL(
+            string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!
+        NSWorkspace.shared.open(url)
+    }
+
     private func commitProjectsDirectory() {
-        guard let draft else { return }
-        Task { await model.saveSettings(draft) }
+        guard let pending = draft else { return }
+        Task {
+            if await model.saveSettings(pending) == false { draft = model.settings }
+        }
     }
 }
 
@@ -383,6 +489,19 @@ struct DictationSettingsTab: View {
                         }
                         Spacer()
                         modelStatusControl
+                    }
+                }
+                // The composer's banner for this failure self-dismisses and is
+                // hidden behind the frontmost Settings window anyway, so the
+                // download's only visible outcome would be a button flipping
+                // back to "Download".
+                if let downloadError = dictation.lastDownloadError {
+                    SettingsDivider()
+                    SettingsCardRow {
+                        Text(downloadError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 SettingsDivider()
@@ -419,6 +538,7 @@ struct DictationSettingsTab: View {
             }
         }
         .animation(Motion.ambient, value: dictation.modelStatus)
+        .animation(Motion.reveal, value: dictation.lastDownloadError)
     }
 
     @ViewBuilder
@@ -426,14 +546,15 @@ struct DictationSettingsTab: View {
         switch dictation.modelStatus {
         case .notDownloaded:
             Button("Download") { dictation.downloadModel() }
-        case .downloading(let fraction):
+        case .downloading:
+            // FluidAudio reports `fractionCompleted` per sub-download, so a
+            // determinate bar visibly runs backwards between files.
             HStack(spacing: 8) {
-                ProgressView(value: fraction)
-                    .frame(width: 90)
-                Text(fraction.formatted(.percent.precision(.fractionLength(0))))
+                ProgressView()
+                    .controlSize(.small)
+                Text("Downloading…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .monospacedDigit()
             }
         case .ready:
             HStack(spacing: 10) {
@@ -480,7 +601,13 @@ private struct ArchiveSettingsTab: View {
                                 next.autoArchiveSettledAfterMs =
                                     enabled ? Self.defaultAutoArchiveAfterMs : nil
                                 draft = next
-                                Task { await model.saveSettings(next) }
+                                // A rejected save must not leave the toggle
+                                // showing a value the server never accepted.
+                                Task {
+                                    if await model.saveSettings(next) == false {
+                                        draft = model.settings
+                                    }
+                                }
                             }))
                     if (draft ?? settings).autoArchiveSettledAfterMs != nil {
                         SettingsDivider()
@@ -568,9 +695,14 @@ private struct ArchiveSettingsTab: View {
                 }
             }
         }
-        .task {
-            await model.loadSettings()
-            draft = model.settings
+        // Re-runs when the sidecar finishes connecting: a tab opened during
+        // launch would otherwise keep an empty auto-archive section forever.
+        .task(id: model.connection) {
+            guard model.connection == .ready else { return }
+            if draft == nil {
+                await model.loadSettings()
+                draft = model.settings
+            }
             await model.refreshArchivedThreads()
         }
         .animation(Motion.structure, value: model.archivedThreads.map(\.id))
@@ -640,9 +772,17 @@ private struct ArchiveSettingsTab: View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return model.archivedThreads }
         return model.archivedThreads.filter {
-            $0.title.localizedCaseInsensitiveContains(query)
-                || $0.provider.displayName.localizedCaseInsensitiveContains(query)
+            Self.searchMatches($0.title, query)
+                || Self.searchMatches($0.provider.displayName, query)
         }
+    }
+
+    /// Search folds diacritics as well as case, matching the sidebar: threads
+    /// are auto-titled after scenery locations ("Skógafoss"), so a query typed
+    /// on an ASCII keyboard has to reach them.
+    private static func searchMatches(_ haystack: String, _ term: String) -> Bool {
+        haystack.range(
+            of: term, options: [.caseInsensitive, .diacriticInsensitive], locale: .current) != nil
     }
 
     /// Amount + unit editor for the auto-archive window. The amount field
@@ -686,7 +826,11 @@ private struct ArchiveSettingsTab: View {
                             next.autoArchiveSettledAfterMs =
                                 Double(amount) * (newUnit == "days" ? Self.dayMs : Self.hourMs)
                             draft = next
-                            Task { await model.saveSettings(next) }
+                            Task {
+                                if await model.saveSettings(next) == false {
+                                    draft = model.settings
+                                }
+                            }
                         }),
                     height: 26
                 )
@@ -696,8 +840,10 @@ private struct ArchiveSettingsTab: View {
     }
 
     private func commitAutoArchiveValue() {
-        guard let draft else { return }
-        Task { await model.saveSettings(draft) }
+        guard let pending = draft else { return }
+        Task {
+            if await model.saveSettings(pending) == false { draft = model.settings }
+        }
     }
 }
 
@@ -1401,18 +1547,31 @@ private struct QRCodePairingView: View {
 
 private struct ConnectionSettingsTab: View {
     let model: AppModel
+    let multi: MultiDeviceModel
     @UIState private var access = ServerRemoteAccessStatus(
         lanReachable: false, tailnetHostname: nil)
+    @UIState private var isRetrying = false
 
     var body: some View {
         VStack(spacing: 18) {
             SettingsSection {
                 SettingsValueRow(title: "Status") {
-                    Label(model.connection.statusText, systemImage: model.connection.symbolName)
-                        .foregroundStyle(model.connection.statusColor)
-                        .contentTransition(
-                            Motion.reduceMotion ? .identity : .symbolEffect(.replace))
-                        .animation(Motion.ambient, value: model.connection)
+                    HStack(spacing: 10) {
+                        Label(model.connection.statusText, systemImage: model.connection.symbolName)
+                            .foregroundStyle(model.connection.statusColor)
+                            .contentTransition(
+                                Motion.reduceMotion ? .identity : .symbolEffect(.replace))
+                            .fixedSize(horizontal: false, vertical: true)
+                        // A sidecar that failed to launch has nothing left
+                        // retrying itself — without this the only way back is
+                        // quitting the app.
+                        if model.connection.needsAttention {
+                            Button("Retry") { retry() }
+                                .controlSize(.small)
+                                .disabled(isRetrying)
+                        }
+                    }
+                    .animation(Motion.ambient, value: model.connection)
                 }
             }
 
@@ -1440,6 +1599,17 @@ private struct ConnectionSettingsTab: View {
         // comes up (or restarts) after the Settings window opened. The serve
         // record can arrive shortly after the sidecar becomes reachable.
         .task(id: model.connection) { await refreshRemoteAccess() }
+    }
+
+    /// Full backend restart: `shutdown()` then `start()`, which is the only
+    /// recovery from a terminal launch failure (see `MultiDeviceModel.reconnect`).
+    private func retry() {
+        guard !isRetrying else { return }
+        isRetrying = true
+        Task {
+            await multi.reconnect(id: model.deviceID)
+            isRetrying = false
+        }
     }
 
     private func refreshRemoteAccess() async {

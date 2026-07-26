@@ -10,12 +10,14 @@ private enum MockBackendError: Error, LocalizedError {
     case threadNotFound(String)
     case taskNotFound(threadID: String, taskId: String)
     case unknownAttachment(String)
+    case diffFailed(String)
     var errorDescription: String? {
         switch self {
         case .threadNotFound(let id): "Thread not found: \(id)."
         case .taskNotFound(let threadID, let taskId):
             "Task '\(taskId)' not found on thread \(threadID)."
         case .unknownAttachment(let id): "Attachment not found: \(id)."
+        case .diffFailed(let message): message
         }
     }
 }
@@ -23,8 +25,10 @@ private enum MockBackendError: Error, LocalizedError {
 public final class MockBackend: BackendService, @unchecked Sendable {
     private let state: MockState
 
-    public init(seedVariant: String? = nil) {
-        self.state = MockState(seedVariant: seedVariant)
+    /// `streamChunkDelay` paces the canned assistant reply; tests that only
+    /// care about the turn's bookkeeping can shorten it.
+    public init(seedVariant: String? = nil, streamChunkDelay: Duration = .milliseconds(80)) {
+        self.state = MockState(seedVariant: seedVariant, streamChunkDelay: streamChunkDelay)
     }
 
     public func events() async -> AsyncStream<BackendEvent> {
@@ -71,6 +75,17 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         ) async {
             await state.appendSessionExit(
                 threadID: threadID, summary: summary, stderrTail: stderrTail)
+        }
+
+        /// Probe hook: make the next `runGitAction` report failure once.
+        public func probeSetNextGitActionFailure(_ title: String) async {
+            await state.setNextGitActionFailure(title)
+        }
+
+        /// Probe hook: make the next `diff(threadID:)` throw once, so the
+        /// review pane's load-failure state is reachable under the mock.
+        public func probeSetNextDiffFailure(_ message: String) async {
+            await state.setNextDiffFailure(message)
         }
 
         /// Probe hook: append one finished tool row to a mid-turn thread.
@@ -241,6 +256,13 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         threadID: String, action: GitAction, commitMessage: String?
     ) async throws -> GitActionOutcome {
         try? await Task.sleep(nanoseconds: 400_000_000)
+        // Armed by the probe seam: the mock otherwise only ever succeeds, so
+        // the failure banner would have no reachable state.
+        if let failureTitle = await state.consumeNextGitActionFailure() {
+            return GitActionOutcome(
+                success: false, title: failureTitle,
+                detail: "fatal: remote rejected the push")
+        }
         if action == .mergePR {
             await state.emitVcsStatus(
                 threadID: threadID,
@@ -352,7 +374,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
     }
 
     public func diff(threadID: String) async throws -> [DiffFile] {
-        await state.diff(threadID: threadID)
+        if let message = await state.consumeNextDiffFailure() {
+            throw MockBackendError.diffFailed(message)
+        }
+        return await state.diff(threadID: threadID)
     }
 
     public func diff(threadID: String, fromTurn: Int, toTurn: Int) async throws -> [DiffFile] {
@@ -396,6 +421,7 @@ private actor MockState {
 
     private let seedVariant: String?
     private let primaryThreadID: String
+    private let streamChunkDelay: Duration
 
     private var eventContinuation: AsyncStream<BackendEvent>.Continuation?
 
@@ -418,6 +444,10 @@ private actor MockState {
     private var injectedVcsStatusByThread: [String: VcsStatus] = [:]
     /// Thread IDs passed to `settleThread(id:)`, in call order (test seam).
     private(set) var recordedSettleThreadIDs: [String] = []
+    /// One-shot git failure armed through the DEBUG probe seam.
+    private var nextGitActionFailure: String?
+    /// One-shot review-diff load failure armed through the DEBUG probe seam.
+    private var nextDiffFailure: String?
 
     private struct StreamingKey: Hashable {
         let threadID: String
@@ -436,7 +466,8 @@ private actor MockState {
     private var lifecycleTask: Task<Void, Never>?
     private var connectionWobbleTask: Task<Void, Never>?
 
-    init(seedVariant: String?) {
+    init(seedVariant: String?, streamChunkDelay: Duration) {
+        self.streamChunkDelay = streamChunkDelay
         let normalizedVariant = seedVariant?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.seedVariant = normalizedVariant?.isEmpty == false ? normalizedVariant : nil
         self.primaryThreadID = self.seedVariant.map {
@@ -782,10 +813,19 @@ private actor MockState {
             emit(.planProgressUpdated(threadID: threadID, progress: Self.planFixture))
         }
 
+        startAssistantStream(
+            threadID: threadID,
+            reply: MockState.canned(for: text),
+            isPerfStream: text.trimmingCharacters(in: .whitespacesAndNewlines) == "/perf-stream")
+    }
+
+    /// Registers and starts the canned assistant reply for a thread, then
+    /// returns. Deliberately does not await the stream: LiveBackend returns as
+    /// soon as the turn is acked and the reply arrives later over the event
+    /// stream, so blocking here would fake an ordering the app never sees.
+    private func startAssistantStream(threadID: String, reply: String, isPerfStream: Bool) {
         let messageID = nextID("asst")
         let key = StreamingKey(threadID: threadID, messageID: messageID)
-        let reply = MockState.canned(for: text)
-        let isPerfStream = text.trimmingCharacters(in: .whitespacesAndNewlines) == "/perf-stream"
         let chunks = isPerfStream
             ? MockState.byteChunks(reply, size: 64)
             : MockState.chunk(reply, size: 24)
@@ -798,12 +838,10 @@ private actor MockState {
 
         inFlightMessageIDsByThread[threadID, default: []].append(messageID)
         currentTurnByThread[threadID] = messageID
-        let task = Task {
+        streamingTasks[key] = Task {
             await self.streamMessage(
                 key: key, chunks: chunks, reply: reply, isPerfStream: isPerfStream)
         }
-        streamingTasks[key] = task
-        await task.value
     }
 
     func attachmentImageURL(id: String) async throws -> URL {
@@ -824,8 +862,7 @@ private actor MockState {
         for chunk in chunks {
             guard !Task.isCancelled else { return }
             do {
-                try await Task.sleep(
-                    nanoseconds: isPerfStream ? 2_000_000 : 80_000_000)
+                try await Task.sleep(for: isPerfStream ? .milliseconds(2) : streamChunkDelay)
             } catch {
                 return
             }
@@ -840,6 +877,9 @@ private actor MockState {
 
     func cancelTurn(threadID: String) {
         guard var thread = threadsByID[threadID] else { return }
+        // Live, the server stops producing deltas on interrupt; without this
+        // the canned stream keeps appending past the "Turn cancelled." notice.
+        cancelStreamingTasks(for: threadID)
         thread.status = idleStatus(for: threadID)
         thread.backgroundAgentCount = backgroundAgentsByThread[threadID] ?? 0
         thread.updatedAt = Date()
@@ -910,6 +950,29 @@ private actor MockState {
             id: nextID("exit"), summary: summary, stderrTail: stderrTail, at: Date())
         timelinesByThread[threadID, default: []].append(item)
         emit(.timelineAppended(threadID: threadID, item: item))
+    }
+
+    /// Arms a one-shot `success: false` git outcome, as if the remote had
+    /// rejected the action.
+    func setNextGitActionFailure(_ title: String) {
+        nextGitActionFailure = title
+    }
+
+    func consumeNextGitActionFailure() -> String? {
+        defer { nextGitActionFailure = nil }
+        return nextGitActionFailure
+    }
+
+    /// Arms a one-shot `diff(threadID:)` throw, so the review pane's load
+    /// failure — which otherwise needs a dead sidecar to reach — has a
+    /// reachable state.
+    func setNextDiffFailure(_ message: String) {
+        nextDiffFailure = message
+    }
+
+    func consumeNextDiffFailure() -> String? {
+        defer { nextDiffFailure = nil }
+        return nextDiffFailure
     }
 
     /// Holds a thread mid-turn and appends one finished tool event, as if the
@@ -1125,6 +1188,17 @@ private actor MockState {
 
         if approve {
             emit(.diffInvalidated(threadID: approval.threadID))
+            // An approval resumes the turn live, so the thread must eventually
+            // reach idle; routing through the normal stream means
+            // `finishStreamingTask` performs that transition.
+            startAssistantStream(
+                threadID: approval.threadID,
+                reply: """
+                    Approved — “\(approval.title)” is done.
+
+                    That completes the step. Let me know what you'd like next.
+                    """,
+                isPerfStream: false)
         }
     }
 

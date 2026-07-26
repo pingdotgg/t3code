@@ -20,7 +20,6 @@ public final class AgentNotificationService: NSObject {
     public var isAppActiveOverride: Bool?
 
     private var didRequestAuthorization = false
-    private var authorizationGranted: Bool?
     /// Collapse approval/input (and status-fallback approval) that land in the
     /// same second so a shell upsert + activity event do not double-banner.
     private var recentAttentionDeliveries: [String: Date] = [:]
@@ -30,8 +29,18 @@ public final class AgentNotificationService: NSObject {
         super.init()
     }
 
+    /// SwiftPM debug executables are not application bundles, and the very
+    /// first `UNUserNotificationCenter.current()` in such a process raises
+    /// `NSInternalInconsistencyException` ("bundleProxyForCurrentProcess is
+    /// nil") rather than returning nil — so every entry point that touches the
+    /// framework has to check first, not just the delivery path.
+    private nonisolated static var isBundledApp: Bool {
+        Bundle.main.bundleURL.pathExtension == "app"
+    }
+
     /// Register the notification category and request authorization once.
     public func prepare() {
+        guard Self.isBundledApp else { return }
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         let category = UNNotificationCategory(
@@ -44,14 +53,20 @@ public final class AgentNotificationService: NSObject {
     }
 
     public func requestAuthorizationIfNeeded() {
-        guard !didRequestAuthorization else { return }
+        guard Self.isBundledApp, !didRequestAuthorization else { return }
         didRequestAuthorization = true
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) {
-            [weak self] granted, _ in
-            Task { @MainActor in
-                self?.authorizationGranted = granted
-            }
-        }
+        UNUserNotificationCenter.current().requestAuthorization(
+            options: [.alert, .sound, .badge], completionHandler: { _, _ in })
+    }
+
+    /// Whether the user has turned notifications off. Read live rather than
+    /// cached from the authorization prompt: the setting can change in System
+    /// Settings at any time, and the prompt only ever appears once per install.
+    /// `nonisolated` so the non-Sendable settings object stays off the main actor.
+    public nonisolated func isAuthorizationDenied() async -> Bool {
+        guard Self.isBundledApp else { return false }
+        return await UNUserNotificationCenter.current().notificationSettings()
+            .authorizationStatus == .denied
     }
 
     /// Evaluate a thread status/health transition and notify if warranted.
@@ -143,10 +158,7 @@ public final class AgentNotificationService: NSObject {
         selectedThreadID: String?,
         detail: String?
     ) {
-        // SwiftPM debug executables are not application bundles; UserNotifications
-        // raises an Objective-C exception when the UI probe or mock backend tries
-        // to deliver through that process shape.
-        guard Bundle.main.bundleURL.pathExtension == "app" else { return }
+        guard Self.isBundledApp else { return }
         let isAppActive = isAppActiveOverride ?? NSApp.isActive
         let context = AgentNotificationPolicy.DeliveryContext(
             isAppActive: isAppActive,
@@ -159,7 +171,10 @@ public final class AgentNotificationService: NSObject {
                 context: context)
         else { return }
 
-        let attentionKey = "\(deviceID.rawValue).\(threadID)"
+        // Keyed by kind as well: the sibling being collapsed is always the same
+        // kind, and an approval must not swallow a genuine input request that
+        // lands on the same thread seconds later.
+        let attentionKey = "\(kind.rawValue).\(deviceID.rawValue).\(threadID)"
         if kind == .needsApproval || kind == .needsInput {
             pruneAttentionDedupe()
             if let last = recentAttentionDeliveries[attentionKey],
