@@ -1,9 +1,11 @@
 # Handover — continuing SurgeCode for Windows on a Windows machine
 
-Everything in this repository that can be written and verified from a macOS
-development machine is done. What is left needs a real Windows 11 box: the
-`cfg(windows)` Rust paths have never been compiled, the app has never been
-launched, and the remaining work is UI that has to be looked at.
+Everything in this repository that can be written and verified without a
+Windows machine is done. The `cfg(windows)` Rust paths now compile, lint under
+`-D warnings`, and pass their tests on `windows-latest` via
+`.github/workflows/ci-windows.yml`. What is left needs a real Windows 11 box:
+the app has never been **launched**, and the remaining work is UI that has to
+be looked at.
 
 Read `ARCHITECTURE.md` before starting. This file is the operational half.
 
@@ -14,9 +16,9 @@ Read `ARCHITECTURE.md` before starting. This file is the operational half.
 | Area                                                             | State                            | Verified by                                                  |
 | ---------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------ |
 | Sidecar supervisor (spawn, bootstrap, readiness, backoff, stop)  | Complete                         | 27 `cargo test` cases, run on macOS                          |
-| Job Object process ownership (`sidecar/job.rs`)                  | Complete, **never compiled**     | —                                                            |
-| Credential Manager store (`secrets.rs`)                          | Complete, **never compiled**     | Non-Windows fallback path tested                             |
-| DWM backdrop + dark caption (`window.rs`)                        | Complete, **never compiled**     | Enum/IPC shape tested                                        |
+| Job Object process ownership (`sidecar/job.rs`)                  | Complete, **never run**          | Compiles + clippy clean on `windows-latest` (CI)             |
+| Credential Manager store (`secrets.rs`)                          | Complete, **never run**          | `cargo test` on `windows-latest` (CI)                        |
+| DWM backdrop + dark caption (`window.rs`)                        | Complete, **never run**          | Compiles on `windows-latest` (CI); visual result unverified  |
 | Node runtime locator                                             | Complete                         | `cargo test` (pure candidate-ordering + engines-range cases) |
 | Launch preferences (LAN access, Tailscale, backdrop)             | Complete                         | `cargo test`                                                 |
 | Tauri commands + events                                          | Complete, **never invoked**      | Serialization shape tested                                   |
@@ -27,8 +29,10 @@ Read `ARCHITECTURE.md` before starting. This file is the operational half.
 | Sidebar / chat / composer / diffs / settings                     | **Not started** — see §6         | —                                                            |
 | Installer, signing, auto-update feed                             | Workflow written, secrets absent | —                                                            |
 
-The three "never compiled" rows are the highest-risk items and the first thing
-to check (§3).
+CI proves those three compile and their tests pass; it cannot prove they
+_behave_. No Job Object has ever actually reaped a process tree, no credential
+has been written to Credential Manager, and nobody has seen the Mica backdrop.
+Confirming that is §3, and it is the first thing to do.
 
 ---
 
@@ -62,8 +66,8 @@ cd SergeCode
 git checkout sergecode/windows-app-port     # or main, once this PR has merged
 corepack pnpm install
 
-# The Rust half. This is the first time the cfg(windows) code has ever been
-# compiled — expect the failures here, not later.
+# The Rust half. CI already builds this on windows-latest, so it should be
+# green — treat a failure here as a difference in your local toolchain.
 cd apps\windows\src-tauri
 cargo test
 cargo clippy --all-targets -- -D warnings
@@ -124,11 +128,10 @@ Copy everything between the rules into a fresh session on the Windows machine.
 > supervisor, the design-system port, the Tauri IPC surface, and the
 > bootstrap-token exchange all exist with tests. Your job is, in order:
 >
-> 1. Verify the `cfg(windows)` Rust paths actually compile and behave — the Job
->    Object, the Credential Manager store, and the DWM backdrop calls have never
->    been built. Run `cargo test` and `cargo clippy --all-targets -- -D warnings`
->    in `apps/windows/src-tauri` and fix what breaks, keeping the non-Windows
->    no-op branches intact.
+> 1. Verify the `cfg(windows)` paths actually _behave_. They compile and pass
+>    tests on `windows-latest` in CI, but nothing has observed them working:
+>    confirm the Job Object really reaps the sidecar tree, that a credential
+>    round-trips through Credential Manager, and that the Mica backdrop renders.
 > 2. Launch the app (`pnpm exec tauri dev` in `apps/windows`) and confirm the
 >    startup sequence in HANDOVER.md §3, including that no `node.exe` survives
 >    closing the window.
