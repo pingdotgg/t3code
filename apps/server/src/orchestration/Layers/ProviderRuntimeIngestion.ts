@@ -1919,8 +1919,12 @@ const make = Effect.gen(function* () {
           ...(input.turnId ? { turnId: input.turnId } : {}),
           createdAt: input.createdAt,
         });
+        // Only retire once a complete actually went out. A completion that
+        // dispatched nothing (no text, no projected message) must leave the
+        // claimed id live so misordered later events for the same item still
+        // correlate to it instead of minting another id.
+        yield* retireAssistantMessageId(input.threadId, input.messageId);
       }
-      yield* retireAssistantMessageId(input.threadId, input.messageId);
       yield* clearAssistantMessageState(input.messageId);
     });
 
@@ -2585,7 +2589,18 @@ const make = Effect.gen(function* () {
               : yield* claimAssistantMessageId({
                   threadId: thread.id,
                   candidateId: assistantCompletion.messageId,
-                });
+                }).pipe(
+                  // Persist the minted id so later events for this item
+                  // (misordered deltas, duplicate completions) correlate to
+                  // the same message instead of minting yet another id.
+                  Effect.tap((messageId) =>
+                    Cache.set(
+                      claimedAssistantMessageIdByBaseKey,
+                      claimedBaseKeyCacheKey(thread.id, completionBaseKey),
+                      messageId,
+                    ),
+                  ),
+                );
           const existingAssistantMessage = findMessageById(messages, assistantMessageId);
           const shouldApplyFallbackCompletionText =
             !existingAssistantMessage || existingAssistantMessage.text.length === 0;
