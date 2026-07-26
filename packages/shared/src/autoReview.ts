@@ -155,9 +155,46 @@ export function isAutoReviewFixThreadBusy(input: {
 }
 
 /**
+ * Origin thread a job should be attributed to when projecting thread phases.
+ *
+ * A job is only assigned `originThreadId` when the runner finishes it, so
+ * while it is queued/running it carries no linkage — attributing by stored id
+ * alone would leave the thread's phase null for the whole review (the thread
+ * reads as "done" while the reviewer is working). Active jobs are therefore
+ * provisionally attributed with the same `linkOriginThread` heuristic the
+ * runner applies on success, using the head branch captured at enqueue time.
+ * Terminal jobs are never guessed: their linkage is whatever the runner wrote.
+ */
+export function resolveAutoReviewJobOriginThread(input: {
+  readonly job: Pick<
+    AutoReviewJob,
+    "originThreadId" | "projectId" | "prNumber" | "headBranch" | "status"
+  >;
+  readonly candidates: ReadonlyArray<ThreadLinkCandidate>;
+}): string | null {
+  const job = input.job;
+  if (job.originThreadId != null) {
+    return String(job.originThreadId);
+  }
+  if (job.status !== "queued" && job.status !== "running") {
+    return null;
+  }
+  if (job.headBranch == null || job.headBranch.length === 0) {
+    return null;
+  }
+  return linkOriginThread({
+    projectId: String(job.projectId),
+    prNumber: job.prNumber,
+    headBranch: job.headBranch,
+    candidates: input.candidates,
+  });
+}
+
+/**
  * Phase shown on a thread shell for auto-review activity. `jobs` must be
  * pre-filtered to the jobs relevant to this thread (origin-thread linkage,
- * plus unlinked queued/running jobs matched by the caller).
+ * plus unlinked queued/running jobs matched by the caller — see
+ * `resolveAutoReviewJobOriginThread`).
  */
 export function deriveAutoReviewThreadPhase(input: {
   readonly jobs: ReadonlyArray<AutoReviewJob>;

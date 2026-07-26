@@ -12,6 +12,7 @@ import {
   matchAutoReviewMention,
   nextAutoReviewAttempt,
   parseAutoReviewFooter,
+  resolveAutoReviewJobOriginThread,
   resolveAutoReviewPolicy,
   shouldAutoFixOriginThread,
   shouldEnqueueAutoReviewJob,
@@ -201,6 +202,67 @@ describe("linkOriginThread", () => {
       ],
     });
     expect(threadId).toBe("t-pr-idle");
+  });
+});
+
+describe("resolveAutoReviewJobOriginThread", () => {
+  const candidates = [
+    {
+      threadId: "t-feat",
+      projectId: "proj",
+      deletedAt: null,
+      updatedAt: "2026-01-02T00:00:00.000Z",
+      status: "idle",
+      prNumber: null,
+      prState: null,
+      branch: "feat",
+    },
+  ];
+
+  const job = (overrides: Partial<AutoReviewJob>) =>
+    ({
+      originThreadId: null,
+      projectId: "proj",
+      prNumber: 12,
+      headBranch: "feat",
+      status: "queued",
+      ...overrides,
+    }) as AutoReviewJob;
+
+  it("keeps the stored linkage when the runner already assigned one", () => {
+    expect(
+      resolveAutoReviewJobOriginThread({
+        job: job({ originThreadId: "t-linked" as never, status: "succeeded" }),
+        candidates,
+      }),
+    ).toBe("t-linked");
+  });
+
+  it("provisionally links a queued or running job by head branch", () => {
+    expect(resolveAutoReviewJobOriginThread({ job: job({ status: "queued" }), candidates })).toBe(
+      "t-feat",
+    );
+    expect(resolveAutoReviewJobOriginThread({ job: job({ status: "running" }), candidates })).toBe(
+      "t-feat",
+    );
+  });
+
+  it("does not guess for terminal jobs the runner left unlinked", () => {
+    for (const status of ["succeeded", "failed", "skipped"] as const) {
+      expect(resolveAutoReviewJobOriginThread({ job: job({ status }), candidates })).toBeNull();
+    }
+  });
+
+  it("returns null when the job has no head branch to match on", () => {
+    expect(
+      resolveAutoReviewJobOriginThread({ job: job({ headBranch: null }), candidates }),
+    ).toBeNull();
+  });
+
+  it("returns null when no thread tracks the head branch", () => {
+    expect(
+      resolveAutoReviewJobOriginThread({ job: job({ headBranch: "other" }), candidates }),
+    ).toBeNull();
   });
 });
 
