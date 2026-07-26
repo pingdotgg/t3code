@@ -8,7 +8,7 @@ export class ThreadColdStorageError extends Schema.TaggedErrorClass<ThreadColdSt
   {
     operation: Schema.String,
     threadId: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
