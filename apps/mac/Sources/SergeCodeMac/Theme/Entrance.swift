@@ -10,6 +10,12 @@ import SwiftUI
 // suppresses to stop the `LazyVStack` re-measuring realized rows mid-stream.
 // Local opacity/offset animates a view in without touching sibling layout, so
 // hydration can animate while the streaming carve-outs stay intact.
+//
+// One caveat: the timeline's suppressor works by clearing
+// `transaction.animation` on the LazyVStack, which flattens *every* descendant
+// animation it doesn't recognize — including the entrance's own. The entrance
+// transaction is therefore marked (`isEntranceAnimation`) so the suppressor
+// whitelists it, the same way user-initiated disclosures are whitelisted.
 
 // MARK: - Environment
 
@@ -25,6 +31,27 @@ extension EnvironmentValues {
     var entranceSuppressed: Bool {
         get { self[EntranceSuppressedKey.self] }
         set { self[EntranceSuppressedKey.self] = newValue }
+    }
+}
+
+// MARK: - Transaction key
+
+private enum EntranceAnimationKey: TransactionKey {
+    static let defaultValue = false
+}
+
+extension Transaction {
+    /// Marks a state change as an entrance arrival. The streaming chat
+    /// timeline clears `transaction.animation` on its LazyVStack to stop
+    /// mid-run layout churn, and that suppressor flattens every descendant
+    /// animation it doesn't recognize — an unmarked entrance flipped its
+    /// state instantly, so arriving rows popped in instead of animating.
+    /// Entrance only animates render-time transforms (opacity/scale/offset),
+    /// never layout, so the suppressor whitelists marked transactions just
+    /// like `isIntentionalDisclosure`.
+    var isEntranceAnimation: Bool {
+        get { self[EntranceAnimationKey.self] }
+        set { self[EntranceAnimationKey.self] = newValue }
     }
 }
 
@@ -67,7 +94,13 @@ private struct EntranceModifier: ViewModifier {
                     hasEntered = true
                     return
                 }
-                withAnimation(role.animation.delay(policy.delay(forIndex: index))) {
+                // Marked so the streaming timeline's animation suppressor lets
+                // this through — unmarked, `hasEntered` flipped instantly and
+                // arriving rows popped in mid-run. See `isEntranceAnimation`.
+                var transaction = Transaction(
+                    animation: role.animation.delay(policy.delay(forIndex: index)))
+                transaction.isEntranceAnimation = true
+                withTransaction(transaction) {
                     hasEntered = true
                 }
             }

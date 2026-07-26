@@ -50,6 +50,19 @@ enum ChatTimelineScrollPolicy {
         if pendingInitialAnchor { return hasContent }
         return isPinned
     }
+
+    /// Whether an update's animation should be flattened to keep the streaming
+    /// timeline's layout still. Two marked transaction kinds pierce the
+    /// suppressor: user-initiated disclosure toggles (a deliberate click
+    /// deserves its animation) and row entrances (render-time transforms only
+    /// — opacity/scale/offset — so they cannot re-measure realized rows).
+    static func shouldFlattenAnimation(
+        suppressLayoutAnimation: Bool,
+        isIntentionalDisclosure: Bool,
+        isEntranceAnimation: Bool
+    ) -> Bool {
+        suppressLayoutAnimation && !isIntentionalDisclosure && !isEntranceAnimation
+    }
 }
 
 /// Scrollable timeline body. Pins to the bottom as new items/deltas arrive,
@@ -156,9 +169,13 @@ struct ChatTimelineScrollView: View {
                                 // animates the row's own opacity and offset,
                                 // which are render-time transforms, so no
                                 // sibling is re-measured and the stack cannot
-                                // blank. Unstaggered on purpose — the index
-                                // needed for a cascade would mean rebuilding an
-                                // enumerated array on every streaming tick.
+                                // blank. Its transaction is marked
+                                // `isEntranceAnimation` so the suppressor
+                                // below lets it play instead of flattening it
+                                // into a pop. Unstaggered on purpose — the
+                                // index needed for a cascade would mean
+                                // rebuilding an enumerated array on every
+                                // streaming tick.
                                 .entrance(.row)
                         }
                         if showThinking {
@@ -179,18 +196,20 @@ struct ChatTimelineScrollView: View {
                     // landing while the user drags (or while tools regroup)
                     // re-measures realized rows for the animation duration and
                     // is what made the transcript judder / blank. Clearing the
-                    // ambient animation is enough for that — implicit layout
-                    // animation cannot start without one. `disablesAnimations`
-                    // is deliberately NOT set here: it would also kill the
-                    // row-local entrance `withAnimation`, which is render-time
-                    // only (opacity/scale/offset) and safe mid-run. Scroll
-                    // re-anchors opt out individually below.
+                    // ambient animation stops implicit layout animation, and
+                    // the `.transaction` suppressor below flattens every other
+                    // transaction flowing to the rows — except the two marked
+                    // kinds that are safe mid-run (see shouldFlattenAnimation):
+                    // row entrances, which are render-time transforms only, and
+                    // user-initiated disclosure toggles. Scroll re-anchors opt
+                    // out individually below.
                     .animation(revealAnimation, value: displayItems.count)
                     .transaction { transaction in
-                        // User-initiated disclosure toggles keep their
-                        // animation even mid-run; everything else (streaming
-                        // churn, regroups) stays unanimated.
-                        if suppressLayoutAnimation && !transaction.isIntentionalDisclosure {
+                        if ChatTimelineScrollPolicy.shouldFlattenAnimation(
+                            suppressLayoutAnimation: suppressLayoutAnimation,
+                            isIntentionalDisclosure: transaction.isIntentionalDisclosure,
+                            isEntranceAnimation: transaction.isEntranceAnimation)
+                        {
                             transaction.animation = nil
                         }
                     }
