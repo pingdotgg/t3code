@@ -45,6 +45,13 @@ enum AlpineContextMenuGeometry {
     static func anchorRect(at point: CGPoint) -> CGRect {
         CGRect(origin: point, size: CGSize(width: 1, height: 1))
     }
+
+    /// Where a menu opened without a cursor hangs from: the bottom edge,
+    /// centred, so a VoiceOver "show menu" drops it under the focused row the
+    /// way a click near the row's middle would.
+    static func focusAnchor(in size: CGSize) -> CGPoint {
+        clamp(CGPoint(x: size.width / 2, y: size.height), in: size)
+    }
 }
 
 /// Transparent overlay that claims *only* secondary clicks. Everything else —
@@ -115,11 +122,24 @@ private struct AlpineContextMenuModifier<MenuContent: View>: ViewModifier {
 
     @UIState private var isPresented = false
     @UIState private var anchor: CGPoint = .zero
+    /// Size of the row the menu belongs to, so an invocation that carries no
+    /// cursor position still has somewhere to anchor.
+    @UIState private var rowSize: CGSize = .zero
 
     func body(content: Content) -> some View {
         content
             .overlay {
                 SecondaryClickCatcher(onSecondaryClick: present)
+            }
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { rowSize = $0 }
+            // A mouse is not the only way to ask for a context menu, and
+            // `.contextMenu` answered the other way too: VoiceOver's "show
+            // menu" (VO-Shift-M) reaches an element through AXShowMenu. macOS
+            // has no system keyboard chord for a list row's menu — Finder has
+            // none either — so this is the invocation path that had to be
+            // replaced rather than dropped along with the NSMenu.
+            .accessibilityAction(.showMenu) {
+                present(at: AlpineContextMenuGeometry.focusAnchor(in: rowSize))
             }
             .popover(
                 isPresented: $isPresented,
@@ -151,7 +171,7 @@ private struct AlpineContextMenuModifier<MenuContent: View>: ViewModifier {
 }
 
 extension View {
-    /// The app's own context menu: a right-click (or ⌃-click) opens an Alpine
+    /// The app's own context menu: a secondary click opens an Alpine
     /// popover anchored at the cursor instead of the native `NSMenu` that
     /// `.contextMenu` produces, so secondary-click menus read as part of this
     /// app rather than as a system control that wandered in.
@@ -160,6 +180,9 @@ extension View {
     /// an action must call it, and a row that opens a second page must not.
     /// Wrap rows in `AlpineMenuList` and separate groups with
     /// `AlpineMenuSeparator` so every menu shares one rhythm.
+    ///
+    /// Invocation matches `.contextMenu`: right-click, ⌃-click, and VoiceOver's
+    /// AXShowMenu action.
     func alpineContextMenu<Content: View>(
         width: CGFloat = 260,
         @ViewBuilder content: @escaping (_ dismiss: @escaping () -> Void) -> Content

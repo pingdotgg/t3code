@@ -159,6 +159,18 @@ struct SidebarView: View {
         .onChange(of: allProjectGroups.map(\.id)) {
             validateProjectScope()
         }
+        // Probe hook (see UIProbeHooks): reveals every project's settled
+        // disclosure, so the rows it hides — and their menus — can be driven.
+        // Nothing posts this outside a probe run.
+        .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
+            guard note.object as? String == "settled" else { return }
+            let groupIDs = Set(allProjectGroups.map(\.id))
+            DispatchQueue.main.async {
+                withAnimation(Motion.structure) {
+                    revealedSettled = revealedSettled.isEmpty ? groupIDs : []
+                }
+            }
+        }
         .alert(
             "Rename Project",
             isPresented: Binding(
@@ -488,6 +500,11 @@ struct SidebarView: View {
                         Task { await archiveAllSettled(settled) }
                     }
                 }
+            }
+            .onAppear {
+                #if DEBUG
+                    UIProbeMenus.record("settled:\(group.id)")
+                #endif
             }
         }
         if isRevealed {
@@ -1032,10 +1049,20 @@ private struct SidebarThreadMenu: View {
         }
         .onAppear {
             #if DEBUG
-                UIProbeMenus.record("thread:\(item.thread.id)")
+                // The lifecycle branch is part of the identity: settle and
+                // un-settle share one slot, so the probe cannot tell the two
+                // menus apart from the thread id alone.
+                UIProbeMenus.record("thread:\(item.thread.id):\(lifecycleProbeLabel)")
             #endif
         }
     }
+
+    #if DEBUG
+        private var lifecycleProbeLabel: String {
+            if item.thread.status != .settled, item.thread.status != .archived { return "settle" }
+            return item.thread.status == .settled ? "unsettle" : "none"
+        }
+    #endif
 
     /// Settle and un-settle are the same slot: a live session can be settled,
     /// a settled one reopened, and an archived one is neither.

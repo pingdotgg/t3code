@@ -89,6 +89,26 @@ struct AlpineContextMenuTests {
                 CGPoint(x: 30, y: 9), in: CGSize(width: -10, height: -10)) == .zero)
     }
 
+    @Test("a cursorless invocation hangs the menu off the row's bottom edge")
+    func focusAnchorSitsUnderTheRow() {
+        // VoiceOver's "show menu" carries no click point, so the anchor has to
+        // come from the row itself — centred on its bottom edge, which puts the
+        // popover under the row instead of at the window's origin.
+        let anchor = AlpineContextMenuGeometry.focusAnchor(
+            in: CGSize(width: 260, height: 28))
+
+        #expect(anchor == CGPoint(x: 130, y: 28))
+    }
+
+    @Test("a cursorless invocation on an unmeasured row still anchors in bounds")
+    func focusAnchorSurvivesAZeroSizedRow() {
+        // The AX action can fire before any geometry has been reported.
+        #expect(AlpineContextMenuGeometry.focusAnchor(in: .zero) == .zero)
+        #expect(
+            AlpineContextMenuGeometry.focusAnchor(in: CGSize(width: -20, height: -20))
+                == .zero)
+    }
+
     @Test("the anchor is a unit rect at the cursor, not the whole row")
     func anchorRectSitsAtThePoint() {
         let rect = AlpineContextMenuGeometry.anchorRect(at: CGPoint(x: 40, y: 12))
