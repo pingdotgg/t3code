@@ -63,6 +63,7 @@ const runtimeMock = {
     authHeaders: [] as Array<string | null>,
     abortCalls: [] as string[],
     abortPromise: null as Promise<void> | null,
+    abortError: null as Error | null,
     closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     promptCalls: [] as Array<unknown>,
@@ -72,6 +73,8 @@ const runtimeMock = {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    subscribedEventsGate: null as Promise<void> | null,
+    subscribedEventsConsumed: 0,
     sessionGetIds: [] as string[],
     missingSessionIds: new Set<string>(),
     transientErrorSessionIds: new Set<string>(),
@@ -86,6 +89,7 @@ const runtimeMock = {
     this.state.authHeaders.length = 0;
     this.state.abortCalls.length = 0;
     this.state.abortPromise = null;
+    this.state.abortError = null;
     this.state.closeCalls.length = 0;
     this.state.revertCalls.length = 0;
     this.state.promptCalls.length = 0;
@@ -95,6 +99,8 @@ const runtimeMock = {
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.subscribedEventsGate = null;
+    this.state.subscribedEventsConsumed = 0;
     this.state.sessionGetIds.length = 0;
     this.state.missingSessionIds.clear();
     this.state.transientErrorSessionIds.clear();
@@ -184,6 +190,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         abort: async ({ sessionID }: { sessionID: string }) => {
           runtimeMock.state.abortCalls.push(sessionID);
           await runtimeMock.state.abortPromise;
+          if (runtimeMock.state.abortError) {
+            throw runtimeMock.state.abortError;
+          }
         },
         promptAsync: async (input: unknown) => {
           runtimeMock.state.promptCalls.push(input);
@@ -218,8 +227,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       event: {
         subscribe: async () => ({
           stream: (async function* () {
+            await runtimeMock.state.subscribedEventsGate;
             for (const event of runtimeMock.state.subscribedEvents) {
               yield event;
+              runtimeMock.state.subscribedEventsConsumed += 1;
             }
           })(),
         }),
@@ -563,6 +574,23 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       runtimeMock.state.abortPromise = new Promise<void>((resolve) => {
         resolveAbort = resolve;
       });
+      let releaseLateEvents!: () => void;
+      runtimeMock.state.subscribedEventsGate = new Promise<void>((resolve) => {
+        releaseLateEvents = resolve;
+      });
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "session.error",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            error: {
+              data: {
+                message: "late abort error",
+              },
+            },
+          },
+        },
+      ];
       const terminalEvents: Array<ProviderRuntimeEvent> = [];
       const eventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter(
@@ -594,8 +622,20 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const interruptFiber = yield* adapter
         .interruptTurn(threadId, turn.turnId)
         .pipe(Effect.forkChild);
+      for (
+        let attempt = 0;
+        attempt < 10 && runtimeMock.state.abortCalls.length === 0;
+        attempt += 1
+      ) {
+        yield* Effect.yieldNow;
+      }
+      NodeAssert.equal(runtimeMock.state.abortCalls.length, 1);
+      const joinedInterruptFiber = yield* adapter
+        .interruptTurn(threadId, turn.turnId)
+        .pipe(Effect.forkChild);
       yield* Effect.yieldNow;
       NodeAssert.equal(runtimeMock.state.abortCalls.length, 1);
+      yield* Fiber.interrupt(interruptFiber);
 
       const steeredTurn = yield* adapter.sendTurn({
         threadId,
@@ -609,9 +649,16 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
 
       rejectCommand(new Error("late command failure"));
       resolveAbort();
-      yield* Fiber.join(interruptFiber);
-      yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
+      yield* Fiber.join(joinedInterruptFiber);
+      releaseLateEvents();
+      for (
+        let attempt = 0;
+        attempt < 10 && runtimeMock.state.subscribedEventsConsumed === 0;
+        attempt += 1
+      ) {
+        yield* Effect.yieldNow;
+      }
+      NodeAssert.equal(runtimeMock.state.subscribedEventsConsumed, 1);
 
       NodeAssert.equal(terminalEvents.length, 1);
       const completed = terminalEvents[0];
@@ -625,6 +672,72 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(sessions[0]?.status, "ready");
       NodeAssert.equal(sessions[0]?.activeTurnId, undefined);
       yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("reports a deferred command failure when abort also fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-command-and-abort-failure");
+      let rejectCommand!: (error: Error) => void;
+      runtimeMock.state.commandPromise = new Promise<void>((_resolve, reject) => {
+        rejectCommand = reject;
+      });
+      let resolveAbort!: () => void;
+      runtimeMock.state.abortPromise = new Promise<void>((resolve) => {
+        resolveAbort = resolve;
+      });
+      runtimeMock.state.abortError = new Error("abort failed");
+      const terminalEventFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.completed" || event.type === "turn.aborted"),
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "/review src/provider",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/sonnet",
+        ),
+      });
+      const interruptFiber = yield* adapter
+        .interruptTurn(threadId, turn.turnId)
+        .pipe(Effect.forkChild);
+      for (
+        let attempt = 0;
+        attempt < 10 && runtimeMock.state.abortCalls.length === 0;
+        attempt += 1
+      ) {
+        yield* Effect.yieldNow;
+      }
+      rejectCommand(new Error("command failed during abort"));
+      resolveAbort();
+
+      const interruptExit = yield* Fiber.await(interruptFiber);
+      NodeAssert.equal(Exit.isFailure(interruptExit), true);
+      const events = Array.from(
+        yield* Fiber.join(terminalEventFiber).pipe(Effect.timeout("1 second")),
+      );
+      const completed = events[0];
+      if (completed?.type !== "turn.completed") {
+        throw new Error("Expected a failed turn.completed event");
+      }
+      NodeAssert.equal(completed.payload.state, "failed");
+      NodeAssert.equal(completed.payload.errorMessage, "command failed during abort");
+
       yield* adapter.stopSession(threadId);
     }),
   );
