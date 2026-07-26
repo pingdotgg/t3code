@@ -426,13 +426,14 @@ function TailscaleServeErrorAlert({
   readonly onOpenConfigureUrl: (configureUrl: string) => void;
 }) {
   const configureUrl = extractTailscaleServeConfigureUrl(message);
-  // The button carries the link, so keep the bare URL out of the prose — it
-  // wraps badly in a narrow dialog.
-  const description = configureUrl ? message.split(configureUrl).join("").trim() : message;
+  // Keep the URL in the message. The CLI phrases this as "... To enable,
+  // visit: <url>", so dropping the URL leaves a dangling colon; `wrap-anywhere`
+  // lets it break inside the dialog's narrow column instead. The button is a
+  // shortcut, not a replacement — the text stays selectable and copyable.
   return (
     <Alert variant="error">
       <AlertTitle>{title}</AlertTitle>
-      <AlertDescription>{description}</AlertDescription>
+      <AlertDescription className="wrap-anywhere">{message}</AlertDescription>
       {configureUrl ? (
         <AlertAction>
           <Button
@@ -3052,7 +3053,11 @@ export function ConnectionsSettings() {
       title="Tailscale HTTPS"
       status={
         tailscaleServeMutationError ? (
-          <span className="block text-destructive">{tailscaleServeMutationError}</span>
+          // The CLI message can carry a long admin URL; wrap it rather than
+          // letting it run past the row.
+          <span className="block wrap-anywhere text-destructive">
+            {tailscaleServeMutationError}
+          </span>
         ) : null
       }
       description={
