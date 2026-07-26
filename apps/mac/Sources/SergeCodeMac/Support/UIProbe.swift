@@ -59,6 +59,7 @@
             try? await Task.sleep(for: .seconds(2))
             snapshot("1-inspector-timeline", dir: dir)
             await probeChatTurnRail(model: model, dir: dir)
+            await probeBackgroundCommandCard(model: model, dir: dir)
 
             // Unified activity panel: scroll to the checkpoint history, then
             // back up to the changed-files section (legacy section keys).
@@ -719,6 +720,68 @@
                 "UIProbe: turn rail turns=\(turns.count) "
                     + "visible=\(turns.count >= 2)")
             snapshot("1c-chat-turn-rail", dir: dir)
+        }
+
+        /// Backgrounded commands render as shell work, not as delegated
+        /// agents, and foreground commands render no task card at all (their
+        /// tool row is the whole story). The card only appears mid-transcript,
+        /// so host it directly instead of scrolling the chat to it.
+        private static func probeBackgroundCommandCard(model: AppModel, dir: String) async {
+            let threadID = model.selectedThreadID
+            let items = threadID.map { model.timeline(threadID: $0) } ?? []
+            let commandCards = items.filter {
+                if case .subagentTask(let task) = $0 { return task.entityKind == .command }
+                return false
+            }
+            let foregroundCards = commandCards.filter {
+                if case .subagentTask(let task) = $0 { return !task.isBackgrounded }
+                return false
+            }
+            print(
+                "UIProbe: command task cards=\(commandCards.count) "
+                    + "foreground=\(foregroundCards.count)")
+
+            let now = Date()
+            let running = SubagentTaskItem(
+                taskId: "probe-command-running", taskType: "local_bash",
+                entityKind: .command, description: "Run full mac test suite",
+                state: .running, latestProgress: nil, lastToolName: "local_bash",
+                isBackgrounded: true, startedAt: now.addingTimeInterval(-190),
+                lastActivityAt: now.addingTimeInterval(-4), duration: nil,
+                progressLog: [
+                    SubagentTaskProgressEntry(
+                        at: now.addingTimeInterval(-120), toolName: "local_bash",
+                        text: "Building for debugging..."),
+                    SubagentTaskProgressEntry(
+                        at: now.addingTimeInterval(-4), toolName: "local_bash",
+                        text: "Test Suite 'SubagentTaskPresentationTests' started\n"
+                            + "✔ subtitle prefers the completion summary (0.004s)"),
+                ])
+            var finished = running
+            finished.taskId = "probe-command-finished"
+            finished.description = "Tail deploy logs"
+            finished.state = .completed
+            finished.duration = 214
+            finished.lastActivityAt = now.addingTimeInterval(-30)
+
+            let hosting = NSHostingView(
+                rootView: VStack(alignment: .leading, spacing: 12) {
+                    BackgroundCommandCard(
+                        task: running, stopError: nil, onStop: {}, onClearStopError: {})
+                    BackgroundCommandCard(
+                        task: finished, stopError: nil, onStop: {}, onClearStopError: {})
+                }
+                .padding(16))
+            let frame = NSRect(x: 0, y: 0, width: 720, height: 420)
+            hosting.frame = frame
+            let window = NSWindow(
+                contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
+            DarkAppearanceConfigurator.applyAppearance(to: window)
+            window.contentView = hosting
+            window.orderFront(nil)
+            try? await Task.sleep(for: .seconds(1))
+            snapshot("1d-background-command", window: window, dir: dir)
+            window.orderOut(nil)
         }
 
         /// Captures the main window at translucency 1.0 and 0.5 and logs

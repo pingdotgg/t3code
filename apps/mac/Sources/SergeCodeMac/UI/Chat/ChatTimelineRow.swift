@@ -146,20 +146,36 @@ struct ChatTimelineRowView: View, Equatable {
                 threadStatus: context.threadStatus, at: at,
                 projectRoot: context.projectRoot)
         case .subagentTask(let task):
-            DelegatedTaskCard(
-                task: task,
-                modelDisplayNames: model.modelDisplayNames,
-                stopError: model.subagentStopErrors[task.taskId],
-                onStopAgent: {
-                    Task { await model.stopSubagentTask(taskId: task.taskId) }
-                },
-                onStopTurn: {
-                    Task { await model.cancelCurrentTurn() }
-                },
-                onClearStopError: {
-                    model.clearSubagentStopError(taskId: task.taskId)
-                }
-            )
+            // A command that reaches the transcript is a backgrounded one
+            // (foreground commands live entirely in their tool row), and it
+            // reads as shell work, not as a delegated agent.
+            if task.entityKind == .command {
+                BackgroundCommandCard(
+                    task: task,
+                    stopError: model.subagentStopErrors[task.taskId],
+                    onStop: {
+                        Task { await model.stopSubagentTask(taskId: task.taskId) }
+                    },
+                    onClearStopError: {
+                        model.clearSubagentStopError(taskId: task.taskId)
+                    }
+                )
+            } else {
+                DelegatedTaskCard(
+                    task: task,
+                    modelDisplayNames: model.modelDisplayNames,
+                    stopError: model.subagentStopErrors[task.taskId],
+                    onStopAgent: {
+                        Task { await model.stopSubagentTask(taskId: task.taskId) }
+                    },
+                    onStopTurn: {
+                        Task { await model.cancelCurrentTurn() }
+                    },
+                    onClearStopError: {
+                        model.clearSubagentStopError(taskId: task.taskId)
+                    }
+                )
+            }
         case .approval(let request):
             ApprovalCard(request: request, isActive: isActiveDecisionCard(request.id)) { approve in
                 Task { await model.respond(to: request, approve: approve) }
@@ -871,6 +887,13 @@ private struct ToolEventRow: View {
         !detail.isEmpty || !(output?.isEmpty ?? true)
     }
 
+    /// Running commands count up in place of the hover timestamp: elapsed
+    /// time is what a user watching a build or a test run wants, and the two
+    /// labels would otherwise stack on the same corner.
+    private var showsElapsedTimer: Bool {
+        kind == .command && displayState == .running
+    }
+
     /// One-line preview text plus optional full path for the tooltip when a
     /// file path was shortened for display.
     private var preview: (text: String, fullPath: String?)? {
@@ -919,6 +942,16 @@ private struct ToolEventRow: View {
                         previewLabel(preview)
                     }
                     Spacer(minLength: 8)
+                    // A command is the one tool whose runtime the user is
+                    // waiting on, and long ones used to be indistinguishable
+                    // from wedged ones. The elapsed clock is the whole
+                    // "long-running" signal a foreground command needs — it
+                    // does not earn a card of its own.
+                    if showsElapsedTimer, let at {
+                        Text(at, style: .timer)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                     if hasExpandableContent {
                         Image(systemName: "chevron.right")
                             .font(.caption.weight(.semibold))
@@ -944,7 +977,7 @@ private struct ToolEventRow: View {
             isActive: displayState == .running,
             cornerRadius: TranscriptMetrics.cardRadius)
         .overlay(alignment: .topTrailing) {
-            if isHovering, let at {
+            if isHovering, !showsElapsedTimer, let at {
                 TranscriptTimestamp(date: at)
                     .transition(.opacity)
                     .padding(.top, 9)

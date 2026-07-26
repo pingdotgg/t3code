@@ -344,10 +344,11 @@ enum TranscriptTextBuilder {
 
         case .subagentTask(let task):
             if leadingBreak { appendBlankLine(to: result) }
+            let isCommand = task.entityKind == .command
             let title =
                 task.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                ? task.description! : "Subagent task"
-            appendHeader("Subagent · \(title)", to: result)
+                ? task.description! : (isCommand ? "Background command" : "Subagent task")
+            appendHeader("\(isCommand ? "Command" : "Subagent") · \(title)", to: result)
             if let progress = task.latestProgress?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !progress.isEmpty
             {

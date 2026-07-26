@@ -1767,6 +1767,34 @@ private actor MockState {
                 isStreaming: false,
                 at: now.addingTimeInterval(-12)
             ),
+            // A foreground command is its tool row and nothing else — the
+            // elapsed clock carries the "still running" signal. Compare with
+            // the backgrounded command below, which is the only command shape
+            // that also earns a task row.
+            .toolEvent(
+                id: "t1-tool13", name: "Running command",
+                detail: "Bash: swift build --package-path apps/mac", kind: .command,
+                status: .running, at: now.addingTimeInterval(-11),
+                output: nil, outputIsError: false),
+            .subagentTask(
+                SubagentTaskItem(
+                    taskId: "mock-command-1", taskType: "local_bash",
+                    entityKind: .command,
+                    description: "Run full mac test suite",
+                    state: .running, latestProgress: nil,
+                    lastToolName: "local_bash",
+                    isBackgrounded: true,
+                    startedAt: now.addingTimeInterval(-240),
+                    lastActivityAt: now.addingTimeInterval(-6), duration: nil,
+                    progressLog: [
+                        SubagentTaskProgressEntry(
+                            at: now.addingTimeInterval(-120), toolName: "local_bash",
+                            text: "Building for debugging..."),
+                        SubagentTaskProgressEntry(
+                            at: now.addingTimeInterval(-6), toolName: "local_bash",
+                            text: "Test Suite 'SubagentTaskPresentationTests' started\n"
+                                + "✔ subtitle prefers the completion summary (0.004s)"),
+                    ])),
         ]
     }
 
