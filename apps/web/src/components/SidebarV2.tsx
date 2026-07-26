@@ -913,7 +913,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 {props.settlementSupported || showSnoozeButton ? (
                   <span
                     className={cn(
-                      "absolute inset-y-0 right-0 flex items-stretch gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
+                      "absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
                       snoozeMenuOpen && "opacity-100",
                     )}
                   >
@@ -929,9 +929,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                         type="button"
                         aria-label="Settle thread"
                         onClick={handleSettleClick}
-                        className="inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground hover:text-foreground"
+                        className="-mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
                       >
-                        <CheckIcon className="size-3" />
+                        <CheckIcon className="size-3.5" />
                         Settle
                       </button>
                     ) : null}
@@ -2229,7 +2229,7 @@ export default function SidebarV2() {
                   <SearchIcon />
                   <div className="flex-1 truncate text-left">Search</div>
                   {commandPaletteShortcutLabel ? (
-                    <Kbd className="h-4 min-w-0 rounded-sm bg-sidebar-control-surface px-1.5 text-[10px] text-sidebar-muted-foreground ring-1 ring-sidebar-border">
+                    <Kbd className="mr-px h-4 min-w-0 rounded-sm bg-sidebar-control-surface px-1.5 text-[10px] text-sidebar-muted-foreground ring-1 ring-sidebar-border">
                       {commandPaletteShortcutLabel}
                     </Kbd>
                   ) : null}
@@ -2271,8 +2271,12 @@ export default function SidebarV2() {
             <div className="flex items-center gap-1">
               <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
                 <MenuTrigger
-                  aria-label="Filter threads by project"
-                  className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                  render={
+                    <SidebarMenuButton
+                      aria-label="Filter threads by project"
+                      className="min-w-0 flex-1 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                    />
+                  }
                 >
                   {scopedProjectGroup ? (
                     <ProjectFavicon
@@ -2286,7 +2290,7 @@ export default function SidebarV2() {
                   <span className="min-w-0 flex-1 truncate">
                     {scopedProjectGroup?.displayName ?? "All projects"}
                   </span>
-                  <ChevronDownIcon className="size-4 shrink-0 text-sidebar-muted-foreground/70" />
+                  <ChevronDownIcon className="-mr-px size-4 shrink-0 text-sidebar-muted-foreground/70" />
                 </MenuTrigger>
                 <MenuPopup align="start" className="w-(--anchor-width)">
                   <MenuRadioGroup
