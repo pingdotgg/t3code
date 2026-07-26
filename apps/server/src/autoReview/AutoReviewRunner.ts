@@ -60,6 +60,31 @@ function toGithubEvent(
   return "COMMENT";
 }
 
+/**
+ * GitHub rejects APPROVE and REQUEST_CHANGES when the review author is the PR
+ * author (HTTP 422 — COMMENT is the only event accepted on your own PR). The
+ * auto-review posts as the local `gh` user, which is usually also the PR
+ * author, so a blocking verdict would fail the whole submission with an
+ * opaque CLI error. Keep the honest verdict in the review body and downgrade
+ * the GitHub-side event to COMMENT instead.
+ */
+function resolveSubmittableEvent(input: {
+  readonly decision: ReturnType<typeof resolveReviewEvent>;
+  readonly prAuthorLogin: string | null | undefined;
+  readonly viewerLogin: string | null;
+}): GitHubCli.GitHubPullRequestReviewEvent {
+  const event = toGithubEvent(input.decision);
+  if (
+    event !== "COMMENT" &&
+    input.viewerLogin !== null &&
+    input.prAuthorLogin != null &&
+    input.viewerLogin.trim().toLowerCase() === input.prAuthorLogin.trim().toLowerCase()
+  ) {
+    return "COMMENT";
+  }
+  return event;
+}
+
 export const make = Effect.gen(function* () {
   const store = yield* AutoReviewJobStore.AutoReviewJobStore;
   const github = yield* GitHubCli.GitHubCli;
@@ -139,12 +164,19 @@ export const make = Effect.gen(function* () {
       let githubReviewId: string | null = null;
 
       if (!alreadyPosted || job.trigger === "mention") {
+        const viewerLogin = yield* github
+          .getViewerLogin({ cwd: context.cwd })
+          .pipe(Effect.orElseSucceed(() => null));
         const submitted = yield* github.submitPullRequestReview({
           cwd: context.cwd,
           reference: prReference,
           commitId: job.headSha,
           body,
-          event: toGithubEvent(decision),
+          event: resolveSubmittableEvent({
+            decision,
+            prAuthorLogin: prMeta.authorLogin,
+            viewerLogin,
+          }),
           comments: anchorable,
         });
         reviewUrl = submitted.url || null;

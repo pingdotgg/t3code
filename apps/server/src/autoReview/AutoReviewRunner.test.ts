@@ -39,6 +39,7 @@ const makeGithub = (overrides: Partial<GitHubCli.GitHubCli["Service"]> = {}) =>
     createRepository: () => Effect.die("unused"),
     createPullRequest: () => Effect.void,
     getDefaultBranch: () => Effect.succeed("main"),
+    getViewerLogin: () => Effect.succeed("octocat"),
     checkoutPullRequest: () => Effect.void,
     getPullRequestReviewStatus: () => Effect.die("unused"),
     getPullRequestMergeState: () => Effect.die("unused"),
@@ -136,6 +137,162 @@ describe("AutoReviewRunner", () => {
               ),
             ),
             Layer.provide(Layer.succeed(TextGeneration.TextGeneration, makeText())),
+          ),
+        ),
+      ),
+      Effect.runPromise,
+    );
+  });
+
+  it("downgrades request_changes to comment when reviewing your own PR", async () => {
+    const events: string[] = [];
+
+    await Effect.gen(function* () {
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      const runner = yield* AutoReviewRunner.AutoReviewRunner;
+      const enqueued = yield* store.enqueue({
+        projectId: "proj",
+        prNumber: 1,
+        headSha: "abc123def456",
+        trigger: "open_or_push",
+        modelSelection,
+      });
+      yield* store.update(enqueued.job.id, { status: "running" });
+
+      yield* runner.runJob(enqueued.job.id, { cwd: "/repo", candidates: [] });
+
+      const job = yield* store.get(enqueued.job.id);
+      expect(job?.status).toBe("succeeded");
+      expect(events).toEqual(["COMMENT"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          AutoReviewJobStore.layerInMemory,
+          AutoReviewRunner.layer.pipe(
+            Layer.provide(AutoReviewJobStore.layerInMemory),
+            Layer.provide(
+              Layer.succeed(
+                GitHubCli.GitHubCli,
+                makeGithub({
+                  getViewerLogin: () => Effect.succeed("OctoCat"),
+                  getPullRequest: () =>
+                    Effect.succeed({
+                      number: 1,
+                      title: "Test",
+                      url: "https://github.com/o/r/pull/1",
+                      baseRefName: "main",
+                      headRefName: "feat",
+                      headRefOid: "abc123",
+                      state: "open",
+                      authorLogin: "octocat",
+                    }),
+                  submitPullRequestReview: (input) =>
+                    Effect.sync(() => {
+                      events.push(input.event);
+                      return { reviewId: "r1", url: "https://example/review" };
+                    }),
+                }),
+              ),
+            ),
+            Layer.provide(
+              Layer.succeed(
+                TextGeneration.TextGeneration,
+                makeText({
+                  generateAutoReviewFindings: () =>
+                    Effect.succeed({
+                      summary: "Blocking issue found",
+                      decision: "request_changes",
+                      comments: [
+                        {
+                          path: "a.ts",
+                          line: 2,
+                          side: "RIGHT",
+                          severity: "blocking",
+                          body: "breaks correctness",
+                        },
+                      ],
+                    }),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+      Effect.runPromise,
+    );
+  });
+
+  it("keeps request_changes when the PR author is someone else", async () => {
+    const events: string[] = [];
+
+    await Effect.gen(function* () {
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      const runner = yield* AutoReviewRunner.AutoReviewRunner;
+      const enqueued = yield* store.enqueue({
+        projectId: "proj",
+        prNumber: 1,
+        headSha: "abc123def456",
+        trigger: "open_or_push",
+        modelSelection,
+      });
+      yield* store.update(enqueued.job.id, { status: "running" });
+
+      yield* runner.runJob(enqueued.job.id, { cwd: "/repo", candidates: [] });
+
+      const job = yield* store.get(enqueued.job.id);
+      expect(job?.status).toBe("succeeded");
+      expect(events).toEqual(["REQUEST_CHANGES"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          AutoReviewJobStore.layerInMemory,
+          AutoReviewRunner.layer.pipe(
+            Layer.provide(AutoReviewJobStore.layerInMemory),
+            Layer.provide(
+              Layer.succeed(
+                GitHubCli.GitHubCli,
+                makeGithub({
+                  getViewerLogin: () => Effect.succeed("octocat"),
+                  getPullRequest: () =>
+                    Effect.succeed({
+                      number: 1,
+                      title: "Test",
+                      url: "https://github.com/o/r/pull/1",
+                      baseRefName: "main",
+                      headRefName: "feat",
+                      headRefOid: "abc123",
+                      state: "open",
+                      authorLogin: "someone-else",
+                    }),
+                  submitPullRequestReview: (input) =>
+                    Effect.sync(() => {
+                      events.push(input.event);
+                      return { reviewId: "r1", url: "https://example/review" };
+                    }),
+                }),
+              ),
+            ),
+            Layer.provide(
+              Layer.succeed(
+                TextGeneration.TextGeneration,
+                makeText({
+                  generateAutoReviewFindings: () =>
+                    Effect.succeed({
+                      summary: "Blocking issue found",
+                      decision: "request_changes",
+                      comments: [
+                        {
+                          path: "a.ts",
+                          line: 2,
+                          side: "RIGHT",
+                          severity: "blocking",
+                          body: "breaks correctness",
+                        },
+                      ],
+                    }),
+                }),
+              ),
+            ),
           ),
         ),
       ),

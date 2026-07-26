@@ -21,6 +21,8 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly headRepositoryOwnerLogin?: string | null;
   /** Head commit OID when requested via `gh pr list/view --json headRefOid`. */
   readonly headRefOid?: string | null;
+  /** PR author login when requested via `gh pr list/view --json author`. */
+  readonly authorLogin?: string | null;
 }
 
 const GitHubPullRequestSchema = Schema.Struct({
@@ -49,6 +51,13 @@ const GitHubPullRequestSchema = Schema.Struct({
     ),
   ),
   headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
+  author: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        login: Schema.String,
+      }),
+    ),
+  ),
 });
 
 function trimOptionalString(value: string | null | undefined): string | null {
@@ -99,6 +108,9 @@ function normalizeGitHubPullRequestRecord(
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
     ...(trimOptionalString(raw.headRefOid)
       ? { headRefOid: trimOptionalString(raw.headRefOid) }
+      : {}),
+    ...(trimOptionalString(raw.author?.login)
+      ? { authorLogin: trimOptionalString(raw.author?.login) }
       : {}),
   };
 }
