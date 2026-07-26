@@ -165,10 +165,16 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
     }
 
     /// Active tasks that represent background work a user tracks: sub-agents,
-    /// workflows, and backgrounded commands. Foreground shell commands are
-    /// excluded — they are ordinary tool calls of the running turn, so
-    /// counting them would inflate the sidebar's background badge and hold a
-    /// finished thread in `backgroundWork`.
+    /// workflows, and backgrounded commands.
+    ///
+    /// Foreground shell commands are deliberately excluded. They are ordinary
+    /// tool calls of the running turn, and `ThreadStatusProjection` already
+    /// projects that turn as `running` from session/turn liveness — this count
+    /// only decides the picture *after* the turn goes quiet. Counting them
+    /// there put a number in the sidebar's background badge for a shell call
+    /// nobody is waiting on, and pinned a finished thread to `backgroundWork`
+    /// whenever the provider never closed the task. Use `activeTaskCount` for
+    /// "tasks still open" regardless of shape.
     public var activeBackgroundWorkCount: Int {
         activeTaskIDsStorage.lazy.filter { tasksByID[$0]?.producesTimelineRow ?? false }.count
     }
