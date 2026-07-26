@@ -1161,25 +1161,6 @@ function buildLatestTurn(params: {
   };
 }
 
-function rebindTurnDiffSummariesForAssistantMessage(
-  turnDiffSummaries: ReadonlyArray<TurnDiffSummary>,
-  turnId: TurnId,
-  assistantMessageId: NonNullable<Thread["latestTurn"]>["assistantMessageId"],
-): TurnDiffSummary[] {
-  let changed = false;
-  const nextSummaries = turnDiffSummaries.map((summary) => {
-    if (summary.turnId !== turnId || summary.assistantMessageId === assistantMessageId) {
-      return summary;
-    }
-    changed = true;
-    return {
-      ...summary,
-      assistantMessageId: assistantMessageId ?? undefined,
-    };
-  });
-  return changed ? nextSummaries : [...turnDiffSummaries];
-}
-
 function retainThreadMessagesAfterRevert(
   messages: ReadonlyArray<ChatMessage>,
   retainedTurnIds: ReadonlySet<string>,
@@ -1313,6 +1294,167 @@ function updateThreadState(
     return state;
   }
   return writeThreadState(state, nextThread, currentThread);
+}
+
+function updateThreadMessageState(
+  state: EnvironmentState,
+  event: Extract<OrchestrationEvent, { type: "thread.message-sent" }>,
+  environmentId: EnvironmentId,
+): EnvironmentState {
+  const threadId = event.payload.threadId;
+  const shell = state.threadShellById[threadId];
+  if (!shell) {
+    return state;
+  }
+
+  const messageIds = state.messageIdsByThreadId[threadId] ?? [];
+  const messagesById = state.messageByThreadId[threadId] ?? ({} as Record<MessageId, ChatMessage>);
+  const incoming = mapMessage(environmentId, {
+    id: event.payload.messageId,
+    role: event.payload.role,
+    text: event.payload.text,
+    ...(event.payload.attachments !== undefined ? { attachments: event.payload.attachments } : {}),
+    turnId: event.payload.turnId,
+    streaming: event.payload.streaming,
+    createdAt: event.payload.createdAt,
+    updatedAt: event.payload.updatedAt,
+  });
+  const previousMessage = messagesById[incoming.id];
+  const message =
+    previousMessage === undefined
+      ? incoming
+      : {
+          ...previousMessage,
+          text: incoming.streaming
+            ? `${previousMessage.text}${incoming.text}`
+            : incoming.text.length > 0
+              ? incoming.text
+              : previousMessage.text,
+          streaming: incoming.streaming,
+          ...(incoming.turnId !== undefined ? { turnId: incoming.turnId } : {}),
+          ...(incoming.streaming
+            ? previousMessage.completedAt !== undefined
+              ? { completedAt: previousMessage.completedAt }
+              : {}
+            : incoming.completedAt !== undefined
+              ? { completedAt: incoming.completedAt }
+              : {}),
+          ...(incoming.attachments !== undefined ? { attachments: incoming.attachments } : {}),
+        };
+
+  let nextMessageIds = messageIds;
+  const nextMessagesById: Record<MessageId, ChatMessage> = {
+    ...messagesById,
+    [message.id]: message,
+  };
+  if (previousMessage === undefined) {
+    nextMessageIds = [...messageIds, message.id];
+    if (nextMessageIds.length > MAX_THREAD_MESSAGES) {
+      const overflow = nextMessageIds.length - MAX_THREAD_MESSAGES;
+      for (const messageId of nextMessageIds.slice(0, overflow)) {
+        delete nextMessagesById[messageId];
+      }
+      nextMessageIds = nextMessageIds.slice(overflow);
+    }
+  }
+
+  const currentTurnState = state.threadTurnStateById[threadId];
+  const currentLatestTurn = currentTurnState?.latestTurn ?? null;
+  const latestTurn: Thread["latestTurn"] =
+    event.payload.role === "assistant" &&
+    event.payload.turnId !== null &&
+    (currentLatestTurn === null || currentLatestTurn.turnId === event.payload.turnId)
+      ? buildLatestTurn({
+          previous: currentLatestTurn,
+          turnId: event.payload.turnId,
+          state: event.payload.streaming
+            ? "running"
+            : currentLatestTurn?.state === "interrupted"
+              ? "interrupted"
+              : currentLatestTurn?.state === "error"
+                ? "error"
+                : "completed",
+          requestedAt:
+            currentLatestTurn?.turnId === event.payload.turnId
+              ? currentLatestTurn.requestedAt
+              : event.payload.createdAt,
+          startedAt:
+            currentLatestTurn?.turnId === event.payload.turnId
+              ? (currentLatestTurn.startedAt ?? event.payload.createdAt)
+              : event.payload.createdAt,
+          sourceProposedPlan: currentTurnState?.pendingSourceProposedPlan,
+          completedAt: event.payload.streaming
+            ? currentLatestTurn?.turnId === event.payload.turnId
+              ? (currentLatestTurn.completedAt ?? null)
+              : null
+            : event.payload.updatedAt,
+          assistantMessageId: event.payload.messageId,
+        })
+      : currentLatestTurn;
+  const nextTurnState: ThreadTurnState = {
+    latestTurn,
+    ...(currentTurnState?.pendingSourceProposedPlan
+      ? { pendingSourceProposedPlan: currentTurnState.pendingSourceProposedPlan }
+      : {}),
+  };
+
+  let turnDiffSummaryByThreadId = state.turnDiffSummaryByThreadId;
+  if (event.payload.role === "assistant" && event.payload.turnId !== null) {
+    const summariesById = state.turnDiffSummaryByThreadId[threadId];
+    const summaryId = state.turnDiffIdsByThreadId[threadId]?.find(
+      (turnId) => turnId === event.payload.turnId,
+    );
+    const summary = summaryId ? summariesById?.[summaryId] : undefined;
+    if (summary && summaryId && summary.assistantMessageId !== event.payload.messageId) {
+      turnDiffSummaryByThreadId = {
+        ...turnDiffSummaryByThreadId,
+        [threadId]: {
+          ...summariesById,
+          [summaryId]: {
+            ...summary,
+            assistantMessageId: event.payload.messageId,
+          },
+        },
+      };
+    }
+  }
+
+  return {
+    ...state,
+    ...(shell.updatedAt === event.occurredAt
+      ? {}
+      : {
+          threadShellById: {
+            ...state.threadShellById,
+            [threadId]: {
+              ...shell,
+              updatedAt: event.occurredAt,
+            },
+          },
+        }),
+    messageIdsByThreadId:
+      nextMessageIds === messageIds
+        ? state.messageIdsByThreadId
+        : {
+            ...state.messageIdsByThreadId,
+            [threadId]: nextMessageIds,
+          },
+    messageByThreadId: {
+      ...state.messageByThreadId,
+      [threadId]: nextMessagesById,
+    },
+    ...(threadTurnStatesEqual(currentTurnState, nextTurnState)
+      ? {}
+      : {
+          threadTurnStateById: {
+            ...state.threadTurnStateById,
+            [threadId]: nextTurnState,
+          },
+        }),
+    ...(turnDiffSummaryByThreadId === state.turnDiffSummaryByThreadId
+      ? {}
+      : { turnDiffSummaryByThreadId }),
+  };
 }
 
 function buildProjectState(
@@ -1701,100 +1843,7 @@ function applyEnvironmentOrchestrationEvent(
     }
 
     case "thread.message-sent":
-      return updateThreadState(state, event.payload.threadId, (thread) => {
-        const message = mapMessage(thread.environmentId, {
-          id: event.payload.messageId,
-          role: event.payload.role,
-          text: event.payload.text,
-          ...(event.payload.attachments !== undefined
-            ? { attachments: event.payload.attachments }
-            : {}),
-          turnId: event.payload.turnId,
-          streaming: event.payload.streaming,
-          createdAt: event.payload.createdAt,
-          updatedAt: event.payload.updatedAt,
-        });
-
-        const lastMessage = thread.messages.at(-1);
-        const messageIndex =
-          lastMessage?.id === message.id
-            ? thread.messages.length - 1
-            : thread.messages.findIndex((entry) => entry.id === message.id);
-        const messages =
-          messageIndex === -1
-            ? [...thread.messages, message]
-            : [
-                ...thread.messages.slice(0, messageIndex),
-                {
-                  ...thread.messages[messageIndex]!,
-                  text: message.streaming
-                    ? `${thread.messages[messageIndex]!.text}${message.text}`
-                    : message.text.length > 0
-                      ? message.text
-                      : thread.messages[messageIndex]!.text,
-                  streaming: message.streaming,
-                  ...(message.turnId !== undefined ? { turnId: message.turnId } : {}),
-                  ...(message.streaming
-                    ? thread.messages[messageIndex]!.completedAt !== undefined
-                      ? { completedAt: thread.messages[messageIndex]!.completedAt }
-                      : {}
-                    : message.completedAt !== undefined
-                      ? { completedAt: message.completedAt }
-                      : {}),
-                  ...(message.attachments !== undefined
-                    ? { attachments: message.attachments }
-                    : {}),
-                },
-                ...thread.messages.slice(messageIndex + 1),
-              ];
-        const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
-        const turnDiffSummaries =
-          event.payload.role === "assistant" && event.payload.turnId !== null
-            ? rebindTurnDiffSummariesForAssistantMessage(
-                thread.turnDiffSummaries,
-                event.payload.turnId,
-                event.payload.messageId,
-              )
-            : thread.turnDiffSummaries;
-        const latestTurn: Thread["latestTurn"] =
-          event.payload.role === "assistant" &&
-          event.payload.turnId !== null &&
-          (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
-            ? buildLatestTurn({
-                previous: thread.latestTurn,
-                turnId: event.payload.turnId,
-                state: event.payload.streaming
-                  ? "running"
-                  : thread.latestTurn?.state === "interrupted"
-                    ? "interrupted"
-                    : thread.latestTurn?.state === "error"
-                      ? "error"
-                      : "completed",
-                requestedAt:
-                  thread.latestTurn?.turnId === event.payload.turnId
-                    ? thread.latestTurn.requestedAt
-                    : event.payload.createdAt,
-                startedAt:
-                  thread.latestTurn?.turnId === event.payload.turnId
-                    ? (thread.latestTurn.startedAt ?? event.payload.createdAt)
-                    : event.payload.createdAt,
-                sourceProposedPlan: thread.pendingSourceProposedPlan,
-                completedAt: event.payload.streaming
-                  ? thread.latestTurn?.turnId === event.payload.turnId
-                    ? (thread.latestTurn.completedAt ?? null)
-                    : null
-                  : event.payload.updatedAt,
-                assistantMessageId: event.payload.messageId,
-              })
-            : thread.latestTurn;
-        return {
-          ...thread,
-          messages: cappedMessages,
-          turnDiffSummaries,
-          latestTurn,
-          updatedAt: event.occurredAt,
-        };
-      });
+      return updateThreadMessageState(state, event, environmentId);
 
     case "thread.review-result-set":
       return updateThreadState(state, event.payload.threadId, (thread) => ({

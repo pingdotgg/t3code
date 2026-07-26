@@ -738,6 +738,45 @@ describe("incremental orchestration updates", () => {
     expect(localEnvironmentStateOf(next).bootstrapComplete).toBe(false);
   });
 
+  it("keeps the normalized message index while updating a streamed tail message", () => {
+    const threadId = ThreadId.make("thread-1");
+    const messages = Array.from({ length: 2_000 }, (_, index) => ({
+      id: MessageId.make(`message-${index}`),
+      role: "assistant" as const,
+      text: index === 1_999 ? "partial" : `message ${index}`,
+      turnId: TurnId.make("turn-1"),
+      createdAt: "2026-02-27T00:00:00.000Z",
+      streaming: index === 1_999,
+    }));
+    const state = makeState(makeThread({ id: threadId, messages }));
+    const before = localEnvironmentStateOf(state);
+    const previousMessageIndex = before.messageIdsByThreadId[threadId];
+    const previousActivityIndex = before.activityIdsByThreadId[threadId];
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.message-sent", {
+        threadId,
+        messageId: messages.at(-1)!.id,
+        role: "assistant",
+        text: " text",
+        turnId: TurnId.make("turn-1"),
+        streaming: true,
+        createdAt: "2026-02-27T00:00:00.000Z",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+      localEnvironmentId,
+    );
+    const after = localEnvironmentStateOf(next);
+
+    expect(after.messageIdsByThreadId[threadId]).toBe(previousMessageIndex);
+    expect(after.activityIdsByThreadId[threadId]).toBe(previousActivityIndex);
+    expect(after.messageByThreadId[threadId]?.[messages[0]!.id]).toBe(
+      before.messageByThreadId[threadId]?.[messages[0]!.id],
+    );
+    expect(after.messageByThreadId[threadId]?.[messages.at(-1)!.id]?.text).toBe("partial text");
+  });
+
   it("preserves state identity for no-op project and thread deletes", () => {
     const thread = makeThread();
     const state = makeState(thread);
