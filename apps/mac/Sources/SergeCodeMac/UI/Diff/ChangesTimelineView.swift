@@ -52,24 +52,15 @@ public struct ChangesTimelineView: View {
         model.threads.first { $0.id == threadID }?.status == .running
     }
 
-    /// The agent's most recent tool calls, newest first — the "now" card's
-    /// content while a turn is in flight.
-    private var recentToolEvents: [RecentToolEvent] {
-        let timeline = model.threadState(threadID)?.timeline ?? []
-        // Reverse-scan and stop at 3: this runs on every body pass while the
-        // timeline streams, so a full compactMap would be an O(n) allocation
-        // on a hot path.
-        var events: [RecentToolEvent] = []
-        events.reserveCapacity(3)
-        for item in timeline.reversed() {
-            guard
-                case .toolEvent(let id, let name, let detail, let kind, let status, _, _, _) = item
-            else { continue }
-            events.append(
-                RecentToolEvent(id: id, name: name, detail: detail, kind: kind, status: status))
-            if events.count == 3 { break }
-        }
-        return events
+    /// The turn currently in flight, segmented out of the timeline (see
+    /// `TurnActivityProjection` for the turn rule). One forward pass, same
+    /// order of work as the per-checkpoint `toolCounts` mapping the History
+    /// section already runs on every body pass.
+    private var currentTurn: TurnActivity {
+        TurnActivityProjection.currentTurn(
+            timeline: model.threadState(threadID)?.timeline ?? [],
+            checkpoints: model.threadState(threadID)?.checkpoints ?? []
+        )
     }
 
     private var showsNow: Bool {
@@ -91,7 +82,7 @@ public struct ChangesTimelineView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         if showsNow {
-                            nowSection
+                            currentTurnSection
                                 .id(FeedAnchor.now)
                                 .transition(Motion.materialize)
                         }
@@ -212,16 +203,42 @@ public struct ChangesTimelineView: View {
         }
     }
 
-    // MARK: - Now
+    // MARK: - Current turn
 
-    /// Live card: the agent's latest tool calls while a turn is in flight.
-    /// The shimmer border marks the card as live; settled rows stay still.
-    private var nowSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionLabel("Now")
+    /// Cap on visible tool rows so a long agent loop can't blow up the
+    /// panel; older events fold into a "… N earlier" line.
+    private static let visibleEventLimit = 6
+
+    /// Live card for the turn in flight: which turn it is, what kicked it
+    /// off, how long it's been running, and this turn's tool calls in
+    /// chronological order (latest at the bottom, matching how the chat
+    /// reads). The shimmer border marks the card as live; settled rows stay
+    /// still.
+    private var currentTurnSection: some View {
+        let turn = currentTurn
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                sectionLabel("Now · Turn \(turn.turnNumber)")
+                Spacer(minLength: 4)
+                if let startedAt = turn.startedAt {
+                    Text(startedAt, style: .timer)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 2) {
-                if recentToolEvents.isEmpty {
+                if let prompt = turn.prompt, !prompt.isEmpty {
+                    Text(prompt)
+                        .font(SurgeTypography.technicalMetadata)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                }
+                turnStatsRow(turn)
+                if turn.events.isEmpty {
                     nowRow(
                         chipStyle: ToolActivityStyle(
                             symbolName: "sparkles", tint: AlpineTheme.accent),
@@ -230,7 +247,16 @@ public struct ChangesTimelineView: View {
                         status: .running
                     )
                 } else {
-                    ForEach(recentToolEvents) { event in
+                    let hiddenCount = max(0, turn.events.count - Self.visibleEventLimit)
+                    if hiddenCount > 0 {
+                        Text("… \(hiddenCount) earlier tool call\(hiddenCount == 1 ? "" : "s")")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                    }
+                    ForEach(turn.events.suffix(Self.visibleEventLimit)) { event in
                         nowRow(
                             chipStyle: event.kind.activityStyle,
                             title: event.name,
@@ -252,6 +278,27 @@ public struct ChangesTimelineView: View {
                 cornerRadius: AlpineTheme.Corners.card)
         }
         .padding(.horizontal, 12)
+    }
+
+    /// Compact "12 tools · 3 files · 1 failed" summary for the live turn.
+    private func turnStatsRow(_ turn: TurnActivity) -> some View {
+        HStack(spacing: 6) {
+            Text("\(turn.toolCount) tool\(turn.toolCount == 1 ? "" : "s")")
+            if !turn.filesTouched.isEmpty {
+                Text("·")
+                Text("\(turn.filesTouched.count) file\(turn.filesTouched.count == 1 ? "" : "s")")
+            }
+            if turn.failedCount > 0 {
+                Text("·")
+                Text("\(turn.failedCount) failed")
+                    .foregroundStyle(.red)
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
     }
 
     private func nowRow(
@@ -813,15 +860,6 @@ public struct ChangesTimelineView: View {
             .padding(.top, 32)
             .transition(Motion.materialize)
     }
-}
-
-/// A recent tool call summarized for the "Now" card.
-private struct RecentToolEvent: Identifiable {
-    let id: String
-    let name: String
-    let detail: String
-    let kind: ToolEventKind
-    let status: ToolEventStatus
 }
 
 /// 26×26 icon button for inspector surfaces: transparent at rest, flat hover
