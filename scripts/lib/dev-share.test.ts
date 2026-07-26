@@ -191,7 +191,7 @@ describe("shareDevServer", () => {
 });
 
 it.layer(NodeServices.layer)("dev share cleanup ownership", (it) => {
-  it.effect("cleans up a claimed mapping when replacement sharing fails", () =>
+  it.effect("keeps the prior owner when clearing its mapping fails", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const directory = yield* fileSystem.makeTempDirectoryScoped({
@@ -209,6 +209,33 @@ it.layer(NodeServices.layer)("dev share cleanup ownership", (it) => {
         Effect.provide(
           spawnerLayer({
             calls,
+            off: { exitCode: 1, stderr: "permission denied" },
+          }),
+        ),
+        Effect.flip,
+      );
+
+      assert.equal(yield* fileSystem.readFileString(leasePath), "old-runner");
+      assert.equal(calls.filter((args) => args.includes("off")).length, 1);
+    }),
+  );
+
+  it.effect("claims ownership after clearing and before publishing", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-dev-share-lease-",
+      });
+      const leasePath = `${directory}/5788.owner`;
+
+      yield* fileSystem.writeFileString(leasePath, "old-runner");
+      yield* acquireDevShare({
+        leasePath,
+        ownerId: "new-runner",
+        webPort: 5788,
+      }).pipe(
+        Effect.provide(
+          spawnerLayer({
             off: { exitCode: 0 },
             serve: { exitCode: 1, stderr: "permission denied" },
           }),
@@ -217,7 +244,6 @@ it.layer(NodeServices.layer)("dev share cleanup ownership", (it) => {
       );
 
       assert.equal(yield* fileSystem.readFileString(leasePath), "new-runner");
-      assert.equal(calls.filter((args) => args.includes("off")).length, 2);
     }),
   );
 

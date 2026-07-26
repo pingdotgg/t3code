@@ -255,11 +255,7 @@ export const cleanupOwnedDevShare = Effect.fn("devShare.cleanupOwnedDevShare")(f
   );
 });
 
-/**
- * Publishes `webPort` on the tailnet at the same port number and returns the
- * resulting HTTPS URL. Idempotent: re-running replaces any existing mapping.
- */
-export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (input: {
+const prepareDevShare = Effect.fn("devShare.prepareDevShare")(function* (input: {
   readonly webPort: number;
 }) {
   const status = yield* readTailscaleStatus.pipe(
@@ -287,7 +283,17 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
     });
   }
 
-  yield* ensureTailscaleServe({ localPort: input.webPort, servePort: input.webPort }).pipe(
+  return status.magicDnsName;
+});
+
+const publishDevShare = Effect.fn("devShare.publishDevShare")(function* (input: {
+  readonly host: string;
+  readonly webPort: number;
+}) {
+  yield* ensureTailscaleServe({
+    localPort: input.webPort,
+    servePort: input.webPort,
+  }).pipe(
     Effect.mapError((error) => {
       const explanation = explainCommandFailure(error);
       return new DevServeFailedError({
@@ -301,24 +307,33 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
 
   return {
     url: buildTailscaleHttpsBaseUrl({
-      magicDnsName: status.magicDnsName,
+      magicDnsName: input.host,
       servePort: input.webPort,
     }),
-    host: status.magicDnsName,
+    host: input.host,
   } satisfies DevShareResult;
 });
 
 /**
- * Claims cleanup ownership before publishing, then cleans up immediately if
- * publishing fails. This keeps the handoff atomic from the runners' point of
- * view: the prior runner can stop cleaning as soon as the successor claims,
- * because that successor owns both the attempted mapping and its rollback.
+ * Publishes `webPort` on the tailnet at the same port number and returns the
+ * resulting HTTPS URL. Idempotent: re-running replaces any existing mapping.
+ */
+export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (input: {
+  readonly webPort: number;
+}) {
+  const host = yield* prepareDevShare(input);
+  return yield* publishDevShare({ ...input, host });
+});
+
+/**
+ * Transfers cleanup ownership after the old mapping is known to be gone and
+ * before the new mapping is published. Failures on either side of that
+ * boundary therefore cannot leave a surviving mapping without an owner.
  */
 export const acquireDevShare = Effect.fn("devShare.acquireDevShare")(function* (
   lease: DevShareLease,
 ) {
+  const host = yield* prepareDevShare({ webPort: lease.webPort });
   yield* claimDevShareLease(lease);
-  return yield* shareDevServer({ webPort: lease.webPort }).pipe(
-    Effect.tapError(() => cleanupOwnedDevShare(lease)),
-  );
+  return yield* publishDevShare({ host, webPort: lease.webPort });
 });
