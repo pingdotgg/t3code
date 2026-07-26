@@ -136,7 +136,12 @@ struct NewSessionSheet: View {
     private var deviceSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionLabel("Device")
-            HStack(spacing: 8) {
+            // Adaptive grid (same as the provider section) so 3+ remotes
+            // wrap instead of crushing names inside the fixed-width sheet.
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 132), spacing: 8)],
+                spacing: 8
+            ) {
                 OptionCard(
                     title: "This Mac",
                     isSelected: selectedDeviceID == .local,
@@ -230,7 +235,11 @@ struct NewSessionSheet: View {
 
             if model.projects.isEmpty {
                 ContentUnavailableView {
-                    Label("No Projects on This Mac", systemImage: "folder")
+                    Label(
+                        model.capabilities.canBrowseLocalFolders
+                            ? "No Projects on This Mac"
+                            : "No Projects on This Device",
+                        systemImage: "folder")
                 } description: {
                     Text(
                         model.capabilities.canBrowseLocalFolders
@@ -309,7 +318,10 @@ struct NewSessionSheet: View {
                         OptionCard(
                             title: kind.displayName,
                             isSelected: provider == kind,
-                            showsWarning: model.providerAvailability(for: kind) != .available,
+                            // Match the Create gate exactly: available runtime
+                            // AND a selectable model, so a provider with no
+                            // models yet is badged too.
+                            showsWarning: !model.canCreateThread(with: kind),
                             action: {
                                 provider = kind
                                 clearError()
@@ -570,6 +582,9 @@ private struct OptionCard<Icon: View>: View {
         .animation(Motion.feedback, value: isHovering)
         .animation(Motion.feedback, value: isSelected)
         .accessibilityLabel(title)
+        // The warning triangle is decorative-only; say it out loud so an
+        // unready but unselected provider doesn't read as normal.
+        .accessibilityValue(showsWarning ? "Needs attention" : "")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
