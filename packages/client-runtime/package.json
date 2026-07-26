@@ -79,6 +79,10 @@
       "types": "./src/state/orchestrationV2Projection.ts",
       "default": "./src/state/orchestrationV2Projection.ts"
     },
+    "./state/orchestration-v2-subagents": {
+      "types": "./src/state/orchestrationV2Subagents.ts",
+      "default": "./src/state/orchestrationV2Subagents.ts"
+    },
     "./state/presentation": {
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"

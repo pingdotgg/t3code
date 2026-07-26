@@ -1290,6 +1290,268 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     };
   });
 
+  it.effect("projects Claude workflow phases and workers as structured subagents", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const workflowTaskId = "task-workflow-observability";
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-workflow-observability"),
+            text: "Run a two-phase workflow.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: workflowTaskId,
+            tool_use_id: "toolu-workflow-observability",
+            description: "Research and implement",
+            task_type: "local_workflow",
+            prompt: "Research, then implement.",
+            uuid: "00000000-0000-4000-8000-000000000121",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: workflowTaskId,
+            tool_use_id: "toolu-workflow-observability",
+            description: "Implementation started",
+            usage: {
+              input_tokens: 300,
+              output_tokens: 200,
+              total_tokens: 500,
+              tool_uses: 4,
+            },
+            workflow_progress: [
+              { type: "workflow_phase", index: 0, title: "Research" },
+              { type: "workflow_phase", index: 1, title: "Implement" },
+              {
+                type: "workflow_agent",
+                index: 0,
+                label: "Researcher",
+                state: "done",
+                phaseIndex: 0,
+                attempt: 0,
+                model: "claude-sonnet-4-6",
+                lastToolName: "Read",
+                tokens: 200,
+                toolCalls: 2,
+              },
+              {
+                type: "workflow_agent",
+                index: 1,
+                label: "Implementer",
+                state: "active",
+                phase_index: 1,
+                attempt: 0,
+                model: "claude-opus-4-1",
+                last_tool_name: "Edit",
+                tokens: 300,
+                tool_calls: 2,
+              },
+            ],
+            uuid: "00000000-0000-4000-8000-000000000122",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+        yield* awaitUntil(
+          () =>
+            new Set(
+              subagentEvents()
+                .filter((event) => event.subagent.kind === "workflow_agent")
+                .map((event) => event.subagent.id),
+            ).size === 2,
+          "workflow workers projected",
+        );
+
+        const latestById = new Map(
+          subagentEvents().map((event) => [event.subagent.id, event.subagent]),
+        );
+        const workflow = [...latestById.values()].find((agent) => agent.kind === "workflow");
+        const workers = [...latestById.values()]
+          .filter((agent) => agent.kind === "workflow_agent")
+          .sort(
+            (left, right) =>
+              (left.workflowMembership?.agentIndex ?? 0) -
+              (right.workflowMembership?.agentIndex ?? 0),
+          );
+        assert.deepEqual(workflow?.role, {
+          name: "workflow-coordinator",
+          source: "app_default",
+        });
+        assert.deepEqual(workflow?.workflow?.phases, [
+          { index: 0, title: "Research" },
+          { index: 1, title: "Implement" },
+        ]);
+        assert.equal(workflow?.usage?.totalTokens, 500);
+        assert.deepEqual(
+          workers.map((worker) => worker.role),
+          [
+            { name: "workflow-worker", source: "app_default" },
+            { name: "workflow-worker", source: "app_default" },
+          ],
+        );
+        assert.deepEqual(
+          workers.map((worker) => [
+            worker.status,
+            worker.workflowMembership?.phaseIndex,
+            worker.workflowMembership?.attempt,
+            worker.usage?.totalTokens,
+          ]),
+          [
+            ["completed", 0, 1, 200],
+            ["running", 1, 1, 300],
+          ],
+        );
+
+        const workerUpdateCountBeforeStaleActive = subagentEvents().filter(
+          (event) => event.subagent.kind === "workflow_agent",
+        ).length;
+        const eventCountBeforeStaleActive = subagentEvents().length;
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: workflowTaskId,
+            tool_use_id: "toolu-workflow-observability",
+            description: "Provider replayed the completed attempt as active",
+            workflow_progress: [
+              {
+                type: "workflow_agent",
+                index: 0,
+                label: "Researcher",
+                state: "active",
+                phaseIndex: 0,
+                attempt: 0,
+                tokens: 200,
+              },
+            ],
+            uuid: "00000000-0000-4000-8000-000000000126",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () => subagentEvents().length > eventCountBeforeStaleActive,
+          "stale workflow attempt inspected",
+        );
+        assert.equal(
+          subagentEvents().filter((event) => event.subagent.kind === "workflow_agent").length,
+          workerUpdateCountBeforeStaleActive,
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: workflowTaskId,
+            tool_use_id: "toolu-workflow-observability",
+            description: "Research retry queued",
+            workflow_progress: [
+              { type: "workflow_phase", index: 0, title: "Research" },
+              { type: "workflow_phase", index: 1, title: "Implement" },
+              {
+                type: "workflow_agent",
+                index: 0,
+                label: "Researcher",
+                state: "start",
+                phaseIndex: 0,
+                attempt: 1,
+                model: "claude-sonnet-4-6",
+                tokens: 50,
+                toolCalls: 1,
+              },
+            ],
+            uuid: "00000000-0000-4000-8000-000000000123",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            subagentEvents().at(-1)?.subagent.kind === "workflow_agent" &&
+            subagentEvents().at(-1)?.subagent.status === "pending",
+          "workflow retry projected",
+        );
+        const retried = subagentEvents().at(-1)?.subagent;
+        assert.equal(retried?.activationCount, 2);
+        assert.equal(retried?.workflowMembership?.attempt, 2);
+        assert.equal(retried?.usage?.totalTokens, 250);
+        assert.lengthOf(
+          new Set(
+            harness.events
+              .filter(
+                (
+                  event,
+                ): event is Extract<
+                  ProviderAdapterV2Event,
+                  { type: "subagent_activation.updated" }
+                > => event.type === "subagent_activation.updated",
+              )
+              .filter((event) => event.activation.subagentId === retried?.id)
+              .map((event) => event.activation.id),
+          ),
+          2,
+        );
+
+        const workerUpdateCount = subagentEvents().filter(
+          (event) => event.subagent.kind === "workflow_agent",
+        ).length;
+        const eventCount = subagentEvents().length;
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: workflowTaskId,
+            tool_use_id: "toolu-workflow-observability",
+            description: "Provider sent a future workflow state",
+            workflow_progress: [
+              {
+                type: "workflow_agent",
+                index: 0,
+                label: "Researcher",
+                state: "future_state",
+                phaseIndex: 0,
+                attempt: 2,
+                tokens: 100,
+              },
+            ],
+            uuid: "00000000-0000-4000-8000-000000000124",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () => subagentEvents().length > eventCount,
+          "unknown workflow state inspected",
+        );
+        assert.equal(
+          subagentEvents().filter((event) => event.subagent.kind === "workflow_agent").length,
+          workerUpdateCount,
+        );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("buffers wake output and requests a single continuation run", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1959,6 +2221,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           status: "completed",
           output_file: "/tmp/task-resume-subagent.output",
           summary: FIRST_SUMMARY,
+          usage: {
+            input_tokens: 70,
+            output_tokens: 30,
+            total_tokens: 100,
+            tool_uses: 2,
+          },
           uuid: "00000000-0000-4000-8000-000000000402",
           session_id: WAKE_NATIVE_SESSION,
         });
@@ -1985,6 +2253,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           status: "completed",
           output_file: "/tmp/task-resume-subagent.output",
           summary: SECOND_SUMMARY,
+          usage: {
+            input_tokens: 50,
+            output_tokens: 30,
+            total_tokens: 80,
+            tool_uses: 1,
+          },
           uuid: "00000000-0000-4000-8000-000000000407",
           session_id: WAKE_NATIVE_SESSION,
         });
@@ -1995,6 +2269,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.events.filter(
             (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
               event.type === "subagent.updated",
+          );
+        const activationEvents = () =>
+          harness.events.filter(
+            (
+              event,
+            ): event is Extract<ProviderAdapterV2Event, { type: "subagent_activation.updated" }> =>
+              event.type === "subagent_activation.updated",
           );
 
         yield* harness.runtime.startTurn(
@@ -2047,6 +2328,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
         assert.equal(subagentEvents().at(-1)?.subagent.status, "completed");
         assert.equal(subagentEvents().at(-1)?.subagent.result, FIRST_SUMMARY);
+        assert.deepEqual(subagentEvents().at(-1)?.subagent.role, {
+          name: "general-purpose",
+          source: "provider",
+        });
+        assert.equal(subagentEvents().at(-1)?.subagent.usage?.totalTokens, 100);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
 
         // A user turn nudges the completed subagent via SendMessage; the
@@ -2172,6 +2458,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const finalSubagent = subagentEvents().at(-1)?.subagent;
         assert.equal(finalSubagent?.status, "completed");
         assert.equal(finalSubagent?.result, SECOND_SUMMARY);
+        assert.equal(finalSubagent?.activationCount, 2);
+        assert.equal(finalSubagent?.usage?.totalTokens, 180);
+        assert.equal(finalSubagent?.usage?.toolUses, 3);
+        assert.lengthOf(new Set(activationEvents().map((event) => event.activation.id)), 2);
+        assert.equal(activationEvents().at(-1)?.activation.ordinal, 2);
+        assert.equal(activationEvents().at(-1)?.activation.usage?.totalTokens, 80);
         // The completion keeps the resuming run's attribution.
         assert.equal(finalSubagent?.runId, "run-attempt-claude-wake-8c");
         assert.isFalse(yield* harness.hasPendingBackgroundWork);

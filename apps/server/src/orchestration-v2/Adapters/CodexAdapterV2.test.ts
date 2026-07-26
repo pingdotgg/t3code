@@ -986,6 +986,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
             event.type === "subagent.updated",
         );
+      const subagentActivationUpdates = () =>
+        events.filter(
+          (
+            event,
+          ): event is Extract<ProviderAdapterV2Event, { type: "subagent_activation.updated" }> =>
+            event.type === "subagent_activation.updated",
+        );
       return {
         runtime,
         providerThread,
@@ -994,6 +1001,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         continuationRequests,
         terminalEvents,
         subagentUpdates,
+        subagentActivationUpdates,
         hasPendingBackgroundWork,
       };
     });
@@ -3184,6 +3192,38 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     },
   });
 
+  const childTokenUsageUpdated = (
+    turnId: string,
+    totalTokens: number,
+    lastTokens: number,
+  ): CodexReplay.CodexAppServerReplayEntry => ({
+    type: "emit_inbound",
+    label: `thread/tokenUsage/updated/${turnId}`,
+    frame: {
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId: RESUME_CHILD_THREAD,
+        turnId,
+        tokenUsage: {
+          total: {
+            totalTokens,
+            inputTokens: totalTokens - 10,
+            cachedInputTokens: 0,
+            outputTokens: 10,
+            reasoningOutputTokens: 0,
+          },
+          last: {
+            totalTokens: lastTokens,
+            inputTokens: lastTokens - 10,
+            cachedInputTokens: 0,
+            outputTokens: 10,
+            reasoningOutputTokens: 0,
+          },
+        },
+      },
+    },
+  });
+
   const resumeSubagentTranscript = makeCodexReplayTranscript({
     scenario: RESUME_SCENARIO,
     entries: [
@@ -3232,6 +3272,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         completedAtMs: 1782622442002,
       }),
       childTurnCompleted(RESUME_CHILD_TURN_1, 100),
+      childTokenUsageUpdated(RESUME_CHILD_TURN_1, 100, 100),
+      {
+        type: "emit_inbound",
+        label: "thread/status/changed/late-active",
+        frame: {
+          method: "thread/status/changed",
+          params: {
+            threadId: RESUME_CHILD_THREAD,
+            status: { type: "active", activeFlags: [] },
+          },
+        },
+      },
       {
         type: "emit_inbound",
         label: "item/completed/root-answer",
@@ -3271,6 +3323,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         afterMs: 30_000,
       }),
       childTurnCompleted(RESUME_CHILD_TURN_2),
+      childTokenUsageUpdated(RESUME_CHILD_TURN_2, 180, 80),
     ],
   });
 
@@ -3303,8 +3356,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
         const settledUpdates = harness.subagentUpdates();
         const firstCompletion = settledUpdates[settledUpdates.length - 1];
-        assert.equal(firstCompletion?.subagent.status, "completed");
+        assert.equal(firstCompletion?.subagent.status, "idle");
         assert.equal(firstCompletion?.subagent.result, "CODEX_FIRST_DONE");
+        assert.equal(firstCompletion?.subagent.activationCount, 1);
+        assert.equal(firstCompletion?.subagent.usage?.totalTokens, 100);
+        assert.isNull(firstCompletion?.subagent.currentActivationId);
+        assert.lengthOf(
+          new Set(
+            settledUpdates
+              .filter((event) => event.subagent.status === "idle")
+              .map((event) => event.subagent.completedAt),
+          ),
+          1,
+          "post-idle usage updates preserve the completion timestamp",
+        );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         const settledUpdateCount = settledUpdates.length;
 
@@ -3323,10 +3388,31 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           const latest = updates[updates.length - 1];
           return (
             latest !== undefined &&
-            latest.subagent.status === "completed" &&
+            latest.subagent.status === "idle" &&
             latest.subagent.result === "CODEX_RESUME_DONE"
           );
         }, "resumed subagent completion");
+        const finalSubagent = harness.subagentUpdates().at(-1)?.subagent;
+        assert.equal(finalSubagent?.activationCount, 2);
+        assert.equal(finalSubagent?.usage?.totalTokens, 180);
+        assert.isNull(finalSubagent?.currentActivationId);
+        const activations = harness.subagentActivationUpdates();
+        assert.lengthOf(new Set(activations.map((event) => event.activation.id)), 2);
+        assert.sameMembers(
+          [...new Set(activations.map((event) => event.activation.ordinal))],
+          [1, 2],
+        );
+        assert.deepEqual(
+          [
+            ...new Set(
+              activations.map((event) =>
+                event.activation.providerTurnId?.replace(/^.*native-turn:/, ""),
+              ),
+            ),
+          ],
+          [RESUME_CHILD_TURN_1, RESUME_CHILD_TURN_2],
+        );
+        assert.equal(activations.at(-1)?.activation.status, "completed");
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.lengthOf(harness.terminalEvents(), 1);
         assert.lengthOf(harness.continuationRequests, 0);

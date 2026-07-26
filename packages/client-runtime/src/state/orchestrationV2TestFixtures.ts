@@ -84,6 +84,7 @@ export const v2Projection: OrchestrationV2ThreadProjection = {
   attempts: [],
   nodes: [],
   subagents: [],
+  subagentActivations: [],
   providerSessions: [],
   providerThreads: [],
   providerTurns: [],

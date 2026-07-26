@@ -23,6 +23,7 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  SubagentActivationId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
@@ -427,6 +428,35 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
 });
 export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.Type;
 
+export const OrchestrationV2SubagentUsage = Schema.Struct({
+  totalTokens: NonNegativeInt,
+  inputTokens: Schema.optional(NonNegativeInt),
+  cachedInputTokens: Schema.optional(NonNegativeInt),
+  outputTokens: Schema.optional(NonNegativeInt),
+  reasoningOutputTokens: Schema.optional(NonNegativeInt),
+  toolUses: Schema.optional(NonNegativeInt),
+  durationMs: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationV2SubagentUsage = typeof OrchestrationV2SubagentUsage.Type;
+
+export const OrchestrationV2SubagentRole = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  source: Schema.Literals(["provider", "app_default"]),
+});
+export type OrchestrationV2SubagentRole = typeof OrchestrationV2SubagentRole.Type;
+
+export const OrchestrationV2SubagentActivity = Schema.Struct({
+  at: Schema.DateTimeUtc,
+  summary: TrimmedNonEmptyString,
+});
+export type OrchestrationV2SubagentActivity = typeof OrchestrationV2SubagentActivity.Type;
+
+export const OrchestrationV2WorkflowPhase = Schema.Struct({
+  index: NonNegativeInt,
+  title: TrimmedNonEmptyString,
+});
+export type OrchestrationV2WorkflowPhase = typeof OrchestrationV2WorkflowPhase.Type;
+
 export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
@@ -442,6 +472,62 @@ export const OrchestrationV2Subagent = Schema.Struct({
   prompt: Schema.String,
   title: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
+  kind: Schema.Literals(["subagent", "workflow", "workflow_agent"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("subagent" as const)),
+  ),
+  role: OrchestrationV2SubagentRole.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({ name: "general-purpose", source: "app_default" as const }),
+    ),
+  ),
+  status: Schema.Literals([
+    "pending",
+    "running",
+    "waiting",
+    "idle",
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
+  ]),
+  progress: Schema.optional(Schema.String),
+  result: Schema.NullOr(Schema.String),
+  usage: Schema.NullOr(OrchestrationV2SubagentUsage).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  currentActivationId: Schema.NullOr(SubagentActivationId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  activationCount: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(1))),
+  workflow: Schema.NullOr(
+    Schema.Struct({
+      phases: Schema.Array(OrchestrationV2WorkflowPhase),
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  workflowMembership: Schema.NullOr(
+    Schema.Struct({
+      workflowSubagentId: NodeId,
+      agentIndex: NonNegativeInt,
+      phaseIndex: Schema.NullOr(NonNegativeInt),
+      attempt: PositiveInt,
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  recentActivity: Schema.Array(OrchestrationV2SubagentActivity).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  startedAt: Schema.NullOr(Schema.DateTimeUtc),
+  completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2Subagent = typeof OrchestrationV2Subagent.Type;
+
+export const OrchestrationV2SubagentActivation = Schema.Struct({
+  id: SubagentActivationId,
+  threadId: ThreadId,
+  subagentId: NodeId,
+  runId: Schema.NullOr(RunId),
+  providerTurnId: Schema.NullOr(ProviderTurnId),
+  ordinal: PositiveInt,
   status: Schema.Literals([
     "pending",
     "running",
@@ -451,13 +537,12 @@ export const OrchestrationV2Subagent = Schema.Struct({
     "cancelled",
     "interrupted",
   ]),
-  progress: Schema.optional(Schema.String),
-  result: Schema.NullOr(Schema.String),
+  usage: Schema.NullOr(OrchestrationV2SubagentUsage),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
 });
-export type OrchestrationV2Subagent = typeof OrchestrationV2Subagent.Type;
+export type OrchestrationV2SubagentActivation = typeof OrchestrationV2SubagentActivation.Type;
 
 export const OrchestrationV2CheckpointScope = Schema.Struct({
   id: CheckpointScopeId,
@@ -693,6 +778,7 @@ export const OrchestrationV2TurnItemStatus = Schema.Literals([
   "pending",
   "running",
   "waiting",
+  "idle",
   "completed",
   "failed",
   "cancelled",
@@ -1034,6 +1120,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("subagent-activation.updated"),
+    payload: OrchestrationV2SubagentActivation,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literals(["provider-session.attached", "provider-session.updated"]),
     payload: OrchestrationV2ProviderSession,
   }),
@@ -1111,6 +1202,7 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   attempts: Schema.Array(OrchestrationV2RunAttempt),
   nodes: Schema.Array(OrchestrationV2ExecutionNode),
   subagents: Schema.Array(OrchestrationV2Subagent),
+  subagentActivations: Schema.Array(OrchestrationV2SubagentActivation),
   providerSessions: Schema.Array(OrchestrationV2ProviderSession),
   providerThreads: Schema.Array(OrchestrationV2ProviderThread),
   providerTurns: Schema.Array(OrchestrationV2ProviderTurn),
@@ -1284,11 +1376,28 @@ export type OrchestrationV2ExecutionNodeJson = typeof OrchestrationV2ExecutionNo
 
 export const OrchestrationV2SubagentJson = OrchestrationV2Subagent.mapFields((fields) => ({
   ...fields,
+  recentActivity: Schema.Array(
+    OrchestrationV2SubagentActivity.mapFields((activityFields) => ({
+      ...activityFields,
+      at: Schema.DateTimeUtcFromString,
+    })),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   updatedAt: Schema.DateTimeUtcFromString,
 }));
 export type OrchestrationV2SubagentJson = typeof OrchestrationV2SubagentJson.Type;
+
+export const OrchestrationV2SubagentActivationJson = OrchestrationV2SubagentActivation.mapFields(
+  (fields) => ({
+    ...fields,
+    startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    updatedAt: Schema.DateTimeUtcFromString,
+  }),
+);
+export type OrchestrationV2SubagentActivationJson =
+  typeof OrchestrationV2SubagentActivationJson.Type;
 
 export const OrchestrationV2CheckpointScopeJson = OrchestrationV2CheckpointScope.mapFields(
   (fields) => ({
@@ -1575,6 +1684,9 @@ export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjecti
     attempts: Schema.Array(OrchestrationV2RunAttemptJson),
     nodes: Schema.Array(OrchestrationV2ExecutionNodeJson),
     subagents: Schema.Array(OrchestrationV2SubagentJson),
+    subagentActivations: Schema.Array(OrchestrationV2SubagentActivationJson).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+    ),
     providerSessions: Schema.Array(OrchestrationV2ProviderSessionJson),
     providerThreads: Schema.Array(OrchestrationV2ProviderThreadJson),
     providerTurns: Schema.Array(OrchestrationV2ProviderTurnJson),
@@ -1698,6 +1810,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("subagent.updated"),
     payload: OrchestrationV2SubagentJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("subagent-activation.updated"),
+    payload: OrchestrationV2SubagentActivationJson,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,

@@ -13,6 +13,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentActivation,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -21,6 +22,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  SubagentActivationId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -1217,6 +1219,12 @@ it.effect("cascade helper is provider-neutral for Claude and Codex-shaped child 
       const threadId = ThreadId.make(`thread:cascade-helper:${driverKind}`);
       const childThreadId = ThreadId.make(`thread:cascade-helper:${driverKind}:child`);
       const subagentId = NodeId.make(`node:cascade-helper:${driverKind}:subagent`);
+      const activationId = SubagentActivationId.make(
+        `node:cascade-helper:${driverKind}:subagent:activation:2`,
+      );
+      const previousActivationId = SubagentActivationId.make(
+        `node:cascade-helper:${driverKind}:subagent:activation:1`,
+      );
       const childNodeId = NodeId.make(`node:cascade-helper:${driverKind}:child-root`);
       const providerInstanceId = ProviderInstanceId.make(String(driverKind));
       const terminalStatus = driverKind === "claudeAgent" ? "failed" : "cancelled";
@@ -1239,12 +1247,39 @@ it.effect("cascade helper is provider-neutral for Claude and Codex-shaped child 
         prompt: "hold",
         title: "hold",
         model: null,
+        kind: "subagent",
+        role: { name: "general-purpose", source: "app_default" },
         status: "running",
         progress: "partial progress",
         result: "partial result",
+        usage: null,
+        currentActivationId: activationId,
+        activationCount: 2,
+        workflow: null,
+        workflowMembership: null,
+        recentActivity: [],
         startedAt: now,
         completedAt: null,
         updatedAt: now,
+      };
+      const activation: OrchestrationV2SubagentActivation = {
+        id: activationId,
+        threadId,
+        subagentId,
+        runId,
+        providerTurnId: null,
+        ordinal: 2,
+        status: "running",
+        usage: { totalTokens: 120, toolUses: 2 },
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      };
+      const previousActivation: OrchestrationV2SubagentActivation = {
+        ...activation,
+        id: previousActivationId,
+        ordinal: 1,
+        usage: { totalTokens: 60, toolUses: 1 },
       };
       const turnItem = {
         id: TurnItemId.make(`turn-item:cascade-helper:${driverKind}`),
@@ -1354,6 +1389,10 @@ it.effect("cascade helper is provider-neutral for Claude and Codex-shaped child 
         } as OrchestrationV2Run,
         open: {
           subagents: new Map([[subagentId, subagent]]),
+          activations: new Map([
+            [previousActivation.id, previousActivation],
+            [activation.id, activation],
+          ]),
           turnItems: new Map([[subagentId, turnItem]]),
           childTurnItems: new Map(),
           nodes: new Map([[subagentId, node]]),
@@ -1364,7 +1403,7 @@ it.effect("cascade helper is provider-neutral for Claude and Codex-shaped child 
         allocateEventId,
       });
 
-      assert.equal(events.length, 3, `${driverKind}: subagent + node + turn item`);
+      assert.equal(events.length, 5, `${driverKind}: subagent + activations + node + turn item`);
       const terminalSubagent = events.find((event) => event.type === "subagent.updated");
       assert.isDefined(terminalSubagent);
       if (terminalSubagent?.type !== "subagent.updated") {
@@ -1376,6 +1415,25 @@ it.effect("cascade helper is provider-neutral for Claude and Codex-shaped child 
       assert.equal(terminalSubagent.payload.progress, "partial progress");
       assert.equal(terminalSubagent.payload.result, "partial result");
       assert.equal(terminalSubagent.payload.driver, driverKind);
+      assert.isNull(terminalSubagent.payload.currentActivationId);
+
+      const terminalActivations = events.filter(
+        (
+          event,
+        ): event is Extract<OrchestrationV2DomainEvent, { type: "subagent-activation.updated" }> =>
+          event.type === "subagent-activation.updated",
+      );
+      assert.deepEqual(
+        terminalActivations.map((event) => ({
+          id: event.payload.id,
+          status: event.payload.status,
+          totalTokens: event.payload.usage?.totalTokens,
+        })),
+        [
+          { id: previousActivationId, status: terminalStatus, totalTokens: 60 },
+          { id: activationId, status: terminalStatus, totalTokens: 120 },
+        ],
+      );
 
       const terminalItem = events.find(
         (event) => event.type === "turn-item.updated" && event.payload.type === "subagent",
@@ -1401,6 +1459,7 @@ it.effect("cascade helper is provider-neutral for Claude and Codex-shaped child 
         } as OrchestrationV2Run,
         open: {
           subagents: new Map(),
+          activations: new Map(),
           turnItems: new Map(),
           childTurnItems: new Map([[childTurnItem.id, childTurnItem]]),
           nodes: new Map([[childNodeId, openChildNode]]),
@@ -1793,8 +1852,16 @@ function makeRunOwnedSubagentFixture(input: {
     prompt: "hold",
     title: "Live-test subagent hold",
     model: null,
+    kind: "subagent",
+    role: { name: "general-purpose", source: "app_default" },
     status: input.status,
     result: null,
+    usage: null,
+    currentActivationId: null,
+    activationCount: 1,
+    workflow: null,
+    workflowMembership: null,
+    recentActivity: [],
     startedAt: now,
     completedAt: null,
     updatedAt: now,

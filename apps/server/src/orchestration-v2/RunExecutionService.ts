@@ -13,11 +13,13 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentActivation,
   type OrchestrationV2TurnItem,
   type ProviderSessionId,
   type ProviderThreadId,
   type ProviderTurnId,
   type RunAttemptId,
+  type SubagentActivationId,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -75,6 +77,7 @@ function isTerminalProviderTurnStatus(status: OrchestrationV2ProviderTurn["statu
 
 function isTerminalSubagentStatus(status: OrchestrationV2Subagent["status"]): boolean {
   return (
+    status === "idle" ||
     status === "completed" ||
     status === "interrupted" ||
     status === "failed" ||
@@ -94,6 +97,7 @@ const backgroundCapableTurnItemTypes: ReadonlySet<OrchestrationV2TurnItem["type"
 
 function isTerminalTurnItemStatus(status: OrchestrationV2TurnItem["status"]): boolean {
   return (
+    status === "idle" ||
     status === "completed" ||
     status === "interrupted" ||
     status === "failed" ||
@@ -105,6 +109,7 @@ type SubagentTurnItem = Extract<OrchestrationV2TurnItem, { readonly type: "subag
 
 type OpenRunOwnedSubagentProjection = {
   readonly subagents: ReadonlyMap<NodeId, OrchestrationV2Subagent>;
+  readonly activations: ReadonlyMap<SubagentActivationId, OrchestrationV2SubagentActivation>;
   readonly turnItems: ReadonlyMap<NodeId, SubagentTurnItem>;
   readonly childTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2TurnItem>;
   readonly nodes: ReadonlyMap<NodeId, OrchestrationV2ExecutionNode>;
@@ -134,6 +139,7 @@ export function canRouteRelatedSubagent(status: OrchestrationV2Subagent["status"
 function emptyOpenRunOwnedSubagentProjection(): OpenRunOwnedSubagentProjection {
   return {
     subagents: new Map(),
+    activations: new Map(),
     turnItems: new Map(),
     childTurnItems: new Map(),
     nodes: new Map(),
@@ -190,6 +196,7 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
           payload: {
             ...subagent,
             status: input.status,
+            currentActivationId: null,
             completedAt: input.completedAt,
             updatedAt: input.completedAt,
           },
@@ -239,6 +246,31 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
           },
         });
       }
+    }
+    for (const activation of input.open.activations.values()) {
+      if (
+        activation.status === "completed" ||
+        activation.status === "interrupted" ||
+        activation.status === "failed" ||
+        activation.status === "cancelled"
+      ) {
+        continue;
+      }
+      events.push({
+        id: yield* input.allocateEventId(),
+        type: "subagent-activation.updated",
+        threadId: activation.threadId,
+        runId: activation.runId ?? input.run.id,
+        nodeId: activation.subagentId,
+        providerInstanceId: input.run.providerInstanceId,
+        occurredAt: input.completedAt,
+        payload: {
+          ...activation,
+          status: input.status,
+          completedAt: input.completedAt,
+          updatedAt: input.completedAt,
+        },
+      });
     }
     for (const turnItem of input.open.childTurnItems.values()) {
       if (!childThreadIds.has(turnItem.threadId) || isTerminalTurnItemStatus(turnItem.status)) {
@@ -360,6 +392,8 @@ export function routeProviderEvent(
     }
     case "subagent.updated":
       return [ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId), state];
+    case "subagent_activation.updated":
+      return [ownsRun(event.activation.runId) || ownsChildThread(event.activation.threadId), state];
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
     case "turn_item.updated":
@@ -548,6 +582,7 @@ export const layer: Layer.Layer<
         const open = input.openRunOwnedSubagents ?? emptyOpenRunOwnedSubagentProjection();
         const hasOpenSubagentProjection =
           open.subagents.size > 0 ||
+          open.activations.size > 0 ||
           open.turnItems.size > 0 ||
           open.childTurnItems.size > 0 ||
           open.nodes.size > 0;
@@ -864,6 +899,29 @@ export const layer: Layer.Layer<
                     return { ...withLink, subagents };
                   });
                 }
+              }
+              if (event.type === "subagent_activation.updated") {
+                const belongsToRootRun = event.activation.runId === input.run.id;
+                const belongsToOwnedChildThread =
+                  event.activation.threadId !== input.run.threadId &&
+                  routing.ownedThreadIds.has(event.activation.threadId);
+                if (!belongsToRootRun && !belongsToOwnedChildThread) {
+                  return;
+                }
+                yield* Ref.update(openRunOwnedSubagents, (current) => {
+                  const activations = new Map(current.activations);
+                  if (
+                    event.activation.status === "completed" ||
+                    event.activation.status === "interrupted" ||
+                    event.activation.status === "failed" ||
+                    event.activation.status === "cancelled"
+                  ) {
+                    activations.delete(event.activation.id);
+                  } else {
+                    activations.set(event.activation.id, event.activation);
+                  }
+                  return { ...current, activations };
+                });
               }
               if (event.type === "node.updated") {
                 const belongsToRootSubagent =

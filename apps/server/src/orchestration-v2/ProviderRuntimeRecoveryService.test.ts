@@ -265,6 +265,7 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
     attempts: [],
     nodes: [],
     subagents: [],
+    subagentActivations: [],
     messages: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
@@ -343,6 +344,7 @@ it.effect("cancels accepted queued work instead of replaying it after restart", 
       },
     ],
     subagents: [],
+    subagentActivations: [],
     messages: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
@@ -451,6 +453,7 @@ it.effect(
       ],
       nodes: [{ id: rootNodeId, runId, status: "running" }],
       subagents: [],
+      subagentActivations: [],
       messages: [{ id: MessageId.make("message_recovery_cancel"), runId, streaming: true }],
       turnItems: [
         {

@@ -32,6 +32,8 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentActivation,
+  type OrchestrationV2SubagentUsage,
   type OrchestrationV2TurnItem,
   type OrchestrationV2WebSearchResult,
   type ProviderApprovalDecision,
@@ -111,6 +113,13 @@ import {
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
 } from "../SubagentProjection.ts";
+import {
+  accumulateSubagentUsage,
+  appendSubagentActivity,
+  mergeSubagentUsage,
+  providerSubagentRole,
+  subagentActivationId,
+} from "../SubagentObservability.ts";
 
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
@@ -1401,6 +1410,99 @@ function claudeTaskTypeFromSdkMessage(message: SDKMessage): string | null {
   return typeof taskType === "string" ? taskType : null;
 }
 
+const nonNegativeInteger = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined;
+
+const recordField = (value: unknown, key: string) =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? Reflect.get(value, key)
+    : undefined;
+
+const firstRecordField = (value: unknown, keys: ReadonlyArray<string>) => {
+  for (const key of keys) {
+    const field = recordField(value, key);
+    if (field !== undefined) return field;
+  }
+  return undefined;
+};
+
+const nonNegativeRecordField = (value: unknown, keys: ReadonlyArray<string>) =>
+  nonNegativeInteger(firstRecordField(value, keys));
+
+function claudeSubagentUsage(value: unknown): OrchestrationV2SubagentUsage | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const inputTokens = nonNegativeInteger(recordField(value, "input_tokens"));
+  const cacheCreationTokens = nonNegativeInteger(recordField(value, "cache_creation_input_tokens"));
+  const cachedInputTokens = nonNegativeInteger(recordField(value, "cache_read_input_tokens"));
+  const outputTokens = nonNegativeInteger(recordField(value, "output_tokens"));
+  const totalTokens =
+    nonNegativeInteger(recordField(value, "total_tokens")) ??
+    nonNegativeInteger(recordField(value, "totalTokens")) ??
+    (inputTokens ?? 0) +
+      (cacheCreationTokens ?? 0) +
+      (cachedInputTokens ?? 0) +
+      (outputTokens ?? 0);
+  const toolUses =
+    nonNegativeInteger(recordField(value, "tool_uses")) ??
+    nonNegativeInteger(recordField(value, "totalToolUseCount"));
+  const durationMs =
+    nonNegativeInteger(recordField(value, "duration_ms")) ??
+    nonNegativeInteger(recordField(value, "totalDurationMs"));
+  if (
+    inputTokens === undefined &&
+    cacheCreationTokens === undefined &&
+    cachedInputTokens === undefined &&
+    outputTokens === undefined &&
+    nonNegativeInteger(recordField(value, "total_tokens")) === undefined &&
+    nonNegativeInteger(recordField(value, "totalTokens")) === undefined &&
+    toolUses === undefined &&
+    durationMs === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    totalTokens,
+    ...(inputTokens === undefined && cacheCreationTokens === undefined
+      ? {}
+      : { inputTokens: (inputTokens ?? 0) + (cacheCreationTokens ?? 0) }),
+    ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+    ...(toolUses === undefined ? {} : { toolUses }),
+    ...(durationMs === undefined ? {} : { durationMs }),
+  };
+}
+
+const claudeWorkflowAgentStatus = (entry: unknown) => {
+  const state = firstRecordField(entry, ["state", "status"]);
+  if (typeof state !== "string") return null;
+  switch (state.toLowerCase()) {
+    case "start":
+      return nonNegativeRecordField(entry, ["startedAt", "started_at"]) === undefined
+        ? ("pending" as const)
+        : ("running" as const);
+    case "pending":
+    case "queued":
+      return "pending" as const;
+    case "active":
+    case "in_progress":
+    case "running":
+    case "working":
+      return "running" as const;
+    case "blocked":
+    case "waiting":
+      return "waiting" as const;
+    case "completed":
+    case "done":
+    case "finished":
+      return "completed" as const;
+    case "error":
+    case "failed":
+      return "failed" as const;
+    default:
+      return null;
+  }
+};
+
 function isClaudeNonSubagentTask(message: SDKMessage): boolean {
   return claudeTaskTypeFromSdkMessage(message) === "local_bash";
 }
@@ -1910,6 +2012,7 @@ interface ActiveClaudeTurnContext {
 
 interface ActiveClaudeSubagent {
   task: OrchestrationV2Subagent;
+  activation: OrchestrationV2SubagentActivation;
   readonly childThreadId: ThreadId;
   readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly turnItemId: OrchestrationV2TurnItem["id"];
@@ -2218,11 +2321,20 @@ export function makeClaudeAdapterV2(
           readonly toolUseId?: string;
           readonly prompt?: string;
           readonly title?: string;
+          readonly agentType?: string;
+          readonly roleFallback?: string;
+          readonly model?: string;
+          readonly kind?: OrchestrationV2Subagent["kind"];
+          readonly workflow?: OrchestrationV2Subagent["workflow"];
+          readonly workflowMembership?: OrchestrationV2Subagent["workflowMembership"];
+          readonly parentNodeId?: OrchestrationV2ExecutionNode["id"];
+          readonly allowCreateSettled?: boolean;
           readonly progress?: string;
           readonly result?: string;
+          readonly usage?: OrchestrationV2SubagentUsage;
           readonly status: Extract<
-            OrchestrationV2ExecutionNode["status"],
-            "running" | "completed" | "failed" | "cancelled"
+            OrchestrationV2Subagent["status"],
+            "pending" | "running" | "waiting" | "completed" | "failed" | "cancelled"
           >;
           readonly reopen?: boolean;
         }) {
@@ -2234,7 +2346,11 @@ export function makeClaudeAdapterV2(
               ? undefined
               : input.context.subagentsByToolUseId.get(input.toolUseId)) ??
             (yield* Ref.get(sessionSubagentsByTaskId)).get(input.taskId);
-          if (existingSubagent === undefined && input.status !== "running") {
+          if (
+            existingSubagent === undefined &&
+            input.status !== "running" &&
+            input.allowCreateSettled !== true
+          ) {
             return;
           }
           // Status is monotone with one exception: task_started for a known
@@ -2242,17 +2358,14 @@ export function makeClaudeAdapterV2(
           // completed subagent resumes it and re-emits task_started with the
           // same id), so it may re-open a terminal entry. A late or
           // out-of-order task_progress must not.
-          const isReopen =
-            input.reopen === true &&
+          const previousSettled =
             existingSubagent !== undefined &&
-            existingSubagent.task.status !== "running" &&
-            input.status === "running";
-          if (
-            existingSubagent !== undefined &&
-            existingSubagent.task.status !== "running" &&
-            input.status === "running" &&
-            !isReopen
-          ) {
+            (existingSubagent.task.status === "completed" ||
+              existingSubagent.task.status === "failed" ||
+              existingSubagent.task.status === "cancelled");
+          const activeStart = input.status === "pending" || input.status === "running";
+          const isReopen = input.reopen === true && previousSettled && activeStart;
+          if (existingSubagent !== undefined && previousSettled && activeStart && !isReopen) {
             return;
           }
           const lifecycleChanged =
@@ -2262,9 +2375,13 @@ export function makeClaudeAdapterV2(
             // already pre-opened to running by bufferWakeMessage while the
             // projection node still holds the old terminal status; re-emit
             // the node lifecycle for authoritative task_started updates.
-            (input.reopen === true && input.status === "running");
+            (input.reopen === true && activeStart);
 
           const now = yield* DateTime.now;
+          const settled =
+            input.status === "completed" ||
+            input.status === "failed" ||
+            input.status === "cancelled";
           const nativeItemId = `task:${input.taskId}`;
           const nodeId =
             existingSubagent?.task.id ??
@@ -2301,12 +2418,13 @@ export function makeClaudeAdapterV2(
                     existingSubagent.task,
                   )
                 : existingSubagent.task;
+          const startsActivation = existingSubagent === undefined || isReopen;
           const task = {
             ...(priorTask ?? {
               id: nodeId,
               threadId: input.context.input.threadId,
               runId: input.context.input.runId,
-              parentNodeId: input.context.input.rootNodeId,
+              parentNodeId: input.parentNodeId ?? input.context.input.rootNodeId,
               origin: "provider_native" as const,
               createdBy: "agent" as const,
               driver: CLAUDE_PROVIDER,
@@ -2320,8 +2438,16 @@ export function makeClaudeAdapterV2(
               },
               prompt: input.prompt ?? "",
               title: input.title ?? null,
-              model: input.context.input.modelSelection.model,
+              model: input.model ?? input.context.input.modelSelection.model,
+              kind: input.kind ?? ("subagent" as const),
+              role: providerSubagentRole(input.agentType, input.roleFallback),
               result: null,
+              usage: null,
+              currentActivationId: null,
+              activationCount: 0,
+              workflow: null,
+              workflowMembership: null,
+              recentActivity: [],
               startedAt: now,
             }),
             status: input.status,
@@ -2332,20 +2458,64 @@ export function makeClaudeAdapterV2(
             // subagents terminalize); attribution also enrolls the subagent
             // in the resuming run's active-child tracking so its fiber
             // outlives settle until the resumed task completes.
-            ...(input.reopen === true &&
-            input.status === "running" &&
-            existingSubagent !== undefined
+            ...(input.reopen === true && activeStart && existingSubagent !== undefined
               ? { runId: input.context.input.runId }
               : {}),
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
             ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.model === undefined ? {} : { model: input.model }),
+            ...(input.kind === undefined ? {} : { kind: input.kind }),
+            ...(input.agentType === undefined
+              ? {}
+              : { role: providerSubagentRole(input.agentType, input.roleFallback) }),
+            ...(input.workflow === undefined ? {} : { workflow: input.workflow }),
+            ...(input.workflowMembership === undefined
+              ? {}
+              : { workflowMembership: input.workflowMembership }),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
             ...(input.result === undefined ? {} : { result: input.result }),
-            completedAt: input.status === "running" ? null : now,
+            usage: accumulateSubagentUsage(
+              priorTask?.usage ?? null,
+              startsActivation ? undefined : existingSubagent?.activation.usage,
+              input.usage,
+            ),
+            activationCount:
+              existingSubagent === undefined || isReopen
+                ? (priorTask?.activationCount ?? 0) + 1
+                : (priorTask?.activationCount ?? 1),
+            recentActivity: appendSubagentActivity(
+              priorTask?.recentActivity ?? [],
+              input.progress,
+              now,
+            ),
+            completedAt: settled ? now : null,
             updatedAt: now,
           } satisfies OrchestrationV2Subagent;
+          const activation = startsActivation
+            ? ({
+                id: subagentActivationId(nodeId, task.activationCount),
+                threadId: task.threadId,
+                subagentId: nodeId,
+                runId: task.runId,
+                providerTurnId: input.context.providerTurnId,
+                ordinal: task.activationCount,
+                status: input.status,
+                usage: input.usage ?? null,
+                startedAt: now,
+                completedAt: settled ? now : null,
+                updatedAt: now,
+              } satisfies OrchestrationV2SubagentActivation)
+            : ({
+                ...existingSubagent.activation,
+                status: input.status,
+                usage: mergeSubagentUsage(existingSubagent.activation.usage, input.usage),
+                completedAt: settled ? now : null,
+                updatedAt: now,
+              } satisfies OrchestrationV2SubagentActivation);
+          task.currentActivationId = settled ? null : activation.id;
           const subagent = {
             task,
+            activation,
             childThreadId,
             childRootNodeId,
             turnItemId:
@@ -2376,7 +2546,7 @@ export function makeClaudeAdapterV2(
             if (
               registered !== undefined &&
               registered.task.status !== "running" &&
-              input.status === "running" &&
+              activeStart &&
               !(isReopen && registered === existingSubagent)
             ) {
               return current;
@@ -2435,7 +2605,7 @@ export function makeClaudeAdapterV2(
                 runtimeRequestId: null,
                 checkpointScopeId: null,
                 startedAt: task.startedAt,
-                completedAt: input.status === "running" ? null : now,
+                completedAt: settled ? now : null,
               },
             });
             yield* emitProviderEvent({
@@ -2456,7 +2626,7 @@ export function makeClaudeAdapterV2(
                 runtimeRequestId: null,
                 checkpointScopeId: null,
                 startedAt: task.startedAt,
-                completedAt: input.status === "running" ? null : now,
+                completedAt: settled ? now : null,
               },
             });
           }
@@ -2500,6 +2670,11 @@ export function makeClaudeAdapterV2(
             type: "subagent.updated",
             driver: CLAUDE_PROVIDER,
             subagent: task,
+          });
+          yield* emitProviderEvent({
+            type: "subagent_activation.updated",
+            driver: CLAUDE_PROVIDER,
+            activation,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",
@@ -3151,12 +3326,16 @@ export function makeClaudeAdapterV2(
                 new Set(current).add(message.task_id),
               );
             } else {
+              const agentType = recordField(message, "subagent_type");
+              const isWorkflow = message.task_type === "local_workflow";
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 title: message.description,
+                ...(typeof agentType === "string" ? { agentType } : {}),
+                ...(isWorkflow ? { kind: "workflow", roleFallback: "workflow-coordinator" } : {}),
                 status: "running",
                 reopen: true,
               });
@@ -3165,21 +3344,114 @@ export function makeClaudeAdapterV2(
 
           if (message.type === "system" && message.subtype === "task_progress") {
             const progress = message.description.trim();
+            const usage = claudeSubagentUsage(message.usage);
+            const agentType = recordField(message, "subagent_type");
+            const workflowProgress = recordField(message, "workflow_progress");
+            const workflowEntries = Array.isArray(workflowProgress) ? workflowProgress : [];
+            const phases = workflowEntries.flatMap((entry) => {
+              const index = nonNegativeRecordField(entry, ["index", "phaseIndex", "phase_index"]);
+              const title = firstRecordField(entry, ["title", "name"]);
+              return recordField(entry, "type") === "workflow_phase" &&
+                index !== undefined &&
+                typeof title === "string" &&
+                title.trim()
+                ? [{ index, title: title.trim() }]
+                : [];
+            });
             const isBackgroundTask = (yield* Ref.get(pendingBackgroundTaskIds)).has(
               message.task_id,
             );
+            const shouldTrackSubagent =
+              !context.ignoredTaskIds.has(message.task_id) && !isBackgroundTask;
             if (
-              progress.length > 0 &&
-              !context.ignoredTaskIds.has(message.task_id) &&
-              !isBackgroundTask
+              (progress.length > 0 || usage !== undefined || workflowEntries.length > 0) &&
+              shouldTrackSubagent
             ) {
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
-                progress,
+                ...(progress.length === 0 ? {} : { progress }),
+                ...(usage === undefined ? {} : { usage }),
+                ...(typeof agentType === "string" ? { agentType } : {}),
+                ...(phases.length === 0
+                  ? {}
+                  : {
+                      kind: "workflow",
+                      roleFallback: "workflow-coordinator",
+                      workflow: { phases },
+                    }),
                 status: "running",
               });
+            }
+
+            const workflowParent = shouldTrackSubagent
+              ? (context.subagentsByTaskId.get(message.task_id) ??
+                (message.tool_use_id === undefined
+                  ? undefined
+                  : context.subagentsByToolUseId.get(message.tool_use_id)) ??
+                (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id))
+              : undefined;
+            if (workflowParent !== undefined) {
+              for (const entry of workflowEntries) {
+                if (recordField(entry, "type") !== "workflow_agent") continue;
+                const index = nonNegativeInteger(recordField(entry, "index"));
+                const label = firstRecordField(entry, ["label", "name"]);
+                if (index === undefined || typeof label !== "string" || !label.trim()) continue;
+                const status = claudeWorkflowAgentStatus(entry);
+                if (status === null) continue;
+                const phaseIndex = nonNegativeRecordField(entry, ["phaseIndex", "phase_index"]);
+                const attempt = (nonNegativeInteger(recordField(entry, "attempt")) ?? 0) + 1;
+                const model = recordField(entry, "model");
+                const lastToolName = firstRecordField(entry, ["lastToolName", "last_tool_name"]);
+                const tokens = nonNegativeRecordField(entry, ["tokens", "total_tokens"]);
+                const toolUses = nonNegativeRecordField(entry, [
+                  "toolCalls",
+                  "tool_calls",
+                  "tool_uses",
+                ]);
+                const childUsage =
+                  tokens === undefined
+                    ? undefined
+                    : ({
+                        totalTokens: tokens,
+                        ...(toolUses === undefined ? {} : { toolUses }),
+                      } satisfies OrchestrationV2SubagentUsage);
+                const workerTaskId = `${message.task_id}:workflow:${index}`;
+                const existingWorker =
+                  context.subagentsByTaskId.get(workerTaskId) ??
+                  (yield* Ref.get(sessionSubagentsByTaskId)).get(workerTaskId);
+                const activeWorker = status === "pending" || status === "running";
+                const reopen =
+                  activeWorker &&
+                  existingWorker !== undefined &&
+                  attempt > (existingWorker.task.workflowMembership?.attempt ?? 0);
+                yield* updateClaudeSubagentNode({
+                  context,
+                  taskId: workerTaskId,
+                  title: label.trim(),
+                  parentNodeId: workflowParent.task.id,
+                  kind: "workflow_agent",
+                  roleFallback: "workflow-worker",
+                  ...(typeof model === "string" && model.trim() ? { model: model.trim() } : {}),
+                  workflowMembership: {
+                    workflowSubagentId: workflowParent.task.id,
+                    agentIndex: index,
+                    phaseIndex: phaseIndex ?? null,
+                    attempt,
+                  },
+                  allowCreateSettled: true,
+                  ...(typeof lastToolName === "string" && lastToolName.trim()
+                    ? { progress: lastToolName.trim() }
+                    : {}),
+                  ...(childUsage === undefined ? {} : { usage: childUsage }),
+                  ...(typeof recordField(entry, "error") === "string"
+                    ? { result: String(recordField(entry, "error")) }
+                    : {}),
+                  status,
+                  reopen,
+                });
+              }
             }
           }
 
@@ -3188,11 +3460,13 @@ export function makeClaudeAdapterV2(
             // background registry is the durable ignore signal across turns.
             const wasBackgroundTask = yield* clearPendingBackgroundTask(message.task_id);
             if (!wasBackgroundTask && !context.ignoredTaskIds.has(message.task_id)) {
+              const usage = claudeSubagentUsage(message.usage);
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 result: message.summary,
+                ...(usage === undefined ? {} : { usage }),
                 status:
                   message.status === "completed"
                     ? "completed"

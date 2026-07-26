@@ -191,6 +191,16 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
                   nodeId: input.event.subagent.id,
                 }),
               ];
+            case "subagent_activation.updated":
+              return [
+                yield* makeDomainEvent(input, {
+                  type: "subagent-activation.updated",
+                  threadId: input.event.activation.threadId,
+                  payload: input.event.activation,
+                  runId: input.event.activation.runId,
+                  nodeId: input.event.activation.subagentId,
+                }),
+              ];
             case "message.updated":
               return [
                 yield* makeDomainEvent(input, {

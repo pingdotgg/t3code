@@ -28,6 +28,7 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentActivation,
   type OrchestrationV2TurnItem,
   OpenCodeSettings as OpenCodeSettingsSchema,
   type PlanId,
@@ -101,6 +102,11 @@ import {
   type ProviderAdapterDriverCreateInput,
 } from "../ProviderAdapterDriver.ts";
 import { makeSubagentChildThread, subagentThreadTitle } from "../SubagentProjection.ts";
+import {
+  appendSubagentActivity,
+  defaultSubagentRole,
+  subagentActivationId,
+} from "../SubagentObservability.ts";
 
 export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
 export const OPENCODE_DRIVER_KIND = OPENCODE_PROVIDER;
@@ -248,6 +254,7 @@ interface OpenCodeSubagentContext {
   childProviderThreadId: OrchestrationV2ProviderThread["id"] | null;
   model: string | null;
   result: string | null;
+  recentActivity: OrchestrationV2Subagent["recentActivity"];
 }
 
 interface OpenCodeThreadState {
@@ -1086,6 +1093,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               childProviderThreadId: null,
               model: null,
               result: null,
+              recentActivity: [],
             };
             subagentsByNativeItemId.set(part.id, context);
           }
@@ -1195,6 +1203,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 : status.item === "pending"
                   ? "pending"
                   : "running";
+          const activationId = subagentActivationId(nodeId, 1);
+          const settled = subagentStatus === "completed" || subagentStatus === "failed";
+          context.recentActivity = appendSubagentActivity(context.recentActivity, title, now);
           const subagent: OrchestrationV2Subagent = {
             id: nodeId,
             threadId: turn.threadId,
@@ -1210,8 +1221,16 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             prompt,
             title,
             model: context.model,
+            kind: "subagent",
+            role: defaultSubagentRole(),
             status: subagentStatus,
             result: context.result,
+            usage: null,
+            currentActivationId: settled ? null : activationId,
+            activationCount: 1,
+            workflow: null,
+            workflowMembership: null,
+            recentActivity: context.recentActivity,
             startedAt: context.startedAt,
             completedAt,
             updatedAt: now,
@@ -1241,6 +1260,23 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             type: "subagent.updated",
             driver: OPENCODE_PROVIDER,
             subagent,
+          });
+          yield* emitProviderEvent({
+            type: "subagent_activation.updated",
+            driver: OPENCODE_PROVIDER,
+            activation: {
+              id: activationId,
+              threadId: subagent.threadId,
+              subagentId: subagent.id,
+              runId: subagent.runId,
+              providerTurnId: turn.providerTurnId,
+              ordinal: 1,
+              status: subagentStatus,
+              usage: null,
+              startedAt: context.startedAt,
+              completedAt,
+              updatedAt: now,
+            } satisfies OrchestrationV2SubagentActivation,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",

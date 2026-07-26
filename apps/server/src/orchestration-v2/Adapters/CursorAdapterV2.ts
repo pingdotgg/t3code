@@ -23,6 +23,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentActivation,
   type OrchestrationV2TurnItem,
   type ProviderInstanceId,
   type ThreadId,
@@ -79,6 +80,7 @@ import {
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
 } from "../SubagentProjection.ts";
+import { defaultSubagentRole, subagentActivationId } from "../SubagentObservability.ts";
 import {
   CURSOR_PROVIDER,
   CursorAgentSdkRunner,
@@ -1477,6 +1479,7 @@ export function makeCursorAdapterV2(
               driver: CURSOR_PROVIDER,
               nativeThreadId: `${input.context.run.runId}:task:${input.callId}`,
             });
+          const activationId = subagentActivationId(nodeId, 1);
           const task: OrchestrationV2Subagent = {
             ...(existing?.task ?? {
               id: nodeId,
@@ -1497,7 +1500,15 @@ export function makeCursorAdapterV2(
               prompt: args.prompt,
               title: args.description,
               model: args.model ?? input.context.input.modelSelection.model,
+              kind: "subagent" as const,
+              role: defaultSubagentRole(),
               result: null,
+              usage: null,
+              currentActivationId: activationId,
+              activationCount: 1,
+              workflow: null,
+              workflowMembership: null,
+              recentActivity: [],
               startedAt: now,
             }),
             nativeTaskRef: {
@@ -1507,6 +1518,7 @@ export function makeCursorAdapterV2(
             },
             status,
             result: resultText.length === 0 ? (existing?.task.result ?? null) : resultText,
+            currentActivationId: input.completed ? null : activationId,
             completedAt: input.completed ? now : null,
             updatedAt: now,
           };
@@ -1632,6 +1644,23 @@ export function makeCursorAdapterV2(
             type: "subagent.updated",
             driver: CURSOR_PROVIDER,
             subagent: task,
+          });
+          yield* emitProviderEvent({
+            type: "subagent_activation.updated",
+            driver: CURSOR_PROVIDER,
+            activation: {
+              id: activationId,
+              threadId: task.threadId,
+              subagentId: task.id,
+              runId: task.runId,
+              providerTurnId: input.context.providerTurnId,
+              ordinal: 1,
+              status,
+              usage: null,
+              startedAt: task.startedAt,
+              completedAt: input.completed ? now : null,
+              updatedAt: now,
+            } satisfies OrchestrationV2SubagentActivation,
           });
           yield* emitProviderEvent({
             type: "turn_item.updated",

@@ -354,6 +354,7 @@ function projectedWorkEntryStatus(
     case "running":
     case "waiting":
       return "inProgress";
+    case "idle":
     case "completed":
       return "completed";
     case "failed":
