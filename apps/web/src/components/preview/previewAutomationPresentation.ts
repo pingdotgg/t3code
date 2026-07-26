@@ -91,21 +91,24 @@ export async function withPreviewAutomationBackgroundPresentation<A>(
     }, timeoutMs);
   });
   const operation = (async () => {
-    await waitForPreviewAutomationBackgroundPresentation({
-      threadRef,
-      requestId,
-      tabId,
-      timeoutMs,
-    });
-    if (timedOut) throw timeoutError();
-    const stillBackground = !(useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false);
-    return await use(stillBackground);
+    try {
+      await waitForPreviewAutomationBackgroundPresentation({
+        threadRef,
+        requestId,
+        tabId,
+        timeoutMs,
+      });
+      if (timedOut) throw timeoutError();
+      const stillBackground = !(useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false);
+      return await use(stillBackground);
+    } finally {
+      releaseCapture();
+    }
   })();
 
   try {
     return await Promise.race([operation, deadline]);
   } finally {
     if (timer !== undefined) globalThis.clearTimeout(timer);
-    releaseCapture();
   }
 }

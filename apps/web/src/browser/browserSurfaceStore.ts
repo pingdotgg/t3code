@@ -71,13 +71,22 @@ export function resolveBrowserSurfaceBackgroundCaptureRect(
   tabId: string,
   viewport: { readonly width: number; readonly height: number },
 ): BrowserSurfaceRect {
-  const presentedRect = resolveBrowserSurfacePanelRect(byTabId, tabId);
-  if (presentedRect) return presentedRect;
-
   const viewportWidth =
     Number.isFinite(viewport.width) && viewport.width > 0 ? Math.round(viewport.width) : 1280;
   const viewportHeight =
     Number.isFinite(viewport.height) && viewport.height > 0 ? Math.round(viewport.height) : 800;
+  const presentedRect = resolveBrowserSurfacePanelRect(byTabId, tabId);
+  if (presentedRect) {
+    const width = Math.max(1, Math.min(Math.round(presentedRect.width), viewportWidth));
+    const height = Math.max(1, Math.min(Math.round(presentedRect.height), viewportHeight));
+    return {
+      x: Math.max(0, Math.min(Math.round(presentedRect.x), viewportWidth - width)),
+      y: Math.max(0, Math.min(Math.round(presentedRect.y), viewportHeight - height)),
+      width,
+      height,
+    };
+  }
+
   const width = Math.max(1, Math.min(1280, viewportWidth));
   const height = Math.max(1, Math.min(800, viewportHeight));
   return {

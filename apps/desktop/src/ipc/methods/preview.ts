@@ -269,9 +269,13 @@ export const automationSnapshot = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_SNAPSHOT_CHANNEL,
   payload: DesktopPreviewAutomationSnapshotInputSchema,
   result: PreviewAutomationSnapshot,
-  handler: Effect.fn("desktop.ipc.preview.automationSnapshot")(function* ({ tabId, background }) {
+  handler: Effect.fn("desktop.ipc.preview.automationSnapshot")(function* ({
+    tabId,
+    background,
+    timeoutMs,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.automationSnapshot(tabId, background);
+    return yield* manager.automationSnapshot(tabId, background, timeoutMs);
   }),
 });
 

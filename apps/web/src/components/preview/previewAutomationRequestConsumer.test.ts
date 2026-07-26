@@ -20,6 +20,7 @@ import {
 import {
   createPreviewAutomationRequestConsumerAtom,
   previewAutomationExecutionBudget,
+  previewAutomationRemainingBudget,
   serializePreviewAutomationError,
 } from "./previewAutomationRequestConsumer";
 
@@ -61,6 +62,12 @@ describe("previewAutomationRequestConsumer", () => {
     expect(previewAutomationExecutionBudget(100, 250)).toBe(100);
     expect(previewAutomationExecutionBudget(500, 250)).toBe(500);
     expect(previewAutomationExecutionBudget(1_000, 250)).toBe(750);
+    expect(previewAutomationExecutionBudget(1_000)).toBe(750);
+  });
+
+  it("reports an expired operation budget instead of clamping it to one millisecond", () => {
+    expect(previewAutomationRemainingBudget(1_000, 15_000, 999)).toBe(1);
+    expect(previewAutomationRemainingBudget(1_000, 15_000, 1_001)).toBe(-1);
   });
 
   it("acknowledges a replacement stream before consuming requests from it", async () => {

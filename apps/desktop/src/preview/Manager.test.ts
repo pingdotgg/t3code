@@ -300,6 +300,22 @@ describe("PreviewManager", () => {
           const recovered = yield* manager.automationSnapshot("tab_snapshot");
           expect(recovered.screenshot).toMatchObject({ width: 640, height: 360 });
           expect(attach).toHaveBeenCalledTimes(2);
+
+          captureMode = "timeout";
+          const callerBoundCapture = yield* manager
+            .automationSnapshot("tab_snapshot", false, 1_000)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* TestClock.adjust(750);
+          const callerBoundExit = yield* Effect.exit(Fiber.join(callerBoundCapture));
+          expect(Exit.isFailure(callerBoundExit)).toBe(true);
+          if (Exit.isFailure(callerBoundExit)) {
+            expect(Option.getOrThrow(Cause.findErrorOption(callerBoundExit.cause))).toMatchObject({
+              _tag: "PreviewAutomationTimeoutError",
+              tabId: "tab_snapshot",
+              timeoutMs: 1_000,
+            });
+          }
+          expect(detach).toHaveBeenCalledTimes(2);
         }),
       ),
   );

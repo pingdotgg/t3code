@@ -43,11 +43,24 @@ describe("DesktopEnvironmentBootstrapSchema", () => {
 describe("DesktopPreviewAutomationSnapshotInputSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopPreviewAutomationSnapshotInputSchema);
 
-  it("defaults omitted and undefined background flags to foreground capture", () => {
-    expect(decode({ tabId: "tab-1" })).toEqual({ tabId: "tab-1", background: false });
+  it("defaults omitted legacy fields to foreground capture and the desktop timeout", () => {
+    expect(decode({ tabId: "tab-1" })).toEqual({
+      tabId: "tab-1",
+      background: false,
+      timeoutMs: 15_000,
+    });
     expect(decode({ tabId: "tab-1", background: undefined })).toEqual({
       tabId: "tab-1",
       background: false,
+      timeoutMs: 15_000,
+    });
+  });
+
+  it("preserves a caller-supplied snapshot timeout", () => {
+    expect(decode({ tabId: "tab-1", background: true, timeoutMs: 1_250 })).toEqual({
+      tabId: "tab-1",
+      background: true,
+      timeoutMs: 1_250,
     });
   });
 });

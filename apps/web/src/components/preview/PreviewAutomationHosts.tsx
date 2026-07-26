@@ -52,6 +52,7 @@ import {
 } from "./previewAutomationPresentation";
 import {
   PreviewAutomationNavigationTimeoutError,
+  PreviewAutomationHostDeadlineExceededError,
   PreviewAutomationOperationError,
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationRecordingNotActiveError,
@@ -63,6 +64,7 @@ import { resolvePreviewAutomationOpenWaitPolicy } from "./previewAutomationOpenR
 import {
   createPreviewAutomationRequestConsumerAtom,
   previewAutomationExecutionBudget,
+  previewAutomationRemainingBudget,
 } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
 import {
@@ -71,8 +73,6 @@ import {
   resolvePreviewAutomationTarget,
 } from "./previewAutomationTarget";
 import { isPreviewViewportReady } from "./previewViewportReadiness";
-
-const PREVIEW_AUTOMATION_INTERNAL_RESPONSE_GRACE_MS = 500;
 
 const waitForDesktopOverlay = async (
   threadRef: ScopedThreadRef,
@@ -352,14 +352,20 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
 
   const handleRequest = useCallback(
     async (request: PreviewAutomationRequest): Promise<unknown> => {
-      const operationDeadline =
-        Date.now() +
-        previewAutomationExecutionBudget(
-          request.timeoutMs,
-          PREVIEW_AUTOMATION_INTERNAL_RESPONSE_GRACE_MS,
-        );
-      const remainingOperationBudget = (requestedTimeoutMs = request.timeoutMs): number =>
-        Math.max(1, Math.min(requestedTimeoutMs, operationDeadline - Date.now()));
+      const operationBudgetMs = previewAutomationExecutionBudget(request.timeoutMs);
+      const operationDeadline = Date.now() + operationBudgetMs;
+      const remainingOperationBudget = (requestedTimeoutMs = request.timeoutMs): number => {
+        const remainingMs = previewAutomationRemainingBudget(operationDeadline, requestedTimeoutMs);
+        if (remainingMs > 0) return remainingMs;
+        throw new PreviewAutomationHostDeadlineExceededError({
+          requestId: request.requestId,
+          operation: request.operation,
+          environmentId,
+          threadId: request.threadId,
+          tabId,
+          timeoutMs: operationBudgetMs,
+        });
+      };
       const threadRef: ScopedThreadRef = {
         environmentId,
         threadId: request.threadId,
@@ -542,12 +548,18 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "snapshot": {
             const ready = await requireReadyTab();
+            const presentationTimeoutMs = remainingOperationBudget();
             return await withPreviewAutomationBackgroundPresentation(
               threadRef,
               request.requestId,
               ready.tabId,
-              remainingOperationBudget(),
-              async (background) => await ready.bridge.automation.snapshot(ready.tabId, background),
+              presentationTimeoutMs,
+              async (background) =>
+                await ready.bridge.automation.snapshot(
+                  ready.tabId,
+                  background,
+                  remainingOperationBudget(),
+                ),
             );
           }
           case "click": {

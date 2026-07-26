@@ -94,6 +94,29 @@ describe("browserSurfaceStore", () => {
     });
   });
 
+  it("clamps a stale presented rectangle to the current renderer viewport", () => {
+    expect(
+      resolveBrowserSurfaceBackgroundCaptureRect(
+        {
+          active: {
+            rect: { x: 1_000, y: 700, width: 900, height: 640 },
+            visible: true,
+            content: null,
+            updatedAt: 1,
+            owner: null,
+          },
+        },
+        "hidden",
+        { width: 800, height: 600 },
+      ),
+    ).toEqual({
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 600,
+    });
+  });
+
   it("ignores updates and releases from a stale surface lease", () => {
     const tabId = "leased-browser-surface";
     const staleRect = { x: 0, y: 0, width: 500, height: 700 };

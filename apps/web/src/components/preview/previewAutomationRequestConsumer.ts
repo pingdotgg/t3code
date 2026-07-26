@@ -15,12 +15,18 @@ import {
 
 type AutomationStreamResult<E> = AsyncResult.AsyncResult<PreviewAutomationStreamEvent, E>;
 
-const PREVIEW_AUTOMATION_RESPONSE_GRACE_MS = 250;
+export const PREVIEW_AUTOMATION_RESPONSE_GRACE_MS = 250;
 
 export const previewAutomationExecutionBudget = (
   timeoutMs: number,
-  responseGraceMs: number,
+  responseGraceMs = PREVIEW_AUTOMATION_RESPONSE_GRACE_MS,
 ): number => (timeoutMs > responseGraceMs * 2 ? timeoutMs - responseGraceMs : timeoutMs);
+
+export const previewAutomationRemainingBudget = (
+  operationDeadline: number,
+  requestedTimeoutMs: number,
+  now = Date.now(),
+): number => Math.min(requestedTimeoutMs, operationDeadline - now);
 
 const handleWithinResponseBudget = (
   request: PreviewAutomationRequest,
@@ -29,10 +35,7 @@ const handleWithinResponseBudget = (
 ): Promise<unknown> =>
   new Promise((resolve, reject) => {
     let settled = false;
-    const timeoutMs = previewAutomationExecutionBudget(
-      request.timeoutMs,
-      PREVIEW_AUTOMATION_RESPONSE_GRACE_MS,
-    );
+    const timeoutMs = previewAutomationExecutionBudget(request.timeoutMs);
     const timer = globalThis.setTimeout(() => {
       if (settled) return;
       settled = true;

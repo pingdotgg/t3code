@@ -2219,11 +2219,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const automationSnapshot = Effect.fn("PreviewManager.automationSnapshot")(function* (
     tabId: string,
     background = false,
+    timeoutMs = DEFAULT_AUTOMATION_TIMEOUT_MS,
   ) {
     const wc = yield* requireWebContents(tabId);
     if (!background) {
-      const result = yield* withControlSession(tabId, wc, "snapshot", (send) =>
-        captureAutomationSnapshot(tabId, wc, send, false),
+      const result = yield* withControlSession(
+        tabId,
+        wc,
+        "snapshot",
+        (send) => captureAutomationSnapshot(tabId, wc, send, false),
+        timeoutMs,
       );
       if (result.detachAfterCapture) yield* detachControlSession(wc.id);
       const { detachAfterCapture: _, ...snapshot } = result;
@@ -2234,8 +2239,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // its composited pixels. Do not focus the guest or send Page.bringToFront:
     // Electron can otherwise promote the native guest surface above the host
     // UI while ignoring the staging wrapper's opacity.
-    const result = yield* withControlSession(tabId, wc, "snapshot", (send) =>
-      captureAutomationSnapshot(tabId, wc, send, true),
+    const result = yield* withControlSession(
+      tabId,
+      wc,
+      "snapshot",
+      (send) => captureAutomationSnapshot(tabId, wc, send, true),
+      timeoutMs,
     );
     if (result.detachAfterCapture) yield* detachControlSession(wc.id);
     const { detachAfterCapture: _, ...snapshot } = result;
@@ -3159,6 +3168,7 @@ export class PreviewManager extends Context.Service<
     readonly automationSnapshot: (
       tabId: string,
       background?: boolean,
+      timeoutMs?: number,
     ) => Effect.Effect<PreviewAutomationSnapshot, PreviewManagerError>;
     readonly automationClick: (
       tabId: string,

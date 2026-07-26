@@ -119,7 +119,7 @@ describe("preview automation presentation", () => {
     }
   });
 
-  it("releases a background capture lease when the staged operation stalls", async () => {
+  it("retains a background capture lease until a timed-out operation settles", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("document", {
       querySelectorAll: () => [
@@ -139,12 +139,16 @@ describe("preview automation presentation", () => {
       },
     });
     try {
+      let settleOperation!: () => void;
+      const stalledOperation = new Promise<void>((resolve) => {
+        settleOperation = resolve;
+      });
       const operation = withPreviewAutomationBackgroundPresentation(
         threadRef,
         "request-stalled",
         "tab-background",
         40,
-        () => new Promise<never>(() => undefined),
+        () => stalledOperation,
       );
       const rejection = expect(operation).rejects.toMatchObject({
         _tag: "PreviewAutomationBackgroundPresentationTimeoutError",
@@ -159,6 +163,13 @@ describe("preview automation presentation", () => {
 
       await vi.advanceTimersByTimeAsync(40);
       await rejection;
+      expect(
+        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+      ).toBe(1);
+
+      settleOperation();
+      await stalledOperation;
+      await Promise.resolve();
       expect(
         useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
       ).toBeUndefined();
