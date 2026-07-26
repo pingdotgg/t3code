@@ -3,6 +3,7 @@ import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   buildSidebarV2ThreadContextMenuItems,
+  canArchiveSettledSidebarThread,
   createThreadJumpHintVisibilityController,
   filterArchivableSidebarThreads,
   getSidebarThreadIdsToPrewarm,
@@ -434,6 +435,32 @@ describe("archive lifecycle guards", () => {
 
     expect(isThreadSessionRunning(running.session)).toBe(true);
     expect(filterArchivableSidebarThreads([ready, running])).toEqual([ready]);
+  });
+
+  it("re-checks settled membership before a settled-partition archive", () => {
+    const settledThreadKeys = new Set(["ready", "running"]);
+
+    expect(
+      canArchiveSettledSidebarThread({
+        threadKey: "ready",
+        settledThreadKeys,
+        session: null,
+      }),
+    ).toBe(true);
+    expect(
+      canArchiveSettledSidebarThread({
+        threadKey: "running",
+        settledThreadKeys,
+        session: { status: "running", activeTurnId: "turn-running" },
+      }),
+    ).toBe(false);
+    expect(
+      canArchiveSettledSidebarThread({
+        threadKey: "unsettled",
+        settledThreadKeys,
+        session: null,
+      }),
+    ).toBe(false);
   });
 });
 

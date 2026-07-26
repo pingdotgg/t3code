@@ -104,6 +104,7 @@ import { cn } from "~/lib/utils";
 import {
   archiveSelectedThreadEntries,
   buildSidebarV2ThreadContextMenuItems,
+  canArchiveSettledSidebarThread,
   filterArchivableSidebarThreads,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
@@ -1971,6 +1972,7 @@ export default function SidebarV2() {
       options: {
         onArchived?: (threadKey: string) => void;
         recheckLiveEligibility?: boolean;
+        requireStillSettled?: boolean;
       } = {},
     ) => {
       const outcome = await archiveSelectedThreadEntries({
@@ -1978,8 +1980,23 @@ export default function SidebarV2() {
         archive: ({ threadRef }, onArchived) => archiveThread(threadRef, { onArchived }),
         ...(options.recheckLiveEligibility
           ? {
-              canArchive: ({ threadRef }: { threadRef: ScopedThreadRef }) =>
-                !isThreadSessionRunning(readThreadShell(threadRef)?.session),
+              canArchive: ({
+                threadKey,
+                threadRef,
+              }: {
+                threadKey: string;
+                threadRef: ScopedThreadRef;
+              }) => {
+                const session = readThreadShell(threadRef)?.session;
+                if (!options.requireStillSettled) {
+                  return !isThreadSessionRunning(session);
+                }
+                return canArchiveSettledSidebarThread({
+                  threadKey,
+                  settledThreadKeys: settledThreadKeysRef.current,
+                  session,
+                });
+              },
             }
           : {}),
         onArchived: ({ threadKey }) => options.onArchived?.(threadKey),
@@ -2080,6 +2097,7 @@ export default function SidebarV2() {
             const outcome = await archiveThreadEntries(entries, {
               onArchived,
               recheckLiveEligibility: true,
+              requireStillSettled: true,
             });
             removeFromSelection(outcome.archivedThreadKeys);
             return outcome.archivedThreadKeys;

@@ -213,6 +213,14 @@ export function isThreadSessionRunning(
   return session?.status === "running" && session.activeTurnId != null;
 }
 
+export function canArchiveSettledSidebarThread(input: {
+  readonly threadKey: string;
+  readonly settledThreadKeys: ReadonlySet<string>;
+  readonly session: { readonly status: string; readonly activeTurnId?: unknown } | null | undefined;
+}): boolean {
+  return input.settledThreadKeys.has(input.threadKey) && !isThreadSessionRunning(input.session);
+}
+
 export function filterArchivableSidebarThreads<
   T extends {
     readonly session?:
