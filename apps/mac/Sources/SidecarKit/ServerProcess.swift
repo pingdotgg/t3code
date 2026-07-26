@@ -319,6 +319,11 @@ public actor ServerProcess {
 
     private func handleTermination(runID: UUID, status: Int32, uncaughtSignal: Bool) async {
         guard runID == currentRunID else { return }
+        // Retire the run id before scheduling a restart: the readiness poll
+        // for this same run is still looping, and if it hits its deadline
+        // during the backoff window it would pass its own `runID ==
+        // currentRunID` guard and schedule a second restart for one crash.
+        currentRunID = UUID()
         process = nil
 
         guard desiredRunning else {
@@ -333,6 +338,10 @@ public actor ServerProcess {
 
     private func scheduleRestartIfNeeded(reason: String) {
         guard desiredRunning else { return }
+        // Only one restart may be armed at a time; a second `launch()` would
+        // overwrite `process` and orphan the first child (still holding the
+        // port and the SQLite base dir) beyond the reach of stop().
+        restartTask?.cancel()
         let delay = Self.backoffDelay(forAttempt: restartAttempt)
         restartAttempt += 1
         restartTask = Task { [weak self] in

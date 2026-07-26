@@ -188,8 +188,22 @@ public struct NodeRuntimeLocator: Sendable {
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-ilc", "command -v node"]
         guard let output = runProbe(process) else { return nil }
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        return nodePath(fromLoginShellOutput: output)
+    }
+
+    /// Extracts the node path from the login-shell probe's stdout. `-i`
+    /// sources `~/.zshrc`, so anything it echoes (version-manager banners,
+    /// greetings, fastfetch) is printed *before* `command -v node`'s answer —
+    /// take the last non-empty line and require an absolute path so rc
+    /// chatter can never be mistaken for a binary. Pure; unit tested.
+    static func nodePath(fromLoginShellOutput output: String) -> String? {
+        let candidate =
+            output
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .last { !$0.isEmpty }
+        guard let candidate, candidate.hasPrefix("/") else { return nil }
+        return candidate
     }
 
     private func commonCandidatePaths() -> [String] {
