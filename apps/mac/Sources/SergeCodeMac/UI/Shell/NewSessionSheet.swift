@@ -485,6 +485,7 @@ struct NewSessionSheet: View {
 
     private func create() async {
         clearError()
+        Haptics.play(.commit)
         isBusy = true
         defer { isBusy = false }
         var createdThread: ChatThread?
@@ -536,7 +537,10 @@ private struct OptionCard<Icon: View>: View {
     @UIState private var isHovering = false
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            Haptics.play(.selection)
+            action()
+        } label: {
             HStack(spacing: 8) {
                 icon
                     .frame(width: 24, height: 24)

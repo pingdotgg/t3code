@@ -33,6 +33,16 @@ public struct ChatScreen: View {
             isLiveTurn: thread.status.isLiveTurn, hasPhoto: hasPhoto, hasSteps: hasSteps)
     }
 
+    /// Identity + status of the thread on screen, so switching to an already
+    /// idle thread never reports as "the run just finished".
+    private var watchedThreadSnapshot: ThreadStatusSnapshot {
+        guard let thread = model.selectedThread else { return ThreadStatusSnapshot() }
+        return ThreadStatusSnapshot(
+            threadID: thread.id,
+            status: thread.status,
+            cancellationPending: model.isCancellationPending(for: thread))
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             if let thread = model.selectedThread {
@@ -129,6 +139,13 @@ public struct ChatScreen: View {
             Motion.structure,
             value: model.selectedThreadID.flatMap { model.threadState($0)?.planProgress } != nil
         )
+        // The watched thread finishing, failing, or stopping to ask something
+        // is exactly the case macOS banners suppress (see
+        // AgentNotificationPolicy), so it lands as a tap instead.
+        .onChange(of: watchedThreadSnapshot) { old, new in
+            guard let event = ThreadStatusHaptics.event(from: old, to: new) else { return }
+            Haptics.play(event)
+        }
         .background {
             // The thread's scene as a full chat wallpaper; the wash inside
             // keeps timeline text readable (see SceneryChatBackground).

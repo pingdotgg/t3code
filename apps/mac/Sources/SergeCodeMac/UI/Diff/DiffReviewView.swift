@@ -564,7 +564,13 @@ public struct DiffReviewView: View {
     private func stepFile(by delta: Int) {
         guard let idx = selectedIndex else { return }
         let next = idx + delta
-        guard files.indices.contains(next) else { return }
+        guard files.indices.contains(next) else {
+            // ⌘⌥↑/↓ is held down to walk a review; the first and last file
+            // announce themselves instead of silently doing nothing.
+            Haptics.play(.boundary)
+            return
+        }
+        Haptics.play(.selection)
         model.selectReviewFile(threadID: threadID, path: files[next].path)
     }
 
@@ -581,11 +587,15 @@ public struct DiffReviewView: View {
     }
 
     private func setZoom(_ factor: Double) {
-        zoomFactor = DiffZoom.clamp(factor)
+        let clamped = DiffZoom.clamp(factor)
+        // Every ⌘+/⌘− steps or refuses to; both are reported, so hitting the
+        // zoom limit doesn't feel like a dropped keystroke.
+        Haptics.play(clamped == zoomFactor ? .boundary : .step)
+        zoomFactor = clamped
     }
 
     private func normalizeZoom() {
-        setZoom(effectiveZoom)
+        zoomFactor = DiffZoom.clamp(effectiveZoom)
     }
 
     private func statusColor(_ status: DiffFileStatus) -> Color {
