@@ -330,6 +330,39 @@ describe("DesktopServerExposure", () => {
       applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
     } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
 
+    const tailscaleCommands: Array<{
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+    }> = [];
+    const recordingSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        const childProcess = command as unknown as {
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+        };
+        tailscaleCommands.push({
+          command: childProcess.command,
+          args: childProcess.args,
+        });
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(encoder.encode("{}")),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
+    );
+
     return withHarness(
       lanNetworkInterfaces,
       Effect.gen(function* () {
@@ -369,9 +402,22 @@ describe("DesktopServerExposure", () => {
           "Failed to persist desktop Tailscale Serve settings (enabled: true, port: 8443).",
         );
         assert.notInclude(tailscaleError.message, diskFailure.message);
+
+        // Preflight turned Serve on; persistence failure must roll it back so we
+        // do not leave HTTPS exposure active while settings still say disabled.
+        assert.deepEqual(tailscaleCommands, [
+          {
+            command: "tailscale",
+            args: ["serve", "--bg", "--https=8443", "http://127.0.0.1:4173"],
+          },
+          {
+            command: "tailscale",
+            args: ["serve", "--https=8443", "off"],
+          },
+        ]);
       }),
       {},
-      undefined,
+      recordingSpawner,
       settingsLayer,
     );
   });

@@ -10,6 +10,7 @@ import {
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
 import {
+  disableTailscaleServe,
   ensureTailscaleServe,
   formatTailscaleServeUserMessage,
   readTailscaleStatus,
@@ -525,7 +526,10 @@ export const make = Effect.gen(function* () {
 
       // Preflight Serve configuration before persisting so Enable can fail loudly
       // with the same CLI guidance (including the admin setup URL) instead of a
-      // silent restart that leaves the toggle unchecked.
+      // silent restart that leaves the toggle unchecked. If settings write fails
+      // after Serve is already active, roll Serve back so we do not leave
+      // unintended network exposure with UI/settings still showing disabled.
+      let preflightedServePort: number | null = null;
       if (input.enabled) {
         const current = yield* Ref.get(stateRef);
         const servePort = input.port ?? current.tailscaleServePort;
@@ -558,6 +562,7 @@ export const make = Effect.gen(function* () {
             });
           }),
         );
+        preflightedServePort = servePort;
       }
 
       const result = yield* desktopSettings
@@ -573,6 +578,18 @@ export const make = Effect.gen(function* () {
                 port: input.port ?? null,
                 cause,
               }),
+          ),
+          Effect.tapError(() =>
+            preflightedServePort === null
+              ? Effect.void
+              : disableTailscaleServe({ servePort: preflightedServePort }).pipe(
+                  Effect.provideService(
+                    ChildProcessSpawner.ChildProcessSpawner,
+                    childProcessSpawner,
+                  ),
+                  // Best-effort: still surface the original persistence failure.
+                  Effect.ignore,
+                ),
           ),
         );
 
