@@ -307,3 +307,16 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
     host: status.magicDnsName,
   } satisfies DevShareResult;
 });
+
+/**
+ * Claims cleanup ownership only after the tailnet mapping exists. A failed
+ * replacement must leave the prior runner as the owner so its finalizer can
+ * still remove any mapping that survived the attempt.
+ */
+export const acquireDevShare = Effect.fn("devShare.acquireDevShare")(function* (
+  lease: DevShareLease,
+) {
+  const shared = yield* shareDevServer({ webPort: lease.webPort });
+  yield* claimDevShareLease(lease);
+  return shared;
+});

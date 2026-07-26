@@ -20,12 +20,7 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { ChildProcess } from "effect/unstable/process";
 
-import {
-  claimDevShareLease,
-  cleanupOwnedDevShare,
-  type DevShareError,
-  shareDevServer,
-} from "./lib/dev-share.ts";
+import { acquireDevShare, cleanupOwnedDevShare, type DevShareError } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 
 Object.assign(process.env, loadRepoEnv());
@@ -666,12 +661,12 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         // A tailnet that isn't up shouldn't stop the dev server from starting —
         // warn, and carry on serving locally.
         const shared = yield* Effect.gen(function* () {
-          const lease = yield* claimDevShareLease({
+          const lease = {
             leasePath: path.join(baseDir, "dev-share", `${String(sharedWebPort)}.owner`),
             ownerId: `${String(process.pid)}:${NodeCrypto.randomUUID()}`,
             webPort: sharedWebPort,
-          });
-          return yield* Effect.acquireRelease(shareDevServer({ webPort: sharedWebPort }), () =>
+          };
+          return yield* Effect.acquireRelease(acquireDevShare(lease), () =>
             cleanupOwnedDevShare(lease).pipe(
               Effect.flatMap((result) =>
                 result.status !== "failed"

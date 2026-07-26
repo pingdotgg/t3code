@@ -8,6 +8,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  acquireDevShare,
   claimDevShareLease,
   cleanupOwnedDevShare,
   type DevShareError,
@@ -190,6 +191,33 @@ describe("shareDevServer", () => {
 });
 
 it.layer(NodeServices.layer)("dev share cleanup ownership", (it) => {
+  it.effect("keeps the prior owner when a replacement share fails", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-dev-share-lease-",
+      });
+      const leasePath = `${directory}/5788.owner`;
+
+      yield* fileSystem.writeFileString(leasePath, "old-runner");
+      yield* acquireDevShare({
+        leasePath,
+        ownerId: "new-runner",
+        webPort: 5788,
+      }).pipe(
+        Effect.provide(
+          spawnerLayer({
+            off: { exitCode: 0 },
+            serve: { exitCode: 1, stderr: "permission denied" },
+          }),
+        ),
+        Effect.flip,
+      );
+
+      assert.equal(yield* fileSystem.readFileString(leasePath), "old-runner");
+    }),
+  );
+
   it.effect("restores a newer runner's mapping when ownership changes during cleanup", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
