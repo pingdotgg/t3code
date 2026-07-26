@@ -344,11 +344,15 @@ enum TranscriptTextBuilder {
 
         case .subagentTask(let task):
             if leadingBreak { appendBlankLine(to: result) }
-            let isCommand = task.entityKind == .command
-            let title =
-                task.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                ? task.description! : (isCommand ? "Background command" : "Subagent task")
-            appendHeader("\(isCommand ? "Command" : "Subagent") · \(title)", to: result)
+            // Copied text carries the same claim the card makes on screen:
+            // "background" only for a task that actually detached, and no
+            // filler title for one the provider never described.
+            let description = SubagentTaskPresentation.nonEmpty(task.description)
+            let label =
+                task.entityKind == .command
+                ? (task.isBackgrounded ? "Background command" : "Command")
+                : "Subagent"
+            appendHeader(description.map { "\(label) · \($0)" } ?? label, to: result)
             if let progress = task.latestProgress?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !progress.isEmpty
             {
