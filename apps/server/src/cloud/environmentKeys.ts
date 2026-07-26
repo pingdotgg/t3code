@@ -84,8 +84,10 @@ export const getOrCreateEnvironmentKeyPairFromSecretStore = Effect.fn(function* 
     return existing.value;
   }
 
-  const existingPrivate = yield* secrets.get(CLOUD_LINK_PRIVATE_KEY);
-  const existingPublic = yield* secrets.get(CLOUD_LINK_PUBLIC_KEY);
+  const [existingPrivate, existingPublic] = yield* Effect.all(
+    [secrets.get(CLOUD_LINK_PRIVATE_KEY), secrets.get(CLOUD_LINK_PUBLIC_KEY)],
+    { concurrency: 2 },
+  );
   if (Option.isSome(existingPrivate) && Option.isSome(existingPublic)) {
     return yield* persistEnvironmentKeyPair(secrets, {
       privateKey: bytesToString(existingPrivate.value),
