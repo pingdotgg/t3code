@@ -2214,7 +2214,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         payload: {
           taskId: RuntimeTaskId.make(taskId),
           entityType: "command",
-          description: "Background command output",
+          // No description: clients fold progress descriptions over the one
+          // from task_started, so labelling each chunk here would rename a
+          // live command ("Run full mac test suite") after its first drain.
           summary,
           lastToolName: "local_bash",
           ...(context.taskToolUseIdByTaskId.get(taskId)

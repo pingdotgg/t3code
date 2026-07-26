@@ -782,6 +782,38 @@ struct SubagentTaskActivityStateTests {
         #expect(state.activeBackgroundWorkCount == 1)
     }
 
+    @Test("streamed output keeps the command's own description")
+    func streamedOutputDoesNotRenameTheCommand() throws {
+        let started = activity(
+            id: "act-cmd-start", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("cmd-1"),
+                "entityType": .string("command"),
+                "taskType": .string("local_bash"),
+                "description": .string("Run full mac test suite"),
+            ]))
+        // Background output chunks carry a summary and no description; the
+        // fold must not blank or replace the title the task started with.
+        let output = activity(
+            id: "act-cmd-output", kind: ActivityKind.taskProgress,
+            at: "2026-07-04T10:00:05.000Z",
+            payload: .object([
+                "taskId": .string("cmd-1"),
+                "entityType": .string("command"),
+                "summary": .string("Building for debugging..."),
+                "lastToolName": .string("local_bash"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        _ = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+        let progressResult = state.apply(activity: output, at: WireDate.parse(output.createdAt)!)
+        let item = try #require(progressResult)
+
+        #expect(item.description == "Run full mac test suite")
+        #expect(item.progressLog.last?.text == "Building for debugging...")
+    }
+
     @Test("sub-agents and workflows always earn a row")
     func delegatedWorkAlwaysProducesRows() throws {
         let subagent = activity(

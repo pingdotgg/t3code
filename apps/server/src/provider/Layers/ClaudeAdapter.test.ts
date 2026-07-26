@@ -2505,6 +2505,10 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(progress.payload.taskId, "task-local-bash-1");
         assert.equal(progress.payload.entityType, "command");
         assert.equal(progress.payload.lastToolName, "local_bash");
+        // Clients fold a progress description over the one from
+        // task_started, so labelling the chunk would rename the task
+        // ("Run Grok in the background") after its first drain.
+        assert.equal(progress.payload.description, undefined);
       }
 
       // Detaching to an output file is the only signal that this command
