@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import type * as PlatformError from "effect/PlatformError";
 import {
@@ -472,15 +473,14 @@ export function makeSourceControlPanelActions(
           yield* runCommit(input.cwd, message, env);
         }),
       );
-      yield* stageFiles({ cwd: input.cwd, paths }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("Selected-file commit index synchronization failed after commit", {
-            cwd: input.cwd,
-            pathCount: paths.length,
-            error,
-          }),
-        ),
-      );
+      const indexSyncExit = yield* Effect.exit(stageFiles({ cwd: input.cwd, paths }));
+      if (Exit.isFailure(indexSyncExit)) {
+        yield* Effect.logWarning("Selected-file commit index synchronization failed after commit", {
+          cwd: input.cwd,
+          pathCount: paths.length,
+          cause: indexSyncExit.cause,
+        });
+      }
     } else {
       const message = input.message?.trim() || (yield* generatedCommitMessage(input.cwd));
       yield* runCommit(input.cwd, message);
@@ -859,7 +859,17 @@ export function makeSourceControlPanelActions(
       const left = targetRef(input.left);
       const right = targetRef(input.right);
       const range = left && right ? `${left}..${right}` : left || right;
-      const args = range ? ["diff", "--no-ext-diff", "--patch", "--minimal", range] : ["diff"];
+      const reverse = input.left.kind === "working-tree" && input.right.kind !== "working-tree";
+      const args = range
+        ? [
+            "diff",
+            "--no-ext-diff",
+            "--patch",
+            "--minimal",
+            ...(reverse ? ["--reverse"] : []),
+            range,
+          ]
+        : ["diff"];
       return run("vcs.panel.compare", input.cwd, args).pipe(
         Effect.map((patch): VcsPanelCompareResult => ({ patch })),
       );

@@ -26,12 +26,14 @@ import {
   actionableLocalBranches,
   applyWorkingTreeEnrichments,
   branchOwnsOperationCwd,
+  clearResolvedDetailError,
   discardableFiles,
   discardPathGroups,
   operationPaths,
   panelChangeSets,
   reconcileSelectedPaths,
   selectedFileStats,
+  snapshotForCwd,
   stashIdentityKey,
   workingTreeDiffIsStaged,
   workingTreeEnrichmentRequests,
@@ -87,7 +89,11 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
       : null,
   );
 
-  const [snapshot, setSnapshot] = useState<VcsPanelSnapshotResult | null>(null);
+  const [scopedSnapshot, setScopedSnapshot] = useState<{
+    readonly cwd: string;
+    readonly snapshot: VcsPanelSnapshotResult;
+  } | null>(null);
+  const snapshot = snapshotForCwd(scopedSnapshot, selectedThreadCwd);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -209,7 +215,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
               ),
           );
         }
-        setSnapshot(next);
+        setScopedSnapshot({ cwd: selectedThreadCwd, snapshot: next });
         syncSelections(next, selectedThreadCwd);
         setError(null);
       } catch (cause) {
@@ -428,6 +434,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
       const wasExpanded = expandedRowsRef.current.has(key);
       toggleExpanded(key);
       if (!snapshot || branchDetails.has(key) || wasExpanded) return;
+      const previousDetailError = detailErrors.get(key) ?? null;
       const revision = snapshotRevision.current;
       setDetailErrors((current) => {
         if (!current.has(key)) return current;
@@ -452,6 +459,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
             next.delete(key);
             return next;
           });
+          setError((current) => clearResolvedDetailError(current, previousDetailError));
         })
         .catch((cause) => {
           if (
@@ -464,7 +472,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
           }
         });
     },
-    [api, branchDetails, selectedThreadCwd, snapshot, toggleExpanded],
+    [api, branchDetails, detailErrors, selectedThreadCwd, snapshot, toggleExpanded],
   );
 
   const publishBranch = useCallback(
@@ -653,6 +661,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
       const wasExpanded = expandedRowsRef.current.has(key);
       toggleExpanded(key);
       if (!selectedThreadCwd || stashDetails.has(detailsKey) || wasExpanded) return;
+      const previousDetailError = detailErrors.get(key) ?? null;
       const revision = snapshotRevision.current;
       setDetailErrors((current) => {
         if (!current.has(key)) return current;
@@ -672,6 +681,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
             next.delete(key);
             return next;
           });
+          setError((current) => clearResolvedDetailError(current, previousDetailError));
         })
         .catch((cause) => {
           if (
@@ -684,7 +694,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
           }
         });
     },
-    [api, selectedThreadCwd, stashDetails, toggleExpanded],
+    [api, detailErrors, selectedThreadCwd, stashDetails, toggleExpanded],
   );
 
   return {
@@ -705,7 +715,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
     insets,
     loadBranchDetails,
     loadStashDetails,
-    loading,
+    loading: loading || (selectedThreadCwd !== null && snapshot === null),
     localBranches,
     mergeBranch,
     mutationError,

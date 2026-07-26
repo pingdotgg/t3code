@@ -188,6 +188,51 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("lists pull requests against an explicit Azure organization", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.listPullRequests({
+        cwd: "/repo",
+        headSelector: "feature/provider",
+        organization: "https://dev.azure.com/acme",
+        repository: "repo",
+        project: "project",
+        state: "open",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: [
+          "repos",
+          "pr",
+          "list",
+          "--detect",
+          "true",
+          "--organization",
+          "https://dev.azure.com/acme",
+          "--repository",
+          "repo",
+          "--project",
+          "project",
+          "--source-branch",
+          "feature/provider",
+          "--status",
+          "active",
+          "--top",
+          "20",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

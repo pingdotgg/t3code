@@ -208,6 +208,7 @@ export class AzureDevOpsCli extends Context.Service<
       readonly cwd: string;
       readonly headSelector: string;
       readonly source?: SourceControlProvider.SourceControlRefSelector;
+      readonly organization?: string;
       readonly repository?: string;
       readonly project?: string;
       readonly state: "open" | "closed" | "merged" | "all";
@@ -396,6 +397,7 @@ export const make = Effect.gen(function* () {
           "list",
           "--detect",
           "true",
+          ...(input.organization ? ["--organization", input.organization] : []),
           ...(input.repository ? ["--repository", input.repository] : []),
           ...(input.project ? ["--project", input.project] : []),
           "--source-branch",

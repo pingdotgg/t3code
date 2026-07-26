@@ -3,6 +3,7 @@ import { EnvironmentId, type VcsPanelSnapshotResult, type VcsRef } from "@t3tool
 
 import {
   beginPanelFileDiffLoad,
+  beginPanelDetailRequest,
   branchAttention,
   branchHasUpstream,
   branchIsCheckedOut,
@@ -15,11 +16,14 @@ import {
   isFederatedSourceControlTargetExpanded,
   mergeChangeGroups,
   namedBranchOperationCwd,
+  isLatestPanelDetailRequest,
+  panelActionError,
   resolveFederatedSourceControlTargets,
   runPanelActionAndReconcile,
   stashIdentityKey,
   vcsPanelSnapshotFingerprint,
 } from "./SourceControlPanel.logic";
+import { operationPathsForFile } from "./SourceControlPanelModel";
 
 const PRIMARY_ENVIRONMENT_ID = EnvironmentId.make("environment-primary");
 const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
@@ -247,6 +251,23 @@ describe("SourceControlPanel working-tree presentation logic", () => {
 
     expect(formatRelativeDate(then, now)).toBe("11 months ago");
   });
+
+  it("includes the original path for renames but not copies", () => {
+    expect(
+      operationPathsForFile({
+        path: "src/renamed.ts",
+        originalPath: "src/original.ts",
+        status: "renamed",
+      }),
+    ).toEqual(["src/renamed.ts", "src/original.ts"]);
+    expect(
+      operationPathsForFile({
+        path: "src/copied.ts",
+        originalPath: "src/original.ts",
+        status: "copied",
+      }),
+    ).toEqual(["src/copied.ts"]);
+  });
 });
 
 describe("SourceControlPanel stash identity", () => {
@@ -290,6 +311,25 @@ describe("SourceControlPanel refresh stability logic", () => {
 
     expect(calls).toEqual(["action", "reconcile"]);
     expect(result).toEqual({ status: "failure", error: failure });
+  });
+
+  it("preserves the mutation error when reconciliation also fails", () => {
+    const mutationError = new Error("merge produced conflicts");
+    const reconcileError = new Error("snapshot refresh failed");
+
+    expect(panelActionError({ status: "failure", error: mutationError }, reconcileError)).toBe(
+      mutationError,
+    );
+    expect(panelActionError({ status: "success" }, reconcileError)).toBe(reconcileError);
+  });
+
+  it("rejects late branch-detail responses for the same rendered surface", () => {
+    const requests = new Map<string, number>();
+    const first = beginPanelDetailRequest(requests, "branch:feature");
+    const second = beginPanelDetailRequest(requests, "branch:feature");
+
+    expect(isLatestPanelDetailRequest(requests, "branch:feature", first)).toBe(false);
+    expect(isLatestPanelDetailRequest(requests, "branch:feature", second)).toBe(true);
   });
 
   it("drains a queued refresh after the active refresh fails", async () => {

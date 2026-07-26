@@ -5,6 +5,7 @@ import {
   actionableLocalBranches,
   applyWorkingTreeEnrichments,
   branchOwnsOperationCwd,
+  clearResolvedDetailError,
   discardableFiles,
   discardPathGroups,
   localBranchForRemoteBranch,
@@ -13,6 +14,7 @@ import {
   reconcileSelectedPaths,
   relativeLabel,
   selectedFileStats,
+  snapshotForCwd,
   stashIdentityKey,
   visibleRemoteBranches,
   workingTreeDiffIsStaged,
@@ -194,10 +196,30 @@ describe("native Version Control model", () => {
   it("includes both rename sides once in operation paths", () => {
     expect(
       operationPaths([
-        { path: "new.ts", originalPath: "old.ts" },
-        { path: "new.ts", originalPath: "old.ts" },
+        { path: "new.ts", originalPath: "old.ts", status: "renamed" },
+        { path: "new.ts", originalPath: "old.ts", status: "renamed" },
       ]),
     ).toEqual(["new.ts", "old.ts"]);
+  });
+
+  it("does not mutate a copied file's live source path", () => {
+    expect(
+      operationPaths([{ path: "copy.ts", originalPath: "source.ts", status: "copied" }]),
+    ).toEqual(["copy.ts"]);
+  });
+
+  it("exposes snapshots only to the cwd that loaded them", () => {
+    const current = snapshot();
+    const scoped = { cwd: "/repo/one", snapshot: current };
+
+    expect(snapshotForCwd(scoped, "/repo/one")).toBe(current);
+    expect(snapshotForCwd(scoped, "/repo/two")).toBeNull();
+  });
+
+  it("clears only the shared banner for the resolved detail error", () => {
+    expect(clearResolvedDetailError("detail failed", "detail failed")).toBeNull();
+    expect(clearResolvedDetailError("mutation failed", "detail failed")).toBe("mutation failed");
+    expect(clearResolvedDetailError("detail failed", null)).toBe("detail failed");
   });
 
   it("partitions mixed staged and unstaged files for complete discards", () => {

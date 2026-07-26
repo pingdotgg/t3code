@@ -100,6 +100,13 @@ export type PanelActionResult =
   | { readonly status: "success" }
   | { readonly status: "failure"; readonly error: unknown };
 
+export function panelActionError(
+  result: PanelActionResult | null,
+  reconcileError: unknown,
+): unknown {
+  return result?.status === "failure" ? result.error : reconcileError;
+}
+
 export async function runPanelActionAndReconcile(options: {
   readonly action: () => Promise<void>;
   readonly reconcile: () => Promise<void>;
@@ -110,6 +117,20 @@ export async function runPanelActionAndReconcile(options: {
   );
   await options.reconcile();
   return result;
+}
+
+export function beginPanelDetailRequest(requestsByKey: Map<string, number>, key: string): number {
+  const requestId = (requestsByKey.get(key) ?? 0) + 1;
+  requestsByKey.set(key, requestId);
+  return requestId;
+}
+
+export function isLatestPanelDetailRequest(
+  requestsByKey: ReadonlyMap<string, number>,
+  key: string,
+  requestId: number,
+): boolean {
+  return requestsByKey.get(key) === requestId;
 }
 
 export function branchIsCheckedOut(branch: VcsRef | undefined): boolean {

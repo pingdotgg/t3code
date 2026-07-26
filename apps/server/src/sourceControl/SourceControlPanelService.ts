@@ -426,9 +426,18 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           ...globalThis.process.env,
           GIT_INDEX_FILE: path.join(tempDir, "index"),
         };
-        yield* run("vcs.panel.commitStaged.tempIndexReadTree", cwd, ["read-tree", "HEAD"], {
-          env,
-        }).pipe(Effect.asVoid);
+        const headResult = yield* runResult(
+          "vcs.panel.commitStaged.tempIndexResolveHead",
+          cwd,
+          ["rev-parse", "--verify", "HEAD"],
+          { allowNonZeroExit: true, env },
+        );
+        yield* run(
+          "vcs.panel.commitStaged.tempIndexReadTree",
+          cwd,
+          headResult.exitCode === 0 ? ["read-tree", "HEAD"] : ["read-tree", "--empty"],
+          { env },
+        ).pipe(Effect.asVoid);
         yield* run(
           "vcs.panel.commitStaged.tempIndexAddSelected",
           cwd,

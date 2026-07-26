@@ -118,13 +118,36 @@ export function visibleRemoteBranches(
 }
 
 export function operationPaths(
-  files: readonly Pick<VcsPanelFileChange, "path" | "originalPath">[],
+  files: readonly Pick<VcsPanelFileChange, "path" | "originalPath" | "status">[],
 ) {
   return [
     ...new Set(
-      files.flatMap((file) => (file.originalPath ? [file.path, file.originalPath] : [file.path])),
+      files.flatMap((file) =>
+        file.status === "renamed" && file.originalPath
+          ? [file.path, file.originalPath]
+          : [file.path],
+      ),
     ),
   ];
+}
+
+export interface CwdScopedSnapshot {
+  readonly cwd: string;
+  readonly snapshot: VcsPanelSnapshotResult;
+}
+
+export function snapshotForCwd(
+  scopedSnapshot: CwdScopedSnapshot | null,
+  cwd: string | null | undefined,
+): VcsPanelSnapshotResult | null {
+  return scopedSnapshot !== null && scopedSnapshot.cwd === cwd ? scopedSnapshot.snapshot : null;
+}
+
+export function clearResolvedDetailError(
+  currentError: string | null,
+  resolvedDetailError: string | null,
+): string | null {
+  return resolvedDetailError !== null && currentError === resolvedDetailError ? null : currentError;
 }
 
 export function discardPathGroups(files: readonly PanelChangedFile[]): {

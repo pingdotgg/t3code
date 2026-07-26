@@ -48,6 +48,7 @@ import {
   branchSyncState,
   drainPanelRefreshQueue,
   namedBranchOperationCwd,
+  panelActionError,
   runPanelActionAndReconcile,
   type PanelChangedFile,
   stashIdentityKey,
@@ -121,8 +122,9 @@ export function useSourceControlPanelActions(
     async (actionKey: string, action: () => Promise<void>) => {
       setRunningActions((current) => new Set(current).add(actionKey));
       setError(null);
+      let result: Awaited<ReturnType<typeof runPanelActionAndReconcile>> | null = null;
       try {
-        const result = await runPanelActionAndReconcile({
+        result = await runPanelActionAndReconcile({
           action,
           reconcile: async () => {
             vcsStatus.refresh();
@@ -133,8 +135,9 @@ export function useSourceControlPanelActions(
           setError(errorMessage(result.error));
         }
       } catch (reconcileError) {
-        if (isSourceControlPanelCommandInterrupted(reconcileError)) return;
-        setError(errorMessage(reconcileError));
+        const nextError = panelActionError(result, reconcileError);
+        if (isSourceControlPanelCommandInterrupted(nextError)) return;
+        setError(errorMessage(nextError));
       } finally {
         setRunningActions((current) => {
           const next = new Set(current);

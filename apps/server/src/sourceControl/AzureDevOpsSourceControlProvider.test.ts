@@ -77,6 +77,7 @@ it.effect("lists Azure DevOps PRs against the requested remote repository contex
     assert.deepStrictEqual(listInput, {
       cwd: "/repo",
       headSelector: "feature/provider",
+      organization: "https://dev.azure.com/acme",
       repository: "repo",
       project: "project",
       state: "open",
@@ -115,6 +116,7 @@ it.effect("preserves Azure DevOps fallback project context when _git is absent",
     assert.deepStrictEqual(listInput, {
       cwd: "/repo",
       headSelector: "feature/provider",
+      organization: "https://dev.azure.com/acme",
       repository: "repo",
       project: "project",
       state: "open",

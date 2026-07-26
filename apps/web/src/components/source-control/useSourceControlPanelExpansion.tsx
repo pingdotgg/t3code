@@ -15,7 +15,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
 import { getRenderablePatch, resolveDiffThemeName } from "~/lib/diffRendering";
@@ -41,11 +41,13 @@ import {
 import { Textarea } from "../ui/textarea";
 import {
   beginPanelFileDiffLoad,
+  beginPanelDetailRequest,
   branchHasUpstream,
   branchOperationCwd,
   branchSyncState,
   drainPanelRefreshQueue,
   namedBranchOperationCwd,
+  isLatestPanelDetailRequest,
   type PanelChangedFile,
   stashIdentityKey,
 } from "./SourceControlPanel.logic";
@@ -102,6 +104,7 @@ export function useSourceControlPanelExpansion(state: SourceControlPanelState) {
     snapshot,
     stashDetailsByKey,
   } = state;
+  const branchDetailRequestsRef = useRef(new Map<string, number>());
   const toggleSection = useCallback((key: SectionKey) => {
     setCollapsed((current) => {
       const next = new Set(current);
@@ -139,6 +142,7 @@ export function useSourceControlPanelExpansion(state: SourceControlPanelState) {
     async (branch: VcsRef, compareBaseRef?: string, detailsKey = branch.name) => {
       if (!api || !snapshot) return;
       if (!compareBaseRef && branchDetailsByRef.has(detailsKey)) return;
+      const requestId = beginPanelDetailRequest(branchDetailRequestsRef.current, detailsKey);
       setLoadingBranchDetails((current) => {
         const next = new Set(current);
         next.add(detailsKey);
@@ -154,6 +158,9 @@ export function useSourceControlPanelExpansion(state: SourceControlPanelState) {
             compareBaseOverrides.get(detailsKey) ??
             compareBaseOverrides.get(branch.name),
         });
+        if (!isLatestPanelDetailRequest(branchDetailRequestsRef.current, detailsKey, requestId)) {
+          return;
+        }
         setBranchDetailsByRef((current) => {
           const next = new Map(current);
           next.set(detailsKey, details);
@@ -164,14 +171,19 @@ export function useSourceControlPanelExpansion(state: SourceControlPanelState) {
           return next;
         });
       } catch (nextError) {
+        if (!isLatestPanelDetailRequest(branchDetailRequestsRef.current, detailsKey, requestId)) {
+          return;
+        }
         if (isSourceControlPanelCommandInterrupted(nextError)) return;
         setError(errorMessage(nextError));
       } finally {
-        setLoadingBranchDetails((current) => {
-          const next = new Set(current);
-          next.delete(detailsKey);
-          return next;
-        });
+        if (isLatestPanelDetailRequest(branchDetailRequestsRef.current, detailsKey, requestId)) {
+          setLoadingBranchDetails((current) => {
+            const next = new Set(current);
+            next.delete(detailsKey);
+            return next;
+          });
+        }
       }
     },
     [api, branchDetailsByRef, compareBaseOverrides, cwd, snapshot],

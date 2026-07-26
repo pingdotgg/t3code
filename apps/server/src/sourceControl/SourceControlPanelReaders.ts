@@ -600,18 +600,37 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
       const diffArgs =
         mode === "staged"
           ? (["diff", "--cached", "--stat"] as const)
-          : (["diff", "--stat"] as const);
+          : mode === "all"
+            ? (["diff", "HEAD", "--stat"] as const)
+            : (["diff", "--stat"] as const);
       const patchArgs =
         mode === "staged"
           ? (["diff", "--cached", "--no-ext-diff", "--patch", "--minimal"] as const)
-          : (["diff", "--no-ext-diff", "--patch", "--minimal"] as const);
+          : mode === "all"
+            ? (["diff", "HEAD", "--no-ext-diff", "--patch", "--minimal"] as const)
+            : (["diff", "--no-ext-diff", "--patch", "--minimal"] as const);
       const pathArgs = paths && paths.length > 0 ? (["--", ...paths] as const) : [];
+      const literalPathspecArgs =
+        paths && paths.length > 0 ? (["--literal-pathspecs"] as const) : [];
       const [settings, summary, patch, status] = yield* Effect.all(
         [
           serverSettings.getSettings,
-          run("vcs.panel.stashMessageSummary", cwd, [...diffArgs, ...pathArgs]),
-          run("vcs.panel.stashMessagePatch", cwd, [...patchArgs, ...pathArgs]),
-          run("vcs.panel.stashMessageStatus", cwd, ["status", "--short"]),
+          run("vcs.panel.stashMessageSummary", cwd, [
+            ...literalPathspecArgs,
+            ...diffArgs,
+            ...pathArgs,
+          ]),
+          run("vcs.panel.stashMessagePatch", cwd, [
+            ...literalPathspecArgs,
+            ...patchArgs,
+            ...pathArgs,
+          ]),
+          run("vcs.panel.stashMessageStatus", cwd, [
+            ...literalPathspecArgs,
+            "status",
+            "--short",
+            ...pathArgs,
+          ]),
         ],
         { concurrency: "unbounded" },
       );

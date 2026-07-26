@@ -839,6 +839,10 @@ describe("SourceControlPanelService", () => {
         calls.map((call) => ({ operation: call.operation, args: call.args })),
         [
           {
+            operation: "vcs.panel.commitStaged.tempIndexResolveHead",
+            args: ["rev-parse", "--verify", "HEAD"],
+          },
+          {
             operation: "vcs.panel.commitStaged.tempIndexReadTree",
             args: ["read-tree", "HEAD"],
           },
@@ -889,6 +893,7 @@ describe("SourceControlPanelService", () => {
       assert.deepStrictEqual(
         calls.map((call) => call.operation),
         [
+          "vcs.panel.commitStaged.tempIndexResolveHead",
           "vcs.panel.commitStaged.tempIndexReadTree",
           "vcs.panel.commitStaged.tempIndexAddSelected",
           "vcs.panel.commitStaged",
@@ -922,6 +927,10 @@ describe("SourceControlPanelService", () => {
       assert.deepStrictEqual(
         calls.map((call) => ({ operation: call.operation, args: call.args })),
         [
+          {
+            operation: "vcs.panel.commitStaged.tempIndexResolveHead",
+            args: ["rev-parse", "--verify", "HEAD"],
+          },
           {
             operation: "vcs.panel.commitStaged.tempIndexReadTree",
             args: ["read-tree", "HEAD"],
@@ -974,6 +983,173 @@ describe("SourceControlPanelService", () => {
           Effect.sync(() => {
             calls.push(input);
             return success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("initializes an empty selected-file index for an unborn HEAD", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.commitStaged({
+        cwd: "/repo",
+        paths: ["README.md"],
+        message: "Initial commit",
+      });
+
+      assert.deepStrictEqual(
+        calls.slice(0, 3).map((call) => ({
+          operation: call.operation,
+          args: call.args,
+          allowNonZeroExit: call.allowNonZeroExit,
+        })),
+        [
+          {
+            operation: "vcs.panel.commitStaged.tempIndexResolveHead",
+            args: ["rev-parse", "--verify", "HEAD"],
+            allowNonZeroExit: true,
+          },
+          {
+            operation: "vcs.panel.commitStaged.tempIndexReadTree",
+            args: ["read-tree", "--empty"],
+            allowNonZeroExit: false,
+          },
+          {
+            operation: "vcs.panel.commitStaged.tempIndexAddSelected",
+            args: ["--literal-pathspecs", "add", "-A", "--", "README.md"],
+            allowNonZeroExit: false,
+          },
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return input.operation === "vcs.panel.commitStaged.tempIndexResolveHead"
+              ? failure("Needed a single revision")
+              : success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("reports success when post-commit index synchronization defects", () => {
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.commitStaged({
+        cwd: "/repo",
+        paths: ["src/selected.ts"],
+        message: "Commit selected file",
+      });
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          input.operation === "vcs.panel.stageFiles"
+            ? Effect.die(new Error("index sync defect"))
+            : Effect.succeed(success()),
+        ),
+      ),
+    );
+  });
+
+  it.effect("scopes generated stash input to literal selected paths", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.createStash({
+        cwd: "/repo",
+        mode: "all",
+        paths: ["src/[literal].ts"],
+        includeUntracked: true,
+      });
+
+      assert.deepStrictEqual(
+        calls.map((call) => ({ operation: call.operation, args: call.args })),
+        [
+          {
+            operation: "vcs.panel.stashMessageSummary",
+            args: ["--literal-pathspecs", "diff", "HEAD", "--stat", "--", "src/[literal].ts"],
+          },
+          {
+            operation: "vcs.panel.stashMessagePatch",
+            args: [
+              "--literal-pathspecs",
+              "diff",
+              "HEAD",
+              "--no-ext-diff",
+              "--patch",
+              "--minimal",
+              "--",
+              "src/[literal].ts",
+            ],
+          },
+          {
+            operation: "vcs.panel.stashMessageStatus",
+            args: ["--literal-pathspecs", "status", "--short", "--", "src/[literal].ts"],
+          },
+          {
+            operation: "vcs.panel.createStash",
+            args: [
+              "--literal-pathspecs",
+              "stash",
+              "push",
+              "--include-untracked",
+              "-m",
+              "T3 Code all stash",
+              "--",
+              "src/[literal].ts",
+            ],
+          },
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success("");
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("reverses comparisons with the working tree on the left", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.compare({
+        cwd: "/repo",
+        left: { kind: "working-tree" },
+        right: { kind: "branch", refName: "feature/right" },
+      });
+      yield* service.compare({
+        cwd: "/repo",
+        left: { kind: "branch", refName: "feature/left" },
+        right: { kind: "working-tree" },
+      });
+
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [
+          ["diff", "--no-ext-diff", "--patch", "--minimal", "--reverse", "feature/right"],
+          ["diff", "--no-ext-diff", "--patch", "--minimal", "feature/left"],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success("patch");
           }),
         ),
       ),

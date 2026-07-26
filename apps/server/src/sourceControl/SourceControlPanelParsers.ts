@@ -245,8 +245,11 @@ export function parseCreatedFromRef(output: string): string | null {
 
 export function parseCommits(output: string): VcsPanelSnapshotResult["recentCommits"] {
   return output.split("\n").flatMap((line) => {
-    const [sha, shortSha, authorName, authorEmail, authoredAt, message] = line.split("\t");
-    if (!sha || !shortSha || !message) return [];
+    const fields = line.split("\t");
+    if (fields.length < 6) return [];
+    const [sha, shortSha, authorName, authorEmail, authoredAt, ...messageParts] = fields;
+    if (!sha || !shortSha) return [];
+    const message = messageParts.join("\t");
     return [
       {
         sha,

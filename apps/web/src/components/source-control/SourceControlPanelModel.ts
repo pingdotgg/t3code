@@ -161,9 +161,11 @@ export function uniquePaths(paths: readonly string[]): string[] {
 }
 
 export function operationPathsForFile(
-  file: Pick<VcsPanelFileChange, "path" | "originalPath">,
+  file: Pick<VcsPanelFileChange, "path" | "originalPath" | "status">,
 ): string[] {
-  return uniquePaths(file.originalPath ? [file.path, file.originalPath] : [file.path]);
+  return uniquePaths(
+    file.status === "renamed" && file.originalPath ? [file.path, file.originalPath] : [file.path],
+  );
 }
 
 export function worktreeChangeSetId(

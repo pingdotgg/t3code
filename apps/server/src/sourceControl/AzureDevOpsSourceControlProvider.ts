@@ -144,6 +144,7 @@ export const make = Effect.gen(function* () {
           ...(source !== undefined ? { source } : {}),
           ...(repository !== undefined
             ? {
+                organization: repository.organization,
                 repository: repository.repository,
                 ...(repository.project !== undefined ? { project: repository.project } : {}),
               }
