@@ -437,16 +437,49 @@ private struct RuntimeModeMenu: View {
     }
 }
 
-/// Menu selecting how the agent engages with the request: do it (default) or
-/// plan it. Mirrors the `/default` and `/plan` slash commands.
+/// Menu selecting how the agent engages with the request: do it (default),
+/// plan it, or advise/plan-and-delegate. Mirrors the `/default`, `/plan` and
+/// `/advisor` slash commands. When Advisor/Planner is active, also picks the
+/// per-thread executor model used for delegated sub-agents and caps how many
+/// of them run at once.
 private struct InteractionModeMenu: View {
     let thread: ChatThread
     let model: AppModel
 
     @UIState private var isHovering = false
     @UIState private var isPresented = false
+    @UIState private var showingExecutorPicker = false
+    /// Live slider position while dragging; flushed to the backend on release.
+    @UIState private var maxSubAgentsDraft: Double?
 
     private var mode: ThreadInteractionMode { thread.interactionMode }
+
+    private var hasExecutor: Bool {
+        thread.executorModelInstanceID != nil && thread.executorModelID != nil
+    }
+
+    private var maxSubAgentsValue: Int {
+        Int(maxSubAgentsDraft ?? Double(thread.executorMaxSubAgents))
+    }
+
+    private var advisorDetail: String {
+        if let name = executorDisplayName {
+            return "Executor: \(name)"
+        }
+        return ThreadInteractionMode.advisor.helpText
+    }
+
+    private var executorDisplayName: String? {
+        if let instanceID = thread.executorModelInstanceID,
+            let modelID = thread.executorModelID,
+            let option = model.models.first(where: {
+                $0.instanceID == instanceID && $0.modelID == modelID
+            })
+        {
+            return option.displayName
+        }
+        return thread.executorModelID
+    }
 
     var body: some View {
         Button {
@@ -464,9 +497,52 @@ private struct InteractionModeMenu: View {
         .buttonStyle(.plain)
         .fixedSize()
         .animation(Motion.feedback, value: mode)
-        .help(mode.helpText)
+        .help(
+            mode == .advisor
+                ? (executorDisplayName.map { "Advisor/Planner · Executor: \($0)" }
+                    ?? mode.helpText)
+                : mode.helpText
+        )
         .onHover { isHovering = $0 }
         .popover(isPresented: $isPresented, arrowEdge: .top) {
+            interactionModePopover
+        }
+        .onChange(of: isPresented) { _, presented in
+            if !presented {
+                showingExecutorPicker = false
+                maxSubAgentsDraft = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var interactionModePopover: some View {
+        if showingExecutorPicker {
+            ModelPickerPopoverContent(
+                models: model.models,
+                selectedInstanceID: thread.executorModelInstanceID,
+                selectedModelID: thread.executorModelID,
+                onSelect: { option in
+                    Task {
+                        await model.setExecutorModel(
+                            instanceID: option.instanceID, modelID: option.modelID)
+                    }
+                    showingExecutorPicker = false
+                },
+                title: "Executor model",
+                subtitle: "Used for delegated sub-agents",
+                clearRow: ModelPickerClearRowConfig(
+                    icon: "slash.circle",
+                    title: "None — advise only",
+                    detail: "Sub-agents will not be spawned with a specific executor",
+                    action: {
+                        Task { await model.setExecutorModel(instanceID: nil, modelID: nil) }
+                        showingExecutorPicker = false
+                    }
+                ),
+                onBack: { showingExecutorPicker = false }
+            )
+        } else {
             interactionModeList
         }
     }
@@ -485,18 +561,93 @@ private struct InteractionModeMenu: View {
                         ComposerPickerChoiceRow(
                             icon: choice.symbolName,
                             title: choice.displayName,
-                            detail: choice.helpText,
+                            detail: choice == .advisor ? advisorDetail : choice.helpText,
                             isSelected: choice == mode,
                             tint: choice.tint
                         ) {
                             Task { await model.setInteractionMode(choice) }
-                            isPresented = false
+                            if choice != .advisor {
+                                isPresented = false
+                            }
                         }
                     }
                 }
                 .padding(8)
+                if mode == .advisor {
+                    Divider().opacity(0.55)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Executor model")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 8)
+                        ComposerPickerChoiceRow(
+                            icon: "cpu",
+                            title: "Executor model",
+                            detail: executorDisplayName ?? "None — advise only",
+                            isSelected: false
+                        ) {
+                            showingExecutorPicker = true
+                        }
+                        if hasExecutor {
+                            maxSubAgentsRow
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 8)
+                }
             }
         }
+    }
+
+    /// Cap on concurrently spawned executor sub-agents; flushed on drag end so
+    /// the backend sees one command per adjustment, not one per tick.
+    private var maxSubAgentsRow: some View {
+        HStack(spacing: 12) {
+            Slider(
+                value: Binding(
+                    get: { maxSubAgentsDraft ?? Double(thread.executorMaxSubAgents) },
+                    set: { maxSubAgentsDraft = $0 }
+                ),
+                in: 1...10,
+                step: 1,
+                label: {
+                    Text("Max sub-agents")
+                },
+                minimumValueLabel: {
+                    Text("1")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                },
+                maximumValueLabel: {
+                    Text("10")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                },
+                onEditingChanged: { editing in
+                    guard !editing, let draft = maxSubAgentsDraft else { return }
+                    maxSubAgentsDraft = nil
+                    Task {
+                        await model.setExecutorModel(
+                            instanceID: thread.executorModelInstanceID,
+                            modelID: thread.executorModelID,
+                            maxSubAgents: Int(draft))
+                    }
+                }
+            )
+            .accessibilityLabel("Max sub-agents")
+            .accessibilityValue("\(maxSubAgentsValue)")
+
+            Text("\(maxSubAgentsValue)")
+                .font(.body.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 24, alignment: .trailing)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
     }
 }
 

@@ -1150,6 +1150,16 @@ public actor LiveBackend: BackendService {
                         text: "Reverted to turn \(payload.turnCount).", at: Date())))
             resolveRevertWaiters(threadID: threadID)
 
+        case .threadExecutorModelSet(let payload):
+            // The shell subscription re-projects the thread too, but it is a
+            // separate stream; fold the executor fields in here so the
+            // composer picker updates even when the event arrives first.
+            updateCachedThread(threadID) {
+                $0.executorModelInstanceID = payload.executorModelSelection?.instanceId
+                $0.executorModelID = payload.executorModelSelection?.model
+                $0.executorMaxSubAgents = payload.executorMaxSubAgents
+            }
+
         // Status is projected from the shell subscription; the remaining events
         // (session-set, meta-updated, turn-start/interrupt requests, user-input,
         // approval-response-requested, etc.) are intentionally not mirrored into
@@ -1888,6 +1898,28 @@ public actor LiveBackend: BackendService {
         _ = try await client.setInteractionMode(
             threadId: threadID, interactionMode: Self.wireInteractionMode(mode))
         updateCachedThread(threadID) { $0.interactionMode = mode }
+    }
+
+    public func setExecutorModel(
+        threadID: String, instanceID: String?, modelID: String?, maxSubAgents: Int?
+    ) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let selection: ModelSelection?
+        if let instanceID, let modelID {
+            selection = ModelSelection(instanceId: instanceID, model: modelID)
+        } else {
+            selection = nil
+        }
+        _ = try await client.setExecutorModel(
+            threadId: threadID, executorModelSelection: selection,
+            executorMaxSubAgents: maxSubAgents)
+        updateCachedThread(threadID) {
+            $0.executorModelInstanceID = selection?.instanceId
+            $0.executorModelID = selection?.model
+            if let maxSubAgents {
+                $0.executorMaxSubAgents = maxSubAgents
+            }
+        }
     }
 
     public func setModel(threadID: String, model: ModelOption) async throws {
@@ -2808,6 +2840,9 @@ public actor LiveBackend: BackendService {
             runtimeMode: Self.uiRuntimeMode(shell.runtimeMode),
             interactionMode: Self.uiInteractionMode(shell.interactionMode),
             modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model,
+            executorModelInstanceID: shell.executorModelSelection?.instanceId,
+            executorModelID: shell.executorModelSelection?.model,
+            executorMaxSubAgents: shell.executorMaxSubAgents,
             reasoningEffort: Self.effortValue(of: shell.modelSelection),
             serviceTier: Self.serviceTierValue(of: shell.modelSelection),
             backgroundAgentCount: activeSubagentCount,
@@ -2839,6 +2874,7 @@ public actor LiveBackend: BackendService {
         switch mode {
         case .default: .normal
         case .plan: .plan
+        case .advisor: .advisor
         }
     }
 
@@ -2846,6 +2882,7 @@ public actor LiveBackend: BackendService {
         switch mode {
         case .normal: .default
         case .plan: .plan
+        case .advisor: .advisor
         }
     }
 

@@ -41,22 +41,9 @@ public enum RuntimeMode: String, Codable, Sendable {
 public enum ProviderInteractionMode: String, Codable, Sendable {
     case `default`
     case plan
+    case advisor
 
     public static let wireDefault: ProviderInteractionMode = .default
-
-    /// Historical Advisor/Planner wire value; maps to default so old payloads still decode.
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let raw = try container.decode(String.self)
-        switch raw {
-        case "plan": self = .plan
-        case "default", "advisor": self = .default
-        default:
-            throw DecodingError.dataCorruptedError(
-                in: container,
-                debugDescription: "Unknown ProviderInteractionMode: \(raw)")
-        }
-    }
 }
 
 public enum ProviderApprovalDecision: String, Codable, Sendable {
@@ -623,8 +610,10 @@ public struct OrchestrationThread: Codable, Sendable {
     public var modelSelection: ModelSelection
     public var runtimeMode: RuntimeMode
     public var interactionMode: ProviderInteractionMode
-    /// Legacy field from the removed Advisor/Planner mode; unused.
+    /// Advisor/Planner executor model; nil means advise only.
     public var executorModelSelection: ModelSelection?
+    /// Cap on concurrently spawned executor sub-agents in advisor mode (1...10).
+    public var executorMaxSubAgents: Int
     public var branch: String?
     public var worktreePath: String?
     /// Parent thread when this is a nested sub-agent; nil for top-level threads.
@@ -642,9 +631,9 @@ public struct OrchestrationThread: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, projectId, title, modelSelection, runtimeMode, interactionMode,
-            executorModelSelection, branch, worktreePath, parentThreadId, latestTurn, createdAt,
-            updatedAt, archivedAt, deletedAt, messages, proposedPlans, activities, checkpoints,
-            session
+            executorModelSelection, executorMaxSubAgents, branch, worktreePath, parentThreadId,
+            latestTurn, createdAt, updatedAt, archivedAt, deletedAt, messages, proposedPlans,
+            activities, checkpoints, session
     }
 
     public init(from decoder: Decoder) throws {
@@ -658,6 +647,7 @@ public struct OrchestrationThread: Codable, Sendable {
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
         executorModelSelection = try c.decodeIfPresent(
             ModelSelection.self, forKey: .executorModelSelection)
+        executorMaxSubAgents = try c.decodeIfPresent(Int.self, forKey: .executorMaxSubAgents) ?? 3
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
         worktreePath = try c.decode(String?.self, forKey: .worktreePath, default: nil)
         parentThreadId = try c.decode(String?.self, forKey: .parentThreadId, default: nil)
@@ -716,6 +706,8 @@ public struct OrchestrationThreadShell: Codable, Sendable {
     public var runtimeMode: RuntimeMode
     public var interactionMode: ProviderInteractionMode
     public var executorModelSelection: ModelSelection?
+    /// Cap on concurrently spawned executor sub-agents in advisor mode (1...10).
+    public var executorMaxSubAgents: Int
     public var branch: String?
     public var worktreePath: String?
     /// Parent thread when this is a nested sub-agent; nil for top-level threads.
@@ -734,9 +726,10 @@ public struct OrchestrationThreadShell: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, projectId, title, modelSelection, runtimeMode, interactionMode,
-            executorModelSelection, branch, worktreePath, parentThreadId, latestTurn, createdAt,
-            updatedAt, archivedAt, settledOverride, settledAt, session, latestUserMessageAt,
-            hasPendingApprovals, hasPendingUserInput, hasActionableProposedPlan
+            executorModelSelection, executorMaxSubAgents, branch, worktreePath, parentThreadId,
+            latestTurn, createdAt, updatedAt, archivedAt, settledOverride, settledAt, session,
+            latestUserMessageAt, hasPendingApprovals, hasPendingUserInput,
+            hasActionableProposedPlan
     }
 
     public init(from decoder: Decoder) throws {
@@ -750,6 +743,7 @@ public struct OrchestrationThreadShell: Codable, Sendable {
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
         executorModelSelection = try c.decodeIfPresent(
             ModelSelection.self, forKey: .executorModelSelection)
+        executorMaxSubAgents = try c.decodeIfPresent(Int.self, forKey: .executorMaxSubAgents) ?? 3
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
         worktreePath = try c.decode(String?.self, forKey: .worktreePath, default: nil)
         parentThreadId = try c.decode(String?.self, forKey: .parentThreadId, default: nil)
@@ -1203,22 +1197,26 @@ public struct ThreadExecutorModelSetCommand: Encodable, Sendable {
     public let type: String = "thread.executor-model.set"
     public var commandId: String
     public var threadId: String
-    /// Legacy field from the removed Advisor/Planner mode; unused.
+    /// Advisor/Planner executor model; explicit null clears (advise only).
     public var executorModelSelection: ModelSelection?
+    /// Optional cap on concurrently spawned executor sub-agents (1...10);
+    /// omitted keys leave the current value untouched server-side.
+    public var executorMaxSubAgents: Int?
     public var createdAt: String
 
     public init(
         commandId: String, threadId: String, executorModelSelection: ModelSelection?,
-        createdAt: String
+        executorMaxSubAgents: Int? = nil, createdAt: String
     ) {
         self.commandId = commandId
         self.threadId = threadId
         self.executorModelSelection = executorModelSelection
+        self.executorMaxSubAgents = executorMaxSubAgents
         self.createdAt = createdAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case type, commandId, threadId, executorModelSelection, createdAt
+        case type, commandId, threadId, executorModelSelection, executorMaxSubAgents, createdAt
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -1229,6 +1227,7 @@ public struct ThreadExecutorModelSetCommand: Encodable, Sendable {
         // Explicit null must be encoded to clear; omit-if-nil would leave the field
         // unchanged server-side (command payload requires NullOr).
         try c.encode(executorModelSelection, forKey: .executorModelSelection)
+        try c.encodeIfPresent(executorMaxSubAgents, forKey: .executorMaxSubAgents)
         try c.encode(createdAt, forKey: .createdAt)
     }
 }
@@ -1634,6 +1633,8 @@ public struct ThreadCreatedPayload: Decodable, Sendable {
     public var runtimeMode: RuntimeMode
     public var interactionMode: ProviderInteractionMode
     public var executorModelSelection: ModelSelection?
+    /// Cap on concurrently spawned executor sub-agents in advisor mode (1...10).
+    public var executorMaxSubAgents: Int
     public var branch: String?
     public var worktreePath: String?
     public var parentThreadId: String?
@@ -1642,7 +1643,8 @@ public struct ThreadCreatedPayload: Decodable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case threadId, projectId, title, modelSelection, runtimeMode, interactionMode,
-            executorModelSelection, branch, worktreePath, parentThreadId, createdAt, updatedAt
+            executorModelSelection, executorMaxSubAgents, branch, worktreePath, parentThreadId,
+            createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -1656,6 +1658,7 @@ public struct ThreadCreatedPayload: Decodable, Sendable {
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
         executorModelSelection = try c.decodeIfPresent(
             ModelSelection.self, forKey: .executorModelSelection)
+        executorMaxSubAgents = try c.decodeIfPresent(Int.self, forKey: .executorMaxSubAgents) ?? 3
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
         worktreePath = try c.decode(String?.self, forKey: .worktreePath, default: nil)
         parentThreadId = try c.decode(String?.self, forKey: .parentThreadId, default: nil)
@@ -1714,10 +1717,11 @@ public struct ThreadInteractionModeSetPayload: Decodable, Sendable {
 public struct ThreadExecutorModelSetPayload: Decodable, Sendable {
     public var threadId: String
     public var executorModelSelection: ModelSelection?
+    public var executorMaxSubAgents: Int
     public var updatedAt: String
 
     private enum CodingKeys: String, CodingKey {
-        case threadId, executorModelSelection, updatedAt
+        case threadId, executorModelSelection, executorMaxSubAgents, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -1725,6 +1729,7 @@ public struct ThreadExecutorModelSetPayload: Decodable, Sendable {
         threadId = try c.decode(String.self, forKey: .threadId)
         executorModelSelection = try c.decodeIfPresent(
             ModelSelection.self, forKey: .executorModelSelection)
+        executorMaxSubAgents = try c.decodeIfPresent(Int.self, forKey: .executorMaxSubAgents) ?? 3
         updatedAt = try c.decode(String.self, forKey: .updatedAt)
     }
 }

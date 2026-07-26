@@ -120,4 +120,54 @@ struct OrchestrationModelCodingTests {
         }
         #expect(payload == .object(["x": .int(1)]))
     }
+
+    // MARK: - Advisor/Planner executor fields
+
+    @Test("ProviderInteractionMode decodes the advisor wire value")
+    func interactionModeDecodesAdvisor() throws {
+        let mode = try WireCoding.decoder.decode(
+            ProviderInteractionMode.self, from: Data(#""advisor""#.utf8))
+        #expect(mode == .advisor)
+    }
+
+    @Test("ThreadExecutorModelSetPayload defaults executorMaxSubAgents to 3 when absent")
+    func executorModelSetPayloadDefaultsMaxSubAgents() throws {
+        let json = #"""
+        {"threadId":"thr-1","executorModelSelection":null,"updatedAt":"2026-01-01T00:00:00Z"}
+        """#
+        let payload = try WireCoding.decoder.decode(
+            ThreadExecutorModelSetPayload.self, from: Data(json.utf8))
+        #expect(payload.threadId == "thr-1")
+        #expect(payload.executorModelSelection == nil)
+        #expect(payload.executorMaxSubAgents == 3)
+    }
+
+    @Test("ThreadExecutorModelSetPayload decodes a present executorMaxSubAgents")
+    func executorModelSetPayloadDecodesMaxSubAgents() throws {
+        let json = #"""
+        {"threadId":"thr-1","executorModelSelection":{"instanceId":"codex","model":"gpt-5-codex"},
+         "executorMaxSubAgents":8,"updatedAt":"2026-01-01T00:00:00Z"}
+        """#
+        let payload = try WireCoding.decoder.decode(
+            ThreadExecutorModelSetPayload.self, from: Data(json.utf8))
+        #expect(payload.executorModelSelection?.model == "gpt-5-codex")
+        #expect(payload.executorMaxSubAgents == 8)
+    }
+
+    @Test("OrchestrationThreadShell defaults executorMaxSubAgents to 3 when absent")
+    func threadShellDefaultsMaxSubAgents() throws {
+        let json = #"""
+        {"id":"thr-1","projectId":"prj-1","title":"T",
+         "modelSelection":{"instanceId":"codex","model":"gpt-5-codex"},
+         "runtimeMode":"full-access","interactionMode":"advisor",
+         "executorModelSelection":null,"createdAt":"2026-01-01T00:00:00Z",
+         "updatedAt":"2026-01-01T00:00:00Z","hasPendingApprovals":false,
+         "hasPendingUserInput":false,"hasActionableProposedPlan":false}
+        """#
+        let shell = try WireCoding.decoder.decode(
+            OrchestrationThreadShell.self, from: Data(json.utf8))
+        #expect(shell.interactionMode == .advisor)
+        #expect(shell.executorModelSelection == nil)
+        #expect(shell.executorMaxSubAgents == 3)
+    }
 }

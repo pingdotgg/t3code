@@ -319,6 +319,13 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.setInteractionMode(threadID: threadID, mode: mode)
     }
 
+    public func setExecutorModel(
+        threadID: String, instanceID: String?, modelID: String?, maxSubAgents: Int?
+    ) async throws {
+        await state.setExecutorModel(
+            threadID: threadID, instanceID: instanceID, modelID: modelID, maxSubAgents: maxSubAgents)
+    }
+
     public func setModel(threadID: String, model: ModelOption) async throws {
         await state.setModel(threadID: threadID, model: model)
     }
@@ -1029,6 +1036,23 @@ private actor MockState {
     func setInteractionMode(threadID: String, mode: ThreadInteractionMode) {
         guard var thread = threadsByID[threadID] else { return }
         thread.interactionMode = mode
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    func setExecutorModel(threadID: String, instanceID: String?, modelID: String?, maxSubAgents: Int?) {
+        guard var thread = threadsByID[threadID] else { return }
+        // Match LiveBackend: only a complete pair is stored; partial clears both.
+        if let instanceID, let modelID {
+            thread.executorModelInstanceID = instanceID
+            thread.executorModelID = modelID
+        } else {
+            thread.executorModelInstanceID = nil
+            thread.executorModelID = nil
+        }
+        if let maxSubAgents {
+            thread.executorMaxSubAgents = maxSubAgents
+        }
         threadsByID[threadID] = thread
         emit(.threadUpserted(thread))
     }
