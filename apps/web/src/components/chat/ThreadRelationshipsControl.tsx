@@ -104,21 +104,23 @@ export function ThreadRelationshipsPanel(props: {
   const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
   const latestCompletedRun = projection?.runs.findLast((run) => run.status === "completed") ?? null;
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
-  const relationshipRows = immediateThreadRelationships(graph, props.threadId).toSorted(
-    (left, right) =>
-      relationshipSortKey({
-        edge: left.edge,
-        threadId: left.threadId,
-        currentThreadId: props.threadId,
-        mergeTargetThreadId,
-      }) -
-      relationshipSortKey({
-        edge: right.edge,
-        threadId: right.threadId,
-        currentThreadId: props.threadId,
-        mergeTargetThreadId,
-      }),
-  );
+  const relationshipRows = immediateThreadRelationships(graph, props.threadId)
+    .filter((relationship) => relationship.edge.kind !== "subagent")
+    .toSorted(
+      (left, right) =>
+        relationshipSortKey({
+          edge: left.edge,
+          threadId: left.threadId,
+          currentThreadId: props.threadId,
+          mergeTargetThreadId,
+        }) -
+        relationshipSortKey({
+          edge: right.edge,
+          threadId: right.threadId,
+          currentThreadId: props.threadId,
+          mergeTargetThreadId,
+        }),
+    );
   const canMerge = mergeTargetThreadId !== null && latestCompletedRun !== null;
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
 

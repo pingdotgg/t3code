@@ -4,11 +4,16 @@ import { useEffect } from "react";
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
-import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
+import {
+  buildThreadRouteParams,
+  resolveThreadRouteRef,
+  resolveThreadRouteRenderState,
+} from "../threadRoutes";
 import { SidebarInset } from "~/components/ui/sidebar";
 import { useEnvironmentThreadRefs, useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
+import { isInternalSubagentThread } from "../threadVisibility";
 
 function ChatThreadRouteView() {
   const navigate = useNavigate();
@@ -42,6 +47,10 @@ function ChatThreadRouteView() {
   });
   const serverThreadStarted = threadHasStarted(serverThreadShell);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
+  const subagentParentThreadId =
+    serverThreadShell && isInternalSubagentThread(serverThreadShell)
+      ? serverThreadShell.lineage.parentThreadId
+      : null;
 
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
@@ -54,13 +63,35 @@ function ChatThreadRouteView() {
   }, [bootstrapComplete, environmentHasAnyThreads, navigate, renderState, threadRef]);
 
   useEffect(() => {
+    if (!threadRef || !serverThreadShell || !isInternalSubagentThread(serverThreadShell)) {
+      return;
+    }
+    if (subagentParentThreadId === null) {
+      void navigate({ to: "/", replace: true });
+      return;
+    }
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams({
+        environmentId: threadRef.environmentId,
+        threadId: subagentParentThreadId,
+      }),
+      replace: true,
+    });
+  }, [navigate, serverThreadShell, subagentParentThreadId, threadRef]);
+
+  useEffect(() => {
     if (!threadRef || !serverThreadStarted || !draftThread) {
       return;
     }
     finalizePromotedDraftThreadByRef(threadRef);
   }, [draftThread, serverThreadStarted, threadRef]);
 
-  if (!threadRef || renderState !== "ready") {
+  if (
+    !threadRef ||
+    renderState !== "ready" ||
+    (serverThreadShell !== null && isInternalSubagentThread(serverThreadShell))
+  ) {
     return null;
   }
 

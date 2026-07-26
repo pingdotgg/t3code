@@ -171,6 +171,16 @@ export class ThreadManagementService extends Context.Service<
   ThreadManagementServiceShape
 >()("t3/orchestration-v2/ThreadManagementService") {}
 
+export const isInternalSubagentThread = (
+  thread: Pick<OrchestrationV2ThreadShell, "forkedFrom" | "lineage">,
+) => thread.lineage.relationshipToParent === "subagent" || thread.forkedFrom?.type === "node";
+
+export const userFacingShellSnapshot = (snapshot: OrchestrationV2ThreadShellSnapshot) => ({
+  ...snapshot,
+  threads: snapshot.threads.filter((thread) => !isInternalSubagentThread(thread)),
+  archivedThreads: snapshot.archivedThreads.filter((thread) => !isInternalSubagentThread(thread)),
+});
+
 export function isActiveRun(run: OrchestrationV2Run): boolean {
   return (
     run.status === "preparing" ||
@@ -269,10 +279,7 @@ const make = Effect.gen(function* () {
       Effect.map((snapshot) =>
         snapshot.threads
           .filter((thread) => thread.projectId === input.projectId)
-          .filter(
-            (thread) =>
-              input.includeSubagents || thread.lineage.relationshipToParent !== "subagent",
-          )
+          .filter((thread) => input.includeSubagents || !isInternalSubagentThread(thread))
           .toSorted(
             (left, right) =>
               DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||

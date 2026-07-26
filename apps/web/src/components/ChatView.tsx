@@ -5901,15 +5901,6 @@ function ChatViewContent(props: ChatViewProps) {
       showThreadPanelControl={!inlineRightPanelOwnsTitleBar}
     />
   );
-  const threadPanelHeaderControl = (
-    <div className="workspace-titlebar-controls z-50 [-webkit-app-region:no-drag]">
-      <PanelLayoutControls
-        {...panelToggleControlProps}
-        showTerminalControl={false}
-        showRightPanelControl={false}
-      />
-    </div>
-  );
   const panelLayoutControls = (
     <div className="workspace-titlebar-controls z-50 gap-1 [-webkit-app-region:no-drag]">
       {panelToggleControls}
@@ -5921,7 +5912,7 @@ function ChatViewContent(props: ChatViewProps) {
         maximized={rightPanelMaximized}
         onToggle={toggleRightPanelMaximized}
       />
-      <PanelLayoutControls {...panelToggleControlProps} showThreadPanelControl={false} />
+      <PanelLayoutControls {...panelToggleControlProps} />
     </div>
   );
 
@@ -5954,11 +5945,7 @@ function ChatViewContent(props: ChatViewProps) {
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
-          {inlineRightPanelOwnsTitleBar
-            ? threadPanelHeaderControl
-            : !rightPanelOpen
-              ? panelLayoutControls
-              : null}
+          {!inlineRightPanelOwnsTitleBar && !rightPanelOpen ? panelLayoutControls : null}
           <ChatHeader
             activeThreadTitle={activeThread.title}
             rightPanelOpen={inlineRightPanelOwnsTitleBar}

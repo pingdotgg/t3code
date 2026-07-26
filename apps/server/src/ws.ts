@@ -748,7 +748,9 @@ const makeWsRpcLayer = (
             const base = yield* sql.withTransaction(
               Effect.gen(function* () {
                 const projects = yield* projectionSnapshotQuery.getShellSnapshotWithoutEnrichment();
-                const threads = yield* threadManagement.getShellSnapshot();
+                const threads = yield* threadManagement
+                  .getShellSnapshot()
+                  .pipe(Effect.map(ThreadManagementService.userFacingShellSnapshot));
                 return {
                   schemaVersion: threads.schemaVersion,
                   snapshotSequence: yield* applicationEvents.latestApplicationSequence,
@@ -797,7 +799,12 @@ const makeWsRpcLayer = (
             const survivors = coalesceShellApplicationEvents(events);
             const needsThreadSnapshot = survivors.some((stored) => !("aggregateKind" in stored));
             const threadSnapshot = needsThreadSnapshot
-              ? yield* threadManagement.getShellSnapshot().pipe(Effect.map(Option.some))
+              ? yield* threadManagement
+                  .getShellSnapshot()
+                  .pipe(
+                    Effect.map(ThreadManagementService.userFacingShellSnapshot),
+                    Effect.map(Option.some),
+                  )
               : Option.none();
             return yield* Effect.forEach(
               survivors,
@@ -933,7 +940,9 @@ const makeWsRpcLayer = (
         .withTransaction(
           Effect.gen(function* () {
             const projects = yield* projectionSnapshotQuery.getShellSnapshotWithoutEnrichment();
-            const threads = yield* threadManagement.getShellSnapshot();
+            const threads = yield* threadManagement
+              .getShellSnapshot()
+              .pipe(Effect.map(ThreadManagementService.userFacingShellSnapshot));
             return {
               schemaVersion: threads.schemaVersion,
               snapshotSequence: yield* applicationEvents.latestApplicationSequence,
@@ -966,6 +975,7 @@ const makeWsRpcLayer = (
           .pipe(
             Stream.mapEffect((stored) =>
               threadManagement.getShellSnapshot().pipe(
+                Effect.map(ThreadManagementService.userFacingShellSnapshot),
                 Effect.map((nextSnapshot) =>
                   archivedShellStreamItemFromSnapshot({ stored, snapshot: nextSnapshot }),
                 ),

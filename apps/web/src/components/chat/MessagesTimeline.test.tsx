@@ -852,7 +852,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('data-v2-item-type="subagent"');
-    expect(markup).toContain('aria-label="Open Package audit"');
+    expect(markup).not.toContain('aria-label="Open Package audit"');
     expect(markup).toContain("Reading src/index.ts");
     expect(markup).not.toContain("Inspect the package");
     expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
@@ -908,7 +908,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-v2-subagent-result-disclosure="true"');
     expect(markup).toContain('data-v2-subagent-result="true"');
     expect(markup).toContain('aria-label="Show full result for Isolation report"');
-    expect(markup).toContain('aria-label="Open Isolation report"');
+    expect(markup).not.toContain('aria-label="Open Isolation report"');
     expect(markup).toContain("Tests should be isolated.");
     expect(markup).toContain("Result: no shared state.");
     expect(markup).not.toContain("Explain test isolation");
@@ -961,7 +961,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('data-v2-item-type="subagent"');
-    expect(markup).toContain('aria-label="Open Package audit"');
+    expect(markup).not.toContain('aria-label="Open Package audit"');
     expect(markup).toContain("Reading src/index.ts");
     expect(markup).not.toContain("Partial streamed answer so far");
     expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
