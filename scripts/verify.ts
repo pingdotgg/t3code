@@ -293,7 +293,11 @@ export function planSteps(scope: ChangedScope, options: { readonly all: boolean 
       {
         label: "typecheck (all)",
         command: "vp",
-        args: ["run", "-r", "--concurrency-limit", "2", "typecheck"],
+        // --cache turns a repeat typecheck with no intervening edit into a
+        // replay (15s -> 0.7s here). It is deliberately not applied to `test`:
+        // replaying a stale green would defeat the flake-hunting loops agents
+        // legitimately run.
+        args: ["run", "--cache", "-r", "--concurrency-limit", "2", "typecheck"],
       },
       { label: "test (all)", command: "vp", args: ["run", "-r", "test"] },
     );
@@ -309,7 +313,14 @@ export function planSteps(scope: ChangedScope, options: { readonly all: boolean 
       steps.push({
         label: `typecheck (${scope.packages.join(", ")} + dependents)`,
         command: "vp",
-        args: ["run", ...dependentFilters(scope.packages), "--concurrency-limit", "2", "typecheck"],
+        args: [
+          "run",
+          "--cache",
+          ...dependentFilters(scope.packages),
+          "--concurrency-limit",
+          "2",
+          "typecheck",
+        ],
       });
     }
     if (scope.relatedSources.length > 0) {

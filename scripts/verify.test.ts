@@ -50,7 +50,7 @@ describe("planSteps", () => {
     });
     assert.strictEqual(
       commandFor(scope, "typecheck"),
-      "vp run --filter ...@t3tools/contracts --concurrency-limit 2 typecheck",
+      "vp run --cache --filter ...@t3tools/contracts --concurrency-limit 2 typecheck",
     );
   });
 
