@@ -783,7 +783,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  "peer/menu-button flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-lg p-2 text-left text-sm outline-hidden ring-ring transition-[width,height,padding] hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 active:bg-sidebar-row-active active:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-row-selected data-[active=true]:font-medium data-[active=true]:text-sidebar-foreground data-[state=open]:hover:bg-sidebar-row-hover data-[state=open]:hover:text-sidebar-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0",
+  "peer/menu-button flex w-full cursor-pointer items-center gap-2 overflow-hidden text-left outline-hidden ring-ring transition-[width,height,padding] hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 active:bg-sidebar-row-active active:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-row-selected data-[active=true]:font-medium data-[active=true]:text-sidebar-foreground data-[state=open]:hover:bg-sidebar-row-hover data-[state=open]:hover:text-sidebar-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0",
   {
     defaultVariants: {
       size: "default",
@@ -791,14 +791,14 @@ const sidebarMenuButtonVariants = cva(
     },
     variants: {
       size: {
-        default: "h-8 text-sm",
-        lg: "h-12 text-sm group-data-[collapsible=icon]:p-0!",
-        sm: "h-7 text-xs",
+        default: "h-8 rounded-md px-2 py-1.5 text-sm",
+        icon: "size-8 justify-center rounded-md p-0",
+        lg: "h-12 rounded-lg p-2 text-sm group-data-[collapsible=icon]:p-0!",
+        sm: "h-7 rounded-lg p-2 text-xs",
       },
       variant: {
-        default: "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-        outline:
-          "bg-sidebar-control-surface ring-1 ring-sidebar-border hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+        default: "font-medium text-sidebar-muted-foreground/80",
+        outline: "bg-sidebar-control-surface ring-1 ring-sidebar-border",
       },
     },
   },

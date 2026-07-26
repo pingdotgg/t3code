@@ -113,12 +113,8 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarUpdatePill />
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton
-            size="sm"
-            className="h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-            onClick={handleSettingsClick}
-          >
-            <SettingsIcon className="size-4.5 shrink-0" />
+          <SidebarMenuButton onClick={handleSettingsClick}>
+            <SettingsIcon />
             <span>Settings</span>
           </SidebarMenuButton>
         </SidebarMenuItem>

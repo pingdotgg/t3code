@@ -2227,15 +2227,14 @@ export default function SidebarV2() {
               <CommandDialogTrigger
                 render={
                   <SidebarMenuButton
-                    size="sm"
                     type="button"
                     aria-label="Search threads and commands"
-                    className="h-8 gap-2 rounded-md border-0 bg-transparent px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                    className="focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                     data-testid="command-palette-trigger"
                   />
                 }
               >
-                <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+                <SearchIcon />
                 <div className="flex-1 truncate text-left">Search</div>
                 {commandPaletteShortcutLabel ? (
                   <Kbd className="h-4 min-w-0 rounded-sm bg-sidebar-control-surface px-1.5 text-[10px] text-sidebar-muted-foreground ring-1 ring-sidebar-border">
@@ -2249,16 +2248,16 @@ export default function SidebarV2() {
                 <TooltipTrigger
                   render={
                     <SidebarMenuButton
-                      size="sm"
+                      size="icon"
                       type="button"
-                      className="relative size-8 justify-center rounded-md border-0 bg-transparent p-0 text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                      className="relative focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                       onClick={handleNewThreadClick}
                       disabled={projects.length === 0}
                       aria-label="New thread"
                     />
                   }
                 >
-                  <SquarePenIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+                  <SquarePenIcon />
                   <span
                     className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
                     aria-hidden="true"
@@ -2345,15 +2344,15 @@ export default function SidebarV2() {
                 <TooltipTrigger
                   render={
                     <SidebarMenuButton
-                      size="sm"
-                      className="relative size-8 shrink-0 justify-center rounded-md bg-transparent p-0 text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                      size="icon"
+                      className="relative shrink-0 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                       onClick={openAddProjectCommandPalette}
                       type="button"
                       aria-label="New project"
                     />
                   }
                 >
-                  <FolderPlusIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+                  <FolderPlusIcon />
                   <span
                     className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
                     aria-hidden="true"
