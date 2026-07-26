@@ -452,6 +452,13 @@ describe("DesktopServerExposure", () => {
 
         assert.instanceOf(error, DesktopServerExposure.DesktopTailscaleServeConfigureError);
         assert.equal(error.enabled, false);
+        // The CLI hint must not crowd out the exposure warning: a teardown that
+        // only says "could not run the tailscale CLI" reads like a no-op, when
+        // in fact the backend may still be served over the tailnet.
+        assert.equal(
+          error.message,
+          "Could not run the tailscale CLI. Is Tailscale installed and on PATH? It may still be reachable on your tailnet.",
+        );
 
         // Never record "disabled" for a teardown we could not perform — Serve
         // may still be reachable on the tailnet.

@@ -1,3 +1,5 @@
+import * as NodeFS from "node:fs";
+
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -87,7 +89,7 @@ describe("buildAppImageRelaunchShellCommand", () => {
           args: ["--no-sandbox"],
           delayMs: 1_000,
         }),
-        `sleep 1.0 && exec ${posixShellSingleQuote("/home/user/T3 Code.AppImage")} ${posixShellSingleQuote("--no-sandbox")}`,
+        `sleep 1 && exec ${posixShellSingleQuote("/home/user/T3 Code.AppImage")} ${posixShellSingleQuote("--no-sandbox")}`,
       );
 
       assert.equal(posixShellSingleQuote("it's"), `'it'\\''s'`);
@@ -96,17 +98,22 @@ describe("buildAppImageRelaunchShellCommand", () => {
 });
 
 describe("scheduleAppImageRelaunch", () => {
-  it.effect("resolves only once the detached helper has actually spawned", () =>
-    // Resolves on the `spawn` event, well before the helper's sleep elapses.
-    // The caller depends on this to know it is safe to release the
-    // single-instance lock and exit rather than vanishing on a failed spawn.
-    Effect.promise(() =>
-      scheduleAppImageRelaunch({
-        kind: "appimage-delayed",
-        appImagePath: "/bin/true",
-        args: [],
-        delayMs: 200,
-      }),
-    ),
+  // Really spawns the helper. The code path is POSIX-only by construction, so
+  // gate on the shell it needs rather than on a platform name — on a Windows
+  // dev machine (a supported setup) this would otherwise fail with ENOENT.
+  it.effect.skipIf(!NodeFS.existsSync("/bin/sh"))(
+    "resolves only once the detached helper has actually spawned",
+    () =>
+      // Resolves on the `spawn` event, well before the helper's sleep elapses.
+      // The caller depends on this to know it is safe to release the
+      // single-instance lock and exit rather than vanishing on a failed spawn.
+      Effect.promise(() =>
+        scheduleAppImageRelaunch({
+          kind: "appimage-delayed",
+          appImagePath: "/bin/true",
+          args: [],
+          delayMs: 200,
+        }),
+      ),
   );
 });

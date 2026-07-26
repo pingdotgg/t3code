@@ -2053,19 +2053,29 @@ export function ConnectionsSettings() {
 
   const openTailscaleServeConfigureUrl = useCallback(
     (configureUrl: string) => {
-      // openExternal resolves `false` instead of rejecting when the shell
-      // refuses the URL, so branch on the result too.
+      // In a plain browser this is the only way out.
       if (!desktopBridge) {
         window.open(configureUrl, "_blank", "noopener,noreferrer");
         return;
       }
+      // openExternal resolves `false` instead of rejecting when the shell
+      // refuses the URL, so branch on the result. `window.open` is not a usable
+      // fallback here: the main window's setWindowOpenHandler routes it back
+      // into the same openExternal and denies the popup, so a failure would be
+      // a silent no-op. Say so instead — the URL is in the message above, and
+      // the alert text is selectable.
       void desktopBridge
         .openExternal(configureUrl)
         .catch(() => false)
         .then((opened) => {
-          if (!opened) {
-            window.open(configureUrl, "_blank", "noopener,noreferrer");
-          }
+          if (opened) return;
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not open the Tailscale setup page",
+              description: `Copy this link into your browser: ${configureUrl}`,
+            }),
+          );
         });
     },
     [desktopBridge],
@@ -3078,7 +3088,12 @@ export function ConnectionsSettings() {
             />
           ) : null}
           <Switch
-            checked={tailscaleHttpsEndpoint?.status === "available"}
+            // Reflect the persisted setting, not endpoint reachability. `status`
+            // comes from an HTTP probe of the MagicDNS URL, so a provisioning
+            // cert or a momentary tailnet blip would render this off while
+            // `tailscale serve` is live — and turning it off would be
+            // unreachable, since that path is behind the on state.
+            checked={desktopServerExposureState?.tailscaleServeEnabled ?? false}
             disabled={isUpdatingTailscaleServe}
             onCheckedChange={(checked) => {
               if (checked) {

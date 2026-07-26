@@ -62,7 +62,12 @@ export function buildAppImageRelaunchShellCommand(input: {
   readonly args: readonly string[];
   readonly delayMs: number;
 }): string {
-  const sleepSeconds = Math.max(0.2, input.delayMs / 1_000).toFixed(1);
+  // Whole seconds only: POSIX specifies `sleep` as taking an integer, and a
+  // /bin/sh whose sleep rejects "1.0" would short-circuit the `&&` and never
+  // exec — an app that quits and never returns, which is the failure this
+  // helper exists to avoid. The spawn succeeds either way, so nothing would
+  // report it.
+  const sleepSeconds = Math.max(1, Math.ceil(input.delayMs / 1_000));
   const quotedPath = posixShellSingleQuote(input.appImagePath);
   const quotedArgs = input.args.map(posixShellSingleQuote).join(" ");
   const execTarget = quotedArgs.length > 0 ? `${quotedPath} ${quotedArgs}` : quotedPath;

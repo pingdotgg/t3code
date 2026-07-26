@@ -13,7 +13,10 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 
 const SetTailscaleServeEnabledInput = Schema.Struct({
   enabled: Schema.Boolean,
-  port: Schema.optionalKey(Schema.Number),
+  // Reject out-of-range ports at the boundary. Settings persistence silently
+  // normalizes anything invalid to 443, so a bare Schema.Number would let the
+  // CLI bind one port while settings recorded another.
+  port: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 }))),
 });
 
 export const getServerExposureState = DesktopIpc.makeIpcMethod({

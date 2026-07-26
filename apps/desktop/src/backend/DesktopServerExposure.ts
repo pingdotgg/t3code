@@ -277,8 +277,15 @@ export class DesktopTailscaleServeConfigureError extends Schema.TaggedErrorClass
       );
     } else {
       parts.push(
-        `Failed to turn off Tailscale Serve on port ${this.port ?? DEFAULT_TAILSCALE_SERVE_PORT}. It may still be reachable on your tailnet.`,
+        `Failed to turn off Tailscale Serve on port ${this.port ?? DEFAULT_TAILSCALE_SERVE_PORT}.`,
       );
+    }
+    if (!this.enabled) {
+      // Append regardless of `detail`: whatever the CLI failed on, the point the
+      // user must not miss is that the backend may still be exposed. A teardown
+      // failure that only says "could not run the tailscale CLI" reads like a
+      // no-op, which is exactly the silent-exposure case this error exists for.
+      parts.push("It may still be reachable on your tailnet.");
     }
     if (this.configureUrl !== null) {
       parts.push(`To enable, visit: ${this.configureUrl}`);
