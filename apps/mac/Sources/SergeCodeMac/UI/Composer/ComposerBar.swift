@@ -433,102 +433,140 @@ public struct ComposerBar: View {
     /// `composerChrome` by `body`; see the note there for why this is a
     /// separate expression.
     private func composerBehaviour(_ content: some View) -> some View {
+        composerStateSync(composerDialogs(composerLifecycle(composerAnimations(content))))
+    }
+
+    // Typing and suggestion filtering are deliberately unanimated. Async
+    // arrivals reveal independently without moving the entire composer on
+    // every keystroke. Suggestion menus intentionally carry no transition
+    // declaration — keyboard-frequency UI stays instant.
+    //
+    // Attachments finish encoding asynchronously (file import, paste, drop),
+    // so the strip filling in is confirmed by feel as well as by sight.
+    // Removals are silent — the user already knows.
+    private func composerAnimations(_ content: some View) -> some View {
         content
-        // Typing and suggestion filtering are deliberately unanimated. Async
-        // arrivals reveal independently without moving the entire composer on
-        // every keystroke. Suggestion menus intentionally carry no transition
-        // declaration — keyboard-frequency UI stays instant.
-        .animation(Motion.reveal, value: attachments.map(\.id))
-        .animation(Motion.reveal, value: model.selectedQueuedMessages.map(\.id))
-        .animation(Motion.reveal, value: attachmentError)
-        .animation(Motion.reveal, value: model.dictation.lastError)
-        .animation(Motion.reveal, value: dictationOverlayVisible)
-        .animation(Motion.reveal, value: model.lastError)
-        .animation(Motion.feedback, value: isThreadRunning)
-        // Attachments finish encoding asynchronously (file import, paste,
-        // drop), so the strip filling in is confirmed by feel as well as by
-        // sight. Removals are silent — the user already knows.
-        .haptic(.selection, trigger: attachments.count) { old, new in new > old }
-        .haptic(.failure, trigger: attachmentError) { _, new in new != nil }
-        .haptic(.failure, trigger: model.lastError) { _, new in new != nil }
-        .task {
-            defersSuggestionWork = ComposerPerformancePolicy.shouldDeferSuggestions(for: draft)
-            model.dictation.insertHandler = { threadID, text in
-                insertDictated(text, into: threadID)
+            .animation(Motion.reveal, value: attachments.map(\.id))
+            .animation(Motion.reveal, value: model.selectedQueuedMessages.map(\.id))
+            .animation(Motion.reveal, value: attachmentError)
+            .animation(Motion.reveal, value: model.dictation.lastError)
+            .animation(Motion.reveal, value: dictationOverlayVisible)
+            .animation(Motion.reveal, value: model.lastError)
+            .animation(Motion.feedback, value: isThreadRunning)
+            .haptic(.selection, trigger: attachments.count) { old, new in new > old }
+            .haptic(.failure, trigger: attachmentError) { _, new in new != nil }
+            .haptic(.failure, trigger: model.lastError) { _, new in new != nil }
+    }
+
+    private func composerLifecycle(_ content: some View) -> some View {
+        content
+            .task { installDictationHandlers() }
+            .onPasteCommand(of: [.image], perform: handlePasteProviders)
+            .onDrop(of: [.fileURL, .image], isTargeted: nil, perform: handleDropProviders)
+            .onChange(of: editorFocused, syncPasteMonitor)
+            .onAppear(perform: installPasteMonitorIfFocused)
+            .onDisappear(perform: removePasteMonitor)
+    }
+
+    private func composerDialogs(_ content: some View) -> some View {
+        content
+            .alert("Download dictation model?", isPresented: $showDictationDownloadPrompt) {
+                Button("Download") { model.dictation.downloadModel() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "Dictation runs fully on this Mac using the Parakeet v3 speech model — a one-time ~2.5 GB download."
+                )
             }
-            model.dictation.replaceHandler = { threadID, original, replacement in
-                replaceDictated(original, with: replacement, in: threadID)
+            .alert("Microphone access needed", isPresented: micPermissionDeniedBinding) {
+                Button("Open System Settings") { openMicrophonePrivacySettings() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Allow SurgeCode to use the microphone in Privacy & Security → Microphone.")
             }
+    }
+
+    private func composerStateSync(_ content: some View) -> some View {
+        content
+            .onChange(of: model.composerPrefill, applyComposerPrefill)
+            .onChange(of: model.selectedThreadID, handleSelectedThreadChange)
+            .onChange(of: draft, handleDraftChange)
+            .fileImporter(
+                isPresented: $showFileImporter, allowedContentTypes: [.image],
+                allowsMultipleSelection: true, onCompletion: handleFileImport)
+    }
+
+    // MARK: Behaviour handlers
+    //
+    // These are named methods rather than inline closures on purpose. As
+    // multi-statement closures inside the modifier chain they were type-checked
+    // as part of one expression, which is what pushed `body` over the CI
+    // toolchain's solver budget (see `body`). A method reference contributes a
+    // single known type instead.
+
+    private func installDictationHandlers() {
+        defersSuggestionWork = ComposerPerformancePolicy.shouldDeferSuggestions(for: draft)
+        model.dictation.insertHandler = { threadID, text in
+            insertDictated(text, into: threadID)
         }
-        .onPasteCommand(of: [.image], perform: handlePasteProviders)
-        .onDrop(of: [.fileURL, .image], isTargeted: nil, perform: handleDropProviders)
-        // TextEditor's NSTextView owns Cmd+V and swallows image-only pastes
-        // before `.onPasteCommand` runs. Intercept while the composer editor
-        // is focused so screenshots and image files still attach.
-        .onChange(of: editorFocused) { _, focused in
-            if focused {
-                installPasteMonitor()
-            } else {
-                removePasteMonitor()
-            }
+        model.dictation.replaceHandler = { threadID, original, replacement in
+            replaceDictated(original, with: replacement, in: threadID)
         }
-        .onAppear {
-            if editorFocused { installPasteMonitor() }
-        }
-        .onDisappear {
+    }
+
+    /// TextEditor's NSTextView owns Cmd+V and swallows image-only pastes
+    /// before `.onPasteCommand` runs. Intercept while the composer editor is
+    /// focused so screenshots and image files still attach.
+    private func syncPasteMonitor(_ wasFocused: Bool, _ isFocused: Bool) {
+        if isFocused {
+            installPasteMonitor()
+        } else {
             removePasteMonitor()
         }
-        .alert("Download dictation model?", isPresented: $showDictationDownloadPrompt) {
-            Button("Download") { model.dictation.downloadModel() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "Dictation runs fully on this Mac using the Parakeet v3 speech model — a one-time ~2.5 GB download."
-            )
+    }
+
+    private func installPasteMonitorIfFocused() {
+        if editorFocused { installPasteMonitor() }
+    }
+
+    /// Edit action on a sent message: load its text as the draft. An
+    /// in-progress draft is replaced — the edit gesture is explicit intent to
+    /// compose from the old message.
+    private func applyComposerPrefill(
+        _ previous: AppModel.ComposerPrefill?, _ prefill: AppModel.ComposerPrefill?
+    ) {
+        guard prefill != nil, let staged = model.takeComposerPrefill() else { return }
+        editedMessageID = staged.editedMessageID
+        editedMessageThreadID = staged.editedMessageThreadID
+        if model.selectedThreadID == staged.threadID {
+            editorFocused = true
         }
-        .alert("Microphone access needed", isPresented: micPermissionDeniedBinding) {
-            Button("Open System Settings") { openMicrophonePrivacySettings() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Allow SurgeCode to use the microphone in Privacy & Security → Microphone.")
+    }
+
+    /// Drafts persist per-thread. ComposerBar stays mounted across thread
+    /// switches, so only staged edit context and transient UI state drop.
+    private func handleSelectedThreadChange(_ previous: String?, _ next: String?) {
+        resetTransientState()
+        defersSuggestionWork = ComposerPerformancePolicy.shouldDeferSuggestions(for: draft)
+        model.clearComposerPrefill()
+    }
+
+    /// User wiped the draft: drop edit identity so a later unrelated send is a
+    /// normal append.
+    private func handleDraftChange(_ previous: String, _ newValue: String) {
+        defersSuggestionWork = ComposerPerformancePolicy.shouldDeferSuggestions(for: newValue)
+        if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            editedMessageID = nil
+            editedMessageThreadID = nil
         }
-        // Edit action on a sent message: load its text as the draft. An
-        // in-progress draft is replaced — the edit gesture is explicit intent
-        // to compose from the old message.
-        .onChange(of: model.composerPrefill) { _, prefill in
-            guard prefill != nil, let staged = model.takeComposerPrefill() else { return }
-            editedMessageID = staged.editedMessageID
-            editedMessageThreadID = staged.editedMessageThreadID
-            if model.selectedThreadID == staged.threadID {
-                editorFocused = true
-            }
-        }
-        // Drafts persist per-thread. ComposerBar stays mounted across thread
-        // switches, so only staged edit context and transient UI state drop.
-        .onChange(of: model.selectedThreadID) { _, _ in
-            resetTransientState()
-            defersSuggestionWork = ComposerPerformancePolicy.shouldDeferSuggestions(for: draft)
-            model.clearComposerPrefill()
-        }
-        // User wiped the draft: drop edit identity so a later unrelated
-        // send is a normal append.
-        .onChange(of: draft) { _, newValue in
-            defersSuggestionWork = ComposerPerformancePolicy.shouldDeferSuggestions(for: newValue)
-            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                editedMessageID = nil
-                editedMessageThreadID = nil
-            }
-        }
-        .fileImporter(
-            isPresented: $showFileImporter, allowedContentTypes: [.image],
-            allowsMultipleSelection: true
-        ) { (result: Result<[URL], any Error>) in
-            let targetThreadID: String? = fileImporterThreadID
-            fileImporterThreadID = nil
-            guard let targetThreadID else { return }
-            guard case .success(let urls) = result else { return }
-            attach(urls: urls, to: targetThreadID)
-        }
+    }
+
+    private func handleFileImport(_ result: Result<[URL], any Error>) {
+        let targetThreadID = fileImporterThreadID
+        fileImporterThreadID = nil
+        guard let targetThreadID else { return }
+        guard case .success(let urls) = result else { return }
+        attach(urls: urls, to: targetThreadID)
     }
 
     /// Cmd+. must cancel a running turn regardless of what the composer looks

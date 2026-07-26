@@ -1,0 +1,52 @@
+name: macOS build check
+
+# Until now the only Swift build in CI lived in `Release macOS App`, which runs
+# on `pull_request: [closed]` — i.e. after merge. Two releases in a row (0.3.0
+# and its follow-up) broke on `main` because a PR that compiled locally did not
+# compile on the runner: the runner's Swift is older than a current CLT
+# toolchain and has a tighter type-checker budget, so an over-large expression
+# fails there and nowhere else. This job runs the same Swift steps before merge
+# so that class of failure is caught on the PR instead of on `main`.
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/mac/**"
+      - ".github/workflows/ci-mac.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-mac-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test apps/mac
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same cache shape as the release job so the two share warm builds.
+      - name: Restore SwiftPM build cache
+        uses: actions/cache@v4
+        with:
+          path: apps/mac/.build
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/mac/Package.resolved') }}
+          restore-keys: swiftpm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Report toolchain
+        run: swift --version
+
+      - name: Build
+        run: swift build --package-path apps/mac
+
+      # --no-parallel matches the release job: the suites share process-wide
+      # static caches (TimelineDisplayCache, StreamingMarkdownCache) and are all
+      # @MainActor, so parallel execution only interleaves them at await points
+      # and one suite's resetForTesting() can land inside another's counter
+      # assertions.
+      - name: Test
+        run: swift test --package-path apps/mac --no-parallel
