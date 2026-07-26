@@ -14,16 +14,19 @@ import {
   EnvironmentAuthHttpApi,
   EnvironmentMetadataHttpApi,
   EnvironmentOrchestrationHttpApi,
+  EventId,
   ORCHESTRATION_CLI_API_VERSION,
   MessageId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
+import * as Runtime from "effect/Runtime";
 import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
@@ -64,6 +67,7 @@ import {
   RemoteCliError,
   requireCliApiCompatibility,
 } from "./cli/remote.ts";
+import { RemoteWatchInteractionRequiredError } from "./cli/remoteWatch.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 class ProjectCliHttpApi extends HttpApi.make("environment")
@@ -362,6 +366,94 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
           assert.equal(firstDto.auth.principal.sessionId, secondDto.auth.principal.sessionId);
           assert.equal(firstDto.auth.principal.subject, "local-cli:bin-test-local-environment");
         }),
+      );
+    }),
+  );
+
+  it.effect("interrupts a bare local watch when command approval is pending", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-local-watch-approval-test-"),
+      );
+      const workspaceRoot = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-local-watch-approval-workspace-"),
+      );
+      yield* runCliWithRuntime(["project", "add", workspaceRoot, "--base-dir", baseDir]);
+      const project = (yield* readPersistedSnapshot(baseDir)).projects.find(
+        (candidate) => candidate.workspaceRoot === workspaceRoot,
+      );
+      assert.isTrue(project !== undefined);
+
+      const config = yield* makeCliTestServerConfig(baseDir);
+      const threadId = ThreadId.make("thread-cli-watch-approval");
+      const turnId = TurnId.make("turn-cli-watch-approval");
+      const createdAt = "2026-07-25T00:00:00.000Z";
+      yield* Effect.gen(function* () {
+        const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+        yield* engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-cli-watch-thread-create"),
+          threadId,
+          projectId: project!.id,
+          title: "Approval watch",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: "default",
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: workspaceRoot,
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-cli-watch-session-running"),
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "approval-required",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-cli-watch-approval-requested"),
+          threadId,
+          activity: {
+            id: EventId.make("activity-cli-watch-approval-requested"),
+            tone: "approval",
+            kind: "approval.requested",
+            summary: "Command approval requested",
+            payload: {
+              requestId: "request-cli-watch-approval",
+              requestKind: "command",
+              command: "must-not-appear",
+            },
+            turnId,
+            createdAt,
+          },
+          createdAt,
+        });
+      }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
+
+      yield* withLiveProjectCliServer(baseDir, () =>
+        Effect.gen(function* () {
+          const error = yield* runCli(["watch", threadId, "--base-dir", baseDir]).pipe(Effect.flip);
+          assert.instanceOf(error, RemoteWatchInteractionRequiredError);
+          assert.equal(error[Runtime.errorExitCode], 26);
+          assert.equal(
+            error.message,
+            `{"threadId":"${threadId}","turnId":"${turnId}","interaction":{"kind":"approval","requestId":"request-cli-watch-approval","prompt":{"requestKind":"command"}}}`,
+          );
+          assert.notInclude(error.message, "must-not-appear");
+        }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer))),
       );
     }),
   );
