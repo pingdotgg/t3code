@@ -1,0 +1,90 @@
+name: Release Windows App
+
+# Manual-only for now. The macOS release workflow is label-triggered because
+# its signing identity, notarization, and Sparkle appcast are all wired up;
+# the Windows equivalent needs three secrets that do not exist yet
+# (TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD, and an
+# Authenticode certificate). Until those are set, a label-triggered build would
+# publish an unsigned installer that SmartScreen blocks — so this stays
+# `workflow_dispatch` and the version input must match version.json exactly,
+# the same rule the macOS manual path follows.
+#
+# See apps/windows/HANDOVER.md ▸ "Signing and updates" for the one-time setup.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version from apps/windows/version.json to release"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-windows
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build and publish the Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Require the requested version to match version.json
+        shell: pwsh
+        run: |
+          $manifest = Get-Content apps/windows/version.json | ConvertFrom-Json
+          if ($manifest.version -ne "${{ inputs.version }}") {
+            Write-Error "version.json is $($manifest.version), workflow input is ${{ inputs.version }}"
+            exit 1
+          }
+
+      - name: Set up vp
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the server bundle
+        run: vp run --filter t3 build:bundle
+
+      # Downloads the pinned node.exe (checksum-verified) and materializes the
+      # production server payload the installer embeds.
+      - name: Stage the sidecar
+        run: node apps/windows/scripts/stage-sidecar.mjs
+
+      - name: Build the renderer
+        run: vp run --filter @sergecode/windows build
+
+      - name: Build the installer
+        working-directory: apps/windows
+        env:
+          # Empty values leave `createUpdaterArtifacts` off, so the build still
+          # succeeds before the signing keys exist — it just ships without an
+          # update feed.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm exec tauri build
+
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-v${{ inputs.version }}
+          name: SurgeCode for Windows ${{ inputs.version }}
+          draft: true
+          files: |
+            apps/windows/src-tauri/target/release/bundle/nsis/*.exe
+            apps/windows/src-tauri/target/release/bundle/nsis/*.sig
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

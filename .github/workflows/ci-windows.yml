@@ -1,0 +1,75 @@
+name: Windows build check
+
+# The Windows app's Rust shell contains code that only compiles under
+# `cfg(windows)` — the Job Object that owns the sidecar tree, the Credential
+# Manager store, and the DWM backdrop calls. None of it can be type-checked on
+# a macOS or Linux development machine (cross-compiling needs the Windows SDK
+# headers and `llvm-rc`), so this job is the verification loop for that half of
+# the app. It mirrors `ci-mac.yml`: build before merge, not after.
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/windows/**"
+      - "packages/**"
+      - ".github/workflows/ci-windows.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-windows-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test apps/windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up vp
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Restore cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/windows/src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('apps/windows/src-tauri/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Typecheck the renderer
+        run: vp run --filter @sergecode/windows typecheck
+
+      - name: Test the renderer
+        run: vp run --filter @sergecode/windows test
+
+      # `tauri build` reads `frontendDist`, and `generate_context!` fails if it
+      # is missing, so the renderer bundle has to exist before any cargo step.
+      - name: Build the renderer
+        run: vp run --filter @sergecode/windows build
+
+      - name: Check formatting of the Rust shell
+        working-directory: apps/windows/src-tauri
+        run: cargo fmt --check
+
+      - name: Lint the Rust shell
+        working-directory: apps/windows/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test the Rust shell
+        working-directory: apps/windows/src-tauri
+        run: cargo test
