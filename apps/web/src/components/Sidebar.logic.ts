@@ -92,8 +92,12 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   ];
 }
 
-export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
-  return thread.lineage.relationshipToParent === "subagent";
+export function isSidebarSubagentThread(
+  thread: Pick<SidebarThreadSummary, "forkedFrom" | "lineage">,
+): boolean {
+  // Provider-native subagents are node-owned child threads. Keep the structural
+  // marker as a compatibility fallback when an older shell omits their lineage.
+  return thread.lineage.relationshipToParent === "subagent" || thread.forkedFrom?.type === "node";
 }
 
 export function getSidebarForkParentThreadId(

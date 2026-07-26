@@ -5912,13 +5912,16 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const panelLayoutControls = (
     <div className="workspace-titlebar-controls z-50 gap-1 [-webkit-app-region:no-drag]">
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? (
-        <RightPanelMaximizeControl
-          maximized={rightPanelMaximized}
-          onToggle={toggleRightPanelMaximized}
-        />
-      ) : null}
       {panelToggleControls}
+    </div>
+  );
+  const rightPanelLayoutControls = (
+    <div className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+      <RightPanelMaximizeControl
+        maximized={rightPanelMaximized}
+        onToggle={toggleRightPanelMaximized}
+      />
+      <PanelLayoutControls {...panelToggleControlProps} showThreadPanelControl={false} />
     </div>
   );
 
@@ -5927,7 +5930,6 @@ function ChatViewContent(props: ChatViewProps) {
       ref={workspaceLayoutRef}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
-      {rightPanelOpen && !shouldUsePlanSidebarSheet ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -6306,6 +6308,7 @@ function ChatViewContent(props: ChatViewProps) {
           mode="inline"
           maximized={rightPanelMaximized}
           inlineSize={previewPanelInlineSize}
+          layoutControls={rightPanelLayoutControls}
           surfaces={rightPanelState.surfaces}
           activeSurfaceId={activeRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
