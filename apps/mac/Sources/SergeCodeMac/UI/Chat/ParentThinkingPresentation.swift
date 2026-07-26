@@ -57,16 +57,24 @@ enum ParentThinkingPresentation {
             latestTurnState = nil
         }
 
+        // Turn-scoped, deliberately. The pure `ParentThinking` gate is a
+        // byte-for-byte mirror of packages/shared/src/parentThinking.ts and
+        // is untouched; the shared package defines only that gate, and each
+        // client computes its own signals. Feeding it whole-transcript
+        // values was a client-side bug: every one of these describes the
+        // active turn, and a reasoning row (which never leaves the
+        // transcript) would otherwise suppress the indicator on that thread
+        // permanently.
         return ParentThinkingSignals(
             sessionStatus: sessionStatus,
             latestTurnState: latestTurnState,
             hasPendingApproval: hasPendingApproval,
             hasPendingUserInput: hasPendingUserInput,
             isStalled: isStalled,
-            hasActiveToolActivity: scan.hasActiveToolActivity,
-            hasActiveStreamingAssistant: scan.hasActiveStreamingAssistant,
-            hasStreamingAssistantText: scan.hasStreamingAssistantText,
-            hasVisibleReasoningText: scan.hasVisibleReasoningText)
+            hasActiveToolActivity: scan.turn.hasActiveToolActivity,
+            hasActiveStreamingAssistant: scan.turn.hasActiveStreamingAssistant,
+            hasStreamingAssistantText: scan.turn.hasStreamingAssistantText,
+            hasVisibleReasoningText: scan.turn.hasVisibleReasoningText)
     }
 
     static func shouldShow(

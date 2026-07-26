@@ -150,10 +150,119 @@ struct AgentActivityPresentationTests {
         }
 
         let scan = TimelineActivityScan.scan(items: items)
-        #expect(scan.turnToolCount == 8)
-        #expect(scan.recentToolKinds.count == TimelineActivityScan.recentToolTapeLength)
+        #expect(scan.turn.toolCount == 8)
+        #expect(scan.turn.recentToolKinds.count == TimelineActivityScan.recentToolTapeLength)
         // The pre-turn web search must not leak into the new turn's tape.
-        #expect(!scan.recentToolKinds.contains(.webSearch))
+        #expect(!scan.turn.recentToolKinds.contains(.webSearch))
+    }
+
+    // MARK: - Cross-turn leaks
+
+    @Test("a tool left running by an old turn cannot drive the current one")
+    func staleRunningToolDoesNotLeakAcrossTurns() {
+        // Providers do not always close a tool's lifecycle, so a row stuck on
+        // `.running` outlives its turn (the same condition ToolEventRow's
+        // `displayState` defends against). It must not name the new turn.
+        let items: [TimelineItem] = [
+            userMessage(offset: 0),
+            tool(id: "stale", name: "run_command", kind: .command, status: .running, offset: 5),
+            userMessage(offset: 100),
+        ]
+
+        let scan = TimelineActivityScan.scan(items: items)
+        #expect(scan.turn.runningTool == nil)
+        #expect(!scan.turn.hasActiveToolActivity)
+
+        // ...so the dock reports the new turn as thinking, not as still
+        // running a command from minutes ago with a runaway clock.
+        let activity = AgentActivityPresentation.activity(
+            threadStatus: .running, isStalled: false, items: items)
+        #expect(activity?.phase == .thinking)
+        #expect(activity?.since == base.addingTimeInterval(100))
+        #expect(activity?.toolCount == 0)
+    }
+
+    @Test("reasoning from an old turn does not suppress the current one")
+    func staleReasoningDoesNotLeakAcrossTurns() {
+        // The durable case: reasoning rows are permanent transcript entries,
+        // so a whole-transcript scan would kill the thinking phase on this
+        // thread for good after the very first one.
+        let items: [TimelineItem] = [
+            userMessage(offset: 0),
+            .reasoning(id: "r1", text: "Considering the parser", at: base.addingTimeInterval(5)),
+            userMessage(offset: 100),
+        ]
+
+        #expect(!TimelineActivityScan.scan(items: items).turn.hasVisibleReasoningText)
+        #expect(
+            AgentActivityPresentation.activity(
+                threadStatus: .running, isStalled: false, items: items)?.phase == .thinking)
+    }
+
+    @Test("a message left mid-stream by an old turn does not suppress the current one")
+    func staleStreamingDoesNotLeakAcrossTurns() {
+        let items: [TimelineItem] = [
+            userMessage(offset: 0),
+            .assistantMessage(
+                id: "a1", markdown: "Half a thou", isStreaming: true,
+                at: base.addingTimeInterval(5)),
+            userMessage(offset: 100),
+        ]
+
+        let scan = TimelineActivityScan.scan(items: items)
+        #expect(!scan.turn.hasActiveStreamingAssistant)
+        #expect(!scan.turn.hasStreamingAssistantText)
+        #expect(
+            AgentActivityPresentation.activity(
+                threadStatus: .running, isStalled: false, items: items)?.phase == .thinking)
+    }
+
+    @Test("live signals still register within the turn that owns them")
+    func currentTurnSignalsSurvive() {
+        // The scoping must not overshoot: the same signals, in the newest
+        // turn, still have to drive the dock.
+        let running: [TimelineItem] = [
+            userMessage(offset: 0),
+            tool(id: "stale", status: .running, offset: 5),
+            userMessage(offset: 100),
+            tool(id: "live", kind: .fileRead, status: .running, offset: 105),
+        ]
+        guard case .tool(let named)? = AgentActivityPresentation.activity(
+            threadStatus: .running, isStalled: false, items: running)?.phase
+        else {
+            Issue.record("the current turn's running tool should name the dock")
+            return
+        }
+        #expect(named.id == "live")
+
+        let reasoning: [TimelineItem] = [
+            userMessage(offset: 0),
+            .reasoning(id: "r1", text: "Thinking out loud", at: base.addingTimeInterval(5)),
+        ]
+        #expect(TimelineActivityScan.scan(items: reasoning).turn.hasVisibleReasoningText)
+        #expect(
+            AgentActivityPresentation.activity(
+                threadStatus: .running, isStalled: false, items: reasoning) == nil)
+    }
+
+    @Test("an unanswered decision card is not turn-scoped")
+    func pendingDecisionsRemainWholeTranscript() {
+        // Counterpart to the scoping above: `resolveInteraction` removes a
+        // card from the timeline once answered, so one that is still present
+        // is still pending no matter which turn raised it.
+        let items: [TimelineItem] = [
+            userMessage(offset: 0),
+            .approval(
+                ApprovalRequest(
+                    id: "a1", threadID: "t", kind: .command, title: "Run command",
+                    detail: "ls /tmp", createdAt: base.addingTimeInterval(5))),
+            userMessage(offset: 100),
+        ]
+
+        #expect(TimelineActivityScan.scan(items: items).hasPendingApproval)
+        #expect(
+            AgentActivityPresentation.activity(
+                threadStatus: .running, isStalled: false, items: items) == nil)
     }
 
     @Test("out-of-order deltas do not rewind the silence clock")

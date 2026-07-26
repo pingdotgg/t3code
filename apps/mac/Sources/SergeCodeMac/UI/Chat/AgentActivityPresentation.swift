@@ -18,20 +18,43 @@ struct TimelineActivityScan: Equatable, Sendable {
         var startedAt: Date
     }
 
-    var hasActiveToolActivity = false
-    var hasActiveStreamingAssistant = false
-    var hasStreamingAssistantText = false
-    var hasVisibleReasoningText = false
+    /// Signals describing the turn currently in flight.
+    ///
+    /// These are nested, and reset wholesale on each user message, because
+    /// every one of them answers "what is happening *right now*" while the
+    /// transcript keeps plenty of evidence from turns that are long over:
+    ///
+    /// - a tool the provider never closed stays `.running` forever (the same
+    ///   condition `ToolEventRow.displayState` defends against);
+    /// - an assistant message interrupted mid-stream stays `isStreaming`;
+    /// - reasoning rows are permanent transcript entries, so the worst case
+    ///   is not even transient — one reasoning row would suppress the
+    ///   thinking phase on that thread for good.
+    ///
+    /// Adding a field here gets the reset for free. Adding one to the outer
+    /// scan does not, which is exactly how the leak above was introduced.
+    struct Turn: Equatable, Sendable {
+        var hasActiveToolActivity = false
+        var hasActiveStreamingAssistant = false
+        var hasStreamingAssistantText = false
+        var hasVisibleReasoningText = false
+        /// Latest-started running tool. Providers can have several in flight;
+        /// the newest is the one a person reading the tail is waiting on.
+        var runningTool: RunningTool?
+        /// Kinds of the last few tool calls, oldest first. Drives the dock's
+        /// tape of what just happened.
+        var recentToolKinds: [ToolEventKind] = []
+        var toolCount = 0
+    }
+
+    /// The turn in flight.
+    var turn = Turn()
+
+    /// Whole-transcript, and correctly so: `AppModel.resolveInteraction`
+    /// removes a decision card from the timeline the moment it is answered,
+    /// so one that survives the scan is by definition still pending.
     var hasPendingApproval = false
     var hasPendingUserInput = false
-    /// Latest-started running tool. Providers can have several in flight; the
-    /// newest is the one a person reading the tail is waiting on.
-    var runningTool: RunningTool?
-    /// Kinds of the last few tool calls *this turn*, oldest first. Drives the
-    /// dock's tape of what just happened.
-    var recentToolKinds: [ToolEventKind] = []
-    /// Tool calls since the last user message.
-    var turnToolCount = 0
     /// Timestamp of the newest transcript entry: when the transcript last
     /// said anything, which is when the current silence began.
     var lastItemAt: Date?
@@ -47,35 +70,37 @@ struct TimelineActivityScan: Equatable, Sendable {
         for item in items {
             switch item {
             case .userMessage(_, _, _, let at):
-                scan.recentToolKinds.removeAll(keepingCapacity: true)
-                scan.turnToolCount = 0
+                // A new turn starts clean. Everything the previous turn left
+                // behind — a tool still marked running, a half-streamed
+                // message, its reasoning — describes work that is over.
+                scan.turn = Turn()
                 scan.note(at)
             case .toolEvent(let id, let name, let detail, let kind, let status, let at, _, _):
-                scan.turnToolCount += 1
-                scan.recentToolKinds.append(kind)
-                if scan.recentToolKinds.count > recentToolTapeLength {
-                    scan.recentToolKinds.removeFirst(
-                        scan.recentToolKinds.count - recentToolTapeLength)
+                scan.turn.toolCount += 1
+                scan.turn.recentToolKinds.append(kind)
+                if scan.turn.recentToolKinds.count > recentToolTapeLength {
+                    scan.turn.recentToolKinds.removeFirst(
+                        scan.turn.recentToolKinds.count - recentToolTapeLength)
                 }
                 if status == .running {
-                    scan.hasActiveToolActivity = true
-                    if scan.runningTool.map({ at >= $0.startedAt }) ?? true {
-                        scan.runningTool = RunningTool(
+                    scan.turn.hasActiveToolActivity = true
+                    if scan.turn.runningTool.map({ at >= $0.startedAt }) ?? true {
+                        scan.turn.runningTool = RunningTool(
                             id: id, name: name, detail: detail, kind: kind, startedAt: at)
                     }
                 }
                 scan.note(at)
             case .assistantMessage(_, let markdown, let isStreaming, let at):
                 if isStreaming {
-                    scan.hasActiveStreamingAssistant = true
+                    scan.turn.hasActiveStreamingAssistant = true
                     if !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        scan.hasStreamingAssistantText = true
+                        scan.turn.hasStreamingAssistantText = true
                     }
                 }
                 scan.note(at)
             case .reasoning(_, let text, let at):
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    scan.hasVisibleReasoningText = true
+                    scan.turn.hasVisibleReasoningText = true
                 }
                 scan.note(at)
             case .approval(let request):
@@ -166,7 +191,7 @@ enum AgentActivityPresentation {
         if isStalled {
             phase = .stalled
             since = scan.lastItemAt
-        } else if let tool = scan.runningTool {
+        } else if let tool = scan.turn.runningTool {
             // A running tool outranks the thinking gate: `ParentThinking`
             // suppresses itself while a tool runs precisely because that case
             // used to have no home. It has one now.
@@ -185,8 +210,8 @@ enum AgentActivityPresentation {
         return AgentActivity(
             phase: phase,
             since: since,
-            recentToolKinds: scan.recentToolKinds,
-            toolCount: scan.turnToolCount)
+            recentToolKinds: scan.turn.recentToolKinds,
+            toolCount: scan.turn.toolCount)
     }
 
     // MARK: - Copy
