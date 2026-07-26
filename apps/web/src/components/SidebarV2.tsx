@@ -903,11 +903,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                       <button
                         type="button"
                         aria-label="Settle thread"
+                        title="Settle thread"
                         onClick={handleSettleClick}
-                        className="inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground hover:text-foreground"
+                        className="inline-flex h-full cursor-pointer items-center justify-center rounded-md bg-transparent px-1.5 text-muted-foreground hover:text-foreground"
                       >
-                        <CheckIcon className="size-3" />
-                        Settle
+                        <CheckIcon aria-hidden className="size-3" />
                       </button>
                     ) : null}
                   </span>
