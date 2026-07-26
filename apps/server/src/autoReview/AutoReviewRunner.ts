@@ -1,5 +1,4 @@
 import * as Context from "effect/Context";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { AutoReviewFindings, ModelSelection, ThreadId } from "@t3tools/contracts";
@@ -14,6 +13,8 @@ import {
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as AutoReviewJobStore from "./AutoReviewJobStore.ts";
+import { parseDiffAnchors } from "./diffAnchors.ts";
+import { describeAutoReviewFailure } from "./failureMessage.ts";
 import {
   buildReviewBody,
   normalizeFindings,
@@ -147,7 +148,10 @@ export const make = Effect.gen(function* () {
 
       const findings = normalizeFindings(rawFindings as AutoReviewFindings);
       const decision = resolveReviewEvent(findings);
-      const { anchorable, unanchored } = partitionReviewComments(findings.comments);
+      // Anchor against the full diff, not the byte-truncated prompt copy: a
+      // comment on a hunk past the truncation point is still valid on GitHub.
+      const anchors = parseDiffAnchors(diff);
+      const { anchorable, unanchored } = partitionReviewComments(findings.comments, anchors);
       const body = buildReviewBody({
         findings: { ...findings, decision },
         unanchored,
@@ -168,18 +172,46 @@ export const make = Effect.gen(function* () {
         const viewerLogin = yield* github
           .getViewerLogin({ cwd: context.cwd })
           .pipe(Effect.orElseSucceed(() => null));
-        const submitted = yield* github.submitPullRequestReview({
-          cwd: context.cwd,
-          reference: prReference,
-          commitId: job.headSha,
-          body,
-          event: resolveSubmittableEvent({
-            decision,
-            prAuthorLogin: prMeta.authorLogin,
-            viewerLogin,
-          }),
-          comments: anchorable,
+        const event = resolveSubmittableEvent({
+          decision,
+          prAuthorLogin: prMeta.authorLogin,
+          viewerLogin,
         });
+        const submitted = yield* github
+          .submitPullRequestReview({
+            cwd: context.cwd,
+            reference: prReference,
+            commitId: job.headSha,
+            body,
+            event,
+            comments: anchorable,
+          })
+          .pipe(
+            // GitHub rejects the whole review when one inline comment fails to
+            // anchor, so retry body-only rather than lose the findings. The
+            // rejected comments are re-rendered into the body.
+            Effect.catchIf(
+              (error) =>
+                error._tag === "GitHubPullRequestReviewRejectedError" &&
+                error.inlineCommentRejected,
+              () =>
+                github.submitPullRequestReview({
+                  cwd: context.cwd,
+                  reference: prReference,
+                  commitId: job.headSha,
+                  body: buildReviewBody({
+                    findings: { ...findings, decision },
+                    unanchored: findings.comments,
+                    modelSelection: job.modelSelection as ModelSelection,
+                    headSha: job.headSha,
+                    // Anchorable findings are in here too, so do not claim
+                    // they missed the diff — GitHub refused the whole batch.
+                    unanchoredReason: "inline-rejected",
+                  }),
+                  event,
+                }),
+            ),
+          );
         reviewUrl = submitted.url || null;
         githubReviewId = submitted.reviewId || null;
       }
@@ -223,7 +255,7 @@ export const make = Effect.gen(function* () {
         store
           .update(jobId, {
             status: "failed",
-            error: Cause.pretty(cause),
+            error: describeAutoReviewFailure(cause),
           })
           .pipe(Effect.asVoid),
       ),
