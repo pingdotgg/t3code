@@ -171,8 +171,6 @@ describe("PreviewManager", () => {
           const detach = vi.fn(() => {
             attached = false;
           });
-          const focus = vi.fn();
-          const restoreFocus = vi.fn();
           const capturePage = vi.fn(async () => image);
           const sendCommand = vi.fn(async (method: string): Promise<unknown> => {
             if (method === "Runtime.evaluate") {
@@ -214,7 +212,6 @@ describe("PreviewManager", () => {
             send: webviewSend,
             navigationHistory: { canGoBack: () => false, canGoForward: () => false },
             setWindowOpenHandler: vi.fn(),
-            focus,
             capturePage,
             debugger: {
               isAttached: () => attached,
@@ -225,12 +222,6 @@ describe("PreviewManager", () => {
               off: vi.fn(),
             },
           } as never);
-          getFocusedWebContents.mockReturnValue({
-            id: 7,
-            isDestroyed: () => false,
-            focus: restoreFocus,
-          } as never);
-
           yield* manager.createTab("tab_snapshot");
           yield* manager.registerWebview("tab_snapshot", 42);
           yield* Effect.yieldNow;
@@ -256,7 +247,6 @@ describe("PreviewManager", () => {
             captureBeyondViewport: false,
           });
           expect(sendCommand).not.toHaveBeenCalledWith("Page.bringToFront", undefined);
-          expect(focus).not.toHaveBeenCalled();
 
           const backgroundCdpCaptured = yield* manager.automationSnapshot("tab_snapshot", true);
           expect(backgroundCdpCaptured.screenshot).toMatchObject({ width: 640, height: 360 });
@@ -265,9 +255,7 @@ describe("PreviewManager", () => {
             fromSurface: true,
             captureBeyondViewport: false,
           });
-          expect(sendCommand).toHaveBeenCalledWith("Page.bringToFront", undefined);
-          expect(focus).toHaveBeenCalledOnce();
-          expect(restoreFocus).toHaveBeenCalledOnce();
+          expect(sendCommand).not.toHaveBeenCalledWith("Page.bringToFront", undefined);
           expect(capturePage).not.toHaveBeenCalled();
 
           captureMode = "failure";
@@ -276,10 +264,8 @@ describe("PreviewManager", () => {
             true,
           );
           expect(backgroundFallbackCaptured.screenshot).toMatchObject({ width: 640, height: 360 });
-          expect(focus).toHaveBeenCalledTimes(2);
-          expect(restoreFocus).toHaveBeenCalledTimes(2);
           expect(capturePage).toHaveBeenCalledOnce();
-          expect(capturePage).toHaveBeenCalledWith(undefined, { stayHidden: false });
+          expect(capturePage).toHaveBeenCalledWith(undefined, { stayHidden: true });
 
           capturePage.mockClear();
           const foregroundFallbackCaptured = yield* manager.automationSnapshot("tab_snapshot");
@@ -288,6 +274,7 @@ describe("PreviewManager", () => {
             height: 360,
           });
           expect(capturePage).toHaveBeenCalledOnce();
+          expect(capturePage).toHaveBeenCalledWith(undefined, { stayHidden: false });
 
           capturePage.mockClear();
           capturePage.mockResolvedValueOnce({ ...image, isEmpty: () => true });

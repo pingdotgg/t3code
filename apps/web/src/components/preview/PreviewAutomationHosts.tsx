@@ -490,19 +490,12 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               },
             );
             await ready.bridge.navigate(ready.tabId, resolution.resolvedUrl);
-            await withPreviewAutomationBackgroundPresentation(
+            await waitForNavigationReadiness(
               threadRef,
               request.requestId,
               ready.tabId,
-              remainingOperationBudget(),
-              async () =>
-                await waitForNavigationReadiness(
-                  threadRef,
-                  request.requestId,
-                  ready.tabId,
-                  input.readiness ?? "load",
-                  remainingOperationBudget(input.timeoutMs ?? request.timeoutMs),
-                ),
+              input.readiness ?? "load",
+              remainingOperationBudget(input.timeoutMs ?? request.timeoutMs),
             );
             return await currentStatus(threadRef, ready.tabId);
           }
@@ -541,13 +534,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "setColorScheme": {
             const ready = await requireReadyTab();
             const input = request.input as PreviewAutomationSetColorSchemeInput;
-            await withPreviewAutomationBackgroundPresentation(
-              threadRef,
-              request.requestId,
-              ready.tabId,
-              remainingOperationBudget(),
-              async () => await ready.bridge.setColorScheme(ready.tabId, input.colorScheme),
-            );
+            await ready.bridge.setColorScheme(ready.tabId, input.colorScheme);
             return {
               tabId: ready.tabId,
               colorScheme: input.colorScheme,
@@ -565,86 +552,44 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "click": {
             const ready = await requireReadyTab();
-            return await withPreviewAutomationBackgroundPresentation(
-              threadRef,
-              request.requestId,
+            return await ready.bridge.automation.click(
               ready.tabId,
-              remainingOperationBudget(),
-              async () =>
-                await ready.bridge.automation.click(
-                  ready.tabId,
-                  request.input as Parameters<typeof ready.bridge.automation.click>[1],
-                ),
+              request.input as Parameters<typeof ready.bridge.automation.click>[1],
             );
           }
           case "type": {
             const ready = await requireReadyTab();
-            return await withPreviewAutomationBackgroundPresentation(
-              threadRef,
-              request.requestId,
+            return await ready.bridge.automation.type(
               ready.tabId,
-              remainingOperationBudget(),
-              async () =>
-                await ready.bridge.automation.type(
-                  ready.tabId,
-                  request.input as Parameters<typeof ready.bridge.automation.type>[1],
-                ),
+              request.input as Parameters<typeof ready.bridge.automation.type>[1],
             );
           }
           case "press": {
             const ready = await requireReadyTab();
-            return await withPreviewAutomationBackgroundPresentation(
-              threadRef,
-              request.requestId,
+            return await ready.bridge.automation.press(
               ready.tabId,
-              remainingOperationBudget(),
-              async () =>
-                await ready.bridge.automation.press(
-                  ready.tabId,
-                  request.input as Parameters<typeof ready.bridge.automation.press>[1],
-                ),
+              request.input as Parameters<typeof ready.bridge.automation.press>[1],
             );
           }
           case "scroll": {
             const ready = await requireReadyTab();
-            return await withPreviewAutomationBackgroundPresentation(
-              threadRef,
-              request.requestId,
+            return await ready.bridge.automation.scroll(
               ready.tabId,
-              remainingOperationBudget(),
-              async () =>
-                await ready.bridge.automation.scroll(
-                  ready.tabId,
-                  request.input as Parameters<typeof ready.bridge.automation.scroll>[1],
-                ),
+              request.input as Parameters<typeof ready.bridge.automation.scroll>[1],
             );
           }
           case "evaluate": {
             const ready = await requireReadyTab();
-            return await withPreviewAutomationBackgroundPresentation(
-              threadRef,
-              request.requestId,
+            return await ready.bridge.automation.evaluate(
               ready.tabId,
-              remainingOperationBudget(),
-              async () =>
-                await ready.bridge.automation.evaluate(
-                  ready.tabId,
-                  request.input as Parameters<typeof ready.bridge.automation.evaluate>[1],
-                ),
+              request.input as Parameters<typeof ready.bridge.automation.evaluate>[1],
             );
           }
           case "waitFor": {
             const ready = await requireReadyTab();
-            return await withPreviewAutomationBackgroundPresentation(
-              threadRef,
-              request.requestId,
+            return await ready.bridge.automation.waitFor(
               ready.tabId,
-              remainingOperationBudget(),
-              async () =>
-                await ready.bridge.automation.waitFor(
-                  ready.tabId,
-                  request.input as Parameters<typeof ready.bridge.automation.waitFor>[1],
-                ),
+              request.input as Parameters<typeof ready.bridge.automation.waitFor>[1],
             );
           }
           case "recordingStart": {

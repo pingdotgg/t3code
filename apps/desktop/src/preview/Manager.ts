@@ -2067,6 +2067,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const captureBackgroundPage = Effect.fn("PreviewManager.captureBackgroundPage")(function* (
     tabId: string,
     wc: Electron.WebContents,
+    background: boolean,
   ) {
     const sourceImage = yield* attemptPromise(
       {
@@ -2074,7 +2075,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         tabId,
         webContentsId: wc.id,
       },
-      () => wc.capturePage(undefined, { stayHidden: false }),
+      () => wc.capturePage(undefined, { stayHidden: background }),
     );
     return yield* encodeAutomationScreenshot(
       tabId,
@@ -2177,7 +2178,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               tabId,
               timeoutMs: cdpScreenshotTimeoutMs,
             });
-        const backgroundScreenshotResult = yield* captureBackgroundPage(tabId, wc).pipe(
+        const backgroundScreenshotResult = yield* captureBackgroundPage(tabId, wc, background).pipe(
           Effect.timeoutOption(AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS),
           Effect.exit,
         );
@@ -2229,39 +2230,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return snapshot;
     }
 
-    const previouslyFocused = yield* attempt(
-      { operation: "automationSnapshot.getFocusedWebContents", tabId, webContentsId: wc.id },
-      () => webContents.getFocusedWebContents(),
-    ).pipe(Effect.orElseSucceed(() => null));
-    const restoreFocus =
-      previouslyFocused && previouslyFocused.id !== wc.id
-        ? attempt(
-            {
-              operation: "automationSnapshot.restoreFocusedWebContents",
-              tabId,
-              webContentsId: previouslyFocused.id,
-            },
-            () => {
-              if (!previouslyFocused.isDestroyed()) previouslyFocused.focus();
-            },
-          ).pipe(Effect.ignore)
-        : Effect.void;
-
-    // A mounted-but-unselected <webview> remains a live guest, but Chromium
-    // does not expose its composited pixels until that guest is foregrounded.
-    // The renderer stages it transparently while this short capture lease
-    // activates the guest itself. Restoring the prior WebContents preserves
-    // both application focus and the user-visible preview selection.
+    // The renderer briefly stages a non-selected guest so Chromium can expose
+    // its composited pixels. Do not focus the guest or send Page.bringToFront:
+    // Electron can otherwise promote the native guest surface above the host
+    // UI while ignoring the staging wrapper's opacity.
     const result = yield* withControlSession(tabId, wc, "snapshot", (send) =>
-      Effect.gen(function* () {
-        yield* attempt(
-          { operation: "automationSnapshot.focusWebContents", tabId, webContentsId: wc.id },
-          () => wc.focus(),
-        );
-        yield* send("Page.bringToFront");
-        return yield* captureAutomationSnapshot(tabId, wc, send, true);
-      }),
-    ).pipe(Effect.ensuring(restoreFocus));
+      captureAutomationSnapshot(tabId, wc, send, true),
+    );
     if (result.detachAfterCapture) yield* detachControlSession(wc.id);
     const { detachAfterCapture: _, ...snapshot } = result;
     return snapshot;
