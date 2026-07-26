@@ -495,6 +495,58 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("completes the lifecycle when a detached slash command fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-failed-command");
+      let rejectCommand!: (error: Error) => void;
+      runtimeMock.state.commandPromise = new Promise<void>((_resolve, reject) => {
+        rejectCommand = reject;
+      });
+      const terminalEventFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.completed" || event.type === "turn.aborted"),
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "/review src/provider",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/sonnet",
+        ),
+      });
+      rejectCommand(new Error("command failed"));
+
+      const events = Array.from(
+        yield* Fiber.join(terminalEventFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["turn.completed"],
+      );
+      const completed = events[0];
+      if (completed?.type !== "turn.completed") {
+        throw new Error("Expected a failed turn.completed event");
+      }
+      NodeAssert.equal(completed.payload.state, "failed");
+      NodeAssert.equal(completed.payload.errorMessage, "command failed");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("falls back to a fresh session when the persisted session is gone", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

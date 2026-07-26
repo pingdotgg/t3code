@@ -1511,11 +1511,13 @@ export function makeOpenCodeAdapter(
 
       const dispatchedRequest = request.pipe(
         Effect.mapError(toRequestError),
-        // On failure of a fresh turn: clear active-turn state, flip the
-        // session back to ready with lastError set, emit turn.aborted, then
-        // let the typed error propagate. We don't need to rebuild the error
-        // here — `toRequestError` already produced the right shape. A failed
-        // steer leaves the still-running original turn untouched.
+        // On failure of a fresh turn: clear active-turn state and publish a
+        // terminal runtime event. Commands are detached below because their
+        // endpoint waits for the full assistant turn, so their failure must
+        // close the orchestration lifecycle through turn.completed. Regular
+        // prompt dispatch failures still propagate to the caller, which owns
+        // start-failure recovery. A failed steer leaves the still-running
+        // original turn untouched.
         Effect.tapError((requestError) =>
           steeringTurnId !== undefined || context.activeTurnId !== turnId
             ? Effect.void
@@ -1526,22 +1528,34 @@ export function makeOpenCodeAdapter(
                 yield* updateProviderSession(
                   context,
                   {
-                    status: "ready",
+                    status: command ? "error" : "ready",
                     model: modelSelection?.model ?? context.session.model,
                     lastError: requestError.detail,
                   },
                   { clearActiveTurnId: true },
                 );
-                yield* emit({
-                  ...(yield* buildEventBase({
-                    threadId: input.threadId,
-                    turnId,
-                  })),
-                  type: "turn.aborted",
-                  payload: {
-                    reason: requestError.detail,
-                  },
+                const eventBase = yield* buildEventBase({
+                  threadId: input.threadId,
+                  turnId,
                 });
+                if (command) {
+                  yield* emit({
+                    ...eventBase,
+                    type: "turn.completed",
+                    payload: {
+                      state: "failed",
+                      errorMessage: requestError.detail,
+                    },
+                  });
+                } else {
+                  yield* emit({
+                    ...eventBase,
+                    type: "turn.aborted",
+                    payload: {
+                      reason: requestError.detail,
+                    },
+                  });
+                }
               }),
         ),
       );
