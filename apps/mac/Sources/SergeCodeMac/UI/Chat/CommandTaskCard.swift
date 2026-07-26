@@ -24,13 +24,15 @@ enum CommandTaskPresentation {
             ?? (task.isBackgrounded ? "Background command" : "Command")
     }
 
-    /// Streamed process output, oldest first. The provider slices the output
-    /// file into progress chunks, so the log entries concatenate back into the
-    /// process's own text.
+    /// Streamed process output, oldest first.
+    ///
+    /// The provider slices the output file by size, not by line, so the chunks
+    /// concatenate — a separator here would invent a line break wherever a
+    /// slice landed mid-line, in the visible tail and in Copy output alike.
     static func output(for task: SubagentTaskItem) -> String? {
         let chunks = task.progressLog.compactMap { SubagentTaskPresentation.nonEmpty($0.text) }
         guard !chunks.isEmpty else { return nil }
-        return chunks.joined(separator: "\n")
+        return chunks.joined()
     }
 
     /// Keeps the last `limit` lines — a running job's tail is the signal —

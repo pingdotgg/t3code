@@ -17,9 +17,11 @@ struct CommandTaskPresentationTests {
         #expect(CommandTaskPresentation.title(for: task) == "Background command")
     }
 
-    @Test("streamed chunks concatenate into the process output")
+    @Test("streamed chunks concatenate without inventing line breaks")
     func outputJoinsProgressChunks() throws {
-        let task = backgroundCommand(progress: ["Building for debugging...", "Test Suite started"])
+        // The provider slices by size, so a chunk boundary can land mid-line:
+        // joining with a separator would split "Building" in half.
+        let task = backgroundCommand(progress: ["Buil", "ding for debugging...\nTest Suite started"])
 
         let output = try #require(CommandTaskPresentation.output(for: task))
         #expect(output == "Building for debugging...\nTest Suite started")
