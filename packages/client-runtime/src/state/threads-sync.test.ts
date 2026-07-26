@@ -424,7 +424,7 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("treats an authoritative HTTP thread_not_found response as terminal", () =>
+  it.effect("keeps an authoritative HTTP thread_not_found response terminal", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         httpSnapshotError: new EnvironmentResourceNotFoundError({
@@ -439,6 +439,7 @@ describe("EnvironmentThreads", () => {
         (value) => value.status === "deleted",
       );
       yield* Queue.offer(harness.wakeups, "application-active");
+      yield* harness.replaceSession;
       yield* TestClock.adjust("1 second");
       for (let attempt = 0; attempt < 100; attempt += 1) {
         yield* Effect.yieldNow;
