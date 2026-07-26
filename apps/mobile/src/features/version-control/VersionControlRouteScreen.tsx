@@ -178,6 +178,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
         }
         return;
       }
+      setSettledSnapshotCwd((current) => (current === selectedThreadCwd ? null : current));
       try {
         const rawSnapshot = await api.snapshot({
           cwd: selectedThreadCwd,

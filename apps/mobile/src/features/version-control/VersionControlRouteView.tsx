@@ -170,6 +170,8 @@ export function VersionControlRouteView({
           <EmptyState
             title="Version Control unavailable"
             detail={error ?? "The repository snapshot could not be loaded."}
+            actionLabel="Retry"
+            onAction={() => void refreshSnapshot()}
           />
         </View>
       </>

@@ -310,6 +310,7 @@ export function useSourceControlPanelExpansion(state: SourceControlPanelState) {
         if (!isLatestPanelDetailRequest(branchDetailRequestsRef.current, detailsKey, requestId)) {
           return;
         }
+        if (isSourceControlPanelCommandInterrupted(nextError)) return;
         setError(errorMessage(nextError));
       } finally {
         if (isLatestPanelDetailRequest(branchDetailRequestsRef.current, detailsKey, requestId)) {
