@@ -37,6 +37,12 @@
             case "glass":
                 await GlassLayeringProbe.run(multi: multi, scenery: scenery, dir: dir)
                 return
+            case "window-size":
+                await runWindowSize(multi: multi, dir: dir)
+                return
+            case "min-size":
+                await runMinSize(multi: multi, scenery: scenery)
+                return
             default:
                 break
             }
@@ -751,6 +757,136 @@
                 }
             }
             window.orderOut(nil)
+        }
+
+        /// Window-sizing diagnostic: shrinks the window below the split-view
+        /// content minimum, then exercises the structural toggles (inspector,
+        /// sidebar, thread selection, main-area review) logging the window
+        /// frame and AppKit minimum after each step. Any step that reports a
+        /// larger frame than the previous one grew the window behind the
+        /// user's back.
+        private static func runWindowSize(multi: MultiDeviceModel, dir: String) async {
+            let model = multi.local
+            try? await Task.sleep(for: .seconds(2))
+            guard let window = NSApp.windows.first(where: { $0.isVisible }) else {
+                print("UIProbe: window-size failed (no window)")
+                NSApp.terminate(nil)
+                return
+            }
+            func log(_ tag: String) {
+                let f = window.frame
+                print(
+                    "UIProbe: window-size \(tag) "
+                        + "frame=\(Int(f.width))x\(Int(f.height)) "
+                        + "content=\(Int(window.contentLayoutRect.width))x\(Int(window.contentLayoutRect.height)) "
+                        + "minSize=\(Int(window.minSize.width))x\(Int(window.minSize.height)) "
+                        + "contentMinSize=\(Int(window.contentMinSize.width))x\(Int(window.contentMinSize.height)) "
+                        + "autosave='\(window.frameAutosaveName)' restorable=\(window.isRestorable)")
+            }
+            log("initial")
+            logSplitViews(window)
+
+            window.setContentSize(NSSize(width: 1500, height: 700))
+            try? await Task.sleep(for: .seconds(1.5))
+            log("after-grow-1500")
+            if model.selectedThreadID == nil,
+                let threadID = model.threads.first(where: { $0.id == "thread-1" })?.id
+                    ?? model.threads.first?.id
+            {
+                multi.select(threadID: threadID, on: model.deviceID)
+                try? await Task.sleep(for: .seconds(2))
+            }
+            snapshot("window-size-wide", window: window, dir: dir)
+
+            // Stepwise shrink: a user drags the corner, so the minimum is
+            // re-evaluated at every intermediate width.
+            for target in stride(from: 1450, through: 800, by: -50) {
+                window.setContentSize(NSSize(width: CGFloat(target), height: 600))
+                try? await Task.sleep(for: .seconds(0.4))
+                log("after-shrink-\(target)")
+            }
+
+            log("after-select-thread")
+
+            toggleSection("inspector")
+            try? await Task.sleep(for: .seconds(1.5))
+            log("after-inspector-hide")
+
+            toggleSection("inspector")
+            try? await Task.sleep(for: .seconds(1.5))
+            log("after-inspector-show")
+
+            toggleSection("sidebar")
+            try? await Task.sleep(for: .seconds(1.5))
+            log("after-sidebar-hide")
+
+            toggleSection("sidebar")
+            try? await Task.sleep(for: .seconds(1.5))
+            log("after-sidebar-show")
+
+            if let threadID = model.selectedThreadID {
+                model.openReview(threadID: threadID, scope: .allChanges)
+                try? await Task.sleep(for: .seconds(2))
+                log("after-open-review")
+                model.closeReview(threadID: threadID)
+                try? await Task.sleep(for: .seconds(1.5))
+                log("after-close-review")
+            }
+
+            snapshot("window-size-final", window: window, dir: dir)
+            NSApp.terminate(nil)
+        }
+
+        /// Dumps the AppKit split-view panes backing NavigationSplitView, so
+        /// the window minimum can be attributed to individual columns.
+        private static func logSplitViews(_ window: NSWindow) {
+            func walk(_ view: NSView) {
+                if let split = view as? NSSplitView {
+                    let panes = split.arrangedSubviews.map { Int($0.frame.width) }
+                    print("UIProbe: window-size splitview panes=\(panes)")
+                }
+                for sub in view.subviews { walk(sub) }
+            }
+            if let root = window.contentView { walk(root) }
+        }
+
+        /// Reports each shell surface's minimum (fitting) size, so the
+        /// contributor to an oversized window minimum can be identified.
+        private static func runMinSize(multi: MultiDeviceModel, scenery: SceneryStore) async {
+            let model = multi.local
+            try? await Task.sleep(for: .seconds(2))
+            if model.selectedThreadID == nil,
+                let threadID = model.threads.first(where: { $0.id == "thread-1" })?.id
+                    ?? model.threads.first?.id
+            {
+                multi.select(threadID: threadID, on: model.deviceID)
+            }
+            try? await Task.sleep(for: .seconds(2))
+            func measure(_ name: String, _ view: some View) {
+                let host = NSHostingView(rootView: AnyView(view))
+                host.frame = NSRect(x: 0, y: 0, width: 1400, height: 900)
+                host.layoutSubtreeIfNeeded()
+                let fitting = host.fittingSize
+                print("UIProbe: min-size \(name) = \(Int(fitting.width))x\(Int(fitting.height))")
+            }
+            measure("SidebarView", SidebarView(multi: multi, scenery: scenery, onToggleSidebar: {}))
+            measure("ChatScreen", ChatScreen(model: model, scenery: scenery))
+            measure("ComposerBar", ComposerBar(model: model, accent: AlpineTheme.accent))
+            if let thread = model.selectedThread {
+                measure(
+                    "ChatHeaderView",
+                    ChatHeaderView(
+                        thread: thread, model: model, scenery: scenery,
+                        threadKey: model.scopedThreadKey(thread.id)))
+                measure("InspectorPanel", InspectorPanel(model: model, threadID: thread.id))
+                measure("ChatFollowUpBar", ChatFollowUpBar(model: model))
+                measure("DiffReviewView", DiffReviewView(model: model, threadID: thread.id))
+                measure("VcsToolbar", VcsToolbar(model: model, threadID: thread.id))
+                measure(
+                    "ProviderLabel",
+                    ProviderLabel(provider: thread.provider, modelID: thread.modelID, iconSize: 13))
+            }
+            NSApp.terminate(nil)
         }
 
         /// Toggles a collapsible section via the probe notification hook
