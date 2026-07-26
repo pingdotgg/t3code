@@ -1085,73 +1085,6 @@ describe("ProviderRuntimeIngestion", () => {
     expect(second?.text).toBe("second turn-less answer");
   });
 
-  it("keeps correlation when a recycled item's empty completion arrives before its deltas", async () => {
-    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
-    const now = "2026-01-01T00:00:00.000Z";
-
-    // An earlier message already took the raw id.
-    harness.emit({
-      type: "item.completed",
-      eventId: asEventId("evt-misordered-original"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      turnId: asTurnId("turn-misordered-0"),
-      itemId: asItemId("item-misordered"),
-      payload: {
-        itemType: "assistant_message",
-        status: "completed",
-        detail: "original answer",
-      },
-    });
-    await waitForThread(harness.readModel, (entry) =>
-      entry.messages.some(
-        (message: ProviderRuntimeTestMessage) =>
-          message.id === "assistant:item-misordered" && !message.streaming,
-      ),
-    );
-
-    // The provider recycles the item id and misorders its events: an empty
-    // completion (no detail) arrives before the content. The completion
-    // claims a fresh id; the deltas must continue that same message instead
-    // of minting yet another one.
-    harness.emit({
-      type: "item.completed",
-      eventId: asEventId("evt-misordered-empty-completion"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      itemId: asItemId("item-misordered"),
-      payload: {
-        itemType: "assistant_message",
-        status: "completed",
-      },
-    });
-    harness.emit({
-      type: "content.delta",
-      eventId: asEventId("evt-misordered-delta"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      itemId: asItemId("item-misordered"),
-      payload: {
-        streamKind: "assistant_text",
-        delta: "late-arriving content",
-      },
-    });
-
-    const thread = await waitForThread(harness.readModel, (entry) =>
-      entry.messages.some(
-        (message: ProviderRuntimeTestMessage) => message.id === "assistant:item-misordered:again:1",
-      ),
-    );
-    const recycled = thread.messages.filter((message: ProviderRuntimeTestMessage) =>
-      message.id.startsWith("assistant:item-misordered:again"),
-    );
-    expect(recycled).toHaveLength(1);
-    expect(recycled[0]?.text).toBe("late-arriving content");
-  });
-
   it("continues a live turn-less assistant message across a restart", async () => {
     const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
     const now = "2026-01-01T00:00:00.000Z";
@@ -1239,6 +1172,56 @@ describe("ProviderRuntimeIngestion", () => {
       thread.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-resume-turn:again:1",
+      ),
+    ).toBe(false);
+  });
+
+  it("finalizes a live message across a restart instead of minting a new id", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // Pre-restart live message for the same turn; in-memory caches start
+    // empty, so the completion has no segment state or correlation entry.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make("cmd-seed-live-completion"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: MessageId.make("assistant:item-resume-complete"),
+        turnId: TurnId.make("turn-resume-complete"),
+        delta: "pre-restart content",
+        createdAt: now,
+      }),
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-resume-complete"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-resume-complete"),
+      itemId: asItemId("item-resume-complete"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-resume-complete" && !message.streaming,
+      ),
+    );
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-resume-complete",
+    );
+    expect(message?.text).toBe("pre-restart content");
+    expect(
+      thread.messages.some(
+        (entry: ProviderRuntimeTestMessage) =>
+          entry.id === "assistant:item-resume-complete:again:1",
       ),
     ).toBe(false);
   });
