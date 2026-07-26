@@ -104,6 +104,7 @@ import {
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
+  isSidebarSubagentThread,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
@@ -1370,6 +1371,7 @@ export default function SidebarV2() {
     const visible = threads.filter(
       (thread) =>
         thread.archivedAt === null &&
+        !isSidebarSubagentThread(thread) &&
         (scopedProjectKeys === null ||
           scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
     );
