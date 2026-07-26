@@ -6,14 +6,66 @@ SergeCode (github.com/SergeSerb2/SergeCode) is a **permanent hard fork** of `pin
 
 - **NEVER EVER open a PR against, merge into, push to, comment on, or otherwise touch `pingdotgg/t3code`.** Not for any reason.
 - All PRs, issues, and pushes go to `SergeSerb2/SergeCode` only. Always pass `--repo SergeSerb2/SergeCode` explicitly to `gh` commands.
-- Do not add a git remote pointing at `pingdotgg/t3code`. If one exists, treat it as an error and remove it.
+- Do not add a git remote pointing at `pingdotgg/t3code`. If one exists, treat it as an error and remove it. `scripts/setup-worktree.sh` refuses to run when it finds one, so a worktree that bootstrapped cleanly has already passed this check.
 - Before creating any PR, verify the base repository is `SergeSerb2/SergeCode`.
+
+## Working in a Fresh Worktree
+
+Each thread gets its own git worktree, which starts with no `node_modules`.
+`scripts/setup-worktree.sh` installs dependencies, links `.env.local` from the
+main checkout, and fails fast if a remote points at the upstream repo.
+`.vite-hooks/post-checkout` runs it automatically when git creates the
+worktree, so normally there is nothing to do.
+
+If a command fails with `vp: command not found`,
+`Could not resolve 'vite-plus/test/config'`, or `Cannot find module`, that is
+the missing install and not your change. Run `pnpm run setup` and retry —
+do not start debugging the error itself.
 
 ## Task Completion Requirements
 
-- `vp check` and `vp run typecheck` must pass before considering tasks completed.
-  - If changing native mobile code, `vp run lint:mobile` must also pass.
-- Use `vp test` for the built-in Vite+ test command and `vp run test` when you specifically need the `test` package script.
+### Verify the change, not the monorepo
+
+`pnpm run verify` runs only the checks your diff can possibly have broken: it
+resolves changed files to workspace packages, then runs `vp check` on those
+files, `vp run --filter ...<pkg> typecheck` on those packages and their
+dependents, `vp test related` on the tests that import the changed sources,
+and the Swift suite only when `apps/mac` changed. Use it as the loop you run
+while working.
+
+- `pnpm run verify` — the changed slice. Seconds, not minutes.
+- `pnpm run verify --all` — the full gate. Run it once, before opening the PR.
+- `pnpm run verify --dry-run` — show the plan without running it.
+- A single file is always cheapest to check directly:
+  `vp test run path/to/file.test.ts`.
+
+`vp check` and `vp run typecheck` must pass before a task is complete, and
+`vp run lint:mobile` must also pass when native mobile code changed —
+`pnpm run verify --all` covers all three. Use `vp test` for the built-in
+Vite+ test command and `vp run test` when you specifically need the `test`
+package script.
+
+### Do not re-run a check that cannot have changed
+
+Across the archived threads, 63% of all build/test/check runs happened with no
+file edit since the previous run. Re-running is not free: the full TypeScript
+suite is 411 files, and the Swift suite relinks before it runs.
+
+- Never re-run a suite to "confirm" a result you already have. If nothing was
+  edited, the answer is the same.
+- `swift test` builds first. Do not run `swift build` before it.
+- Re-read the output you already captured instead of re-running the command to
+  see it again.
+
+### macOS app
+
+Use `pnpm run test:mac` (`apps/mac/scripts/swift-test.sh`). A bare
+`swift test --package-path apps/mac` fails on a Command Line Tools toolchain —
+missing `TestingMacros` plugin, then missing `lib_TestingInterop.dylib`, then
+missing `Sparkle.framework` — and the flags that fix it differ between
+Command Line Tools and Xcode. The wrapper resolves them from the active
+toolchain and applies `--no-parallel`. It forwards arguments, so
+`pnpm run test:mac --filter SidebarPresentationTests` scopes the run.
 
 ## macOS App Versioning and Release Policy
 

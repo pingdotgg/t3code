@@ -25,9 +25,8 @@ PR policy reminders (delete this comment before submitting):
 
 <!-- How was this tested? Check what you actually ran and note the results. -->
 
-- [ ] `vp check` passes
-- [ ] `vp run typecheck` passes
-- [ ] `vp run lint:mobile` passes (required for native mobile changes)
+- [ ] `pnpm run verify --all` passes (check + typecheck + tests; adds `lint:mobile` and the Swift suite)
+- [ ] `pnpm run test:mac` passes (required for `apps/mac` changes)
 - [ ] Manually verified (describe below)
 
 ## Screenshots / Recordings
