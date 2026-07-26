@@ -71,6 +71,20 @@ struct RootView: View {
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar {
             ToolbarItem(placement: .navigation) {
+                // Reopen affordance: the close button lives inside the
+                // sidebar, so once the column is collapsed this is the only
+                // on-screen way back (besides the View menu / shortcut and
+                // edge-drag). Hidden while the sidebar is visible.
+                if columnVisibility == .detailOnly {
+                    Button(action: toggleSidebar) {
+                        Label("Show Sidebar", systemImage: "sidebar.leading")
+                    }
+                    .buttonStyle(AlpineToolbarIconButtonStyle())
+                    .transition(.opacity)
+                }
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .navigation) {
                 ConnectionStatusPill(phase: model.connection)
             }
             .sharedBackgroundVisibility(.hidden)
@@ -208,8 +222,15 @@ struct RootView: View {
     }
 
     private func toggleSidebar() {
-        withAnimation(Motion.structure) {
-            columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+        // Deferred one runloop turn: flipping the visibility re-vends the
+        // conditional "Show Sidebar" toolbar item, and on macOS 26/27 a
+        // SwiftUI toolbar re-vend during an in-layout render trips AppKit's
+        // layout-feedback-loop guard (same crash class as the Inspector
+        // button above).
+        DispatchQueue.main.async {
+            withAnimation(Motion.structure) {
+                columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+            }
         }
     }
 
