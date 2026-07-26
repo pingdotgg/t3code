@@ -42,7 +42,11 @@ jobs:
     # decision, and it defaults to a draft for manual review.
     name: Build the Windows installer and create its release
     runs-on: windows-latest
-    timeout-minutes: 60
+    # The job now runs the full check suite before a release-profile Tauri
+    # build (`lto = true`, `codegen-units = 1`), on top of the server bundle
+    # and the sidecar download. Timing out midway is a genuinely bad failure —
+    # it can leave a tag without its release — so the ceiling is generous.
+    timeout-minutes: 120
 
     steps:
       # No `ref:` — check out exactly the ref the dispatch selected, so the
@@ -83,6 +87,37 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Restore cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/windows/src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('apps/windows/src-tauri/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # `AGENTS.md` requires these before anything is considered done, and
+      # `release-mac.yml` runs them before shipping for the same reason. A
+      # release is the last place that should skip them: `ci-windows.yml` is
+      # path-filtered, so a merge that touched nothing it watches can reach
+      # `main` unverified, and nothing else would catch it before an installer
+      # went out.
+      #
+      # Separate steps, not one multi-line `run:` — GitHub's `pwsh` propagates
+      # only the last command's exit code, so a failing `vp check` followed by
+      # a passing typecheck would report green.
+      - name: Repository lint and format check
+        run: vp check
+
+      - name: Repository typecheck
+        run: vp run typecheck
+
+      - name: Test the renderer
+        run: vp run --filter @sergecode/windows test
 
       - name: Build the server bundle
         run: vp run --filter t3 build:bundle
@@ -94,6 +129,23 @@ jobs:
 
       - name: Build the renderer
         run: vp run --filter @sergecode/windows build
+
+      # The Rust gates run here rather than alongside the TypeScript ones
+      # above: `generate_context!` reads `frontendDist`, so nothing in this
+      # crate compiles until the renderer bundle exists. They still precede
+      # the installer build, which is the point — a clippy failure should not
+      # cost a full release-profile link first.
+      - name: Check formatting of the Rust shell
+        working-directory: apps/windows/src-tauri
+        run: cargo fmt --check
+
+      - name: Lint the Rust shell
+        working-directory: apps/windows/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test the Rust shell
+        working-directory: apps/windows/src-tauri
+        run: cargo test
 
       # `createUpdaterArtifacts` is `false` in tauri.conf.json so the build
       # works before any signing key exists. Setting the env vars alone would
