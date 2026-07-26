@@ -33,6 +33,15 @@ public struct ChatScreen: View {
             isLiveTurn: thread.status.isLiveTurn, hasPhoto: hasPhoto, hasSteps: hasSteps)
     }
 
+    /// The auto-review pet for `thread`. A function rather than an inline
+    /// closure in the modifier chain, for the same Swift 6.2 type-checker
+    /// reason as `selectedThreadIsActive` above.
+    private func reviewPet(_ thread: ChatThread) -> some View {
+        ReviewPetOverlay(status: thread.status, threadID: thread.id)
+            .padding(.trailing, 22)
+            .padding(.bottom, 6)
+    }
+
     /// Identity + status of the thread on screen, so switching to an already
     /// idle thread never reports as "the run just finished".
     private var watchedThreadSnapshot: ThreadStatusSnapshot {
@@ -65,6 +74,13 @@ public struct ChatScreen: View {
                             isPinnedToBottom: $isPinnedToBottom
                         )
                         .id(thread.id)
+                        // Auto-review runs on the server with no transcript
+                        // of its own, so the pet is anchored to the corner of
+                        // the timeline rather than dropped into it: it must
+                        // not scroll away, and it must not push the composer.
+                        .overlay(alignment: .bottomTrailing) {
+                            reviewPet(thread)
+                        }
                         ChatFollowUpBar(model: model)
                         // One shared row above the composer: the plan rail
                         // takes all the free width on the left, the Unsplash
