@@ -58,6 +58,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -467,6 +468,14 @@ function CommandPaletteDialog(props: {
   );
 }
 
+function renderThreadLeadingContent(thread: EnvironmentThreadShell) {
+  return <ThreadRowLeadingStatus thread={thread} />;
+}
+
+function renderThreadTrailingContent(thread: EnvironmentThreadShell) {
+  return <ThreadRowTrailingStatus thread={thread} />;
+}
+
 function OpenCommandPaletteDialog(props: {
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;
@@ -852,8 +861,8 @@ function OpenCommandPaletteDialog(props: {
         projectTitleById,
         sortOrder: clientSettings.sidebarThreadSortOrder,
         icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-        renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
-        renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
+        renderLeadingContent: renderThreadLeadingContent,
+        renderTrailingContent: renderThreadTrailingContent,
         runThread: async (thread) => {
           await navigate({
             to: "/$environmentId/$threadId",
