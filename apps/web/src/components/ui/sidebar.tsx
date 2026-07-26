@@ -800,7 +800,7 @@ const sidebarMenuButtonVariants = cva(
     },
     variants: {
       size: {
-        default: "h-8 rounded-md px-2 py-1.5 text-sm",
+        default: "h-8 rounded-md px-2.5 py-1.5 text-sm",
         icon: "size-8 justify-center rounded-md p-0",
         lg: "h-12 rounded-lg p-2 text-sm group-data-[collapsible=icon]:p-0!",
         sm: "h-7 rounded-lg p-2 text-xs",
