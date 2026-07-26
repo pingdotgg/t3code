@@ -19,6 +19,7 @@ import {
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderRuntimeEvent,
   ThreadId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -543,6 +544,63 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(completed.payload.state, "failed");
       NodeAssert.equal(completed.payload.errorMessage, "command failed");
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("keeps a late command rejection from overwriting an interruption", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-interrupted-command");
+      let rejectCommand!: (error: Error) => void;
+      runtimeMock.state.commandPromise = new Promise<void>((_resolve, reject) => {
+        rejectCommand = reject;
+      });
+      const terminalEvents: Array<ProviderRuntimeEvent> = [];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.completed" || event.type === "turn.aborted"),
+        ),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            terminalEvents.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "/review src/provider",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/sonnet",
+        ),
+      });
+      yield* adapter.interruptTurn(threadId, turn.turnId);
+      rejectCommand(new Error("late command failure"));
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      NodeAssert.equal(terminalEvents.length, 1);
+      const completed = terminalEvents[0];
+      if (completed?.type !== "turn.completed") {
+        throw new Error("Expected an interrupted turn.completed event");
+      }
+      NodeAssert.equal(completed.payload.state, "interrupted");
+      NodeAssert.equal(completed.payload.stopReason, "Interrupted by user.");
+
+      const sessions = yield* adapter.listSessions();
+      NodeAssert.equal(sessions[0]?.status, "ready");
+      NodeAssert.equal(sessions[0]?.activeTurnId, undefined);
+      yield* Fiber.interrupt(eventsFiber);
       yield* adapter.stopSession(threadId);
     }),
   );
