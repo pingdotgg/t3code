@@ -76,6 +76,49 @@ struct TranscriptCleanupTests {
         #expect(TranscriptCleanup.accepted(candidate: echoed, raw: raw) == nil)
     }
 
+    @Test("a short answer that echoes the words behind an assistant opener is rejected")
+    func rejectsShortAnswerBehindOpener() {
+        // Both ratios clear on their own here — 80% of the spoken words come
+        // back and only a third of the reply is new — so the opener veto is
+        // the only thing standing between this and the composer.
+        let raw = "can you make it blue"
+        #expect(
+            TranscriptCleanup.accepted(candidate: "Sure, I can make it blue.", raw: raw) == nil)
+        #expect(TranscriptCleanup.accepted(candidate: "Sure, ship it.", raw: "ship it") == nil)
+    }
+
+    @Test("an assistant opener is caught without any punctuation to key off")
+    func rejectsOpenerWithoutPunctuation() {
+        #expect(
+            TranscriptCleanup.accepted(candidate: "Okay I will make it blue", raw: "make it blue")
+                == nil)
+        #expect(
+            TranscriptCleanup.accepted(
+                candidate: "You can restart it from the menu",
+                raw: "restart it from the menu") == nil)
+    }
+
+    @Test("an opener the speaker actually said is kept")
+    func keepsSpokenOpener() {
+        let raw = "okay so lets ship the release tomorrow morning"
+        let candidate = "Okay, so let's ship the release tomorrow morning."
+        #expect(TranscriptCleanup.accepted(candidate: candidate, raw: raw) == candidate)
+    }
+
+    @Test("a spoken opener behind a filler word is still recognized as the speaker's")
+    func keepsSpokenOpenerAfterFiller() {
+        let raw = "um sure lets do it on friday"
+        let candidate = "Sure, let's do it on Friday."
+        #expect(TranscriptCleanup.accepted(candidate: candidate, raw: raw) == candidate)
+    }
+
+    @Test("apostrophes the cleanup pass adds do not read as invented words")
+    func apostrophesDoNotCountAsInvented() {
+        let raw = "i dont think that were going to make it and thats fine"
+        let candidate = "I don't think that we're going to make it, and that's fine."
+        #expect(TranscriptCleanup.accepted(candidate: candidate, raw: raw) == candidate)
+    }
+
     @Test("a summary that throws most of the utterance away is rejected")
     func rejectsSummary() {
         let raw = """

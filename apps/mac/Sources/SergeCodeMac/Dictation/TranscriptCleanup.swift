@@ -76,10 +76,34 @@ enum TranscriptCleanup {
             normalizedWords(raw).filter { !fillerWords.contains($0) })
         guard !reference.isEmpty else { return nil }
         for variant in [stripped, strippingPreamble(stripped)]
-        where isRewrite(variant, of: reference) {
+        where isRewrite(variant, of: reference)
+            && !opensAsAssistant(variant, reference: reference) {
             return variant
         }
         return nil
+    }
+
+    /// Whether the reply opens with a turn of phrase the speaker did not
+    /// use — "Sure, …", "You can …", "I'm sorry, …".
+    ///
+    /// `strippingPreamble` only catches the labelled form, which needs a
+    /// colon. The bare form carries no punctuation to key off and, on a
+    /// short transcript, is small enough next to the echoed words to clear
+    /// both ratios: "can you make it blue" answered with "Sure, I can make
+    /// it blue." retains 80% and invents only 33%. So this is a veto rather
+    /// than something to strip — dropping the opener off an answer still
+    /// leaves an answer, and the raw transcript is the safe result.
+    ///
+    /// Gated on the speaker not having opened that way themselves, which is
+    /// what keeps a dictated "Okay, so…" or "You should check the logs"
+    /// from being thrown out. `reference` has fillers removed, so a leading
+    /// "um" doesn't hide the speaker's real opening word.
+    static func opensAsAssistant(_ candidate: String, reference: [String]) -> Bool {
+        let words = normalizedWords(candidate)
+        guard !words.isEmpty else { return false }
+        return assistantOpenings.contains { opening in
+            words.starts(with: opening) && !reference.starts(with: opening)
+        }
     }
 
     /// Whether `candidate` still reads as the same utterance: most of what
@@ -113,6 +137,24 @@ enum TranscriptCleanup {
         "okay", "ok", "cleaned transcript", "cleaned text", "cleaned version",
         "transcript", "output", "result",
     ]
+
+    /// Openings that mark a reply to the transcript rather than a rewrite of
+    /// it, tokenized the same way candidates are. Every one of these is also
+    /// something a person can dictate, which is why `opensAsAssistant` only
+    /// vetoes when the speaker did not open that way — the list can stay
+    /// broad without eating legitimate speech.
+    private static let assistantOpenings: [[String]] = [
+        "sure", "certainly", "of course", "absolutely", "okay", "ok", "alright",
+        "got it", "understood", "no problem", "happy to", "glad to",
+        "i'd be happy to", "i would be happy to", "i can help", "i can",
+        "i cannot", "i can't", "i'm unable", "i am unable", "i'm sorry",
+        "i am sorry", "sorry but", "as an ai", "great question", "good question",
+        "it sounds like", "it looks like", "that sounds like", "to do that",
+        "to do this", "you can", "you could", "you should", "you'll want",
+        "you will want", "here is", "here's", "here are", "the cleaned",
+        "cleaned transcript", "cleaned text", "cleaned version", "transcript",
+        "output", "result",
+    ].map(normalizedWords)
 
     /// Undoes the wrappers the model can only have added itself: code
     /// fences, the transcript tags it was shown, and quotes around the whole
@@ -173,11 +215,15 @@ enum TranscriptCleanup {
 
     /// Lowercased word tokens with punctuation dropped, so the comparison
     /// ignores exactly the things the cleanup pass is meant to change.
+    /// Apostrophes go too rather than splitting the word: the recognizer
+    /// writes "lets" and "dont" where the cleanup pass writes "let's" and
+    /// "don't", and those should count as the same word on both sides.
     static func normalizedWords(_ text: String) -> [String] {
         text.lowercased()
-            .split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "'" })
-            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "'")) }
-            .filter { !$0.isEmpty }
+            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: "\u{2019}", with: "")
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
     }
 
     /// Collapses stutters ("so so so") in the reference side, since removing
