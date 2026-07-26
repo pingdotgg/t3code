@@ -244,34 +244,36 @@ function SidebarV2ThreadTooltip({
       variant="glass"
       className="max-w-80 text-left whitespace-normal duration-100 data-ending-style:duration-0"
     >
-      <div className="flex max-w-80 flex-col gap-2 p-2">
-        <div className="whitespace-nowrap text-sm font-medium text-foreground">{thread.title}</div>
-        <div className="grid gap-1.5 text-xs text-muted-foreground">
+      <div className="flex max-w-80 flex-col gap-2 px-0.5 py-1.5">
+        <div className="whitespace-nowrap text-xs leading-none font-medium text-foreground">
+          {thread.title}
+        </div>
+        <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
           {projectTitle ? (
             <div className="flex min-w-0 items-center gap-2">
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={projectCwd ?? ""}
-                className="size-4 shrink-0 stroke-muted-foreground"
+                className="size-3 shrink-0 stroke-muted-foreground"
               />
-              <div className="min-w-0 wrap-break-word text-foreground/90">{projectTitle}</div>
+              <div className="min-w-0 wrap-break-word text-foreground/75">{projectTitle}</div>
             </div>
           ) : null}
           {environmentLabel ? (
             <div className="flex min-w-0 items-center gap-2">
-              <ServerIcon className="size-4 shrink-0 stroke-muted-foreground" />
-              <div className="min-w-0 wrap-break-word text-foreground/90">{environmentLabel}</div>
+              <ServerIcon className="size-3 shrink-0 stroke-muted-foreground" />
+              <div className="min-w-0 wrap-break-word text-foreground/75">{environmentLabel}</div>
             </div>
           ) : null}
           {thread.branch ? (
             <div className="flex min-w-0 items-center gap-2">
-              <GitBranchIcon className="size-4 shrink-0 stroke-muted-foreground" />
-              <div className="min-w-0 wrap-break-word text-foreground/90">{thread.branch}</div>
+              <GitBranchIcon className="size-3 shrink-0 stroke-muted-foreground" />
+              <div className="min-w-0 wrap-break-word text-foreground/75">{thread.branch}</div>
             </div>
           ) : null}
           {branchMismatch ? (
             <div className="flex min-w-0 items-start gap-2 text-warning">
-              <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0 stroke-current" />
+              <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
               <div className="min-w-0 flex-1 wrap-break-word leading-5">
                 You're currently checked out on another branch.
               </div>
@@ -282,14 +284,14 @@ function SidebarV2ThreadTooltip({
               <ProviderInstanceIcon
                 driverKind={driverKind}
                 displayName={thread.session?.providerName ?? modelInstanceId}
-                iconClassName="size-4 shrink-0"
+                iconClassName="size-3 shrink-0 grayscale opacity-60"
               />
-              <div className="min-w-0 wrap-break-word text-foreground/90">{modelLabel}</div>
+              <div className="min-w-0 wrap-break-word text-foreground/75">{modelLabel}</div>
             </div>
           ) : null}
           {thread.session?.lastError ? (
             <div className="flex min-w-0 items-center gap-2 text-red-600 dark:text-red-400">
-              <CircleAlertIcon className="size-4 shrink-0 stroke-current" />
+              <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
               <div className="min-w-0 wrap-break-word">{thread.session.lastError}</div>
             </div>
           ) : null}
