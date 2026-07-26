@@ -20,9 +20,12 @@ SergeCode (github.com/SergeSerb2/SergeCode) is a **permanent hard fork** of `pin
 Releases are automated but opt-in: **merging a PR into `main` only triggers
 the `Release macOS App` workflow when that PR carries the `release` label**.
 Plain merges never ship an update. When triggered, the workflow bumps the
-prerelease version and `buildNumber` in `apps/mac/version.json`, builds and
-signs the app, publishes a GitHub Release, and commits the updated Sparkle
-appcast back to `main`. Installed apps then see the update via Sparkle. Bot
+version and `buildNumber` in `apps/mac/version.json`, builds and signs the
+app, publishes a GitHub Release, and commits the updated Sparkle appcast back
+to `main`. The bump size comes from an optional qualifier label on the same
+PR — `release:patch` for bug fixes (the default when only `release` is
+present), `release:minor` for features or larger PRs, and `release:major`
+for big releases. Installed apps then see the update via Sparkle. Bot
 commits pushed by the workflow carry `[skip release]` in their message —
 never remove that marker from automation commits, and never cherry-pick a
 bot commit without keeping the marker.
@@ -36,12 +39,13 @@ every agent MUST ask the user this question and wait for the answer:
 
 Do not infer the answer from the size of the change, the PR title, or the
 current branch. Note that merging a PR labeled `release` to `main` produces
-an automatic prerelease — this question is about _manual_ version-line
+an automatic version bump — this question is about _manual_ version-line
 changes (major/minor/patch) and manual release actions.
 
 - **Rolling/pending version:** keep both `version` and `buildNumber` in
   `apps/mac/version.json` unchanged in the PR. The automation bumps the
-  prerelease number on merge.
+  version on merge (patch by default; add `release:minor` or
+  `release:major` to the PR for a bigger bump).
 - **New version/release (manual semver bump):** get the user's desired semver
   bump (major, minor, patch, or prerelease), increment `buildNumber`
   monotonically, and update `apps/mac/version.json` in a PR targeting `main`.

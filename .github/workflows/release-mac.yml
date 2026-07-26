@@ -26,7 +26,9 @@ jobs:
     timeout-minutes: 45
     # Releases only ship when a PR carrying the "release" label is merged
     # into main (or via manual workflow_dispatch). Plain merges and bot
-    # commits never trigger a release.
+    # commits never trigger a release. The semver bump is chosen by an
+    # optional release:major / release:minor / release:patch label on the
+    # same PR; a bare "release" label defaults to patch.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.merged == true &&
@@ -48,15 +50,27 @@ jobs:
             exit 1
           fi
 
-      - name: Bump prerelease version
+      - name: Bump release version
         if: github.event_name == 'pull_request'
         id: bump
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
         run: |
           set -euo pipefail
+          # Semver bump from the PR's release:* qualifier label; a bare
+          # "release" label means a bug-fix-scale change and defaults to
+          # patch. Major wins if several qualifiers are present.
+          BUMP_TYPE=patch
+          case " $PR_LABELS " in
+            *" release:major "*) BUMP_TYPE=major ;;
+            *" release:minor "*) BUMP_TYPE=minor ;;
+            *" release:patch "*) BUMP_TYPE=patch ;;
+          esac
+          echo "Bump type: $BUMP_TYPE (PR labels: $PR_LABELS)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           for attempt in 1 2 3; do
-            BUMP_OUTPUT="$(apps/mac/scripts/compute-version.sh prerelease)"
+            BUMP_OUTPUT="$(apps/mac/scripts/compute-version.sh "$BUMP_TYPE")"
             VERSION=$(sed -n 's/^version=//p' <<< "$BUMP_OUTPUT")
             BUILD=$(sed -n 's/^buildNumber=//p' <<< "$BUMP_OUTPUT")
             TAG=$(sed -n 's/^tag=//p' <<< "$BUMP_OUTPUT")
