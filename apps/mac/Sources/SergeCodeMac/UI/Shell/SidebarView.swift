@@ -1329,6 +1329,20 @@ extension SidebarThreadItem {
         }
     }
 
+    /// Whether something is actually running for this thread — the parent
+    /// agent, its subagents, or the auto-reviewer. Narrower than
+    /// `!isSettled`, which also covers threads parked on a question: those
+    /// want attention, not a "still going" cue.
+    @MainActor var isWorking: Bool {
+        if hasConnectionIssue { return false }
+        switch thread.status {
+        case .running, .backgroundWork, .reviewing, .fixing: return true
+        case .idle, .waiting, .waitingApproval, .waitingInput, .error, .archived, .settled,
+            .done, .readyToMerge:
+            return false
+        }
+    }
+
     var statusSymbol: String {
         if hasConnectionIssue { return member.location.connection.symbolName }
         if thread.isStalled { return "exclamationmark.circle.fill" }
@@ -1358,6 +1372,11 @@ private struct SidebarThreadStatus: View {
             .font(.system(size: 9, weight: .semibold))
             .foregroundStyle(item.statusTint)
             .frame(width: 14, height: 14)
+            // A working thread breathes, so a sidebar full of sessions says
+            // which ones are alive without the user reading a single label.
+            // `pulseGlow` is a phase animator, not a timeline clock, so a
+            // long list of running threads stays cheap.
+            .pulseGlow(isActive: item.isWorking)
             .accessibilityLabel(item.statusLabel)
             .help(item.statusLabel)
             .contentTransition(Motion.reduceMotion ? .identity : .symbolEffect(.replace))
