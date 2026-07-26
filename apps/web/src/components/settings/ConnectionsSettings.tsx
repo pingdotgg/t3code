@@ -1851,6 +1851,12 @@ export function ConnectionsSettings() {
   const [desktopServerExposureMutationError, setDesktopServerExposureMutationError] = useState<
     string | null
   >(null);
+  // Kept separate from the network-access error above: these two settings are
+  // independent, and a Tailscale failure reported under "Network access" points
+  // the user at the wrong control.
+  const [tailscaleServeMutationError, setTailscaleServeMutationError] = useState<string | null>(
+    null,
+  );
   const [desktopAccessManagementMutationError, setDesktopAccessManagementMutationError] = useState<
     string | null
   >(null);
@@ -2068,7 +2074,7 @@ export function ConnectionsSettings() {
     if (!desktopBridge) return;
     if (!isTailscaleServePortValid) return;
     setIsUpdatingTailscaleServe(true);
-    setDesktopServerExposureMutationError(null);
+    setTailscaleServeMutationError(null);
     try {
       await desktopBridge.setTailscaleServeEnabled({
         enabled: true,
@@ -2081,7 +2087,7 @@ export function ConnectionsSettings() {
         error,
         "Failed to configure Tailscale HTTPS.",
       );
-      setDesktopServerExposureMutationError(message);
+      setTailscaleServeMutationError(message);
       const configureUrl = extractTailscaleServeConfigureUrl(message);
       toastManager.add(
         stackedThreadToast({
@@ -2118,7 +2124,7 @@ export function ConnectionsSettings() {
       );
       // The dialog surfaces this inline, so a failure from a previous attempt
       // must not be sitting there when it reopens.
-      setDesktopServerExposureMutationError(null);
+      setTailscaleServeMutationError(null);
       setPendingTailscaleServeEndpoint(endpoint);
     },
     [desktopServerExposureState?.tailscaleServePort],
@@ -2127,7 +2133,7 @@ export function ConnectionsSettings() {
   const handleConfirmTailscaleServeDisable = useCallback(async () => {
     if (!desktopBridge) return;
     setIsUpdatingTailscaleServe(true);
-    setDesktopServerExposureMutationError(null);
+    setTailscaleServeMutationError(null);
     try {
       await desktopBridge.setTailscaleServeEnabled({
         enabled: false,
@@ -2137,7 +2143,7 @@ export function ConnectionsSettings() {
       setDisableTailscaleServeDialogOpen(false);
     } catch (error) {
       const message = formatDesktopTailscaleServeError(error, "Failed to disable Tailscale HTTPS.");
-      setDesktopServerExposureMutationError(message);
+      setTailscaleServeMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -2152,7 +2158,7 @@ export function ConnectionsSettings() {
 
   const openTailscaleServeDisableDialog = useCallback(() => {
     // The dialog surfaces this inline; clear any previous attempt's failure.
-    setDesktopServerExposureMutationError(null);
+    setTailscaleServeMutationError(null);
     setDisableTailscaleServeDialogOpen(true);
   }, []);
 
@@ -2433,13 +2439,13 @@ export function ConnectionsSettings() {
     // MagicDNS is resolved only on explicit opt-in so local-only Connections
     // mounts do not spawn `tailscale status` (macOS MAS TCC; #2745).
     setIsUpdatingTailscaleServe(true);
-    setDesktopServerExposureMutationError(null);
+    setTailscaleServeMutationError(null);
     try {
       const endpoint = await desktopBridge.resolveTailscaleHttpsEndpoint();
       if (!endpoint) {
         const message =
           "Tailscale is not running or has no MagicDNS name. Start Tailscale and try again.";
-        setDesktopServerExposureMutationError(message);
+        setTailscaleServeMutationError(message);
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -2456,7 +2462,7 @@ export function ConnectionsSettings() {
         error,
         "Failed to resolve Tailscale HTTPS endpoint.",
       );
-      setDesktopServerExposureMutationError(message);
+      setTailscaleServeMutationError(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -3044,6 +3050,11 @@ export function ConnectionsSettings() {
   const renderTailscaleRow = () => (
     <SettingsRow
       title="Tailscale HTTPS"
+      status={
+        tailscaleServeMutationError ? (
+          <span className="block text-destructive">{tailscaleServeMutationError}</span>
+        ) : null
+      }
       description={
         tailscaleHttpsEndpoint
           ? tailscaleHttpsEndpoint.status === "available"
@@ -3401,9 +3412,9 @@ export function ConnectionsSettings() {
                   T3 Code will restart the local backend without Tailscale Serve.
                 </AlertDialogDescription>
               </AlertDialogHeader>
-              {desktopServerExposureMutationError ? (
+              {tailscaleServeMutationError ? (
                 <TailscaleServeErrorAlert
-                  message={desktopServerExposureMutationError}
+                  message={tailscaleServeMutationError}
                   onOpenConfigureUrl={openTailscaleServeConfigureUrl}
                   title="Could not disable Tailscale HTTPS"
                 />
@@ -3474,9 +3485,9 @@ export function ConnectionsSettings() {
                     {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
                   </p>
                 </div>
-                {desktopServerExposureMutationError ? (
+                {tailscaleServeMutationError ? (
                   <TailscaleServeErrorAlert
-                    message={desktopServerExposureMutationError}
+                    message={tailscaleServeMutationError}
                     onOpenConfigureUrl={openTailscaleServeConfigureUrl}
                     title="Could not enable Tailscale HTTPS"
                   />
