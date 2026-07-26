@@ -34,7 +34,7 @@ export function assertSubagentContinueOutput(
   assert.lengthOf(projection.subagents, 1);
 
   const subagent = projection.subagents[0]!;
-  assert.equal(subagent.status, "completed");
+  assert.equal(subagent.status, "idle");
   assert.equal(subagent.result, "initial subagent response");
   assert.isNotNull(subagent.childThreadId);
   if (subagent.childThreadId === null) {
