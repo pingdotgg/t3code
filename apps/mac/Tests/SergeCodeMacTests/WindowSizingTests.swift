@@ -87,14 +87,14 @@ struct WindowSizingTests {
         }
     }
 
-    @Test("a content maximum under the floor is raised, never lowered")
-    func expansionStaysConsistentWithTheMinimum() {
-        // A maximum below the reported minimum is not a size AppKit can honor.
-        // This is the only case where the floor touches the unbounded answer,
-        // and it can only raise it.
+    @Test("the floor never participates in the unbounded answer")
+    func expansionIgnoresTheFloorEntirely() {
+        // Even a content maximum below the floor passes through untouched: the
+        // clamp does not get a vote on how large a window may become, in either
+        // direction. AppKit reconciles a maximum under the minimum itself.
         let tiny = resolved(.infinity, natural: CGSize(width: 100, height: 90))
-        #expect(tiny.width == floorWidth)
-        #expect(tiny.height == floorHeight)
+        #expect(tiny.width == 100)
+        #expect(tiny.height == 90)
     }
 
     @Test("a finite content maximum is forwarded as-is")

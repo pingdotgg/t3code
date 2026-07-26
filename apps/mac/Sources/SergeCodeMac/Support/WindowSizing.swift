@@ -74,24 +74,13 @@ struct WindowContentSizeClamp: Layout {
         // the only path the clamp exists to change.
         if proposed <= floor { return floor }
         // Unbounded probe: this answer becomes `NSWindow.contentMaxSize`, so
-        // the content's own stretch is forwarded untouched — the clamp must
-        // never be what stops a window expanding. A flexible detail column
-        // answers `.infinity` here and keeps the window unbounded.
-        guard proposed.isFinite else { return expansion(natural: natural, floor: floor) }
+        // the content's stretch is forwarded verbatim — no floor, no ceiling of
+        // ours. The clamp must never be what stops a window expanding, so it
+        // does not participate in this answer at all. A flexible detail column
+        // answers `.infinity` here and the window stays unbounded.
+        guard proposed.isFinite else { return natural }
         // A concrete offer is the window: fill it exactly.
         return proposed
-    }
-
-    /// The unbounded answer, kept separate from the minimum path so the two
-    /// cannot drift into each other.
-    ///
-    /// The content's number passes through as-is. The single exception is a
-    /// content maximum that lands *below* the floor: a window whose maximum is
-    /// under its minimum is not a size AppKit can honor, and the floor is the
-    /// minimum we just reported. That case cannot cap a window in practice —
-    /// the floor is 280x320 — but it keeps the pair consistent.
-    private static func expansion(natural: CGFloat, floor: CGFloat) -> CGFloat {
-        natural >= floor ? natural : floor
     }
 }
 

@@ -1324,12 +1324,17 @@
                     "window minimum moved \(Int(minBefore.width))x\(Int(minBefore.height)) -> "
                         + "\(Int(minAfter.width))x\(Int(minAfter.height))")
             }
-            if maxBefore.width < 10000 || maxBefore.height < 10000 {
+            // The maximum is checked on both sides of the growth: a clamp that
+            // let the content's current width become the window's ceiling would
+            // show up here, once the strip is wider than the floor.
+            let maxAfter = window.contentMaxSize
+            for (label, size) in [("before", maxBefore), ("after", maxAfter)]
+            where size.width < 10000 || size.height < 10000 {
                 failed = true
                 UIProbeAssertions.fail(
                     "content-growth",
-                    "window maximum is capped at "
-                        + "\(Int(maxBefore.width))x\(Int(maxBefore.height)); resizing is blocked")
+                    "window maximum \(label) growth is capped at "
+                        + "\(Int(size.width))x\(Int(size.height)); resizing is blocked")
             }
             // The other half of the contract: the clamp must not have turned a
             // resize bug into a max-size regression. `contentMaxSize` is only
