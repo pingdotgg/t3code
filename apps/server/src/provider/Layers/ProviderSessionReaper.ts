@@ -79,6 +79,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
               `server:provider-session-reconcile:${binding.threadId}:${binding.lastSeenAt}`,
             ),
             threadId: binding.threadId,
+            expectedSessionUpdatedAt: session.updatedAt,
             session: {
               threadId: binding.threadId,
               status: "stopped",
@@ -102,6 +103,13 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
                 provider: binding.provider,
                 stoppedAt: binding.lastSeenAt,
                 projectedStatus: session.status,
+              }),
+            ),
+            Effect.catchTag("OrchestrationCommandInvariantError", () =>
+              Effect.logDebug("provider.session.reaper.skipped-concurrent-session-update", {
+                threadId: binding.threadId,
+                provider: binding.provider,
+                projectedSessionUpdatedAt: session.updatedAt,
               }),
             ),
             Effect.catchCause((cause) =>

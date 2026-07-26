@@ -470,6 +470,28 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
+  it.effect("rejects a conditional session write after the projected session changes", () =>
+    Effect.gen(function* () {
+      const currentSession = makeSession("running");
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-stale-session-write"),
+          threadId: ThreadId.make("thread-1"),
+          expectedSessionUpdatedAt: "2025-12-31T23:59:00.000Z",
+          session: {
+            ...currentSession,
+            status: "stopped",
+          },
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(null, null, currentSession),
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
   it.effect("unsettles for approval and user-input activities but not others", () =>
     Effect.gen(function* () {
       const approvalResult = yield* decideOrchestrationCommand({
