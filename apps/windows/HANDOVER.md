@@ -285,6 +285,14 @@ and its version input must match `apps/windows/version.json` exactly.
   which needs Windows SDK headers. Together they make `cargo check --target
 x86_64-pc-windows-msvc` impossible from macOS. That is why `ci-windows.yml`
   exists.
+- **A `cfg(windows)` block can only fail on Windows, and it will.** The first
+  CI run on this code failed on exactly one line: an unused
+  `std::os::windows::process::CommandExt` import, because
+  `tokio::process::Command` exposes `creation_flags` as an inherent method
+  while `std`'s needs the trait. Under `-D warnings` that is a build failure,
+  and no amount of macOS testing can see it. Expect this class of thing when
+  you add Windows-only code, and let CI be the check rather than reasoning
+  about it.
 - **A missing bundle resource fails the build**, so
   `dist-sidecar/SergeCode{Node,Server}/.gitkeep` are tracked on purpose. Do not
   "clean up" the empty directories.

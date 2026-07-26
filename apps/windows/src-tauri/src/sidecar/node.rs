@@ -203,6 +203,12 @@ pub async fn locate(cached_path: Option<&Path>) -> Result<LocatedNode, LocatorEr
 
 /// Suppresses the console window Windows would otherwise flash for a child
 /// process spawned from a GUI application. No-op elsewhere.
+///
+/// `tokio::process::Command` exposes `creation_flags` as an inherent method on
+/// Windows, so this deliberately does not import
+/// `std::os::windows::process::CommandExt` — that trait is what `std`'s
+/// `Command` needs, and pulling it in here is an unused import that fails the
+/// build under `-D warnings`.
 pub fn no_window(command: &mut Command) {
     #[cfg(windows)]
     {
@@ -214,9 +220,6 @@ pub fn no_window(command: &mut Command) {
         let _ = command;
     }
 }
-
-#[cfg(windows)]
-use std::os::windows::process::CommandExt as _;
 
 /// Convenience for callers holding raw `node --version` output.
 pub fn version_satisfies(raw: &str) -> bool {
