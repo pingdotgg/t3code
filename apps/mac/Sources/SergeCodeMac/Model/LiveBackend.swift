@@ -2333,11 +2333,29 @@ public actor LiveBackend: BackendService {
 
     private static let maxVcsWatchRetries = 4
 
+    /// Takes one attempt from this thread's retry budget, returning the
+    /// zero-based attempt number to back off by, or `nil` once the budget is
+    /// spent.
+    ///
+    /// The budget is a *consecutive-failure* count, not a lifetime one: it is
+    /// cleared in `applyVcsEvent`, so any event on a recovered stream restores
+    /// it in full. It is also cleared when the watch moves to another worktree
+    /// (`restartVcsWatchIfStale`), when the thread goes away
+    /// (`dropLiveTimelineState`), and on socket teardown
+    /// (`cancelAllVcsSubscriptions`). Exhausting it therefore requires
+    /// `maxVcsWatchRetries` subscribes that each died without ever emitting —
+    /// a cwd that is not a repo — and `retryVcsWatch` still leaves a one-shot
+    /// `refreshVcsStatus` behind so the toolbar never asserts stale state.
+    private func consumeVcsRetryBudget(threadID: String) -> Int? {
+        let attempt = vcsRetryAttempts[threadID] ?? 0
+        guard attempt < Self.maxVcsWatchRetries else { return nil }
+        vcsRetryAttempts[threadID] = attempt + 1
+        return attempt
+    }
+
     private func scheduleVcsWatchRetry(threadID: String) {
         guard watchedVcsThreadIDs.contains(threadID), currentClient != nil else { return }
-        let attempt = vcsRetryAttempts[threadID] ?? 0
-        guard attempt < Self.maxVcsWatchRetries else { return }
-        vcsRetryAttempts[threadID] = attempt + 1
+        guard let attempt = consumeVcsRetryBudget(threadID: threadID) else { return }
         let delay = ServerProcess.backoffDelay(forAttempt: attempt)
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
@@ -2449,6 +2467,8 @@ public actor LiveBackend: BackendService {
     private func applyVcsEvent(threadID: String, event: VcsStatusStreamEvent) {
         // Any event proves the stream is healthy again, so the next failure
         // gets a full retry budget rather than inheriting the old backoff.
+        // This is the reset that makes `consumeVcsRetryBudget` a
+        // consecutive-failure counter; see its doc comment.
         vcsRetryAttempts[threadID] = nil
         switch event {
         case .snapshot(let local, let remote):
@@ -3488,6 +3508,24 @@ public actor LiveBackend: BackendService {
         else { return nil }
         return ModelSelection(instanceId: instanceID, model: modelSlug)
     }
+
+    #if DEBUG
+        /// Test seams for the VCS retry budget. The scheduling path itself
+        /// spawns a real backoff sleep, so tests drive the two pieces of state
+        /// it depends on directly — the same functions production calls, not
+        /// copies of their logic.
+        func debugConsumeVcsRetryBudget(threadID: String) -> Int? {
+            consumeVcsRetryBudget(threadID: threadID)
+        }
+
+        func debugApplyVcsEvent(threadID: String, event: VcsStatusStreamEvent) {
+            applyVcsEvent(threadID: threadID, event: event)
+        }
+
+        func debugRestartVcsWatchIfStale(threadID: String) {
+            restartVcsWatchIfStale(threadID: threadID)
+        }
+    #endif
 }
 
 public enum LiveBackendError: Error, Sendable {
