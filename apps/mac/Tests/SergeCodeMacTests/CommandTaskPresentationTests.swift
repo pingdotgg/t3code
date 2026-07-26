@@ -54,10 +54,11 @@ struct CommandTaskPresentationTests {
         task.state = .completed
         #expect(CommandTaskPresentation.statusLine(for: task, at: now) == "Finished")
 
+        // The failure text is rendered in full on the card, so the one-line
+        // status stays a state word instead of a truncated error.
         task.state = .failed
-        task.error = "exited with code 1"
-        #expect(
-            CommandTaskPresentation.statusLine(for: task, at: now) == "exited with code 1")
+        task.error = "exited with code 1\nsee /tmp/build.log for the full output"
+        #expect(CommandTaskPresentation.statusLine(for: task, at: now) == "Failed")
     }
 
     @Test("a command without the detach flag is never labelled backgrounded")

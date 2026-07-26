@@ -56,7 +56,9 @@ enum CommandTaskPresentation {
         case .completed:
             return "Finished"
         case .failed:
-            return SubagentTaskPresentation.nonEmpty(task.error) ?? "Failed"
+            // The failure text itself is rendered in full under the header;
+            // repeating it here would truncate it to one line.
+            return "Failed"
         case .stopped:
             return "Stopped"
         }
@@ -95,8 +97,11 @@ struct CommandTaskCard: View {
 
     private var output: String? { CommandTaskPresentation.output(for: task) }
 
+    /// Only streamed output is hidden behind the disclosure — the error and
+    /// stop-failure texts are always on the card, so counting them here would
+    /// offer a chevron that expands nothing.
     private var hasExpandableContent: Bool {
-        output != nil || SubagentTaskPresentation.nonEmpty(task.error) != nil
+        output != nil
     }
 
     var body: some View {
@@ -135,12 +140,24 @@ struct CommandTaskCard: View {
                 }
             }
 
+            // Failure text in full: a command's error is often several lines
+            // of shell output, and the status line above it is one line.
+            if let error = SubagentTaskPresentation.nonEmpty(task.error) {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, TranscriptMetrics.iconColumn + 10)
+            }
+
             if let stopError = SubagentTaskPresentation.nonEmpty(stopError) {
                 Text(stopError)
                     .font(.caption)
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, TranscriptMetrics.iconColumn + 10)
             }
 
             if let output {

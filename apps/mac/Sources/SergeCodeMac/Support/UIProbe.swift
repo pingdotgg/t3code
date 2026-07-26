@@ -771,6 +771,16 @@
             attached.description = "Compile the sidecar"
             attached.isBackgrounded = false
 
+            // A failure with no streamed output: the error must be readable on
+            // the card rather than hidden behind a chevron that expands nothing.
+            var failed = running
+            failed.taskId = "probe-command-failed"
+            failed.description = "Publish the appcast"
+            failed.state = .failed
+            failed.duration = 12
+            failed.progressLog = []
+            failed.error = "exited with code 1\nsee /tmp/appcast.log for the full output"
+
             let hosting = NSHostingView(
                 rootView: VStack(alignment: .leading, spacing: 12) {
                     CommandTaskCard(
@@ -779,9 +789,11 @@
                         task: finished, stopError: nil, onStop: {}, onClearStopError: {})
                     CommandTaskCard(
                         task: attached, stopError: nil, onStop: {}, onClearStopError: {})
+                    CommandTaskCard(
+                        task: failed, stopError: nil, onStop: {}, onClearStopError: {})
                 }
                 .padding(16))
-            let frame = NSRect(x: 0, y: 0, width: 720, height: 620)
+            let frame = NSRect(x: 0, y: 0, width: 720, height: 760)
             hosting.frame = frame
             let window = NSWindow(
                 contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
