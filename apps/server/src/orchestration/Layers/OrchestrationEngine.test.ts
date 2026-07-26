@@ -140,6 +140,7 @@ describe("OrchestrationEngine", () => {
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           executorModelSelection: null,
+          executorMaxSubAgents: 3,
           runtimeMode: "full-access" as const,
           branch: null,
           worktreePath: null,

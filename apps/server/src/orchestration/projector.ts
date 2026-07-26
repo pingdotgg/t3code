@@ -421,6 +421,7 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             executorModelSelection: payload.executorModelSelection,
+            executorMaxSubAgents: payload.executorMaxSubAgents,
             updatedAt: payload.updatedAt,
           }),
         })),

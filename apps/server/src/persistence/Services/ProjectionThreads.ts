@@ -31,6 +31,7 @@ export const ProjectionThread = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   executorModelSelection: Schema.NullOr(ModelSelection),
+  executorMaxSubAgents: NonNegativeInt,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   parentThreadId: Schema.NullOr(ThreadId),

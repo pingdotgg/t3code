@@ -2726,7 +2726,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   ) {
     const turnState = context.turnState;
     const planMarkdown = input.planMarkdown.trim();
-    if (!turnState || planMarkdown.length === 0) {
+    if (!turnState || context.activeInteractionMode === "advisor" || planMarkdown.length === 0) {
       return;
     }
 
@@ -4554,6 +4554,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
 
         if (toolName === "ExitPlanMode") {
+          // Advisor uses the SDK's plan permission mode to block writes, but it
+          // has no plan artifact: capturing one here would render a plan card
+          // the user never asked for. Deny and steer back to advising.
+          if (context.activeInteractionMode === "advisor") {
+            return {
+              behavior: "deny",
+              message:
+                "You are in Advisor/Planner mode, which has no plan artifact. Plan the work and delegate implementation to executor sub-agents via the delegate_task tool; do not call ExitPlanMode. Answer the user directly in your reply instead.",
+            } satisfies PermissionResult;
+          }
+
           const planMarkdown = extractExitPlanModePlan(toolInput);
           if (planMarkdown) {
             yield* emitProposedPlanCompleted(context, {
@@ -4986,13 +4997,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     // Apply interaction mode by switching the SDK's permission mode.
-    // "plan" maps directly to the SDK's "plan" permission mode. "default"
-    // restores the session's original mode. When interactionMode is absent we
-    // leave the current mode unchanged.
+    // "plan" maps directly to the SDK's "plan" permission mode. "advisor" uses
+    // the same permission mode because it is the SDK's only write-blocking
+    // mode; the two are told apart by the interaction-mode checks, including
+    // the shared plan emitter. "default" restores the session's original mode.
+    // When interactionMode is absent we leave the current mode unchanged.
     if (input.interactionMode !== undefined) {
       context.activeInteractionMode = input.interactionMode;
     }
-    if (input.interactionMode === "plan") {
+    if (input.interactionMode === "plan" || input.interactionMode === "advisor") {
       yield* Effect.tryPromise({
         try: () => context.query.setPermissionMode("plan"),
         catch: (cause) => toRequestError(PROVIDER, input.threadId, "turn/setPermissionMode", cause),

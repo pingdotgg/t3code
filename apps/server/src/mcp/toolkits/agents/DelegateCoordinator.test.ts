@@ -83,6 +83,7 @@ const makeThreadShell = (
     runtimeMode: "approval-required",
     interactionMode: "default",
     executorModelSelection: null,
+    executorMaxSubAgents: 3,
     branch: "feature/foo",
     worktreePath: "/tmp/worktrees/foo",
     parentThreadId: null,
@@ -110,6 +111,7 @@ const makeThreadDetail = (
     runtimeMode: "approval-required",
     interactionMode: "default",
     executorModelSelection: null,
+    executorMaxSubAgents: 3,
     branch: null,
     worktreePath: null,
     parentThreadId,
@@ -314,6 +316,82 @@ it.effect("reports a missing delegated thread as an error result", () =>
 
     const result = yield* coordinator.delegate(makeScope(), { prompt: "vanished" });
     expect(result.status).toBe("error");
+  }),
+);
+
+it.effect("advisor parent with an executor model delegates on the executor selection", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator({
+      parentShell: (threadId) =>
+        makeThreadShell(threadId, {
+          interactionMode: "advisor",
+          executorModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.6",
+          },
+        }),
+    });
+    harness.setThreadDetail((threadId) => Option.some(completedChildDetail(threadId)));
+
+    const result = yield* coordinator.delegate(makeScope(), { prompt: "Implement the plan" });
+    expect(result.status).toBe("completed");
+
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create).toMatchObject({
+      // The child runs on the user-configured executor model, not the
+      // advisor's own model.
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
+      // Executor children are pure executors: default interaction mode, the
+      // parent thread's stored runtime mode, and a parentThreadId that bars
+      // them from delegating further.
+      interactionMode: "default",
+      runtimeMode: "approval-required",
+      parentThreadId,
+    });
+  }),
+);
+
+it.effect("advisor parent without an executor model keeps delegating on its own model", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator({
+      parentShell: (threadId) => makeThreadShell(threadId, { interactionMode: "advisor" }),
+    });
+    harness.setThreadDetail((threadId) => Option.some(completedChildDetail(threadId)));
+
+    yield* coordinator.delegate(makeScope(), { prompt: "Implement the plan" });
+
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create).toMatchObject({
+      modelSelection: expect.objectContaining({ model: "claude-sonnet-5" }),
+    });
+  }),
+);
+
+it.effect("advisor parent honors its configured executor sub-agent cap", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator({
+      parentShell: (threadId) =>
+        makeThreadShell(threadId, {
+          interactionMode: "advisor",
+          executorMaxSubAgents: 1,
+        }),
+    });
+    // Children stay running: no latestTurn and no failure activities.
+    harness.setThreadDetail((threadId) => Option.some(makeThreadDetail(threadId)));
+
+    const fiber = yield* coordinator
+      .delegate(makeScope(), { prompt: "first task" })
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust(Duration.millis(10));
+
+    const error = yield* coordinator
+      .delegate(makeScope(), { prompt: "over the configured cap" })
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("DelegateError");
+    expect(error.reason).toBe("concurrency-limit-exceeded");
+    expect(error.description).toContain("max 1");
+
+    yield* Fiber.interrupt(fiber);
   }),
 );
 

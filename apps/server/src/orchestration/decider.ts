@@ -596,6 +596,31 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.executor-model.set": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.executor-model-set",
+        payload: {
+          threadId: command.threadId,
+          executorModelSelection: command.executorModelSelection,
+          // Absent slider value keeps the thread's current cap.
+          executorMaxSubAgents: command.executorMaxSubAgents ?? thread.executorMaxSubAgents,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
     case "thread.turn.start": {
       const targetThread = yield* requireThread({
         readModel,

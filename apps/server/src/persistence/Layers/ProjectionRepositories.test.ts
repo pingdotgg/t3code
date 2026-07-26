@@ -86,6 +86,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         runtimeMode: "full-access",
         interactionMode: "default",
         executorModelSelection: null,
+        executorMaxSubAgents: 3,
         branch: null,
         worktreePath: null,
         parentThreadId: null,
@@ -153,6 +154,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         runtimeMode: "full-access",
         interactionMode: "default",
         executorModelSelection: executorSelection,
+        executorMaxSubAgents: 3,
         branch: null,
         worktreePath: null,
         parentThreadId: null,
@@ -193,6 +195,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       yield* threads.upsert({
         ...Option.getOrThrow(persisted),
         executorModelSelection: null,
+        executorMaxSubAgents: 3,
       });
       const cleared = yield* threads.getById({
         threadId: ThreadId.make("thread-executor-model"),

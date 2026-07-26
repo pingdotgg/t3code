@@ -4,16 +4,21 @@
  * A running provider session delegates one self-contained task to a child
  * thread on its own provider instance, model, effort, runtime mode, project,
  * and worktree — all inherited from the calling thread, never chosen by the
- * model. The call blocks until the child turn settles (or a generous
- * timeout) and returns the child's final message, so delegation costs
- * exactly one tool round-trip.
+ * model. The one exception is advisor mode: when the calling thread is an
+ * advisor thread with a user-configured executor model, the child runs on
+ * that executor selection instead (still with `interactionMode: "default"`
+ * and the parent's stored runtime mode). The call blocks until the child
+ * turn settles (or a generous timeout) and returns the child's final
+ * message, so delegation costs exactly one tool round-trip.
  *
  * Fan-out is bounded by construction: depth is capped at 1 via the persisted
- * `parentThreadId` (delegated children are refused), and concurrency is
- * capped per parent and server-wide. Child threads flow through the regular
- * orchestration engine, so they persist and render in the UI like
- * user-created threads; progress is mirrored into the parent timeline as
- * task activities.
+ * `parentThreadId` (delegated children are refused, so advisor executor
+ * sub-agents are pure executors that cannot spawn sub-agents of their own),
+ * and concurrency is capped per parent (a per-thread slider value for
+ * advisor threads, a global constant otherwise) and server-wide. Child
+ * threads flow through the regular orchestration engine, so they persist and
+ * render in the UI like user-created threads; progress is mirrored into the
+ * parent timeline as task activities.
  */
 import {
   CommandId,
@@ -462,10 +467,16 @@ const makeDelegateCoordinator = Effect.gen(function* () {
     const runningForParent = [...snapshot.values()].filter(
       (record) => record.parentThreadId === scope.threadId && record.status === "running",
     ).length;
-    if (runningForParent >= DELEGATE_MAX_CHILDREN_PER_PARENT) {
+    // Advisor threads get a user-configured per-thread cap (the executor
+    // slider); every other thread uses the global per-parent cap.
+    const maxChildrenForCaller =
+      caller.interactionMode === "advisor"
+        ? caller.executorMaxSubAgents
+        : DELEGATE_MAX_CHILDREN_PER_PARENT;
+    if (runningForParent >= maxChildrenForCaller) {
       return yield* new DelegateError({
         reason: "concurrency-limit-exceeded",
-        description: `This session already has ${runningForParent} delegated agents running (max ${DELEGATE_MAX_CHILDREN_PER_PARENT}). Wait for one to finish before delegating more.`,
+        description: `This session already has ${runningForParent} delegated agents running (max ${maxChildrenForCaller}). Wait for one to finish before delegating more.`,
       });
     }
     const runningTotal = [...snapshot.values()].filter(
@@ -486,22 +497,31 @@ const makeDelegateCoordinator = Effect.gen(function* () {
     const title = resolveTitle(input);
     const parentTurnId = yield* readParentTurnId(scope.threadId);
 
+    // Advisor threads with an executor model configured delegate on that
+    // model instead of their own. The child still runs with
+    // `interactionMode: "default"` and the parent's stored runtime mode, and
+    // `parentThreadId` structurally bars it from delegating further — advisor
+    // sub-agents are pure executors.
+    const executorSelection =
+      caller.interactionMode === "advisor" ? caller.executorModelSelection : null;
+    const childModelSelection = executorSelection ?? caller.modelSelection;
+
     const providers = yield* providerRegistry.getProviders.pipe(
       Effect.orElseSucceed(() => [] as const),
     );
     const provider = providers.find(
-      (candidate) => candidate.instanceId === caller.modelSelection.instanceId,
+      (candidate) => candidate.instanceId === childModelSelection.instanceId,
     );
-    const effortOption = caller.modelSelection.options?.find(
+    const effortOption = childModelSelection.options?.find(
       (option) => EFFORT_OPTION_IDS.has(option.id) && typeof option.value === "string",
     );
     const record: DelegateRecord = {
       parentThreadId: scope.threadId,
       taskId,
       title,
-      model: caller.modelSelection.model,
+      model: childModelSelection.model,
       effort: typeof effortOption?.value === "string" ? effortOption.value : undefined,
-      providerLabel: provider?.displayName ?? provider?.driver ?? caller.modelSelection.instanceId,
+      providerLabel: provider?.displayName ?? provider?.driver ?? childModelSelection.instanceId,
       parentTurnId,
       lastTurnRequestedAt: createdAt,
       status: "running",
@@ -514,7 +534,7 @@ const makeDelegateCoordinator = Effect.gen(function* () {
         threadId: childThreadId,
         projectId: caller.projectId,
         title,
-        modelSelection: caller.modelSelection,
+        modelSelection: childModelSelection,
         runtimeMode: caller.runtimeMode,
         interactionMode: "default",
         branch: caller.branch,

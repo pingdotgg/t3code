@@ -96,6 +96,7 @@ function makeReadModel(
       modelSelection: defaultModelSelection,
       interactionMode: "default" as const,
       executorModelSelection: null,
+      executorMaxSubAgents: 3,
       runtimeMode: "full-access" as const,
       branch: null,
       worktreePath: null,
