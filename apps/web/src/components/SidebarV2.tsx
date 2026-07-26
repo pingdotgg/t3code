@@ -85,6 +85,7 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { providerThreadCopyAction } from "../threadReferences";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -1036,6 +1037,45 @@ export default function SidebarV2() {
       );
     },
   });
+  const { copyToClipboard: copyThreadId } = useCopyToClipboard<{ threadId: string }>({
+    onCopy: ({ threadId }) => {
+      toastManager.add({
+        type: "success",
+        title: "Thread ID copied",
+        description: threadId,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy thread ID",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
+  const { copyToClipboard: copyProviderThreadId } = useCopyToClipboard<{
+    threadId: string;
+    label: string;
+  }>({
+    onCopy: ({ threadId, label }) => {
+      toastManager.add({
+        type: "success",
+        title: `${label} copied`,
+        description: threadId,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy provider thread ID",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
   const [projectActionsTarget, setProjectActionsTarget] = useState<SidebarProjectSnapshot | null>(
     null,
   );
@@ -1980,6 +2020,7 @@ export default function SidebarV2() {
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
+        const providerCopyAction = providerThreadCopyAction(thread.session);
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date());
         const clicked = await settlePromise(() =>
@@ -2017,6 +2058,10 @@ export default function SidebarV2() {
                 : []),
               { id: "rename", label: "Rename thread" },
               { id: "mark-unread", label: "Mark unread" },
+              { id: "copy-thread-id", label: "Copy Thread ID" },
+              ...(providerCopyAction
+                ? [{ id: providerCopyAction.id, label: providerCopyAction.label }]
+                : []),
               { id: "delete", label: "Delete", destructive: true, icon: "trash" },
             ],
             position,
@@ -2069,6 +2114,17 @@ export default function SidebarV2() {
           case "mark-unread":
             markThreadUnread(threadKey, thread.latestTurn?.completedAt);
             return;
+          case "copy-thread-id":
+            copyThreadId(thread.id, { threadId: thread.id });
+            return;
+          case "copy-provider-thread-id":
+            if (providerCopyAction) {
+              copyProviderThreadId(providerCopyAction.value, {
+                threadId: providerCopyAction.value,
+                label: providerCopyAction.label,
+              });
+            }
+            return;
           case "delete": {
             if (confirmThreadDelete) {
               const confirmed = await settlePromise(() =>
@@ -2106,6 +2162,8 @@ export default function SidebarV2() {
       attemptUnsettle,
       attemptUnsnooze,
       confirmThreadDelete,
+      copyProviderThreadId,
+      copyThreadId,
       deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,

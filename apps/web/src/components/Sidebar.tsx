@@ -198,6 +198,7 @@ import {
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
+import { providerThreadCopyAction } from "../threadReferences";
 import type { SidebarThreadSummary } from "../types";
 import {
   buildPhysicalToLogicalProjectKeyMap,
@@ -1138,6 +1139,27 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         stackedThreadToast({
           type: "error",
           title: "Failed to copy thread ID",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
+  const { copyToClipboard: copyProviderThreadIdToClipboard } = useCopyToClipboard<{
+    threadId: string;
+    label: string;
+  }>({
+    onCopy: (ctx) => {
+      toastManager.add({
+        type: "success",
+        title: `${ctx.label} copied`,
+        description: ctx.threadId,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy provider thread ID",
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
@@ -2112,6 +2134,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
       const threadWorkspacePath =
         thread.worktreePath ?? threadProject?.workspaceRoot ?? project.workspaceRoot ?? null;
+      const providerCopyAction = providerThreadCopyAction(thread.session);
       const clicked = await api.contextMenu.show(
         [
           ...(thread.branch
@@ -2121,6 +2144,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
+          ...(providerCopyAction
+            ? [{ id: providerCopyAction.id, label: providerCopyAction.label }]
+            : []),
           { id: "delete", label: "Delete", destructive: true, icon: "trash" },
         ],
         position,
@@ -2177,6 +2203,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         copyThreadIdToClipboard(thread.id, { threadId: thread.id });
         return;
       }
+      if (clicked === "copy-provider-thread-id" && providerCopyAction) {
+        copyProviderThreadIdToClipboard(providerCopyAction.value, {
+          threadId: providerCopyAction.value,
+          label: providerCopyAction.label,
+        });
+        return;
+      }
       if (clicked !== "delete") return;
       if (appSettingsConfirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
@@ -2204,6 +2237,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [
       appSettingsConfirmThreadDelete,
       copyPathToClipboard,
+      copyProviderThreadIdToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
       handleNewThread,

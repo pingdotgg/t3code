@@ -243,10 +243,13 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
     );
-    runtime = ManagedRuntime.make(layer);
-    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
-    const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
-    const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
+    const activeRuntime = ManagedRuntime.make(layer);
+    runtime = activeRuntime;
+    const engine = await activeRuntime.runPromise(Effect.service(OrchestrationEngineService));
+    const snapshotQuery = await activeRuntime.runPromise(Effect.service(ProjectionSnapshotQuery));
+    const ingestion = await activeRuntime.runPromise(
+      Effect.service(ProviderRuntimeIngestionService),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(ingestion.drain);
@@ -313,6 +316,7 @@ describe("ProviderRuntimeIngestion", () => {
     return {
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      readEvents: () => activeRuntime.runPromise(Stream.runCollect(engine.readEvents(0))),
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
@@ -2724,7 +2728,19 @@ describe("ProviderRuntimeIngestion", () => {
       provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
+      payload: {
+        providerThreadId: "019c-native-codex-thread",
+      },
     });
+    await harness.drain();
+    const events = Array.from(await harness.readEvents());
+    expect(
+      events.some(
+        (event) =>
+          event.type === "thread.session-set" &&
+          event.payload.session.providerThreadId === "019c-native-codex-thread",
+      ),
+    ).toBe(true);
     harness.emit({
       type: "item.started",
       eventId: asEventId("evt-tool-started"),

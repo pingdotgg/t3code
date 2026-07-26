@@ -11,6 +11,14 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/uns
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionSnapshotQueryShape,
+} from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  ProviderSessionDirectory,
+  type ProviderSessionDirectoryShape,
+} from "../provider/Services/ProviderSessionDirectory.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -38,6 +46,36 @@ const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
 );
+const unused = () => Effect.die("unused");
+const projectionSnapshotQueryStub: ProjectionSnapshotQueryShape = {
+  getCommandReadModel: unused,
+  getSnapshot: unused,
+  getShellSnapshot: unused,
+  getArchivedShellSnapshot: unused,
+  getSnapshotSequence: unused,
+  getCounts: unused,
+  getActiveProjectByWorkspaceRoot: unused,
+  getProjectShellById: unused,
+  getFirstActiveThreadIdByProjectId: unused,
+  getThreadCheckpointContext: unused,
+  getFullThreadDiffContext: unused,
+  getThreadShellById: unused,
+  getThreadDetailById: unused,
+  getThreadDetailSnapshot: unused,
+};
+const providerSessionDirectoryStub: ProviderSessionDirectoryShape = {
+  upsert: unused,
+  getProvider: unused,
+  getBinding: unused,
+  listThreadIds: unused,
+  listBindings: unused,
+};
+const CombinedToolkitTestLayer = McpHttpServer.ToolkitRegistrationLive.pipe(
+  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
+  Layer.provideMerge(Layer.succeed(ProjectionSnapshotQuery, projectionSnapshotQueryStub)),
+  Layer.provideMerge(Layer.succeed(ProviderSessionDirectory, providerSessionDirectoryStub)),
+);
 
 it("normalizes empty successful notification responses to accepted", () => {
   const notificationResponse = McpHttpServer.normalizeMcpHttpResponse(
@@ -50,6 +88,21 @@ it("normalizes empty successful notification responses to accepted", () => {
   );
   expect(resultResponse.status).toBe(200);
 });
+
+it.effect("registers cross-thread reading without replacing preview tools", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const toolNames = new Set(server.tools.map(({ tool }) => tool.name));
+    expect(toolNames.has("preview_status")).toBe(true);
+    expect(toolNames.has("preview_snapshot")).toBe(true);
+    expect(toolNames.has("read_thread")).toBe(true);
+
+    const readThreadTool = server.tools.find(({ tool }) => tool.name === "read_thread");
+    expect(readThreadTool?.tool.annotations?.readOnlyHint).toBe(true);
+    expect(readThreadTool?.tool.annotations?.idempotentHint).toBe(true);
+    expect(readThreadTool?.tool.annotations?.destructiveHint).toBe(false);
+  }).pipe(Effect.provide(CombinedToolkitTestLayer)),
+);
 
 it.effect("returns bounded structural preview snapshot failures", () =>
   Effect.scoped(
