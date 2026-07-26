@@ -80,20 +80,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               return (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
-                    size="sm"
                     isActive={isActive}
-                    className={
-                      isActive
-                        ? "h-8 items-center gap-2 rounded-md bg-sidebar-row-active px-2 py-1.5 text-left text-sm font-medium text-sidebar-foreground"
-                        : "h-8 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                    }
                     onClick={() => handleSectionClick(item.to)}
                   >
                     <Icon
                       className={
-                        isActive
-                          ? "size-4 shrink-0 text-sidebar-foreground"
-                          : "size-4 shrink-0 text-sidebar-muted-foreground/60"
+                        isActive ? "text-sidebar-foreground" : "text-sidebar-muted-foreground/60"
                       }
                     />
                     <span className="truncate">{item.label}</span>
@@ -109,12 +101,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         <div className="flex items-center gap-1">
           <SidebarMenu className="min-w-0 flex-1">
             <SidebarMenuItem>
-              <SidebarMenuButton
-                size="sm"
-                className="h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                onClick={handleBackClick}
-              >
-                <ArrowLeftIcon className="size-4" />
+              <SidebarMenuButton onClick={handleBackClick}>
+                <ArrowLeftIcon />
                 <span>Back</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
