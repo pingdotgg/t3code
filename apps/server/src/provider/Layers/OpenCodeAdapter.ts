@@ -29,7 +29,6 @@ import type {
   OpencodeClient,
   Part,
   PermissionRequest,
-  ProviderListResponse,
   QuestionRequest,
 } from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -228,18 +227,47 @@ function openCodeModelSlug(providerID: string, modelID: string): string {
   return `${providerID}/${modelID}`;
 }
 
-function collectOpenCodeModelContextWindows(
-  providerList: ProviderListResponse | undefined,
-): ReadonlyMap<string, number> {
+function collectOpenCodeModelContextWindows(providerList: unknown): ReadonlyMap<string, number> {
   const result = new Map<string, number>();
-  for (const provider of providerList?.all ?? []) {
-    for (const [modelID, model] of Object.entries(provider.models)) {
-      const contextWindow = finitePositiveInteger(model.limit.context);
+  if (
+    !providerList ||
+    typeof providerList !== "object" ||
+    !Array.isArray((providerList as { readonly all?: unknown }).all)
+  ) {
+    return result;
+  }
+
+  for (const provider of (providerList as { readonly all: ReadonlyArray<unknown> }).all) {
+    if (
+      !provider ||
+      typeof provider !== "object" ||
+      typeof (provider as { readonly id?: unknown }).id !== "string" ||
+      !(provider as { readonly models?: unknown }).models ||
+      typeof (provider as { readonly models?: unknown }).models !== "object"
+    ) {
+      continue;
+    }
+    const providerID = (provider as { readonly id: string }).id;
+    const models = (provider as { readonly models: Record<string, unknown> }).models;
+    for (const [modelID, model] of Object.entries(models)) {
+      if (!model || typeof model !== "object") {
+        continue;
+      }
+      const modelRecord = model as { readonly id?: unknown; readonly limit?: unknown };
+      const limit = modelRecord.limit;
+      if (!limit || typeof limit !== "object") {
+        continue;
+      }
+      const contextWindow = finitePositiveInteger(
+        (limit as { readonly context?: unknown }).context,
+      );
       if (contextWindow === undefined) {
         continue;
       }
-      result.set(openCodeModelSlug(provider.id, modelID), contextWindow);
-      result.set(openCodeModelSlug(provider.id, model.id), contextWindow);
+      result.set(openCodeModelSlug(providerID, modelID), contextWindow);
+      if (typeof modelRecord.id === "string") {
+        result.set(openCodeModelSlug(providerID, modelRecord.id), contextWindow);
+      }
     }
   }
   return result;
@@ -253,8 +281,8 @@ function normalizeOpenCodeTokenUsage(
     return undefined;
   }
   const nonCachedInputTokens = finiteNonNegativeInteger(tokens.input) ?? 0;
-  const cachedInputTokens = finiteNonNegativeInteger(tokens.cache.read) ?? 0;
-  const cacheWriteInputTokens = finiteNonNegativeInteger(tokens.cache.write) ?? 0;
+  const cachedInputTokens = finiteNonNegativeInteger(tokens.cache?.read) ?? 0;
+  const cacheWriteInputTokens = finiteNonNegativeInteger(tokens.cache?.write) ?? 0;
   const inputTokens = nonCachedInputTokens + cachedInputTokens + cacheWriteInputTokens;
   const outputTokens = finiteNonNegativeInteger(tokens.output) ?? 0;
   const reasoningOutputTokens = finiteNonNegativeInteger(tokens.reasoning) ?? 0;
