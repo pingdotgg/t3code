@@ -44,6 +44,14 @@ struct RootView: View {
                     .transition(.opacity)
                 }
             }
+            // The detail column reports a fixed floor instead of whatever its
+            // content currently needs. The chat header's git strip grows and
+            // shrinks with server state (branch name, PR pills, comment
+            // counts), and AppKit enlarges any window whose frame is under the
+            // content minimum — that is the window resizing itself to a size
+            // the user never asked for. Clamping keeps the user's frame
+            // authoritative; over-wide content compresses instead.
+            .clampedWindowContentSize()
             // Keyed to presence, not thread id — thread → thread switches render
             // immediately inside ChatScreen (frequent, often keyboard-driven); this
             // only covers hero ↔ chat.
@@ -132,6 +140,16 @@ struct RootView: View {
         // Cross-fades the celebration in and (when its timer clears it) out,
         // so the confetti never hard-cuts on unmount.
         .animation(Motion.reveal, value: model.mergeCelebration)
+        // Probe hook: the structural columns can't be driven through AX from
+        // the same process (see UIProbeHooks.swift), so probe runs flip them
+        // through the same notification the collapsible sections use.
+        .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
+            switch note.object as? String {
+            case "inspector": showInspector.toggle()
+            case "sidebar": toggleSidebar()
+            default: break
+            }
+        }
     }
 
     /// Primary click opens the scalable chooser. The chevron's Alpine popover

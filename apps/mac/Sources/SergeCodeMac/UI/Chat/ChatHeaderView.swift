@@ -39,15 +39,18 @@ struct ChatHeaderView: View {
 
             Spacer(minLength: 8)
 
-            // Git controls ride the header instead of a separate section
-            // below; the toolbar owns the repo-status gate and shows nothing
-            // for non-repo projects. Keyed per thread so in-flight git state
-            // never leaks across a thread switch (see VcsToolbar.threadID).
-            VcsToolbar(model: model, threadID: thread.id)
-                .id(thread.id)
-
-            ProviderBadge(provider: thread.provider, modelID: thread.modelID)
-            StatusBadge(status: thread.status, stalled: thread.isStalled)
+            // The cluster is as wide as the repository state makes it — a long
+            // branch name next to PR pills asked for ~940pt on its own, which
+            // became the window's minimum width and had AppKit grow the window
+            // past whatever size the user had set. Scrolling it keeps every
+            // control reachable at any window width instead; the anchor keeps
+            // the same trailing alignment the plain HStack had, so nothing
+            // moves at widths where it already fit.
+            ScrollView(.horizontal) {
+                trailingCluster
+            }
+            .scrollIndicators(.hidden)
+            .defaultScrollAnchor(.trailing)
         }
         .padding(.horizontal, 16)
         // Floor height shared with the inspector Activity header so the
@@ -55,6 +58,20 @@ struct ChatHeaderView: View {
         // so the header can grow instead of clipping if its content ever
         // exceeds the band (see AlpineTheme.contentHeaderHeight).
         .frame(minHeight: AlpineTheme.contentHeaderHeight)
+    }
+
+    /// Git controls ride the header instead of a separate section below; the
+    /// toolbar owns the repo-status gate and shows nothing for non-repo
+    /// projects. Keyed per thread so in-flight git state never leaks across a
+    /// thread switch (see VcsToolbar.threadID).
+    private var trailingCluster: some View {
+        HStack(spacing: 16) {
+            VcsToolbar(model: model, threadID: thread.id)
+                .id(thread.id)
+
+            ProviderBadge(provider: thread.provider, modelID: thread.modelID)
+            StatusBadge(status: thread.status, stalled: thread.isStalled)
+        }
     }
 
     private var projectPrefs: ProjectSceneryPrefs? {
