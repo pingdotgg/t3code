@@ -75,13 +75,13 @@ const withTestClock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(TestClock.layer()), Effect.scoped);
 
 describe("TurnActivityWatchdog", () => {
-  it("uses a 120s default and reads the server env override", () => {
-    assert.equal(DEFAULT_TURN_STALL_THRESHOLD_MS, 120_000);
+  it("uses a 15-minute default and reads the server env override", () => {
+    assert.equal(DEFAULT_TURN_STALL_THRESHOLD_MS, 900_000);
     assert.equal(readTurnStallThresholdMs({ T3CODE_TURN_STALL_THRESHOLD_MS: "45000" }), 45_000);
     for (const malformed of ["invalid", "120000ms", "1.5", "-1", "Infinity"]) {
       assert.equal(
         readTurnStallThresholdMs({ T3CODE_TURN_STALL_THRESHOLD_MS: malformed }),
-        120_000,
+        900_000,
       );
     }
   });

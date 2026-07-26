@@ -1,6 +1,6 @@
 /** Provider turn-liveness defaults shared by runtime wiring and tests. */
 
-export const DEFAULT_TURN_STALL_THRESHOLD_MS = 120_000;
+export const DEFAULT_TURN_STALL_THRESHOLD_MS = 900_000;
 export const TURN_STALL_POLL_INTERVAL_MS = 15_000;
 
 function readNonNegativeIntEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
