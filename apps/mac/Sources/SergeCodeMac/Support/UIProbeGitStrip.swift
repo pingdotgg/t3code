@@ -1,6 +1,37 @@
 #if DEBUG
     import SwiftUI
 
+    /// Failures recorded by probe checks that assert product behavior rather
+    /// than capture diagnostics. The probe exits non-zero when any are present,
+    /// so a broken clamp cannot read as green to CI or an agent watching only
+    /// the exit status.
+    @MainActor
+    enum UIProbeAssertions {
+        private(set) static var failures: [String] = []
+
+        static func fail(_ check: String, _ detail: String) {
+            failures.append("\(check): \(detail)")
+            print("UIProbe: \(check) FAIL \(detail)")
+        }
+
+        static func pass(_ check: String, _ detail: String) {
+            print("UIProbe: \(check) OK \(detail)")
+        }
+
+        /// Prints the verdict and returns the process exit code to use.
+        static func verdict() -> Int32 {
+            guard !failures.isEmpty else {
+                print("UIProbe: assertions passed")
+                return 0
+            }
+            print("UIProbe: \(failures.count) assertion(s) FAILED")
+            for failure in failures {
+                print("UIProbe:   - \(failure)")
+            }
+            return 2
+        }
+    }
+
     /// Last reported scroll geometry of the chat header's git strip, so probe
     /// runs can check where the strip actually landed. The strip's placement
     /// cannot be read from a probe screenshot with any precision, and SwiftUI

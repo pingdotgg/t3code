@@ -67,6 +67,19 @@ struct WindowSizingTests {
         #expect(size.height == unbounded)
     }
 
+    @Test("a finite content maximum is forwarded as-is")
+    func finiteMaximumIsForwarded() {
+        // Current intent, written down: if a subview ever answers a finite max
+        // to an unbounded proposal, the clamp forwards it rather than
+        // substituting a floor or an infinity of its own. Nothing here should
+        // be "tightened" into a hard window maximum while chasing minimums —
+        // the runtime guard is the `window-size` probe, which fails the run if
+        // `contentMaxSize` ever comes back capped.
+        let size = resolved(.infinity, natural: CGSize(width: 2400, height: 1600))
+        #expect(size.width == 2400)
+        #expect(size.height == 1600)
+    }
+
     @Test("content that outgrows the floor cannot raise the reported minimum")
     func growingContentDoesNotRaiseTheMinimum() {
         // The whole point, stated as a property: whatever the content's ideal
