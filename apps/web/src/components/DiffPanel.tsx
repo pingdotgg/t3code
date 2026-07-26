@@ -863,10 +863,13 @@ export default function DiffPanel({
                   if (filePath) openDiffFile(filePath);
                 }}
               >
+                {/* The diffs virtualizer scrolls by repositioning its own sticky window through
+                    inline top/bottom insets. Do not override those insets from here: pinning the
+                    window freezes the rendered rows while the scrollbar keeps moving. */}
                 <AnnotatableCodeView
                   viewerRef={codeViewRef}
                   key={collapseScopeKey ?? reviewSectionId}
-                  className="diff-render-surface h-full min-h-0 overflow-auto [&>div>div:last-child]:top-0! [&>div>div:last-child]:bottom-auto!"
+                  className="diff-render-surface h-full min-h-0 overflow-auto"
                   files={codeViewFiles}
                   sectionId={reviewSectionId}
                   sectionTitle={reviewSectionTitle}
