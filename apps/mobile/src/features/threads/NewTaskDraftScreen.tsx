@@ -25,6 +25,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
+import { applyCreatePullRequestSuffix } from "@t3tools/shared/createPullRequestPrompt";
 import {
   applyProviderOptionMenuEvent,
   buildProviderOptionMenuActions,
@@ -37,6 +38,10 @@ import {
   parseComposerMenuEvent,
 } from "../../lib/interactionModes";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import {
+  setAutoCreatePullRequest,
+  useAutoCreatePullRequest,
+} from "../../state/use-auto-create-pull-request";
 import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
 import { useProjects } from "../../state/entities";
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
@@ -257,6 +262,7 @@ export function NewTaskDraftScreen(props: {
       }),
     [flow.selectedModel?.options, flow.selectedModelOption?.capabilities],
   );
+  const autoCreatePullRequest = useAutoCreatePullRequest();
 
   // A draft thread does not exist on the server yet, so it has no executor
   // binding to configure — advisor's executor model and sub-agent cap are
@@ -442,11 +448,19 @@ export function NewTaskDraftScreen(props: {
     const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
     const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
     const interactionMode = draft.interactionMode ?? flow.interactionMode;
-    const initialMessageText = draft.text.trim();
+    const trimmedMessageText = draft.text.trim();
+    // The first message of a brand-new thread always qualifies for the auto-PR
+    // suffix; the helper is idempotent so re-sending an edited pending task
+    // does not stack a second copy.
+    const initialMessageText = applyCreatePullRequestSuffix({
+      text: trimmedMessageText,
+      autoCreatePullRequest,
+      threadHasStarted: false,
+    });
 
     if (
       !modelSelection ||
-      initialMessageText.length === 0 ||
+      trimmedMessageText.length === 0 ||
       flow.submitting ||
       (workspaceMode === "worktree" && !selectedBranchName)
     ) {
@@ -664,6 +678,16 @@ export function NewTaskDraftScreen(props: {
                   label={workspaceLabel}
                 />
               </ControlPillMenu>
+              <ComposerToolbarButton
+                accessibilityLabel={
+                  autoCreatePullRequest ? "Create PR when done: on" : "Create PR when done: off"
+                }
+                active={autoCreatePullRequest}
+                icon="arrow.triangle.pull"
+                label="PR"
+                onPress={() => setAutoCreatePullRequest(!autoCreatePullRequest)}
+                showChevron={false}
+              />
             </ComposerToolbarScroller>
             <ComposerToolbarButton
               accessibilityLabel={

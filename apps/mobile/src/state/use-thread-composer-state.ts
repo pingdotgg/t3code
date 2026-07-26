@@ -11,6 +11,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { applyCreatePullRequestSuffix } from "@t3tools/shared/createPullRequestPrompt";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
@@ -40,6 +41,7 @@ import { setPendingConnectionError } from "../state/use-remote-environment-regis
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
+import { getAutoCreatePullRequest } from "./use-auto-create-pull-request";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
@@ -152,13 +154,19 @@ export function useThreadComposerState() {
 
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
+    const outgoingText = applyCreatePullRequestSuffix({
+      text,
+      autoCreatePullRequest: getAutoCreatePullRequest(),
+      // The shell owns latestUserMessageAt; the detail projection does not.
+      threadHasStarted: selectedThreadShell.latestUserMessageAt !== null,
+    });
     try {
       await enqueueThreadOutboxMessage({
         environmentId: selectedThreadShell.environmentId,
         threadId: selectedThreadShell.id,
         messageId,
         commandId: CommandId.make(metadata.commandId),
-        text,
+        text: outgoingText,
         attachments,
         modelSelection: draft.modelSelection ?? thread.modelSelection,
         runtimeMode: draft.runtimeMode ?? thread.runtimeMode,

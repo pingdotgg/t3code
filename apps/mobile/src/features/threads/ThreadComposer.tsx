@@ -67,6 +67,10 @@ import {
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
+import {
+  setAutoCreatePullRequest,
+  useAutoCreatePullRequest,
+} from "../../state/use-auto-create-pull-request";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import type { ComposerAnchorRect } from "./composerCommandPopoverLayout";
 
@@ -311,6 +315,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const currentInteractionMode = props.selectedThread.interactionMode ?? "default";
+  // Only fresh threads offer the auto-PR toggle: once a thread has its first
+  // user message the suffix stops being appended, so showing the control would
+  // promise something the send path no longer does (macOS parity).
+  const threadHasStarted = props.selectedThread.latestUserMessageAt !== null;
+  const autoCreatePullRequest = useAutoCreatePullRequest();
   const currentExecutorModelSelection = props.selectedThread.executorModelSelection ?? null;
   const currentExecutorMaxSubAgents = clampMaxSubAgents(props.selectedThread.executorMaxSubAgents);
   const connectionStatus = composerConnectionStatus({
@@ -890,6 +899,18 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   label={configurationLabel}
                 />
               </ControlPillMenu>
+              {threadHasStarted ? null : (
+                <ComposerToolbarButton
+                  accessibilityLabel={
+                    autoCreatePullRequest ? "Create PR when done: on" : "Create PR when done: off"
+                  }
+                  active={autoCreatePullRequest}
+                  icon="arrow.triangle.pull"
+                  label="PR"
+                  onPress={() => setAutoCreatePullRequest(!autoCreatePullRequest)}
+                  showChevron={false}
+                />
+              )}
               {showStopAction ? (
                 <ComposerToolbarButton
                   icon="stop.fill"
