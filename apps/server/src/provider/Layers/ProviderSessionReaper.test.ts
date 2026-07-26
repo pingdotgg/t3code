@@ -114,6 +114,7 @@ function makeReadModel(
       proposedPlans: [],
       checkpoints: [],
       deletedAt: null,
+      autoReviewPhase: null,
     })),
   };
 }
