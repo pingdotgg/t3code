@@ -37,6 +37,12 @@
             case "glass":
                 await GlassLayeringProbe.run(multi: multi, scenery: scenery, dir: dir)
                 return
+            case "window-size":
+                await runWindowSize(multi: multi, dir: dir)
+                return
+            case "min-size":
+                await runMinSize(multi: multi, scenery: scenery)
+                return
             case "tool-group-receive":
                 await runToolGroupReceive(model: model, multi: multi, dir: dir)
                 return
@@ -1028,6 +1034,591 @@
                 }
             }
             window.orderOut(nil)
+        }
+
+        /// Window-sizing diagnostic: shrinks the window below the split-view
+        /// content minimum, then exercises the structural toggles (inspector,
+        /// sidebar, thread selection, main-area review) logging the window
+        /// frame and AppKit minimum after each step. Any step that reports a
+        /// larger frame than the previous one grew the window behind the
+        /// user's back.
+        private static func runWindowSize(multi: MultiDeviceModel, dir: String) async {
+            let model = multi.local
+            try? await Task.sleep(for: .seconds(2))
+            guard let window = NSApp.windows.first(where: { $0.isVisible }) else {
+                print("UIProbe: window-size failed (no window)")
+                NSApp.terminate(nil)
+                return
+            }
+            // A window whose maximum has become finite is capped, whatever the
+            // number. Checked at every step below rather than once, so a cap
+            // that only appears after a particular resize, toggle, or content
+            // change cannot slip through: the clamp answers the unbounded probe
+            // with `.infinity`, and this is what holds it to that.
+            var maximumWentFinite = false
+            func assertUnboundedMaximum(_ tag: String) {
+                let maximum = window.contentMaxSize
+                guard maximum.width < 10000 || maximum.height < 10000 else { return }
+                maximumWentFinite = true
+                UIProbeAssertions.fail(
+                    "max-size",
+                    "contentMaxSize went finite at \(tag): "
+                        + "\(Int(maximum.width))x\(Int(maximum.height))")
+            }
+
+            func log(_ tag: String) {
+                let f = window.frame
+                print(
+                    "UIProbe: window-size \(tag) "
+                        + "frame=\(Int(f.width))x\(Int(f.height)) "
+                        + "content=\(Int(window.contentLayoutRect.width))x\(Int(window.contentLayoutRect.height)) "
+                        + "minSize=\(Int(window.minSize.width))x\(Int(window.minSize.height)) "
+                        + "contentMinSize=\(Int(window.contentMinSize.width))x\(Int(window.contentMinSize.height)) "
+                        + "contentMaxSize=\(Int(min(window.contentMaxSize.width, 99999)))x"
+                        + "\(Int(min(window.contentMaxSize.height, 99999))) "
+                        + "autosave='\(window.frameAutosaveName)' restorable=\(window.isRestorable)")
+                assertUnboundedMaximum(tag)
+            }
+            log("initial")
+            logSplitViews(window)
+
+            window.setContentSize(NSSize(width: 1500, height: 700))
+            try? await Task.sleep(for: .seconds(1.5))
+            log("after-grow-1500")
+            if model.selectedThreadID == nil,
+                let threadID = model.threads.first(where: { $0.id == "thread-1" })?.id
+                    ?? model.threads.first?.id
+            {
+                multi.select(threadID: threadID, on: model.deviceID)
+                try? await Task.sleep(for: .seconds(2))
+            }
+            snapshot("window-size-wide", window: window, dir: dir)
+
+            // Stepwise shrink: a user drags the corner, so the minimum is
+            // re-evaluated at every intermediate width.
+            for target in stride(from: 1450, through: 800, by: -50) {
+                window.setContentSize(NSSize(width: CGFloat(target), height: 600))
+                try? await Task.sleep(for: .seconds(0.4))
+                log("after-shrink-\(target)")
+            }
+
+            log("after-select-thread")
+
+            toggleSection("inspector")
+            try? await Task.sleep(for: .seconds(1.5))
+            log("after-inspector-hide")
+
+            toggleSection("inspector")
+            try? await Task.sleep(for: .seconds(1.5))
+            log("after-inspector-show")
+
+            toggleSection("sidebar")
+            try? await Task.sleep(for: .seconds(1.5))
+            log("after-sidebar-hide")
+
+            toggleSection("sidebar")
+            try? await Task.sleep(for: .seconds(1.5))
+            log("after-sidebar-show")
+
+            if let threadID = model.selectedThreadID {
+                model.openReview(threadID: threadID, scope: .allChanges)
+                try? await Task.sleep(for: .seconds(2))
+                log("after-open-review")
+                model.closeReview(threadID: threadID)
+                try? await Task.sleep(for: .seconds(1.5))
+                log("after-close-review")
+            }
+
+            await probeGitStripAnchor(multi: multi, dir: dir, window: window)
+            await probeHeaderFloorCoversWidestState(multi: multi)
+            await probeLateVcsStatusAnchor(multi: multi, dir: dir)
+            await probeContentGrowthDoesNotResizeWindow(
+                multi: multi, dir: dir, window: window, log: log)
+
+            snapshot("window-size-final", window: window, dir: dir)
+            // The checks above assert product behavior, not diagnostics: a
+            // window that resized itself or a strip that lost its anchor has to
+            // fail the run, not just print. `exit` rather than
+            // `NSApp.terminate` because the terminate path always reports
+            // success, and a caller watching the status would read a broken
+            // clamp as green.
+            assertUnboundedMaximum("end-of-run")
+            if !maximumWentFinite {
+                UIProbeAssertions.pass(
+                    "max-size", "contentMaxSize stayed unbounded across every step")
+            }
+
+            let status = UIProbeAssertions.verdict()
+            fflush(stdout)
+            guard status == 0 else { exit(status) }
+            NSApp.terminate(nil)
+        }
+
+        /// The regression this whole change exists to prevent: repository state
+        /// growing the git strip must not move the window. Shrinks the window
+        /// to its minimum, then injects a deliberately oversized VCS status (a
+        /// very long branch name, five-figure diff counts, a draft PR with
+        /// conflicts and review comments) and checks the frame, the AppKit
+        /// minimum, and the AppKit maximum against the values from before.
+        /// Holds `WindowSizing.minContentWidth` to account: the floor is a
+        /// fixed number, so it has to keep covering the header's *incompressible*
+        /// width — the provider badge, the status badge, and the title's minimum
+        /// — across every status label and repository state. The git strip
+        /// itself scrolls, so it does not participate; what would break is the
+        /// fixed chrome around it being clipped at the window minimum, which no
+        /// amount of scrolling recovers.
+        ///
+        /// Measured rather than assumed, because status labels are the widest
+        /// piece and they change with the wording (and would change again with
+        /// localisation).
+        private static func probeHeaderFloorCoversWidestState(
+            multi: MultiDeviceModel
+        ) async {
+            let model = multi.local
+            guard let thread = model.selectedThread ?? model.threads.first else {
+                UIProbeAssertions.fail("header-floor", "no thread to measure")
+                return
+            }
+            let statuses: [ThreadStatus] = [
+                .idle, .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork,
+                .error, .archived, .settled, .done, .reviewing, .fixing, .readyToMerge,
+            ]
+            // What genuinely cannot compress: the two fixed badges and the
+            // paddings and spacings around them. The title is excluded because
+            // it truncates and the git strip because it scrolls — both degrade
+            // without becoming unreachable. A few points are still reserved so
+            // the title is not reduced to literally nothing at the minimum.
+            let headerPadding: CGFloat = 32  // .padding(.horizontal, 16)
+            let clusterSpacing: CGFloat = 32  // HStack(spacing: 16), two gaps
+            let truncatedTitleRoom: CGFloat = 24
+            var widest: (status: ThreadStatus, width: CGFloat) = (.idle, 0)
+            for status in statuses {
+                let host = NSHostingView(
+                    rootView: HStack(spacing: 16) {
+                        ProviderBadge(provider: thread.provider, modelID: thread.modelID)
+                        StatusBadge(status: status, stalled: false)
+                    })
+                host.frame = NSRect(x: 0, y: 0, width: 1400, height: 90)
+                host.layoutSubtreeIfNeeded()
+                let width =
+                    host.fittingSize.width + headerPadding + clusterSpacing
+                    + truncatedTitleRoom
+                if width > widest.width { widest = (status, width) }
+            }
+            let floor = WindowSizing.minContentWidth
+            print(
+                "UIProbe: header-floor widest incompressible=\(Int(widest.width))pt at "
+                    + "status=\(widest.status.rawValue), floor=\(Int(floor))pt")
+            if widest.width <= floor {
+                UIProbeAssertions.pass(
+                    "header-floor",
+                    "floor \(Int(floor))pt covers the widest header state "
+                        + "(\(Int(widest.width))pt at \(widest.status.rawValue), "
+                        + "\(Int(floor - widest.width))pt spare)")
+            } else {
+                UIProbeAssertions.fail(
+                    "header-floor",
+                    "floor \(Int(floor))pt is under the header's incompressible width "
+                        + "\(Int(widest.width))pt at status=\(widest.status.rawValue); "
+                        + "the fixed chrome would clip at the window minimum")
+            }
+        }
+
+        /// The late-arriving VCS status case, driven deterministically rather
+        /// than waiting for the mock to happen to be slow: blank the strip, let
+        /// it lay out empty, then hand it a status wide enough to overflow and
+        /// assert it comes to rest at its trailing edge. This is the path where
+        /// the scroll view has already anchored an empty strip, so growth has
+        /// to re-anchor it or the git actions menu is off-screen.
+        private static func probeLateVcsStatusAnchor(
+            multi: MultiDeviceModel, dir: String
+        ) async {
+            let model = multi.local
+            guard let mock = model.backendForShutdown as? MockBackend else {
+                print("UIProbe: late-status skipped (live backend run)")
+                return
+            }
+            guard let threadID = model.selectedThreadID else {
+                UIProbeAssertions.fail("late-status", "no selected thread")
+                return
+            }
+
+            /// Waits for the strip to report a settled geometry for this thread.
+            func settledMetrics() async -> ChatHeaderView.GitStripMetrics? {
+                var settled: ChatHeaderView.GitStripMetrics?
+                var stableFor = 0
+                for _ in 0..<40 {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    guard let metrics = UIProbeGitStrip.metrics(for: threadID) else { continue }
+                    if settled == metrics {
+                        stableFor += 1
+                        if stableFor >= 3 { return metrics }
+                    } else {
+                        stableFor = 0
+                    }
+                    settled = metrics
+                }
+                return settled
+            }
+
+            // 1. Blank the strip: a non-repo status renders no git controls.
+            UIProbeGitStrip.reset()
+            await mock.injectVcsStatus(
+                threadID: threadID,
+                status: VcsStatus(
+                    isRepo: false, branch: nil, isDefaultBranch: false, changedFileCount: 0,
+                    insertions: 0, deletions: 0, aheadCount: 0, behindCount: 0,
+                    hasUpstream: false))
+            try? await mock.refreshVcsStatus(threadID: threadID)
+            let empty = await settledMetrics()
+            print(
+                "UIProbe: late-status emptied strip content="
+                    + "\(empty.map { Int($0.contentWidth) } ?? -1)")
+
+            // 2. Status arrives, wide enough to overflow any header.
+            UIProbeGitStrip.reset()
+            await mock.injectVcsStatus(
+                threadID: threadID,
+                status: VcsStatus(
+                    isRepo: true,
+                    branch: "sergecode/status-that-arrives-after-the-strip-has-already-laid-out",
+                    isDefaultBranch: false,
+                    changedFileCount: 4242,
+                    insertions: 31337,
+                    deletions: 2718,
+                    aheadCount: 42,
+                    behindCount: 17,
+                    hasUpstream: true,
+                    hasPrimaryRemote: true,
+                    prNumber: 267,
+                    prTitle: "Stop the window resizing itself",
+                    prURL: "https://github.com/SergeSerb2/SergeCode/pull/267",
+                    prState: .open,
+                    isDraftPR: true,
+                    unresolvedReviewThreadCount: 9,
+                    prMergeStateStatus: "dirty"))
+            try? await mock.refreshVcsStatus(threadID: threadID)
+            guard let grown = await settledMetrics(), grown.contentWidth > 0 else {
+                UIProbeAssertions.fail(
+                    "late-status", "strip never reported content after the status arrived")
+                return
+            }
+            print("UIProbe: late-status \(UIProbeGitStrip.describe())")
+            guard grown.overflow.isOverflowing else {
+                UIProbeAssertions.fail(
+                    "late-status",
+                    "strip did not overflow (content \(Int(grown.contentWidth)) in "
+                        + "\(Int(grown.containerWidth))); the check proves nothing")
+                return
+            }
+            if grown.isAtTrailingEdge {
+                UIProbeAssertions.pass(
+                    "late-status",
+                    "strip anchored at \(Int(grown.contentOffsetX)) of "
+                        + "\(Int(grown.trailingEdgeOffset)) after a late status")
+            } else {
+                UIProbeAssertions.fail(
+                    "late-status",
+                    "strip rested at \(Int(grown.contentOffsetX)) of "
+                        + "\(Int(grown.trailingEdgeOffset)); git actions off-screen")
+            }
+            snapshot("window-size-late-status", dir: dir)
+        }
+
+        private static func probeContentGrowthDoesNotResizeWindow(
+            multi: MultiDeviceModel,
+            dir: String,
+            window: NSWindow,
+            log: (String) -> Void
+        ) async {
+            let model = multi.local
+            guard let mock = model.backendForShutdown as? MockBackend else {
+                print("UIProbe: content-growth skipped (live backend run)")
+                return
+            }
+            guard let threadID = model.selectedThreadID else {
+                print("UIProbe: content-growth no selected thread")
+                return
+            }
+
+            // Sit at the window minimum: the state where AppKit used to grow
+            // the window the moment the content wanted more room.
+            window.setContentSize(NSSize(width: 1, height: 1))
+            try? await Task.sleep(for: .seconds(1.5))
+            let frameBefore = window.frame
+            let minBefore = window.contentMinSize
+            let maxBefore = window.contentMaxSize
+            let stripBefore = UIProbeGitStrip.metrics(for: threadID)?.contentWidth ?? 0
+            log("content-growth-before")
+            print(
+                "UIProbe: content-growth maxBefore="
+                    + "\(Int(min(maxBefore.width, 99999)))x\(Int(min(maxBefore.height, 99999))) "
+                    + "stripContent=\(Int(stripBefore))")
+
+            UIProbeGitStrip.reset()
+            await mock.injectVcsStatus(
+                threadID: threadID,
+                status: VcsStatus(
+                    isRepo: true,
+                    branch: "sergecode/a-deliberately-enormous-branch-name-that-will-not-fit-anywhere",
+                    isDefaultBranch: false,
+                    changedFileCount: 12345,
+                    insertions: 67890,
+                    deletions: 54321,
+                    aheadCount: 999,
+                    behindCount: 888,
+                    hasUpstream: true,
+                    hasPrimaryRemote: true,
+                    prNumber: 26777,
+                    prTitle: "A pull request whose title is also far too long for the header band",
+                    prURL: "https://github.com/SergeSerb2/SergeCode/pull/26777",
+                    prState: .open,
+                    isDraftPR: true,
+                    unresolvedReviewThreadCount: 4321,
+                    prMergeStateStatus: "dirty"))
+            try? await mock.refreshVcsStatus(threadID: threadID)
+            try? await Task.sleep(for: .seconds(2.5))
+
+            let frameAfter = window.frame
+            let minAfter = window.contentMinSize
+            let stripAfter = UIProbeGitStrip.metrics(for: threadID)?.contentWidth ?? 0
+            log("content-growth-after")
+            print("UIProbe: content-growth stripContent=\(Int(stripAfter))")
+
+            // A point of epsilon: AppKit nudges frames by fractions for display
+            // scale, titlebar, and divider settling, and reporting that as a
+            // resize would make the check flaky rather than strict.
+            let epsilon: CGFloat = 1
+            func differs(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
+                abs(lhs.width - rhs.width) > epsilon || abs(lhs.height - rhs.height) > epsilon
+            }
+
+            var failed = false
+            if stripAfter <= stripBefore {
+                failed = true
+                UIProbeAssertions.fail(
+                    "content-growth",
+                    "strip did not grow (\(Int(stripBefore)) -> \(Int(stripAfter))); "
+                        + "the check proves nothing")
+            }
+            if differs(frameAfter.size, frameBefore.size) {
+                failed = true
+                UIProbeAssertions.fail(
+                    "content-growth",
+                    "window resized \(Int(frameBefore.width))x\(Int(frameBefore.height)) -> "
+                        + "\(Int(frameAfter.width))x\(Int(frameAfter.height))")
+            }
+            if differs(minAfter, minBefore) {
+                failed = true
+                UIProbeAssertions.fail(
+                    "content-growth",
+                    "window minimum moved \(Int(minBefore.width))x\(Int(minBefore.height)) -> "
+                        + "\(Int(minAfter.width))x\(Int(minAfter.height))")
+            }
+            // The maximum is checked on both sides of the growth: a clamp that
+            // let the content's current width become the window's ceiling would
+            // show up here, once the strip is wider than the floor.
+            let maxAfter = window.contentMaxSize
+            for (label, size) in [("before", maxBefore), ("after", maxAfter)]
+            where size.width < 10000 || size.height < 10000 {
+                failed = true
+                UIProbeAssertions.fail(
+                    "content-growth",
+                    "window maximum \(label) growth is capped at "
+                        + "\(Int(size.width))x\(Int(size.height)); resizing is blocked")
+            }
+            // The other half of the contract: the clamp must not have turned a
+            // resize bug into a max-size regression. `contentMaxSize` is only
+            // the reported number — this asks AppKit for a bigger window after
+            // the content grew and checks the frame actually followed.
+            let expanded = NSSize(
+                width: frameAfter.width + 400, height: frameAfter.height + 200)
+            window.setContentSize(expanded)
+            try? await Task.sleep(for: .seconds(1.5))
+            let grownFrame = window.frame
+            if grownFrame.width < frameAfter.width + 300 {
+                failed = true
+                UIProbeAssertions.fail(
+                    "content-growth",
+                    "window would not expand after the content grew: asked for "
+                        + "\(Int(expanded.width)) wide, got \(Int(grownFrame.width))")
+            }
+            if !failed {
+                UIProbeAssertions.pass(
+                    "content-growth",
+                    "strip \(Int(stripBefore)) -> \(Int(stripAfter))pt, window and minimum "
+                        + "unchanged, still expandable to \(Int(grownFrame.width))pt")
+            }
+            snapshot("window-size-content-growth", window: window, dir: dir)
+        }
+
+        /// Checks that the chat header's git strip starts at its trailing edge
+        /// — where the git actions menu lives — on first show and again after
+        /// each thread switch. A strip that overflows but reports a zero offset
+        /// has silently landed at the leading edge, which would bury the git
+        /// actions behind a long branch name.
+        private static func probeGitStripAnchor(
+            multi: MultiDeviceModel, dir: String, window: NSWindow
+        ) async {
+            let model = multi.local
+            let threadIDs = model.threads.prefix(3).map(\.id)
+            guard !threadIDs.isEmpty else {
+                UIProbeAssertions.fail("git-strip", "no threads to check")
+                return
+            }
+            var checks = 0
+            var failures = 0
+
+            /// Reads the strip's geometry for `threadID` only, after the
+            /// previous reading was cleared: a strip that never reports must
+            /// fail rather than inherit the last thread's numbers. Samples
+            /// until the offset stops moving, because the anchor animates and a
+            /// mid-flight sample measures the animation, not where the strip
+            /// came to rest.
+            func check(_ label: String, threadID: String) async {
+                var settled: ChatHeaderView.GitStripMetrics?
+                var stableFor = 0
+                var startedEmpty = false
+                var sawAnything = false
+                for _ in 0..<40 {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    guard let metrics = UIProbeGitStrip.metrics(for: threadID) else { continue }
+                    if !sawAnything {
+                        sawAnything = true
+                        startedEmpty = metrics.contentWidth == 0
+                    }
+                    guard metrics.contentWidth > 0 else { continue }
+                    if settled == metrics {
+                        stableFor += 1
+                        if stableFor >= 3 { break }
+                    } else {
+                        stableFor = 0
+                    }
+                    settled = metrics
+                }
+                checks += 1
+                guard let metrics = settled else {
+                    failures += 1
+                    UIProbeAssertions.fail(
+                        "git-strip",
+                        "\(label) no fresh geometry for \(threadID) "
+                            + "(last reading from \(UIProbeGitStrip.latestThreadID ?? "nothing"))")
+                    return
+                }
+                print("UIProbe: \(label) \(UIProbeGitStrip.describe())")
+                // Reachability, not just placement: if the fixed chrome ever ate
+                // the whole header, the strip's container would collapse and no
+                // amount of scrolling would reach the git controls.
+                if metrics.containerWidth <= 0 {
+                    failures += 1
+                    UIProbeAssertions.fail(
+                        "git-strip",
+                        "\(label) strip has no room at all (\(threadID)); "
+                            + "git controls unreachable")
+                    return
+                }
+                guard !metrics.isAtTrailingEdge else { return }
+                if startedEmpty {
+                    // No longer an excuse: the strip is rebuilt when its
+                    // content appears, so a status that arrives after mount
+                    // gets a first layout with content in it. Kept in the
+                    // message because it is the harder case to debug.
+                    print("UIProbe: git-strip \(label) strip had populated after mount")
+                }
+                failures += 1
+                UIProbeAssertions.fail(
+                    "git-strip", "\(label) not at trailing edge (\(threadID))")
+            }
+
+            // Thread switches: every thread starts at the trailing edge. The
+            // selection is cleared first so re-selecting the already-selected
+            // thread is still a real change — otherwise nothing re-renders and
+            // the check would read as "no geometry" rather than measuring.
+            for threadID in threadIDs {
+                multi.selection = nil
+                try? await Task.sleep(for: .seconds(0.5))
+                UIProbeGitStrip.reset()
+                multi.select(threadID: threadID, on: model.deviceID)
+                // Nudge the window a point: scroll geometry only reports on
+                // change, and a strip that mounts with the same size and offset
+                // as the last one would otherwise report nothing at all — which
+                // the identity check (correctly) treats as no evidence.
+                try? await Task.sleep(for: .seconds(1))
+                window.setContentSize(
+                    NSSize(width: window.frame.width + 1, height: window.frame.height - 52))
+                await check("thread-switch", threadID: threadID)
+            }
+
+            // Header width changes: the case where a scroll view keeps a stale
+            // offset and drifts off the trailing edge. Widths only grow, so none
+            // of them can be refused by the window minimum (a refused resize
+            // would emit no geometry at all).
+            if let threadID = model.selectedThreadID {
+                let base = window.frame.width
+                for delta in [80.0, 320.0, 200.0] {
+                    UIProbeGitStrip.reset()
+                    window.setContentSize(NSSize(width: base + delta, height: 600))
+                    await check("resize-\(Int(base + delta))", threadID: threadID)
+                }
+            }
+
+            if failures == 0 {
+                UIProbeAssertions.pass("git-strip", "anchor held across \(checks) checks")
+            }
+            snapshot("window-size-git-strip", dir: dir)
+        }
+
+
+        /// Dumps the AppKit split-view panes backing NavigationSplitView, so
+        /// the window minimum can be attributed to individual columns.
+        private static func logSplitViews(_ window: NSWindow) {
+            func walk(_ view: NSView) {
+                if let split = view as? NSSplitView {
+                    let panes = split.arrangedSubviews.map { Int($0.frame.width) }
+                    print("UIProbe: window-size splitview panes=\(panes)")
+                }
+                for sub in view.subviews { walk(sub) }
+            }
+            if let root = window.contentView { walk(root) }
+        }
+
+        /// Reports each shell surface's minimum (fitting) size, so the
+        /// contributor to an oversized window minimum can be identified.
+        private static func runMinSize(multi: MultiDeviceModel, scenery: SceneryStore) async {
+            let model = multi.local
+            try? await Task.sleep(for: .seconds(2))
+            if model.selectedThreadID == nil,
+                let threadID = model.threads.first(where: { $0.id == "thread-1" })?.id
+                    ?? model.threads.first?.id
+            {
+                multi.select(threadID: threadID, on: model.deviceID)
+            }
+            try? await Task.sleep(for: .seconds(2))
+            func measure(_ name: String, _ view: some View) {
+                let host = NSHostingView(rootView: AnyView(view))
+                host.frame = NSRect(x: 0, y: 0, width: 1400, height: 900)
+                host.layoutSubtreeIfNeeded()
+                let fitting = host.fittingSize
+                print("UIProbe: min-size \(name) = \(Int(fitting.width))x\(Int(fitting.height))")
+            }
+            measure("SidebarView", SidebarView(multi: multi, scenery: scenery, onToggleSidebar: {}))
+            measure("ChatScreen", ChatScreen(model: model, scenery: scenery))
+            measure("ComposerBar", ComposerBar(model: model, accent: AlpineTheme.accent))
+            if let thread = model.selectedThread {
+                measure(
+                    "ChatHeaderView",
+                    ChatHeaderView(
+                        thread: thread, model: model, scenery: scenery,
+                        threadKey: model.scopedThreadKey(thread.id)))
+                measure("InspectorPanel", InspectorPanel(model: model, threadID: thread.id))
+                measure("ChatFollowUpBar", ChatFollowUpBar(model: model))
+                measure("DiffReviewView", DiffReviewView(model: model, threadID: thread.id))
+                measure("VcsToolbar", VcsToolbar(model: model, threadID: thread.id))
+                measure(
+                    "ProviderLabel",
+                    ProviderLabel(provider: thread.provider, modelID: thread.modelID, iconSize: 13))
+            }
+            NSApp.terminate(nil)
         }
 
         /// Toggles a collapsible section via the probe notification hook
