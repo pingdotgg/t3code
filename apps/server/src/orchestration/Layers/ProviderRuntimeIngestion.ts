@@ -1334,6 +1334,38 @@ const make = Effect.gen(function* () {
       ),
   });
 
+  /**
+   * Every assistant message id already taken for a thread: hydrated once from
+   * the projection (covers ids minted before a server restart), then kept
+   * current as ids are claimed and finalized. Provider item ids are not
+   * guaranteed unique across turns — e.g. the ACP session runtime derives
+   * them from the session id plus a segment counter that resets on resume —
+   * so without this guard a later turn can reuse an earlier message's id,
+   * which makes the projector (and every client) append the new response
+   * into the old message instead of showing it as a new one.
+   */
+  const usedAssistantMessageIdsByThread = yield* Cache.make<ThreadId, Set<string>>({
+    capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
+    timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
+    lookup: () =>
+      Effect.die(
+        new Error("used assistant message ids should be read through getUsedAssistantMessageIds"),
+      ),
+  });
+
+  /**
+   * Correlation from a provider event's base key (itemId/turnId/eventId) to
+   * the (possibly collision-adjusted) message id minted for it, so the
+   * completion path resolves the same id the deltas used when no per-turn
+   * segment state exists.
+   */
+  const claimedAssistantMessageIdByBaseKey = yield* Cache.make<string, MessageId>({
+    capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
+    timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
+    lookup: () =>
+      Effect.die(new Error("claimed assistant message ids are read through getOption only")),
+  });
+
   const bufferedProposedPlanById = yield* Cache.make<string, { text: string; createdAt: string }>({
     capacity: BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
@@ -1358,6 +1390,85 @@ const make = Effect.gen(function* () {
       .getThreadShellById(threadId)
       .pipe(Effect.map(Option.getOrUndefined));
   });
+
+  const getUsedAssistantMessageIds = (threadId: ThreadId) =>
+    Cache.getOption(usedAssistantMessageIdsByThread, threadId).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            resolveThreadDetail(threadId).pipe(
+              Effect.flatMap((detail) => {
+                const ids = new Set<string>();
+                for (const message of detail?.messages ?? []) {
+                  if (message.role === "assistant") {
+                    ids.add(message.id);
+                  }
+                }
+                return Cache.set(usedAssistantMessageIdsByThread, threadId, ids).pipe(
+                  Effect.as(ids),
+                );
+              }),
+            ),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+
+  /**
+   * Return `candidateId`, or the first free `${candidateId}:again:N` variant
+   * when the candidate already belongs to an earlier message, and mark it
+   * taken. Keeps every assistant message id unique per thread even when a
+   * provider recycles item ids across turns.
+   */
+  const claimAssistantMessageId = (input: { threadId: ThreadId; candidateId: MessageId }) =>
+    Effect.gen(function* () {
+      const used = yield* getUsedAssistantMessageIds(input.threadId);
+      let id = input.candidateId as string;
+      let suffix = 0;
+      while (used.has(id)) {
+        suffix += 1;
+        id = `${input.candidateId}:again:${suffix}`;
+      }
+      used.add(id);
+      yield* Cache.set(usedAssistantMessageIdsByThread, input.threadId, used);
+      return MessageId.make(id);
+    });
+
+  const retireAssistantMessageId = (threadId: ThreadId, messageId: MessageId) =>
+    getUsedAssistantMessageIds(threadId).pipe(
+      Effect.tap((ids) => {
+        ids.add(messageId);
+        return Cache.set(usedAssistantMessageIdsByThread, threadId, ids);
+      }),
+      Effect.asVoid,
+    );
+
+  const claimedBaseKeyCacheKey = (threadId: ThreadId, baseKey: string) => `${threadId}:${baseKey}`;
+
+  const claimedAssistantMessageIdForBaseKey = (input: { threadId: ThreadId; baseKey: string }) =>
+    Cache.getOption(
+      claimedAssistantMessageIdByBaseKey,
+      claimedBaseKeyCacheKey(input.threadId, input.baseKey),
+    ).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            claimAssistantMessageId({
+              threadId: input.threadId,
+              candidateId: assistantSegmentMessageId(input.baseKey, 0),
+            }).pipe(
+              Effect.tap((messageId) =>
+                Cache.set(
+                  claimedAssistantMessageIdByBaseKey,
+                  claimedBaseKeyCacheKey(input.threadId, input.baseKey),
+                  messageId,
+                ),
+              ),
+            ),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
 
   const rememberAssistantMessageId = (threadId: ThreadId, turnId: TurnId, messageId: MessageId) =>
     Cache.getOption(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
@@ -1449,8 +1560,15 @@ const make = Effect.gen(function* () {
               } satisfies AssistantSegmentState;
             },
           });
-          yield* setAssistantSegmentStateForTurn(input.threadId, input.turnId, nextState);
-          return nextState.activeMessageId!;
+          const claimedMessageId = yield* claimAssistantMessageId({
+            threadId: input.threadId,
+            candidateId: nextState.activeMessageId!,
+          });
+          yield* setAssistantSegmentStateForTurn(input.threadId, input.turnId, {
+            ...nextState,
+            activeMessageId: claimedMessageId,
+          });
+          return claimedMessageId;
         }),
       ),
     );
@@ -1462,7 +1580,10 @@ const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       if (!input.turnId) {
-        return assistantSegmentMessageId(assistantSegmentBaseKeyFromEvent(input.event), 0);
+        return yield* claimedAssistantMessageIdForBaseKey({
+          threadId: input.threadId,
+          baseKey: assistantSegmentBaseKeyFromEvent(input.event),
+        });
       }
 
       const activeMessageId = yield* getActiveAssistantMessageIdForTurn(
@@ -1740,6 +1861,7 @@ const make = Effect.gen(function* () {
           createdAt: input.createdAt,
         });
       }
+      yield* retireAssistantMessageId(input.threadId, input.messageId);
       yield* clearAssistantMessageState(input.messageId);
     });
 
@@ -2367,9 +2489,20 @@ const make = Effect.gen(function* () {
           : Option.none<MessageId>();
         const hasAssistantMessagesForTurn =
           turnId !== undefined ? hasAssistantMessageForTurn(messages, turnId) : false;
-        const assistantMessageId = Option.getOrElse(
-          activeAssistantMessageId,
-          () => assistantCompletion.messageId,
+        // When no per-turn segment state names the message, prefer the id the
+        // deltas actually used for this base key (it may have been adjusted
+        // for a collision) over re-deriving the raw id here.
+        const claimedForBaseKey = Option.isNone(activeAssistantMessageId)
+          ? yield* Cache.getOption(
+              claimedAssistantMessageIdByBaseKey,
+              claimedBaseKeyCacheKey(
+                thread.id,
+                String(event.itemId ?? event.turnId ?? event.eventId),
+              ),
+            )
+          : Option.none<MessageId>();
+        const assistantMessageId = Option.getOrElse(activeAssistantMessageId, () =>
+          Option.getOrElse(claimedForBaseKey, () => assistantCompletion.messageId),
         );
         const existingAssistantMessage = findMessageById(messages, assistantMessageId);
         const shouldApplyFallbackCompletionText =
