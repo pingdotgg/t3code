@@ -436,6 +436,7 @@ function selectedClaudeContextWindow(
   getModelCapabilities: ClaudeModelCapabilitiesLookup = getClaudeModelCapabilities,
 ): number | undefined {
   switch (modelSelection?.model) {
+    case "claude-opus-5":
     case "claude-opus-4-8":
     case "claude-opus-4-7":
       return 1_000_000;

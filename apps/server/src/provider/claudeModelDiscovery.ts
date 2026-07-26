@@ -26,7 +26,9 @@ import { buildBooleanOptionDescriptor, buildSelectOptionDescriptor } from "./pro
  * as the built-in list and dedupe against it.
  */
 const CLAUDE_MODEL_SLUG_ALIASES: Record<string, string> = {
-  opus: "claude-opus-4-8",
+  opus: "claude-opus-5",
+  "opus-5": "claude-opus-5",
+  "claude-opus-5": "claude-opus-5",
   "opus-4.8": "claude-opus-4-8",
   "claude-opus-4.8": "claude-opus-4-8",
   "opus-4.7": "claude-opus-4-7",
@@ -168,9 +170,11 @@ function buildDiscoveredModelCapabilities(input: {
  * recorded as long-context support), and aliases are normalized through the
  * curated Claude alias map so they dedupe against the built-in list.
  *
- * Note: brand-new models surface here via their full model id (that is how
- * the CLI lists newly released flagships). Alias-only entries always resolve
- * to an existing built-in slug and are therefore deduped away.
+ * Note: brand-new models surface here via their full model id (one way the
+ * CLI lists newly released flagships) or through picker aliases such as
+ * `opus`, which the curated alias map keeps pointed at the latest slug.
+ * Alias entries that still resolve to an older built-in slug are deduped
+ * away.
  */
 export function parseClaudeSdkDiscoveredModels(raw: unknown): ReadonlyArray<ServerProviderModel> {
   if (!globalThis.Array.isArray(raw)) return [];

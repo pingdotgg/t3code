@@ -15,11 +15,18 @@ The system consists of four main components:
 
 ### Automatic releases (default)
 
-Every push to `main` triggers the `Release macOS App` workflow, which:
+Merging a PR carrying a release label into `main` triggers the
+`Release macOS App` workflow — either `release` (default patch bump) or any
+qualifier on its own: `release:patch` (bug fixes), `release:minor`
+(features or larger PRs), or `release:major` (big releases). A qualifier
+label is sufficient by itself; it implies a release and picks the bump
+size. The workflow:
 
-1. Bumps the prerelease version (e.g. `0.1.0-alpha.2` → `0.1.0-alpha.3`) and
-   `buildNumber` in `apps/mac/version.json`, commits it as
-   `chore: bump version to X [skip release]`, and tags `vX`.
+1. Bumps the version and `buildNumber` in `apps/mac/version.json`, commits
+   it as `chore: bump version to X [skip release]`, and tags `vX`. The bump
+   type is resolved by `apps/mac/scripts/release-bump-type.sh` (tested in
+   `scripts/release-bump-type.test.ts`); a `major` qualifier wins if
+   several are present. e.g. `0.1.0` → `0.1.1` / `0.2.0` / `1.0.0`.
 2. Runs the repository checks, builds the app, signs the Sparkle appcast, and
    publishes a GitHub Release.
 3. Commits the updated `appcast.xml` directly to `main` as
@@ -31,6 +38,17 @@ see the update as soon as that commit lands — no manual steps.
 The `[skip release]` marker in bot commit messages prevents the workflow from
 re-triggering itself. Keep that marker on any automation or cherry-picked
 release commit you create by hand.
+
+#### Leaving the alpha track
+
+The version line is currently `0.1.0-alpha.N`. The first labeled merge
+ships a plain semver release — `0.1.1` with a default patch bump — dropping
+the `-alpha.N` suffix and marking the GitHub Release as stable rather than
+prerelease. That is intentional, but it means there is no automated path
+that publishes exactly `0.1.0`: if you want the current base to ship as
+stable `0.1.0` (or one last `0.1.0-alpha.N+1`), set
+`apps/mac/version.json` manually and run the workflow via
+`workflow_dispatch` instead.
 
 ### Manual release (override)
 
@@ -78,14 +96,18 @@ Reads version from Bundle.main.infoDictionary at runtime.
 
 **Workflow**: `.github/workflows/release-mac.yml`
 
-Triggered automatically on every push to `main` (commits containing
-`[skip release]` are ignored to prevent release loops), or manually via
-`workflow_dispatch` with a version matching `version.json`.
+Triggered when a PR carrying a release label (`release` or any
+`release:patch` / `release:minor` / `release:major` qualifier) is merged
+into `main` (bot commits containing `[skip release]` never carry the label
+path and cannot re-trigger it), or manually via `workflow_dispatch` with a
+version matching `version.json`.
 
 Steps:
 
-1. **Version bump** (push events only): compute the next prerelease version
-   via `scripts/compute-version.sh`, commit `version.json`, tag `vX`, push.
+1. **Version bump** (merge events only): compute the next version via
+   `scripts/compute-version.sh` using the bump type from the PR's
+   `release:patch` / `release:minor` / `release:major` qualifier label
+   (default `patch`), commit `version.json`, tag `vX`, push.
 2. **Checkout & Setup**: Clone repo, install dependencies
 3. **Test**: Run checks (`vp check`, `vp run typecheck`, `swift test`)
 4. **Build**: Run `make-app.sh` to create release build
@@ -138,12 +160,21 @@ The version from `version.json` is automatically synced to Info.plist before bui
 
 ### Creating a Release
 
-Releases are automatic — merging a PR to `main` is all it takes. Each merge
-produces a new prerelease (e.g. `0.1.0-alpha.3`) with its own GitHub Release
-and appcast entry.
+Releases are automatic — merging a PR carrying a release label to `main` is
+all it takes. `release` alone ships a default patch bump; a qualifier label
+is sufficient on its own and picks the bump size: `release:patch` (bug
+fixes), `release:minor` (features or larger PRs), or `release:major` (big
+releases). Each merge produces a new version (e.g. `0.1.0` → `0.1.1` for a
+patch) with its own GitHub Release and appcast entry. Note the first
+labeled merge leaves the alpha track — see "Leaving the alpha track" above.
 
-To move the semver line (e.g. from alpha to a stable `0.1.0`, or a minor
-bump), prepare a release branch:
+To release the exact version currently in `apps/mac/version.json` without an
+auto-bump (e.g. after merging a manual semver bump PR), run the
+`Release macOS App` workflow manually from `main` with that version as the
+input; the dispatch path validates the input against `version.json` and skips
+the auto-bump.
+
+For a manual version-line change, prepare a release branch:
 
 1. **Prepare a release branch**:
 
@@ -159,9 +190,9 @@ bump), prepare a release branch:
    git log -1 --stat
    ```
 
-3. **Merge the PR**: the push to `main` triggers the release workflow, which
-   auto-bumps the prerelease number on top (e.g. `0.1.0` → `0.1.1-alpha.1`
-   per the prerelease rules). If you need to release the exact version in
+3. **Merge the PR**: the merge to `main` triggers the release workflow,
+   which auto-bumps the version on top per the PR's `release:*` qualifier
+   label (default patch). If you need to release the exact version in
    `version.json` instead, run the `Release macOS App` workflow manually
    from `main` with that version as the input.
 
@@ -229,7 +260,10 @@ completed before distributing its artifacts to end users.
 
 The semver bump rules live in `apps/mac/scripts/compute-version.sh`, a
 compute-only script (prints the next `version`/`buildNumber`/`tag`, no git
-side effects) shared by `version-bump.sh` and the release workflow.
+side effects) shared by `version-bump.sh` and the release workflow. The
+label → bump-type mapping used by the release workflow lives in
+`apps/mac/scripts/release-bump-type.sh` (tested in
+`scripts/release-bump-type.test.ts`).
 
 ### Usage
 
@@ -374,6 +408,7 @@ apps/mac/
 ├── scripts/
 │   ├── sync-version.sh             # Sync version.json → Info.plist
 │   ├── compute-version.sh          # Compute next version (no git side effects)
+│   ├── release-bump-type.sh        # PR labels → semver bump type
 │   ├── version-bump.sh             # Increment version + git tag
 │   ├── update-appcast.sh           # Update appcast.xml
 │   └── make-app.sh                 # Build script (calls sync-version.sh)
