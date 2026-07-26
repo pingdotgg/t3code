@@ -1331,11 +1331,27 @@
                     "window maximum is capped at "
                         + "\(Int(maxBefore.width))x\(Int(maxBefore.height)); resizing is blocked")
             }
+            // The other half of the contract: the clamp must not have turned a
+            // resize bug into a max-size regression. `contentMaxSize` is only
+            // the reported number — this asks AppKit for a bigger window after
+            // the content grew and checks the frame actually followed.
+            let expanded = NSSize(
+                width: frameAfter.width + 400, height: frameAfter.height + 200)
+            window.setContentSize(expanded)
+            try? await Task.sleep(for: .seconds(1.5))
+            let grownFrame = window.frame
+            if grownFrame.width < frameAfter.width + 300 {
+                failed = true
+                UIProbeAssertions.fail(
+                    "content-growth",
+                    "window would not expand after the content grew: asked for "
+                        + "\(Int(expanded.width)) wide, got \(Int(grownFrame.width))")
+            }
             if !failed {
                 UIProbeAssertions.pass(
                     "content-growth",
-                    "strip \(Int(stripBefore)) -> \(Int(stripAfter))pt, "
-                        + "window and minimum unchanged")
+                    "strip \(Int(stripBefore)) -> \(Int(stripAfter))pt, window and minimum "
+                        + "unchanged, still expandable to \(Int(grownFrame.width))pt")
             }
             snapshot("window-size-content-growth", window: window, dir: dir)
         }

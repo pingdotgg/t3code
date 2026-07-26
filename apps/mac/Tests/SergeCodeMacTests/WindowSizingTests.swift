@@ -67,6 +67,36 @@ struct WindowSizingTests {
         #expect(size.height == unbounded)
     }
 
+    @Test("the unbounded answer never shrinks to the content's current size")
+    func expansionIsNotCappedAtNaturalIdeal() {
+        // The regression this guards: if the clamp answered the unbounded probe
+        // from its own numbers, `NSWindow.contentMaxSize` could settle at
+        // whatever the content happens to measure now, and the window would
+        // stop expanding. A flexible column answers `.infinity` here and the
+        // clamp forwards it, whatever the content's ideal width is.
+        let stretchy = CGFloat.infinity
+        for naturalIdeal in [472.0, 1062.0, 4000.0] as [CGFloat] {
+            let unbounded = resolved(
+                .infinity, natural: CGSize(width: stretchy, height: stretchy))
+            #expect(unbounded.width == stretchy)
+            // The ideal probe, for the same content, is a separate answer.
+            let ideal = resolved(
+                ProposedViewSize(width: nil, height: nil),
+                natural: CGSize(width: naturalIdeal, height: 400))
+            #expect(ideal.width == naturalIdeal)
+        }
+    }
+
+    @Test("a content maximum under the floor is raised, never lowered")
+    func expansionStaysConsistentWithTheMinimum() {
+        // A maximum below the reported minimum is not a size AppKit can honor.
+        // This is the only case where the floor touches the unbounded answer,
+        // and it can only raise it.
+        let tiny = resolved(.infinity, natural: CGSize(width: 100, height: 90))
+        #expect(tiny.width == floorWidth)
+        #expect(tiny.height == floorHeight)
+    }
+
     @Test("a finite content maximum is forwarded as-is")
     func finiteMaximumIsForwarded() {
         // Current intent, written down: if a subview ever answers a finite max
