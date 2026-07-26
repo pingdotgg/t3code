@@ -65,6 +65,7 @@ const runtimeMock = {
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     promptCalls: [] as Array<unknown>,
     commandCalls: [] as Array<unknown>,
+    commandPromise: null as Promise<void> | null,
     promptAsyncError: null as Error | null,
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
@@ -86,6 +87,7 @@ const runtimeMock = {
     this.state.revertCalls.length = 0;
     this.state.promptCalls.length = 0;
     this.state.commandCalls.length = 0;
+    this.state.commandPromise = null;
     this.state.promptAsyncError = null;
     this.state.closeError = null;
     this.state.messages = [];
@@ -187,6 +189,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
         command: async (input: unknown) => {
           runtimeMock.state.commandCalls.push(input);
+          await runtimeMock.state.commandPromise;
         },
         messages: async () => ({ data: runtimeMock.state.messages }),
         revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
@@ -459,6 +462,35 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         },
       ]);
       NodeAssert.deepEqual(runtimeMock.state.promptCalls, []);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("returns without waiting for a long-running slash command", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-long-command");
+      let resolveCommand!: () => void;
+      runtimeMock.state.commandPromise = new Promise<void>((resolve) => {
+        resolveCommand = resolve;
+      });
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "/review src/provider",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/sonnet",
+        ),
+      });
+
+      NodeAssert.equal(runtimeMock.state.commandCalls.length, 1);
+      resolveCommand();
       yield* adapter.stopSession(threadId);
     }),
   );

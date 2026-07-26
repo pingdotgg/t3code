@@ -1509,7 +1509,7 @@ export function makeOpenCodeAdapter(
             }),
           );
 
-      yield* request.pipe(
+      const dispatchedRequest = request.pipe(
         Effect.mapError(toRequestError),
         // On failure of a fresh turn: clear active-turn state, flip the
         // session back to ready with lastError set, emit turn.aborted, then
@@ -1517,7 +1517,7 @@ export function makeOpenCodeAdapter(
         // here — `toRequestError` already produced the right shape. A failed
         // steer leaves the still-running original turn untouched.
         Effect.tapError((requestError) =>
-          steeringTurnId !== undefined
+          steeringTurnId !== undefined || context.activeTurnId !== turnId
             ? Effect.void
             : Effect.gen(function* () {
                 context.activeTurnId = undefined;
@@ -1545,6 +1545,16 @@ export function makeOpenCodeAdapter(
               }),
         ),
       );
+      if (command) {
+        // Unlike `promptAsync`, OpenCode's command endpoint does not return
+        // until the full assistant turn finishes. Keep the request attached to
+        // the session scope while returning the dispatch result immediately;
+        // the event stream remains authoritative for turn completion.
+        yield* dispatchedRequest.pipe(Effect.ignore, Effect.forkIn(context.sessionScope));
+        yield* Effect.yieldNow;
+      } else {
+        yield* dispatchedRequest;
+      }
 
       return {
         threadId: input.threadId,

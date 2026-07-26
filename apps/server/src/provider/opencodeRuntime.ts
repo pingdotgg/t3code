@@ -158,6 +158,57 @@ export interface OpenCodeRuntimeShape {
   }) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
 }
 
+export const loadOpenCodeInventoryFromClient = (
+  client: OpencodeClient,
+): Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError> => {
+  const loadProviders = runOpenCodeSdk("provider.list", () => client.provider.list()).pipe(
+    Effect.filterMapOrFail(
+      (list) =>
+        list.data
+          ? Result.succeed(list.data)
+          : Result.fail(
+              new OpenCodeRuntimeError({
+                operation: "provider.list",
+                detail: "OpenCode provider list was empty.",
+              }),
+            ),
+      (result) => result,
+    ),
+  );
+  const loadAgents = runOpenCodeSdk("app.agents", () => client.app.agents()).pipe(
+    Effect.map((result) => result.data ?? []),
+  );
+  const loadCommands = runOpenCodeSdk("command.list", () => client.command.list()).pipe(
+    Effect.map((result) => result.data ?? []),
+    Effect.tapError((cause) =>
+      Effect.logWarning("OpenCode command discovery failed; continuing without commands.", {
+        detail: cause.detail,
+      }),
+    ),
+    Effect.orElseSucceed(() => [] as ReadonlyArray<Command>),
+  );
+  const loadSkills = runOpenCodeSdk("app.skills", () => client.app.skills()).pipe(
+    Effect.map((result) => result.data ?? []),
+    Effect.tapError((cause) =>
+      Effect.logWarning("OpenCode skill discovery failed; continuing without skills.", {
+        detail: cause.detail,
+      }),
+    ),
+    Effect.orElseSucceed(() => [] as AppSkillsResponse),
+  );
+
+  return Effect.all([loadProviders, loadAgents, loadCommands, loadSkills], {
+    concurrency: "unbounded",
+  }).pipe(
+    Effect.map(([providerList, agents, commands, skills]) => ({
+      providerList,
+      agents,
+      commands,
+      skills,
+    })),
+  );
+};
+
 function parseServerUrlFromOutput(output: string): string | null {
   for (const line of output.split("\n")) {
     if (!line.startsWith(OPENCODE_SERVER_READY_PREFIX)) {
@@ -632,51 +683,8 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       throwOnError: true,
     });
 
-  const loadProviders = (client: OpencodeClient) =>
-    runOpenCodeSdk("provider.list", () => client.provider.list()).pipe(
-      Effect.filterMapOrFail(
-        (list) =>
-          list.data
-            ? Result.succeed(list.data)
-            : Result.fail(
-                new OpenCodeRuntimeError({
-                  operation: "provider.list",
-                  detail: "OpenCode provider list was empty.",
-                }),
-              ),
-        (result) => result,
-      ),
-    );
-
-  const loadAgents = (client: OpencodeClient) =>
-    runOpenCodeSdk("app.agents", () => client.app.agents()).pipe(
-      Effect.map((result) => result.data ?? []),
-    );
-
-  const loadCommands = (client: OpencodeClient) =>
-    runOpenCodeSdk("command.list", () => client.command.list()).pipe(
-      Effect.map((result) => result.data ?? []),
-    );
-
-  const loadSkills = (client: OpencodeClient) =>
-    runOpenCodeSdk("app.skills", () => client.app.skills()).pipe(
-      Effect.map((result) => result.data ?? []),
-    );
-
   const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all(
-      [loadProviders(client), loadAgents(client), loadCommands(client), loadSkills(client)],
-      {
-        concurrency: "unbounded",
-      },
-    ).pipe(
-      Effect.map(([providerList, agents, commands, skills]) => ({
-        providerList,
-        agents,
-        commands,
-        skills,
-      })),
-    );
+    loadOpenCodeInventoryFromClient(client);
 
   const loadInventoryFromCli: OpenCodeRuntimeShape["loadInventoryFromCli"] = (input) =>
     Effect.gen(function* () {
