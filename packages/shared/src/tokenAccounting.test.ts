@@ -36,7 +36,7 @@ describe("tokenAccounting", () => {
   it("uses provider-reported cost as exact total", () => {
     expect(
       computeUsageCost({
-        provider: "claudex",
+        provider: "claudeAgent",
         model: "claude-sonnet-5",
         usage: { usedTokens: 1000 },
         providerReportedTotalCostUsd: 0.123,
@@ -79,7 +79,7 @@ describe("tokenAccounting", () => {
 
   it("does not double-count cached totals when cache write/read rates are available", () => {
     const result = computeUsageCost({
-      provider: "claudex",
+      provider: "claudeAgent",
       model: "claude-example",
       usage: {
         usedTokens: 5500,
@@ -92,7 +92,7 @@ describe("tokenAccounting", () => {
       pricingCatalog: {
         entries: [
           {
-            provider: "claudex",
+            provider: "claudeAgent",
             model: "claude-example",
             uncachedInputPerMillionUsd: 3,
             cachedInputPerMillionUsd: 0.75,
@@ -115,7 +115,7 @@ describe("tokenAccounting", () => {
 
   it("prices the ungranular cached remainder when only one granular cache rate is available", () => {
     const result = computeUsageCost({
-      provider: "claudex",
+      provider: "claudeAgent",
       model: "claude-example",
       usage: {
         usedTokens: 5500,
@@ -128,7 +128,7 @@ describe("tokenAccounting", () => {
       pricingCatalog: {
         entries: [
           {
-            provider: "claudex",
+            provider: "claudeAgent",
             model: "claude-example",
             uncachedInputPerMillionUsd: 3,
             cachedInputPerMillionUsd: 0.75,

@@ -7,9 +7,9 @@ struct ProviderIconTests {
     @Test("Model identity takes precedence over runtime provider")
     func modelIdentityWins() {
         #expect(
-            ProviderBrand.resolve(provider: .claudex, modelID: "gpt-5.6-sol") == .openAI)
+            ProviderBrand.resolve(provider: .claude, modelID: "gpt-5.6-sol") == .openAI)
         #expect(
-            ProviderBrand.resolve(provider: .claudex, modelID: "gpt-5.2-codex") == .codex)
+            ProviderBrand.resolve(provider: .claude, modelID: "gpt-5.2-codex") == .codex)
         #expect(
             ProviderBrand.resolve(provider: .codex, modelID: "claude-sonnet-5") == .claude)
     }
@@ -17,7 +17,7 @@ struct ProviderIconTests {
     @Test("Provider fallback covers every configured provider")
     func providerFallbacks() {
         #expect(ProviderBrand.resolve(provider: .claudeWork) == .claude)
-        #expect(ProviderBrand.resolve(provider: .claudex) == .claude)
+        #expect(ProviderBrand.resolve(provider: .claude) == .claude)
         #expect(ProviderBrand.resolve(provider: .codex) == .codex)
         #expect(ProviderBrand.resolve(provider: .grok) == .grok)
         #expect(ProviderBrand.resolve(provider: .kimi) == .kimi)

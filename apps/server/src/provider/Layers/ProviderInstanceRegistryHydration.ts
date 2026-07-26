@@ -8,7 +8,7 @@
  *      registry expects. Keyed by `ProviderInstanceId`, values are
  *      `ProviderInstanceConfig` envelopes.
  *   2. `settings.providers.<kind>` — the legacy single-instance-per-driver
- *      fields (`providers.codex`, `providers.claudex`, …). These are
+ *      fields (`providers.codex`, `providers.claudeAgent`, …). These are
  *      the source of truth for every deployment that hasn't been migrated
  *      yet to an explicit `providerInstances` entry.
  *

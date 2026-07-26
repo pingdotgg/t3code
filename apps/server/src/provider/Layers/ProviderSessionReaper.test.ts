@@ -63,7 +63,7 @@ function makeReadModel(
     readonly session: {
       readonly threadId: ThreadId;
       readonly status: "starting" | "running" | "ready" | "interrupted" | "stopped" | "error";
-      readonly providerName: "codex" | "claudex";
+      readonly providerName: "codex" | "claudeAgent";
       readonly runtimeMode: "approval-required" | "full-access" | "auto-accept-edits";
       readonly activeTurnId: TurnId | null;
       readonly lastError: string | null;
@@ -238,7 +238,7 @@ describe("ProviderSessionReaper", () => {
           session: {
             threadId,
             status: "ready",
-            providerName: "claudex",
+            providerName: "claudeAgent",
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -254,9 +254,9 @@ describe("ProviderSessionReaper", () => {
     await runtime!.runPromise(
       repository.upsert({
         threadId,
-        providerName: "claudex",
+        providerName: "claudeAgent",
         providerInstanceId: null,
-        adapterKey: "claudex",
+        adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
         lastSeenAt: "2026-04-14T00:00:00.000Z",
@@ -292,7 +292,7 @@ describe("ProviderSessionReaper", () => {
           session: {
             threadId,
             status: "running",
-            providerName: "claudex",
+            providerName: "claudeAgent",
             runtimeMode: "full-access",
             activeTurnId: turnId,
             lastError: null,
@@ -308,9 +308,9 @@ describe("ProviderSessionReaper", () => {
     await runtime!.runPromise(
       repository.upsert({
         threadId,
-        providerName: "claudex",
+        providerName: "claudeAgent",
         providerInstanceId: null,
-        adapterKey: "claudex",
+        adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
         lastSeenAt: "2026-04-14T00:00:00.000Z",
@@ -341,7 +341,7 @@ describe("ProviderSessionReaper", () => {
           session: {
             threadId,
             status: "ready",
-            providerName: "claudex",
+            providerName: "claudeAgent",
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -357,9 +357,9 @@ describe("ProviderSessionReaper", () => {
     await runtime!.runPromise(
       repository.upsert({
         threadId,
-        providerName: "claudex",
+        providerName: "claudeAgent",
         providerInstanceId: null,
-        adapterKey: "claudex",
+        adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
         lastSeenAt: now,
@@ -390,7 +390,7 @@ describe("ProviderSessionReaper", () => {
           session: {
             threadId,
             status: "stopped",
-            providerName: "claudex",
+            providerName: "claudeAgent",
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -406,9 +406,9 @@ describe("ProviderSessionReaper", () => {
     await runtime!.runPromise(
       repository.upsert({
         threadId,
-        providerName: "claudex",
+        providerName: "claudeAgent",
         providerInstanceId: null,
-        adapterKey: "claudex",
+        adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "stopped",
         lastSeenAt: "2026-04-14T00:00:00.000Z",
@@ -440,7 +440,7 @@ describe("ProviderSessionReaper", () => {
           session: {
             threadId: failedThreadId,
             status: "ready",
-            providerName: "claudex",
+            providerName: "claudeAgent",
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -477,9 +477,9 @@ describe("ProviderSessionReaper", () => {
     await runtime!.runPromise(
       repository.upsert({
         threadId: failedThreadId,
-        providerName: "claudex",
+        providerName: "claudeAgent",
         providerInstanceId: null,
-        adapterKey: "claudex",
+        adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
         lastSeenAt: "2026-04-14T00:00:00.000Z",
@@ -528,7 +528,7 @@ describe("ProviderSessionReaper", () => {
           session: {
             threadId: defectThreadId,
             status: "ready",
-            providerName: "claudex",
+            providerName: "claudeAgent",
             runtimeMode: "full-access",
             activeTurnId: null,
             lastError: null,
@@ -560,9 +560,9 @@ describe("ProviderSessionReaper", () => {
     await runtime!.runPromise(
       repository.upsert({
         threadId: defectThreadId,
-        providerName: "claudex",
+        providerName: "claudeAgent",
         providerInstanceId: null,
-        adapterKey: "claudex",
+        adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
         lastSeenAt: "2026-04-14T00:00:00.000Z",

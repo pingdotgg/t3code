@@ -141,7 +141,7 @@ describe("makeTextGenerationFromRegistry", () => {
 
         const fallbackSelections: string[] = [];
         const claude = makeStubInstance(
-          ProviderInstanceId.make("claudex"),
+          ProviderInstanceId.make("claudeAgent"),
           makeStubTextGeneration({
             generateThreadTitle: (input) => {
               fallbackSelections.push(
@@ -161,7 +161,7 @@ describe("makeTextGenerationFromRegistry", () => {
         });
 
         expect(result.title).toBe("Fallback title");
-        expect(fallbackSelections).toEqual(["claudex:claudex-luna"]);
+        expect(fallbackSelections).toEqual(["claudeAgent:claude-haiku-4-5"]);
       }),
   );
 
@@ -180,7 +180,7 @@ describe("makeTextGenerationFromRegistry", () => {
         }),
       );
       const claude = makeStubInstance(
-        ProviderInstanceId.make("claudex"),
+        ProviderInstanceId.make("claudeAgent"),
         makeStubTextGeneration({
           generateBranchName: () =>
             Effect.fail(
@@ -225,7 +225,7 @@ describe("makeTextGenerationFromRegistry", () => {
         }),
       );
       const disabledClaude = makeStubInstance(
-        ProviderInstanceId.make("claudex"),
+        ProviderInstanceId.make("claudeAgent"),
         makeStubTextGeneration({
           generateBranchName: () => Effect.succeed({ branch: "should-not-happen" }),
         }),

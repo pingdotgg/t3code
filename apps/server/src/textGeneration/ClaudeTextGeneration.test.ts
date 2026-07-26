@@ -221,7 +221,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             stagedSummary: "M README.md",
             stagedPatch: "diff --git a/README.md b/README.md",
             modelSelection: {
-              ...createModelSelection(ProviderInstanceId.make("claudex"), "claude-haiku-4-5", [
+              ...createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-haiku-4-5", [
                 { id: "thinking", value: false },
                 { id: "effort", value: "high" },
               ]),
@@ -254,7 +254,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             diffSummary: "1 file changed",
             diffPatch: "diff --git a/README.md b/README.md",
             modelSelection: {
-              ...createModelSelection(ProviderInstanceId.make("claudex"), "claude-opus-4-6", [
+              ...createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-opus-4-6", [
                 { id: "effort", value: "max" },
                 { id: "fastMode", value: true },
               ]),
@@ -275,7 +275,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             body: "Body",
           },
         }),
-        argsMustContain: '--model claudex-luna --effort xhigh --settings {"ultracode":true}',
+        argsMustContain: '--model claude-opus-5 --effort xhigh --settings {"ultracode":true}',
         textGenerationOptions: {
           getModelCapabilities: () =>
             createModelCapabilities({
@@ -303,13 +303,13 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
           const generated = yield* textGeneration.generatePrContent({
             cwd: process.cwd(),
             baseBranch: "main",
-            headBranch: "feature/claudex-ultracode",
+            headBranch: "feature/claudeAgent-ultracode",
             commitSummary: "Use ultracode",
             diffSummary: "1 file changed",
             diffPatch: "diff --git a/README.md b/README.md",
             modelSelection: createModelSelection(
-              ProviderInstanceId.make("claudex"),
-              "claudex-luna",
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-opus-5",
               [{ id: "effort", value: "ultracode" }],
             ),
           });
@@ -336,7 +336,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             cwd: process.cwd(),
             message: "Please investigate reconnect failures after restarting the session.",
             modelSelection: {
-              instanceId: ProviderInstanceId.make("claudex"),
+              instanceId: ProviderInstanceId.make("claudeAgent"),
               model: "claude-sonnet-4-6",
             },
           });
@@ -371,7 +371,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
               cwd: process.cwd(),
               message: "thread title",
               modelSelection: {
-                instanceId: ProviderInstanceId.make("claudex"),
+                instanceId: ProviderInstanceId.make("claudeAgent"),
                 model: "claude-sonnet-4-6",
               },
             });
@@ -397,7 +397,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             cwd: process.cwd(),
             message: "Name this thread.",
             modelSelection: {
-              instanceId: ProviderInstanceId.make("claudex"),
+              instanceId: ProviderInstanceId.make("claudeAgent"),
               model: "claude-sonnet-4-6",
             },
           });

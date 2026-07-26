@@ -46,7 +46,7 @@ export function ProviderIcon(props: ProviderIconProps) {
   const size = props.size ?? 16;
   const monochromeFill = isDarkMode ? "#e5e5e5" : "#171717";
 
-  if (props.provider === "claudex") {
+  if (props.provider === "claudeAgent") {
     return (
       <Svg width={size} height={size} viewBox="0 0 256 257" fill="none">
         <Path

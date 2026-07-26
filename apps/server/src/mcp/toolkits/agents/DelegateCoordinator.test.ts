@@ -198,7 +198,7 @@ const makeCoordinator = (options?: {
   });
 
   const providerRegistry = ProviderRegistry.of({
-    getProviders: Effect.succeed([makeProvider("claude", "claudex")]),
+    getProviders: Effect.succeed([makeProvider("claude", "claudeAgent")]),
     refresh: unused,
     refreshInstance: unused,
     getProviderMaintenanceCapabilitiesForInstance: unused,

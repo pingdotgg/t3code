@@ -90,12 +90,12 @@ the first Advisor/Planner rollout.
 Steering — getting the model to _act_ like an advisor/planner rather than
 merely being permissioned — is per-driver and best-effort.
 
-| Driver                          | Write blocking (from runtime mode)      | Advisor/Planner steering                                                           |
-| ------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------- |
-| Codex, Fugu                     | OS sandbox from runtime mode            | `CODEX_ADVISOR_MODE_DEVELOPER_INSTRUCTIONS`, sent on the `plan` wire mode          |
-| Claude, Claudex, ClaudeSynthero | SDK permission mode + `canUseTool` gate | `ExitPlanMode` is denied and the plan artifact suppressed; steer toward delegation |
-| Grok (ACP)                      | Per-tool permission requests            | **None** — Grok ignores interaction mode entirely                                  |
-| ChatGptBrowser                  | n/a (no tools)                          | None                                                                               |
+| Driver         | Write blocking (from runtime mode)      | Advisor/Planner steering                                                           |
+| -------------- | --------------------------------------- | ---------------------------------------------------------------------------------- |
+| Codex, Fugu    | OS sandbox from runtime mode            | `CODEX_ADVISOR_MODE_DEVELOPER_INSTRUCTIONS`, sent on the `plan` wire mode          |
+| Claude         | SDK permission mode + `canUseTool` gate | `ExitPlanMode` is denied and the plan artifact suppressed; steer toward delegation |
+| Grok (ACP)     | Per-tool permission requests            | **None** — Grok ignores interaction mode entirely                                  |
+| ChatGptBrowser | n/a (no tools)                          | None                                                                               |
 
 Codex only accepts `plan | default` as a collaboration mode on the wire, so
 advisor borrows the `plan` kind. The advisor developer instructions — which

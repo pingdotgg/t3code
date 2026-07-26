@@ -133,12 +133,12 @@ describe("serverSettings helpers", () => {
     expect(
       applyServerSettingsPatch(current, {
         textGenerationModelSelection: {
-          instanceId: ProviderInstanceId.make("claudex"),
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-haiku-4-5",
         },
       }).textGenerationModelSelection,
     ).toEqual({
-      instanceId: "claudex",
+      instanceId: "claudeAgent",
       model: "claude-haiku-4-5",
     });
   });
@@ -147,7 +147,7 @@ describe("serverSettings helpers", () => {
     expect(
       applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
         textGenerationModelSelection: {
-          instanceId: ProviderInstanceId.make("claudex"),
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-haiku-4-5",
           options: [
             { id: "variant", value: "prod" },
@@ -156,7 +156,7 @@ describe("serverSettings helpers", () => {
         },
       }).textGenerationModelSelection,
     ).toEqual({
-      instanceId: "claudex",
+      instanceId: "claudeAgent",
       model: "claude-haiku-4-5",
       options: [
         { id: "variant", value: "prod" },

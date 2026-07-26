@@ -316,7 +316,7 @@ describe("ProviderCommandReactor", () => {
       getInstanceInfo: (instanceId) => {
         const raw = String(instanceId);
         const driverKind = ProviderDriverKind.make(
-          raw.startsWith("claude") ? "claudex" : raw.startsWith("codex") ? "codex" : raw,
+          raw.startsWith("claude") ? "claudeAgent" : raw.startsWith("codex") ? "codex" : raw,
         );
         return Effect.succeed({
           instanceId,
@@ -826,7 +826,7 @@ describe("ProviderCommandReactor", () => {
   it("forwards claude effort options through session start and turn send", async () => {
     const harness = await createHarness({
       threadModelSelection: {
-        instanceId: ProviderInstanceId.make("claudex"),
+        instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-sonnet-4-6",
       },
     });
@@ -844,7 +844,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         modelSelection: createModelSelection(
-          ProviderInstanceId.make("claudex"),
+          ProviderInstanceId.make("claudeAgent"),
           "claude-sonnet-4-6",
           [{ id: "effort", value: "max" }],
         ),
@@ -858,7 +858,7 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
       modelSelection: createModelSelection(
-        ProviderInstanceId.make("claudex"),
+        ProviderInstanceId.make("claudeAgent"),
         "claude-sonnet-4-6",
         [{ id: "effort", value: "max" }],
       ),
@@ -866,7 +866,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       modelSelection: createModelSelection(
-        ProviderInstanceId.make("claudex"),
+        ProviderInstanceId.make("claudeAgent"),
         "claude-sonnet-4-6",
         [{ id: "effort", value: "max" }],
       ),
@@ -876,7 +876,7 @@ describe("ProviderCommandReactor", () => {
   it("forwards claude fast mode options through session start and turn send", async () => {
     const harness = await createHarness({
       threadModelSelection: {
-        instanceId: ProviderInstanceId.make("claudex"),
+        instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-opus-4-6",
       },
     });
@@ -894,7 +894,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         modelSelection: createModelSelection(
-          ProviderInstanceId.make("claudex"),
+          ProviderInstanceId.make("claudeAgent"),
           "claude-opus-4-6",
           [{ id: "fastMode", value: true }],
         ),
@@ -907,15 +907,19 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      modelSelection: createModelSelection(ProviderInstanceId.make("claudex"), "claude-opus-4-6", [
-        { id: "fastMode", value: true },
-      ]),
+      modelSelection: createModelSelection(
+        ProviderInstanceId.make("claudeAgent"),
+        "claude-opus-4-6",
+        [{ id: "fastMode", value: true }],
+      ),
     });
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
-      modelSelection: createModelSelection(ProviderInstanceId.make("claudex"), "claude-opus-4-6", [
-        { id: "fastMode", value: true },
-      ]),
+      modelSelection: createModelSelection(
+        ProviderInstanceId.make("claudeAgent"),
+        "claude-opus-4-6",
+        [{ id: "fastMode", value: true }],
+      ),
     });
   });
 
@@ -1397,7 +1401,7 @@ describe("ProviderCommandReactor", () => {
     };
     expect(restart).toMatchObject({
       providerInstanceId: ProviderInstanceId.make("claude"),
-      provider: "claudex",
+      provider: "claudeAgent",
     });
     // The exhausted provider's cursor cannot resume a claude session.
     expect(restart?.resumeCursor).toBeUndefined();
@@ -1478,7 +1482,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         modelSelection: {
-          instanceId: ProviderInstanceId.make("claudex"),
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-opus-4-6",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -1491,18 +1495,18 @@ describe("ProviderCommandReactor", () => {
 
     expect(harness.startSession).toHaveBeenCalledTimes(1);
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      provider: ProviderDriverKind.make("claudex"),
-      providerInstanceId: ProviderInstanceId.make("claudex"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
       modelSelection: {
-        instanceId: ProviderInstanceId.make("claudex"),
+        instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-opus-4-6",
       },
     });
 
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.session?.providerName).toBe("claudex");
-    expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("claudex"));
+    expect(thread?.session?.providerName).toBe("claudeAgent");
+    expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("claudeAgent"));
     expect(
       thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
     ).toBeUndefined();
@@ -1619,7 +1623,7 @@ describe("ProviderCommandReactor", () => {
   it("restarts the provider session when the thread workspace changes", async () => {
     const harness = await createHarness({
       threadModelSelection: {
-        instanceId: ProviderInstanceId.make("claudex"),
+        instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-sonnet-4-6",
       },
     });
@@ -1683,7 +1687,7 @@ describe("ProviderCommandReactor", () => {
       isWorktree: true,
       resumeCursor: { opaque: "resume-1" },
       modelSelection: {
-        instanceId: ProviderInstanceId.make("claudex"),
+        instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-sonnet-4-6",
       },
       runtimeMode: "approval-required",
@@ -1693,7 +1697,7 @@ describe("ProviderCommandReactor", () => {
   it("restarts claude sessions when claude effort changes", async () => {
     const harness = await createHarness({
       threadModelSelection: {
-        instanceId: ProviderInstanceId.make("claudex"),
+        instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-sonnet-4-6",
       },
     });
@@ -1711,7 +1715,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         modelSelection: createModelSelection(
-          ProviderInstanceId.make("claudex"),
+          ProviderInstanceId.make("claudeAgent"),
           "claude-sonnet-4-6",
           [{ id: "effort", value: "medium" }],
         ),
@@ -1736,7 +1740,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         modelSelection: createModelSelection(
-          ProviderInstanceId.make("claudex"),
+          ProviderInstanceId.make("claudeAgent"),
           "claude-sonnet-4-6",
           [{ id: "effort", value: "max" }],
         ),
@@ -1751,7 +1755,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
       resumeCursor: { opaque: "resume-1" },
       modelSelection: createModelSelection(
-        ProviderInstanceId.make("claudex"),
+        ProviderInstanceId.make("claudeAgent"),
         "claude-sonnet-4-6",
         [{ id: "effort", value: "max" }],
       ),
@@ -1846,7 +1850,7 @@ describe("ProviderCommandReactor", () => {
   it("does not inject derived model options when restarting claude on runtime mode changes", async () => {
     const harness = await createHarness({
       threadModelSelection: {
-        instanceId: ProviderInstanceId.make("claudex"),
+        instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-opus-4-6",
       },
     });
@@ -1860,7 +1864,7 @@ describe("ProviderCommandReactor", () => {
         session: {
           threadId: ThreadId.make("thread-1"),
           status: "ready",
-          providerName: "claudex",
+          providerName: "claudeAgent",
           runtimeMode: "full-access",
           activeTurnId: null,
           lastError: null,
@@ -1884,7 +1888,7 @@ describe("ProviderCommandReactor", () => {
 
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
       modelSelection: {
-        instanceId: ProviderInstanceId.make("claudex"),
+        instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-opus-4-6",
       },
       runtimeMode: "approval-required",
@@ -1992,7 +1996,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         modelSelection: {
-          instanceId: ProviderInstanceId.make("claudex"),
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-opus-4-6",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -2023,7 +2027,7 @@ describe("ProviderCommandReactor", () => {
       thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
     ).toMatchObject({
       payload: {
-        detail: expect.stringContaining("cannot switch to 'claudex'"),
+        detail: expect.stringContaining("cannot switch to 'claudeAgent'"),
       },
     });
   });
@@ -2063,7 +2067,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         modelSelection: {
-          instanceId: ProviderInstanceId.make("claudex"),
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-opus-4-6",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -2089,7 +2093,7 @@ describe("ProviderCommandReactor", () => {
       thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
     ).toMatchObject({
       payload: {
-        detail: expect.stringContaining("cannot switch to 'claudex'"),
+        detail: expect.stringContaining("cannot switch to 'claudeAgent'"),
       },
     });
   });
@@ -2251,7 +2255,7 @@ describe("ProviderCommandReactor", () => {
         session: {
           threadId: ThreadId.make("thread-1"),
           status: "running",
-          providerName: "claudex",
+          providerName: "claudeAgent",
           runtimeMode: "full-access",
           activeTurnId: asTurnId("turn-1"),
           lastError: null,
@@ -2285,7 +2289,7 @@ describe("ProviderCommandReactor", () => {
       () =>
         Effect.fail(
           new ProviderAdapterRequestError({
-            provider: ProviderDriverKind.make("claudex"),
+            provider: ProviderDriverKind.make("claudeAgent"),
             method: "task/stop",
             detail: "stopTask is not supported by this adapter",
           }),
@@ -2300,7 +2304,7 @@ describe("ProviderCommandReactor", () => {
         session: {
           threadId: ThreadId.make("thread-1"),
           status: "running",
-          providerName: "claudex",
+          providerName: "claudeAgent",
           runtimeMode: "full-access",
           activeTurnId: asTurnId("turn-1"),
           lastError: null,
@@ -2935,7 +2939,7 @@ describe("ProviderCommandReactor", () => {
     harness.respondToUserInput.mockImplementation(() =>
       Effect.fail(
         new ProviderAdapterRequestError({
-          provider: ProviderDriverKind.make("claudex"),
+          provider: ProviderDriverKind.make("claudeAgent"),
           method: "item/tool/respondToUserInput",
           detail: "Unknown pending Codex user input request: user-input-request-1",
         }),
@@ -2950,7 +2954,7 @@ describe("ProviderCommandReactor", () => {
         session: {
           threadId: ThreadId.make("thread-1"),
           status: "running",
-          providerName: "claudex",
+          providerName: "claudeAgent",
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,

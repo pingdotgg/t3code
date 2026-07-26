@@ -28,9 +28,9 @@ struct UsageLimitModelOptionsTests {
         let available = [
             option("codex-current", provider: .codex),
             option("codex-next", provider: .codex),
-            option("claude-first", provider: .claudex),
+            option("claude-first", provider: .claude),
             option("grok", provider: .grok),
-            option("claude-second", provider: .claudex),
+            option("claude-second", provider: .claude),
             option("codex-last", provider: .codex),
         ]
 
@@ -48,7 +48,7 @@ struct UsageLimitModelOptionsTests {
     @Test("preserves available-model order when the exhausted provider is unknown")
     func unknownProviderPreservesOrder() {
         let available = [
-            option("claude", provider: .claudex),
+            option("claude", provider: .claude),
             option("codex-current", provider: .codex),
             option("grok", provider: .grok),
         ]

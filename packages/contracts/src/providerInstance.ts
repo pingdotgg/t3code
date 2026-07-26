@@ -4,7 +4,7 @@
  * Splits the historical "provider kind" concept into two:
  *
  *   - `ProviderDriverKind` is the implementation kind selector (e.g. codex,
- *     claudex, a fork's `ollama`, …). It picks which driver package
+ *     claudeAgent, a fork's `ollama`, …). It picks which driver package
  *     handles the protocol, the probe, the adapter, and text generation.
  *
  *   - `ProviderInstanceId` is the routing key (a user-defined slug).

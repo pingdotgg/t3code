@@ -211,9 +211,9 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
 
       yield* runtimeRepository.upsert({
         threadId: olderThreadId,
-        providerName: "claudex",
+        providerName: "claudeAgent",
         providerInstanceId: null,
-        adapterKey: "claudex",
+        adapterKey: "claudeAgent",
         runtimeMode: "approval-required",
         status: "starting",
         lastSeenAt: "2026-04-14T12:00:00.000Z",
@@ -230,8 +230,8 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       assert.deepEqual(bindings, [
         {
           threadId: olderThreadId,
-          provider: ProviderDriverKind.make("claudex"),
-          adapterKey: "claudex",
+          provider: ProviderDriverKind.make("claudeAgent"),
+          adapterKey: "claudeAgent",
           runtimeMode: "approval-required",
           status: "starting",
           lastSeenAt: "2026-04-14T12:00:00.000Z",
@@ -267,9 +267,9 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
 
       yield* runtimeRepository.upsert({
         threadId,
-        providerName: "claudex",
+        providerName: "claudeAgent",
         providerInstanceId: null,
-        adapterKey: "claudex",
+        adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
         lastSeenAt: "2026-01-01T00:00:00.000Z",
