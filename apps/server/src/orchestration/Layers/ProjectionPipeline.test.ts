@@ -1429,6 +1429,17 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       assert.deepEqual(settledRows, [
         { state: "completed", completedAt: "2026-01-01T00:01:00.000Z" },
       ]);
+
+      // The settling session reports `activeTurnId: null`. The thread
+      // shell must still point at the finished turn — otherwise every reader
+      // of the last completion (unseen-completion pill, snooze raised hand,
+      // cross-project awareness) goes blind the moment a run ends.
+      const shellRows = yield* sql<{ readonly latestTurnId: string | null }>`
+        SELECT latest_turn_id AS "latestTurnId"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(shellRows, [{ latestTurnId: turnId }]);
     }),
   );
 

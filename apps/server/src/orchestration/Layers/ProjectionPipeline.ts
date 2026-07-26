@@ -809,7 +809,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            latestTurnId: event.payload.session.activeTurnId,
+            // `latestTurnId` means the LATEST turn, not the ACTIVE one.
+            // A settling session reports `activeTurnId: null`, and writing that
+            // through made the shell forget every finished run the instant it
+            // ended. Everything keyed on the last completion went quiet with
+            // it: the sidebar's "Completed" pill, the raised-hand check on a
+            // snoozed thread, and the cross-project awareness feed. Keep the
+            // last known turn; only a newer one replaces it.
+            latestTurnId: event.payload.session.activeTurnId ?? existingRow.value.latestTurnId,
             updatedAt: event.occurredAt,
           });
           yield* refreshThreadShellSummary(event.payload.threadId);
