@@ -1560,7 +1560,8 @@ public final class AppModel {
     /// Provider kinds that have at least one available provider instance with
     /// at least one selectable model. New-session entry points use this list
     /// instead of `ProviderKind.allCases` so unavailable/auth-required
-    /// providers cannot be selected and then fail with `noProviderForKind`.
+    /// providers such as an unconfigured Claude Synthero cannot be selected
+    /// and then fail with `noProviderForKind`.
     public var runnableProviderKinds: [ProviderKind] {
         let availableInstanceIDs = Set(
             providers
@@ -1576,7 +1577,7 @@ public final class AppModel {
     /// Provider kinds that exist in the current server provider list. This is
     /// intentionally broader than `runnableProviderKinds`: new-session pickers
     /// should still show configured but auth-required providers (for example
-    /// one whose token has not been entered yet) with a disabled action and
+    /// Claude Synthero before its token is entered) with a disabled action and
     /// a clear readiness hint instead of disappearing entirely.
     public var configuredProviderKinds: [ProviderKind] {
         ProviderKind.allCases.filter { kind in
@@ -1643,6 +1644,17 @@ public final class AppModel {
         guard let threadID = selectedThreadID else { return }
         do {
             try await backend.setInteractionMode(threadID: threadID, mode: mode)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
+    public func setExecutorModel(instanceID: String?, modelID: String?, maxSubAgents: Int? = nil) async {
+        guard let threadID = selectedThreadID else { return }
+        do {
+            try await backend.setExecutorModel(
+                threadID: threadID, instanceID: instanceID, modelID: modelID,
+                maxSubAgents: maxSubAgents)
         } catch {
             lastError = String(describing: error)
         }

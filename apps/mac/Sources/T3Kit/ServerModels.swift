@@ -453,8 +453,8 @@ public struct ServerSettings: Decodable, Sendable {
     public var newWorktreesStartFromOrigin: Bool
     public var addProjectBaseDirectory: String
     public var textGenerationModelSelection: ModelSelection
-    /// Per-driver legacy settings blobs (`codex`, `claude`, `cursor`,
-    /// `grok`) — opaque, not edited by v1 UI.
+    /// Per-driver legacy settings blobs (`codex`, `claudeAgent`, `cursor`,
+    /// `grok`, `fugu`) — opaque, not edited by v1 UI.
     public var providers: JSONValue
     /// `Record<ProviderInstanceId, ProviderInstanceConfig>` — opaque.
     public var providerInstances: JSONValue

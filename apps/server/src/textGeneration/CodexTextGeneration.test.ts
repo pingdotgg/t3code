@@ -261,33 +261,31 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect(
-    "falls back from a disallowed alternate-provider effort to the configured default",
-    () =>
-      withFakeCodexEnv(
-        {
-          output: JSON.stringify({
-            subject: "Add important change",
-            body: "",
-          }),
-          requireReasoningEffort: "high",
-        },
-        (textGeneration) =>
-          textGeneration.generateCommitMessage({
-            cwd: process.cwd(),
-            branch: "feature/alt-effort",
-            stagedSummary: "M README.md",
-            stagedPatch: "diff --git a/README.md b/README.md",
-            modelSelection: createModelSelection(ProviderInstanceId.make("altcodex"), "alt-model", [
-              { id: "reasoningEffort", value: "medium" },
-            ]),
-          }),
-        {
-          defaultReasoningEffort: "high",
-          allowedReasoningEfforts: ["high", "xhigh", "max"],
-          displayName: "Alt",
-        },
-      ),
+  it.effect("falls back from disallowed Fugu text-generation effort to high", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject: "Add important change",
+          body: "",
+        }),
+        requireReasoningEffort: "high",
+      },
+      (textGeneration) =>
+        textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/fugu-effort",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: createModelSelection(ProviderInstanceId.make("fugu"), "fugu", [
+            { id: "reasoningEffort", value: "medium" },
+          ]),
+        }),
+      {
+        defaultReasoningEffort: "high",
+        allowedReasoningEfforts: ["high", "xhigh", "max"],
+        displayName: "Fugu",
+      },
+    ),
   );
 
   it.effect("generates commit message with branch when includeBranch is true", () =>
@@ -626,13 +624,13 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           expect(Result.isFailure(result)).toBe(true);
           if (Result.isFailure(result)) {
             expect(result.failure).toBeInstanceOf(TextGenerationError);
-            expect(result.failure.message).toContain("Alt returned invalid structured output");
+            expect(result.failure.message).toContain("Fugu returned invalid structured output");
             expect(result.failure.message).not.toContain(
               "Codex returned invalid structured output",
             );
           }
         }),
-      { displayName: "Alt" },
+      { displayName: "Fugu" },
     ),
   );
 
@@ -657,11 +655,11 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           expect(Result.isFailure(result)).toBe(true);
           if (Result.isFailure(result)) {
             expect(result.failure).toBeInstanceOf(TextGenerationError);
-            expect(result.failure.message).toContain("Failed to read Alt output file");
+            expect(result.failure.message).toContain("Failed to read Fugu output file");
             expect(result.failure.message).not.toContain("Failed to read Codex output file");
           }
         }),
-      { displayName: "Alt" },
+      { displayName: "Fugu" },
     ),
   );
 
@@ -674,7 +672,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
         config,
         { PATH: tempDir },
         {
-          displayName: "Alt",
+          displayName: "Fugu",
         },
       );
 
@@ -692,7 +690,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
       if (Result.isFailure(result)) {
         expect(result.failure).toBeInstanceOf(TextGenerationError);
         expect(result.failure.message).toContain("Codex CLI (`codex`) is required");
-        expect(result.failure.message).not.toContain("Alt CLI (`alt`) is required");
+        expect(result.failure.message).not.toContain("Fugu CLI (`fugu`) is required");
       }
     }).pipe(Effect.scoped),
   );

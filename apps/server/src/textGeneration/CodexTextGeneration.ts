@@ -41,13 +41,15 @@ const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 export type CodexTextGenerationOptions = {
   /**
    * Default `model_reasoning_effort` when the model selection has none.
-   * Codex git helpers use `low`; Codex-backed providers with constrained
-   * effort sets can raise this.
+   * Codex git helpers use `low`; Fugu models only accept `high`/`xhigh`/`max`.
    */
   readonly defaultReasoningEffort?: string;
   /** Optional allow-list for Codex-backed providers with constrained effort sets. */
   readonly allowedReasoningEfforts?: ReadonlyArray<string>;
-  /** Display name in user-facing CLI error messages (default `"Codex"`). */
+  /**
+   * Display name in user-facing CLI error messages (default `"Codex"`).
+   * Fugu passes `"Fugu"`.
+   */
   readonly displayName?: string;
 };
 

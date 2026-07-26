@@ -181,12 +181,12 @@ it.effect("decodes project.meta-updated payloads with explicit default provider"
     const parsed = yield* decodeProjectMetaUpdatedPayload({
       projectId: "project-1",
       defaultModelSelection: {
-        provider: "claudex",
+        provider: "claudeAgent",
         model: "claude-opus-4-6",
       },
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
-    assert.strictEqual(parsed.defaultModelSelection?.instanceId, "claudex");
+    assert.strictEqual(parsed.defaultModelSelection?.instanceId, "claudeAgent");
   }),
 );
 
@@ -306,6 +306,7 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
       },
       interactionMode: "default",
       executorModelSelection: null,
+      executorMaxSubAgents: 3,
       branch: null,
       worktreePath: null,
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -322,12 +323,12 @@ it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
     const parsed = yield* decodeThreadMetaUpdatedPayload({
       threadId: "thread-1",
       modelSelection: {
-        provider: "claudex",
+        provider: "claudeAgent",
         model: "claude-opus-4-6",
       },
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
-    assert.strictEqual(parsed.modelSelection?.instanceId, "claudex");
+    assert.strictEqual(parsed.modelSelection?.instanceId, "claudeAgent");
   }),
 );
 
@@ -428,7 +429,7 @@ it.effect("normalizes legacy object-shaped modelSelection.options on decode", ()
       projectId: "project-1",
       title: "Legacy options thread",
       modelSelection: {
-        provider: "claudex",
+        provider: "claudeAgent",
         model: "claude-opus-4-6",
         options: {
           effort: "max",
@@ -445,7 +446,7 @@ it.effect("normalizes legacy object-shaped modelSelection.options on decode", ()
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
 
-    assert.strictEqual(parsed.modelSelection.instanceId, ProviderInstanceId.make("claudex"));
+    assert.strictEqual(parsed.modelSelection.instanceId, ProviderInstanceId.make("claudeAgent"));
     assert.deepStrictEqual(parsed.modelSelection.options, [
       { id: "effort", value: "max" },
       { id: "fastMode", value: true },
@@ -771,9 +772,9 @@ it.effect("decodes composer payload weight metadata", () =>
   }),
 );
 
-it.effect("maps legacy advisor interaction mode to default", () =>
+it.effect("accepts advisor as a thread interaction mode", () =>
   Effect.gen(function* () {
     const decoded = yield* decodeProviderInteractionMode("advisor");
-    assert.strictEqual(decoded, "default");
+    assert.strictEqual(decoded, "advisor");
   }),
 );

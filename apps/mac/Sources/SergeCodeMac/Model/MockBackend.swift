@@ -319,6 +319,13 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.setInteractionMode(threadID: threadID, mode: mode)
     }
 
+    public func setExecutorModel(
+        threadID: String, instanceID: String?, modelID: String?, maxSubAgents: Int?
+    ) async throws {
+        await state.setExecutorModel(
+            threadID: threadID, instanceID: instanceID, modelID: modelID, maxSubAgents: maxSubAgents)
+    }
+
     public func setModel(threadID: String, model: ModelOption) async throws {
         await state.setModel(threadID: threadID, model: model)
     }
@@ -899,11 +906,15 @@ private actor MockState {
         return [
             ModelOption(
                 instanceID: "provider-claude", modelID: "claude-fable-5",
-                displayName: "Fable 5", provider: .claudex, isDefault: true,
+                displayName: "Fable 5", provider: .claude, isDefault: true,
                 effortOptionID: "effort", effortChoices: claudeEfforts),
             ModelOption(
                 instanceID: "provider-claude", modelID: "claude-opus-4-8",
-                displayName: "Opus 4.8", provider: .claudex, isDefault: false,
+                displayName: "Opus 4.8", provider: .claude, isDefault: false,
+                effortOptionID: "effort", effortChoices: claudeEfforts),
+            ModelOption(
+                instanceID: "provider-claude-synthero", modelID: "claude-sonnet-5",
+                displayName: "Sonnet 5", provider: .claudeSynthero, isDefault: true,
                 effortOptionID: "effort", effortChoices: claudeEfforts),
             ModelOption(
                 instanceID: "provider-codex", modelID: "gpt-5.2-codex",
@@ -944,6 +955,24 @@ private actor MockState {
             ModelOption(
                 instanceID: "provider-kimi", modelID: "kimi-code/kimi-for-coding-highspeed",
                 displayName: "K2.7 Coding Highspeed", provider: .kimi, isDefault: false),
+            ModelOption(
+                instanceID: "provider-fugu", modelID: "fugu",
+                displayName: "Fugu", provider: .fugu, isDefault: true,
+                effortOptionID: "reasoningEffort",
+                effortChoices: [
+                    EffortChoice(id: "high", label: "High", isDefault: true),
+                    EffortChoice(id: "xhigh", label: "Extra High", isDefault: false),
+                    EffortChoice(id: "max", label: "Max", isDefault: false),
+                ]),
+            ModelOption(
+                instanceID: "provider-fugu", modelID: "fugu-ultra",
+                displayName: "Fugu Ultra", provider: .fugu, isDefault: false,
+                effortOptionID: "reasoningEffort",
+                effortChoices: [
+                    EffortChoice(id: "high", label: "High", isDefault: false),
+                    EffortChoice(id: "xhigh", label: "Extra High", isDefault: true),
+                    EffortChoice(id: "max", label: "Max", isDefault: false),
+                ]),
         ]
     }
 
@@ -1007,6 +1036,23 @@ private actor MockState {
     func setInteractionMode(threadID: String, mode: ThreadInteractionMode) {
         guard var thread = threadsByID[threadID] else { return }
         thread.interactionMode = mode
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    func setExecutorModel(threadID: String, instanceID: String?, modelID: String?, maxSubAgents: Int?) {
+        guard var thread = threadsByID[threadID] else { return }
+        // Match LiveBackend: only a complete pair is stored; partial clears both.
+        if let instanceID, let modelID {
+            thread.executorModelInstanceID = instanceID
+            thread.executorModelID = modelID
+        } else {
+            thread.executorModelInstanceID = nil
+            thread.executorModelID = nil
+        }
+        if let maxSubAgents {
+            thread.executorMaxSubAgents = maxSubAgents
+        }
         threadsByID[threadID] = thread
         emit(.threadUpserted(thread))
     }
@@ -1296,7 +1342,7 @@ private actor MockState {
                 case "thread-3": remapped.title = "Tune studio deployment dashboards"
                 case "thread-4": remapped.title = "Investigate remote build error"
                 case "thread-5": remapped.title = "Surface the Grok provider"
-                case "thread-6": remapped.title = "Surface the Kimi provider"
+                case "thread-6": remapped.title = "Surface the Fugu provider"
                 default: remapped.title = "\(displayVariant) \(thread.title)"
                 }
                 return (remapped.id, remapped)
@@ -1379,17 +1425,19 @@ private actor MockState {
         projectsByID[projectB.id] = projectB
 
         let providerList: [ProviderInstance] = [
-            ProviderInstance(id: "provider-claude", kind: .claudex, availability: .available, version: "1.4.2"),
+            ProviderInstance(id: "provider-claude", kind: .claude, availability: .available, version: "1.4.2"),
+            ProviderInstance(id: "provider-claude-synthero", kind: .claudeSynthero, availability: .authRequired, version: nil),
             ProviderInstance(id: "provider-codex", kind: .codex, availability: .available, version: "0.9.0"),
             ProviderInstance(id: "provider-grok", kind: .grok, availability: .available, version: "0.2.91"),
             ProviderInstance(id: "provider-kimi", kind: .kimi, availability: .available, version: "0.29.0"),
+            ProviderInstance(id: "provider-fugu", kind: .fugu, availability: .available, version: "0.1.0"),
         ]
 
         let thread1 = ChatThread(
             id: "thread-1",
             projectID: projectA.id,
             title: "Fix sidebar scroll jank",
-            provider: .claudex,
+            provider: .claude,
             status: .backgroundWork,
             updatedAt: now.addingTimeInterval(-60),
             backgroundAgentCount: 1
@@ -1416,7 +1464,7 @@ private actor MockState {
             id: "thread-4",
             projectID: projectB.id,
             title: "Investigate build error",
-            provider: .kimi,
+            provider: .fugu,
             status: .error,
             updatedAt: now.addingTimeInterval(-7_200)
         )
@@ -1431,8 +1479,8 @@ private actor MockState {
         let thread6 = ChatThread(
             id: "thread-6",
             projectID: projectA.id,
-            title: "Surface Kimi provider",
-            provider: .kimi,
+            title: "Surface Fugu provider",
+            provider: .fugu,
             status: .idle,
             updatedAt: now.addingTimeInterval(-14_400)
         )
@@ -1800,7 +1848,7 @@ private actor MockState {
                 isStreaming: false,
                 at: now.addingTimeInterval(-7_350)
             ),
-            .notice(id: "t4-n1", text: "Kimi provider became unavailable mid-session.", at: now.addingTimeInterval(-7_200)),
+            .notice(id: "t4-n1", text: "Fugu provider became unavailable mid-session.", at: now.addingTimeInterval(-7_200)),
         ]
     }
 

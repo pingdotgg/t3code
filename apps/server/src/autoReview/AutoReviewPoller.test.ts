@@ -76,11 +76,7 @@ function makeText() {
   });
 }
 
-function makeLayer(input: {
-  enabled: boolean;
-  listCount: { value: number };
-  maintenanceCount?: { drain: number; sync: number };
-}) {
+function makeLayer(input: { enabled: boolean; listCount: { value: number } }) {
   return Layer.mergeAll(
     AutoReviewJobStore.layerInMemory,
     AutoReviewPoller.layer({
@@ -96,16 +92,6 @@ function makeLayer(input: {
       listProjects: Effect.succeed([{ id: "proj", workspaceRoot: "/repo", deletedAt: null }]),
       isGitHubProject: () => Effect.succeed(true),
       contextForJob: () => Effect.succeed({ cwd: "/repo", candidates: [] }),
-      drainPendingFixes: Effect.sync(() => {
-        if (input.maintenanceCount) {
-          input.maintenanceCount.drain += 1;
-        }
-      }),
-      syncThreadPhases: Effect.sync(() => {
-        if (input.maintenanceCount) {
-          input.maintenanceCount.sync += 1;
-        }
-      }),
     }).pipe(
       Layer.provide(
         AutoReviewRunner.layer.pipe(
@@ -124,7 +110,6 @@ function makeLayer(input: {
 describe("AutoReviewPoller", () => {
   it("enqueues a job for a new open PR head sha in auto mode", async () => {
     const listCount = { value: 0 };
-    const maintenanceCount = { drain: 0, sync: 0 };
     await Effect.gen(function* () {
       const store = yield* AutoReviewJobStore.AutoReviewJobStore;
       const poller = yield* AutoReviewPoller.AutoReviewPoller;
@@ -134,21 +119,15 @@ describe("AutoReviewPoller", () => {
       expect(jobs.length).toBeGreaterThanOrEqual(1);
       expect(jobs[0]?.headSha).toBe("deadbeef01");
       expect(jobs[0]?.trigger).toBe("open_or_push");
-      expect(maintenanceCount).toEqual({ drain: 1, sync: 1 });
 
       yield* poller.tick;
       const again = yield* store.list({ projectId: "proj" });
       expect(again.filter((j) => j.headSha === "deadbeef01")).toHaveLength(1);
-      expect(maintenanceCount).toEqual({ drain: 2, sync: 2 });
-    }).pipe(
-      Effect.provide(makeLayer({ enabled: true, listCount, maintenanceCount })),
-      Effect.runPromise,
-    );
+    }).pipe(Effect.provide(makeLayer({ enabled: true, listCount })), Effect.runPromise);
   });
 
   it("does nothing when disabled", async () => {
     const listCount = { value: 0 };
-    const maintenanceCount = { drain: 0, sync: 0 };
     await Effect.gen(function* () {
       const store = yield* AutoReviewJobStore.AutoReviewJobStore;
       const poller = yield* AutoReviewPoller.AutoReviewPoller;
@@ -156,10 +135,6 @@ describe("AutoReviewPoller", () => {
       const jobs = yield* store.list();
       expect(jobs).toHaveLength(0);
       expect(listCount.value).toBe(0);
-      expect(maintenanceCount).toEqual({ drain: 0, sync: 0 });
-    }).pipe(
-      Effect.provide(makeLayer({ enabled: false, listCount, maintenanceCount })),
-      Effect.runPromise,
-    );
+    }).pipe(Effect.provide(makeLayer({ enabled: false, listCount })), Effect.runPromise);
   });
 });

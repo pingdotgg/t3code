@@ -596,18 +596,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
-    case "thread.auto-review-phase.set": {
-      const thread = yield* requireThreadNotArchived({
+    case "thread.executor-model.set": {
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      // Setting the phase the thread already has re-emits with the existing
-      // updatedAt: the engine rejects zero-event commands, and duplicate sets
-      // must stay silent no-ops rather than churn ordering (mirrors
-      // thread.settle).
-      const unchanged = thread.autoReviewPhase === command.phase;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -615,11 +610,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           occurredAt,
           commandId: command.commandId,
         })),
-        type: "thread.auto-review-phase-set",
+        type: "thread.executor-model-set",
         payload: {
           threadId: command.threadId,
-          phase: command.phase,
-          updatedAt: unchanged ? thread.updatedAt : occurredAt,
+          executorModelSelection: command.executorModelSelection,
+          // Absent slider value keeps the thread's current cap.
+          executorMaxSubAgents: command.executorMaxSubAgents ?? thread.executorMaxSubAgents,
+          updatedAt: occurredAt,
         },
       };
     }

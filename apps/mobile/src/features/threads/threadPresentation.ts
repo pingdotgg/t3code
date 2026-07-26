@@ -13,10 +13,6 @@ export type ThreadStatusKind =
   | "stalled"
   | "pending-approval"
   | "awaiting-input"
-  | "reviewing"
-  | "fixing"
-  | "ready-to-merge"
-  | "done"
   | "working"
   | "waiting"
   | "connecting"
@@ -107,33 +103,6 @@ export function resolveThreadStatus(
     };
   }
 
-  // Active auto-review phases win over session/turn liveness: the orchestrator
-  // owns the thread while it reviews or applies fixes (mac parity:
-  // ThreadStatusProjection returns .fixing/.reviewing before .running).
-  if (thread.autoReviewPhase === "fixing") {
-    return {
-      kind: "fixing",
-      label: "Fixing",
-      pillClassName: "bg-accent-soft",
-      textClassName: "text-accent",
-      iconColor: "#5c8c6e",
-      iconBackground: "rgba(92,140,110,0.22)",
-      pulse: true,
-    };
-  }
-
-  if (thread.autoReviewPhase === "reviewing") {
-    return {
-      kind: "reviewing",
-      label: "Reviewing",
-      pillClassName: "bg-sky-500/12 dark:bg-sky-500/16",
-      textClassName: "text-sky-700 dark:text-sky-300",
-      iconColor: "#0a84ff",
-      iconBackground: "rgba(10,132,255,0.20)",
-      pulse: true,
-    };
-  }
-
   if (thread.session?.status === "waiting" && thread.session.waiting) {
     return {
       kind: "waiting",
@@ -209,34 +178,6 @@ export function resolveThreadStatus(
       textClassName: "text-violet-700 dark:text-violet-300",
       iconColor: "#bf5af2",
       iconBackground: "rgba(191,90,242,0.22)",
-      pulse: false,
-    };
-  }
-
-  // Terminal auto-review states, below every live/actionable state so a busy
-  // thread never advertises a stale review outcome. `done` must stay below
-  // `plan-ready`: a plan-ready turn is always completed, so the broader
-  // completed-turn check would shadow Plan Ready badges.
-  if (thread.autoReviewPhase === "readyToMerge") {
-    return {
-      kind: "ready-to-merge",
-      label: "Ready to Merge",
-      pillClassName: "bg-emerald-500/12 dark:bg-emerald-500/16",
-      textClassName: "text-emerald-700 dark:text-emerald-300",
-      iconColor: "#34c759",
-      iconBackground: "rgba(52,199,89,0.20)",
-      pulse: false,
-    };
-  }
-
-  if (thread.latestTurn?.state === "completed") {
-    return {
-      kind: "done",
-      label: "Done",
-      pillClassName: "bg-zinc-500/12 dark:bg-zinc-500/16",
-      textClassName: "text-zinc-600 dark:text-zinc-300",
-      iconColor: THREAD_STATUS_NEUTRAL_ICON.iconColor,
-      iconBackground: THREAD_STATUS_NEUTRAL_ICON.iconBackground,
       pulse: false,
     };
   }

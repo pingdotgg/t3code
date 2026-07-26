@@ -39,6 +39,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           runtime_mode,
           interaction_mode,
           executor_model_selection,
+          executor_max_sub_agents,
           branch,
           worktree_path,
           parent_thread_id,
@@ -52,8 +53,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
-          deleted_at,
-          auto_review_phase
+          deleted_at
         )
         VALUES (
           ${row.threadId},
@@ -63,6 +63,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.runtimeMode},
           ${row.interactionMode},
           ${row.executorModelSelection !== null ? JSON.stringify(row.executorModelSelection) : null},
+          ${row.executorMaxSubAgents},
           ${row.branch},
           ${row.worktreePath},
           ${row.parentThreadId},
@@ -76,8 +77,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.pendingApprovalCount},
           ${row.pendingUserInputCount},
           ${row.hasActionableProposedPlan},
-          ${row.deletedAt},
-          ${row.autoReviewPhase}
+          ${row.deletedAt}
         )
         ON CONFLICT (thread_id)
         DO UPDATE SET
@@ -87,6 +87,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
           executor_model_selection = excluded.executor_model_selection,
+          executor_max_sub_agents = excluded.executor_max_sub_agents,
           branch = excluded.branch,
           worktree_path = excluded.worktree_path,
           parent_thread_id = excluded.parent_thread_id,
@@ -100,8 +101,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count = excluded.pending_approval_count,
           pending_user_input_count = excluded.pending_user_input_count,
           has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
-          deleted_at = excluded.deleted_at,
-          auto_review_phase = excluded.auto_review_phase
+          deleted_at = excluded.deleted_at
       `,
   });
 
@@ -118,6 +118,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
           executor_model_selection AS "executorModelSelection",
+          executor_max_sub_agents AS "executorMaxSubAgents",
           branch,
           worktree_path AS "worktreePath",
           parent_thread_id AS "parentThreadId",
@@ -131,8 +132,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt",
-          auto_review_phase AS "autoReviewPhase"
+          deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
       `,
@@ -151,6 +151,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
           executor_model_selection AS "executorModelSelection",
+          executor_max_sub_agents AS "executorMaxSubAgents",
           branch,
           worktree_path AS "worktreePath",
           parent_thread_id AS "parentThreadId",
@@ -164,8 +165,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt",
-          auto_review_phase AS "autoReviewPhase"
+          deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE project_id = ${projectId}
         ORDER BY created_at ASC, thread_id ASC

@@ -4,25 +4,28 @@ import Foundation
 // them. Keep UI code independent of wire-shape churn.
 
 public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable {
-    case claudeWork, claudex, codex, grok, kimi
+    case claude, claudeWork, claudex, claudeSynthero, codex, grok, kimi, fugu
     /// Decodes persisted threads created by the removed Cursor provider. This
     /// case is intentionally excluded from `allCases` so it is never offered
     /// for new sessions.
     case legacyCursor = "cursor"
 
     public static let allCases: [ProviderKind] = [
-        .claudeWork, .claudex, .codex, .grok, .kimi,
+        .claude, .claudeWork, .claudex, .claudeSynthero, .codex, .grok, .kimi, .fugu,
     ]
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
+        case .claude: "Claude Code"
         case .claudeWork: "Claude Work"
-        case .claudex: "Claude Code"
+        case .claudex: "Claudex"
+        case .claudeSynthero: "Claude Synthero"
         case .codex: "Codex"
         case .grok: "Grok"
         case .kimi: "Kimi"
+        case .fugu: "Fugu"
         case .legacyCursor: "Cursor (Unsupported)"
         }
     }
@@ -47,13 +50,11 @@ public struct Project: Identifiable, Hashable, Sendable {
 
 public enum ThreadStatus: String, Sendable {
     case idle, running, waiting, waitingApproval, waitingInput, backgroundWork, error, archived, settled
-    case done, reviewing, fixing, readyToMerge
 
     public var isSettled: Bool {
         switch self {
-        case .idle, .archived, .error, .settled, .done, .readyToMerge: true
-        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork, .reviewing, .fixing:
-            false
+        case .idle, .archived, .error, .settled: true
+        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork: false
         }
     }
 }
@@ -83,15 +84,16 @@ public enum ThreadRuntimeMode: String, CaseIterable, Sendable, Identifiable {
 }
 
 /// UI mirror of the wire `ProviderInteractionMode` (how the agent engages with
-/// the request: do it, or plan it).
+/// the request: do it, plan it, or advise on it).
 public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable {
-    case normal, plan
+    case normal, plan, advisor
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
         case .normal: "Default"
         case .plan: "Plan"
+        case .advisor: "Advisor/Planner"
         }
     }
 
@@ -99,6 +101,7 @@ public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable 
         switch self {
         case .normal: "text.bubble"
         case .plan: "list.clipboard"
+        case .advisor: "lightbulb.max"
         }
     }
 
@@ -106,6 +109,8 @@ public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable 
         switch self {
         case .normal: "The agent does the work."
         case .plan: "The agent proposes a plan instead of editing."
+        case .advisor:
+            "The agent plans and advises rather than editing itself. With an executor model configured it delegates implementation to sub-agents on that model; otherwise it advises only."
         }
     }
 }
@@ -202,6 +207,15 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// modelSelection); used to mark the active row in the model picker.
     public var modelInstanceID: String?
     public var modelID: String?
+    /// Advisor/Planner executor model (instance + slug); nil means advise only.
+    public var executorModelInstanceID: String?
+    public var executorModelID: String?
+    /// Default cap applied at the UI boundary when the wire payload carries no
+    /// value (payloads that predate the field). Wire models keep the field
+    /// optional so older data never fabricates an explicit cap.
+    public static let defaultExecutorMaxSubAgents = 3
+    /// Cap on concurrently spawned executor sub-agents in advisor mode (1...10).
+    public var executorMaxSubAgents: Int
     /// Explicit reasoning-effort choice id from the thread's modelSelection
     /// options; nil means the provider default applies.
     public var reasoningEffort: String?
@@ -236,6 +250,8 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         runtimeMode: ThreadRuntimeMode = .fullAccess,
         interactionMode: ThreadInteractionMode = .normal,
         modelInstanceID: String? = nil, modelID: String? = nil,
+        executorModelInstanceID: String? = nil, executorModelID: String? = nil,
+        executorMaxSubAgents: Int = ChatThread.defaultExecutorMaxSubAgents,
         reasoningEffort: String? = nil, serviceTier: String? = nil,
         backgroundAgentCount: Int = 0, parentThreadId: String? = nil,
         health: ThreadHealth? = nil
@@ -261,6 +277,9 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         self.interactionMode = interactionMode
         self.modelInstanceID = modelInstanceID
         self.modelID = modelID
+        self.executorModelInstanceID = executorModelInstanceID
+        self.executorModelID = executorModelID
+        self.executorMaxSubAgents = executorMaxSubAgents
         self.reasoningEffort = reasoningEffort
         self.serviceTier = serviceTier
         self.backgroundAgentCount = backgroundAgentCount
@@ -291,6 +310,9 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
             && interactionMode == other.interactionMode
             && modelInstanceID == other.modelInstanceID
             && modelID == other.modelID
+            && executorModelInstanceID == other.executorModelInstanceID
+            && executorModelID == other.executorModelID
+            && executorMaxSubAgents == other.executorMaxSubAgents
             && reasoningEffort == other.reasoningEffort
             && serviceTier == other.serviceTier
             && backgroundAgentCount == other.backgroundAgentCount

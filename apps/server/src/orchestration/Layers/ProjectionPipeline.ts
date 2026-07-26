@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   type ChatAttachment,
+  DEFAULT_EXECUTOR_MAX_SUB_AGENTS,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
   ProviderDriverKind,
@@ -612,6 +613,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             runtimeMode: event.payload.runtimeMode,
             interactionMode: event.payload.interactionMode,
             executorModelSelection: event.payload.executorModelSelection ?? null,
+            executorMaxSubAgents: DEFAULT_EXECUTOR_MAX_SUB_AGENTS,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
             parentThreadId: event.payload.parentThreadId ?? null,
@@ -626,7 +628,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
             deletedAt: null,
-            autoReviewPhase: null,
           });
           return;
 
@@ -729,21 +730,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
-        case "thread.auto-review-phase-set": {
-          const existingRow = yield* projectionThreadRepository.getById({
-            threadId: event.payload.threadId,
-          });
-          if (Option.isNone(existingRow)) {
-            return;
-          }
-          yield* projectionThreadRepository.upsert({
-            ...existingRow.value,
-            autoReviewPhase: event.payload.phase,
-            updatedAt: event.payload.updatedAt,
-          });
-          return;
-        }
-
         case "thread.interaction-mode-set": {
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,
@@ -769,6 +755,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             executorModelSelection: event.payload.executorModelSelection,
+            executorMaxSubAgents: event.payload.executorMaxSubAgents,
             updatedAt: event.payload.updatedAt,
           });
           return;

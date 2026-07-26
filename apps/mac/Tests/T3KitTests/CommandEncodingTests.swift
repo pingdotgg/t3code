@@ -42,3 +42,42 @@ struct ProjectMetaUpdateCommandEncodingTests {
         #expect(value["defaultModelSelection"]?["model"]?.stringValue == "claude-fable-5")
     }
 }
+
+@Suite("ThreadExecutorModelSetCommand encoding")
+struct ThreadExecutorModelSetCommandEncodingTests {
+
+    private func encodeToJSON(_ command: ThreadExecutorModelSetCommand) throws -> JSONValue {
+        let data = try WireCoding.encoder.encode(command)
+        return try WireCoding.decoder.decode(JSONValue.self, from: data)
+    }
+
+    @Test("nil selection encodes explicit null (clear the executor)")
+    func explicitNullClears() throws {
+        let value = try encodeToJSON(
+            ThreadExecutorModelSetCommand(
+                commandId: "cmd_1", threadId: "thr_1", executorModelSelection: nil,
+                createdAt: "2026-01-01T00:00:00Z"))
+        #expect(value["type"]?.stringValue == "thread.executor-model.set")
+        #expect(value["executorModelSelection"] == .null)
+    }
+
+    @Test("nil executorMaxSubAgents omits the key (leave untouched)")
+    func omitsMaxSubAgentsWhenNil() throws {
+        let value = try encodeToJSON(
+            ThreadExecutorModelSetCommand(
+                commandId: "cmd_1", threadId: "thr_1", executorModelSelection: nil,
+                createdAt: "2026-01-01T00:00:00Z"))
+        #expect(value["executorMaxSubAgents"] == nil)
+    }
+
+    @Test("set executorMaxSubAgents is encoded")
+    func encodesMaxSubAgentsWhenSet() throws {
+        let selection = ModelSelection(instanceId: "codex", model: "gpt-5-codex")
+        let value = try encodeToJSON(
+            ThreadExecutorModelSetCommand(
+                commandId: "cmd_1", threadId: "thr_1", executorModelSelection: selection,
+                executorMaxSubAgents: 7, createdAt: "2026-01-01T00:00:00Z"))
+        #expect(value["executorMaxSubAgents"] == .int(7))
+        #expect(value["executorModelSelection"]?["model"]?.stringValue == "gpt-5-codex")
+    }
+}

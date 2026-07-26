@@ -28,6 +28,7 @@ function makeThread(
   return {
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     executorModelSelection: null,
+    executorMaxSubAgents: 3,
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
@@ -42,7 +43,6 @@ function makeThread(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
-    autoReviewPhase: null,
     ...input,
     settledOverride: input.settledOverride ?? null,
     settledAt: input.settledAt ?? null,

@@ -65,6 +65,7 @@ const readModel: OrchestrationReadModel = {
       },
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
       executorModelSelection: null,
+      executorMaxSubAgents: 3,
       runtimeMode: "full-access",
       branch: null,
       worktreePath: null,
@@ -79,7 +80,6 @@ const readModel: OrchestrationReadModel = {
       proposedPlans: [],
       checkpoints: [],
       deletedAt: null,
-      autoReviewPhase: null,
     },
     {
       id: ThreadId.make("thread-2"),
@@ -91,6 +91,7 @@ const readModel: OrchestrationReadModel = {
       },
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
       executorModelSelection: null,
+      executorMaxSubAgents: 3,
       runtimeMode: "full-access",
       branch: null,
       worktreePath: null,
@@ -105,7 +106,6 @@ const readModel: OrchestrationReadModel = {
       proposedPlans: [],
       checkpoints: [],
       deletedAt: null,
-      autoReviewPhase: null,
     },
   ],
 };

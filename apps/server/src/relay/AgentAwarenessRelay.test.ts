@@ -291,6 +291,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       runtimeMode: "full-access",
       interactionMode: "default",
       executorModelSelection: null,
+      executorMaxSubAgents: 3,
       branch: null,
       worktreePath: null,
       parentThreadId: null,
@@ -303,7 +304,6 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
-      autoReviewPhase: null,
     } satisfies Omit<OrchestrationThreadShell, "id">;
 
     expect(
@@ -433,6 +433,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           runtimeMode: "full-access",
           interactionMode: "default",
           executorModelSelection: null,
+          executorMaxSubAgents: 3,
           branch: null,
           worktreePath: null,
           parentThreadId: null,
@@ -460,7 +461,6 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
-          autoReviewPhase: null,
         } satisfies OrchestrationThreadShell;
 
         const orchestrationEngine = {
@@ -592,6 +592,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           runtimeMode: "full-access",
           interactionMode: "default",
           executorModelSelection: null,
+          executorMaxSubAgents: 3,
           branch: null,
           worktreePath: null,
           parentThreadId: null,
@@ -619,7 +620,6 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
-          autoReviewPhase: null,
         } satisfies OrchestrationThreadShell;
 
         const descriptor = {

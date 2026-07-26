@@ -38,6 +38,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
+  CODEX_ADVISOR_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
@@ -361,6 +362,11 @@ function codexModeKindFor(
 ): EffectCodexSchema.V2TurnStartParams__ModeKind {
   switch (interactionMode) {
     case "plan":
+    // Codex only accepts "plan" | "default" on the wire. Advisor borrows the
+    // "plan" kind because it is the non-default kind that keeps
+    // `request_user_input` available and `update_plan` disabled; the advisor
+    // developer instructions below are what stop it producing a plan artifact.
+    case "advisor":
       return "plan";
     case "default":
     default:
@@ -372,6 +378,8 @@ function codexDeveloperInstructionsFor(interactionMode: ProviderInteractionMode)
   switch (interactionMode) {
     case "plan":
       return CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS;
+    case "advisor":
+      return CODEX_ADVISOR_MODE_DEVELOPER_INSTRUCTIONS;
     case "default":
     default:
       return CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;

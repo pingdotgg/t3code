@@ -221,7 +221,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             stagedSummary: "M README.md",
             stagedPatch: "diff --git a/README.md b/README.md",
             modelSelection: {
-              ...createModelSelection(ProviderInstanceId.make("claudex"), "claude-haiku-4-5", [
+              ...createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-haiku-4-5", [
                 { id: "thinking", value: false },
                 { id: "effort", value: "high" },
               ]),
@@ -254,7 +254,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             diffSummary: "1 file changed",
             diffPatch: "diff --git a/README.md b/README.md",
             modelSelection: {
-              ...createModelSelection(ProviderInstanceId.make("claudex"), "claude-opus-4-6", [
+              ...createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-opus-4-6", [
                 { id: "effort", value: "max" },
                 { id: "fastMode", value: true },
               ]),
@@ -336,7 +336,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             cwd: process.cwd(),
             message: "Please investigate reconnect failures after restarting the session.",
             modelSelection: {
-              instanceId: ProviderInstanceId.make("claudex"),
+              instanceId: ProviderInstanceId.make("claudeAgent"),
               model: "claude-sonnet-4-6",
             },
           });
@@ -371,7 +371,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
               cwd: process.cwd(),
               message: "thread title",
               modelSelection: {
-                instanceId: ProviderInstanceId.make("claudex"),
+                instanceId: ProviderInstanceId.make("claudeAgent"),
                 model: "claude-sonnet-4-6",
               },
             });
@@ -397,7 +397,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             cwd: process.cwd(),
             message: "Name this thread.",
             modelSelection: {
-              instanceId: ProviderInstanceId.make("claudex"),
+              instanceId: ProviderInstanceId.make("claudeAgent"),
               model: "claude-sonnet-4-6",
             },
           });

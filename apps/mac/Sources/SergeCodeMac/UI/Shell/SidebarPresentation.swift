@@ -67,10 +67,8 @@ struct SidebarThreadItem {
 
     var isInProgress: Bool {
         return switch thread.status {
-        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork,
-            .reviewing, .fixing:
-            true
-        case .idle, .error, .archived, .settled, .done, .readyToMerge: false
+        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork: true
+        case .idle, .error, .archived, .settled: false
         }
     }
 
@@ -84,9 +82,6 @@ struct SidebarThreadItem {
         if thread.status == .error { return 2 }
         if hasConnectionIssue { return 2 }
         if thread.isStalled { return 3 }
-        // Ready-to-merge threads are settled but actionable; surface them above
-        // idle/done threads in the attention ordering.
-        if thread.status == .readyToMerge { return 3 }
         return 4
     }
 
@@ -103,10 +98,6 @@ struct SidebarThreadItem {
         case .error: "Error"
         case .archived: "Archived"
         case .settled: "Settled"
-        case .done: "Done"
-        case .reviewing: "Reviewing"
-        case .fixing: "Fixing"
-        case .readyToMerge: "Ready to merge"
         }
     }
 }

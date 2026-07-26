@@ -32,6 +32,7 @@ export function threadDetailToShell(
     title: thread.title,
     modelSelection: thread.modelSelection,
     executorModelSelection: thread.executorModelSelection,
+    executorMaxSubAgents: thread.executorMaxSubAgents,
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
     branch: thread.branch,
@@ -51,6 +52,5 @@ export function threadDetailToShell(
       proposedPlans: thread.proposedPlans,
       latestTurnId: thread.latestTurn?.turnId ?? null,
     }),
-    autoReviewPhase: thread.autoReviewPhase,
   };
 }

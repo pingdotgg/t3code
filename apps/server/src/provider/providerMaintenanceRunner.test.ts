@@ -31,10 +31,10 @@ const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const GROK_DRIVER = ProviderDriverKind.make("grok");
-const KIMI_DRIVER = ProviderDriverKind.make("kimi");
+const FUGU_DRIVER = ProviderDriverKind.make("fugu");
 const CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
 const GROK_INSTANCE_ID = ProviderInstanceId.make("grok");
-const KIMI_INSTANCE_ID = ProviderInstanceId.make("kimi");
+const FUGU_INSTANCE_ID = ProviderInstanceId.make("fugu");
 const encoder = new TextEncoder();
 
 // Pin a non-win32 platform so `resolveSpawnCommand` is a no-op and the raw
@@ -53,12 +53,12 @@ function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabili
       updateLockKey: "grok-cli",
     });
   }
-  if (provider === KIMI_DRIVER) {
+  if (provider === FUGU_DRIVER) {
     return makeProviderMaintenanceCapabilities({
       provider,
-      packageName: "kimi-cli",
+      packageName: "codex-fugu",
       updateExecutable: "npm",
-      updateArgs: ["install", "-g", "kimi-cli@latest"],
+      updateArgs: ["install", "-g", "codex-fugu@latest"],
       updateLockKey: "npm-global",
     });
   }
@@ -91,10 +91,10 @@ const baseGrokProvider: ServerProvider = {
   driver: GROK_DRIVER,
 };
 
-const baseKimiProvider: ServerProvider = {
+const baseFuguProvider: ServerProvider = {
   ...baseProvider,
-  instanceId: KIMI_INSTANCE_ID,
-  driver: KIMI_DRIVER,
+  instanceId: FUGU_INSTANCE_ID,
+  driver: FUGU_DRIVER,
 };
 
 const latestVersionHttpClient = (version: string) =>
@@ -515,18 +515,18 @@ describe("providerMaintenanceRunner", () => {
     });
     const calls: Array<string> = [];
     return Effect.gen(function* () {
-      const { registry } = yield* makeRegistry([baseProvider, baseKimiProvider]);
+      const { registry } = yield* makeRegistry([baseProvider, baseFuguProvider]);
       const updater = yield* makeTestRunner({
         ...registry,
         getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
           Effect.succeed(
             makeProviderMaintenanceCapabilities({
               provider,
-              packageName: provider === KIMI_DRIVER ? "kimi-cli" : "@openai/codex",
+              packageName: provider === FUGU_DRIVER ? "codex-fugu" : "@openai/codex",
               updateExecutable: "npm",
               updateArgs:
-                provider === KIMI_DRIVER
-                  ? ["install", "-g", "kimi-cli@latest"]
+                provider === FUGU_DRIVER
+                  ? ["install", "-g", "codex-fugu@latest"]
                   : ["install", "-g", "@openai/codex@latest"],
               updateLockKey: "npm-global",
             }),
@@ -536,12 +536,12 @@ describe("providerMaintenanceRunner", () => {
       const first = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
       yield* Effect.promise(() => firstStarted);
 
-      const second = yield* updater.updateProvider(KIMI_DRIVER).pipe(Effect.forkScoped);
+      const second = yield* updater.updateProvider(FUGU_DRIVER).pipe(Effect.forkScoped);
       let providersWhileQueued: ReadonlyArray<ServerProvider> = [];
       for (let attempt = 0; attempt < 20; attempt += 1) {
         providersWhileQueued = yield* registry.getProviders;
         const queuedStatus = providersWhileQueued.find(
-          (provider) => provider.instanceId === KIMI_INSTANCE_ID,
+          (provider) => provider.instanceId === FUGU_INSTANCE_ID,
         )?.updateState?.status;
         if (queuedStatus === "queued") {
           break;
@@ -550,7 +550,7 @@ describe("providerMaintenanceRunner", () => {
       }
       assert.deepStrictEqual(calls, ["install -g @openai/codex@latest"]);
       assert.strictEqual(
-        providersWhileQueued.find((provider) => provider.instanceId === KIMI_INSTANCE_ID)
+        providersWhileQueued.find((provider) => provider.instanceId === FUGU_INSTANCE_ID)
           ?.updateState?.status,
         "queued",
       );
@@ -560,7 +560,7 @@ describe("providerMaintenanceRunner", () => {
       yield* Fiber.join(second);
       assert.deepStrictEqual(calls, [
         "install -g @openai/codex@latest",
-        "install -g kimi-cli@latest",
+        "install -g codex-fugu@latest",
       ]);
     }).pipe(
       Effect.provide(

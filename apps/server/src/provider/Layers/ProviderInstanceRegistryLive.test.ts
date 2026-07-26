@@ -10,7 +10,7 @@
  *
  *  2. **Many drivers, one registry** — the "all drivers slice" describe
  *     block below configures one instance of every shipped driver
- *     (`codex`, `claudex`, `grok`) in a single
+ *     (`codex`, `claudeAgent`, `grok`, `fugu`) in a single
  *     `ProviderInstanceConfigMap` and asserts the registry boots them all
  *     without cross-contamination. This proves the driver SPI is uniform
  *     across every provider — any driver plugs into the registry through
@@ -18,15 +18,16 @@
  *
  * Every instance in these tests is configured with `enabled: false` so the
  * provider-status checks short-circuit to pending/disabled snapshots
- * without trying to spawn real `codex` / `claudex` / `grok`
+ * without trying to spawn real `codex` / `claude` / `agent` / `grok` / `fugu`
  * binaries. That keeps the assertions focused on registry routing
  * behaviour rather than the runtime details of each provider.
  */
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  type ClaudexSettings,
+  type ClaudeSettings,
   type CodexSettings,
+  type FuguSettings,
   type GrokSettings,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
@@ -38,8 +39,9 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { ClaudexDriver } from "../Drivers/ClaudexDriver.ts";
+import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
+import { FuguDriver } from "../Drivers/FuguDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
@@ -60,9 +62,9 @@ const makeCodexConfig = (overrides: Partial<CodexSettings>): CodexSettings => ({
   ...overrides,
 });
 
-const makeClaudexConfig = (overrides: Partial<ClaudexSettings>): ClaudexSettings => ({
+const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings => ({
   enabled: false,
-  binaryPath: "claudex",
+  binaryPath: "claude",
   homePath: "",
   customModels: [],
   launchArgs: "",
@@ -72,6 +74,14 @@ const makeClaudexConfig = (overrides: Partial<ClaudexSettings>): ClaudexSettings
 const makeGrokConfig = (overrides: Partial<GrokSettings>): GrokSettings => ({
   enabled: false,
   binaryPath: "grok",
+  customModels: [],
+  ...overrides,
+});
+
+const makeFuguConfig = (overrides: Partial<FuguSettings>): FuguSettings => ({
+  enabled: false,
+  binaryPath: "codex",
+  homePath: "~/.codex/fugu-home",
   customModels: [],
   ...overrides,
 });
@@ -220,12 +230,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
   it.live("boots one instance of every shipped driver from a single config map", () =>
     Effect.gen(function* () {
       const codexId = ProviderInstanceId.make("codex_default");
-      const claudexId = ProviderInstanceId.make("claudex_default");
+      const claudeId = ProviderInstanceId.make("claude_default");
       const grokId = ProviderInstanceId.make("grok_default");
+      const fuguId = ProviderInstanceId.make("fugu_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
-      const claudexDriverKind = ProviderDriverKind.make("claudex");
+      const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const grokDriverKind = ProviderDriverKind.make("grok");
+      const fuguDriverKind = ProviderDriverKind.make("fugu");
 
       const configMap: ProviderInstanceConfigMap = {
         [codexId]: {
@@ -234,11 +246,11 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeCodexConfig({ homePath: "/home/julius/.codex" }),
         },
-        [claudexId]: {
-          driver: claudexDriverKind,
-          displayName: "Claude Code",
+        [claudeId]: {
+          driver: claudeDriverKind,
+          displayName: "Claude",
           enabled: false,
-          config: makeClaudexConfig({
+          config: makeClaudeConfig({
             homePath: "/home/julius/.claude-work",
             launchArgs: "--verbose",
           }),
@@ -249,10 +261,16 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeGrokConfig({}),
         },
+        [fuguId]: {
+          driver: fuguDriverKind,
+          displayName: "Fugu",
+          enabled: false,
+          config: makeFuguConfig({}),
+        },
       };
 
       const { registry } = yield* makeProviderInstanceRegistry({
-        drivers: [CodexDriver, ClaudexDriver, GrokDriver],
+        drivers: [CodexDriver, ClaudeDriver, GrokDriver, FuguDriver],
         configMap,
       });
 
@@ -262,38 +280,42 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(3);
+      expect(instances).toHaveLength(4);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudexId, grokId].toSorted(),
+        [codexId, claudeId, grokId, fuguId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
       // this is how rest-of-server routes turn/session calls in the new
       // model. Each driver's bundle carries its advertised `driverKind`.
       const codex = yield* registry.getInstance(codexId);
-      const claudex = yield* registry.getInstance(claudexId);
+      const claude = yield* registry.getInstance(claudeId);
       const grok = yield* registry.getInstance(grokId);
+      const fugu = yield* registry.getInstance(fuguId);
       expect(codex?.driverKind).toBe(codexDriverKind);
-      expect(claudex?.driverKind).toBe(claudexDriverKind);
+      expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
+      expect(fugu?.driverKind).toBe(fuguDriverKind);
       expect(codex?.displayName).toBe("Codex");
-      expect(claudex?.displayName).toBe("Claude Code");
+      expect(claude?.displayName).toBe("Claude");
       expect(grok?.displayName).toBe("Grok");
+      expect(fugu?.displayName).toBe("Fugu");
 
       // Every instance owns its own set of closures — no sharing across
       // drivers. `adapter` / `textGeneration` / `snapshot` are all
       // distinct references even when two instances happen to share a
       // trait (several drivers use a stub-or-real
       // `textGeneration`; they must still be different object values).
-      const adapters = [codex!.adapter, claudex!.adapter, grok!.adapter];
+      const adapters = [codex!.adapter, claude!.adapter, grok!.adapter, fugu!.adapter];
       expect(new Set(adapters).size).toBe(adapters.length);
       const textGenerations = [
         codex!.textGeneration,
-        claudex!.textGeneration,
+        claude!.textGeneration,
         grok!.textGeneration,
+        fugu!.textGeneration,
       ];
       expect(new Set(textGenerations).size).toBe(textGenerations.length);
-      const snapshots = [codex!.snapshot, claudex!.snapshot, grok!.snapshot];
+      const snapshots = [codex!.snapshot, claude!.snapshot, grok!.snapshot, fugu!.snapshot];
       expect(new Set(snapshots).size).toBe(snapshots.length);
 
       // Snapshots identify themselves by `instanceId` + `driver` so
@@ -308,17 +330,23 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(codexSnapshot.enabled).toBe(false);
       expect(codexSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
 
-      const claudexSnapshot = yield* claudex!.snapshot.getSnapshot;
-      expect(claudexSnapshot.instanceId).toBe(claudexId);
-      expect(claudexSnapshot.driver).toBe(claudexDriverKind);
-      expect(claudexSnapshot.enabled).toBe(false);
-      expect(claudexSnapshot.continuation?.groupKey).toBe("claudex:home:/home/julius/.claude-work");
+      const claudeSnapshot = yield* claude!.snapshot.getSnapshot;
+      expect(claudeSnapshot.instanceId).toBe(claudeId);
+      expect(claudeSnapshot.driver).toBe(claudeDriverKind);
+      expect(claudeSnapshot.enabled).toBe(false);
+      expect(claudeSnapshot.continuation?.groupKey).toBe("claude:home:/home/julius/.claude-work");
 
       const grokSnapshot = yield* grok!.snapshot.getSnapshot;
       expect(grokSnapshot.instanceId).toBe(grokId);
       expect(grokSnapshot.driver).toBe(grokDriverKind);
       expect(grokSnapshot.enabled).toBe(false);
       expect(grokSnapshot.continuation?.groupKey).toBe(`${grokDriverKind}:instance:${grokId}`);
+
+      const fuguSnapshot = yield* fugu!.snapshot.getSnapshot;
+      expect(fuguSnapshot.instanceId).toBe(fuguId);
+      expect(fuguSnapshot.driver).toBe(fuguDriverKind);
+      expect(fuguSnapshot.enabled).toBe(false);
+      expect(fuguSnapshot.continuation?.groupKey).toBe(`${fuguDriverKind}:instance:${fuguId}`);
     }).pipe(Effect.provide(testLayer)),
   );
 });

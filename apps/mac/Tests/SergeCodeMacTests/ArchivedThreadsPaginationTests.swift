@@ -13,7 +13,7 @@ struct ArchivedThreadsPaginationTests {
     private func archivedThread(_ index: Int) -> ChatThread {
         ChatThread(
             id: "archived-\(index)", projectID: "proj-1", title: "Archived \(index)",
-            provider: .claudex, status: .archived,
+            provider: .claude, status: .archived,
             updatedAt: Date(timeIntervalSince1970: TimeInterval(1_000_000 + index)))
     }
 

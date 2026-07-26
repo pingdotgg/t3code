@@ -17,12 +17,12 @@ echoed on every `thread.turn.start` so a send can never silently change either.
 Defined in `packages/contracts/src/orchestration.ts`. Default is `full-access`.
 
 - **`approval-required`** — the strictest mode. Each driver maps it onto its own
-  strongest policy: Codex gets a real `read-only` OS sandbox
+  strongest policy: Codex/Fugu get a real `read-only` OS sandbox
   (`approvalPolicy: untrusted`), Claude falls back to the `canUseTool` gate,
   and the Grok ACP driver to per-tool permission requests.
-- **`auto-accept-edits`** — Codex runs `workspace-write` (`danger-full-access`
+- **`auto-accept-edits`** — Codex/Fugu run `workspace-write` (`danger-full-access`
   inside a git worktree, where `workspace-write` hangs); Claude runs `acceptEdits`.
-- **`full-access`** — no approvals. Codex runs `danger-full-access`; Claude
+- **`full-access`** — no approvals. Codex/Fugu run `danger-full-access`; Claude
   runs `bypassPermissions`.
 
 Changing the permission axis restarts the provider session, because most drivers
@@ -37,9 +37,9 @@ Default is `default`.
   as a plan card. It does not implement. This is prompt-level only: plan mode
   does **not** change the sandbox, so a `full-access` plan thread can still
   write if the model ignores its instructions.
-
-Historical wire/DB values may still carry `"advisor"` from the removed
-Advisor/Planner mode; those decode as `"default"`.
+- **`advisor`** — the agent advises and plans rather than editing itself, and
+  can delegate implementation to executor sub-agents via `delegate_task`. See
+  [advisor-mode.md](./advisor-mode.md).
 
 ## Where the two axes meet
 

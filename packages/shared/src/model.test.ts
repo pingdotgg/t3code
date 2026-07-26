@@ -65,6 +65,20 @@ describe("normalizeModelSlug", () => {
     expect(DEFAULT_MODEL_BY_PROVIDER[kimi]).toBe("kimi-code/k3");
     expect(resolveModelSlugForProvider(kimi, undefined)).toBe("kimi-code/k3");
   });
+
+  it("normalizes Fugu ultra aliases", () => {
+    expect(normalizeModelSlug("ultra", ProviderDriverKind.make("fugu"))).toBe("fugu-ultra");
+    expect(normalizeModelSlug("fugu-ultra-latest", ProviderDriverKind.make("fugu"))).toBe(
+      "fugu-ultra",
+    );
+    expect(normalizeModelSlug("fugu-ultra", ProviderDriverKind.make("fugu"))).toBe("fugu-ultra");
+  });
+
+  it("uses fugu as the Fugu provider default", () => {
+    const fugu = ProviderDriverKind.make("fugu");
+    expect(DEFAULT_MODEL_BY_PROVIDER[fugu]).toBe("fugu");
+    expect(resolveModelSlugForProvider(fugu, undefined)).toBe("fugu");
+  });
 });
 
 const claudeCaps: ModelCapabilities = createModelCapabilities({

@@ -37,7 +37,7 @@ const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnErro
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 
-/** Settings surface shared by Codex and Codex-backed drivers. */
+/** Settings surface shared by Codex and Codex-backed drivers (e.g. Fugu). */
 export type CodexAppServerSettings = {
   readonly enabled: boolean;
   readonly binaryPath: string;
@@ -47,7 +47,7 @@ export type CodexAppServerSettings = {
 
 export type CodexProviderIdentity = {
   readonly presentation: ServerProviderPresentation;
-  /** Short label used in probe/status messages (e.g. "Codex"). */
+  /** Short label used in probe/status messages (e.g. "Codex", "Fugu"). */
   readonly label: string;
   readonly notInstalledMessage?: string;
   readonly unauthenticatedMessage?: string;

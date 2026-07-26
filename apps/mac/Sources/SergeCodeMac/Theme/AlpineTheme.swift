@@ -219,12 +219,13 @@ extension ThreadRuntimeMode {
 }
 
 extension ThreadInteractionMode {
-    /// Tint distinguishing plan mode from default; normal stays unaccented
-    /// so the quiet state reads as the absence of color.
+    /// Tint distinguishing plan/advisor modes from default; normal stays
+    /// unaccented so the quiet state reads as the absence of color.
     var tint: Color? {
         switch self {
         case .normal: nil
         case .plan: AlpineTheme.lavender
+        case .advisor: AlpineTheme.lichen
         }
     }
 }

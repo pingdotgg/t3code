@@ -48,7 +48,7 @@ const FIXTURE_TURN_ID = "fixture-turn";
 const APPROVAL_REQUEST_ID = asApprovalRequestId("req-approval-1");
 type IntegrationProvider = ProviderDriverKind;
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
-const CLAUDE_AGENT_PROVIDER = ProviderDriverKind.make("claudex");
+const CLAUDE_AGENT_PROVIDER = ProviderDriverKind.make("claudeAgent");
 
 function nowIso() {
   return "2026-05-01T00:00:00.000Z";
@@ -926,7 +926,7 @@ it.live(
     ),
 );
 
-it.live("starts a claudex session on first turn when provider is requested", () =>
+it.live("starts a claudeAgent session on first turn when provider is requested", () =>
   withHarness(
     (harness) =>
       Effect.gen(function* () {
@@ -975,7 +975,7 @@ it.live("starts a claudex session on first turn when provider is requested", () 
           messageId: "msg-user-claude-initial",
           text: "Use Claude",
           modelSelection: {
-            instanceId: ProviderInstanceId.make("claudex"),
+            instanceId: ProviderInstanceId.make("claudeAgent"),
             model: "claude-sonnet-4-6",
           },
         });
@@ -983,19 +983,19 @@ it.live("starts a claudex session on first turn when provider is requested", () 
         const thread = yield* harness.waitForThread(
           THREAD_ID,
           (entry) =>
-            entry.session?.providerName === "claudex" &&
+            entry.session?.providerName === "claudeAgent" &&
             entry.session.status === "ready" &&
             entry.messages.some(
               (message) => message.role === "assistant" && message.text === "Claude first turn.\n",
             ),
         );
-        assert.equal(thread.session?.providerName, "claudex");
+        assert.equal(thread.session?.providerName, "claudeAgent");
       }),
     CLAUDE_AGENT_PROVIDER,
   ),
 );
 
-it.live("recovers claudex sessions after provider stopAll using persisted resume state", () =>
+it.live("recovers claudeAgent sessions after provider stopAll using persisted resume state", () =>
   withHarness(
     (harness) =>
       Effect.gen(function* () {
@@ -1044,7 +1044,7 @@ it.live("recovers claudex sessions after provider stopAll using persisted resume
           messageId: "msg-user-claude-recover-1",
           text: "Before restart",
           modelSelection: {
-            instanceId: ProviderInstanceId.make("claudex"),
+            instanceId: ProviderInstanceId.make("claudeAgent"),
             model: "claude-sonnet-4-6",
           },
         });
@@ -1114,20 +1114,20 @@ it.live("recovers claudex sessions after provider stopAll using persisted resume
         const recoveredThread = yield* harness.waitForThread(
           THREAD_ID,
           (entry) =>
-            entry.session?.providerName === "claudex" &&
+            entry.session?.providerName === "claudeAgent" &&
             entry.messages.some(
               (message) => message.role === "user" && message.text === "After restart",
             ) &&
             !entry.activities.some((activity) => activity.kind === "provider.turn.start.failed"),
         );
-        assert.equal(recoveredThread.session?.providerName, "claudex");
+        assert.equal(recoveredThread.session?.providerName, "claudeAgent");
         assert.equal(recoveredThread.session?.threadId, "thread-1");
       }),
     CLAUDE_AGENT_PROVIDER,
   ),
 );
 
-it.live("forwards claudex approval responses to the provider session", () =>
+it.live("forwards claudeAgent approval responses to the provider session", () =>
   withHarness(
     (harness) =>
       Effect.gen(function* () {
@@ -1178,7 +1178,7 @@ it.live("forwards claudex approval responses to the provider session", () =>
           messageId: "msg-user-claude-approval",
           text: "Need approval",
           modelSelection: {
-            instanceId: ProviderInstanceId.make("claudex"),
+            instanceId: ProviderInstanceId.make("claudeAgent"),
             model: "claude-sonnet-4-6",
           },
         });
@@ -1213,7 +1213,7 @@ it.live("forwards claudex approval responses to the provider session", () =>
   ),
 );
 
-it.live("forwards thread.turn.interrupt to claudex provider sessions", () =>
+it.live("forwards thread.turn.interrupt to claudeAgent provider sessions", () =>
   withHarness(
     (harness) =>
       Effect.gen(function* () {
@@ -1262,7 +1262,7 @@ it.live("forwards thread.turn.interrupt to claudex provider sessions", () =>
           messageId: "msg-user-claude-interrupt",
           text: "Start long turn",
           modelSelection: {
-            instanceId: ProviderInstanceId.make("claudex"),
+            instanceId: ProviderInstanceId.make("claudeAgent"),
             model: "claude-sonnet-4-6",
           },
         });
@@ -1294,7 +1294,7 @@ it.live("forwards thread.turn.interrupt to claudex provider sessions", () =>
   ),
 );
 
-it.live("reverts claudex turns and rolls back provider conversation state", () =>
+it.live("reverts claudeAgent turns and rolls back provider conversation state", () =>
   withHarness(
     (harness) =>
       Effect.gen(function* () {
@@ -1347,7 +1347,7 @@ it.live("reverts claudex turns and rolls back provider conversation state", () =
           messageId: "msg-user-claude-revert-1",
           text: "First Claude edit",
           modelSelection: {
-            instanceId: ProviderInstanceId.make("claudex"),
+            instanceId: ProviderInstanceId.make("claudeAgent"),
             model: "claude-sonnet-4-6",
           },
         });
@@ -1411,7 +1411,7 @@ it.live("reverts claudex turns and rolls back provider conversation state", () =
           (entry) =>
             entry.latestTurn?.turnId === "turn-2" &&
             entry.checkpoints.length === 2 &&
-            entry.session?.providerName === "claudex",
+            entry.session?.providerName === "claudeAgent",
         );
 
         yield* harness.engine.dispatch({

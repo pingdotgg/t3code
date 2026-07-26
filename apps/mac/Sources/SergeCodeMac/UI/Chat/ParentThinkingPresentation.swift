@@ -64,11 +64,11 @@ enum ParentThinkingPresentation {
         case .error:
             sessionStatus = "error"
             latestTurnState = "error"
-        case .backgroundWork, .reviewing, .fixing:
-            // Only subagents/auto-review are active; parent is not reasoning.
+        case .backgroundWork:
+            // Only subagents are active; parent is not reasoning.
             sessionStatus = "idle"
             latestTurnState = nil
-        case .idle, .archived, .settled, .done, .readyToMerge, nil:
+        case .idle, .archived, .settled, nil:
             sessionStatus = "idle"
             latestTurnState = nil
         }

@@ -73,8 +73,8 @@ const fullClaudeCatalog: ReadonlyArray<ServerProviderModel> = CLAUDE_MODEL_SLUGS
 }));
 
 const claudexDraft: ServerProviderDraft = buildServerProvider({
-  driver: ProviderDriverKind.make("claudex"),
-  presentation: { displayName: "Claude Code" },
+  driver: ProviderDriverKind.make("claudeAgent"),
+  presentation: { displayName: "Claude" },
   enabled: true,
   checkedAt: "2026-01-01T00:00:00.000Z",
   models: [

@@ -25,6 +25,7 @@ function makeThread(
 ): EnvironmentThreadShell {
   return {
     executorModelSelection: null,
+    executorMaxSubAgents: 3,
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
@@ -39,7 +40,6 @@ function makeThread(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
-    autoReviewPhase: null,
     ...input,
     settledOverride: input.settledOverride ?? null,
     settledAt: input.settledAt ?? null,

@@ -18,6 +18,7 @@ function makeThread(
     runtimeMode: "full-access",
     interactionMode: "default",
     executorModelSelection: null,
+    executorMaxSubAgents: 3,
     branch: null,
     worktreePath: null,
     parentThreadId: null,
@@ -32,7 +33,6 @@ function makeThread(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
-    autoReviewPhase: null,
     ...overrides,
   };
 }
@@ -140,109 +140,5 @@ describe("resolveThreadStatus latestTurn fallback", () => {
     );
 
     expect(status?.kind).toBe("error");
-  });
-});
-
-describe("resolveThreadStatus auto-review phases", () => {
-  const runningSession = (id: string) => ({
-    threadId: ThreadId.make(id),
-    status: "running" as const,
-    providerName: "Codex",
-    runtimeMode: "full-access" as const,
-    activeTurnId: null,
-    lastError: null,
-    updatedAt: "2026-06-02T00:00:00.000Z",
-  });
-
-  const completedTurn = {
-    turnId: TurnId.make("turn-done"),
-    state: "completed" as const,
-    requestedAt: "2026-06-02T00:00:00.000Z",
-    startedAt: "2026-06-02T00:00:01.000Z",
-    completedAt: "2026-06-02T00:01:00.000Z",
-    assistantMessageId: null,
-  };
-
-  it("shows Fixing while a fix is being applied, outranking a running session", () => {
-    const status = resolveThreadStatus(
-      makeThread("fixing", {
-        autoReviewPhase: "fixing",
-        session: runningSession("fixing"),
-      }),
-    );
-
-    expect(status?.kind).toBe("fixing");
-    expect(status?.label).toBe("Fixing");
-    expect(status?.pulse).toBe(true);
-  });
-
-  it("shows Reviewing while a review is running, outranking a running session", () => {
-    const status = resolveThreadStatus(
-      makeThread("reviewing", {
-        autoReviewPhase: "reviewing",
-        session: runningSession("reviewing"),
-      }),
-    );
-
-    expect(status?.kind).toBe("reviewing");
-    expect(status?.label).toBe("Reviewing");
-    expect(status?.pulse).toBe(true);
-  });
-
-  it("keeps actionable states above auto-review phases", () => {
-    const pending = resolveThreadStatus(
-      makeThread("fixing-pending", {
-        autoReviewPhase: "fixing",
-        hasPendingApprovals: true,
-      }),
-    );
-    expect(pending?.kind).toBe("pending-approval");
-
-    const stalled = resolveThreadStatus(
-      makeThread("reviewing-stalled", { autoReviewPhase: "reviewing" }),
-      { stalled: true, lastActivityAt: new Date("2026-06-02T00:00:00.000Z"), stalledSince: null },
-    );
-    expect(stalled?.kind).toBe("stalled");
-  });
-
-  it("shows Ready to Merge only when the thread is not busy", () => {
-    const busy = resolveThreadStatus(
-      makeThread("merge-busy", {
-        autoReviewPhase: "readyToMerge",
-        session: runningSession("merge-busy"),
-      }),
-    );
-    expect(busy?.kind).toBe("working");
-
-    const ready = resolveThreadStatus(
-      makeThread("merge-ready", {
-        autoReviewPhase: "readyToMerge",
-        latestTurn: completedTurn,
-      }),
-    );
-    expect(ready?.kind).toBe("ready-to-merge");
-    expect(ready?.label).toBe("Ready to Merge");
-    expect(ready?.pulse).toBe(false);
-  });
-
-  it("shows Done only for a completed latest turn", () => {
-    const done = resolveThreadStatus(makeThread("done", { latestTurn: completedTurn }));
-    expect(done?.kind).toBe("done");
-    expect(done?.label).toBe("Done");
-    expect(done?.pulse).toBe(false);
-
-    expect(resolveThreadStatus(makeThread("no-turn"))).toBeNull();
-  });
-
-  it("keeps Plan Ready above Done for a settled plan turn", () => {
-    const status = resolveThreadStatus(
-      makeThread("plan-done", {
-        interactionMode: "plan",
-        latestTurn: completedTurn,
-        hasActionableProposedPlan: true,
-      }),
-    );
-
-    expect(status?.kind).toBe("plan-ready");
   });
 });

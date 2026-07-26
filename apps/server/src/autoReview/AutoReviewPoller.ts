@@ -43,8 +43,6 @@ export interface AutoReviewPollerDeps {
     readonly prNumber: number;
     readonly headSha: string;
   }) => Effect.Effect<AutoReviewRunner.AutoReviewOriginContext, unknown>;
-  readonly drainPendingFixes: Effect.Effect<void, unknown>;
-  readonly syncThreadPhases: Effect.Effect<void, unknown>;
 }
 
 export const make = (deps: AutoReviewPollerDeps) =>
@@ -156,9 +154,6 @@ export const make = (deps: AutoReviewPollerDeps) =>
           settings.autoReview.concurrency,
         )
         .pipe(Effect.orElseSucceed(() => 0));
-
-      yield* deps.drainPendingFixes.pipe(Effect.orElseSucceed(() => undefined));
-      yield* deps.syncThreadPhases.pipe(Effect.orElseSucceed(() => undefined));
     }).pipe(
       Effect.orElseSucceed(() => undefined),
       Effect.asVoid,

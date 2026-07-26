@@ -1,9 +1,7 @@
 import Foundation
 
 public enum T3ProjectedThreadStatus: Sendable, Equatable {
-    case idle, running, waiting, waitingApproval, waitingInput, error, archived, backgroundWork,
-        settled
-    case done, reviewing, fixing, readyToMerge
+    case idle, running, waiting, waitingApproval, waitingInput, error, archived, backgroundWork, settled
 }
 
 /// Server-authoritative liveness for a thread's active provider turn, folded
@@ -84,8 +82,7 @@ public enum ThreadStatusProjection {
     public static func project(
         session: OrchestrationSession?, latestTurn: OrchestrationLatestTurn?,
         archivedAt: String?, settledOverride: String?, hasPendingApprovals: Bool,
-        hasPendingUserInput: Bool = false, activeSubagentCount: Int,
-        autoReviewPhase: String? = nil
+        hasPendingUserInput: Bool = false, activeSubagentCount: Int
     ) -> T3ProjectedThreadStatus {
         if session?.status == .error || latestTurn?.state == .error {
             return .error
@@ -95,14 +92,6 @@ public enum ThreadStatusProjection {
         }
         if hasPendingUserInput {
             return .waitingInput
-        }
-        // Active auto-review phases win over session/turn liveness: the
-        // orchestrator owns the thread while it reviews or applies fixes.
-        if autoReviewPhase == "fixing" {
-            return .fixing
-        }
-        if autoReviewPhase == "reviewing" {
-            return .reviewing
         }
         if let status = session?.status {
             switch status {
@@ -124,12 +113,6 @@ public enum ThreadStatusProjection {
         // Check settled state - explicit "settled" override or effective settled
         if settledOverride == "settled" {
             return .settled
-        }
-        if autoReviewPhase == "readyToMerge" {
-            return .readyToMerge
-        }
-        if latestTurn?.state == .completed {
-            return .done
         }
         return .idle
     }

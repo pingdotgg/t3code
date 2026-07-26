@@ -472,8 +472,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             skills: [],
           },
           {
-            instanceId: ProviderInstanceId.make("claudex"),
-            driver: ProviderDriverKind.make("claudex"),
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            driver: ProviderDriverKind.make("claudeAgent"),
             status: "warning",
             enabled: true,
             installed: true,
@@ -913,8 +913,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         Effect.gen(function* () {
           const codexDriver = ProviderDriverKind.make("codex");
           const codexInstanceId = ProviderInstanceId.make("codex");
-          const claudeDriver = ProviderDriverKind.make("claudex");
-          const claudeInstanceId = ProviderInstanceId.make("claudex");
+          const claudeDriver = ProviderDriverKind.make("claudeAgent");
+          const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
           const codexProvider = {
             instanceId: codexInstanceId,
             driver: codexDriver,
@@ -1057,8 +1057,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   // test environment stays isolated from the dev
                   // machine's PATH.
                   codex: { enabled: false },
-                  claudex: { enabled: false },
+                  claudeAgent: { enabled: false },
                   grok: { enabled: false },
+                  fugu: { enabled: false },
                 },
                 // `providerInstances` keys are branded `ProviderInstanceId`;
                 // the branded index signature rejects plain string literals
@@ -1165,8 +1166,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               deepMerge(encodedDefaultServerSettings, {
                 providers: {
                   codex: { enabled: true, binaryPath: firstMissing },
+                  claudeAgent: { enabled: false },
+                  "claude-synthero": { enabled: false },
                   claudex: { enabled: false },
                   grok: { enabled: false },
+                  fugu: { enabled: false },
                   kimi: { enabled: false },
                 },
               }),
@@ -1276,8 +1280,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               deepMerge(encodedDefaultServerSettings, {
                 providers: {
                   codex: { enabled: false },
-                  claudex: { enabled: false },
+                  claudeAgent: { enabled: false },
                   grok: { enabled: false },
+                  fugu: { enabled: false },
                 },
                 providerInstances: {
                   ghost_main: {

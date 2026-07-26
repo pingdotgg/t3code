@@ -100,14 +100,14 @@ describe("deriveToolPresentation", () => {
         input: { command: "pnpm test" },
         result: { content: [{ type: "text", text: "3 passed" }], exitCode: 0 },
       },
-      provider: driver("claudex"),
+      provider: driver("claudeAgent"),
     });
 
     expect(presentation.surface).toBe("command");
     expect(presentation.title).toBe("Ran command");
     expect(presentation.subtitle).toBe("pnpm test");
     expect(presentation.state).toBe("succeeded");
-    expect(presentation.provenance).toMatchObject({ origin: "builtin", provider: "claudex" });
+    expect(presentation.provenance).toMatchObject({ origin: "builtin", provider: "claudeAgent" });
     expect(presentation.inputs).toEqual([
       { label: "command", value: "pnpm test", kind: "command" },
     ]);
@@ -161,7 +161,7 @@ describe("deriveToolPresentation", () => {
         toolName: "Skill",
         input: { skill: "caveman:cavecrew", args: "review the diff" },
       },
-      provider: driver("claudex"),
+      provider: driver("claudeAgent"),
     });
 
     expect(presentation.surface).toBe("skill");
@@ -182,7 +182,7 @@ describe("deriveToolPresentation", () => {
         input: { title: "Fix crash", teamId: "SER" },
         result: "created SER-1",
       },
-      provider: driver("claudex"),
+      provider: driver("claudeAgent"),
     });
 
     expect(presentation.surface).toBe("mcp");

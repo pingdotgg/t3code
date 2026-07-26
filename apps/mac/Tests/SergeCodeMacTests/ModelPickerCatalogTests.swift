@@ -25,7 +25,7 @@ struct ModelPickerCatalogTests {
         let options = [
             option(instance: "codex-a", modelID: "gpt-5", name: "GPT-5", provider: .codex),
             option(instance: "codex-b", modelID: "gpt-5", name: "GPT-5", provider: .codex),
-            option(instance: "claude-a", modelID: "sonnet", name: "Sonnet", provider: .claudex),
+            option(instance: "claude-a", modelID: "sonnet", name: "Sonnet", provider: .claude),
         ]
 
         let items = ModelPickerCatalog.items(
@@ -65,7 +65,7 @@ struct ModelPickerCatalogTests {
         let items = ModelPickerCatalog.items(
             from: [
                 option(instance: "codex", modelID: "gpt-5", name: "GPT-5", provider: .codex),
-                option(instance: "claude", modelID: "sonnet-5", name: "Sonnet 5", provider: .claudex),
+                option(instance: "claude", modelID: "sonnet-5", name: "Sonnet 5", provider: .claude),
             ],
             selectedInstanceID: nil,
             selectedModelID: nil
@@ -73,7 +73,7 @@ struct ModelPickerCatalogTests {
 
         let providerResults = ModelPickerCatalog.filteredItems(
             items,
-            providerFilter: .provider(.claudex),
+            providerFilter: .provider(.claude),
             query: ""
         )
         let searchResults = ModelPickerCatalog.filteredItems(

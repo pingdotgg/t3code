@@ -532,9 +532,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const names = useThreadDisplayNames(threadKey, thread.title);
   const baseStatus = resolveThreadStatus(thread);
   const health = useThreadHealth(
-    baseStatus?.kind === "working" ||
-      baseStatus?.kind === "fixing" ||
-      baseStatus?.kind === "reviewing"
+    baseStatus?.kind === "working"
       ? { environmentId: thread.environmentId, threadId: thread.id }
       : null,
   );

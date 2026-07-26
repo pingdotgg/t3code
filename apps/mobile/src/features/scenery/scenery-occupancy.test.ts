@@ -26,6 +26,7 @@ function makeThread(input: {
     runtimeMode: "full-access",
     interactionMode: "default",
     executorModelSelection: null,
+    executorMaxSubAgents: 3,
     branch: null,
     worktreePath: null,
     parentThreadId: null,
@@ -55,7 +56,6 @@ function makeThread(input: {
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
-    autoReviewPhase: null,
   };
 }
 

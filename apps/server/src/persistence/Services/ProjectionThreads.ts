@@ -10,7 +10,6 @@ import {
   IsoDateTime,
   ModelSelection,
   NonNegativeInt,
-  OrchestrationThreadAutoReviewPhase,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -32,6 +31,7 @@ export const ProjectionThread = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   executorModelSelection: Schema.NullOr(ModelSelection),
+  executorMaxSubAgents: NonNegativeInt,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   parentThreadId: Schema.NullOr(ThreadId),
@@ -46,7 +46,6 @@ export const ProjectionThread = Schema.Struct({
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
   deletedAt: Schema.NullOr(IsoDateTime),
-  autoReviewPhase: Schema.NullOr(OrchestrationThreadAutoReviewPhase),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;
 

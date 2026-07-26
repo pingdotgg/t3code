@@ -23,14 +23,8 @@ struct RootView: View {
                 }
             }
         )) {
-            SidebarView(multi: multi, scenery: scenery, onToggleSidebar: toggleSidebar)
+            SidebarView(multi: multi, scenery: scenery)
                 .navigationSplitViewColumnWidth(min: 230, ideal: 280, max: 360)
-                // The stock AppKit sidebar toggle renders larger than the custom
-                // 28×28 glass controls; the sidebar vends its own close button
-                // instead. The removal must be applied to the view inside the
-                // sidebar column to take effect (the View ▸ Toggle Sidebar menu
-                // item is unaffected).
-                .toolbar(removing: .sidebarToggle)
         } detail: {
             Group {
                 if let thread = multi.selectedThread {
@@ -69,23 +63,28 @@ struct RootView: View {
         // Let `WindowGlassBackground` show through chrome gaps / faded scenery
         // instead of an opaque split-view plate over the desktop glass.
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        // The stock AppKit sidebar toggle renders larger than the custom
+        // 28×28 glass controls it sits next to; replace it with one of ours
+        // (the View ▸ Toggle Sidebar menu item is unaffected).
+        .toolbar(removing: .sidebarToggle)
         .toolbar {
-            // Reopen affordance: the close button lives inside the
-            // sidebar, so once the column is collapsed this is the only
-            // on-screen way back (besides the View menu / shortcut and
-            // edge-drag). The whole item is gated so no empty navigation
-            // slot lingers while the sidebar is visible.
-            if columnVisibility == .detailOnly {
-                ToolbarItem(placement: .navigation) {
-                    Button(action: toggleSidebar) {
-                        Label("Show Sidebar", systemImage: "sidebar.leading")
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    // Same one-runloop deferral as the Inspector button below:
+                    // re-vending toolbar items mid layout pass trips AppKit's
+                    // layout-feedback-loop guard on macOS 26/27.
+                    DispatchQueue.main.async {
+                        withAnimation(Motion.structure) {
+                            columnVisibility =
+                                columnVisibility == .detailOnly ? .all : .detailOnly
+                        }
                     }
-                    .buttonStyle(AlpineToolbarIconButtonStyle())
-                    .help("Show Sidebar")
-                    .transition(.opacity)
+                } label: {
+                    Label("Toggle Sidebar", systemImage: "sidebar.leading")
                 }
-                .sharedBackgroundVisibility(.hidden)
+                .buttonStyle(AlpineToolbarIconButtonStyle())
             }
+            .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .navigation) {
                 ConnectionStatusPill(phase: model.connection)
             }
@@ -221,19 +220,6 @@ struct RootView: View {
     private var selectedProject: Project? {
         guard let thread = multi.selectedThread else { return nil }
         return model.projects.first { $0.id == thread.projectID }
-    }
-
-    private func toggleSidebar() {
-        // Deferred one runloop turn: flipping the visibility re-vends the
-        // conditional "Show Sidebar" toolbar item, and on macOS 26/27 a
-        // SwiftUI toolbar re-vend during an in-layout render trips AppKit's
-        // layout-feedback-loop guard (same crash class as the Inspector
-        // button above).
-        DispatchQueue.main.async {
-            withAnimation(Motion.structure) {
-                columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
-            }
-        }
     }
 
     private func startQuickChat() {

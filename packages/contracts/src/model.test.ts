@@ -4,10 +4,13 @@ import { ProviderDriverKind } from "./providerInstance.ts";
 import { MODEL_SLUG_ALIASES_BY_PROVIDER } from "./model.ts";
 
 describe("model slug aliases", () => {
-  it("resolves Claudex aliases to the catalog slugs", () => {
-    const claudexAliases = MODEL_SLUG_ALIASES_BY_PROVIDER[ProviderDriverKind.make("claudex")];
+  it("resolves Claude aliases to the catalog slugs", () => {
+    const claudeAliases = MODEL_SLUG_ALIASES_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")];
 
-    expect(claudexAliases?.luna).toBe("claudex-luna");
-    expect(claudexAliases?.sol).toBe("claudex-sol");
+    expect(claudeAliases?.fable).toBe("claude-fable-5");
+    expect(claudeAliases?.["fable-5"]).toBe("claude-fable-5");
+    expect(claudeAliases?.opus).toBe("claude-opus-5");
+    expect(claudeAliases?.["opus-5"]).toBe("claude-opus-5");
+    expect(claudeAliases?.["claude-opus-5"]).toBe("claude-opus-5");
   });
 });

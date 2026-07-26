@@ -52,6 +52,7 @@ export function mergeEnvironmentThread(
     runtimeMode: shell.runtimeMode,
     interactionMode: shell.interactionMode,
     executorModelSelection: shell.executorModelSelection,
+    executorMaxSubAgents: shell.executorMaxSubAgents,
     branch: shell.branch,
     worktreePath: shell.worktreePath,
     parentThreadId: shell.parentThreadId,

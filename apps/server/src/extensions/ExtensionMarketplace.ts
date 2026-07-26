@@ -128,14 +128,14 @@ function targetEquals(left: ExtensionInstallTarget, right: ExtensionInstallTarge
 }
 
 function isCodexLikeDriver(driver: string): boolean {
-  return driver === "codex";
+  return driver === "codex" || driver === "fugu";
 }
 
 function defaultCompatibilityForMarketplaceKind(kind: string): ReadonlyArray<ProviderDriverKind> {
   switch (kind) {
     case "agent-skills-repo":
     case "codex-plugin-marketplace":
-      return [ProviderDriverKind.make("codex")];
+      return [ProviderDriverKind.make("codex"), ProviderDriverKind.make("fugu")];
     default:
       return [];
   }

@@ -291,6 +291,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
           interactionMode: "default",
           executorModelSelection: null,
+          executorMaxSubAgents: 3,
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
@@ -313,7 +314,6 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           settledOverride: null,
           settledAt: null,
           deletedAt: null,
-          autoReviewPhase: null,
           messages: [
             {
               id: asMessageId("message-1"),
@@ -406,6 +406,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
           interactionMode: "default",
           executorModelSelection: null,
+          executorMaxSubAgents: 3,
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
@@ -440,7 +441,6 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasPendingApprovals: true,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
-          autoReviewPhase: null,
         },
       ]);
 

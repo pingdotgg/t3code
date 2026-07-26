@@ -37,6 +37,7 @@ function makeThread(
   return {
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     executorModelSelection: null,
+    executorMaxSubAgents: 3,
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
@@ -47,7 +48,6 @@ function makeThread(
     updatedAt: "2026-04-01T00:00:00.000Z",
     archivedAt: null,
     deletedAt: null,
-    autoReviewPhase: null,
     messages: [],
     proposedPlans: [],
     activities: [],
