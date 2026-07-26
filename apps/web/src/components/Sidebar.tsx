@@ -2,12 +2,12 @@ import {
   ArchiveIcon,
   ArrowUpDownIcon,
   ChevronRightIcon,
-  CloudIcon,
   ContainerIcon,
   FolderPlusIcon,
   Globe2Icon,
   LoaderIcon,
   SearchIcon,
+  ServerIcon,
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
@@ -836,7 +836,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                         />
                       }
                     >
-                      <CloudIcon className="size-3 text-muted-foreground/40" />
+                      <ServerIcon className="size-3 text-muted-foreground/40" />
                     </TooltipTrigger>
                     <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
                   </Tooltip>
@@ -2290,7 +2290,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               {project.allRemoteMembersAreDesktopLocal ? (
                 <ContainerIcon className="size-3" />
               ) : (
-                <CloudIcon className="size-3" />
+                <ServerIcon className="size-3" />
               )}
             </TooltipTrigger>
             <TooltipPopup side="top">

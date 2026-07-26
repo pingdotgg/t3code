@@ -27,6 +27,7 @@ import {
   FolderPlusIcon,
   LinkIcon,
   MessageSquareIcon,
+  ServerIcon,
   SettingsIcon,
   SquarePenIcon,
 } from "lucide-react";
@@ -131,6 +132,7 @@ import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore"
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
+  type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
@@ -156,6 +158,35 @@ function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
     return "Linux";
   }
   return typeof navigator === "undefined" ? "" : navigator.platform;
+}
+
+// Badge showing which remote T3 Code environment a project lives on: a server
+// icon plus the environment label(s), matching SidebarV2's environment
+// treatment. Only rendered for projects that live purely on a remote
+// environment — when a project is also present locally (this device), it needs
+// no "from" hint, so mixed and local-only projects render nothing.
+function renderProjectRemoteBadge(group: SidebarProjectSnapshot | undefined): ReactNode {
+  if (
+    !group ||
+    group.environmentPresence !== "remote-only" ||
+    group.remoteEnvironmentLabels.length === 0
+  ) {
+    return undefined;
+  }
+  const label = group.remoteEnvironmentLabels.join(", ");
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="flex min-w-0 shrink items-center gap-1 text-muted-foreground/70 text-xs">
+            <ServerIcon className="size-3 shrink-0" />
+            <span className="max-w-32 truncate">{label}</span>
+          </span>
+        }
+      />
+      <TooltipPopup side="top">Remote environment: {label}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 interface AddProjectEnvironmentOption {
@@ -800,6 +831,10 @@ function OpenCommandPaletteDialog(props: {
             className={ITEM_ICON_CLASS}
           />
         ),
+        titleTrailingContent: (project) =>
+          renderProjectRemoteBadge(
+            projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`),
+          ),
         runProject: openProjectFromSearch,
       }),
     [openProjectFromSearch, pickerProjects, projectGroupByTargetKey],
@@ -824,6 +859,10 @@ function OpenCommandPaletteDialog(props: {
               className={ITEM_ICON_CLASS}
             />
           ),
+          titleTrailingContent: (project) =>
+            renderProjectRemoteBadge(
+              projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`),
+            ),
           runProject: async (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
             const contextualRefBelongsToGroup =
