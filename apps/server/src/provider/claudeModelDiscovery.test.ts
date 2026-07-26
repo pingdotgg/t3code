@@ -68,6 +68,24 @@ describe("parseClaudeSdkDiscoveredModels", () => {
     ]);
   });
 
+  it("resolves the `opus` picker alias to the latest Opus slug", () => {
+    const models = parseClaudeSdkDiscoveredModels([
+      ...CLI_2_1_218_MODELS,
+      {
+        value: "opus",
+        displayName: "Opus",
+        description: "Opus 5 · Latest and greatest",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsFastMode: true,
+      },
+    ]);
+
+    const opus = models.find((model) => model.slug === "claude-opus-5");
+    expect(opus).toBeDefined();
+    expect(opus?.name).toBe("Opus");
+  });
+
   it("surfaces newly released models reported by full id", () => {
     const models = parseClaudeSdkDiscoveredModels([
       ...CLI_2_1_218_MODELS,
