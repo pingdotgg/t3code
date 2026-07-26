@@ -37,9 +37,9 @@ Default is `default`.
   as a plan card. It does not implement. This is prompt-level only: plan mode
   does **not** change the sandbox, so a `full-access` plan thread can still
   write if the model ignores its instructions.
-
-Historical wire/DB values may still carry `"advisor"` from the removed
-Advisor/Planner mode; those decode as `"default"`.
+- **`advisor`** — the agent advises and plans rather than editing itself, and
+  can delegate implementation to executor sub-agents via `delegate_task`. See
+  [advisor-mode.md](./advisor-mode.md).
 
 ## Where the two axes meet
 
