@@ -244,8 +244,8 @@ function SidebarV2ThreadTooltip({
       variant="glass"
       className="max-w-80 text-left whitespace-normal duration-100 data-ending-style:duration-0"
     >
-      <div className="flex max-w-80 flex-col gap-2 px-0.5 py-1.5">
-        <div className="whitespace-nowrap text-xs leading-none font-medium text-foreground">
+      <div className="flex min-w-0 max-w-80 flex-col gap-2 px-0.5 py-1.5">
+        <div className="min-w-0 truncate text-xs leading-none font-medium text-foreground">
           {thread.title}
         </div>
         <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
@@ -256,19 +256,19 @@ function SidebarV2ThreadTooltip({
                 cwd={projectCwd ?? ""}
                 className="size-3 shrink-0 stroke-muted-foreground"
               />
-              <div className="min-w-0 wrap-break-word text-foreground/75">{projectTitle}</div>
+              <div className="min-w-0 truncate text-foreground/75">{projectTitle}</div>
             </div>
           ) : null}
           {environmentLabel ? (
             <div className="flex min-w-0 items-center gap-2">
               <ServerIcon className="size-3 shrink-0 stroke-muted-foreground" />
-              <div className="min-w-0 wrap-break-word text-foreground/75">{environmentLabel}</div>
+              <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
             </div>
           ) : null}
           {thread.branch ? (
             <div className="flex min-w-0 items-center gap-2">
               <GitBranchIcon className="size-3 shrink-0 stroke-muted-foreground" />
-              <div className="min-w-0 wrap-break-word text-foreground/75">{thread.branch}</div>
+              <div className="min-w-0 truncate text-foreground/75">{thread.branch}</div>
             </div>
           ) : null}
           {branchMismatch ? (
@@ -286,13 +286,13 @@ function SidebarV2ThreadTooltip({
                 displayName={thread.session?.providerName ?? modelInstanceId}
                 iconClassName="size-3 shrink-0 grayscale opacity-60"
               />
-              <div className="min-w-0 wrap-break-word text-foreground/75">{modelLabel}</div>
+              <div className="min-w-0 truncate text-foreground/75">{modelLabel}</div>
             </div>
           ) : null}
           {thread.session?.lastError ? (
             <div className="flex min-w-0 items-center gap-2 text-red-600 dark:text-red-400">
               <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
-              <div className="min-w-0 wrap-break-word">{thread.session.lastError}</div>
+              <div className="min-w-0 truncate">Error occurred</div>
             </div>
           ) : null}
         </div>
