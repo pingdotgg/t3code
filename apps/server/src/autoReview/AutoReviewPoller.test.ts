@@ -80,6 +80,7 @@ function makeLayer(input: {
   enabled: boolean;
   listCount: { value: number };
   maintenanceCount?: { drain: number; sync: number };
+  order?: string[];
 }) {
   return Layer.mergeAll(
     AutoReviewJobStore.layerInMemory,
@@ -95,7 +96,11 @@ function makeLayer(input: {
       }),
       listProjects: Effect.succeed([{ id: "proj", workspaceRoot: "/repo", deletedAt: null }]),
       isGitHubProject: () => Effect.succeed(true),
-      contextForJob: () => Effect.succeed({ cwd: "/repo", candidates: [] }),
+      contextForJob: () =>
+        Effect.sync(() => {
+          input.order?.push("review");
+          return { cwd: "/repo", candidates: [] };
+        }),
       drainPendingFixes: Effect.sync(() => {
         if (input.maintenanceCount) {
           input.maintenanceCount.drain += 1;
@@ -105,6 +110,7 @@ function makeLayer(input: {
         if (input.maintenanceCount) {
           input.maintenanceCount.sync += 1;
         }
+        input.order?.push("sync");
       }),
     }).pipe(
       Layer.provide(
@@ -134,16 +140,31 @@ describe("AutoReviewPoller", () => {
       expect(jobs.length).toBeGreaterThanOrEqual(1);
       expect(jobs[0]?.headSha).toBe("deadbeef01");
       expect(jobs[0]?.trigger).toBe("open_or_push");
-      expect(maintenanceCount).toEqual({ drain: 1, sync: 1 });
+      expect(jobs[0]?.headBranch).toBe("feat");
+      // Phases sync twice per tick: once before the drain so in-flight reviews
+      // are visible, once after to settle the outcome.
+      expect(maintenanceCount).toEqual({ drain: 1, sync: 2 });
 
       yield* poller.tick;
       const again = yield* store.list({ projectId: "proj" });
       expect(again.filter((j) => j.headSha === "deadbeef01")).toHaveLength(1);
-      expect(maintenanceCount).toEqual({ drain: 2, sync: 2 });
+      expect(maintenanceCount).toEqual({ drain: 2, sync: 4 });
     }).pipe(
       Effect.provide(makeLayer({ enabled: true, listCount, maintenanceCount })),
       Effect.runPromise,
     );
+  });
+
+  it("syncs thread phases before running the review, not only after", async () => {
+    const listCount = { value: 0 };
+    const order: string[] = [];
+    await Effect.gen(function* () {
+      const poller = yield* AutoReviewPoller.AutoReviewPoller;
+      yield* poller.tick;
+      // Without a pre-drain sync the origin thread stays "done" for the whole
+      // review, since drain awaits the reviewer before the trailing sync.
+      expect(order).toEqual(["sync", "review", "sync"]);
+    }).pipe(Effect.provide(makeLayer({ enabled: true, listCount, order })), Effect.runPromise);
   });
 
   it("does nothing when disabled", async () => {

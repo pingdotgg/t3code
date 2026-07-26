@@ -97,6 +97,7 @@ export const make = (deps: AutoReviewPollerDeps) =>
               projectId: project.id as ProjectId,
               prNumber: pr.number,
               headSha,
+              headBranch: pr.headRefName,
               trigger: "open_or_push",
               modelSelection: policy.modelSelection as ModelSelection,
               maxAttempts: policy.maxAttempts,
@@ -127,6 +128,7 @@ export const make = (deps: AutoReviewPollerDeps) =>
                   projectId: project.id as ProjectId,
                   prNumber: pr.number,
                   headSha,
+                  headBranch: pr.headRefName,
                   trigger: "mention",
                   commentId: comment.id,
                   modelSelection: policy.modelSelection as ModelSelection,
@@ -148,6 +150,11 @@ export const make = (deps: AutoReviewPollerDeps) =>
           }
         }
       }
+
+      // Publish phases for the jobs just enqueued *before* draining them: the
+      // drain awaits every claimed review, so syncing only afterwards would
+      // leave origin threads reading as idle/done for the whole review.
+      yield* deps.syncThreadPhases.pipe(Effect.orElseSucceed(() => undefined));
 
       yield* runner
         .drain(
