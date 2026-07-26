@@ -6,6 +6,15 @@
         <language>en</language>
         <!-- CI will inject release items here -->
         <item>
+            <title>0.2.0</title>
+            <pubDate>Sun, 26 Jul 2026 04:46:03 +0000</pubDate>
+            <sparkle:version>17</sparkle:version>
+            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.2.0/SurgeCode-0.2.0.zip" length="154918678" type="application/octet-stream" sparkle:edSignature="xC9TFKYyRN1KrhAkdflw0kyPMt6Txg+vmaGCp4/OdkXFCmYQe+dg99lpT9SH5JRq9PsdsL00MB3AP8qbzw0HBA=="/>
+        </item>
+        <item>
             <title>0.1.0-alpha.16</title>
             <pubDate>Sat, 25 Jul 2026 23:52:11 +0000</pubDate>
             <sparkle:version>16</sparkle:version>
@@ -22,15 +31,6 @@
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.1.0-alpha.13/SurgeCode-0.1.0-alpha.13.zip" length="154685807" type="application/octet-stream" sparkle:edSignature="qKVU++zic0loc/oX4rdIVaqyxxr6emMrjtosquWTPA0zhmIhhxFDnyvapPnD0TTUH+oLEKhmNZh7frpFBpoaBg=="/>
-        </item>
-        <item>
-            <title>0.1.0-alpha.11</title>
-            <pubDate>Sat, 25 Jul 2026 17:23:35 +0000</pubDate>
-            <sparkle:version>11</sparkle:version>
-            <sparkle:shortVersionString>0.1.0-alpha.11</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.1.0-alpha.11/SurgeCode-0.1.0-alpha.11.zip" length="154602344" type="application/octet-stream" sparkle:edSignature="u/bb8046M8wLyM8reI8Nbwd+pRxV2Mj30NZQV1ij3hlfO4GujYN+IkWVoacAdRwL84tNet0qu/5XzwmXSDizDQ=="/>
         </item>
     </channel>
 </rss>
