@@ -94,7 +94,8 @@ private struct NatureActionButtonStyle: ButtonStyle {
             }
             .foregroundStyle(AlpineTheme.forest)
             .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
-            .scaleEffect(configuration.isPressed && !Motion.reduceMotion ? 0.97 : 1)
-            .animation(Motion.feedback, value: configuration.isPressed)
+            // Accepting the follow-up suggestion sends a message, so its press
+            // gets the committing thud rather than a navigation tick.
+            .pressFeedback(configuration.isPressed, event: .commit)
     }
 }

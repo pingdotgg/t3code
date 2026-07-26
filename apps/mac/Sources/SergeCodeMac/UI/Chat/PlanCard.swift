@@ -149,6 +149,9 @@ public struct PlanCard: View {
             }
             Spacer()
             Button {
+                // Same weight as approving a request: this hands the plan to
+                // the agent to execute.
+                Haptics.play(.decision)
                 onImplement()
             } label: {
                 Label("Implement plan", systemImage: "play.fill")

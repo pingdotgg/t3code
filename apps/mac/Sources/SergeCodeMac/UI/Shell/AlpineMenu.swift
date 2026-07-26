@@ -32,7 +32,10 @@ struct AlpineMenuRow<Leading: View>: View {
     }
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            Haptics.play(.selection)
+            action()
+        } label: {
             HStack(spacing: 10) {
                 leading
                     // SF Symbol sizing; custom leading views (ProviderIcon)

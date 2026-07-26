@@ -312,7 +312,10 @@ private struct SettingsSidebarRow: View {
     @UIState private var isHovering = false
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            Haptics.play(.selection, when: !isSelected)
+            action()
+        } label: {
             HStack(spacing: 10) {
                 Image(systemName: tab.symbolName)
                     .font(.system(size: 13, weight: .medium))
