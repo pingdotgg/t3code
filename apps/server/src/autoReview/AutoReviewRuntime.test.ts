@@ -364,4 +364,108 @@ describe("makeSyncThreadPhases", () => {
       }),
     );
   });
+
+  it("sets reviewing for an in-flight job that is not linked yet, matched by head branch", async () => {
+    const phases: Array<{ threadId: string; phase: OrchestrationThreadAutoReviewPhase | null }> =
+      [];
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        // A freshly enqueued job carries no originThreadId: the runner only
+        // links it on success.
+        const { job } = yield* store.enqueue({
+          projectId: "proj",
+          prNumber: 7,
+          headSha: "abc",
+          headBranch: "feature/x",
+          trigger: "open_or_push",
+          modelSelection,
+        });
+        expect(job.originThreadId).toBeNull();
+
+        const sync = makeSyncThreadPhases({
+          getShell: Effect.succeed(
+            makeShell([
+              makeThread({ id: "thread-1", branch: "feature/x" }),
+              makeThread({ id: "thread-2", branch: "other" }),
+            ]),
+          ),
+          store,
+          setPhase: (threadId, phase) =>
+            Effect.sync(() => {
+              phases.push({ threadId, phase });
+            }),
+        });
+
+        yield* sync;
+
+        expect(phases).toEqual([{ threadId: "thread-1", phase: "reviewing" }]);
+      }),
+    );
+  });
+
+  it("leaves threads on other branches untouched while a job is in flight", async () => {
+    const phases: Array<{ threadId: string; phase: OrchestrationThreadAutoReviewPhase | null }> =
+      [];
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        yield* store.enqueue({
+          projectId: "proj",
+          prNumber: 7,
+          headSha: "abc",
+          headBranch: "feature/x",
+          trigger: "open_or_push",
+          modelSelection,
+        });
+
+        const sync = makeSyncThreadPhases({
+          getShell: Effect.succeed(makeShell([makeThread({ id: "thread-2", branch: "other" })])),
+          store,
+          setPhase: (threadId, phase) =>
+            Effect.sync(() => {
+              phases.push({ threadId, phase });
+            }),
+        });
+
+        yield* sync;
+
+        expect(phases).toEqual([]);
+      }),
+    );
+  });
+
+  it("does not guess linkage for a terminal job with no origin thread", async () => {
+    const phases: Array<{ threadId: string; phase: OrchestrationThreadAutoReviewPhase | null }> =
+      [];
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        const { job } = yield* store.enqueue({
+          projectId: "proj",
+          prNumber: 7,
+          headSha: "abc",
+          headBranch: "feature/x",
+          trigger: "open_or_push",
+          modelSelection,
+        });
+        yield* store.update(job.id, { status: "failed", error: "boom" });
+
+        const sync = makeSyncThreadPhases({
+          getShell: Effect.succeed(
+            makeShell([makeThread({ id: "thread-1", branch: "feature/x" })]),
+          ),
+          store,
+          setPhase: (threadId, phase) =>
+            Effect.sync(() => {
+              phases.push({ threadId, phase });
+            }),
+        });
+
+        yield* sync;
+
+        expect(phases).toEqual([]);
+      }),
+    );
+  });
 });

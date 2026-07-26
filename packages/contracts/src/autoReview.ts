@@ -145,6 +145,14 @@ export const AutoReviewJob = Schema.Struct({
   projectId: ProjectId,
   prNumber: PositiveInt,
   headSha: TrimmedNonEmptyString,
+  /**
+   * PR head branch captured at enqueue time. Lets the phase sync attribute a
+   * queued/running job to its origin thread before the runner links it on
+   * success, so the thread shows "reviewing" while the review is in flight.
+   */
+  headBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   trigger: AutoReviewTrigger,
   commentId: Schema.optional(Schema.NullOr(TrimmedString)),
   status: AutoReviewJobStatus,

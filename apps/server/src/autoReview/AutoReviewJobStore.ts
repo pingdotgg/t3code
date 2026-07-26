@@ -21,6 +21,8 @@ export interface EnqueueAutoReviewJobInput {
   readonly projectId: ProjectId | string;
   readonly prNumber: number;
   readonly headSha: string;
+  /** PR head branch, used to attribute an in-flight job to its origin thread. */
+  readonly headBranch?: string | null;
   readonly trigger: AutoReviewTrigger;
   readonly commentId?: string | null;
   readonly modelSelection: ModelSelection;
@@ -218,6 +220,7 @@ export const makeInMemory = Effect.gen(function* () {
         projectId: input.projectId as ProjectId,
         prNumber: input.prNumber,
         headSha: input.headSha,
+        headBranch: input.headBranch?.trim() ? input.headBranch.trim() : null,
         trigger: input.trigger,
         commentId: input.commentId ?? null,
         status: "queued",
