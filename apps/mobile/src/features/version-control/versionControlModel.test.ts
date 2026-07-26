@@ -15,6 +15,7 @@ import {
   relativeLabel,
   selectedFileStats,
   snapshotForCwd,
+  snapshotIsPendingForCwd,
   stashIdentityKey,
   visibleRemoteBranches,
   workingTreeDiffIsStaged,
@@ -214,6 +215,14 @@ describe("native Version Control model", () => {
 
     expect(snapshotForCwd(scoped, "/repo/one")).toBe(current);
     expect(snapshotForCwd(scoped, "/repo/two")).toBeNull();
+  });
+
+  it("stops treating a missing snapshot as pending after that cwd settles", () => {
+    expect(snapshotIsPendingForCwd(null, "/repo/one", null)).toBe(true);
+    expect(snapshotIsPendingForCwd(null, "/repo/one", "/repo/two")).toBe(true);
+    expect(snapshotIsPendingForCwd(null, "/repo/one", "/repo/one")).toBe(false);
+    expect(snapshotIsPendingForCwd(snapshot(), "/repo/one", null)).toBe(false);
+    expect(snapshotIsPendingForCwd(null, null, null)).toBe(false);
   });
 
   it("clears only the shared banner for the resolved detail error", () => {

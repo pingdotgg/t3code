@@ -143,6 +143,14 @@ export function snapshotForCwd(
   return scopedSnapshot !== null && scopedSnapshot.cwd === cwd ? scopedSnapshot.snapshot : null;
 }
 
+export function snapshotIsPendingForCwd(
+  snapshot: VcsPanelSnapshotResult | null,
+  cwd: string | null | undefined,
+  settledSnapshotCwd: string | null,
+): boolean {
+  return cwd != null && snapshot === null && settledSnapshotCwd !== cwd;
+}
+
 export function clearResolvedDetailError(
   currentError: string | null,
   resolvedDetailError: string | null,

@@ -253,6 +253,8 @@ export function useSourceControlPanelExpansion(state: SourceControlPanelState) {
               ? details.compareCommitsRemaining
               : details.commitsRemaining;
       if (!api || remaining <= 0) return;
+      const requestedBaseRef = details.baseRef;
+      const requestId = beginPanelDetailRequest(branchDetailRequestsRef.current, detailsKey);
       setLoadingBranchDetails((current) => {
         const next = new Set(current);
         next.add(detailsKey);
@@ -267,9 +269,13 @@ export function useSourceControlPanelExpansion(state: SourceControlPanelState) {
           skip: loadedCount,
           limit: COMMIT_PAGE_SIZE,
         });
+        if (!isLatestPanelDetailRequest(branchDetailRequestsRef.current, detailsKey, requestId)) {
+          return;
+        }
         setBranchDetailsByRef((current) => {
           const nextDetails =
             current.get(detailsKey) ?? current.get(details.fullRefName) ?? details;
+          if (nextDetails.baseRef !== requestedBaseRef) return current;
           const merged =
             kind === "ahead"
               ? {
@@ -301,13 +307,18 @@ export function useSourceControlPanelExpansion(state: SourceControlPanelState) {
           return next;
         });
       } catch (nextError) {
+        if (!isLatestPanelDetailRequest(branchDetailRequestsRef.current, detailsKey, requestId)) {
+          return;
+        }
         setError(errorMessage(nextError));
       } finally {
-        setLoadingBranchDetails((current) => {
-          const next = new Set(current);
-          next.delete(detailsKey);
-          return next;
-        });
+        if (isLatestPanelDetailRequest(branchDetailRequestsRef.current, detailsKey, requestId)) {
+          setLoadingBranchDetails((current) => {
+            const next = new Set(current);
+            next.delete(detailsKey);
+            return next;
+          });
+        }
       }
     },
     [api, cwd],

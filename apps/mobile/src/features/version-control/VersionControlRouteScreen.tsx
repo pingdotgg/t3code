@@ -34,6 +34,7 @@ import {
   reconcileSelectedPaths,
   selectedFileStats,
   snapshotForCwd,
+  snapshotIsPendingForCwd,
   stashIdentityKey,
   workingTreeDiffIsStaged,
   workingTreeEnrichmentRequests,
@@ -95,6 +96,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
   } | null>(null);
   const snapshot = snapshotForCwd(scopedSnapshot, selectedThreadCwd);
   const [loading, setLoading] = useState(true);
+  const [settledSnapshotCwd, setSettledSnapshotCwd] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -170,6 +172,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
       setRefreshing(options.pull === true);
       if (!selectedThreadCwd) {
         if (requestId === snapshotRequestId.current) {
+          setSettledSnapshotCwd(null);
           setLoading(false);
           setRefreshing(false);
         }
@@ -227,6 +230,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
         }
       } finally {
         if (requestId === snapshotRequestId.current) {
+          setSettledSnapshotCwd(selectedThreadCwd);
           setLoading(false);
           setRefreshing(false);
         }
@@ -715,7 +719,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
     insets,
     loadBranchDetails,
     loadStashDetails,
-    loading: loading || (selectedThreadCwd !== null && snapshot === null),
+    loading: loading || snapshotIsPendingForCwd(snapshot, selectedThreadCwd, settledSnapshotCwd),
     localBranches,
     mergeBranch,
     mutationError,
