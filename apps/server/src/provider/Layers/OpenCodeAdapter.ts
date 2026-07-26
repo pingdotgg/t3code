@@ -216,6 +216,7 @@ interface OpenCodeSessionContext {
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
   readonly completedAssistantPartIds: Set<string>;
+  readonly interruptingTurnIds: Set<TurnId>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
@@ -1057,6 +1058,7 @@ export function makeOpenCodeAdapter(
           }
 
           if (event.properties.status.type === "idle" && turnId) {
+            const wasInterrupted = context.interruptingTurnIds.delete(turnId);
             context.activeTurnId = undefined;
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
@@ -1067,7 +1069,8 @@ export function makeOpenCodeAdapter(
               })),
               type: "turn.completed",
               payload: {
-                state: "completed",
+                state: wasInterrupted ? "interrupted" : "completed",
+                ...(wasInterrupted ? { stopReason: "Interrupted by user." } : {}),
               },
             });
           }
@@ -1077,14 +1080,19 @@ export function makeOpenCodeAdapter(
         case "session.error": {
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
+          const wasInterrupted =
+            activeTurnId !== undefined && context.interruptingTurnIds.delete(activeTurnId);
           context.activeTurnId = undefined;
           yield* updateProviderSession(
             context,
             {
-              status: "error",
-              lastError: message,
+              status: wasInterrupted ? "ready" : "error",
+              ...(wasInterrupted ? {} : { lastError: message }),
             },
-            { clearActiveTurnId: true },
+            {
+              clearActiveTurnId: true,
+              ...(wasInterrupted ? { clearLastError: true } : {}),
+            },
           );
           if (activeTurnId) {
             yield* emit({
@@ -1095,23 +1103,27 @@ export function makeOpenCodeAdapter(
               })),
               type: "turn.completed",
               payload: {
-                state: "failed",
-                errorMessage: message,
+                state: wasInterrupted ? "interrupted" : "failed",
+                ...(wasInterrupted
+                  ? { stopReason: "Interrupted by user." }
+                  : { errorMessage: message }),
               },
             });
           }
-          yield* emit({
-            ...(yield* buildEventBase({
-              threadId: context.session.threadId,
-              raw: event,
-            })),
-            type: "runtime.error",
-            payload: {
-              message,
-              class: "provider_error",
-              detail: event.properties.error,
-            },
-          });
+          if (!wasInterrupted) {
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                raw: event,
+              })),
+              type: "runtime.error",
+              payload: {
+                message,
+                class: "provider_error",
+                detail: event.properties.error,
+              },
+            });
+          }
           break;
         }
 
@@ -1380,6 +1392,7 @@ export function makeOpenCodeAdapter(
           emittedTextByPartId: new Map(),
           messageRoleById: new Map(),
           completedAssistantPartIds: new Set(),
+          interruptingTurnIds: new Set(),
           turns: [],
           activeTurnId: undefined,
           activeAgent: undefined,
@@ -1519,7 +1532,9 @@ export function makeOpenCodeAdapter(
         // start-failure recovery. A failed steer leaves the still-running
         // original turn untouched.
         Effect.tapError((requestError) =>
-          steeringTurnId !== undefined || context.activeTurnId !== turnId
+          steeringTurnId !== undefined ||
+          context.activeTurnId !== turnId ||
+          context.interruptingTurnIds.has(turnId)
             ? Effect.void
             : Effect.gen(function* () {
                 context.activeTurnId = undefined;
@@ -1588,25 +1603,28 @@ export function makeOpenCodeAdapter(
         const ownsInterruptedTurn =
           interruptedTurnId !== undefined && context.activeTurnId === interruptedTurnId;
         if (ownsInterruptedTurn) {
-          // Relinquish ownership before awaiting the abort request. A detached
-          // command may reject while abort is in flight; its failure handler
-          // must not overwrite the interruption with a hard failure.
-          context.activeTurnId = undefined;
+          // Keep active-turn ownership while abort is in flight so a
+          // concurrent send remains steering for this turn. The marker keeps
+          // a detached command rejection from overwriting the interruption.
+          context.interruptingTurnIds.add(interruptedTurnId);
         }
         yield* runOpenCodeSdk("session.abort", () =>
           context.client.session.abort({ sessionID: context.openCodeSessionId }),
         ).pipe(
           Effect.mapError(toRequestError),
           Effect.tapError(() =>
-            ownsInterruptedTurn && context.activeTurnId === undefined
+            ownsInterruptedTurn
               ? Effect.sync(() => {
-                  context.activeTurnId = interruptedTurnId;
+                  context.interruptingTurnIds.delete(interruptedTurnId);
                 })
               : Effect.void,
           ),
         );
-        if (interruptedTurnId) {
-          if (ownsInterruptedTurn && context.activeTurnId === undefined) {
+        // The idle event may win this race and emit the interrupted completion
+        // first. Deleting the marker is the one-shot claim for terminal state.
+        if (interruptedTurnId && context.interruptingTurnIds.delete(interruptedTurnId)) {
+          if (context.activeTurnId === interruptedTurnId) {
+            context.activeTurnId = undefined;
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
           }
           yield* emit({
