@@ -1,9 +1,12 @@
 import SwiftUI
 
 /// The agent's live in-turn todo list (`turn.plan.updated` activities),
-/// docked above the composer as a collapsible strip so progress stays
-/// visible while the agent works. Collapsed it shows the current step and
-/// a completed/total count; expanded it lists every step.
+/// docked above the composer as a compact, right-anchored card so progress
+/// stays visible while the agent works without spanning the full composer
+/// column (it lines up with the Unsplash credit pill beneath it — see
+/// ChatScreen). Collapsed it shows the current step, a completed/total
+/// badge, and a slim progress rail; expanded it lists every step on an
+/// opaque reading plate inside the glass frame.
 struct PlanProgressStrip: View {
     let model: AppModel
 
@@ -18,6 +21,8 @@ struct PlanProgressStrip: View {
         if let progress, !progress.steps.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 headerButton(progress)
+                progressRail(progress)
+                    .padding(.top, 8)
                 if isExpanded {
                     stepList(progress)
                         .transition(Motion.unfold)
@@ -48,17 +53,10 @@ struct PlanProgressStrip: View {
             isExpanded.toggle()
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "checklist")
-                    .font(.callout)
-                    .foregroundStyle(AlpineTheme.accent)
+                iconTile
                 Text("Plan")
                     .font(.callout.weight(.semibold))
-                Text("\(completed)/\(progress.steps.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .contentTransition(
-                        Motion.reduceMotion ? .identity : .numericText())
-                    .animation(Motion.ambient, value: completed)
+                countBadge(completed: completed, total: progress.steps.count)
                 if !isExpanded, let current = currentStep(progress) {
                     Text(current.title)
                         .font(.callout)
@@ -72,7 +70,7 @@ struct PlanProgressStrip: View {
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right")
-                    .font(.caption2)
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
@@ -81,6 +79,56 @@ struct PlanProgressStrip: View {
         .buttonStyle(.plain)
         .help(isExpanded ? "Collapse plan" : "Expand plan")
         .accessibilityIdentifier("plan-strip-toggle")
+    }
+
+    /// The checklist glyph on a soft accent tile — the same pastel-tile
+    /// identity PlanCard wears in the timeline, so the strip reads as the
+    /// same feature before a word is read.
+    private var iconTile: some View {
+        Image(systemName: "checklist")
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(AlpineTheme.accent)
+            .frame(width: 26, height: 26)
+            .background(
+                AlpineTheme.accent.opacity(0.16),
+                in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
+    }
+
+    /// Completed/total as a small capsule that flips to the success tint
+    /// once every step lands, mirroring PlanCard's implemented badge.
+    private func countBadge(completed: Int, total: Int) -> some View {
+        let done = completed == total
+        let tint = done ? AlpineTheme.statusSuccess : AlpineTheme.accent
+        return Text("\(completed)/\(total)")
+            .font(.caption2.monospacedDigit().weight(.medium))
+            .foregroundStyle(done ? tint : .primary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(tint.opacity(0.15), in: Capsule())
+            .contentTransition(
+                Motion.reduceMotion ? .identity : .numericText())
+            .animation(Motion.ambient, value: completed)
+    }
+
+    /// Hairline progress rail under the header: at-a-glance completion even
+    /// while collapsed, re-tinting to success green when the plan lands.
+    private func progressRail(_ progress: PlanProgress) -> some View {
+        let completed = progress.steps.filter { $0.status == .completed }.count
+        let fraction = Double(completed) / Double(progress.steps.count)
+        let done = completed == progress.steps.count
+        return Capsule()
+            .fill(.secondary.opacity(0.2))
+            .overlay(alignment: .leading) {
+                GeometryReader { proxy in
+                    Capsule()
+                        .fill(done ? AlpineTheme.statusSuccess : AlpineTheme.accent)
+                        .frame(width: proxy.size.width * fraction)
+                }
+            }
+            .frame(height: 3)
+            .accessibilityLabel("Plan progress")
+            .accessibilityValue("\(completed) of \(progress.steps.count) steps completed")
+            .animation(Motion.ambient, value: fraction)
     }
 
     /// The step to surface while collapsed: the one in progress, else the
@@ -114,7 +162,7 @@ struct PlanProgressStrip: View {
     }
 
     private func stepRows(_ progress: PlanProgress) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             if let explanation = progress.explanation, !explanation.isEmpty {
                 Text(explanation)
                     .font(.caption)
@@ -142,6 +190,7 @@ struct PlanProgressStrip: View {
     /// `.contentTransition` rather than swapping glyphs.
     private func statusIcon(_ status: PlanStepStatus) -> some View {
         Image(systemName: iconName(status))
+            .font(.callout)
             .foregroundStyle(iconTint(status))
             .contentTransition(
                 Motion.reduceMotion ? .identity : .symbolEffect(.replace))
