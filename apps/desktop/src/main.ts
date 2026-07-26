@@ -95,6 +95,22 @@ import { registerPreviewIpcHandlers } from "./previewBridge.ts";
 
 const decodeDesktopNotificationRequest = Schema.decodeUnknownSync(DesktopNotificationRequest);
 
+const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
+const desktopAppBranding: DesktopAppBranding = resolveDesktopAppBranding({
+  isDevelopment,
+  appVersion: app.getVersion(),
+  packageProductName: app.getName(),
+});
+const APP_DISPLAY_NAME = desktopAppBranding.displayName;
+const isDevAppFlavor = desktopAppBranding.stageLabel === "Dev";
+const APP_USER_MODEL_ID = isDevAppFlavor ? "com.t3tools.t3code.dev" : "com.t3tools.t3code.alpha";
+const LINUX_DESKTOP_ENTRY_NAME = isDevAppFlavor ? "t3code-dev.desktop" : "t3code-alpha.desktop";
+const LINUX_WM_CLASS = isDevAppFlavor ? "t3code-dev" : "t3code-alpha";
+const USER_DATA_DIR_NAME = isDevAppFlavor ? "t3code-dev" : "t3code-alpha";
+const DEFAULT_T3_HOME_DIR_NAME = isDevAppFlavor ? ".t3-dev" : ".t3-alpha";
+
+app.setPath("userData", resolveUserDataPath());
+
 syncShellEnvironment();
 
 // Persist V8 bytecode under the durable per-user data dir so repeat launches
@@ -130,26 +146,14 @@ const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
 const SHOW_NOTIFICATION_CHANNEL = "desktop:show-notification";
 const NOTIFICATION_CLICKED_CHANNEL = "desktop:notification-clicked";
-const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
+const BASE_DIR =
+  process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), DEFAULT_T3_HOME_DIR_NAME);
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
 const CLIENT_SETTINGS_PATH = Path.join(STATE_DIR, "client-settings.json");
 const SAVED_ENVIRONMENT_REGISTRY_PATH = Path.join(STATE_DIR, "saved-environments.json");
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
-const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const desktopAppBranding: DesktopAppBranding = resolveDesktopAppBranding({
-  isDevelopment,
-  appVersion: app.getVersion(),
-  packageProductName: app.getName(),
-});
-const APP_DISPLAY_NAME = desktopAppBranding.displayName;
-const isDevAppFlavor = desktopAppBranding.stageLabel === "Dev";
-const APP_USER_MODEL_ID = isDevAppFlavor ? "com.t3tools.t3code.dev" : "com.t3tools.t3code";
-const LINUX_DESKTOP_ENTRY_NAME = isDevAppFlavor ? "t3code-dev.desktop" : "t3code.desktop";
-const LINUX_WM_CLASS = isDevAppFlavor ? "t3code-dev" : "t3code";
-const USER_DATA_DIR_NAME = isDevAppFlavor ? "t3code-dev" : "t3code";
-const LEGACY_USER_DATA_DIR_NAME = isDevAppFlavor ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const LOG_DIR = Path.join(STATE_DIR, "logs");
@@ -1065,14 +1069,9 @@ function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
 /**
  * Resolve the Electron userData directory path.
  *
- * Electron derives the default userData path from `productName` in
- * package.json, which currently produces directories with spaces and
- * parentheses (e.g. `~/.config/T3 Code (Alpha)` on Linux). This is
- * unfriendly for shell usage and violates Linux naming conventions.
- *
- * We override it to a clean lowercase name (`t3code`). If the legacy
- * directory already exists we keep using it so existing users don't
- * lose their Chromium profile data (localStorage, cookies, sessions).
+ * Keep each local flavor's Chromium profile separate from the canonical
+ * upstream app. Existing local profiles are migrated by the install workflow
+ * rather than selected here because fallback paths can recreate collisions.
  */
 function resolveUserDataPath(): string {
   const appDataBase =
@@ -1081,11 +1080,6 @@ function resolveUserDataPath(): string {
       : process.platform === "darwin"
         ? Path.join(OS.homedir(), "Library", "Application Support")
         : process.env.XDG_CONFIG_HOME || Path.join(OS.homedir(), ".config");
-
-  const legacyPath = Path.join(appDataBase, LEGACY_USER_DATA_DIR_NAME);
-  if (FS.existsSync(legacyPath)) {
-    return legacyPath;
-  }
 
   return Path.join(appDataBase, USER_DATA_DIR_NAME);
 }
@@ -2163,11 +2157,6 @@ function createWindow(initialUrl?: string): BrowserWindow {
 
   return window;
 }
-
-// Override Electron's userData path before the `ready` event so that
-// Chromium session data uses a filesystem-friendly directory name.
-// Must be called synchronously at the top level — before `app.whenReady()`.
-app.setPath("userData", resolveUserDataPath());
 
 configureAppIdentity();
 

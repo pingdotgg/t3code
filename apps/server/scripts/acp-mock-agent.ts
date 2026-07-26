@@ -33,6 +33,7 @@ const permissionRequestCount = Number.parseInt(
   10,
 );
 const permissionRequestKind = process.env.T3_ACP_PERMISSION_REQUEST_KIND ?? "execute";
+const permissionRequestCommand = process.env.T3_ACP_PERMISSION_REQUEST_COMMAND;
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const disableFork = process.env.T3_ACP_DISABLE_FORK === "1";
@@ -61,6 +62,24 @@ const cancelledSessions = new Set<string>();
 
 function mockPermissionRequestPayload(kind: string) {
   switch (kind) {
+    case "other":
+      return {
+        title: "create_isolated_workspace",
+        rawInput: {
+          path: "/tmp/t3-mock-workspace",
+          branch: "feat/mock",
+          baseRef: "main",
+        },
+        content: [
+          {
+            type: "content" as const,
+            content: {
+              type: "text" as const,
+              text: "Run t3-tools tool create_isolated_workspace",
+            },
+          },
+        ],
+      };
     case "edit":
       return {
         title: "Edit file",
@@ -77,22 +96,24 @@ function mockPermissionRequestPayload(kind: string) {
           },
         ],
       };
-    default:
+    default: {
+      const command = permissionRequestCommand ?? "cat server/package.json";
       return {
-        title: "`cat server/package.json`",
+        title: `\`${command}\``,
         rawInput: {
-          command: ["cat", "server/package.json"],
+          command,
         },
         content: [
           {
             type: "content" as const,
             content: {
               type: "text" as const,
-              text: "Not in allowlist: cat server/package.json",
+              text: `Not in allowlist: ${command}`,
             },
           },
         ],
       };
+    }
   }
 }
 
@@ -740,10 +761,11 @@ const program = Effect.gen(function* () {
       }
 
       if (Number.isFinite(permissionRequestCount) && permissionRequestCount > 0) {
+        const outcomes: Array<string> = [];
         for (let index = 0; index < permissionRequestCount; index += 1) {
           const toolCallId = `permission-tool-call-${index + 1}`;
           const payload = mockPermissionRequestPayload(permissionRequestKind);
-          yield* agent.client.requestPermission({
+          const permission = yield* agent.client.requestPermission({
             sessionId: requestedSessionId,
             toolCall: {
               toolCallId,
@@ -759,13 +781,21 @@ const program = Effect.gen(function* () {
               { optionId: "reject-once", name: "Reject", kind: "reject_once" },
             ],
           });
+          outcomes.push(
+            permission.outcome.outcome === "selected"
+              ? `selected:${permission.outcome.optionId}`
+              : permission.outcome.outcome,
+          );
         }
 
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: promptResponseText ?? "hello from mock" },
+            content: {
+              type: "text",
+              text: `${promptResponseText ?? "hello from mock"} permission-outcomes=${outcomes.join(",")}`,
+            },
           },
         });
 

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProviderSkill } from "@t3tools/contracts";
 
-import { searchProviderSkills } from "./providerSkillSearch";
+import { providerSkillsFromCatalog, searchProviderSkills } from "./providerSkillSearch";
 
 function makeSkill(input: Partial<ServerProviderSkill> & Pick<ServerProviderSkill, "name">) {
   return {
@@ -36,6 +36,41 @@ describe("searchProviderSkills", () => {
       "ui",
       "building-native-ui",
     ]);
+  });
+
+  describe("providerSkillsFromCatalog", () => {
+    it("returns skills readable by the selected provider", () => {
+      const skills = providerSkillsFromCatalog(
+        [
+          {
+            id: "agent-browser",
+            name: "agent-browser",
+            displayName: "Agent Browser",
+            canonicalPath: "/home/test/.copilot/skills/agent-browser",
+            paths: ["/home/test/.copilot/skills/agent-browser"],
+            installations: [
+              {
+                agentId: "copilot-cli",
+                agentName: "Copilot CLI",
+                path: "/home/test/.copilot/skills/agent-browser",
+                source: "primary",
+              },
+            ],
+            hasPathConflict: false,
+          },
+        ],
+        ProviderDriverKind.make("copilot"),
+      );
+
+      expect(skills).toEqual([
+        {
+          name: "agent-browser",
+          displayName: "Agent Browser",
+          path: "/home/test/.copilot/skills/agent-browser",
+          enabled: true,
+        },
+      ]);
+    });
   });
 
   it("uses fuzzy ranking for abbreviated queries", () => {

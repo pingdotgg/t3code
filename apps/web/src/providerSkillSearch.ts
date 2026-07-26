@@ -1,4 +1,9 @@
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type {
+  ProviderDriverKind,
+  ServerProviderSkill,
+  ServerSkillAgentId,
+  ServerSkillCatalogEntry,
+} from "@t3tools/contracts";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
@@ -6,6 +11,35 @@ import {
 } from "@t3tools/shared/searchRanking";
 
 import { formatProviderSkillDisplayName } from "./providerSkillPresentation";
+
+const skillAgentIdByProvider: Partial<Record<string, ServerSkillAgentId>> = {
+  claude: "claude-code",
+  codex: "codex",
+  copilot: "copilot-cli",
+};
+
+export function providerSkillsFromCatalog(
+  skills: ReadonlyArray<ServerSkillCatalogEntry>,
+  provider: ProviderDriverKind,
+): ServerProviderSkill[] {
+  const agentId = skillAgentIdByProvider[provider];
+  if (!agentId) return [];
+
+  return skills.flatMap((skill) => {
+    const installation = skill.installations.find((candidate) => candidate.agentId === agentId);
+    if (!installation) return [];
+    return [
+      {
+        name: skill.name,
+        displayName: skill.displayName,
+        ...(skill.description ? { description: skill.description } : {}),
+        ...(skill.shortDescription ? { shortDescription: skill.shortDescription } : {}),
+        path: installation.path,
+        enabled: true,
+      },
+    ];
+  });
+}
 
 function scoreProviderSkill(skill: ServerProviderSkill, query: string): number | null {
   const normalizedName = skill.name.toLowerCase();

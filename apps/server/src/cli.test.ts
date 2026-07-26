@@ -639,15 +639,71 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
           ]);
           yield* runCliWithRuntime([
             "chat",
-            "set-branch",
+            "handoff",
             created.threadId,
             "--branch",
             "feature/cli",
             "--worktree",
             "/tmp/t3-cli-worktree",
+            "--continue-prompt",
+            "Continue in the worktree",
+            "--command-id",
+            "cmd-cli-workspace-handoff",
             "--base-dir",
             baseDir,
           ]);
+          yield* runCliWithRuntime([
+            "chat",
+            "handoff",
+            created.threadId,
+            "--branch",
+            "feature/should-not-apply",
+            "--worktree",
+            "/tmp/should-not-apply",
+            "--continue-prompt",
+            "Should not be queued",
+            "--command-id",
+            "cmd-cli-workspace-handoff",
+            "--base-dir",
+            baseDir,
+          ]);
+          const secondCreatedOutput = yield* captureStdout(
+            runCli([
+              "chat",
+              "create",
+              "--project",
+              workspaceRoot,
+              "--title",
+              "Second Lifecycle Chat",
+              "--model",
+              "gpt-5.4",
+              "--provider",
+              "codex",
+              "--base-dir",
+              baseDir,
+            ]),
+          );
+          const secondCreated = JSON.parse(secondCreatedOutput.output) as {
+            readonly threadId: string;
+          };
+          const duplicateWorktreeError = yield* runCliWithRuntime([
+            "chat",
+            "handoff",
+            secondCreated.threadId,
+            "--branch",
+            "feature/cli",
+            "--worktree",
+            "/tmp/t3-cli-worktree",
+            "--continue-prompt",
+            "Continue in the existing worktree",
+            "--base-dir",
+            baseDir,
+          ]).pipe(Effect.flip);
+          assert.equal(String(duplicateWorktreeError).includes("already bound"), true);
+          assert.equal(
+            String(duplicateWorktreeError).includes("ORCHESTRATION_COMMAND_REJECTED:"),
+            true,
+          );
           yield* runCliWithRuntime(["chat", "archive", created.threadId, "--base-dir", baseDir]);
           yield* runCliWithRuntime(["chat", "unarchive", created.threadId, "--base-dir", baseDir]);
 
@@ -661,6 +717,7 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
           assert.equal(thread?.interactionMode, "plan");
           assert.equal(thread?.branch, "feature/cli");
           assert.equal(thread?.worktreePath, "/tmp/t3-cli-worktree");
+          assert.equal(thread?.queuedTurns?.[0]?.message.text, "Continue in the worktree");
           assert.equal(thread?.archivedAt, null);
 
           yield* runCliWithRuntime(["chat", "delete", created.threadId, "--base-dir", baseDir]);

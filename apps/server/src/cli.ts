@@ -2065,6 +2065,49 @@ const chatSetBranchCommand = Command.make("set-branch", {
   ),
 );
 
+const chatHandoffCommand = Command.make("handoff", {
+  ...liveTargetFlags,
+  chat: Argument.string("chat").pipe(Argument.withDescription("Thread id or title.")),
+  branch: Flag.string("branch"),
+  worktree: Flag.string("worktree"),
+  continuePrompt: Flag.string("continue-prompt"),
+  commandId: Flag.string("command-id").pipe(Flag.optional),
+}).pipe(
+  Command.withDescription("Atomically bind a chat workspace and schedule its continuation."),
+  Command.withHandler((flags) =>
+    withThreadDispatch(flags, flags.chat, ({ thread, dispatch }) =>
+      Effect.gen(function* () {
+        const createdAt = new Date().toISOString();
+        const result = yield* dispatch({
+          type: "thread.workspace.handoff",
+          commandId: CommandId.make(Option.getOrUndefined(flags.commandId) ?? crypto.randomUUID()),
+          threadId: thread.id,
+          branch: flags.branch,
+          worktreePath: flags.worktree,
+          continuation: {
+            id: QueuedTurnId.make(crypto.randomUUID()),
+            threadId: thread.id,
+            message: {
+              messageId: MessageId.make(crypto.randomUUID()),
+              role: "user",
+              text: flags.continuePrompt,
+              attachments: [],
+            },
+            modelSelection: thread.modelSelection,
+            runtimeMode: thread.runtimeMode,
+            interactionMode: thread.interactionMode,
+            createdAt,
+            updatedAt: createdAt,
+            failedAt: null,
+            failureMessage: null,
+          },
+        });
+        yield* printJson(result);
+      }),
+    ),
+  ),
+);
+
 const chatSendCommand = Command.make("send", {
   ...liveTargetFlags,
   ...modelSelectionFlags,
@@ -2374,6 +2417,7 @@ const chatCommand = Command.make("chat").pipe(
     chatSetRuntimeCommand,
     chatSetInteractionCommand,
     chatSetBranchCommand,
+    chatHandoffCommand,
     chatSendCommand,
     chatNewCommand,
     chatStreamCommand,

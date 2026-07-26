@@ -84,6 +84,10 @@ export function terminalStatusFromRunningIds(
   };
 }
 
+export function resolveTerminalThreadRef(thread: SidebarThreadSummary) {
+  return scopeThreadRef(thread.environmentId, thread.virtualAgentRun?.parentThreadId ?? thread.id);
+}
+
 export function ThreadStatusLabel({
   status,
   compact = false,
@@ -187,7 +191,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
  * environment indicator, matching the sidebar's trailing indicators.
  */
 export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSummary }) {
-  const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+  const threadRef = resolveTerminalThreadRef(thread);
   const runningTerminalIds = useTerminalStateStore(
     (state) =>
       selectThreadTerminalState(state.terminalStateByThreadKey, threadRef).runningTerminalIds,

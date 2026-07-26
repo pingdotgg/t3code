@@ -574,6 +574,15 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 
+const ThreadWorkspaceHandoffCommand = Schema.Struct({
+  type: Schema.Literal("thread.workspace.handoff"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  branch: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+  continuation: OrchestrationQueuedTurn,
+});
+
 const ThreadForkCommand = Schema.Struct({
   type: Schema.Literal("thread.fork"),
   commandId: CommandId,
@@ -837,6 +846,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
   ThreadMetaUpdateCommand,
+  ThreadWorkspaceHandoffCommand,
   ThreadForkCommand,
   ThreadRuntimeModeSetCommand,
   ThreadPendingRuntimeModeSetCommand,
@@ -864,6 +874,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
   ThreadMetaUpdateCommand,
+  ThreadWorkspaceHandoffCommand,
   ThreadForkCommand,
   ThreadRuntimeModeSetCommand,
   ThreadPendingRuntimeModeSetCommand,

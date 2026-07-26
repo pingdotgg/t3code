@@ -39,6 +39,20 @@ describe("resolveDesktopAppStageLabel", () => {
       }),
     ).toBe("Alpha");
   });
+
+  it("brands packaged local alpha builds distinctly from upstream", () => {
+    expect(
+      resolveDesktopAppBranding({
+        isDevelopment: false,
+        appVersion: "0.0.17",
+        packageProductName: "T3 Code (Local Alpha)",
+      }),
+    ).toEqual({
+      baseName: "T3 Code",
+      stageLabel: "Alpha",
+      displayName: "T3 Code (Local Alpha)",
+    });
+  });
 });
 
 describe("resolveDesktopAppBranding", () => {

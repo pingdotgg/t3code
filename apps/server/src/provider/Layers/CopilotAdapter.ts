@@ -143,6 +143,7 @@ interface CopilotSessionContext {
   inFlightTurnId: TurnId | undefined;
   cancelRequestedTurnId: TurnId | undefined;
   readonly fatalErrorByTurnId: Map<TurnId, string>;
+  readonly policyErrorByTurnId: Map<TurnId, string>;
   readonly backgroundAgents: Map<
     string,
     {
@@ -160,6 +161,8 @@ type CopilotStartSessionInput = Parameters<CopilotAdapterShape["startSession"]>[
 
 const COPILOT_FORK_UNSUPPORTED_DETAIL =
   "This Copilot ACP agent does not support native chat forking. The visible T3 chat fork was created, but Copilot context cannot be continued safely from it.";
+const WORKSPACE_HANDOFF_REQUIRED_MESSAGE =
+  "T3 blocked a raw Git worktree mutation. Use the create_isolated_workspace or switch_workspace tool so the thread's workspace, checkpoints, and diffs stay aligned.";
 
 function stringifyCause(value: unknown): string {
   if (value instanceof Error) {
@@ -832,6 +835,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
         event: AcpParsedSessionEvent,
       ) => Effect.Effect<AcpParsedSessionEvent>;
       readonly onFatalCopilotError?: (turnId: TurnId, message: string) => void;
+      readonly onPolicyError?: (turnId: TurnId, message: string) => void;
       readonly resumeSessionId?: string;
       readonly resumeFallback?: "create" | "fail";
     }) =>
@@ -855,6 +859,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
           childProcessSpawner,
           threadId: input.threadId,
           cwd: input.cwd,
+          baseDir: serverConfig.baseDir,
           runtimeMode: input.runtimeMode,
           ...(input.resumeSessionId ? { resumeSessionId: input.resumeSessionId } : {}),
           ...(input.resumeFallback ? { resumeFallback: input.resumeFallback } : {}),
@@ -874,6 +879,27 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                 params,
                 permissionRequest,
               });
+
+              if (autoApproval._tag === "cancel") {
+                if (autoApproval.reason === "workspace_handoff_required") {
+                  const turnId = input.getCurrentTurnId();
+                  if (turnId) {
+                    input.onPolicyError?.(turnId, WORKSPACE_HANDOFF_REQUIRED_MESSAGE);
+                  }
+                  yield* offerRuntimeEvent({
+                    type: "runtime.error",
+                    ...(yield* makeEventStamp()),
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    ...(turnId ? { turnId } : {}),
+                    payload: {
+                      message: WORKSPACE_HANDOFF_REQUIRED_MESSAGE,
+                      class: "provider_error",
+                    },
+                  });
+                }
+                return { outcome: { outcome: "cancelled" as const } };
+              }
 
               if (input.runtimeMode === "full-access") {
                 const warningKey = leakedFullAccessWarningKey(permissionRequest);
@@ -1249,6 +1275,9 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
               ctx.cancelRequestedTurnId = turnId;
             }
           },
+          onPolicyError: (turnId, message) => {
+            ctx.policyErrorByTurnId.set(turnId, message);
+          },
         }).pipe(
           Effect.tapError(() =>
             Effect.sync(() => {
@@ -1428,6 +1457,9 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                 ctx.cancelRequestedTurnId = turnId;
               }
             },
+            onPolicyError: (turnId, message) => {
+              ctx?.policyErrorByTurnId.set(turnId, message);
+            },
           });
 
           const now = yield* nowIso;
@@ -1462,6 +1494,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
               inFlightTurnId: undefined,
               cancelRequestedTurnId: undefined,
               fatalErrorByTurnId: new Map<TurnId, string>(),
+              policyErrorByTurnId: new Map<TurnId, string>(),
               backgroundAgents: new Map(),
               backgroundActivitySignal: undefined,
               stopped: false,
@@ -1731,14 +1764,17 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
         const stopReason =
           promptOutcome._tag === "completed" ? promptOutcome.result.stopReason : "cancelled";
         const fatalErrorMessage = ctx.fatalErrorByTurnId.get(turnId);
+        const policyErrorMessage = ctx.policyErrorByTurnId.get(turnId);
         ctx.fatalErrorByTurnId.delete(turnId);
+        ctx.policyErrorByTurnId.delete(turnId);
         ctx.turns.push({
           id: turnId,
           items: [
             {
               prompt: retainedPromptParts(promptParts),
-              result:
-                promptOutcome._tag === "completed"
+              result: policyErrorMessage
+                ? { stopReason: "workspace_handoff_required" }
+                : promptOutcome._tag === "completed"
                   ? retainedPromptResult(promptOutcome.result)
                   : { stopReason: fatalErrorMessage ? "failed" : "cancelled" },
             },
@@ -1773,10 +1809,16 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                 stopReason: "copilot_fatal_capi_error",
                 errorMessage: fatalErrorMessage,
               }
-            : {
-                state: stopReason === "cancelled" ? "cancelled" : "completed",
-                stopReason: stopReason ?? null,
-              },
+            : policyErrorMessage
+              ? {
+                  state: "failed",
+                  stopReason: "workspace_handoff_required",
+                  errorMessage: policyErrorMessage,
+                }
+              : {
+                  state: stopReason === "cancelled" ? "cancelled" : "completed",
+                  stopReason: stopReason ?? null,
+                },
         });
 
         return {

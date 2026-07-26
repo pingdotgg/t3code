@@ -78,7 +78,7 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("GPT-5-Codex")).toBe("gpt-5.4");
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeModelSlug("sonnet", claude)).toBe("claude-sonnet-4-6");
-    expect(normalizeModelSlug("opus", copilot)).toBe("claude-opus-4.8");
+    expect(normalizeModelSlug("opus", copilot)).toBe("claude-opus-5");
   });
 
   it("preserves OpenCode model casing", () => {

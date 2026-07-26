@@ -37,7 +37,9 @@ export function ReviewFindingsCard({
           <AlertCircleIcon className="size-4 shrink-0" />
           Review output could not be mapped to the diff
         </div>
-        <p className="mt-1 text-xs opacity-80">{result.issues[0] ?? "Invalid review output."}</p>
+        <p className="mt-1 text-xs opacity-80">
+          {result.issues.length > 0 ? result.issues.join(" ") : "Invalid review output."}
+        </p>
       </div>
     );
   }

@@ -15,6 +15,7 @@ import {
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { isReviewOutputText } from "@t3tools/shared/workflows/reviewOutput";
 import {
   extractChangedFilePathCandidatesFromToolPayload,
   normalizeChangedFilePath,
@@ -1102,43 +1103,9 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const readModel = yield* orchestrationEngine.getReadModel();
       const thread = readModel.threads.find((entry) => entry.id === input.threadId);
-      if (
-        !thread?.reviewSnapshot ||
-        (thread.reviewResult !== undefined && thread.reviewResult !== null)
-      ) {
+      if (!thread?.reviewSnapshot) {
         return;
       }
-      const cwd = resolveThreadWorkspaceCwd({
-        thread,
-        projects: readModel.projects,
-      });
-      if (cwd === null) {
-        yield* Effect.logWarning("Discarding review result because the worktree changed", {
-          threadId: input.threadId,
-          snapshotHash: thread.reviewSnapshot.diffHash,
-        });
-        return;
-      }
-      const snapshotIsCurrent = yield* reviewSnapshotVerifier
-        .isCurrent({ cwd, snapshot: thread.reviewSnapshot })
-        .pipe(
-          Effect.tapError((error) =>
-            Effect.logWarning("Discarding review result because snapshot could not be verified", {
-              threadId: input.threadId,
-              snapshotHash: thread.reviewSnapshot.diffHash,
-              error,
-            }),
-          ),
-          Effect.orElseSucceed(() => false),
-        );
-      if (!snapshotIsCurrent) {
-        yield* Effect.logWarning("Discarding review result because the worktree changed", {
-          threadId: input.threadId,
-          snapshotHash: thread.reviewSnapshot.diffHash,
-        });
-        return;
-      }
-
       const output =
         thread.messages
           .filter(
@@ -1150,11 +1117,51 @@ const make = Effect.gen(function* () {
               left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
           )
           .at(-1)?.text ?? "";
+      // Review threads stay conversational after the first result. Only turns
+      // that produced reviewer output may replace an existing result, so an
+      // ordinary follow-up reply cannot wipe the findings card.
+      if (
+        thread.reviewResult !== undefined &&
+        thread.reviewResult !== null &&
+        !isReviewOutputText(output)
+      ) {
+        return;
+      }
+      const cwd = resolveThreadWorkspaceCwd({
+        thread,
+        projects: readModel.projects,
+      });
+      if (cwd === null) {
+        yield* Effect.logWarning("Discarding review result because the worktree is unavailable", {
+          threadId: input.threadId,
+          snapshotHash: thread.reviewSnapshot.diffHash,
+        });
+        return;
+      }
+      // The reviewer inspects the working tree live, so anchor its findings to
+      // the diff as it stands now rather than the snapshot taken at thread
+      // creation, which is stale once the user pushes fixes and re-reviews.
+      const snapshot = yield* reviewSnapshotVerifier
+        .currentSnapshot({ cwd, snapshot: thread.reviewSnapshot })
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("Discarding review result because the diff could not be resolved", {
+              threadId: input.threadId,
+              snapshotHash: thread.reviewSnapshot.diffHash,
+              error,
+            }),
+          ),
+          Effect.orElseSucceed(() => null),
+        );
+      if (snapshot === null) {
+        return;
+      }
+
       yield* orchestrationEngine.dispatch({
         type: "thread.review-result.set",
         commandId: providerCommandId(input.event, "review-result-set"),
         threadId: input.threadId,
-        result: parseReviewResult({ output, snapshot: thread.reviewSnapshot }),
+        result: parseReviewResult({ output, snapshot }),
         createdAt: input.createdAt,
       });
     });

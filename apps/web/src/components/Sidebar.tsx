@@ -191,6 +191,7 @@ import {
   agentRunDismissKey,
   expandSidebarThreadsWithAgentRuns,
   buildSidebarThreadRows,
+  selectVisibleSidebarThreads,
   selectVisibleThreadRows,
   type SidebarThreadRowView,
 } from "../sidebarThreadTree";
@@ -293,6 +294,7 @@ interface SidebarThreadRowProps {
     threadRef: ScopedThreadRef,
     orderedProjectThreadKeys: readonly string[],
   ) => void;
+  handleParentThreadSelected: (threadKey: string, hasChildren: boolean) => void;
   navigateToThread: (threadRef: ScopedThreadRef) => void;
   handleMultiSelectContextMenu: (position?: ContextMenuPosition) => Promise<void>;
   handleThreadContextMenu: (
@@ -431,6 +433,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     setConfirmingArchiveThreadKey,
     confirmArchiveButtonRefs,
     handleThreadClick,
+    handleParentThreadSelected,
     navigateToThread,
     handleMultiSelectContextMenu,
     handleThreadContextMenu,
@@ -513,10 +516,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         return;
       }
 
+      handleParentThreadSelected(threadKey, props.hasChildren);
       handleThreadClick(event, threadRef, orderedProjectThreadKeys);
     },
     [
       handleThreadClick,
+      handleParentThreadSelected,
       clearSelection,
       isPinned,
       navigate,
@@ -981,6 +986,7 @@ interface SidebarProjectThreadListProps {
     threadRef: ScopedThreadRef,
     orderedProjectThreadKeys: readonly string[],
   ) => void;
+  handleParentThreadSelected: (threadKey: string, hasChildren: boolean) => void;
   navigateToThread: (threadRef: ScopedThreadRef) => void;
   handleMultiSelectContextMenu: (position?: ContextMenuPosition) => Promise<void>;
   handleThreadContextMenu: (
@@ -1046,6 +1052,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
     setConfirmingArchiveThreadKey,
     confirmArchiveButtonRefs,
     handleThreadClick,
+    handleParentThreadSelected,
     navigateToThread,
     handleMultiSelectContextMenu,
     handleThreadContextMenu,
@@ -1118,6 +1125,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
         setConfirmingArchiveThreadKey,
         confirmArchiveButtonRefs,
         handleThreadClick,
+        handleParentThreadSelected,
         navigateToThread,
         handleMultiSelectContextMenu,
         handleThreadContextMenu,
@@ -1151,6 +1159,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
       confirmingArchiveThreadKey,
       handleMultiSelectContextMenu,
       handleThreadClick,
+      handleParentThreadSelected,
       handleThreadContextMenu,
       memberProjectByScopedKey,
       navigateToThread,
@@ -1300,6 +1309,7 @@ interface SidebarProjectItemProps {
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
+  handleParentThreadSelected: (threadKey: string, hasChildren: boolean) => void;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
@@ -1320,6 +1330,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     handleNewThread,
     archiveThread,
     deleteThread,
+    handleParentThreadSelected,
     threadJumpLabelByKey,
     expandThreadListForProject,
     collapseThreadListForProject,
@@ -1574,7 +1585,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const visibleProjectThreads = projectThreads.filter((thread) => thread.archivedAt === null);
+    const visibleProjectThreads = selectVisibleSidebarThreads(projectThreads);
     const threadRows = buildSidebarThreadRows({
       threads: visibleProjectThreads,
       pinnedThreadKeys,
@@ -2628,6 +2639,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
         confirmArchiveButtonRefs={confirmArchiveButtonRefs}
         handleThreadClick={handleThreadClick}
+        handleParentThreadSelected={handleParentThreadSelected}
         navigateToThread={navigateToThread}
         handleMultiSelectContextMenu={handleMultiSelectContextMenu}
         handleThreadContextMenu={handleThreadContextMenu}
@@ -2853,9 +2865,39 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }: {
   isElectron: boolean;
 }) {
+  const router = useRouter();
+  const historyIndex = useLocation({ select: (location) => location.state.__TSR_index });
+  const canGoBack = router.history.canGoBack();
+  const canGoForward = historyIndex < router.history.length - 1;
   const wordmark = (
-    <div className="flex items-center gap-2">
+    <div className="flex w-full items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
+      <div
+        aria-label="Chat navigation history"
+        className="ml-auto flex items-center gap-0.5"
+        role="group"
+      >
+        <button
+          type="button"
+          aria-label="Back to previous chat"
+          className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground/65 transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
+          disabled={!canGoBack}
+          onClick={() => router.history.back()}
+          title="Back to previous chat"
+        >
+          <span aria-hidden="true">&lt;</span>
+        </button>
+        <button
+          type="button"
+          aria-label="Forward to next chat"
+          className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground/65 transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
+          disabled={!canGoForward}
+          onClick={() => router.history.forward()}
+          title="Forward to next chat"
+        >
+          <span aria-hidden="true">&gt;</span>
+        </button>
+      </div>
     </div>
   );
 
@@ -2917,6 +2959,7 @@ interface SidebarProjectsContentProps {
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
+  handleParentThreadSelected: (threadKey: string, hasChildren: boolean) => void;
   primaryEnvironmentId: SidebarThreadSummary["environmentId"] | null;
   sortedProjects: readonly SidebarProjectSnapshot[];
   expandedThreadListsByProject: ReadonlySet<string>;
@@ -2957,6 +3000,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleNewThread,
     archiveThread,
     deleteThread,
+    handleParentThreadSelected,
     primaryEnvironmentId,
     sortedProjects,
     expandedThreadListsByProject,
@@ -3116,6 +3160,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         handleNewThread={handleNewThread}
                         archiveThread={archiveThread}
                         deleteThread={deleteThread}
+                        handleParentThreadSelected={handleParentThreadSelected}
                         threadJumpLabelByKey={threadJumpLabelByKey}
                         expandThreadListForProject={expandThreadListForProject}
                         collapseThreadListForProject={collapseThreadListForProject}
@@ -3148,6 +3193,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 handleNewThread={handleNewThread}
                 archiveThread={archiveThread}
                 deleteThread={deleteThread}
+                handleParentThreadSelected={handleParentThreadSelected}
                 threadJumpLabelByKey={threadJumpLabelByKey}
                 expandThreadListForProject={expandThreadListForProject}
                 collapseThreadListForProject={collapseThreadListForProject}
@@ -3179,6 +3225,7 @@ export default function Sidebar() {
   const pinnedThreadKeysByProjectId = useUiStateStore((store) => store.pinnedThreadKeysByProjectId);
   const threadExpandedById = useUiStateStore((store) => store.threadExpandedById);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
+  const selectedParentThreadKeyRef = useRef<string | null>(null);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const isOnSettings = pathname.startsWith("/settings");
@@ -3360,6 +3407,17 @@ export default function Sidebar() {
     },
     [clearSelection, isMobile, navigate, setOpenMobile, setSelectionAnchor],
   );
+  const handleParentThreadSelected = useCallback((threadKey: string, hasChildren: boolean) => {
+    const previousThreadKey = selectedParentThreadKeyRef.current;
+    const nextThreadKey = hasChildren ? threadKey : null;
+    if (previousThreadKey && previousThreadKey !== nextThreadKey) {
+      useUiStateStore.getState().setThreadExpanded(previousThreadKey, false);
+    }
+    if (nextThreadKey) {
+      useUiStateStore.getState().setThreadExpanded(nextThreadKey, true);
+    }
+    selectedParentThreadKeyRef.current = nextThreadKey;
+  }, []);
 
   const projectDnDSensors = useSensors(
     useSensor(PointerSensor, {
@@ -3421,7 +3479,7 @@ export default function Sidebar() {
   }, []);
 
   const visibleThreads = useMemo(
-    () => sidebarThreads.filter((thread) => thread.archivedAt === null),
+    () => selectVisibleSidebarThreads(sidebarThreads),
     [sidebarThreads],
   );
   const sortedProjects = useMemo(() => {
@@ -3468,8 +3526,8 @@ export default function Sidebar() {
       sortedProjects.flatMap((project) => {
         const projectExpanded = projectExpandedById[project.projectKey] ?? true;
         const activeThreadKey = routeThreadKey ?? undefined;
-        const projectThreads = (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-          (thread) => thread.archivedAt === null,
+        const projectThreads = selectVisibleSidebarThreads(
+          threadsByProjectKey.get(project.projectKey) ?? [],
         );
         const pinnedCollapsedThreadKey =
           !projectExpanded && activeThreadKey
@@ -3849,6 +3907,7 @@ export default function Sidebar() {
             handleNewThread={handleNewThread}
             archiveThread={archiveThread}
             deleteThread={deleteThread}
+            handleParentThreadSelected={handleParentThreadSelected}
             primaryEnvironmentId={primaryEnvironmentId}
             sortedProjects={sortedProjects}
             expandedThreadListsByProject={expandedThreadListsByProject}

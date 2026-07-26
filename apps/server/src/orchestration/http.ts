@@ -20,6 +20,17 @@ import { normalizeDispatchCommand } from "./Normalizer.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 
+const isDefinitiveCommandRejection = (error: OrchestrationDispatchCommandError): boolean => {
+  const cause = error.cause;
+  if (typeof cause !== "object" || cause === null || !("_tag" in cause)) {
+    return false;
+  }
+  return (
+    cause._tag === "OrchestrationCommandInvariantError" ||
+    cause._tag === "OrchestrationCommandPreviouslyRejectedError"
+  );
+};
+
 const respondToOrchestrationHttpError = (
   error: OrchestrationDispatchCommandError | OrchestrationGetSnapshotError,
 ) =>
@@ -32,7 +43,13 @@ const respondToOrchestrationHttpError = (
       return HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 500 });
     }
 
-    return HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 400 });
+    return HttpServerResponse.jsonUnsafe(
+      {
+        error: error.message,
+        code: isDefinitiveCommandRejection(error) ? "command-rejected" : "dispatch-failed",
+      },
+      { status: 400 },
+    );
   });
 
 const authenticateOwnerSession = Effect.gen(function* () {

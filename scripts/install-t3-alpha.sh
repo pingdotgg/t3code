@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Build the arm64 macOS Alpha DMG and install it into /Applications, replacing
-# any previous Alpha installation. Use this after verifying changes in Dev via
+# Build the arm64 macOS Local Alpha DMG and install it into /Applications,
+# replacing any previous Local Alpha installation. Use this after verifying changes in Dev via
 # scripts/install-t3-dev.sh.
 #
 # Usage:
@@ -13,8 +13,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_FLAVOR="alpha"
-APP_NAME="T3 Code (Alpha)"
-ARTIFACT_GLOB="T3-Code-[0-9]*-arm64.dmg"
+APP_NAME="T3 Code (Local Alpha)"
+ARTIFACT_GLOB="T3-Code-Local-Alpha-*-arm64.dmg"
 APP_BUNDLE="${APP_NAME}.app"
 INSTALL_DEST="/Applications/${APP_BUNDLE}"
 RELEASE_DIR="${REPO_ROOT}/release"
@@ -50,16 +50,23 @@ log() { printf '\n[install-t3-alpha] %s\n' "$*"; }
 
 log "Quitting any running ${APP_NAME} instance..."
 osascript -e "tell application \"${APP_NAME}\" to quit" >/dev/null 2>&1 || true
-# Give the app a moment to exit cleanly, then force-kill any stragglers.
-sleep 1
-pkill -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1 || true
+for _ in {1..40}; do
+  if ! pgrep -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.05
+done
+if pgrep -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1; then
+  echo "${APP_NAME} did not quit; close it and retry." >&2
+  exit 1
+fi
 
 if [[ "$DO_BUILD" -eq 1 ]]; then
   log "Building ${APP_FLAVOR} arm64 DMG (this takes ~1 minute)..."
-  rm -f "${RELEASE_DIR}"/T3-Code-[0-9]*-arm64.dmg \
-        "${RELEASE_DIR}"/T3-Code-[0-9]*-arm64.dmg.blockmap \
-        "${RELEASE_DIR}"/T3-Code-[0-9]*-arm64.zip \
-        "${RELEASE_DIR}"/T3-Code-[0-9]*-arm64.zip.blockmap
+  rm -f "${RELEASE_DIR}"/T3-Code-Local-Alpha-*-arm64.dmg \
+        "${RELEASE_DIR}"/T3-Code-Local-Alpha-*-arm64.dmg.blockmap \
+        "${RELEASE_DIR}"/T3-Code-Local-Alpha-*-arm64.zip \
+        "${RELEASE_DIR}"/T3-Code-Local-Alpha-*-arm64.zip.blockmap
   ( cd "$REPO_ROOT" && node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --flavor "$APP_FLAVOR" )
 fi
 
