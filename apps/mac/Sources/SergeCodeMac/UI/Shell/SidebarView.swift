@@ -347,7 +347,8 @@ struct SidebarView: View {
             Spacer()
             // Hover-revealed like the project header actions so calm sections
             // stay quiet; kept in the layout at 0 opacity so the row never
-            // resizes on hover.
+            // resizes on hover. The context menu below carries the same action
+            // for keyboard/VO users, who never set `hoveredSettledGroup`.
             Button {
                 Task { await archiveAllSettled(settled) }
             } label: {
@@ -369,6 +370,11 @@ struct SidebarView: View {
             hoveredSettledGroup = hovering ? group.id : nil
         }
         .animation(Motion.feedback, value: hoveredSettledGroup)
+        .contextMenu {
+            Button("Archive All Settled Sessions", systemImage: "archivebox") {
+                Task { await archiveAllSettled(settled) }
+            }
+        }
         if isRevealed {
             ForEach(settled, id: \.id) { item in
                 threadRow(item, context: .project(showMachine: showMachine))
@@ -415,7 +421,10 @@ struct SidebarView: View {
                         } label: {
                             ProviderLabel(provider: provider)
                         }
-                        .disabled(!model.canCreateThread(with: provider))
+                        .disabled(
+                            !item.member.location.isReady
+                                || !model.canCreateThread(with: provider))
+                        .help(newThreadHelp(item.member, provider: provider))
                     }
                 }
                 .disabled(!item.isSelectable || model.configuredProviderKinds.isEmpty)
@@ -482,6 +491,22 @@ struct SidebarView: View {
         case .all: "Start a new task or choose another connection."
         case .device: "Start a new task or switch to All machines."
         }
+    }
+
+    /// Explains why a new-thread row is disabled. The rows mirror
+    /// `createThread`'s own guards, so one that would silently bail reads as
+    /// disabled instead of dead: a Mac that isn't connected can't create
+    /// anything, and neither can a provider that isn't runnable.
+    private func newThreadHelp(
+        _ member: SidebarProjectMember, provider: ProviderKind
+    ) -> String {
+        if !member.location.isReady {
+            return "That Mac isn't connected right now."
+        }
+        if !member.location.model.canCreateThread(with: provider) {
+            return "\(provider.displayName) isn't ready. Open Settings ▸ Providers and refresh."
+        }
+        return "Start another \(provider.displayName) session in this project"
     }
 
     private func createThread(_ member: SidebarProjectMember, provider: ProviderKind) {

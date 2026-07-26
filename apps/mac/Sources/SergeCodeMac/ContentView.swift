@@ -38,6 +38,9 @@ struct RootView: View {
                         .transition(.opacity)
                 } else {
                     EmptyStateView(
+                        // Quick Chat always runs on the local model, so that's
+                        // the `lastError` the hero has to be able to show.
+                        model: multi.local,
                         scenery: scenery,
                         onQuickChat: { startQuickChat() },
                         onNewSession: { showNewSessionSheet = true })
@@ -190,6 +193,8 @@ struct RootView: View {
                                     modelID: thread.modelID,
                                     size: 14)
                             }
+                            .disabled(!canCreateSession(with: thread.provider))
+                            .help(sessionRowHelp(for: thread.provider))
 
                             let otherProviders = model.configuredProviderKinds.filter {
                                 $0 != thread.provider
@@ -207,7 +212,8 @@ struct RootView: View {
                                     } leading: {
                                         ProviderIcon(provider: provider, size: 14)
                                     }
-                                    .disabled(!model.canCreateThread(with: provider))
+                                    .disabled(!canCreateSession(with: provider))
+                                    .help(sessionRowHelp(for: provider))
                                 }
                             }
                         }
@@ -216,6 +222,24 @@ struct RootView: View {
                 }
             }
         }
+    }
+
+    /// Mirrors `createSession`'s own guards, so a row that would silently bail
+    /// reads as disabled instead of dead. A remote device that isn't connected
+    /// can't create anything, and neither can a provider that isn't runnable.
+    private func canCreateSession(with provider: ProviderKind) -> Bool {
+        guard model.deviceID == .local || model.connection == .ready else { return false }
+        return model.canCreateThread(with: provider)
+    }
+
+    private func sessionRowHelp(for provider: ProviderKind) -> String {
+        if model.deviceID != .local, model.connection != .ready {
+            return "That Mac isn't connected right now."
+        }
+        if !model.canCreateThread(with: provider) {
+            return "\(provider.displayName) isn't ready. Open Settings ▸ Providers and refresh."
+        }
+        return "Start another \(provider.displayName) session in this project"
     }
 
     private var selectedProject: Project? {

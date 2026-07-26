@@ -356,19 +356,27 @@ enum SidebarProjection {
 
         return groups.flatMap { group in
             let projectMatches = group.members.contains {
-                $0.project.name.localizedCaseInsensitiveContains(term)
+                searchMatches($0.project.name, term)
             }
             return group.threads.filter { item in
                 projectMatches
-                    || item.thread.title.localizedCaseInsensitiveContains(term)
-                    || item.thread.provider.displayName.localizedCaseInsensitiveContains(term)
-                    || item.member.location.name.localizedCaseInsensitiveContains(term)
-                    || (item.vcs?.branch?.localizedCaseInsensitiveContains(term) ?? false)
-                    || item.vcs?.prNumber.map { "PR #\($0)".localizedCaseInsensitiveContains(term) }
-                        == true
+                    || searchMatches(item.thread.title, term)
+                    || searchMatches(item.thread.provider.displayName, term)
+                    || searchMatches(item.member.location.name, term)
+                    || (item.vcs?.branch.map { searchMatches($0, term) } ?? false)
+                    || item.vcs?.prNumber.map { searchMatches("PR #\($0)", term) } == true
             }
         }
         .sorted { $0.thread.updatedAt > $1.thread.updatedAt }
+    }
+
+    /// Search folds diacritics as well as case: threads are auto-titled after
+    /// scenery locations ("Skógafoss", "Türkiye"), so a query typed on an
+    /// ASCII keyboard has to reach them. Matches how project names are
+    /// normalized for grouping below.
+    private static func searchMatches(_ haystack: String, _ term: String) -> Bool {
+        haystack.range(
+            of: term, options: [.caseInsensitive, .diacriticInsensitive], locale: .current) != nil
     }
 
     private static func normalizedProjectName(_ name: String) -> String {
