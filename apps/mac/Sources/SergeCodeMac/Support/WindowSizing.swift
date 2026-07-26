@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 /// Window-sizing floors for the shell.
@@ -18,12 +17,6 @@ enum WindowSizing {
     /// hidden (versus 1434 and climbing before the clamp).
     static let minContentWidth: CGFloat = 280
     static let minContentHeight: CGFloat = 320
-
-    /// Stable autosave key for the main window frame. SwiftUI's own generated
-    /// key encodes the full generic type of the scene's view chain, so it
-    /// changes whenever a modifier is added to the root view — every release
-    /// that touched the shell silently discarded the user's window frame.
-    static let mainWindowAutosaveName = "SurgeCodeMainWindow"
 }
 
 /// Reports a fixed minimum size to the host window instead of the content's
@@ -95,47 +88,5 @@ extension View {
         WindowContentSizeClamp(minWidth: minWidth, minHeight: minHeight) {
             self
         }
-    }
-}
-
-/// Gives the main window a stable frame autosave key so its size and position
-/// survive both relaunches and app updates (see
-/// `WindowSizing.mainWindowAutosaveName`).
-struct MainWindowFrameAutosave: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = FrameAutosaveProbeView()
-        view.onWindowChange = Self.adopt
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        Self.adopt(nsView.window)
-    }
-
-    static func adopt(_ window: NSWindow?) {
-        guard let window,
-            window.styleMask.contains(.titled),
-            window.styleMask.contains(.resizable),
-            window.frameAutosaveName != WindowSizing.mainWindowAutosaveName
-        else { return }
-        // Fails when another window already owns the key (a second WindowGroup
-        // window); that window then keeps SwiftUI's generated key, which is
-        // the pre-existing behavior.
-        guard window.setFrameAutosaveName(WindowSizing.mainWindowAutosaveName) else { return }
-        // `setFrameAutosaveName` only starts saving — the stored frame has to
-        // be applied explicitly, and it must happen after SwiftUI has placed
-        // the window with `.defaultSize`.
-        _ = window.setFrameUsingName(WindowSizing.mainWindowAutosaveName)
-    }
-}
-
-/// Host view that reports window attachment (SwiftUI can reparent the hosting
-/// view before `window` is non-nil).
-private final class FrameAutosaveProbeView: NSView {
-    var onWindowChange: ((NSWindow?) -> Void)?
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        onWindowChange?(window)
     }
 }

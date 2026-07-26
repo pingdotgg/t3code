@@ -116,9 +116,6 @@ struct SergeCodeApp: App {
                 }
                 // Punch the NSWindow so container glass can sample the desktop.
                 .background(TransparentWindowConfigurator())
-                // Stable frame autosave key: SwiftUI's generated one changes
-                // with the view chain, dropping the saved frame on updates.
-                .background(MainWindowFrameAutosave())
                 .onAppear {
                     multi.start()
                     appDelegate.multi = multi

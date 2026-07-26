@@ -74,9 +74,10 @@ struct WindowSizingTests {
 
     @Test("shell floors stay small enough for the default window")
     func floorsFitDefaultWindow() {
-        // Measured on the mock shell: the window minimum is the detail floor
-        // plus a fixed 820pt of sidebar, inspector, split, and toolbar chrome.
-        // Keep the total at or under the 1100x720 default the app opens with.
+        // The window minimum is the detail floor plus the columns and chrome
+        // around it — about 820pt with the columns at their default widths on
+        // the mock shell. Keep the total at or under the 1100x720 default the
+        // app opens with, so the shell never opens at its own minimum.
         #expect(WindowSizing.minContentWidth + 820 <= 1100)
         #expect(WindowSizing.minContentHeight + 156 <= 720)
     }
