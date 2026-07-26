@@ -21,6 +21,9 @@ export function ActionButton(props: {
   const iconColor = useThemeColor(props.danger ? "--color-danger-foreground" : "--color-icon");
   return (
     <Pressable
+      accessibilityLabel={props.label}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: props.disabled }}
       className={cn(
         "min-h-9 self-start flex-row items-center gap-1.5 rounded-full border px-3 py-2 disabled:opacity-[0.4]",
         props.danger ? "border-danger-border bg-danger" : "border-border bg-subtle",
@@ -124,7 +127,13 @@ export function SectionHeader(props: {
   const iconColor = useThemeColor("--color-icon-subtle");
   return (
     <View className="flex-row items-center gap-2 px-1">
-      <Pressable className="min-h-10 flex-1 flex-row items-center gap-2" onPress={props.onToggle}>
+      <Pressable
+        accessibilityLabel={`${props.title} section`}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: props.expanded }}
+        className="min-h-10 flex-1 flex-row items-center gap-2"
+        onPress={props.onToggle}
+      >
         <SymbolView
           name={props.expanded ? "chevron.down" : "chevron.right"}
           size={12}
@@ -159,6 +168,8 @@ export function FileRow(props: {
             accessibilityLabel={
               props.selected ? `Unselect ${props.file.path}` : `Select ${props.file.path}`
             }
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: props.selected, disabled: props.disabled }}
             className="h-8 w-8 items-center justify-center"
             disabled={props.disabled}
             onPress={props.onSelect}
@@ -172,6 +183,9 @@ export function FileRow(props: {
           </Pressable>
         ) : null}
         <Pressable
+          accessibilityLabel={`Open diff for ${props.file.path}`}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: props.disabled }}
           className="min-w-0 flex-1 flex-row items-center gap-2"
           disabled={props.disabled}
           onPress={props.onOpenDiff}
@@ -209,6 +223,9 @@ export function BranchCommitRow(props: {
   return (
     <View className="border-t border-border/70">
       <Pressable
+        accessibilityLabel={`${props.commit.message}, ${props.direction} commit`}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: props.expanded }}
         className="min-h-14 flex-row items-center gap-2 px-4 py-3"
         onPress={props.onToggle}
       >

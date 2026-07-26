@@ -211,6 +211,8 @@ export function VersionControlRouteView({
               {mutationError ?? error}
             </Text>
             <Pressable
+              accessibilityLabel="Dismiss error"
+              accessibilityRole="button"
               className="mt-2 self-start"
               onPress={() => {
                 setMutationError(null);
@@ -264,6 +266,13 @@ export function VersionControlRouteView({
                     className="overflow-hidden rounded-[20px] border border-border bg-card"
                   >
                     <Pressable
+                      accessibilityLabel={
+                        changeSet.current
+                          ? "Working tree changes"
+                          : `${changeSet.branchName} worktree changes`
+                      }
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded }}
                       className="min-h-14 flex-row items-center gap-3 px-4 py-3"
                       onPress={() => toggleExpanded(rowKey)}
                     >
@@ -355,6 +364,9 @@ export function VersionControlRouteView({
                     className="overflow-hidden rounded-[20px] border border-border bg-card"
                   >
                     <Pressable
+                      accessibilityLabel={`${branch.name} branch`}
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded: expandedRows.has(key) }}
                       className="min-h-14 flex-row items-center gap-3 px-4 py-3"
                       onPress={() => loadBranchDetails(branch, key)}
                     >
@@ -473,6 +485,9 @@ export function VersionControlRouteView({
                     className="overflow-hidden rounded-[20px] border border-border bg-card"
                   >
                     <Pressable
+                      accessibilityLabel={`${fork.localBranchName} branch behind ${fork.remoteRefName}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded: expandedRows.has(key) }}
                       className="min-h-14 flex-row items-center gap-3 px-4 py-3"
                       onPress={() => loadBranchDetails(branch, key, fork.remoteRefName)}
                     >
@@ -541,6 +556,9 @@ export function VersionControlRouteView({
                     className="overflow-hidden rounded-[20px] border border-border bg-card"
                   >
                     <Pressable
+                      accessibilityLabel={`${stash.message}, ${stash.refName}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded: expandedRows.has(key) }}
                       className="min-h-14 flex-row items-center gap-3 px-4 py-3"
                       onPress={() => loadStashDetails(stash)}
                     >
@@ -723,6 +741,9 @@ export function VersionControlRouteView({
                     className="overflow-hidden rounded-[20px] border border-border bg-card"
                   >
                     <Pressable
+                      accessibilityLabel={`${remote.name} remote`}
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded: remoteExpanded }}
                       className="min-h-14 flex-row items-center gap-3 px-4 py-3"
                       onPress={() => toggleExpanded(key)}
                     >
@@ -812,6 +833,9 @@ export function VersionControlRouteView({
                       return (
                         <View key={remoteBranch.fullRefName} className="border-t border-border/70">
                           <Pressable
+                            accessibilityLabel={`${remote.name}/${remoteBranch.name} branch`}
+                            accessibilityRole="button"
+                            accessibilityState={{ expanded: branchExpanded }}
                             className="min-h-12 flex-row items-center gap-2 px-4 py-3"
                             onPress={() => toggleExpanded(branchKey)}
                           >
