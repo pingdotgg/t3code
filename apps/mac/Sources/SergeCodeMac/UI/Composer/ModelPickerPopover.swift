@@ -445,6 +445,9 @@ private struct ProviderFilterRow: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .animation(Motion.feedback, value: isHovering)
+        // Selection is otherwise conveyed by color alone — this row has no
+        // checkmark, so without the trait the active filter is inaudible.
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -502,7 +505,11 @@ private struct ModelPickerRow: View {
                     .foregroundStyle(AlpineTheme.forest)
                     .frame(width: 22, height: 22)
                     .background(AlpineTheme.accent, in: Circle())
+                    // Zero opacity keeps the layout stable but leaves the glyph
+                    // in the accessibility tree, where it reads as a checkmark
+                    // on every row including the unselected ones.
                     .opacity(isSelected ? 1 : 0)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 7)
@@ -515,6 +522,8 @@ private struct ModelPickerRow: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .animation(Motion.feedback, value: isHovering)
+        // Selection is otherwise conveyed by color alone.
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var capabilityLabel: String? {

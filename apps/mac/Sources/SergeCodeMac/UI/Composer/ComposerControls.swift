@@ -87,11 +87,18 @@ private struct ComposerSegmentLabel: View {
     var body: some View {
         HStack(spacing: 6) {
             if let leadingDot {
-                Image(systemName: "circle.fill")
+                let dot = Image(systemName: "circle.fill")
                     .font(.system(size: 7))
                     .foregroundStyle(leadingDot)
                     .shadow(color: leadingDot.opacity(0.9), radius: 3)
-                    .symbolEffect(.bounce, value: dotPulse)
+                // The effort dot changes often; its bounce is decoration the
+                // user opted out of, unlike the two modifiers below which are
+                // already gated.
+                if Motion.reduceMotion {
+                    dot
+                } else {
+                    dot.symbolEffect(.bounce, value: dotPulse)
+                }
             }
             Image(systemName: icon)
                 .font(.system(size: 13, weight: .medium))
@@ -661,23 +668,42 @@ struct ContextMeterView: View {
 
     var body: some View {
         if let fraction = status.usedFraction {
-            HStack(spacing: 5) {
-                Circle()
-                    .trim(from: 0, to: max(0.02, fraction))
-                    .stroke(meterColor(fraction), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .background(Circle().stroke(.quaternary, lineWidth: 2.5))
-                    .frame(width: 12, height: 12)
-                Text("Context \(Int((fraction * 100).rounded()))%")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
+            // Hovering is the pointer affordance, but the numbers behind it
+            // (limit, remaining, the near-full warning) must not be
+            // pointer-exclusive — the button makes them clickable, keyboard
+            // focusable, and reachable by the VoiceOver cursor.
+            Button {
+                // A click landing inside the 400 ms hover delay would otherwise
+                // be immediately undone by the pending timer.
+                hoverTask?.cancel()
+                hoverTask = nil
+                showDetails.toggle()
+            } label: {
+                HStack(spacing: 5) {
+                    Circle()
+                        .trim(from: 0, to: max(0.02, fraction))
+                        .stroke(
+                            meterColor(fraction),
+                            style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .background(Circle().stroke(.quaternary, lineWidth: 2.5))
+                        .frame(width: 12, height: 12)
+                    Text("Context \(Int((fraction * 100).rounded()))%")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .onHover { scheduleDetails(hovering: $0) }
             .popover(isPresented: $showDetails, arrowEdge: .top) {
                 ContextMeterDetails(status: status, fraction: fraction, tint: meterColor(fraction))
             }
+            .accessibilityLabel("Context window")
+            .accessibilityValue(accessibilityValue(fraction))
+            .accessibilityHint("Shows exact token usage")
             .onDisappear {
                 hoverTask?.cancel()
                 hoverTask = nil
@@ -691,6 +717,21 @@ struct ContextMeterView: View {
                 .foregroundStyle(.secondary)
                 .help("\(status.usedTokens.formatted()) context tokens used; this model reports no window limit")
         }
+    }
+
+    /// Everything the details popover shows, spoken in one go — the ring is an
+    /// undescribed shape, so the percent alone would be the whole story.
+    private func accessibilityValue(_ fraction: Double) -> String {
+        let percent = Int((fraction * 100).rounded())
+        var value = "\(percent)% used, \(status.usedTokens.formatted()) tokens"
+        if let maxTokens = status.maxTokens {
+            value += " of \(maxTokens.formatted()), "
+            value += "\(max(0, maxTokens - status.usedTokens).formatted()) remaining"
+        }
+        if fraction >= 0.9 {
+            value += ". Nearly full — the provider may compact older history soon"
+        }
+        return value
     }
 
     private func meterColor(_ fraction: Double) -> Color {

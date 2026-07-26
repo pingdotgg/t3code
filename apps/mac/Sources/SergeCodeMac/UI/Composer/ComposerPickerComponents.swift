@@ -146,7 +146,11 @@ struct ComposerPickerChoiceRow: View {
                     .foregroundStyle(AlpineTheme.forest)
                     .frame(width: 22, height: 22)
                     .background(accent, in: Circle())
+                    // Zero opacity keeps the layout stable but leaves the glyph
+                    // in the accessibility tree, where it reads as a checkmark
+                    // on every row including the unselected ones.
                     .opacity(isSelected ? 1 : 0)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 7)
@@ -162,6 +166,8 @@ struct ComposerPickerChoiceRow: View {
         // Selection changes ease the tile, checkmark, and row wash into the
         // new choice's color instead of snapping.
         .animation(Motion.feedback, value: isSelected)
+        // Selection is otherwise conveyed by color alone.
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var rowBackground: Color {

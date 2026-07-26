@@ -36,6 +36,9 @@ public struct ComposerBar: View {
     @UIState private var defersSuggestionWork = false
     /// Local Cmd+V monitor token while the composer text field is focused.
     @UIState private var pasteMonitor: Any?
+    /// Host window of this composer, published by `ComposerWindowAnchor` so the
+    /// Cmd+V monitor can tell its own window's key events from other windows'.
+    @UIState private var windowBox = ComposerWindowBox()
 
     /// When set, the next send rewinds the origin thread to just before this
     /// message. Cleared on send, draft clear, or thread switch because edit
@@ -56,6 +59,10 @@ public struct ComposerBar: View {
     // actor) can read these caps without hopping back to MainActor.
     nonisolated private static let maxAttachments = 8
     nonisolated private static let maxAttachmentBytes = 10 * 1024 * 1024
+    /// Same wording `AttachmentFileEncoder` uses, so the paste, drop, and
+    /// paperclip paths all explain the cap identically instead of two of them
+    /// failing silently.
+    nonisolated private static let capMessage = "At most \(maxAttachments) attachments per message."
 
     public init(model: AppModel, accent: Color) {
         self.model = model
@@ -118,6 +125,9 @@ public struct ComposerBar: View {
 
     private var sendHelp: String {
         if showsStop { return "Stop the current turn" }
+        // `canSend` folds the connection in, so the disabled button has to say
+        // which of the two reasons it is disabled for.
+        if model.connection != .ready { return "Not connected — \(model.connection.statusText)" }
         return isThreadRunning ? "Send now - steers the running agent" : "Send message"
     }
 
@@ -254,8 +264,11 @@ public struct ComposerBar: View {
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
                     .disabled(attachments.count >= Self.maxAttachments)
-                    .help("Attach images")
-                    .accessibilityLabel("Attach images")
+                    // A disabled control has to state its reason; at the cap
+                    // the button is the only place that can.
+                    .help(attachments.count >= Self.maxAttachments ? Self.capMessage : "Attach images")
+                    .accessibilityLabel(
+                        attachments.count >= Self.maxAttachments ? Self.capMessage : "Attach images")
 
                     TextEditor(text: draftBinding)
                         .font(SurgeTypography.composer)
@@ -267,6 +280,7 @@ public struct ComposerBar: View {
                         .frame(minHeight: 22, maxHeight: 120)
                         .fixedSize(horizontal: false, vertical: true)
                         .background(ComposerDropTargetConfigurator())
+                        .background(ComposerWindowAnchor(box: windowBox))
                         .overlay(alignment: .topLeading) {
                             if draft.isEmpty {
                                 // Matches NSTextView's text origin (no top
@@ -315,7 +329,15 @@ public struct ComposerBar: View {
                             }
                             // Swallow Enter when there's nothing to send so an
                             // empty draft doesn't collect stray newlines.
-                            if canSend { send() }
+                            if canSend {
+                                send()
+                            } else if !trimmedDraft.isEmpty || !attachments.isEmpty {
+                                // There *was* something to send — the connection
+                                // is what blocked it, so say so instead of
+                                // eating the key with no feedback at all.
+                                model.lastError =
+                                    "Not connected (\(model.connection.statusText)) — your draft is kept; press Return again once connected."
+                            }
                             return .handled
                         }
                         // Arrow keys move the highlight within an open
@@ -372,7 +394,6 @@ public struct ComposerBar: View {
                         .buttonStyle(.glass)
                         .buttonBorderShape(.circle)
                         .tint(.red)
-                        .keyboardShortcut(".", modifiers: .command)
                         .help("Stop the current turn")
                         .accessibilityLabel("Stop the current turn")
                         .transition(Motion.materialize)
@@ -382,6 +403,7 @@ public struct ComposerBar: View {
             }
             .padding(.horizontal, 2)
             .padding(.vertical, 4)
+            .background(stopShortcutHolder)
         }
         .padding(12)
         .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.composer))
@@ -477,6 +499,28 @@ public struct ComposerBar: View {
         }
     }
 
+    /// Cmd+. must cancel a running turn regardless of what the composer looks
+    /// like. The visible stop controls take turns being mounted (compact
+    /// button vs. smart button) and SwiftUI honors only one shortcut per view,
+    /// so the shortcut lives here instead — mounted for the whole run.
+    @ViewBuilder
+    private var stopShortcutHolder: some View {
+        if isThreadRunning {
+            Button {
+                Task { await model.cancelCurrentTurn() }
+            } label: {
+                EmptyView()
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(".", modifiers: .command)
+            .frame(width: 0, height: 0)
+            .clipped()
+            .opacity(0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+
     @ViewBuilder
     private var smartSendStopButton: some View {
         styledSmartSendStopButton(active: showsStop || canSend)
@@ -541,9 +585,11 @@ public struct ComposerBar: View {
         } label: {
             Group {
                 switch (dictation.state, dictation.modelStatus) {
-                case (_, .downloading(let fraction)):
-                    ProgressView(value: fraction)
-                        .progressViewStyle(.circular)
+                // FluidAudio reports `fractionCompleted` per sub-download, so a
+                // determinate ring visibly runs backwards each time the next
+                // file starts. Spin indeterminately instead.
+                case (_, .downloading):
+                    ProgressView()
                         .controlSize(.small)
                 case (.processing, _):
                     ProgressView()
@@ -672,6 +718,9 @@ public struct ComposerBar: View {
         // Queued sends are deferred; an edit-resend must not silently become
         // an append later — drop the edit identity when queueing.
         clearSubmittedDraft()
+        // Clicking the tray button unmounts it (canQueue goes false), so
+        // without this the next follow-up needs a click back into the editor.
+        editorFocused = true
         model.enqueueMessage(text: text, attachments: outgoing)
     }
 
@@ -918,7 +967,11 @@ public struct ComposerBar: View {
         let imageProviders = providers.filter {
             $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
         }
-        guard !imageProviders.isEmpty, attachments.count < Self.maxAttachments else { return }
+        guard !imageProviders.isEmpty else { return }
+        guard attachments.count < Self.maxAttachments else {
+            attachmentError = Self.capMessage
+            return
+        }
         attachFromProviders(imageProviders, to: threadID)
     }
 
@@ -942,7 +995,14 @@ public struct ComposerBar: View {
         let imageProviders = providers.filter {
             $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
         }
-        guard !imageProviders.isEmpty, attachments.count < Self.maxAttachments else { return false }
+        guard !imageProviders.isEmpty else { return false }
+        guard attachments.count < Self.maxAttachments else {
+            attachmentError = Self.capMessage
+            // Claim the drop anyway: the text view has image drags unregistered
+            // (see ComposerDropTargetConfigurator), so declining would just
+            // drop the image on the floor with no explanation.
+            return true
+        }
         attachFromProviders(imageProviders, to: threadID)
         return true
     }
@@ -971,7 +1031,7 @@ public struct ComposerBar: View {
     private static func loadFileURL(from provider: NSItemProvider) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
             _ = provider.loadObject(ofClass: URL.self) { item, error in
-                if let url = item as? URL {
+                if let url = item {
                     continuation.resume(returning: url)
                 } else {
                     continuation.resume(throwing: error ?? CocoaError(.fileReadUnknown))
@@ -989,16 +1049,36 @@ public struct ComposerBar: View {
         removePasteMonitor()
         let model = self.model
         let attachmentError = $attachmentError
+        let windowBox = self.windowBox
         pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // A local monitor sees key-downs for every window in the process.
+            // Sibling AppKit windows (New Session, Settings, About) live
+            // outside this scene, so their pastes must be handed straight back.
+            guard let composerWindow = windowBox.window, event.window === composerWindow else {
+                return event
+            }
             let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
             guard flags == .command,
                 event.charactersIgnoringModifiers?.lowercased() == "v"
             else { return event }
-            let images = Pasteboard.imagePayloads()
-            guard !images.isEmpty else { return event }
             guard let threadID = model.selectedThreadID else { return event }
             let existingCount = model.composerDraft(for: threadID).attachments.count
-            guard existingCount < ComposerBar.maxAttachments else { return event }
+            // Everything below runs inline in key-event dispatch, and reading
+            // the pasteboard means disk reads plus a hash of every byte — so
+            // probe the flavors first, and never read more images than there
+            // is room for (one, just to tell an image paste from a text one,
+            // when the draft is already at the cap).
+            let probe: [NSPasteboard.PasteboardType] = [
+                .png, .tiff, .fileURL, NSPasteboard.PasteboardType("public.jpeg"),
+            ]
+            guard NSPasteboard.general.availableType(from: probe) != nil else { return event }
+            let room = ComposerBar.maxAttachments - existingCount
+            let images = Pasteboard.imagePayloads(limit: max(1, room))
+            guard !images.isEmpty else { return event }
+            guard room > 0 else {
+                attachmentError.wrappedValue = ComposerBar.capMessage
+                return nil
+            }
             Task { @MainActor in
                 let (encoded, encodeError) = await AttachmentFileEncoder.encodeFromData(
                     images, existingCount: existingCount,
@@ -1023,6 +1103,42 @@ public struct ComposerBar: View {
         if let pasteMonitor {
             NSEvent.removeMonitor(pasteMonitor)
             self.pasteMonitor = nil
+        }
+    }
+}
+
+// MARK: - Window identity
+
+/// Mutable box so the escaping Cmd+V monitor closure can read the composer's
+/// current window without capturing the View struct. Weak: a closed window must
+/// not be kept alive by a stale monitor.
+@MainActor private final class ComposerWindowBox {
+    weak var window: NSWindow?
+}
+
+/// Publishes the composer's host window into `ComposerWindowBox`. The window is
+/// only ever overwritten with a real one — on teardown the box's weak reference
+/// clears itself, so a transient detach can't leave a bogus identity behind.
+private struct ComposerWindowAnchor: NSViewRepresentable {
+    let box: ComposerWindowBox
+
+    func makeNSView(context: Context) -> NSView {
+        let anchor = WindowReportingView(frame: .zero)
+        anchor.box = box
+        return anchor
+    }
+
+    func updateNSView(_ anchor: NSView, context: Context) {
+        (anchor as? WindowReportingView)?.box = box
+        if let window = anchor.window { box.window = window }
+    }
+
+    private final class WindowReportingView: NSView {
+        weak var box: ComposerWindowBox?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { box?.window = window }
         }
     }
 }
