@@ -292,14 +292,61 @@ jobs:
       - name: Publish the updater manifest to main
         if: steps.signing.outputs.enabled == 'true' && !inputs.draft
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/windows/updater/latest.json
-          if (git diff --cached --quiet) {
-            Write-Host "Manifest unchanged; nothing to commit."
-            exit 0
+          # Written through the Contents API rather than `git push` from this
+          # checkout, because the checkout is stale by the time we get here —
+          # a release build takes the better part of an hour, and `main` can
+          # easily have moved. A plain push would then be rejected *after* the
+          # release is already public, stranding users on a new installer that
+          # the feed never advertises.
+          #
+          # The API takes the current blob sha as an optimistic-concurrency
+          # token, so a write that loses a race fails cleanly and can simply be
+          # retried against the new head. Re-reading the sha each attempt is
+          # what makes the retry correct rather than a clobber. It also avoids
+          # rebasing a working tree full of build output.
+          #
+          # Last-writer-wins is the right semantic for a "latest" feed, and the
+          # job's `concurrency` group already prevents two Windows releases
+          # from overlapping.
+          $ErrorActionPreference = "Stop"
+          # Inspect exit codes directly; a non-zero `gh` is expected on the
+          # first read when the file does not exist yet.
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $repo = "${{ github.repository }}"
+          $path = "apps/windows/updater/latest.json"
+          $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))
+          $message = "chore: publish Windows updater manifest for ${{ inputs.version }} [skip release]"
+
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            $sha = gh api "repos/$repo/contents/${path}?ref=main" --jq .sha
+            $arguments = @(
+              "api", "--method", "PUT", "repos/$repo/contents/$path",
+              "-f", "message=$message",
+              "-f", "content=$content",
+              "-f", "branch=main"
+            )
+            # Absent on the very first publish, when there is no blob to replace.
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($sha)) {
+              $arguments += @("-f", "sha=$sha")
+            }
+
+            gh @arguments
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Published the updater manifest to main."
+              exit 0
+            }
+
+            Write-Host "Attempt ${attempt}: main moved under the write. Retrying."
+            Start-Sleep -Seconds (5 * $attempt)
           }
-          # `[skip release]` marks this as automation, per AGENTS.md.
-          git commit -m "chore: publish Windows updater manifest for ${{ inputs.version }} [skip release]"
-          git push origin HEAD:main
+
+          Write-Error ("Could not publish $path to main after 5 attempts. " +
+            "The GitHub Release is already live, so clients will not see this " +
+            "version until the manifest lands: commit " +
+            "apps/windows/updater/latest.json from the release run's artifacts " +
+            "by hand, or re-run this workflow.")
+          exit 1

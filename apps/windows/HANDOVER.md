@@ -297,6 +297,16 @@ A release asset cannot be the feed, because it has no stable URL.
 at all, and every Windows client would start 404ing. Committing the manifest
 mirrors how `release-mac.yml` commits the Sparkle appcast, for the same reason.
 
+The commit goes through the GitHub Contents API, not `git push` from the
+release checkout. By the time that step runs, the checkout is an hour stale and
+`main` may well have moved; a plain push would be rejected _after_ the release
+is already public, stranding users on a new installer the feed never
+advertises. The API takes the current blob sha as an optimistic-concurrency
+token, so a write that loses a race fails cleanly and is retried against the
+new head — five attempts with backoff. If all five fail the step says exactly
+what to do by hand, because at that point the release is live and the feed is
+the only thing missing.
+
 The endpoint 404s until the first signed, published release. That is fine —
 the updater treats an unreachable feed as "no update available", and the
 plugin is inert until `pubkey` is filled in anyway.
