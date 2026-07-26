@@ -37,6 +37,13 @@ struct WindowSizingTests {
 
     @Test("a concrete proposal is filled exactly, whatever the content wants")
     func concreteProposalFills() {
+        // This branch is the layout answer, not a sizing probe: SwiftUI offers
+        // the column its actual width and the view has to report that it fills
+        // it. Answering `.infinity` here would tell the split view the detail
+        // column wants infinite width in ordinary layout, which is a different
+        // bug entirely — the window maximum comes from the unbounded probe,
+        // which answers `.infinity` unconditionally, and the `window-size`
+        // probe checks `contentMaxSize` stays unbounded at every step of a run.
         let size = resolved(
             ProposedViewSize(width: 640, height: 900),
             natural: CGSize(width: 938, height: 1412))

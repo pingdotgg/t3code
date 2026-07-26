@@ -1049,6 +1049,22 @@
                 NSApp.terminate(nil)
                 return
             }
+            // A window whose maximum has become finite is capped, whatever the
+            // number. Checked at every step below rather than once, so a cap
+            // that only appears after a particular resize, toggle, or content
+            // change cannot slip through: the clamp answers the unbounded probe
+            // with `.infinity`, and this is what holds it to that.
+            var maximumWentFinite = false
+            func assertUnboundedMaximum(_ tag: String) {
+                let maximum = window.contentMaxSize
+                guard maximum.width < 10000 || maximum.height < 10000 else { return }
+                maximumWentFinite = true
+                UIProbeAssertions.fail(
+                    "max-size",
+                    "contentMaxSize went finite at \(tag): "
+                        + "\(Int(maximum.width))x\(Int(maximum.height))")
+            }
+
             func log(_ tag: String) {
                 let f = window.frame
                 print(
@@ -1057,7 +1073,10 @@
                         + "content=\(Int(window.contentLayoutRect.width))x\(Int(window.contentLayoutRect.height)) "
                         + "minSize=\(Int(window.minSize.width))x\(Int(window.minSize.height)) "
                         + "contentMinSize=\(Int(window.contentMinSize.width))x\(Int(window.contentMinSize.height)) "
+                        + "contentMaxSize=\(Int(min(window.contentMaxSize.width, 99999)))x"
+                        + "\(Int(min(window.contentMaxSize.height, 99999))) "
                         + "autosave='\(window.frameAutosaveName)' restorable=\(window.isRestorable)")
+                assertUnboundedMaximum(tag)
             }
             log("initial")
             logSplitViews(window)
@@ -1121,6 +1140,12 @@
             // `NSApp.terminate` because the terminate path always reports
             // success, and a caller watching the status would read a broken
             // clamp as green.
+            assertUnboundedMaximum("end-of-run")
+            if !maximumWentFinite {
+                UIProbeAssertions.pass(
+                    "max-size", "contentMaxSize stayed unbounded across every step")
+            }
+
             let status = UIProbeAssertions.verdict()
             fflush(stdout)
             guard status == 0 else { exit(status) }
