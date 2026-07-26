@@ -2,6 +2,17 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { parseDiffAnchors, resolveCommentAnchor } from "./diffAnchors.ts";
 
+const RENAME_PATCH = [
+  "diff --git a/old.ts b/new.ts",
+  "similarity index 90%",
+  "--- a/old.ts",
+  "+++ b/new.ts",
+  "@@ -1,2 +1,2 @@",
+  " keep",
+  "-dropped",
+  "+added",
+].join("\n");
+
 const PATCH = [
   "diff --git a/src/a.ts b/src/a.ts",
   "index 1111111..2222222 100644",
@@ -41,19 +52,17 @@ describe("parseDiffAnchors", () => {
     expect(anchors.has("/dev/null")).toBe(false);
   });
 
-  it("exposes a renamed file under both paths", () => {
-    const anchors = parseDiffAnchors(
-      [
-        "diff --git a/old.ts b/new.ts",
-        "similarity index 90%",
-        "--- a/old.ts",
-        "+++ b/new.ts",
-        "@@ -1,2 +1,2 @@",
-        " keep",
-        "+added",
-      ].join("\n"),
-    );
+  it("exposes a renamed file under both paths with both names recorded", () => {
+    const anchors = parseDiffAnchors(RENAME_PATCH);
     expect(anchors.get("old.ts")).toBe(anchors.get("new.ts"));
+    expect(anchors.get("new.ts")?.oldPath).toBe("old.ts");
+    expect(anchors.get("new.ts")?.newPath).toBe("new.ts");
+  });
+
+  it("records a null counterpart path for adds and deletes", () => {
+    const anchors = parseDiffAnchors(PATCH);
+    expect(anchors.get("src/new.ts")?.oldPath).toBeNull();
+    expect(anchors.get("src/new.ts")?.newPath).toBe("src/new.ts");
   });
 
   it("unquotes git's C-quoted paths", () => {
@@ -93,9 +102,10 @@ describe("resolveCommentAnchor", () => {
   const anchors = parseDiffAnchors(PATCH);
 
   it("accepts a right-side line inside the diff", () => {
-    expect(resolveCommentAnchor({ anchors, path: "src/a.ts", line: 12, side: "RIGHT" })).toBe(
-      "RIGHT",
-    );
+    expect(resolveCommentAnchor({ anchors, path: "src/a.ts", line: 12, side: "RIGHT" })).toEqual({
+      side: "RIGHT",
+      path: "src/a.ts",
+    });
   });
 
   it("rejects a line outside the diff", () => {
@@ -109,13 +119,16 @@ describe("resolveCommentAnchor", () => {
   });
 
   it("prefers the right side when no side is given", () => {
-    expect(resolveCommentAnchor({ anchors, path: "src/a.ts", line: 13, side: null })).toBe("RIGHT");
+    expect(resolveCommentAnchor({ anchors, path: "src/a.ts", line: 13, side: null })?.side).toBe(
+      "RIGHT",
+    );
   });
 
   it("tolerates leading ./ in model-supplied paths", () => {
-    expect(resolveCommentAnchor({ anchors, path: "./src/a.ts", line: 11, side: null })).toBe(
-      "RIGHT",
-    );
+    expect(resolveCommentAnchor({ anchors, path: "./src/a.ts", line: 11, side: null })).toEqual({
+      side: "RIGHT",
+      path: "src/a.ts",
+    });
   });
 
   it("rejects unknown files and null lines", () => {
@@ -123,5 +136,26 @@ describe("resolveCommentAnchor", () => {
       resolveCommentAnchor({ anchors, path: "src/missing.ts", line: 1, side: null }),
     ).toBeNull();
     expect(resolveCommentAnchor({ anchors, path: "src/a.ts", line: null, side: null })).toBeNull();
+  });
+
+  it("rewrites a renamed file's path to the side GitHub expects", () => {
+    const renamed = parseDiffAnchors(RENAME_PATCH);
+    // The model cites the pre-rename name; RIGHT must be posted as the new one.
+    expect(resolveCommentAnchor({ anchors: renamed, path: "old.ts", line: 2, side: null })).toEqual(
+      {
+        side: "RIGHT",
+        path: "new.ts",
+      },
+    );
+    expect(
+      resolveCommentAnchor({ anchors: renamed, path: "new.ts", line: 2, side: "LEFT" }),
+    ).toEqual({ side: "LEFT", path: "old.ts" });
+  });
+
+  it("keeps the only known path for an added file", () => {
+    expect(resolveCommentAnchor({ anchors, path: "src/new.ts", line: 1, side: null })).toEqual({
+      side: "RIGHT",
+      path: "src/new.ts",
+    });
   });
 });

@@ -43,36 +43,53 @@ export function partitionReviewComments(
       continue;
     }
     const requestedSide = comment.side === "LEFT" || comment.side === "RIGHT" ? comment.side : null;
-    const side =
+    // The resolved anchor also carries the path GitHub expects for the chosen
+    // side, which differs from the model's spelling on renames.
+    const anchor =
       anchors === null
-        ? (requestedSide ?? "RIGHT")
+        ? { side: requestedSide ?? "RIGHT", path: normalizeCommentPath(path) }
         : resolveCommentAnchor({ anchors, path, line, side: requestedSide });
-    if (side === null) {
+    if (anchor === null) {
       unanchored.push(comment);
       continue;
     }
     anchorable.push({
-      path: anchors === null ? path : normalizeCommentPath(path),
+      path: anchor.path,
       body: `**${comment.severity}:** ${body}`,
       line,
-      side,
+      side: anchor.side,
     });
   }
 
   return { anchorable, unanchored };
 }
 
+/**
+ * Why the findings below the summary are not inline.
+ *
+ * - `off-diff`: they cite lines outside the diff, so GitHub cannot anchor them.
+ * - `inline-rejected`: GitHub refused the inline batch, so *every* finding was
+ *   moved into the body — including ones that were anchorable on their own.
+ */
+export type UnanchoredReason = "off-diff" | "inline-rejected";
+
+const UNANCHORED_HEADINGS: Record<UnanchoredReason, string> = {
+  "off-diff": "### Could not anchor",
+  "inline-rejected": "### Inline comments could not be posted",
+};
+
 export function buildReviewBody(input: {
   readonly findings: AutoReviewFindings;
   readonly unanchored: ReadonlyArray<AutoReviewInlineComment>;
   readonly modelSelection: ModelSelection;
   readonly headSha: string;
+  readonly unanchoredReason?: UnanchoredReason;
 }): string {
   const sections = [input.findings.summary.trim()];
   if (input.unanchored.length > 0) {
     sections.push(
       "",
-      "### Could not anchor",
+      UNANCHORED_HEADINGS[input.unanchoredReason ?? "off-diff"],
       ...input.unanchored.map(
         (comment) =>
           `- **${comment.severity}** \`${comment.path}\`${comment.line != null ? `:${comment.line}` : ""} — ${comment.body.trim()}`,

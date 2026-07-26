@@ -593,6 +593,49 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("does not blame inline comments on an unrelated field validation", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed({
+          exitCode: ChildProcessSpawner.ExitCode(1),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          stdout: JSON.stringify({
+            message: "Validation Failed",
+            errors: [
+              {
+                resource: "PullRequestReview",
+                field: "path",
+                code: "invalid",
+                message: "path is not valid",
+              },
+            ],
+          }),
+          stderr: "gh: Validation Failed (HTTP 422)",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .submitPullRequestReview({
+          cwd: "/repo",
+          reference: "12",
+          commitId: "abc",
+          body: "review",
+          event: "COMMENT",
+          comments: [{ path: "a.ts", body: "bad", line: 9, side: "RIGHT" }],
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(
+        error._tag === "GitHubPullRequestReviewRejectedError" && error.inlineCommentRejected,
+        false,
+      );
+      assert.equal(error.message.includes("path is not valid"), true);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("does not blame inline comments on a body-only rejection", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

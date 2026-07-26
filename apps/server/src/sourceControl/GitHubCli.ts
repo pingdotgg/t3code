@@ -478,7 +478,12 @@ export function summarizeGitHubApiFailure(input: {
 }): { readonly apiMessage: string; readonly inlineCommentRejected: boolean } {
   const details: Array<string> = [];
   let topLevel = "";
-  let inlineCommentRejected = false;
+  // A named review-comment/thread resource is proof the inline batch was the
+  // problem. A bare comment-shaped `field` on an unnamed resource is only a
+  // hint — an unrelated validation using `field: "path"` should not cost an
+  // extra POST — so it is weighed after the message check below.
+  let resourceRejected = false;
+  let fieldHint = false;
 
   try {
     const parsed: unknown = JSON.parse(input.stdout.trim() || "{}");
@@ -503,15 +508,22 @@ export function summarizeGitHubApiFailure(input: {
           if (detail) {
             details.push(detail);
           }
+          const normalizedResource = resource.toLowerCase();
           if (
-            resource.toLowerCase().includes("pullrequestreviewcomment") ||
-            resource.toLowerCase().includes("pullrequestreviewthread") ||
-            field === "line" ||
-            field === "path" ||
-            field === "side" ||
-            field === "position"
+            normalizedResource.includes("pullrequestreviewcomment") ||
+            normalizedResource.includes("pullrequestreviewthread")
           ) {
-            inlineCommentRejected = true;
+            resourceRejected = true;
+          } else if (
+            resource === "" &&
+            (field === "line" ||
+              field === "path" ||
+              field === "side" ||
+              field === "position" ||
+              field === "start_line" ||
+              field === "start_side")
+          ) {
+            fieldHint = true;
           }
         }
       }
@@ -533,15 +545,17 @@ export function summarizeGitHubApiFailure(input: {
     stderrLine ||
     `GitHub rejected the review submission (exit ${input.exitCode}).`;
 
-  if (!inlineCommentRejected) {
-    const haystack = `${combined} ${topLevel} ${stderrLine}`.toLowerCase();
-    inlineCommentRejected =
-      haystack.includes("must be part of the diff") ||
-      haystack.includes("line must be") ||
-      haystack.includes("pull_request_review_thread");
-  }
+  const haystack = `${combined} ${topLevel} ${stderrLine}`.toLowerCase();
+  const messageRejected =
+    haystack.includes("must be part of the diff") ||
+    haystack.includes("line must be") ||
+    haystack.includes("pull_request_review_thread") ||
+    haystack.includes("pull_request_review_comment");
 
-  return { apiMessage, inlineCommentRejected };
+  return {
+    apiMessage,
+    inlineCommentRejected: resourceRejected || messageRejected || fieldHint,
+  };
 }
 
 function parsePullRequestNumber(reference: string): number | null {

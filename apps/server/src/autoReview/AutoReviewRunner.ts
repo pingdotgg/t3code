@@ -204,6 +204,9 @@ export const make = Effect.gen(function* () {
                     unanchored: findings.comments,
                     modelSelection: job.modelSelection as ModelSelection,
                     headSha: job.headSha,
+                    // Anchorable findings are in here too, so do not claim
+                    // they missed the diff — GitHub refused the whole batch.
+                    unanchoredReason: "inline-rejected",
                   }),
                   event,
                 }),

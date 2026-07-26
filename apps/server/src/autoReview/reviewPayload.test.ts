@@ -59,6 +59,31 @@ describe("reviewPayload", () => {
     expect(unanchored.map((comment) => comment.body)).toEqual(["off-diff", "wrong file"]);
   });
 
+  it("posts a renamed file under the path GitHub expects for the side", () => {
+    const renameAnchors = parseDiffAnchors(
+      [
+        "diff --git a/old.ts b/new.ts",
+        "--- a/old.ts",
+        "+++ b/new.ts",
+        "@@ -1,2 +1,2 @@",
+        " keep",
+        "-dropped",
+        "+added",
+      ].join("\n"),
+    );
+    const { anchorable } = partitionReviewComments(
+      [
+        { path: "old.ts", line: 2, side: null, severity: "important", body: "on the new file" },
+        { path: "new.ts", line: 2, side: "LEFT", severity: "nit", body: "on the old file" },
+      ],
+      renameAnchors,
+    );
+    expect(anchorable.map((comment) => [comment.path, comment.side])).toEqual([
+      ["new.ts", "RIGHT"],
+      ["old.ts", "LEFT"],
+    ]);
+  });
+
   it("resolves the anchorable side when the model omits or mislabels it", () => {
     const { anchorable } = partitionReviewComments(
       [
@@ -115,6 +140,23 @@ describe("reviewPayload", () => {
     expect(body).toContain("Could not anchor");
     expect(body).toContain("SergeCode auto-review");
     expect(body).toContain("abcdef123456");
+  });
+
+  it("does not claim findings missed the diff when GitHub refused the batch", () => {
+    const body = buildReviewBody({
+      findings: { summary: "Needs work", decision: "comment", comments: [] },
+      unanchored: [
+        { path: "a.ts", line: 9, side: "RIGHT", severity: "blocking", body: "was anchorable" },
+      ],
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+      headSha: "abcdef1234567890",
+      unanchoredReason: "inline-rejected",
+    });
+    expect(body).toContain("Inline comments could not be posted");
+    expect(body).not.toContain("Could not anchor");
   });
 
   it("normalizes empty paths out of findings", () => {

@@ -14,6 +14,10 @@
  */
 
 export interface DiffFileAnchors {
+  /** Pre-change path; null when the file was added. */
+  readonly oldPath: string | null;
+  /** Post-change path; null when the file was deleted. */
+  readonly newPath: string | null;
   /** Line numbers addressable with `side: "RIGHT"` (added + context lines). */
   readonly right: ReadonlySet<number>;
   /** Line numbers addressable with `side: "LEFT"` (removed + context lines). */
@@ -23,6 +27,16 @@ export interface DiffFileAnchors {
 export type DiffAnchors = ReadonlyMap<string, DiffFileAnchors>;
 
 export type DiffAnchorSide = "LEFT" | "RIGHT";
+
+export interface DiffAnchor {
+  readonly side: DiffAnchorSide;
+  /**
+   * Path GitHub expects for this side. Renames are reachable under both
+   * names, but the API only accepts the new path on RIGHT and the old path on
+   * LEFT — posting the model's spelling would 422 the batch.
+   */
+  readonly path: string;
+}
 
 const HUNK_HEADER = /^@@+ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
@@ -67,6 +81,8 @@ export function normalizeCommentPath(path: string): string {
 }
 
 interface MutableAnchors {
+  oldPath: string | null;
+  newPath: string | null;
   readonly right: Set<number>;
   readonly left: Set<number>;
 }
@@ -78,7 +94,12 @@ export function parseDiffAnchors(patch: string): DiffAnchors {
     if (existing) {
       return existing;
     }
-    const created: MutableAnchors = { right: new Set(), left: new Set() };
+    const created: MutableAnchors = {
+      oldPath: null,
+      newPath: null,
+      right: new Set(),
+      left: new Set(),
+    };
     files.set(path, created);
     return created;
   };
@@ -105,10 +126,15 @@ export function parseDiffAnchors(patch: string): DiffAnchors {
       const newPath = normalizeDiffPath(line.slice(4));
       const key = newPath ?? oldPath;
       current = key === null ? null : entryFor(key);
-      // Renames: comments may reference either name, so both keys share one
-      // anchor set.
-      if (current !== null && newPath !== null && oldPath !== null && newPath !== oldPath) {
-        files.set(oldPath, current);
+      if (current !== null) {
+        current.oldPath = oldPath;
+        current.newPath = newPath;
+        // Renames: comments may reference either name, so both keys share one
+        // anchor set. `resolveCommentAnchor` rewrites the path back to the
+        // side-correct one when it reports the match.
+        if (newPath !== null && oldPath !== null && newPath !== oldPath) {
+          files.set(oldPath, current);
+        }
       }
       inHunk = false;
       continue;
@@ -157,32 +183,41 @@ export function parseDiffAnchors(patch: string): DiffAnchors {
 }
 
 /**
- * Resolve the side a comment can actually be anchored on, or null when the
- * referenced line is absent from the diff. A comment without an explicit side
- * prefers RIGHT (the post-change file), matching how review models describe
- * findings.
+ * Resolve the side and path a comment can actually be anchored on, or null
+ * when the referenced line is absent from the diff. A comment without an
+ * explicit side prefers RIGHT (the post-change file), matching how review
+ * models describe findings.
  */
 export function resolveCommentAnchor(input: {
   readonly anchors: DiffAnchors;
   readonly path: string;
   readonly line: number | null;
   readonly side: DiffAnchorSide | null;
-}): DiffAnchorSide | null {
+}): DiffAnchor | null {
   if (input.line === null || !Number.isSafeInteger(input.line) || input.line <= 0) {
     return null;
   }
-  const entry = input.anchors.get(normalizeCommentPath(input.path));
+  const normalizedPath = normalizeCommentPath(input.path);
+  const entry = input.anchors.get(normalizedPath);
   if (!entry) {
     return null;
   }
+  const anchorFor = (side: DiffAnchorSide): DiffAnchor => ({
+    side,
+    // Fall back to the other name (and finally to the caller's spelling) for
+    // adds and deletes, where one side of the rename pair does not exist.
+    path:
+      (side === "LEFT" ? (entry.oldPath ?? entry.newPath) : (entry.newPath ?? entry.oldPath)) ??
+      normalizedPath,
+  });
   if (input.side === "LEFT") {
-    return entry.left.has(input.line) ? "LEFT" : null;
+    return entry.left.has(input.line) ? anchorFor("LEFT") : null;
   }
   if (input.side === "RIGHT") {
-    return entry.right.has(input.line) ? "RIGHT" : null;
+    return entry.right.has(input.line) ? anchorFor("RIGHT") : null;
   }
   if (entry.right.has(input.line)) {
-    return "RIGHT";
+    return anchorFor("RIGHT");
   }
-  return entry.left.has(input.line) ? "LEFT" : null;
+  return entry.left.has(input.line) ? anchorFor("LEFT") : null;
 }
