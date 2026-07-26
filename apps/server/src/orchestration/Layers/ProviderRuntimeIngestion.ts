@@ -1354,6 +1354,20 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * The subset of used ids whose message has not finalized yet (claimed this
+   * run and not retired). A base-key correlation is only valid while its id
+   * is in this set; a missing id means the provider recycled the key.
+   */
+  const liveAssistantMessageIdsByThread = yield* Cache.make<ThreadId, Set<string>>({
+    capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
+    timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
+    lookup: () =>
+      Effect.die(
+        new Error("live assistant message ids should be read through getLiveAssistantMessageIds"),
+      ),
+  });
+
+  /**
    * Correlation from a provider event's base key (itemId/turnId/eventId) to
    * the (possibly collision-adjusted) message id minted for it. Written for
    * turn-less delta mints and for every turn-scoped segment start, so the
@@ -1434,16 +1448,33 @@ const make = Effect.gen(function* () {
       }
       used.add(id);
       yield* Cache.set(usedAssistantMessageIdsByThread, input.threadId, used);
+      const live = yield* getLiveAssistantMessageIds(input.threadId);
+      live.add(id);
+      yield* Cache.set(liveAssistantMessageIdsByThread, input.threadId, live);
       return MessageId.make(id);
     });
 
   const retireAssistantMessageId = (threadId: ThreadId, messageId: MessageId) =>
-    getUsedAssistantMessageIds(threadId).pipe(
-      Effect.tap((ids) => {
-        ids.add(messageId);
-        return Cache.set(usedAssistantMessageIdsByThread, threadId, ids);
-      }),
-      Effect.asVoid,
+    Effect.gen(function* () {
+      const used = yield* getUsedAssistantMessageIds(threadId);
+      used.add(messageId);
+      yield* Cache.set(usedAssistantMessageIdsByThread, threadId, used);
+      const live = yield* getLiveAssistantMessageIds(threadId);
+      live.delete(messageId);
+      yield* Cache.set(liveAssistantMessageIdsByThread, threadId, live);
+    });
+
+  const getLiveAssistantMessageIds = (threadId: ThreadId) =>
+    Cache.getOption(liveAssistantMessageIdsByThread, threadId).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Cache.set(liveAssistantMessageIdsByThread, threadId, new Set<string>()).pipe(
+              Effect.as(new Set<string>()),
+            ),
+          onSome: Effect.succeed,
+        }),
+      ),
     );
 
   const claimedBaseKeyCacheKey = (threadId: ThreadId, baseKey: string) => `${threadId}:${baseKey}`;
@@ -1468,7 +1499,27 @@ const make = Effect.gen(function* () {
                 ),
               ),
             ),
-          onSome: Effect.succeed,
+          onSome: (cachedId) =>
+            Effect.gen(function* () {
+              const live = yield* getLiveAssistantMessageIds(input.threadId);
+              if (live.has(cachedId)) {
+                return cachedId;
+              }
+              // The message this base key pointed at already finalized: the
+              // provider recycled the key for a new message, so mint a fresh
+              // id and re-point the correlation instead of gluing into the
+              // old message.
+              const freshId = yield* claimAssistantMessageId({
+                threadId: input.threadId,
+                candidateId: assistantSegmentMessageId(input.baseKey, 0),
+              });
+              yield* Cache.set(
+                claimedAssistantMessageIdByBaseKey,
+                claimedBaseKeyCacheKey(input.threadId, input.baseKey),
+                freshId,
+              );
+              return freshId;
+            }),
         }),
       ),
     );

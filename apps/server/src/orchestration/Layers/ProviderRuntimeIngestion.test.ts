@@ -1018,6 +1018,73 @@ describe("ProviderRuntimeIngestion", () => {
     expect(second?.streaming).toBe(false);
   });
 
+  it("mints a fresh message id when a turn-less item id is recycled after completion", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // A turn-less (no turnId) assistant message streams and completes.
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-turnless-delta-1"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId: asItemId("item-turnless"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "first turn-less answer",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-turnless-completed-1"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId: asItemId("item-turnless"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-turnless" && !message.streaming,
+      ),
+    );
+
+    // The provider recycles the same item id for a new turn-less message.
+    // The base-key correlation must not point at the finalized message.
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-turnless-delta-2"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId: asItemId("item-turnless"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "second turn-less answer",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) => message.id === "assistant:item-turnless:again:1",
+      ),
+    );
+    const first = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-turnless",
+    );
+    expect(first?.text).toBe("first turn-less answer");
+    const second = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-turnless:again:1",
+    );
+    expect(second?.text).toBe("second turn-less answer");
+  });
+
   it("uses assistant item completion detail when no assistant deltas were streamed", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
