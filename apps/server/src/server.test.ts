@@ -1329,7 +1329,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "bearer-access-token",
         "dpop-access-token",
       ]);
-      assert.isTrue(body.auth.sessionCookieName.startsWith("t3_session_"));
+      assert.equal(body.auth.sessionCookieName, "t3_session");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
