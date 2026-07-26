@@ -2539,6 +2539,82 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("marks a command backgrounded when only its completion names the output file", () => {
+    const harness = makeHarness();
+    const outputDirectory = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "claude-task-output-late-"),
+    );
+    const outputFile = NodePath.join(outputDirectory, "local-bash-late.output");
+    NodeFS.writeFileSync(outputFile, "late worker: finished the sweep\n", "utf8");
+
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(outputDirectory, { recursive: true, force: true })),
+      );
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "task.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudex"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "sweep the repo", attachments: [] });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-local-bash-late",
+        tool_use_id: "toolu-local-bash-late",
+        description: "Sweep the repository",
+        task_type: "local_bash",
+        session_id: "sdk-session-local-bash-late",
+        uuid: "local-bash-late-task-started",
+      } as unknown as SDKMessage);
+      // No tool result ever reveals the output file: the completion is the
+      // first (and only) mention of it.
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-local-bash-late",
+        tool_use_id: "toolu-local-bash-late",
+        status: "completed",
+        output_file: outputFile,
+        summary: "Process exited with code 0.",
+        session_id: "sdk-session-local-bash-late",
+        uuid: "local-bash-late-task-completed",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+      const backgrounded = runtimeEvents.filter(
+        (event) => event.type === "task.updated" && event.payload.isBackgrounded === true,
+      );
+      assert.equal(backgrounded.length, 1);
+      const backgroundedEvent = backgrounded[0];
+      if (backgroundedEvent?.type === "task.updated") {
+        assert.equal(backgroundedEvent.payload.taskId, "task-local-bash-late");
+        assert.equal(backgroundedEvent.payload.entityType, "command");
+      }
+
+      // The drained output must land after the task is known to be
+      // backgrounded, or clients that hide foreground commands drop it.
+      const backgroundedIndex = runtimeEvents.indexOf(backgroundedEvent!);
+      const outputIndex = runtimeEvents.findIndex(
+        (event) =>
+          event.type === "task.progress" &&
+          event.payload.summary?.includes("late worker: finished") === true,
+      );
+      assert.ok(outputIndex > backgroundedIndex);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("emits thread token usage updates from Claude task progress", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

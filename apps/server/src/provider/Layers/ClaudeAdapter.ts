@@ -2280,15 +2280,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
-  const startBackgroundTaskOutputMonitor = Effect.fn(
-    "ClaudeAdapter.startBackgroundTaskOutputMonitor",
+  /**
+   * The single place a background output monitor comes into existence, and
+   * therefore the single place the backgrounded transition is published.
+   * Every path that starts reading an output file routes through here — the
+   * live poller, and the terminal drain that may be the first to see the file
+   * at all (`task_notification` carries `output_file` even when no tool result
+   * ever revealed one). Returns `adopted: false` when a monitor already
+   * existed, which is also the dedupe for the patch.
+   */
+  const adoptBackgroundTaskOutputMonitor = Effect.fn(
+    "ClaudeAdapter.adoptBackgroundTaskOutputMonitor",
   )(function* (context: ClaudeSessionContext, taskId: string, outputFile: string) {
-    if (context.backgroundTaskOutputMonitors.has(taskId)) return;
-    // The monitor map is also the dedupe for the backgrounded patch: both call
-    // sites (task_started with a known output file, and the tool result that
-    // first reveals one) funnel through here exactly once per task.
-    yield* markCommandTaskBackgrounded(context, taskId);
-
+    const existing = context.backgroundTaskOutputMonitors.get(taskId);
+    if (existing) {
+      return { monitor: existing, adopted: false } as const;
+    }
     const monitor: BackgroundTaskOutputMonitor = {
       outputFile,
       decoder: new TextDecoder(),
@@ -2296,6 +2303,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       fiber: undefined,
     };
     context.backgroundTaskOutputMonitors.set(taskId, monitor);
+    yield* markCommandTaskBackgrounded(context, taskId);
+    return { monitor, adopted: true } as const;
+  });
+
+  const startBackgroundTaskOutputMonitor = Effect.fn(
+    "ClaudeAdapter.startBackgroundTaskOutputMonitor",
+  )(function* (context: ClaudeSessionContext, taskId: string, outputFile: string) {
+    const { monitor, adopted } = yield* adoptBackgroundTaskOutputMonitor(
+      context,
+      taskId,
+      outputFile,
+    );
+    if (!adopted) return;
+
     const loop = Effect.gen(function* () {
       while (!context.stopped && context.openTaskIds.has(taskId)) {
         yield* drainBackgroundTaskOutput(context, taskId, monitor).pipe(
@@ -2320,16 +2341,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     "ClaudeAdapter.stopBackgroundTaskOutputMonitor",
   )(function* (context: ClaudeSessionContext, taskId: string, outputFile?: string) {
     let monitor = context.backgroundTaskOutputMonitors.get(taskId);
-    if (!monitor && outputFile) {
-      monitor = {
-        outputFile,
-        decoder: new TextDecoder(),
-        offset: 0n,
-        fiber: undefined,
-      };
-      context.backgroundTaskOutputMonitors.set(taskId, monitor);
+    if (!monitor) {
+      // A task whose output file is first revealed by its own completion was
+      // backgrounded all along; adopting it here (rather than hand-rolling a
+      // monitor) is what publishes that, so the drained output lands on a row
+      // the client actually shows.
+      if (!outputFile) return;
+      monitor = (yield* adoptBackgroundTaskOutputMonitor(context, taskId, outputFile)).monitor;
     }
-    if (!monitor) return;
 
     if (monitor.fiber && monitor.fiber.pollUnsafe() === undefined) {
       yield* Fiber.interrupt(monitor.fiber);
