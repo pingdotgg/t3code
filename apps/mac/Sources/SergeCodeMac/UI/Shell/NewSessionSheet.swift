@@ -595,6 +595,23 @@ private struct ProjectChoiceList: View {
     @Binding var searchText: String
 
     var body: some View {
+        content
+            // Keep the selection inside the filtered set: a hidden selection
+            // would still be submitted by Create Session. Retarget to the
+            // first match (nil when nothing matches) instead of clearing, so
+            // typing a query never strands the user without a selection.
+            .onChange(of: filteredProjects.map(\.id)) {
+                if let selectedProjectID,
+                    filteredProjects.contains(where: { $0.id == selectedProjectID })
+                {
+                    return
+                }
+                selectedProjectID = filteredProjects.first?.id
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if filteredProjects.isEmpty {
             ContentUnavailableView(
                 "No Matching Projects",
