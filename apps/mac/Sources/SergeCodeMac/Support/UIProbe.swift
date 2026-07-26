@@ -79,8 +79,15 @@
             // credit row with the Unsplash pill), then expand, snapshot,
             // collapse. The mock seeds plan progress on thread-1, but the
             // rail only mounts while a run is live — start one if needed and
-            // hand the thread back idle afterwards.
-            let planRunStarted = model.selectedThread?.status != .running
+            // hand the thread back idle afterwards. "Live" means the same two
+            // statuses ChatScreen mounts the rail for: a `.backgroundWork`
+            // thread is already active, so synthesizing a send there would
+            // mutate seeded probe state for no reason.
+            let planTurnIsLive =
+                model.selectedThread.map {
+                    $0.status == .running || $0.status == .backgroundWork
+                } ?? false
+            let planRunStarted = !planTurnIsLive
             if planRunStarted {
                 // `send` only returns when the mock finishes streaming, so
                 // fire it off and snapshot while the turn is still live. The
