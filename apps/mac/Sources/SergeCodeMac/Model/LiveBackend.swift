@@ -2785,7 +2785,8 @@ public actor LiveBackend: BackendService {
             settledOverride: shell.settledOverride,
             hasPendingApprovals: shell.hasPendingApprovals,
             hasPendingUserInput: shell.hasPendingUserInput,
-            activeSubagentCount: activeSubagentCount)
+            activeSubagentCount: activeSubagentCount,
+            autoReviewPhase: shell.autoReviewPhase)
         let presentedStatus =
             status == .running
             && staleRunningTurnKeys[shell.id] == runningLivenessTurnKey(for: shell)
@@ -2851,12 +2852,14 @@ public actor LiveBackend: BackendService {
 
     private func mapStatus(
         session: OrchestrationSession?, latestTurn: OrchestrationLatestTurn?, archivedAt: String?,
-        settledOverride: String?, hasPendingApprovals: Bool, hasPendingUserInput: Bool = false, activeSubagentCount: Int
+        settledOverride: String?, hasPendingApprovals: Bool, hasPendingUserInput: Bool = false,
+        activeSubagentCount: Int, autoReviewPhase: String? = nil
     ) -> ThreadStatus {
         switch ThreadStatusProjection.project(
             session: session, latestTurn: latestTurn, archivedAt: archivedAt,
             settledOverride: settledOverride, hasPendingApprovals: hasPendingApprovals,
-            hasPendingUserInput: hasPendingUserInput, activeSubagentCount: activeSubagentCount)
+            hasPendingUserInput: hasPendingUserInput, activeSubagentCount: activeSubagentCount,
+            autoReviewPhase: autoReviewPhase)
         {
         case .idle: return .idle
         case .running: return .running
@@ -2867,6 +2870,10 @@ public actor LiveBackend: BackendService {
         case .error: return .error
         case .archived: return .archived
         case .settled: return .settled
+        case .done: return .done
+        case .reviewing: return .reviewing
+        case .fixing: return .fixing
+        case .readyToMerge: return .readyToMerge
         }
     }
 

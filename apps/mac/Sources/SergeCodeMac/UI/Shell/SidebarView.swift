@@ -1126,6 +1126,10 @@ private struct SidebarThreadStatus: View {
         case .error: return .red
         case .archived: return .gray
         case .settled: return .secondary
+        case .done: return .secondary
+        case .reviewing: return AlpineTheme.sky
+        case .fixing: return AlpineTheme.accent
+        case .readyToMerge: return AlpineTheme.lichen
         }
     }
 
@@ -1142,6 +1146,10 @@ private struct SidebarThreadStatus: View {
         case .error: return "xmark.octagon.fill"
         case .archived: return "archivebox.fill"
         case .settled: return "checkmark.circle"
+        case .done: return "checkmark"
+        case .reviewing: return "magnifyingglass"
+        case .fixing: return "wrench.and.screwdriver"
+        case .readyToMerge: return "checkmark.seal"
         }
     }
 }
