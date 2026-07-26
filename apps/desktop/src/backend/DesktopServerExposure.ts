@@ -12,8 +12,8 @@ import {
 import {
   disableTailscaleServe,
   ensureTailscaleServe,
-  formatTailscaleServeUserMessage,
   readTailscaleStatus,
+  TailscaleCommandError,
 } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -250,12 +250,34 @@ export class DesktopTailscaleServeConfigureError extends Schema.TaggedErrorClass
     enabled: Schema.Boolean,
     port: Schema.NullOr(Schema.Number),
     localPort: Schema.Number,
-    reason: Schema.String,
+    /**
+     * Safe CLI summary extracted from known `tailscale serve` patterns.
+     * Never raw stderr; optional when this is a pure validation failure.
+     */
+    detail: Schema.optionalKey(Schema.String),
+    /** Admin URL from the CLI (`login.tailscale.com/f/serve...`) when present. */
     configureUrl: Schema.NullOr(Schema.String),
+    /** Immediate CLI failure when configuration was attempted; absent for validation-only errors. */
+    cause: Schema.optionalKey(TailscaleCommandError),
   },
 ) {
   override get message(): string {
-    return this.reason;
+    // Derive only from structural attributes — never cause.message.
+    if (this.localPort <= 0 && this.cause === undefined) {
+      return "Local backend is not ready yet. Try again in a moment.";
+    }
+    const parts: string[] = [];
+    if (this.detail !== undefined) {
+      parts.push(this.detail);
+    } else {
+      parts.push(
+        `Failed to configure Tailscale Serve for the local backend on port ${this.localPort}.`,
+      );
+    }
+    if (this.configureUrl !== null) {
+      parts.push(`To enable, visit: ${this.configureUrl}`);
+    }
+    return parts.join(" ");
   }
 }
 
@@ -539,7 +561,6 @@ export const make = Effect.gen(function* () {
             enabled: true,
             port: servePort,
             localPort,
-            reason: "Local backend is not ready yet. Try again in a moment.",
             configureUrl: null,
           });
         }
@@ -551,14 +572,19 @@ export const make = Effect.gen(function* () {
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
           Effect.mapError((cause) => {
+            // Lift only safe structural diagnostics from the CLI error; keep the
+            // full TailscaleCommandError as cause for the error chain/stack.
+            const exitDetail =
+              cause._tag === "TailscaleCommandExitError" ? cause.detail : undefined;
             const configureUrl =
               cause._tag === "TailscaleCommandExitError" ? (cause.configureUrl ?? null) : null;
             return new DesktopTailscaleServeConfigureError({
               enabled: true,
               port: servePort,
               localPort,
-              reason: formatTailscaleServeUserMessage(cause),
+              ...(exitDetail === undefined ? {} : { detail: exitDetail }),
               configureUrl,
+              cause,
             });
           }),
         );
