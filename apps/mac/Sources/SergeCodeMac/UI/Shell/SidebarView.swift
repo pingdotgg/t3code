@@ -13,8 +13,10 @@ struct SidebarView: View {
     let scenery: SceneryStore
     /// Collapses the sidebar column. Lives here (not in the window toolbar)
     /// so the close control sits inside the sidebar it acts on. No-op default
-    /// keeps standalone hosts (UIProbe) unchanged. `var`, not `let`: a `let`
-    /// with an initial value is excluded from the memberwise initializer.
+    /// keeps standalone hosts (UIProbe) unchanged. `var`, not `let`: on current
+    /// Swift a `let` with an initial value is excluded from the memberwise
+    /// initializer entirely (SE-0242's defaulted-`let` parameters never
+    /// shipped — verified against the toolchain that builds this target).
     var onToggleSidebar: () -> Void = {}
 
     private struct ProjectActionTarget {

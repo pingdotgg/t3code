@@ -70,20 +70,22 @@ struct RootView: View {
         // instead of an opaque split-view plate over the desktop glass.
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                // Reopen affordance: the close button lives inside the
-                // sidebar, so once the column is collapsed this is the only
-                // on-screen way back (besides the View menu / shortcut and
-                // edge-drag). Hidden while the sidebar is visible.
-                if columnVisibility == .detailOnly {
+            // Reopen affordance: the close button lives inside the
+            // sidebar, so once the column is collapsed this is the only
+            // on-screen way back (besides the View menu / shortcut and
+            // edge-drag). The whole item is gated so no empty navigation
+            // slot lingers while the sidebar is visible.
+            if columnVisibility == .detailOnly {
+                ToolbarItem(placement: .navigation) {
                     Button(action: toggleSidebar) {
                         Label("Show Sidebar", systemImage: "sidebar.leading")
                     }
                     .buttonStyle(AlpineToolbarIconButtonStyle())
+                    .help("Show Sidebar")
                     .transition(.opacity)
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
-            .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .navigation) {
                 ConnectionStatusPill(phase: model.connection)
             }
