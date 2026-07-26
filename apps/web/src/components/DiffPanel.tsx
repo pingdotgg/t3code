@@ -69,7 +69,7 @@ import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
-import { refreshVcsRefsOnMenuOpen } from "./vcsRefMenuRefresh";
+import { refreshVcsRefsOnMenuOpen, resetVcsRefQueryOrRefresh } from "./vcsRefMenuRefresh";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -200,6 +200,9 @@ export default function DiffPanel({
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [baseRefQuery, setBaseRefQuery] = useState("");
+  const [baseRefQueryForRefs, setBaseRefQueryForRefs] = useState("");
+  const [shouldRefreshBaseRefsAfterQueryReset, setShouldRefreshBaseRefsAfterQueryReset] =
+    useState(false);
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
     fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
@@ -373,7 +376,7 @@ export default function DiffPanel({
             cwd: branchDiffPreview.data.cwd,
             includeMatchingRemoteRefs: true,
             refKind: "local",
-            ...(baseRefQuery.trim().length > 0 ? { query: baseRefQuery.trim() } : {}),
+            ...(baseRefQueryForRefs.trim().length > 0 ? { query: baseRefQueryForRefs.trim() } : {}),
             limit: 100,
           },
         })
@@ -390,12 +393,25 @@ export default function DiffPanel({
             cwd: branchDiffPreview.data.cwd,
             includeMatchingRemoteRefs: true,
             refKind: "remote",
-            ...(baseRefQuery.trim().length > 0 ? { query: baseRefQuery.trim() } : {}),
+            ...(baseRefQueryForRefs.trim().length > 0 ? { query: baseRefQueryForRefs.trim() } : {}),
             limit: 100,
           },
         })
       : null,
   );
+  useEffect(() => {
+    if (!shouldRefreshBaseRefsAfterQueryReset || baseRefQueryForRefs.trim().length > 0) {
+      return;
+    }
+    setShouldRefreshBaseRefsAfterQueryReset(false);
+    localBranchRefs.refresh();
+    remoteBranchRefs.refresh();
+  }, [
+    baseRefQueryForRefs,
+    localBranchRefs.refresh,
+    remoteBranchRefs.refresh,
+    shouldRefreshBaseRefsAfterQueryReset,
+  ]);
   const baseRefChoices = buildBaseRefChoices(
     localBranchRefs.data?.refs.filter((ref) => ref.name !== selectedGitSource?.headRef) ?? [],
     remoteBranchRefs.data?.refs ?? [],
@@ -615,7 +631,17 @@ export default function DiffPanel({
                 if (!open) {
                   setBaseRefQuery("");
                 }
-                refreshVcsRefsOnMenuOpen(open, localBranchRefs.refresh, remoteBranchRefs.refresh);
+                refreshVcsRefsOnMenuOpen(open, () =>
+                  resetVcsRefQueryOrRefresh(
+                    baseRefQueryForRefs,
+                    () => {
+                      setBaseRefQueryForRefs("");
+                      setShouldRefreshBaseRefsAfterQueryReset(true);
+                    },
+                    localBranchRefs.refresh,
+                    remoteBranchRefs.refresh,
+                  ),
+                );
               }}
               onValueChange={(value) => {
                 if (!value) return;
@@ -647,7 +673,10 @@ export default function DiffPanel({
                       size="sm"
                       unstyled
                       value={baseRefQuery}
-                      onChange={(event) => setBaseRefQuery(event.target.value)}
+                      onChange={(event) => {
+                        setBaseRefQuery(event.target.value);
+                        setBaseRefQueryForRefs(event.target.value);
+                      }}
                     />
                   </div>
                 </div>

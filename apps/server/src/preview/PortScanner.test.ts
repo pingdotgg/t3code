@@ -10,6 +10,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -197,6 +198,35 @@ effectIt("replays snapshots without rescanning unchanged terminal registrations"
 
     expect(probeCount).toBe(2);
     expect(replayCount).toBe(1);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("uses the active polling interval after the initial scan finds a server", () => {
+  let probeCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: "p100\ncnode\nn*:3000\n",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain;
+    expect(probeCount).toBe(1);
+
+    yield* TestClock.adjust("9 seconds");
+    expect(probeCount).toBe(1);
+
+    yield* TestClock.adjust("1 second");
+    expect(probeCount).toBe(2);
   }).pipe(Effect.provide(layer));
 });
 

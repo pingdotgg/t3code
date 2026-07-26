@@ -18,6 +18,7 @@ import { LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -196,6 +197,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const hostPlatform = yield* HostProcessPlatform;
   const scanLock = yield* Semaphore.make(1);
   const notificationLock = yield* Semaphore.make(1);
+  const pollScheduleSignalRef = yield* Ref.make<Deferred.Deferred<void> | undefined>(undefined);
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
     listeners: new Set(),
@@ -328,6 +330,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ),
   );
 
+  const wakePollSchedule = Effect.gen(function* () {
+    const signal = yield* Ref.get(pollScheduleSignalRef);
+    if (signal !== undefined) {
+      yield* Deferred.succeed(signal, undefined).pipe(Effect.ignore);
+    }
+  });
+
   // Keep broad listener discovery as a fallback, but avoid a system-wide lsof
   // process every three seconds while the app is otherwise idle. Terminal PID
   // changes trigger immediate scans below; the periodic loop is only the
@@ -335,13 +344,21 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   yield* Effect.forkScoped(
     Effect.gen(function* () {
       while (true) {
+        const scheduleChanged = yield* Deferred.make<void>();
+        yield* Ref.set(pollScheduleSignalRef, scheduleChanged);
         const state = yield* Ref.get(stateRef);
-        yield* Effect.sleep(
-          state.retainCount > 0 && state.lastSnapshot.length > 0
-            ? ACTIVE_POLL_INTERVAL
-            : IDLE_POLL_INTERVAL,
+        const shouldPoll = yield* Effect.race(
+          Effect.sleep(
+            state.retainCount > 0 && state.lastSnapshot.length > 0
+              ? ACTIVE_POLL_INTERVAL
+              : IDLE_POLL_INTERVAL,
+          ).pipe(Effect.as(true)),
+          Deferred.await(scheduleChanged).pipe(Effect.as(false)),
         );
-        yield* pollTick();
+        yield* Ref.update(pollScheduleSignalRef, (current) =>
+          current === scheduleChanged ? undefined : current,
+        );
+        if (shouldPoll) yield* pollTick();
       }
     }),
   );
@@ -353,16 +370,23 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ]);
     if (wasIdle) {
       // Run an immediate scan + broadcast so the new retainer doesn't have
-      // to wait up to POLL_INTERVAL for the first emission.
+      // to wait for the periodic safety-net scan.
       yield* pollTick();
+      yield* wakePollSchedule;
     }
   });
 
-  const retain: PortDiscovery["Service"]["retain"] = Effect.acquireRelease(acquireRetention(), () =>
-    Ref.update(stateRef, (state) => ({
-      ...state,
-      retainCount: Math.max(0, state.retainCount - 1),
-    })),
+  const releaseRetention = Effect.fn("PortDiscovery.releaseRetention")(function* () {
+    const becameIdle = yield* Ref.modify(stateRef, (state) => {
+      const retainCount = Math.max(0, state.retainCount - 1);
+      return [state.retainCount > 0 && retainCount === 0, { ...state, retainCount }] as const;
+    });
+    if (becameIdle) yield* wakePollSchedule;
+  });
+
+  const retain: PortDiscovery["Service"]["retain"] = Effect.acquireRelease(
+    acquireRetention(),
+    releaseRetention,
   );
 
   const removeListener = (listener: Listener) =>
