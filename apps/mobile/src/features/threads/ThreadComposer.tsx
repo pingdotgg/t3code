@@ -46,6 +46,13 @@ import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import {
+  buildAdvisorMenuActions,
+  buildInteractionModeMenuAction,
+  buildRuntimeModeMenuAction,
+  clampMaxSubAgents,
+  parseComposerMenuEvent,
+} from "../../lib/interactionModes";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
@@ -106,6 +113,14 @@ export interface ThreadComposerProps {
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  /**
+   * Advisor mode: binds the model that delegated sub-agents run on, or clears
+   * it (null) for advise-only. Applied to the thread immediately rather than
+   * queued with the draft, matching the macOS composer.
+   */
+  readonly onUpdateExecutorModel: (executorModelSelection: ModelSelection | null) => void;
+  /** Advisor mode: caps how many executor sub-agents run concurrently. */
+  readonly onUpdateExecutorMaxSubAgents: (maxSubAgents: number) => void;
   readonly onReconnectEnvironment: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
 }
@@ -296,6 +311,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const currentInteractionMode = props.selectedThread.interactionMode ?? "default";
+  const currentExecutorModelSelection = props.selectedThread.executorModelSelection ?? null;
+  const currentExecutorMaxSubAgents = clampMaxSubAgents(props.selectedThread.executorMaxSubAgents);
   const connectionStatus = composerConnectionStatus({
     connectionError: props.connectionError,
     connectionState: props.connectionState,
@@ -377,6 +394,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           command: "plan",
           label: "/plan",
           description: "Switch to plan mode",
+        },
+        {
+          id: "cmd:advisor",
+          type: "slash-command" as const,
+          command: "advisor",
+          label: "/advisor",
+          description: "Switch to advisor mode — plan and delegate to executor sub-agents",
         },
         {
           id: "cmd:default",
@@ -522,7 +546,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
       if (
         item.type === "slash-command" &&
-        (item.command === "plan" || item.command === "default")
+        (item.command === "plan" || item.command === "default" || item.command === "advisor")
       ) {
         const result = replaceTextRange(
           draftMessage,
@@ -610,49 +634,23 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const optionsMenuActions = useMemo(
     () => [
       ...buildProviderOptionMenuActions(providerOptionDescriptors),
-      {
-        id: "options-runtime",
-        title: "Runtime",
-        subtitle:
-          currentRuntimeMode === "approval-required"
-            ? "Approve actions"
-            : currentRuntimeMode === "auto-accept-edits"
-              ? "Auto-accept edits"
-              : currentRuntimeMode === "auto"
-                ? "Auto"
-                : "Full access",
-        subactions: [
-          { id: "options:runtime:approval-required", title: "Approve actions" },
-          { id: "options:runtime:auto-accept-edits", title: "Auto-accept edits" },
-          { id: "options:runtime:auto", title: "Auto" },
-          { id: "options:runtime:full-access", title: "Full access" },
-        ].map((option) => {
-          const value = option.id.replace("options:runtime:", "");
-          return {
-            id: option.id,
-            title: option.title,
-            state: currentRuntimeMode === value ? ("on" as const) : undefined,
-          };
-        }),
-      },
-      {
-        id: "options-interaction",
-        title: "Interaction",
-        subtitle: currentInteractionMode === "plan" ? "Plan" : "Default",
-        subactions: [
-          { id: "options:interaction:default", title: "Default" },
-          { id: "options:interaction:plan", title: "Plan" },
-        ].map((option) => {
-          const value = option.id.replace("options:interaction:", "");
-          return {
-            id: option.id,
-            title: option.title,
-            state: currentInteractionMode === value ? ("on" as const) : undefined,
-          };
-        }),
-      },
+      buildRuntimeModeMenuAction(currentRuntimeMode),
+      buildInteractionModeMenuAction(currentInteractionMode),
+      ...buildAdvisorMenuActions({
+        interactionMode: currentInteractionMode,
+        executorModelSelection: currentExecutorModelSelection,
+        executorMaxSubAgents: currentExecutorMaxSubAgents,
+        modelOptions,
+      }),
     ],
-    [currentInteractionMode, currentRuntimeMode, providerOptionDescriptors],
+    [
+      currentExecutorMaxSubAgents,
+      currentExecutorModelSelection,
+      currentInteractionMode,
+      currentRuntimeMode,
+      modelOptions,
+      providerOptionDescriptors,
+    ],
   );
 
   // ── Menu handlers ────────────────────────────────────────
@@ -676,15 +674,30 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       });
       return;
     }
-    if (event.startsWith("options:runtime:")) {
-      const runtimeMode = event.slice("options:runtime:".length) as RuntimeMode;
-      props.onUpdateRuntimeMode(runtimeMode);
+    const parsed = parseComposerMenuEvent(event);
+    if (!parsed) {
       return;
     }
-    if (event.startsWith("options:interaction:")) {
-      const interactionMode = event.slice("options:interaction:".length) as ProviderInteractionMode;
-      props.onUpdateInteractionMode(interactionMode);
+    if (parsed.kind === "runtime-mode") {
+      props.onUpdateRuntimeMode(parsed.runtimeMode);
+      return;
     }
+    if (parsed.kind === "interaction-mode") {
+      props.onUpdateInteractionMode(parsed.interactionMode);
+      return;
+    }
+    if (parsed.kind === "executor-model") {
+      if (parsed.modelKey === null) {
+        props.onUpdateExecutorModel(null);
+        return;
+      }
+      const option = modelOptions.find((candidate) => candidate.key === parsed.modelKey);
+      if (option) {
+        props.onUpdateExecutorModel(option.selection);
+      }
+      return;
+    }
+    props.onUpdateExecutorMaxSubAgents(parsed.maxSubAgents);
   }
 
   return (

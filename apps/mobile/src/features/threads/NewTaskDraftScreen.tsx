@@ -31,6 +31,11 @@ import {
   providerOptionsConfigurationLabel,
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
+import {
+  buildInteractionModeMenuAction,
+  buildRuntimeModeMenuAction,
+  parseComposerMenuEvent,
+} from "../../lib/interactionModes";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
 import { useProjects } from "../../state/entities";
@@ -253,47 +258,14 @@ export function NewTaskDraftScreen(props: {
     [flow.selectedModel?.options, flow.selectedModelOption?.capabilities],
   );
 
+  // A draft thread does not exist on the server yet, so it has no executor
+  // binding to configure — advisor's executor model and sub-agent cap are
+  // offered in the thread composer once the thread is real.
   const optionsMenuActions = useMemo(
     () => [
       ...buildProviderOptionMenuActions(providerOptionDescriptors),
-      {
-        id: "options-runtime",
-        title: "Runtime",
-        subtitle:
-          flow.runtimeMode === "approval-required"
-            ? "Approve actions"
-            : flow.runtimeMode === "auto-accept-edits"
-              ? "Auto-accept edits"
-              : "Full access",
-        subactions: [
-          { id: "options:runtime:approval-required", title: "Approve actions" },
-          { id: "options:runtime:auto-accept-edits", title: "Auto-accept edits" },
-          { id: "options:runtime:full-access", title: "Full access" },
-        ].map((option) => {
-          const value = option.id.replace("options:runtime:", "");
-          return {
-            id: option.id,
-            title: option.title,
-            state: flow.runtimeMode === value ? ("on" as const) : undefined,
-          };
-        }),
-      },
-      {
-        id: "options-interaction",
-        title: "Interaction",
-        subtitle: flow.interactionMode === "plan" ? "Plan" : "Default",
-        subactions: [
-          { id: "options:interaction:default", title: "Default" },
-          { id: "options:interaction:plan", title: "Plan" },
-        ].map((option) => {
-          const value = option.id.replace("options:interaction:", "");
-          return {
-            id: option.id,
-            title: option.title,
-            state: flow.interactionMode === value ? ("on" as const) : undefined,
-          };
-        }),
-      },
+      buildRuntimeModeMenuAction(flow.runtimeMode),
+      buildInteractionModeMenuAction(flow.interactionMode),
     ],
     [flow.interactionMode, flow.runtimeMode, providerOptionDescriptors],
   );
@@ -401,16 +373,13 @@ export function NewTaskDraftScreen(props: {
       flow.setSelectedModelOptions(providerOptions);
       return;
     }
-    if (event.startsWith("options:runtime:")) {
-      flow.setRuntimeMode(
-        event.slice("options:runtime:".length) as Parameters<typeof flow.setRuntimeMode>[0],
-      );
+    const parsed = parseComposerMenuEvent(event);
+    if (parsed?.kind === "runtime-mode") {
+      flow.setRuntimeMode(parsed.runtimeMode);
       return;
     }
-    if (event.startsWith("options:interaction:")) {
-      flow.setInteractionMode(
-        event.slice("options:interaction:".length) as Parameters<typeof flow.setInteractionMode>[0],
-      );
+    if (parsed?.kind === "interaction-mode") {
+      flow.setInteractionMode(parsed.interactionMode);
     }
   }
 

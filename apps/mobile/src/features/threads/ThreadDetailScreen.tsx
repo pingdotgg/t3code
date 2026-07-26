@@ -91,6 +91,8 @@ export interface ThreadDetailScreenProps {
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly onUpdateThreadExecutorModel: (executorModelSelection: ModelSelection | null) => void;
+  readonly onUpdateThreadExecutorMaxSubAgents: (maxSubAgents: number) => void;
   readonly onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -599,6 +601,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onUpdateModelSelection={props.onUpdateThreadModelSelection}
                 onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                 onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
+                onUpdateExecutorModel={props.onUpdateThreadExecutorModel}
+                onUpdateExecutorMaxSubAgents={props.onUpdateThreadExecutorMaxSubAgents}
                 onExpandedChange={setComposerExpanded}
               />
             </View>
