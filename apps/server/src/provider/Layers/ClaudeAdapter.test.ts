@@ -2507,6 +2507,20 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(progress.payload.lastToolName, "local_bash");
       }
 
+      // Detaching to an output file is the only signal that this command
+      // outlives its tool row, so it must reach clients as `isBackgrounded`:
+      // that flag is what promotes the task to its own live row instead of a
+      // duplicate of the command's tool row.
+      const backgrounded = runtimeEvents.filter(
+        (event) => event.type === "task.updated" && event.payload.isBackgrounded === true,
+      );
+      assert.equal(backgrounded.length, 1);
+      const backgroundedEvent = backgrounded[0];
+      if (backgroundedEvent?.type === "task.updated") {
+        assert.equal(backgroundedEvent.payload.taskId, "task-local-bash-1");
+        assert.equal(backgroundedEvent.payload.entityType, "command");
+      }
+
       harness.query.emit({
         type: "system",
         subtype: "task_notification",

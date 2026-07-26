@@ -2247,10 +2247,47 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  /**
+   * Publish `isBackgrounded` for a command task the moment the runtime reveals
+   * it writes to a background output file. The SDK's `task_updated` patch only
+   * carries `is_backgrounded` for tasks it backgrounds itself, so without this
+   * a `Bash(run_in_background: true)` call is indistinguishable on the wire
+   * from an ordinary foreground command whose tool row already settled — and
+   * clients have nothing to hang a live background row off.
+   */
+  const markCommandTaskBackgrounded = Effect.fn("ClaudeAdapter.markCommandTaskBackgrounded")(
+    function* (context: ClaudeSessionContext, taskId: string) {
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "task.updated",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        payload: {
+          taskId: RuntimeTaskId.make(taskId),
+          entityType: "command",
+          isBackgrounded: true,
+        },
+        providerRefs: nativeProviderRefs(context),
+        raw: {
+          source: "claude.sdk.message",
+          method: "claude/background-task/backgrounded",
+          payload: { taskId },
+        },
+      });
+    },
+  );
+
   const startBackgroundTaskOutputMonitor = Effect.fn(
     "ClaudeAdapter.startBackgroundTaskOutputMonitor",
   )(function* (context: ClaudeSessionContext, taskId: string, outputFile: string) {
     if (context.backgroundTaskOutputMonitors.has(taskId)) return;
+    // The monitor map is also the dedupe for the backgrounded patch: both call
+    // sites (task_started with a known output file, and the tool result that
+    // first reveals one) funnel through here exactly once per task.
+    yield* markCommandTaskBackgrounded(context, taskId);
 
     const monitor: BackgroundTaskOutputMonitor = {
       outputFile,
