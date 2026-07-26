@@ -1,0 +1,67 @@
+import {
+  insertRankedSearchResult,
+  normalizeSearchQuery,
+  scoreQueryMatch,
+} from "@t3tools/shared/searchRanking";
+
+/** One selectable project row in the new-task picker. */
+export interface NewTaskProjectItem {
+  readonly key: string;
+  readonly title: string;
+  readonly workspaceRoot: string;
+}
+
+/** Matches beyond this are not worth scrolling past on a phone. */
+const MAX_RESULTS = 40;
+
+/**
+ * Filters the new-task project list, ranking title matches ahead of workspace
+ * path matches. An empty query keeps the list in its original order — the
+ * picker's default ordering is meaningful (most recently active repositories
+ * first), so ranking should only kick in once the user actually searches.
+ */
+export function filterNewTaskProjects<T extends NewTaskProjectItem>(
+  items: ReadonlyArray<T>,
+  query: string,
+): ReadonlyArray<T> {
+  const normalizedQuery = normalizeSearchQuery(query);
+  if (!normalizedQuery) {
+    return items;
+  }
+
+  const ranked: Array<{ item: T; score: number; tieBreaker: string }> = [];
+  for (const item of items) {
+    const title = item.title.toLowerCase();
+    const scores = [
+      scoreQueryMatch({
+        value: title,
+        query: normalizedQuery,
+        exactBase: 0,
+        prefixBase: 2,
+        boundaryBase: 4,
+        includesBase: 6,
+        fuzzyBase: 100,
+        boundaryMarkers: ["-", "_", "/", " "],
+      }),
+      scoreQueryMatch({
+        value: item.workspaceRoot.toLowerCase(),
+        query: normalizedQuery,
+        exactBase: 20,
+        prefixBase: 22,
+        boundaryBase: 24,
+        includesBase: 26,
+        boundaryMarkers: ["/", "-", "_"],
+      }),
+    ].filter((score): score is number => score !== null);
+
+    if (scores.length > 0) {
+      insertRankedSearchResult(
+        ranked,
+        { item, score: Math.min(...scores), tieBreaker: `${title}\u0000${item.key}` },
+        MAX_RESULTS,
+      );
+    }
+  }
+
+  return ranked.map((entry) => entry.item);
+}

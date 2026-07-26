@@ -15,6 +15,7 @@ import {
   MessageId,
   ThreadId,
 } from "@t3tools/contracts";
+import { applyCreatePullRequestSuffix } from "@t3tools/shared/createPullRequestPrompt";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
@@ -40,6 +41,7 @@ import {
   useComposerDraft,
 } from "../../state/use-composer-drafts";
 import { useBranches } from "../../state/queries";
+import { getAutoCreatePullRequest } from "../../state/use-auto-create-pull-request";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import {
   flattenQueuedThreadMessages,
@@ -617,11 +619,18 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         return null;
       }
       const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
-      const text = draft.text.trim();
+      const trimmedText = draft.text.trim();
       const draftModelSelection = draft.modelSelection ?? selectedModel;
-      if (text.length === 0 || !draftModelSelection) {
+      if (trimmedText.length === 0 || !draftModelSelection) {
         return null;
       }
+      // A queued new task is always a thread's first user message, so the
+      // auto-PR suffix applies whenever the toggle is on.
+      const text = applyCreatePullRequestSuffix({
+        text: trimmedText,
+        autoCreatePullRequest: getAutoCreatePullRequest(),
+        threadHasStarted: false,
+      });
       const workspaceSelection = draft.workspaceSelection;
       const mode = workspaceSelection?.mode ?? "local";
       // When the selection is the stand-in built from the queued snapshot,

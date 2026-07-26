@@ -2,8 +2,8 @@ import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
 import { SymbolView } from "expo-symbols";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { useMemo } from "react";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { useMemo, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
@@ -14,6 +14,7 @@ import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { filterNewTaskProjects } from "./newTaskProjectSearch";
 
 function deriveProjectEmptyState(catalogState: WorkspaceState): {
   readonly title: string;
@@ -107,7 +108,15 @@ export function NewTaskRouteScreen() {
     }
     return nextItems;
   }, [repositoryGroups]);
+  const [projectSearch, setProjectSearch] = useState("");
+  const visibleItems = useMemo(
+    () => filterNewTaskProjects(items, projectSearch),
+    [items, projectSearch],
+  );
   const projectEmptyState = deriveProjectEmptyState(catalogState);
+  // Search chrome only appears once there is something to filter — otherwise
+  // it would sit above the empty state as a dead control (macOS parity).
+  const showsProjectSearch = items.length > 0;
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -137,6 +146,32 @@ export function NewTaskRouteScreen() {
           paddingTop: 8,
         }}
       >
+        {showsProjectSearch ? (
+          <View
+            collapsable={false}
+            className="mb-3 flex-row items-center gap-2 rounded-[18px] bg-card px-3.5 py-2.5"
+          >
+            <SymbolView
+              name="magnifyingglass"
+              size={15}
+              tintColor={chevronColor}
+              type="monochrome"
+            />
+            <TextInput
+              accessibilityLabel="Search projects"
+              autoCapitalize="none"
+              autoCorrect={false}
+              className="flex-1 text-base font-t3-medium text-foreground"
+              clearButtonMode="while-editing"
+              onChangeText={setProjectSearch}
+              placeholder="Search projects"
+              placeholderTextColor={chevronColor}
+              returnKeyType="search"
+              value={projectSearch}
+            />
+          </View>
+        ) : null}
+
         {items.length === 0 ? (
           <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card px-6 py-8">
             {projectEmptyState.loading ? <ActivityIndicator color={accentColor} /> : null}
@@ -166,11 +201,20 @@ export function NewTaskRouteScreen() {
               </Pressable>
             )}
           </View>
+        ) : visibleItems.length === 0 ? (
+          <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card px-6 py-8">
+            <Text className="text-center text-lg font-t3-bold text-foreground">
+              No matching projects
+            </Text>
+            <Text className="text-center text-sm leading-normal text-foreground-muted">
+              {`No projects match \u201c${projectSearch.trim()}\u201d.`}
+            </Text>
+          </View>
         ) : (
           <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
-            {items.map((item, index) => {
+            {visibleItems.map((item, index) => {
               const isFirst = index === 0;
-              const isLast = index === items.length - 1;
+              const isLast = index === visibleItems.length - 1;
 
               return (
                 <Pressable

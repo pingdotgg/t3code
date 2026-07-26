@@ -4,6 +4,10 @@ import Foundation
 /// follow-up bar's Create PR button (sent as its own message) and the
 /// composer's auto-PR toggle (appended to the user's message). Plain
 /// user-message text either way, so it works identically across providers.
+///
+/// The mobile app carries the same wording in
+/// `packages/shared/src/createPullRequestPrompt.ts` (Swift cannot import that
+/// package). Keep the two in sync when either side changes.
 enum CreatePRPrompt {
     /// UserDefaults key for the composer's "create PR when done" toggle.
     static let autoCreateDefaultsKey = "autoCreatePROnSend"
