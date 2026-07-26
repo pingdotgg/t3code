@@ -194,6 +194,10 @@
     "./httpReadiness": {
       "types": "./src/httpReadiness.ts",
       "import": "./src/httpReadiness.ts"
+    },
+    "./devHome": {
+      "types": "./src/devHome.ts",
+      "import": "./src/devHome.ts"
     }
   },
   "scripts": {

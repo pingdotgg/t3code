@@ -3,7 +3,8 @@
 - `vp run dev` — Starts contracts, server, and web in watch mode.
 - `vp run dev:server` — Starts just the WebSocket server. The server process runs on Bun (`@effect/platform-bun` + `BunPtyAdapter`), but task running uses `vp run`.
 - `vp run dev:web` — Starts just the Vite dev server for the web app.
-- Dev commands implicitly use `~/.t3/dev`, keeping development state separate from `~/.t3/userdata`. An explicit `--home-dir <path>` stores state under `<path>/userdata`; the base directory remains available for caches, worktrees, and other shared data.
+- Dev commands run from a linked **git worktree** default to that worktree's gitignored `.t3`, even when `T3CODE_HOME` is set, storing state in `<worktree>/.t3/userdata`. Pass `--home-dir <path>` to choose another isolated directory explicitly. Submodules are not worktrees and keep the normal precedence.
+- From the **main checkout**, dev commands implicitly use `~/.t3/dev`, keeping development state separate from `~/.t3/userdata`. An explicit `--home-dir <path>` stores state under `<path>/userdata`; the base directory remains available for caches, worktrees, and other shared data.
 - Web dev commands do not auto-open a browser. Open the one-time pairing URL printed by the server so the first browser navigation is authenticated. Set `T3CODE_NO_BROWSER=0` only when interactive auto-open is intentional.
 - Pass dev-runner flags directly after the root task name, for example:
   `vp run dev --home-dir /tmp/t3code-dev`
