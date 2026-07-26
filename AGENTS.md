@@ -34,6 +34,27 @@ recoverable and private to your branch. If you have already stashed and lost
 something, `git fsck --unreachable` plus `git stash store <sha>` can recover
 it.
 
+### `--no-verify` is not the escape hatch for a failing hook
+
+120 commits across 45 threads used `git commit --no-verify`, after which
+nothing in this repo is formatted or linted locally.
+
+If the pre-commit hook fails with `Cannot find package 'vite-plus'`, the
+worktree was never bootstrapped: run `pnpm run setup` and commit normally. If
+a hook genuinely must be skipped, `VITE_GIT_HOOKS=0 git commit …` is the
+supported way (`.vite-hooks/_/h` honours it), and run `vp fmt` before opening
+the PR.
+
+### A push that fails on credentials is not a missing login
+
+`could not read Username for 'https://github.com'`, `Permission denied
+(publickey)`, and `You are not logged into any GitHub hosts` show up when the
+provider CLI runs with a redirected `HOME` that has no git or gh credentials —
+not because nobody is logged in. Do not run `gh auth login`; it will not fix
+it and it can disturb the real login. Report the failure and hand the push
+back to the user. 22 threads reached the end of their work and stranded there,
+most of them never shipping a PR.
+
 ### Start from current `main`
 
 Worktrees are created from whatever `main` pointed at when the thread started,
