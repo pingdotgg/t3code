@@ -267,14 +267,36 @@ Then:
 1. Put the **public** key in `tauri.conf.json` ▸ `plugins.updater.pubkey`.
 2. Add repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
    `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Both, or neither — see below.
-3. Publish `latest.json` alongside the installer on the GitHub Release; the
-   endpoint is already configured. The release workflow does not generate it
-   yet — that is the last piece.
+   That is the whole setup. The manifest is generated for you — see below.
 
 Leave `bundle.createUpdaterArtifacts` at `false` in `tauri.conf.json`. The
 release workflow turns it on with a `--config` override when it sees the
 signing secrets, and keys the uploaded artifact list off the same decision, so
 the two can never disagree.
+
+### Where the update feed lives
+
+Tauri's updater reads a manifest, not the release listing: it needs the
+installer's URL and the _contents_ of the `.sig` beside it. `tauri build` emits
+neither, so the workflow writes `apps/windows/updater/latest.json` after the
+build, uploads it as a release asset, and — for a **published** release —
+commits it to `main`.
+
+The feed URL is that committed path on `main`, not the release asset:
+
+```
+https://raw.githubusercontent.com/SergeSerb2/SergeCode/main/apps/windows/updater/latest.json
+```
+
+A release asset cannot be the feed, because it has no stable URL.
+`releases/latest/download/…` looks like one but is repository-wide: the next
+**macOS** release would make it resolve to a release carrying no `latest.json`
+at all, and every Windows client would start 404ing. Committing the manifest
+mirrors how `release-mac.yml` commits the Sparkle appcast, for the same reason.
+
+The endpoint 404s until the first signed, published release. That is fine —
+the updater treats an unreachable feed as "no update available", and the
+plugin is inert until `pubkey` is filled in anyway.
 
 Every half-configured combination fails in the `Resolve updater signing` step
 with a message pointing back here, rather than deep inside `tauri build`:
@@ -299,11 +321,11 @@ worth knowing before you reach for it:
   the wrong code.
 - **The `version` input must equal `apps/windows/version.json` exactly.**
 - **`draft` defaults to true**, and this is the switch that decides whether
-  anyone receives the update. GitHub's `releases/latest` never resolves to a
-  draft, and the updater endpoint is
-  `releases/latest/download/latest.json` — so a drafted release ships to
-  nobody until you publish it, by design, while the installer is still being
-  checked by hand. Uncheck `draft` when you actually intend to update users.
+  anyone receives the update. A draft's assets are not downloadable, so the
+  workflow deliberately does not commit the updater manifest for one — that
+  would hand every client a dead URL. Drafting is the safe default while the
+  installer is still being checked by hand; uncheck `draft` when you actually
+  intend to update users.
 
 Ask the user before running it at all, and before touching
 `apps/windows/version.json`.

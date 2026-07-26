@@ -9,13 +9,11 @@ name: Release Windows App
 # `workflow_dispatch` and the version input must match version.json exactly,
 # the same rule the macOS manual path follows.
 #
-# Draft vs published matters more than it looks: the updater endpoint is
-# `releases/latest/download/latest.json`, and GitHub's `releases/latest` never
-# resolves to a draft. A drafted release therefore ships to nobody until it is
-# published — which is the right default while the installer is still being
-# eyeballed by hand, and wrong the moment you actually intend to update users.
-# So it is an input rather than a constant: default to a draft for review, pass
-# `draft: false` to publish on demand.
+# Draft vs published decides whether anyone receives the update: a draft's
+# assets are not downloadable, so the updater manifest is only committed for a
+# published release. Drafting is the right default while the installer is still
+# being eyeballed by hand, and wrong the moment you intend to update users, so
+# it is an input rather than a constant — uncheck `draft` to publish on demand.
 #
 # See apps/windows/HANDOVER.md ▸ "Signing and updates" for the one-time setup.
 on:
@@ -147,7 +145,7 @@ jobs:
                 "See apps/windows/HANDOVER.md section 7.")
               exit 1
             }
-            $files = "$bundle/*.exe`n$bundle/*.sig"
+            $files = "$bundle/*.exe`n$bundle/*.sig`napps/windows/updater/latest.json"
           } else {
             Write-Host "No signing secrets configured: building an installer with no update feed."
             $files = "$bundle/*.exe"
@@ -175,14 +173,53 @@ jobs:
             pnpm exec tauri build
           }
 
+      # The updater reads a manifest, not the release listing: it needs the
+      # installer's URL and the *contents* of the `.sig` beside it. Tauri emits
+      # the installer and the signature but never this file, so without this
+      # step the endpoint has nothing to serve and every client sees "no
+      # update available" forever.
+      - name: Write the updater manifest
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $bundle = "apps/windows/src-tauri/target/release/bundle/nsis"
+          $installer = Get-ChildItem "$bundle/*-setup.exe" | Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "No NSIS installer found in $bundle."
+            exit 1
+          }
+          $signature = Join-Path $bundle "$($installer.Name).sig"
+          if (-not (Test-Path $signature)) {
+            Write-Error ("Updater signing was enabled but $signature does not " +
+              "exist. The build did not emit updater artifacts.")
+            exit 1
+          }
+
+          New-Item -ItemType Directory -Force -Path apps/windows/updater | Out-Null
+          $manifest = [ordered]@{
+            version  = "${{ inputs.version }}"
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              # Tauri's target key for 64-bit Windows. Add `windows-aarch64`
+              # here if an ARM installer is ever staged alongside it.
+              "windows-x86_64" = [ordered]@{
+                signature = (Get-Content $signature -Raw).Trim()
+                url = "https://github.com/${{ github.repository }}/releases/download/windows-v${{ inputs.version }}/$($installer.Name)"
+              }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 5 |
+            Set-Content apps/windows/updater/latest.json -Encoding utf8
+          Get-Content apps/windows/updater/latest.json
+
       - name: Publish the GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: windows-v${{ inputs.version }}
           name: SurgeCode for Windows ${{ inputs.version }}
-          # A draft is invisible to `releases/latest`, which is what the
-          # updater endpoint resolves — so this is also the switch that decides
-          # whether installed apps ever see the release.
+          # A draft's assets are not downloadable, so the manifest published
+          # below would point at URLs that 404. That is why the manifest is
+          # only committed for a published release.
           draft: ${{ inputs.draft }}
           # Loud rather than silent: a release that quietly ships without its
           # installer is worse than a failed workflow.
@@ -190,3 +227,27 @@ jobs:
           files: ${{ steps.signing.outputs.files }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
+      # The manifest is uploaded as a release asset above, but a release asset
+      # cannot be the *feed*: it has no stable URL. `releases/latest` is
+      # repository-wide, so the next macOS release would make it resolve to a
+      # release carrying no `latest.json` at all and every Windows client would
+      # start 404ing. The feed therefore lives at a fixed path on `main`,
+      # exactly as `release-mac.yml` commits the Sparkle appcast back.
+      #
+      # Skipped for drafts on purpose — a draft's assets are not downloadable,
+      # so advertising them would hand clients a dead URL.
+      - name: Publish the updater manifest to main
+        if: steps.signing.outputs.enabled == 'true' && !inputs.draft
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/windows/updater/latest.json
+          if (git diff --cached --quiet) {
+            Write-Host "Manifest unchanged; nothing to commit."
+            exit 0
+          }
+          # `[skip release]` marks this as automation, per AGENTS.md.
+          git commit -m "chore: publish Windows updater manifest for ${{ inputs.version }} [skip release]"
+          git push origin HEAD:main

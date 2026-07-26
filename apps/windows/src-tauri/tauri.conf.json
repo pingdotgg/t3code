@@ -62,7 +62,9 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://github.com/SergeSerb2/SergeCode/releases/latest/download/latest.json"],
+      "endpoints": [
+        "https://raw.githubusercontent.com/SergeSerb2/SergeCode/main/apps/windows/updater/latest.json"
+      ],
       "pubkey": "",
       "windows": {
         "installMode": "passive"
