@@ -1,12 +1,16 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { resolveDesktopRelaunchOptions } from "./resolveDesktopRelaunchOptions.ts";
+import {
+  buildAppImageRelaunchShellCommand,
+  posixShellSingleQuote,
+  resolveDesktopRelaunchPlan,
+} from "./resolveDesktopRelaunchOptions.ts";
 
-describe("resolveDesktopRelaunchOptions", () => {
-  it.effect("relaunches the outer AppImage path and keeps flag argv only", () =>
+describe("resolveDesktopRelaunchPlan", () => {
+  it.effect("schedules a delayed AppImage re-exec with flag argv only", () =>
     Effect.sync(() => {
-      const options = resolveDesktopRelaunchOptions({
+      const plan = resolveDesktopRelaunchPlan({
         appImagePath: "/home/user/T3-Code-0.0.28-x86_64.AppImage",
         execPath: "/tmp/.mount_t3_codXXXX/t3code",
         argv: [
@@ -16,34 +20,39 @@ describe("resolveDesktopRelaunchOptions", () => {
         ],
       });
 
-      assert.deepEqual(options, {
-        execPath: "/home/user/T3-Code-0.0.28-x86_64.AppImage",
+      assert.deepEqual(plan, {
+        kind: "appimage-delayed",
+        appImagePath: "/home/user/T3-Code-0.0.28-x86_64.AppImage",
         args: ["--no-sandbox"],
+        delayMs: 1_000,
       });
     }),
   );
 
-  it.effect("trims APPIMAGE and ignores empty values", () =>
+  it.effect("trims APPIMAGE and falls back to electron relaunch when empty", () =>
     Effect.sync(() => {
       assert.deepEqual(
-        resolveDesktopRelaunchOptions({
+        resolveDesktopRelaunchPlan({
           appImagePath: "  /opt/T3-Code.AppImage  ",
           execPath: "/tmp/.mount/app",
           argv: ["/tmp/.mount/app"],
         }),
         {
-          execPath: "/opt/T3-Code.AppImage",
+          kind: "appimage-delayed",
+          appImagePath: "/opt/T3-Code.AppImage",
           args: [],
+          delayMs: 1_000,
         },
       );
 
       assert.deepEqual(
-        resolveDesktopRelaunchOptions({
+        resolveDesktopRelaunchPlan({
           appImagePath: "   ",
           execPath: "/usr/bin/t3-code",
           argv: ["/usr/bin/t3-code", "--flag"],
         }),
         {
+          kind: "electron",
           execPath: "/usr/bin/t3-code",
           args: ["--flag"],
         },
@@ -53,16 +62,34 @@ describe("resolveDesktopRelaunchOptions", () => {
 
   it.effect("preserves packaged non-AppImage exec path and argv", () =>
     Effect.sync(() => {
-      const options = resolveDesktopRelaunchOptions({
+      const plan = resolveDesktopRelaunchPlan({
         appImagePath: null,
         execPath: "/Applications/T3 Code.app/Contents/MacOS/T3 Code",
         argv: ["/Applications/T3 Code.app/Contents/MacOS/T3 Code", "--inspect"],
       });
 
-      assert.deepEqual(options, {
+      assert.deepEqual(plan, {
+        kind: "electron",
         execPath: "/Applications/T3 Code.app/Contents/MacOS/T3 Code",
         args: ["--inspect"],
       });
+    }),
+  );
+});
+
+describe("buildAppImageRelaunchShellCommand", () => {
+  it.effect("quotes the AppImage path and delays before exec", () =>
+    Effect.sync(() => {
+      assert.equal(
+        buildAppImageRelaunchShellCommand({
+          appImagePath: "/home/user/T3 Code.AppImage",
+          args: ["--no-sandbox"],
+          delayMs: 1_000,
+        }),
+        `sleep 1.0 && exec ${posixShellSingleQuote("/home/user/T3 Code.AppImage")} ${posixShellSingleQuote("--no-sandbox")}`,
+      );
+
+      assert.equal(posixShellSingleQuote("it's"), `'it'\\''s'`);
     }),
   );
 });

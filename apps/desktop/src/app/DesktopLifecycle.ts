@@ -14,7 +14,8 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
-import { resolveDesktopRelaunchOptions } from "./resolveDesktopRelaunchOptions.ts";
+import { resolveDesktopRelaunchPlan } from "./resolveDesktopRelaunchOptions.ts";
+import { scheduleAppImageRelaunch } from "./scheduleAppImageRelaunch.ts";
 
 export class DesktopLifecycleRelaunchError extends Schema.TaggedErrorClass<DesktopLifecycleRelaunchError>()(
   "DesktopLifecycleRelaunchError",
@@ -28,7 +29,10 @@ export class DesktopLifecycleRelaunchError extends Schema.TaggedErrorClass<Deskt
   }
 }
 
-export { resolveDesktopRelaunchOptions } from "./resolveDesktopRelaunchOptions.ts";
+export {
+  resolveDesktopRelaunchOptions,
+  resolveDesktopRelaunchPlan,
+} from "./resolveDesktopRelaunchOptions.ts";
 
 export type DesktopLifecycleRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
@@ -157,23 +161,38 @@ export const make = DesktopLifecycle.of({
         yield* electronApp.exit(75);
         return;
       }
-      const relaunchOptions = resolveDesktopRelaunchOptions({
-        // AppImage runtime injects APPIMAGE; see resolveDesktopRelaunchOptions.
+      const relaunchPlan = resolveDesktopRelaunchPlan({
+        // AppImage runtime injects APPIMAGE; see resolveDesktopRelaunchPlan.
         appImagePath: process.env.APPIMAGE,
         execPath: process.execPath,
         argv: process.argv,
       });
       yield* logLifecycleInfo("desktop relaunch exec", {
         reason,
-        execPath: relaunchOptions.execPath,
-        argumentCount: relaunchOptions.args.length,
-        isAppImage: Boolean(process.env.APPIMAGE?.trim()),
+        kind: relaunchPlan.kind,
+        execPath:
+          relaunchPlan.kind === "appimage-delayed"
+            ? relaunchPlan.appImagePath
+            : relaunchPlan.execPath,
+        argumentCount: relaunchPlan.args.length,
+        ...(relaunchPlan.kind === "appimage-delayed" ? { delayMs: relaunchPlan.delayMs } : {}),
       });
       // Electron.relaunch spawns the new process while this one is still alive.
       // Release the single-instance lock first or the child immediately exits
       // after requestSingleInstanceLock() fails (looks like "restart never comes back").
       yield* electronApp.releaseSingleInstanceLock;
-      yield* electronApp.relaunch(relaunchOptions);
+      if (relaunchPlan.kind === "appimage-delayed") {
+        // Delayed shell re-exec avoids racing the AppImage FUSE unmount, which
+        // otherwise surfaces "Cannot mount AppImage, please check your FUSE setup."
+        yield* Effect.sync(() => {
+          scheduleAppImageRelaunch(relaunchPlan);
+        });
+      } else {
+        yield* electronApp.relaunch({
+          execPath: relaunchPlan.execPath,
+          args: relaunchPlan.args,
+        });
+      }
       yield* electronApp.exit(0);
     }).pipe(
       Effect.catchCause((cause) => {
