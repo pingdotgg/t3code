@@ -54,11 +54,109 @@ export class TailscaleCommandExitError extends Schema.TaggedErrorClass<Tailscale
     exitCode: Schema.Number,
     stdoutLength: Schema.optional(Schema.Number),
     stderrLength: Schema.Number,
+    /**
+     * Safe, human-readable summary derived from known CLI patterns.
+     * Never contains raw stderr (which may include secrets).
+     */
+    detail: Schema.optionalKey(Schema.String),
+    /**
+     * Admin URL from the CLI to enable Serve/HTTPS when the tailnet blocks it.
+     * Restricted to `https://login.tailscale.com/f/serve...`.
+     */
+    configureUrl: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message(): string {
-    return `tailscale ${this.subcommand} exited with code ${this.exitCode}.`;
+    return formatTailscaleCommandExitMessage({
+      subcommand: this.subcommand,
+      exitCode: this.exitCode,
+      detail: this.detail,
+      configureUrl: this.configureUrl,
+    });
   }
+}
+
+/** Admin console URL Tailscale prints when Serve/HTTPS is not enabled for the tailnet. */
+const TAILSCALE_SERVE_CONFIGURE_URL_PATTERN =
+  /https:\/\/login\.tailscale\.com\/f\/serve\?[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/i;
+
+export interface TailscaleServeDiagnostics {
+  readonly detail: string | null;
+  readonly configureUrl: string | null;
+}
+
+/**
+ * Extract a Tailscale Serve enablement URL from CLI text.
+ * Only accepts `https://login.tailscale.com/f/serve...` URLs.
+ */
+export function extractTailscaleServeConfigureUrl(text: string): string | null {
+  const match = text.match(TAILSCALE_SERVE_CONFIGURE_URL_PATTERN);
+  if (!match?.[0] || match[0].length > 500) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(match[0]);
+    if (parsed.protocol !== "https:") return null;
+    if (parsed.hostname !== "login.tailscale.com") return null;
+    if (!parsed.pathname.startsWith("/f/serve")) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Derive safe, user-facing diagnostics from `tailscale serve` stderr.
+ * Does not return raw stderr — tokens and other secrets must not leak.
+ */
+export function extractTailscaleServeDiagnostics(stderr: string): TailscaleServeDiagnostics {
+  const configureUrl = extractTailscaleServeConfigureUrl(stderr);
+
+  if (/Serve is not enabled on your tailnet/i.test(stderr)) {
+    return {
+      detail: "Serve is not enabled on your tailnet.",
+      configureUrl,
+    };
+  }
+
+  if (/does not support getting TLS certs/i.test(stderr)) {
+    return {
+      detail:
+        "This Tailscale account does not support getting TLS certificates required for HTTPS Serve.",
+      configureUrl,
+    };
+  }
+
+  if (/HTTPS is not enabled/i.test(stderr)) {
+    return {
+      detail: "HTTPS is not enabled for this tailnet.",
+      configureUrl,
+    };
+  }
+
+  return { detail: null, configureUrl };
+}
+
+export function formatTailscaleCommandExitMessage(input: {
+  readonly subcommand: "status" | "serve";
+  readonly exitCode: number;
+  readonly detail?: string | undefined;
+  readonly configureUrl?: string | undefined;
+}): string {
+  if (input.detail || input.configureUrl) {
+    const parts: string[] = [];
+    if (input.detail) {
+      parts.push(input.detail);
+    } else {
+      parts.push(`tailscale ${input.subcommand} exited with code ${input.exitCode}.`);
+    }
+    if (input.configureUrl) {
+      parts.push(`To enable, visit: ${input.configureUrl}`);
+    }
+    return parts.join(" ");
+  }
+  return `tailscale ${input.subcommand} exited with code ${input.exitCode}.`;
 }
 
 export class TailscaleCommandTimeoutError extends Schema.TaggedErrorClass<TailscaleCommandTimeoutError>()(
@@ -81,6 +179,20 @@ export const TailscaleCommandError = Schema.Union([
   TailscaleCommandTimeoutError,
 ]);
 export type TailscaleCommandError = typeof TailscaleCommandError.Type;
+
+/** User-facing message for any Tailscale CLI failure while configuring Serve. */
+export function formatTailscaleServeUserMessage(error: TailscaleCommandError): string {
+  switch (error._tag) {
+    case "TailscaleCommandSpawnError":
+      return "Could not run the tailscale CLI. Is Tailscale installed and on PATH?";
+    case "TailscaleCommandOutputError":
+      return "Could not read output from the tailscale CLI.";
+    case "TailscaleCommandTimeoutError":
+      return "The tailscale CLI timed out while configuring Serve.";
+    case "TailscaleCommandExitError":
+      return error.message;
+  }
+}
 
 export class TailscaleStatusParseError extends Schema.TaggedErrorClass<TailscaleStatusParseError>()(
   "TailscaleStatusParseError",
@@ -271,10 +383,13 @@ const runTailscaleCommand = (
         Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
       );
       if (exitCode !== 0) {
+        const diagnostics = extractTailscaleServeDiagnostics(stderr);
         return yield* new TailscaleCommandExitError({
           ...commandContext,
           exitCode,
           stderrLength: stderr.length,
+          ...(diagnostics.detail ? { detail: diagnostics.detail } : {}),
+          ...(diagnostics.configureUrl ? { configureUrl: diagnostics.configureUrl } : {}),
         });
       }
     }).pipe(

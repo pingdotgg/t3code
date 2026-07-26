@@ -93,7 +93,11 @@ import {
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
+import {
+  disableTailscaleServe,
+  ensureTailscaleServe,
+  formatTailscaleServeUserMessage,
+} from "@t3tools/tailscale";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
 // T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
@@ -430,6 +434,7 @@ export const makeServerLayer = Layer.unwrap(
                 Effect.catch((cause) =>
                   Effect.logWarning("Failed to configure Tailscale Serve", {
                     cause,
+                    message: formatTailscaleServeUserMessage(cause),
                     localPort,
                     servePort: config.tailscaleServePort,
                   }).pipe(Effect.as(null)),

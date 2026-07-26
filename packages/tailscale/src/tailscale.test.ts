@@ -13,6 +13,9 @@ import {
   buildTailscaleHttpsBaseUrl,
   disableTailscaleServe,
   ensureTailscaleServe,
+  extractTailscaleServeConfigureUrl,
+  extractTailscaleServeDiagnostics,
+  formatTailscaleServeUserMessage,
   isTailscaleIpv4Address,
   parseTailscaleMagicDnsName,
   parseTailscaleStatus,
@@ -253,8 +256,69 @@ describe("tailscale", () => {
       assert.notProperty(error, "command");
       assert.notProperty(error, "stderr");
       assert.notInclude(error.message, "tskey-auth-secret-token-value");
+      assert.equal(error.detail, undefined);
+      assert.equal(error.configureUrl, undefined);
     });
   });
+
+  it.effect("surfaces Tailscale Serve-not-enabled diagnostics without raw stderr", () => {
+    const configureUrl = "https://login.tailscale.com/f/serve?node=nExampleNodeIdForTests";
+    const stderr = [
+      "Serve is not enabled on your tailnet.",
+      "To enable, visit:",
+      "",
+      `         ${configureUrl}`,
+      "",
+      "tskey-auth-secret-token-value",
+    ].join("\n");
+    const layer = mockSpawnerLayer(() => ({
+      code: 1,
+      stderr,
+    }));
+
+    return Effect.gen(function* () {
+      const error = yield* ensureTailscaleServe({ localPort: 13773, servePort: 443 }).pipe(
+        Effect.flip,
+        Effect.provide(layer),
+      );
+
+      assert.instanceOf(error, TailscaleCommandExitError);
+      assert.equal(error.detail, "Serve is not enabled on your tailnet.");
+      assert.equal(error.configureUrl, configureUrl);
+      assert.equal(
+        error.message,
+        `Serve is not enabled on your tailnet. To enable, visit: ${configureUrl}`,
+      );
+      assert.equal(formatTailscaleServeUserMessage(error), error.message);
+      assert.notInclude(error.message, "tskey-auth-secret-token-value");
+      assert.notProperty(error, "stderr");
+    });
+  });
+
+  it.effect("extracts only Tailscale Serve configure URLs from CLI text", () =>
+    Effect.sync(() => {
+      const configureUrl = "https://login.tailscale.com/f/serve?node=abc123";
+      assert.equal(extractTailscaleServeConfigureUrl(`visit ${configureUrl} please`), configureUrl);
+      assert.equal(
+        extractTailscaleServeConfigureUrl("https://evil.example/f/serve?node=abc123"),
+        null,
+      );
+      const disabled = extractTailscaleServeDiagnostics(
+        "Serve is not enabled on your tailnet.\nTo enable, visit:\n\n  " + configureUrl,
+      );
+      assert.equal(disabled.detail, "Serve is not enabled on your tailnet.");
+      assert.equal(disabled.configureUrl, configureUrl);
+
+      const tlsUnsupported = extractTailscaleServeDiagnostics(
+        "500 Internal Server Error: your Tailscale account does not support getting TLS certs",
+      );
+      assert.equal(
+        tlsUnsupported.detail,
+        "This Tailscale account does not support getting TLS certificates required for HTTPS Serve.",
+      );
+      assert.equal(tlsUnsupported.configureUrl, null);
+    }),
+  );
 
   it.effect("disables tailscale serve through the process spawner service", () => {
     const commands: {

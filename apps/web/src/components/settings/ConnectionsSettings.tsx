@@ -137,6 +137,26 @@ import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectLis
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+
+/** Matches the admin URL Tailscale CLI prints when Serve is disabled on the tailnet. */
+const TAILSCALE_SERVE_CONFIGURE_URL_PATTERN =
+  /https:\/\/login\.tailscale\.com\/f\/serve\?[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/i;
+
+function extractTailscaleServeConfigureUrl(text: string): string | null {
+  const match = text.match(TAILSCALE_SERVE_CONFIGURE_URL_PATTERN);
+  if (!match?.[0] || match[0].length > 500) {
+    return null;
+  }
+  try {
+    const parsed = new URL(match[0]);
+    if (parsed.protocol !== "https:") return null;
+    if (parsed.hostname !== "login.tailscale.com") return null;
+    if (!parsed.pathname.startsWith("/f/serve")) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 
@@ -1984,11 +2004,25 @@ export function ConnectionsSettings() {
       const message =
         error instanceof Error ? error.message : "Failed to configure Tailscale HTTPS.";
       setDesktopServerExposureMutationError(message);
+      const configureUrl = extractTailscaleServeConfigureUrl(message);
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title: "Could not set up Tailscale HTTPS",
           description: message,
+          actionVariant: "outline",
+          ...(configureUrl
+            ? {
+                actionProps: {
+                  children: "Open setup",
+                  onClick: () => {
+                    void desktopBridge.openExternal(configureUrl).catch(() => {
+                      window.open(configureUrl, "_blank", "noopener,noreferrer");
+                    });
+                  },
+                },
+              }
+            : {}),
         }),
       );
     } finally {
