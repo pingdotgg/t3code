@@ -2539,6 +2539,94 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("leaves a subagent's completion output file alone", () => {
+    const harness = makeHarness();
+    const outputDirectory = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "claude-subagent-output-"),
+    );
+    const outputFile = NodePath.join(outputDirectory, "subagent.output");
+    NodeFS.writeFileSync(outputFile, "explore worker: read the migration\n", "utf8");
+
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(outputDirectory, { recursive: true, force: true })),
+      );
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "task.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudex"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "spawn a reviewer", attachments: [] });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-subagent-output",
+        tool_use_id: "toolu-subagent-output",
+        description: "Review the migration",
+        subagent_type: "Explore",
+        task_type: "local_agent",
+        session_id: "sdk-session-subagent-output",
+        uuid: "subagent-output-task-started",
+      } as unknown as SDKMessage);
+      // Subagent completions carry an output file just like background
+      // commands do; a readable one would be drained if the task were
+      // mistaken for a command.
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-subagent-output",
+        tool_use_id: "toolu-subagent-output",
+        status: "completed",
+        output_file: outputFile,
+        summary: "Review complete",
+        session_id: "sdk-session-subagent-output",
+        uuid: "subagent-output-task-completed",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+      assert.equal(
+        runtimeEvents.some(
+          (event) => event.type === "task.updated" && event.payload.isBackgrounded === true,
+        ),
+        false,
+      );
+      assert.equal(
+        runtimeEvents.some(
+          (event) => event.type === "task.updated" && event.payload.entityType === "command",
+        ),
+        false,
+      );
+      // The file's contents must never reach the subagent's progress log.
+      assert.equal(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "task.progress" &&
+            event.payload.summary?.includes("explore worker") === true,
+        ),
+        false,
+      );
+      const completed = runtimeEvents.find((event) => event.type === "task.completed");
+      assert.equal(completed?.type, "task.completed");
+      if (completed?.type === "task.completed") {
+        // The completion itself carries no task_type/subagent_type here, which
+        // is exactly why the classification has to come from task_started
+        // rather than from the output file.
+        assert.notEqual(completed.payload.entityType, "command");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("marks a command backgrounded when only its completion names the output file", () => {
     const harness = makeHarness();
     const outputDirectory = NodeFS.mkdtempSync(
@@ -2817,6 +2905,25 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(completed.payload.status, "completed");
         assert.equal(completed.payload.outputFile, "/tmp/task-meta-1-output.txt");
       }
+
+      // A subagent completion carries an `output_file` too. It must not be
+      // mistaken for a detached shell command: reclassifying the row as a
+      // command swaps its card on clients, and draining the file would pour
+      // `local_bash`-shaped progress into a subagent's log.
+      assert.equal(
+        runtimeEvents.some(
+          (event) => event.type === "task.updated" && event.payload.entityType === "command",
+        ),
+        false,
+      );
+      assert.equal(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "task.progress" &&
+            (event.payload.entityType === "command" || event.payload.lastToolName === "local_bash"),
+        ),
+        false,
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
