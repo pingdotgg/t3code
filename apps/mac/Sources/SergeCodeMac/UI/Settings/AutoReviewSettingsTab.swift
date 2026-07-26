@@ -7,7 +7,9 @@ struct AutoReviewSettingsTab: View {
     @UIState private var draft: AppSettings?
     @UIState private var jobs: [AppAutoReviewJob] = []
     @UIState private var isRefreshingJobs = false
+    @UIState private var loadError: String?
     @FocusState private var mentionFocused: Bool
+    @FocusState private var intervalFocused: Bool
 
     var body: some View {
         VStack(spacing: 18) {
@@ -110,6 +112,8 @@ struct AutoReviewSettingsTab: View {
                                     .textFieldStyle(.settings)
                                     .frame(width: 72)
                                     .multilineTextAlignment(.trailing)
+                                    .focused($intervalFocused)
+                                    .onSubmit { commitTextFields() }
                                     .disabled(!settings.autoReview.enabled)
                                 Text("sec")
                                     .foregroundStyle(.secondary)
@@ -179,7 +183,22 @@ struct AutoReviewSettingsTab: View {
             } else {
                 SettingsSection {
                     SettingsCardRow {
-                        if model.connection == .ready {
+                        if let loadError {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label(
+                                    "Could not load auto-review settings",
+                                    systemImage: "exclamationmark.triangle"
+                                )
+                                .foregroundStyle(.red)
+                                Text(loadError)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Button("Try Again") {
+                                    Task { await loadDraft() }
+                                }
+                                .controlSize(.small)
+                            }
+                        } else if model.connection == .ready {
                             ProgressView()
                                 .frame(maxWidth: .infinity)
                         } else {
@@ -191,19 +210,21 @@ struct AutoReviewSettingsTab: View {
             }
         }
         .animation(Motion.reveal, value: draft == nil)
-        .task {
-            await model.loadSettings()
-            var loaded = model.settings
-            // Merge live project list so overrides include all known projects.
-            if var settings = loaded {
-                settings.autoReview.projectOverrides = mergeProjectOverrides(
-                    existing: settings.autoReview.projectOverrides,
-                    projects: model.projects)
-                draft = settings
-            }
+        // A tab opened while the sidecar is still booting would load nothing
+        // and never retry, so key the task on the connection phase. Gated on
+        // `.ready` because `.reconnecting(attempt:)` bumps on every restart
+        // attempt and each of those loads could only fail again.
+        .task(id: model.connection) {
+            guard model.connection == .ready else { return }
+            if draft == nil { await loadDraft() }
             await refreshJobs()
         }
         .onChange(of: mentionFocused) { wasFocused, isFocused in
+            if wasFocused && !isFocused { commitTextFields() }
+        }
+        // Blur commits too: the interval is a free-text field, so leaving it
+        // for another control must not silently drop the typed value.
+        .onChange(of: intervalFocused) { wasFocused, isFocused in
             if wasFocused && !isFocused { commitTextFields() }
         }
         .onDisappear { commitTextFields() }
@@ -226,7 +247,9 @@ struct AutoReviewSettingsTab: View {
                     next.autoReview.modelInstanceID = option.instanceID
                     next.autoReview.modelID = option.modelID
                     draft = next
-                    Task { await model.saveSettings(next) }
+                    Task {
+                        if await model.saveSettings(next) == false { rollbackDraft() }
+                    }
                 })
         ) {
             // Keep the current selection visible (and selectable) even when it
@@ -392,7 +415,11 @@ struct AutoReviewSettingsTab: View {
                 var next = draft ?? current
                 next[keyPath: keyPath] = newValue
                 draft = next
-                Task { await model.saveSettings(next) }
+                // A rejected save must not leave the toggle showing a value the
+                // server never accepted.
+                Task {
+                    if await model.saveSettings(next) == false { rollbackDraft() }
+                }
             })
     }
 
@@ -409,8 +436,40 @@ struct AutoReviewSettingsTab: View {
     }
 
     private func commitTextFields() {
-        guard let draft else { return }
-        Task { await model.saveSettings(draft) }
+        guard let pending = draft else { return }
+        Task {
+            if await model.saveSettings(pending) == false { rollbackDraft() }
+        }
+    }
+
+    /// `loadSettings()` swallows its throw into the global `lastError` and
+    /// leaves `settings` untouched, so a still-nil `settings` afterwards is
+    /// the only signal that the load failed — without it the tab would sit on
+    /// an indeterminate spinner forever.
+    private func loadDraft() async {
+        loadError = nil
+        await model.loadSettings()
+        guard var settings = model.settings else {
+            loadError = model.lastError ?? "The server did not return settings."
+            return
+        }
+        // Merge live project list so overrides include all known projects.
+        settings.autoReview.projectOverrides = mergeProjectOverrides(
+            existing: settings.autoReview.projectOverrides,
+            projects: model.projects)
+        draft = settings
+    }
+
+    /// Discards an optimistic edit the server rejected. Re-applies the
+    /// project-override merge `loadDraft` does: assigning `model.settings`
+    /// raw would drop every project the server has no stored override for,
+    /// emptying the Projects list until the tab is reopened.
+    private func rollbackDraft() {
+        guard var settings = model.settings else { return }
+        settings.autoReview.projectOverrides = mergeProjectOverrides(
+            existing: settings.autoReview.projectOverrides,
+            projects: model.projects)
+        draft = settings
     }
 
     private func refreshJobs() async {

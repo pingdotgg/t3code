@@ -331,6 +331,22 @@ public struct DiffReviewView: View {
         if threadState?.isLoadingReviewDiff == true && files.isEmpty {
             ProgressView("Loading diff…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if files.isEmpty, let message = model.reviewDiffError(for: threadID) {
+            // A failed load is indistinguishable from an empty scope by the
+            // files alone, and review mode hides the composer that renders
+            // `lastError` — so the failure has to surface here or nowhere.
+            ContentUnavailableView {
+                Label("Couldn’t load diff", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button {
+                    Task { await model.loadReviewDiff(threadID: threadID) }
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if files.isEmpty {
             ContentUnavailableView(
                 "No Changes",
@@ -345,7 +361,7 @@ public struct DiffReviewView: View {
                 let effectiveMode = renderedMode
                 Group {
                     if isPreparing && !hasPreparedRows(for: selectedFileKey, mode: effectiveMode) {
-                        ProgressView()
+                        ProgressView("Preparing diff…")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         VStack(spacing: 0) {
