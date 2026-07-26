@@ -8,6 +8,8 @@ import {
   type OrchestrationV2ProviderThread,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunId,
+  SubagentActivationId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -365,6 +367,85 @@ layer("ProviderEventIngestorV2", (it) => {
       assert.equal(threadEvents[0]?.threadId, childThreadId);
       assert.equal(messageEvents[0]?.type, "message.updated");
       assert.equal(messageEvents[0]?.threadId, childThreadId);
+    }),
+  );
+
+  it.effect("does not replace explicit null run and node overrides with ambient ids", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const projectId = yield* idAllocator.allocate.project({
+        fixtureName: "provider-event-null-overrides",
+      });
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-event-null-overrides",
+        projectId,
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const ambientRunId = RunId.make("run:provider-event-null-overrides");
+      const ambientNodeId = NodeId.make("node:provider-event-null-overrides");
+      const subagentId = NodeId.make("node:provider-event-null-overrides:subagent");
+
+      const activationEvents = yield* ingestor.normalize({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+        runId: ambientRunId,
+        nodeId: ambientNodeId,
+        event: {
+          type: "subagent_activation.updated",
+          driver: CODEX_DRIVER,
+          activation: {
+            id: SubagentActivationId.make(
+              "node:provider-event-null-overrides:subagent:activation:1",
+            ),
+            threadId,
+            subagentId,
+            runId: null,
+            providerTurnId: null,
+            ordinal: 1,
+            status: "completed",
+            usage: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          },
+        },
+      });
+      const messageEvents = yield* ingestor.normalize({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+        runId: ambientRunId,
+        nodeId: ambientNodeId,
+        event: {
+          type: "message.updated",
+          driver: CODEX_DRIVER,
+          message: {
+            createdBy: "agent",
+            creationSource: "provider",
+            id: MessageId.make("message:provider-event-null-overrides"),
+            threadId,
+            runId: null,
+            nodeId: null,
+            role: "assistant",
+            text: "Detached provider message",
+            attachments: [],
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      });
+
+      assert.isUndefined(activationEvents[0]?.runId);
+      assert.equal(activationEvents[0]?.nodeId, subagentId);
+      assert.isUndefined(messageEvents[0]?.runId);
+      assert.isUndefined(messageEvents[0]?.nodeId);
     }),
   );
 });

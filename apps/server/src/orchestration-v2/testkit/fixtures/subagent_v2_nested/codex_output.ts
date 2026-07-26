@@ -26,7 +26,7 @@ function projectionById(
   return projection;
 }
 
-function assertCompletedProviderNativeSubagent(input: {
+function assertIdleProviderNativeSubagent(input: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly title: string;
   readonly result: string;
@@ -43,12 +43,20 @@ function assertCompletedProviderNativeSubagent(input: {
   assert.equal(subagent.createdBy, "agent");
   assert.equal(subagent.driver, "codex");
   assert.equal(subagent.title, input.title);
-  assert.equal(subagent.status, "completed");
+  assert.equal(subagent.status, "idle");
   assert.equal(subagent.result, input.result);
+  assert.isNull(subagent.currentActivationId);
+  assert.equal(subagent.activationCount, 1);
   assert.isNotNull(subagent.childThreadId);
   assert.isNotNull(subagent.providerThreadId);
   assert.isNotNull(subagent.nativeTaskRef);
   assert.isNotNull(subagent.completedAt);
+  const activation = input.projection.subagentActivations.find(
+    (candidate) => candidate.subagentId === subagent.id,
+  );
+  assert.isDefined(activation);
+  assert.equal(activation.status, "completed");
+  assert.isNotNull(activation.completedAt);
   return subagent;
 }
 
@@ -71,7 +79,7 @@ export function assertSubagentV2NestedOutput(
   assertUserMessagesInclude(rootProjection, [SUBAGENT_V2_PROMPT]);
   assert.lengthOf(result.shellSnapshot.threads, 4);
 
-  const first = assertCompletedProviderNativeSubagent({
+  const first = assertIdleProviderNativeSubagent({
     projection: rootProjection,
     title: "/root/hello_agent",
     result: "Subagent says: “Hello.”",
@@ -88,7 +96,7 @@ export function assertSubagentV2NestedOutput(
   assert.lengthOf(firstProjection.providerTurns, 1);
   assertTurnItemTypes(firstProjection, ["subagent", "assistant_message"]);
 
-  const second = assertCompletedProviderNativeSubagent({
+  const second = assertIdleProviderNativeSubagent({
     projection: firstProjection,
     title: "/root/hello_agent/hello_agent",
     result: "Subagent says: “Hello.”",
@@ -105,7 +113,7 @@ export function assertSubagentV2NestedOutput(
   assert.lengthOf(secondProjection.providerTurns, 1);
   assertTurnItemTypes(secondProjection, ["subagent", "assistant_message"]);
 
-  const third = assertCompletedProviderNativeSubagent({
+  const third = assertIdleProviderNativeSubagent({
     projection: secondProjection,
     title: "/root/hello_agent/hello_agent/hello_agent",
     result: "Hello.",
