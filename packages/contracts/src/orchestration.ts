@@ -125,21 +125,29 @@ export const RuntimeMode = Schema.Literals([
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 /**
- * Interaction mode for a thread. Historical wire/DB values may still carry
- * `"advisor"` from the removed Advisor/Planner mode; those decode as
- * `"default"`.
+ * Interaction mode for a thread: `default` (normal execution), `plan`
+ * (read-only planning that produces a plan artifact), or `advisor`
+ * (consultative planning that can delegate implementation to executor
+ * sub-agents). See docs/architecture/advisor-mode.md.
  */
-export const ProviderInteractionMode = Schema.Literals(["default", "plan", "advisor"]).pipe(
-  Schema.decodeTo(
-    Schema.Literals(["default", "plan"]),
-    SchemaTransformation.transformOrFail({
-      decode: (mode) => Effect.succeed(mode === "advisor" ? ("default" as const) : mode),
-      encode: (mode) => Effect.succeed(mode),
-    }),
-  ),
-);
+export const ProviderInteractionMode = Schema.Literals(["default", "plan", "advisor"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
+
+/** Bounds for the per-thread executor sub-agent slider (advisor mode). */
+export const EXECUTOR_MAX_SUB_AGENTS_MIN = 1;
+export const EXECUTOR_MAX_SUB_AGENTS_MAX = 10;
+export const DEFAULT_EXECUTOR_MAX_SUB_AGENTS = 3;
+/**
+ * How many executor sub-agents a thread may run concurrently. Enforced by the
+ * delegate coordinator for advisor threads; other threads use the global
+ * per-parent delegation cap.
+ */
+export const ExecutorMaxSubAgents = NonNegativeInt.check(
+  Schema.isGreaterThanOrEqualTo(EXECUTOR_MAX_SUB_AGENTS_MIN),
+  Schema.isLessThanOrEqualTo(EXECUTOR_MAX_SUB_AGENTS_MAX),
+);
+export type ExecutorMaxSubAgents = typeof ExecutorMaxSubAgents.Type;
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
@@ -441,11 +449,22 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   /**
-   * Legacy field from the removed Advisor/Planner mode. Always null for new
-   * threads; retained so historical snapshots/events still decode.
+   * Per-thread executor model for advisor mode. When set, sub-agents
+   * delegated from an advisor thread run on this model. Delegated sub-agents
+   * always inherit the parent thread's stored runtime mode and run with
+   * `interactionMode: "default"` so they are pure executors. Null means
+   * advise only (no specific executor binding for delegation).
    */
   executorModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /**
+   * Max concurrent executor sub-agents this thread may run (the advisor-mode
+   * slider). Defaults to `DEFAULT_EXECUTOR_MAX_SUB_AGENTS` for historical
+   * snapshots that predate the field.
+   */
+  executorMaxSubAgents: ExecutorMaxSubAgents.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_EXECUTOR_MAX_SUB_AGENTS)),
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
@@ -504,6 +523,9 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   executorModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  executorMaxSubAgents: ExecutorMaxSubAgents.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_EXECUTOR_MAX_SUB_AGENTS)),
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
@@ -743,6 +765,20 @@ const ThreadInteractionModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadExecutorModelSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.executor-model.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  /** Null clears the per-thread executor model (advise-only advisor). */
+  executorModelSelection: Schema.NullOr(ModelSelection),
+  /**
+   * Max concurrent executor sub-agents for this thread (the advisor-mode
+   * slider). Absent keeps the thread's current value.
+   */
+  executorMaxSubAgents: Schema.optionalKey(ExecutorMaxSubAgents),
+  createdAt: IsoDateTime,
+});
+
 const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
@@ -872,6 +908,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
+  ThreadExecutorModelSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadTaskStopCommand,
@@ -896,6 +933,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
+  ThreadExecutorModelSetCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadTaskStopCommand,
@@ -1118,10 +1156,17 @@ export const ThreadInteractionModeSetPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
-/** Legacy event payload from the removed Advisor/Planner executor model. */
+/**
+ * Event payload for advisor executor configuration changes. Historical events
+ * from the first Advisor/Planner rollout lack `executorMaxSubAgents`; they
+ * decode with the default.
+ */
 export const ThreadExecutorModelSetPayload = Schema.Struct({
   threadId: ThreadId,
   executorModelSelection: Schema.NullOr(ModelSelection),
+  executorMaxSubAgents: ExecutorMaxSubAgents.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_EXECUTOR_MAX_SUB_AGENTS)),
+  ),
   updatedAt: IsoDateTime,
 });
 

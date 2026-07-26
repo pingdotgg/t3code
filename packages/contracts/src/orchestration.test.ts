@@ -306,6 +306,7 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
       },
       interactionMode: "default",
       executorModelSelection: null,
+      executorMaxSubAgents: 3,
       branch: null,
       worktreePath: null,
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -771,9 +772,9 @@ it.effect("decodes composer payload weight metadata", () =>
   }),
 );
 
-it.effect("maps legacy advisor interaction mode to default", () =>
+it.effect("accepts advisor as a thread interaction mode", () =>
   Effect.gen(function* () {
     const decoded = yield* decodeProviderInteractionMode("advisor");
-    assert.strictEqual(decoded, "default");
+    assert.strictEqual(decoded, "advisor");
   }),
 );
