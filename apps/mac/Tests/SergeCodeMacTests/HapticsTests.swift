@@ -145,8 +145,11 @@ struct HapticsThrottleTests {
 
 @Suite("Thread status haptics")
 struct ThreadStatusHapticsTests {
-    private func snapshot(_ id: String?, _ status: ThreadStatus?) -> ThreadStatusSnapshot {
-        ThreadStatusSnapshot(threadID: id, status: status)
+    private func snapshot(
+        _ id: String?, _ status: ThreadStatus?, cancellationPending: Bool = false
+    ) -> ThreadStatusSnapshot {
+        ThreadStatusSnapshot(
+            threadID: id, status: status, cancellationPending: cancellationPending)
     }
 
     @Test("a finished run on the watched thread reports success")
@@ -193,6 +196,52 @@ struct ThreadStatusHapticsTests {
         #expect(
             ThreadStatusHaptics.event(
                 from: snapshot("t1", .idle), to: snapshot("t1", .running)) == nil)
+    }
+
+    @Test("a run the user stopped is not announced as a success")
+    func cancelledRunIsSilent() {
+        #expect(
+            ThreadStatusHaptics.event(
+                from: snapshot("t1", .running),
+                to: snapshot("t1", .idle, cancellationPending: true)) == nil)
+        // The stamp only silences the turn that was actually cancelled; the
+        // next run reports normally.
+        #expect(
+            ThreadStatusHaptics.event(
+                from: snapshot("t1", .running),
+                to: snapshot("t1", .idle, cancellationPending: false)) == .success)
+    }
+
+    @Test("only an executing run can complete")
+    func successRequiresAnExecutingRun() {
+        // Waiting on the user, then settling, is an abandoned turn — the
+        // decision that ended it already tapped.
+        for waiting in [ThreadStatus.waiting, .waitingApproval, .waitingInput] {
+            #expect(
+                ThreadStatusHaptics.event(
+                    from: snapshot("t1", waiting), to: snapshot("t1", .idle)) == nil)
+        }
+        for executing in [ThreadStatus.running, .backgroundWork, .reviewing, .fixing] {
+            #expect(
+                ThreadStatusHaptics.event(
+                    from: snapshot("t1", executing), to: snapshot("t1", .idle)) == .success)
+        }
+    }
+
+    @Test("dispositions applied to a finished thread never tap")
+    func dispositionsAreSilent() {
+        // `settled` is the user filing a thread away (that button taps
+        // itself), `readyToMerge` is a derived review state — neither is the
+        // moment a run completed.
+        #expect(
+            ThreadStatusHaptics.event(
+                from: snapshot("t1", .running), to: snapshot("t1", .settled)) == nil)
+        #expect(
+            ThreadStatusHaptics.event(
+                from: snapshot("t1", .running), to: snapshot("t1", .readyToMerge)) == nil)
+        #expect(
+            ThreadStatusHaptics.event(
+                from: snapshot("t1", .running), to: snapshot("t1", .archived)) == nil)
     }
 }
 

@@ -28,8 +28,11 @@ public struct ChatScreen: View {
     /// Identity + status of the thread on screen, so switching to an already
     /// idle thread never reports as "the run just finished".
     private var watchedThreadSnapshot: ThreadStatusSnapshot {
-        ThreadStatusSnapshot(
-            threadID: model.selectedThread?.id, status: model.selectedThread?.status)
+        guard let thread = model.selectedThread else { return ThreadStatusSnapshot() }
+        return ThreadStatusSnapshot(
+            threadID: thread.id,
+            status: thread.status,
+            cancellationPending: model.isCancellationPending(for: thread))
     }
 
     public var body: some View {

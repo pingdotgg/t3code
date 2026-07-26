@@ -216,10 +216,18 @@ enum Haptics {
 struct ThreadStatusSnapshot: Equatable {
     var threadID: String?
     var status: ThreadStatus?
+    /// Whether the run that is settling is one the user asked to stop
+    /// (`AppModel.isCancellationPending`). Status alone can't tell a finished
+    /// run from a cancelled one — both land on `idle`.
+    var cancellationPending: Bool
 
-    init(threadID: String? = nil, status: ThreadStatus? = nil) {
+    init(
+        threadID: String? = nil, status: ThreadStatus? = nil,
+        cancellationPending: Bool = false
+    ) {
         self.threadID = threadID
         self.status = status
+        self.cancellationPending = cancellationPending
     }
 }
 
@@ -241,12 +249,30 @@ enum ThreadStatusHaptics {
             return .decision
         case .error:
             return .failure
-        case .idle, .done, .settled, .readyToMerge:
-            // Only the run *ending* is an event; idle → settled housekeeping
-            // is not something the user asked to feel.
-            return oldStatus.isSettled ? nil : .success
+        case .idle, .done:
+            // Success is claimed only for a turn that was actually executing
+            // and stopped on its own. Everything else that lands on `idle` —
+            // a run the user stopped, an approval they denied, bookkeeping
+            // between settled states — either already tapped at the moment
+            // the user acted or was never a completion to announce.
+            guard isExecuting(oldStatus), !new.cancellationPending else { return nil }
+            return .success
         default:
+            // `settled` and `readyToMerge` are dispositions the user or the
+            // server assigns to an already-finished thread, not the moment a
+            // run completes.
             return nil
+        }
+    }
+
+    /// Statuses where the provider is working. A thread that was only ever
+    /// waiting on the user did not "complete" when it settles.
+    private static func isExecuting(_ status: ThreadStatus) -> Bool {
+        switch status {
+        case .running, .backgroundWork, .reviewing, .fixing: true
+        case .idle, .waiting, .waitingApproval, .waitingInput, .error, .archived, .settled,
+            .done, .readyToMerge:
+            false
         }
     }
 }
