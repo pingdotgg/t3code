@@ -14,7 +14,7 @@ import T3Kit
 struct PlanProgressLifecycleTests {
     private func thread(_ id: String, status: ThreadStatus) -> ChatThread {
         ChatThread(
-            id: id, projectID: "proj-1", title: "Thread \(id)", provider: .claudex,
+            id: id, projectID: "proj-1", title: "Thread \(id)", provider: .claude,
             status: status, updatedAt: Date(), sessionStatus: status.rawValue)
     }
 

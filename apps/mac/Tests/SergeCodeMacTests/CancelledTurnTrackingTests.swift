@@ -13,7 +13,7 @@ import T3Kit
 struct CancelledTurnTrackingTests {
     private func makeThread(id: String, startedAt: Date?) -> ChatThread {
         var thread = ChatThread(
-            id: id, projectID: "proj-1", title: "Thread \(id)", provider: .claudex,
+            id: id, projectID: "proj-1", title: "Thread \(id)", provider: .claude,
             status: .running, updatedAt: Date(), sessionStatus: "running")
         thread.latestTurnStartedAt = startedAt
         return thread
