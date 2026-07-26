@@ -2435,6 +2435,12 @@ public actor LiveBackend: BackendService {
         vcsWatchedCwd[threadID] = nil
         vcsLocal[threadID] = nil
         vcsRemote[threadID] = nil
+        // The watch is moving to a different worktree, so failures against the
+        // old cwd say nothing about the new one. Without this the new cwd can
+        // inherit an already-exhausted budget and never re-arm after its first
+        // failure — the budget is otherwise only cleared by an event on a
+        // healthy stream (`applyVcsEvent`) or a socket teardown.
+        vcsRetryAttempts[threadID] = nil
         Task { [weak self] in
             try? await self?.watchVcsStatus(threadID: threadID)
         }

@@ -96,8 +96,10 @@ public struct DiffReviewView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            staleReloadNotice
             content
         }
+        .animation(Motion.reveal, value: model.reviewDiffError(for: threadID))
         .background(.background)
         .onAppear(perform: normalizeZoom)
         .onChange(of: selectedFileKey) { _, newKey in
@@ -325,6 +327,32 @@ public struct DiffReviewView: View {
     }
 
     // MARK: - Content
+
+    /// A refresh that fails while files are already on screen keeps the last
+    /// good diff rather than blanking the pane — but `content`'s error branch
+    /// only fires for an empty file list, so without this strip the user goes
+    /// on reviewing hunks that silently stopped being current.
+    @ViewBuilder
+    private var staleReloadNotice: some View {
+        if !files.isEmpty, let message = model.reviewDiffError(for: threadID) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Showing the last loaded diff — refreshing it failed. \(message)")
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 8)
+                Button("Retry") {
+                    Task { await model.loadReviewDiff(threadID: threadID) }
+                }
+            }
+            .font(.caption)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity)
+            .background(Color.secondary.opacity(0.08))
+        }
+    }
 
     @ViewBuilder
     private var content: some View {
