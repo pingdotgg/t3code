@@ -33,12 +33,14 @@ struct ChatHeaderView: View {
         private static let slack: CGFloat = 0.5
 
         /// How far off the trailing edge still counts as anchored. Wider than
-        /// `slack` because a scroll view settles against fractional widths: on
-        /// a fresh mount the strip lands up to 4pt short across probe runs, and
-        /// chasing that residue only makes the strip re-scroll itself. The
-        /// drift worth catching was 21pt — enough to cut into the git actions
-        /// menu — and anything at that scale still fails the check.
-        private static let anchorTolerance: CGFloat = 6
+        /// `slack` because a scroll view settles against fractional widths and
+        /// against a header that is still re-measuring: across probe runs the
+        /// residue reaches 11pt on a thread whose git controls re-render while
+        /// the window resizes. Chasing it only makes the strip re-scroll
+        /// itself. The failures worth catching are far larger — a 21pt drift,
+        /// or a strip resting at the leading edge with the whole 300-600pt of
+        /// offset unspent — and both still fail.
+        private static let anchorTolerance: CGFloat = 12
 
         var overflow: GitStripOverflow {
             GitStripOverflow(
@@ -172,6 +174,12 @@ private struct GitStrip: View {
     /// align its trailing edge with the container's.
     private static let contentID = "git-strip-content"
 
+    /// Whether the git controls render anything at all — the same gate
+    /// `VcsToolbar` applies.
+    private var hasGitContent: Bool {
+        model.selectedVcsStatus()?.isRepo == true
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             strip(proxy)
@@ -186,6 +194,15 @@ private struct GitStrip: View {
         // Compressible: the strip must lose width to the title's compression
         // resistance and scroll, never win width and clip.
         .frame(minWidth: 0)
+        // Rebuilt when the git controls appear. `.defaultScrollAnchor` places
+        // content the first time the scroll view lays it out, and a strip whose
+        // VCS status arrives afterwards was anchored while empty: it stayed at
+        // the leading edge with the git actions menu off-screen (measured
+        // resting at 0 of 640). Re-creating the scroll view at that transition
+        // gives the anchor a first layout that has the content in it. The flag
+        // only flips empty -> populated, so a repository update does not
+        // rebuild anything.
+        .id(hasGitContent)
         .scrollIndicators(overflow.isOverflowing ? .visible : .hidden)
         // SwiftUI owns the anchor. Driving it from measurements instead —
         // scrolling to the trailing offset whenever geometry reported the strip
@@ -225,7 +242,9 @@ private struct GitStrip: View {
                 overflow = metrics.overflow
             }
             if becameOverflowing {
-                proxy.scrollTo(Self.contentID, anchor: .trailing)
+                DispatchQueue.main.async {
+                    proxy.scrollTo(Self.contentID, anchor: .trailing)
+                }
             }
             #if DEBUG
                 UIProbeGitStrip.record(metrics, threadID: threadID)

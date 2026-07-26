@@ -1110,6 +1110,7 @@
             }
 
             await probeGitStripAnchor(multi: multi, dir: dir, window: window)
+            await probeLateVcsStatusAnchor(multi: multi, dir: dir)
             await probeContentGrowthDoesNotResizeWindow(
                 multi: multi, dir: dir, window: window, log: log)
 
@@ -1132,6 +1133,107 @@
         /// very long branch name, five-figure diff counts, a draft PR with
         /// conflicts and review comments) and checks the frame, the AppKit
         /// minimum, and the AppKit maximum against the values from before.
+        /// The late-arriving VCS status case, driven deterministically rather
+        /// than waiting for the mock to happen to be slow: blank the strip, let
+        /// it lay out empty, then hand it a status wide enough to overflow and
+        /// assert it comes to rest at its trailing edge. This is the path where
+        /// the scroll view has already anchored an empty strip, so growth has
+        /// to re-anchor it or the git actions menu is off-screen.
+        private static func probeLateVcsStatusAnchor(
+            multi: MultiDeviceModel, dir: String
+        ) async {
+            let model = multi.local
+            guard let mock = model.backendForShutdown as? MockBackend else {
+                print("UIProbe: late-status skipped (live backend run)")
+                return
+            }
+            guard let threadID = model.selectedThreadID else {
+                UIProbeAssertions.fail("late-status", "no selected thread")
+                return
+            }
+
+            /// Waits for the strip to report a settled geometry for this thread.
+            func settledMetrics() async -> ChatHeaderView.GitStripMetrics? {
+                var settled: ChatHeaderView.GitStripMetrics?
+                var stableFor = 0
+                for _ in 0..<40 {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    guard let metrics = UIProbeGitStrip.metrics(for: threadID) else { continue }
+                    if settled == metrics {
+                        stableFor += 1
+                        if stableFor >= 3 { return metrics }
+                    } else {
+                        stableFor = 0
+                    }
+                    settled = metrics
+                }
+                return settled
+            }
+
+            // 1. Blank the strip: a non-repo status renders no git controls.
+            UIProbeGitStrip.reset()
+            await mock.injectVcsStatus(
+                threadID: threadID,
+                status: VcsStatus(
+                    isRepo: false, branch: nil, isDefaultBranch: false, changedFileCount: 0,
+                    insertions: 0, deletions: 0, aheadCount: 0, behindCount: 0,
+                    hasUpstream: false))
+            try? await mock.refreshVcsStatus(threadID: threadID)
+            let empty = await settledMetrics()
+            print(
+                "UIProbe: late-status emptied strip content="
+                    + "\(empty.map { Int($0.contentWidth) } ?? -1)")
+
+            // 2. Status arrives, wide enough to overflow any header.
+            UIProbeGitStrip.reset()
+            await mock.injectVcsStatus(
+                threadID: threadID,
+                status: VcsStatus(
+                    isRepo: true,
+                    branch: "sergecode/status-that-arrives-after-the-strip-has-already-laid-out",
+                    isDefaultBranch: false,
+                    changedFileCount: 4242,
+                    insertions: 31337,
+                    deletions: 2718,
+                    aheadCount: 42,
+                    behindCount: 17,
+                    hasUpstream: true,
+                    hasPrimaryRemote: true,
+                    prNumber: 267,
+                    prTitle: "Stop the window resizing itself",
+                    prURL: "https://github.com/SergeSerb2/SergeCode/pull/267",
+                    prState: .open,
+                    isDraftPR: true,
+                    unresolvedReviewThreadCount: 9,
+                    prMergeStateStatus: "dirty"))
+            try? await mock.refreshVcsStatus(threadID: threadID)
+            guard let grown = await settledMetrics(), grown.contentWidth > 0 else {
+                UIProbeAssertions.fail(
+                    "late-status", "strip never reported content after the status arrived")
+                return
+            }
+            print("UIProbe: late-status \(UIProbeGitStrip.describe())")
+            guard grown.overflow.isOverflowing else {
+                UIProbeAssertions.fail(
+                    "late-status",
+                    "strip did not overflow (content \(Int(grown.contentWidth)) in "
+                        + "\(Int(grown.containerWidth))); the check proves nothing")
+                return
+            }
+            if grown.isAtTrailingEdge {
+                UIProbeAssertions.pass(
+                    "late-status",
+                    "strip anchored at \(Int(grown.contentOffsetX)) of "
+                        + "\(Int(grown.trailingEdgeOffset)) after a late status")
+            } else {
+                UIProbeAssertions.fail(
+                    "late-status",
+                    "strip rested at \(Int(grown.contentOffsetX)) of "
+                        + "\(Int(grown.trailingEdgeOffset)); git actions off-screen")
+            }
+            snapshot("window-size-late-status", dir: dir)
+        }
+
         private static func probeContentGrowthDoesNotResizeWindow(
             multi: MultiDeviceModel,
             dir: String,
@@ -1293,30 +1395,16 @@
                 }
                 print("UIProbe: \(label) \(UIProbeGitStrip.describe())")
                 guard !metrics.isAtTrailingEdge else { return }
-                // Reported, not failed, in one known case: when the git
-                // controls mount empty and populate afterwards (VCS status
-                // arriving after the thread is selected), the scroll view has
-                // already anchored an empty strip and later content growth does
-                // not re-anchor it. Everything measured with status in hand —
-                // and every window resize — is still a hard failure.
                 if startedEmpty {
-                    print(
-                        "UIProbe: git-strip INCONCLUSIVE \(label) strip populated after mount "
-                            + "(\(threadID)); anchor not asserted")
-                    return
+                    // No longer an excuse: the strip is rebuilt when its
+                    // content appears, so a status that arrives after mount
+                    // gets a first layout with content in it. Kept in the
+                    // message because it is the harder case to debug.
+                    print("UIProbe: git-strip \(label) strip had populated after mount")
                 }
                 failures += 1
-                // Reported, not fatal. The anchor is `.defaultScrollAnchor`,
-                // which SwiftUI applies when the scroll view first lays out its
-                // content; a strip whose VCS status streams in after that can
-                // stay at the leading edge until the next resize, and no
-                // corrective scroll proved reliable (several were measured
-                // being dropped outright). Known gap, tracked here rather than
-                // hidden — the product regression this run exists to catch is
-                // `content-growth`, which does fail the run.
-                print(
-                    "UIProbe: git-strip WARN \(label) not at trailing edge (\(threadID)); "
-                        + "known gap for a strip whose status arrives after mount")
+                UIProbeAssertions.fail(
+                    "git-strip", "\(label) not at trailing edge (\(threadID))")
             }
 
             // Thread switches: every thread starts at the trailing edge. The
@@ -1353,10 +1441,6 @@
 
             if failures == 0 {
                 UIProbeAssertions.pass("git-strip", "anchor held across \(checks) checks")
-            } else {
-                print(
-                    "UIProbe: git-strip anchor held on \(checks - failures) of \(checks) checks "
-                        + "(see WARN lines)")
             }
             snapshot("window-size-git-strip", dir: dir)
         }

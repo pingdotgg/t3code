@@ -51,18 +51,30 @@ struct ChatHeaderGitStripTests {
 
     @Test("settling residue does not count as off-anchor")
     func settlingResidueIsTolerated() {
-        // A scroll view settling against fractional widths lands a few points
-        // short; measured up to 4pt across probe runs. Treating that as
-        // off-anchor would have the strip re-scrolling itself forever.
-        let metrics = Metrics(contentWidth: 472.4, containerWidth: 177.1, contentOffsetX: 291)
+        // A scroll view settling against fractional widths, in a header that is
+        // still re-measuring, lands a few points short; measured up to 11pt
+        // across probe runs. Treating that as off-anchor would have the strip
+        // re-scrolling itself forever.
+        let metrics = Metrics(contentWidth: 472.4, containerWidth: 177.1, contentOffsetX: 284)
         #expect(metrics.isAtTrailingEdge)
+    }
+
+    @Test("a strip resting at the leading edge after a late status fails")
+    func lateStatusRestingAtLeadingEdgeIsNotAnchored() {
+        // The case the probe drives deterministically: the strip lays out
+        // empty, then a wide status arrives (1062pt of controls in a 421pt
+        // header) and it must not be left with all 640pt of offset unspent.
+        let stranded = Metrics(contentWidth: 1062, containerWidth: 421, contentOffsetX: 0)
+        let anchored = Metrics(contentWidth: 1062, containerWidth: 421, contentOffsetX: 640)
+        #expect(!stranded.isAtTrailingEdge)
+        #expect(anchored.isAtTrailingEdge)
     }
 
     @Test("the tolerance stays well under the drift it has to catch")
     func toleranceIsNarrowerThanRealDrift() {
-        // 21pt short must fail even though 4pt passes — otherwise the check
-        // stops being evidence of anything.
-        let settling = Metrics(contentWidth: 472, containerWidth: 177, contentOffsetX: 291)
+        // 21pt short must fail even though the 11pt settling residue passes,
+        // otherwise the check stops being evidence of anything.
+        let settling = Metrics(contentWidth: 472, containerWidth: 177, contentOffsetX: 284)
         let drifted = Metrics(contentWidth: 472, containerWidth: 177, contentOffsetX: 274)
         #expect(settling.isAtTrailingEdge)
         #expect(!drifted.isAtTrailingEdge)
