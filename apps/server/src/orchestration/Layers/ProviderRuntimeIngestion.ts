@@ -207,7 +207,7 @@ function isTurnScopedProgressEvent(event: ProviderRuntimeEvent): boolean {
 function hasAssistantMessageForTurn(
   messages: ReadonlyArray<OrchestrationMessage>,
   turnId: TurnId,
-  options?: { readonly streamingOnly?: boolean },
+  options?: { readonly streamingOnly?: boolean; readonly completedOnly?: boolean },
 ): boolean {
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
@@ -218,6 +218,9 @@ function hasAssistantMessageForTurn(
       continue;
     }
     if (options?.streamingOnly === true && !message.streaming) {
+      continue;
+    }
+    if (options?.completedOnly === true && message.streaming) {
       continue;
     }
     return true;
@@ -1354,9 +1357,12 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * The subset of used ids whose message has not finalized yet (claimed this
-   * run and not retired). A base-key correlation is only valid while its id
-   * is in this set; a missing id means the provider recycled the key.
+   * The subset of used ids whose message has not finalized yet, hydrated
+   * once from the projection (assistant messages still marked streaming) so
+   * correlations built before a server restart survive it, then kept current
+   * as ids are claimed and retired. A base-key correlation is only valid
+   * while its id is in this set; a missing id means the provider recycled
+   * the key.
    */
   const liveAssistantMessageIdsByThread = yield* Cache.make<ThreadId, Set<string>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -1469,8 +1475,18 @@ const make = Effect.gen(function* () {
       Effect.flatMap(
         Option.match({
           onNone: () =>
-            Cache.set(liveAssistantMessageIdsByThread, threadId, new Set<string>()).pipe(
-              Effect.as(new Set<string>()),
+            resolveThreadDetail(threadId).pipe(
+              Effect.flatMap((detail) => {
+                const ids = new Set<string>();
+                for (const message of detail?.messages ?? []) {
+                  if (message.role === "assistant" && message.streaming) {
+                    ids.add(message.id);
+                  }
+                }
+                return Cache.set(liveAssistantMessageIdsByThread, threadId, ids).pipe(
+                  Effect.as(ids),
+                );
+              }),
             ),
           onSome: Effect.succeed,
         }),
@@ -1487,18 +1503,24 @@ const make = Effect.gen(function* () {
       Effect.flatMap(
         Option.match({
           onNone: () =>
-            claimAssistantMessageId({
-              threadId: input.threadId,
-              candidateId: assistantSegmentMessageId(input.baseKey, 0),
-            }).pipe(
-              Effect.tap((messageId) =>
-                Cache.set(
-                  claimedAssistantMessageIdByBaseKey,
-                  claimedBaseKeyCacheKey(input.threadId, input.baseKey),
-                  messageId,
-                ),
-              ),
-            ),
+            Effect.gen(function* () {
+              const candidateId = assistantSegmentMessageId(input.baseKey, 0);
+              const liveIds = yield* getLiveAssistantMessageIds(input.threadId);
+              // Continue a live message with this id (e.g. projected before
+              // a server restart) instead of forking a new one.
+              const messageId = liveIds.has(candidateId)
+                ? candidateId
+                : yield* claimAssistantMessageId({
+                    threadId: input.threadId,
+                    candidateId,
+                  });
+              yield* Cache.set(
+                claimedAssistantMessageIdByBaseKey,
+                claimedBaseKeyCacheKey(input.threadId, input.baseKey),
+                messageId,
+              );
+              return messageId;
+            }),
           onSome: (cachedId) =>
             Effect.gen(function* () {
               const live = yield* getLiveAssistantMessageIds(input.threadId);
@@ -1590,6 +1612,22 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * True when `messageId` names a still-streaming projection message that
+   * belongs to this turn (or to no turn). A live message from a *different*
+   * turn means the provider recycled the id — that is a collision, not a
+   * continuation.
+   */
+  const liveMessageMatchesTurn = (threadId: ThreadId, messageId: MessageId, turnId: TurnId) =>
+    resolveThreadDetail(threadId).pipe(
+      Effect.map((detail) => {
+        const message = detail?.messages.find((entry) => entry.id === messageId);
+        return (
+          message?.streaming === true && (message.turnId === null || message.turnId === turnId)
+        );
+      }),
+    );
+
   const startAssistantSegmentForTurn = (input: {
     threadId: ThreadId;
     turnId: TurnId;
@@ -1614,10 +1652,19 @@ const make = Effect.gen(function* () {
               } satisfies AssistantSegmentState;
             },
           });
-          const claimedMessageId = yield* claimAssistantMessageId({
-            threadId: input.threadId,
-            candidateId: nextState.activeMessageId!,
-          });
+          const candidateMessageId = nextState.activeMessageId!;
+          // A candidate that still names a live message of this same turn
+          // (e.g. projected before a server restart) is a continuation, not
+          // a collision — keep it instead of forking a new id.
+          const continueLiveMessage =
+            (yield* getLiveAssistantMessageIds(input.threadId)).has(candidateMessageId) &&
+            (yield* liveMessageMatchesTurn(input.threadId, candidateMessageId, input.turnId));
+          const claimedMessageId = continueLiveMessage
+            ? candidateMessageId
+            : yield* claimAssistantMessageId({
+                threadId: input.threadId,
+                candidateId: candidateMessageId,
+              });
           yield* setAssistantSegmentStateForTurn(input.threadId, input.turnId, {
             ...nextState,
             activeMessageId: claimedMessageId,
@@ -2391,6 +2438,34 @@ const make = Effect.gen(function* () {
       const proposedPlanDelta =
         event.type === "turn.proposed.delta" ? event.payload.delta : undefined;
 
+      // A new assistant item starting while its message id is still open is
+      // the provider's explicit generation boundary: the id was recycled, so
+      // close the previous message cleanly before the new item's deltas fork
+      // to a fresh id.
+      if (event.type === "item.started" && event.payload.itemType === "assistant_message") {
+        const candidateMessageId = assistantSegmentMessageId(
+          assistantSegmentBaseKeyFromEvent(event),
+          0,
+        );
+        const liveIds = yield* getLiveAssistantMessageIds(thread.id);
+        if (liveIds.has(candidateMessageId)) {
+          const detailedThread = yield* getLoadedThreadDetail();
+          const startTurnId = toTurnId(event.turnId);
+          yield* finalizeAssistantMessage({
+            event,
+            threadId: thread.id,
+            messageId: candidateMessageId,
+            ...(startTurnId ? { turnId: startTurnId } : {}),
+            createdAt: now,
+            commandTag: "assistant-complete-on-recycled-item-start",
+            finalDeltaCommandTag: "assistant-delta-finalize-on-recycled-item-start",
+            hasProjectedMessage:
+              detailedThread !== null &&
+              findMessageById(detailedThread.messages, candidateMessageId) !== undefined,
+          });
+        }
+      }
+
       if (assistantDelta && assistantDelta.length > 0) {
         const turnId = toTurnId(event.turnId);
         const assistantMessageId = yield* getOrCreateAssistantMessageId({
@@ -2550,13 +2625,19 @@ const make = Effect.gen(function* () {
         const activeAssistantMessageId = turnId
           ? yield* getActiveAssistantMessageIdForTurn(thread.id, turnId)
           : Option.none<MessageId>();
-        const hasAssistantMessagesForTurn =
-          turnId !== undefined ? hasAssistantMessageForTurn(messages, turnId) : false;
+        const hasCompletedAssistantMessagesForTurn =
+          turnId !== undefined
+            ? hasAssistantMessageForTurn(messages, turnId, { completedOnly: true })
+            : false;
 
+        // A completion is only redundant when the turn already has a
+        // *completed* assistant message; a live (still-streaming) one means
+        // this completion is what closes it — e.g. after a restart, when the
+        // in-memory segment state is gone.
         const shouldSkipRedundantCompletion =
           Option.isNone(activeAssistantMessageId) &&
           turnId !== undefined &&
-          hasAssistantMessagesForTurn &&
+          hasCompletedAssistantMessagesForTurn &&
           (assistantCompletion.fallbackText?.trim().length ?? 0) === 0;
 
         if (!shouldSkipRedundantCompletion) {
@@ -2582,25 +2663,34 @@ const make = Effect.gen(function* () {
               ? Option.some(messageId)
               : Option.none();
           });
+          // After a restart the correlation map is empty; a raw completion id
+          // that still names a live message of this same turn (or of no turn)
+          // continues in-flight work instead of minting a fresh id.
+          const continueLiveMessage =
+            (yield* getLiveAssistantMessageIds(thread.id)).has(assistantCompletion.messageId) &&
+            (turnId === undefined ||
+              (yield* liveMessageMatchesTurn(thread.id, assistantCompletion.messageId, turnId)));
           const assistantMessageId = Option.isSome(activeAssistantMessageId)
             ? activeAssistantMessageId.value
             : Option.isSome(liveClaimedForBaseKey)
               ? liveClaimedForBaseKey.value
-              : yield* claimAssistantMessageId({
-                  threadId: thread.id,
-                  candidateId: assistantCompletion.messageId,
-                }).pipe(
-                  // Persist the minted id so later events for this item
-                  // (misordered deltas, duplicate completions) correlate to
-                  // the same message instead of minting yet another id.
-                  Effect.tap((messageId) =>
-                    Cache.set(
-                      claimedAssistantMessageIdByBaseKey,
-                      claimedBaseKeyCacheKey(thread.id, completionBaseKey),
-                      messageId,
+              : continueLiveMessage
+                ? assistantCompletion.messageId
+                : yield* claimAssistantMessageId({
+                    threadId: thread.id,
+                    candidateId: assistantCompletion.messageId,
+                  }).pipe(
+                    // Persist the minted id so later events for this item
+                    // (misordered deltas, duplicate completions) correlate to
+                    // the same message instead of minting yet another id.
+                    Effect.tap((messageId) =>
+                      Cache.set(
+                        claimedAssistantMessageIdByBaseKey,
+                        claimedBaseKeyCacheKey(thread.id, completionBaseKey),
+                        messageId,
+                      ),
                     ),
-                  ),
-                );
+                  );
           const existingAssistantMessage = findMessageById(messages, assistantMessageId);
           const shouldApplyFallbackCompletionText =
             !existingAssistantMessage || existingAssistantMessage.text.length === 0;

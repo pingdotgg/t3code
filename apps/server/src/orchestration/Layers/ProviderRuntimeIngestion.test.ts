@@ -1112,6 +1112,164 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     // The provider recycles the item id and misorders its events: an empty
+    // completion (no detail) arrives before the content. The completion
+    // claims a fresh id; the deltas must continue that same message instead
+    // of minting yet another one.
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-misordered-empty-completion"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId: asItemId("item-misordered"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-misordered-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId: asItemId("item-misordered"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "late-arriving content",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) => message.id === "assistant:item-misordered:again:1",
+      ),
+    );
+    const recycled = thread.messages.filter((message: ProviderRuntimeTestMessage) =>
+      message.id.startsWith("assistant:item-misordered:again"),
+    );
+    expect(recycled).toHaveLength(1);
+    expect(recycled[0]?.text).toBe("late-arriving content");
+  });
+
+  it("continues a live turn-less assistant message across a restart", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // Simulate pre-restart projection state: a live streaming message the
+    // current process has never claimed (in-memory caches start empty).
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make("cmd-seed-live-turnless"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: MessageId.make("assistant:item-resume"),
+        delta: "pre-restart content",
+        createdAt: now,
+      }),
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-resume-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId: asItemId("item-resume"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: " plus post-restart",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-resume" &&
+          message.text === "pre-restart content plus post-restart",
+      ),
+    );
+    expect(
+      thread.messages.some(
+        (message: ProviderRuntimeTestMessage) => message.id === "assistant:item-resume:again:1",
+      ),
+    ).toBe(false);
+  });
+
+  it("continues a live turn-scoped assistant message across a restart", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // Pre-restart live message for the same turn and provider item id the
+    // resumed turn will reuse.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make("cmd-seed-live-turnscoped"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: MessageId.make("assistant:item-resume-turn"),
+        turnId: TurnId.make("turn-resume"),
+        delta: "pre-restart content",
+        createdAt: now,
+      }),
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-resume-turn-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-resume"),
+      itemId: asItemId("item-resume-turn"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: " plus post-restart",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-resume-turn" &&
+          message.text === "pre-restart content plus post-restart",
+      ),
+    );
+    expect(
+      thread.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-resume-turn:again:1",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps correlation when a recycled item's empty completion arrives before its deltas", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // An earlier message already took the raw id.
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-misordered-original"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-misordered-0"),
+      itemId: asItemId("item-misordered"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "original answer",
+      },
+    });
+    await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-misordered" && !message.streaming,
+      ),
+    );
+
+    // The provider recycles the item id and misorders its events: an empty
     // completion (no text anywhere) arrives before the content. The claimed
     // id must stay live and correlated so the deltas continue the same
     // message instead of minting yet another one.
@@ -1156,6 +1314,74 @@ describe("ProviderRuntimeIngestion", () => {
       (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-misordered",
     );
     expect(original?.text).toBe("original answer");
+  });
+
+  it("closes the previous message when a recycled assistant item starts while it is live", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // An assistant message streams and stays open (provider died mid-item).
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-recycle-start-delta-1"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId: asItemId("item-recycle-start"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "unfinished answer",
+      },
+    });
+    await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) => message.id === "assistant:item-recycle-start",
+      ),
+    );
+
+    // The provider starts a NEW assistant item with the same id: an explicit
+    // new-generation signal. The old message must close, and the new item's
+    // deltas must land in a fresh message.
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-recycle-start-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId: asItemId("item-recycle-start"),
+      payload: {
+        itemType: "assistant_message",
+        status: "inProgress",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-recycle-start-delta-2"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      itemId: asItemId("item-recycle-start"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "new answer",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-recycle-start:again:1",
+      ),
+    );
+    const first = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-recycle-start",
+    );
+    expect(first?.text).toBe("unfinished answer");
+    expect(first?.streaming).toBe(false);
+    const second = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-recycle-start:again:1",
+    );
+    expect(second?.text).toBe("new answer");
   });
 
   it("uses assistant item completion detail when no assistant deltas were streamed", async () => {
