@@ -43,6 +43,11 @@ public final class SceneryStore {
     /// always agree; cleared by `assign(...)` (commit) and re-sampled when a
     /// pool refresh no longer contains it.
     private var pendingScene: SceneryPhoto?
+    /// Photo ids handed to a thread creation that has not committed yet. The
+    /// new thread doesn't exist during the create round trip, so it can't be
+    /// excluded by thread key; without this an overlapping creation would be
+    /// handed the identical pending pick and produce a duplicate name.
+    private var reservedPhotoIDs: Set<String> = []
     /// setId → (threadID → scene display name committed at creation).
     private var namesBySet: [String: [String: String]] = [:]
     /// setId → photo pool.
@@ -59,7 +64,11 @@ public final class SceneryStore {
     private var registrationClaims: Set<String> = []
 
     private var images: [String: NSImage] = [:]  // "setId/photoID/variant" -> image
-    /// Insertion order of the hero/blur keys in `images`, for FIFO eviction.
+    /// Access order of the hero/blur keys in `images`, oldest first, for LRU
+    /// eviction. `@ObservationIgnored` because `image(_:variant:setId:)`
+    /// touches it from view `body`; an observed write there would invalidate
+    /// the very view that just read the image.
+    @ObservationIgnored
     private var heavyImageCacheOrder: [String] = []
     private var loadingKeys: Set<String> = []
     /// Session-scoped in-flight + failed-extraction guard. Prevents unbounded
@@ -140,11 +149,26 @@ public final class SceneryStore {
     // MARK: - Lifecycle
 
     private var startTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var lastStartAttemptAt = Date.distantPast
+    private static let startRetryCooldown: TimeInterval = 120
+
+    /// A run that came back with an empty World pool (offline at launch, API
+    /// error) must not pin the store to the gradient fallback — and every
+    /// thread created meanwhile to no name — for the rest of the session. The
+    /// cooldown keeps repeated thread creation from re-running a full rebuild.
+    private var shouldRetryStart: Bool {
+        client != nil
+            && (pools[ScenerySet.worldID] ?? []).isEmpty
+            && Date().timeIntervalSince(lastStartAttemptAt) >= Self.startRetryCooldown
+    }
 
     /// Load sets + caches from disk, then refresh each set from the API when
-    /// empty or stale. Idempotent: concurrent callers share one load.
+    /// empty or stale. Idempotent: concurrent callers share one load; a load
+    /// that failed to produce a World pool is retried after a cooldown.
     public func start() async {
-        if startTask == nil {
+        if startTask == nil || shouldRetryStart {
+            lastStartAttemptAt = Date()
             startTask = Task {
                 loadFromDisk()
                 for set in availableSets {
@@ -303,7 +327,7 @@ public final class SceneryStore {
     /// re-samples on the next call.
     public func peekNextScene(excludingThreadKeys: Set<String> = []) -> SceneryPhoto? {
         let worldPool = pools[ScenerySet.worldID] ?? []
-        var occupied: Set<String> = []
+        var occupied: Set<String> = reservedPhotoIDs
         for threadKey in excludingThreadKeys {
             if let photo = photo(for: threadKey) {
                 occupied.insert(photo.id)
@@ -324,6 +348,20 @@ public final class SceneryStore {
     /// Thread title for a scene: the curated place name, verbatim.
     public func threadTitle(for photo: SceneryPhoto) -> String {
         photo.name
+    }
+
+    /// Holds a peeked photo across a create round trip: it counts as occupied
+    /// until `releaseScene`, and the pending pick is consumed so a concurrent
+    /// creation samples a fresh one. Balance every call with `releaseScene`.
+    public func reserveScene(_ photoID: String) {
+        pendingScene = nil
+        reservedPhotoIDs.insert(photoID)
+    }
+
+    /// Releases a `reserveScene` hold — after the assignment committed (the
+    /// thread itself now occupies the photo) or after the create failed.
+    public func releaseScene(_ photoID: String) {
+        reservedPhotoIDs.remove(photoID)
     }
 
     /// Commit a thread → photo binding (after the backend confirmed create),
@@ -425,7 +463,19 @@ public final class SceneryStore {
         setId explicitSetId: String? = nil
     ) -> NSImage? {
         let setId = explicitSetId ?? setIdContaining(photoID: photo.id) ?? ScenerySet.worldID
-        return images[cacheKey(setId, photo.id, variant)]
+        let key = cacheKey(setId, photo.id, variant)
+        let cached = images[key]
+        // Touch on read so eviction is LRU rather than insertion-order FIFO:
+        // a wallpaper still on screen is re-read on every body pass and so can
+        // never be the oldest entry. Views only load inside a `.task(id:)` that
+        // eviction doesn't invalidate, so a dropped visible image never returns.
+        if cached != nil, variant != .thumb,
+            let index = heavyImageCacheOrder.firstIndex(of: key)
+        {
+            heavyImageCacheOrder.remove(at: index)
+            heavyImageCacheOrder.append(key)
+        }
+        return cached
     }
 
     /// Load a photo's image into the in-memory cache: disk first, CDN on
@@ -453,11 +503,13 @@ public final class SceneryStore {
     }
 
     /// Inserts into the decoded-image cache. Hero and blur variants are
-    /// bounded FIFO (`heavyImageCacheCap`): past the cap the oldest heavy
-    /// entries are dropped and re-decode from disk on their next ensureImage.
+    /// bounded LRU (`heavyImageCacheCap`): past the cap the least recently
+    /// read heavy entries are dropped and re-decode from disk on their next
+    /// ensureImage.
     private func cacheImage(_ image: NSImage, forKey key: String, variant: ImageVariant) {
         images[key] = image
         guard variant != .thumb else { return }
+        heavyImageCacheOrder.removeAll { $0 == key }
         heavyImageCacheOrder.append(key)
         let overflow = heavyImageCacheOrder.count - Self.heavyImageCacheCap
         guard overflow > 0 else { return }
@@ -553,15 +605,20 @@ public final class SceneryStore {
                         withIntermediateDirectories: true)
                     try? data.write(to: fileURL, options: .atomic)
                 }.value
-                // Ping first; only persist registration on success so a
-                // transient Unsplash failure is retried on the next load.
-                await registerDownloadIfNeeded(
-                    setId: setId,
-                    photoId: photo.id,
-                    downloadLocationURL: photo.downloadLocationURL
-                ) { ping in
-                    try await client.registerDownload(ping)
-                }
+            }
+        }
+        // Ping once per photo on first successful *use*, disk hits included, so
+        // a transient Unsplash failure really is retried on a later load — the
+        // JPEG is on disk by then, so a CDN-miss-only ping would never run
+        // again. No-ops once registration is recorded; `registrationClaims`
+        // still dedupes concurrent variants.
+        if data != nil, let client {
+            await registerDownloadIfNeeded(
+                setId: setId,
+                photoId: photo.id,
+                downloadLocationURL: photo.downloadLocationURL
+            ) { ping in
+                try await client.registerDownload(ping)
             }
         }
         let maxPixelWidth = variant == .hero ? heroPixelWidth : 512
@@ -787,10 +844,39 @@ public final class SceneryStore {
         poolFetchedAt[setId] = Date()
         savePool(for: setId)
         savePhotoTags(for: setId)
-        // Drop stale decoded images for this set from a previous pool.
+        // Drop decoded images only for photos that actually left the pool:
+        // views showing a photo that survived the rebuild stay mounted and
+        // never re-request their image, so evicting it blanks them for good.
         let prefix = "\(setId)/"
-        images = images.filter { !$0.key.hasPrefix(prefix) }
-        heavyImageCacheOrder.removeAll { $0.hasPrefix(prefix) }
+        let liveIDs = Set((pools[setId] ?? []).map(\.id))
+        let isLive: (String) -> Bool = { key in
+            guard key.hasPrefix(prefix) else { return true }
+            guard let photoID = key.dropFirst(prefix.count).split(separator: "/").first
+            else { return false }
+            return liveIDs.contains(String(photoID))
+        }
+        images = images.filter { isLive($0.key) }
+        heavyImageCacheOrder.removeAll { !isLive($0) }
+        // Same for the on-disk renders, which nothing else ever deletes: a
+        // 14-day rebuild swaps most photo ids, so orphans accumulate forever.
+        // Other-width heroes of live photos stay — `paletteSampleURLs` falls
+        // back to them, and dropping them would re-download the whole pool
+        // after every dock/undock change of `heroPixelWidth`.
+        let imagesDirectory = setDirectory(setId)
+            .appendingPathComponent("images", isDirectory: true)
+        Task.detached(priority: .utility) {
+            let fileManager = FileManager.default
+            let files =
+                (try? fileManager.contentsOfDirectory(
+                    at: imagesDirectory,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles])) ?? []
+            for file in files {
+                let name = file.lastPathComponent
+                guard !liveIDs.contains(where: { name.hasPrefix("\($0)-") }) else { continue }
+                try? fileManager.removeItem(at: file)
+            }
+        }
         if setId == ScenerySet.worldID {
             syncDefaultPool()
         }
@@ -1148,10 +1234,12 @@ public final class SceneryStore {
     /// Forces a disk reload (migration + registry) without network refresh.
     public func reloadFromDiskForTesting() {
         startTask = nil
+        lastStartAttemptAt = .distantPast
         pool = []
         availableSets = []
         assignments = [:]
         pendingScene = nil
+        reservedPhotoIDs = []
         namesBySet = [:]
         pools = [:]
         photoTagsBySet = [:]
@@ -1199,6 +1287,11 @@ extension AppModel {
         await scenery.start()
         let scene = scenery.peekNextScene(excludingThreadKeys: activeSceneThreadKeys)
         let sceneTitle = scene.map { scenery.threadTitle(for: $0) }
+        // Reserve before the first suspension point: the thread being created
+        // isn't in `activeSceneThreadKeys` yet, so nothing else would stop an
+        // overlapping creation from being handed the same scene.
+        if let scene { scenery.reserveScene(scene.id) }
+        defer { if let scene { scenery.releaseScene(scene.id) } }
         let thread = await createThread(
             projectID: projectID, provider: provider, title: sceneTitle)
         if let thread, let scene, let sceneTitle {
