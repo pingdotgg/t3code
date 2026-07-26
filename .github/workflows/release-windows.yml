@@ -40,7 +40,9 @@ concurrency:
 
 jobs:
   build-and-release:
-    name: Build and publish the Windows installer
+    # Not "publish": whether the release goes live is the `draft` input's
+    # decision, and it defaults to a draft for manual review.
+    name: Build the Windows installer and create its release
     runs-on: windows-latest
     timeout-minutes: 60
 
