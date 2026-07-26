@@ -184,7 +184,20 @@ public struct ComposerBar: View {
         return nil
     }
 
+    /// Split from `body` deliberately. The composer's chrome plus its ~20
+    /// lifecycle/animation modifiers used to be one expression, and the Swift
+    /// type checker on the CI runner gave up on it ("unable to type-check this
+    /// expression in reasonable time", reported against the innermost leaf —
+    /// the `.fileImporter` closure). It solved fine on a newer local
+    /// toolchain, so the release build broke without any local signal. Keeping
+    /// the chrome and the behaviour modifiers as two smaller expressions keeps
+    /// the constraint system well inside every toolchain's budget. Modifier
+    /// order across the split is unchanged.
     public var body: some View {
+        composerBehaviour(composerChrome)
+    }
+
+    private var composerChrome: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let rows = activeSuggestionRows {
                 SuggestionList(items: rows, highlightedIndex: highlightedSuggestionIndex)
@@ -414,6 +427,13 @@ public struct ComposerBar: View {
         .padding(12)
         .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.composer))
         .shadow(color: .black.opacity(0.10), radius: 16, y: 6)
+    }
+
+    /// The composer's animation, haptic, and lifecycle modifiers. Applied to
+    /// `composerChrome` by `body`; see the note there for why this is a
+    /// separate expression.
+    private func composerBehaviour(_ content: some View) -> some View {
+        content
         // Typing and suggestion filtering are deliberately unanimated. Async
         // arrivals reveal independently without moving the entire composer on
         // every keystroke. Suggestion menus intentionally carry no transition
@@ -502,12 +522,12 @@ public struct ComposerBar: View {
         .fileImporter(
             isPresented: $showFileImporter, allowedContentTypes: [.image],
             allowsMultipleSelection: true
-        ) { result in
-            let targetThreadID = fileImporterThreadID
+        ) { (result: Result<[URL], any Error>) in
+            let targetThreadID: String? = fileImporterThreadID
             fileImporterThreadID = nil
-            if case .success(let urls) = result, let targetThreadID {
-                attach(urls: urls, to: targetThreadID)
-            }
+            guard let targetThreadID else { return }
+            guard case .success(let urls) = result else { return }
+            attach(urls: urls, to: targetThreadID)
         }
     }
 

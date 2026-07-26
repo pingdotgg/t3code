@@ -14,7 +14,7 @@ import T3Kit
 struct AppModelBugHuntRegressionTests {
     private func makeThread(id: String, status: ThreadStatus = .idle) -> ChatThread {
         ChatThread(
-            id: id, projectID: "proj-1", title: "Thread \(id)", provider: .claudex,
+            id: id, projectID: "proj-1", title: "Thread \(id)", provider: .claude,
             status: status, updatedAt: Date(),
             sessionStatus: "idle")
     }

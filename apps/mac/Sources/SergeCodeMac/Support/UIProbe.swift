@@ -1685,7 +1685,7 @@
                 let fitting = host.fittingSize
                 print("UIProbe: min-size \(name) = \(Int(fitting.width))x\(Int(fitting.height))")
             }
-            measure("SidebarView", SidebarView(multi: multi, scenery: scenery, onToggleSidebar: {}))
+            measure("SidebarView", SidebarView(multi: multi, scenery: scenery))
             measure("ChatScreen", ChatScreen(model: model, scenery: scenery))
             measure("ComposerBar", ComposerBar(model: model, accent: AlpineTheme.accent))
             if let thread = model.selectedThread {
