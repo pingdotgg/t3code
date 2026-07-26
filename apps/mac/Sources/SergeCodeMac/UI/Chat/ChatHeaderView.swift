@@ -16,6 +16,14 @@ struct ChatHeaderView: View {
     /// that controls continue past the leading edge.
     @UIState private var gitStripOverflow = GitStripOverflow()
 
+    /// Starts the strip at its trailing edge and then follows the user. This is
+    /// deliberately *not* `.defaultScrollAnchor(.trailing)`: that re-anchors on
+    /// every content-size change, so a PR pill or file-count landing would yank
+    /// the strip back while the user was reading a long branch name — the same
+    /// footgun `ChatTimelineScrollView` documents for `.bottom` during
+    /// streaming. Trailing is the starting position, not a standing rule.
+    @UIState private var gitStripPosition = ScrollPosition(edge: .trailing)
+
     private struct GitStripOverflow: Equatable {
         /// The strip needs more width than the header gives it.
         var isOverflowing = false
@@ -77,16 +85,23 @@ struct ChatHeaderView: View {
     /// — a long branch name next to PR pills asked for ~940pt on its own,
     /// which became the window's minimum width and had AppKit grow the window
     /// past whatever size the user had set. It scrolls instead of widening the
-    /// window, trailing-anchored so the git actions menu is the last thing to
-    /// go, and it advertises the overflow: a fade at the leading edge plus a
-    /// visible scroller whenever there is more strip than room.
+    /// window, starting at its trailing edge so the git actions menu is the
+    /// last thing to go, and it advertises the overflow: a fade at the leading
+    /// edge plus a visible scroller whenever there is more strip than room.
     private var gitStrip: some View {
         ScrollView(.horizontal) {
             VcsToolbar(model: model, threadID: thread.id)
                 .id(thread.id)
         }
+        // Compressible: the strip must lose width to the title's compression
+        // resistance and scroll, never win width and clip.
+        .frame(minWidth: 0)
         .scrollIndicators(gitStripOverflow.isOverflowing ? .visible : .hidden)
-        .defaultScrollAnchor(.trailing)
+        .scrollPosition($gitStripPosition)
+        // A new thread is a new repository state; start it at trailing again.
+        .onChange(of: thread.id) { _, _ in
+            gitStripPosition.scrollTo(edge: .trailing)
+        }
         .onScrollGeometryChange(for: GitStripOverflow.self) { geometry in
             GitStripOverflow(
                 // Half a point of slack: content and container widths land on

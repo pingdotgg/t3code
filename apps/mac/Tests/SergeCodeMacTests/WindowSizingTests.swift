@@ -74,11 +74,27 @@ struct WindowSizingTests {
 
     @Test("shell floors stay small enough for the default window")
     func floorsFitDefaultWindow() {
-        // The window minimum is the detail floor plus the columns and chrome
-        // around it — about 820pt with the columns at their default widths on
-        // the mock shell. Keep the total at or under the 1100x720 default the
-        // app opens with, so the shell never opens at its own minimum.
-        #expect(WindowSizing.minContentWidth + 820 <= 1100)
-        #expect(WindowSizing.minContentHeight + 156 <= 720)
+        // Tripwire, not a layout model: the numbers below mirror values that
+        // live at their use sites, so update them together.
+        //   sidebarColumnMin / inspectorColumnIdeal — RootView's
+        //     `navigationSplitViewColumnWidth(min: 230, …)` and
+        //     `inspectorColumnWidth(min: 300, ideal: 360, …)`.
+        //   defaultWindow — `SergeCodeApp.body`'s `.defaultSize`.
+        //   titlebarAndSplitChrome — measured remainder on the mock shell
+        //     (window minimum 1100 with 280 floor, 230 sidebar, 360 inspector).
+        let sidebarColumnMin: CGFloat = 230
+        let inspectorColumnIdeal: CGFloat = 360
+        let titlebarAndSplitChrome = CGSize(width: 230, height: 156)
+        let defaultWindow = CGSize(width: 1100, height: 720)
+
+        let windowMinimum = CGSize(
+            width: WindowSizing.minContentWidth + sidebarColumnMin + inspectorColumnIdeal
+                + titlebarAndSplitChrome.width,
+            height: WindowSizing.minContentHeight + titlebarAndSplitChrome.height)
+
+        // The shell must never open already at its own minimum — that is the
+        // state where AppKit used to grow the window on the next content change.
+        #expect(windowMinimum.width <= defaultWindow.width)
+        #expect(windowMinimum.height <= defaultWindow.height)
     }
 }
