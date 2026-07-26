@@ -1,17 +1,21 @@
 import AppKit
 import SwiftUI
 
-/// Window-sizing floors for the main window.
+/// Window-sizing floors for the shell.
 ///
-/// These are the *only* minimums AppKit sees. They are deliberately small:
-/// below them the shell compresses and clips, which is the user's business,
-/// while above them nothing the app renders may move the window.
+/// These are not the only minimums AppKit sees: the sidebar column
+/// (`navigationSplitViewColumnWidth(min: 230, …)`), the inspector column
+/// (`inspectorColumnWidth(min: 300, ideal: 360, …)`, so 360 while it sits at
+/// its ideal width), and the split/toolbar chrome all add their own on top.
+/// What matters is that those are fixed, while the detail column's was moving
+/// with content — these floors replace the moving part.
 enum WindowSizing {
-    /// Floor for the detail column (chat / review). The sidebar column (230),
-    /// the inspector column (360) and the window toolbar add a fixed ~820 on
-    /// top, so the window minimum lands near the 1100pt default width with
-    /// every column showing, and near 510 with both columns hidden. Unlike the
-    /// content's own minimum, it does not move while the app is running.
+    /// Floor the detail column (chat / review) reports in place of whatever
+    /// its content currently needs. Below it the detail content compresses and
+    /// clips, which is the user's business; above it nothing the app renders
+    /// can move the window. Measured window minimums with this floor: 1100pt
+    /// with every column showing, 740 with the inspector hidden, 640 with both
+    /// hidden (versus 1434 and climbing before the clamp).
     static let minContentWidth: CGFloat = 280
     static let minContentHeight: CGFloat = 320
 
