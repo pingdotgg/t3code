@@ -45,7 +45,7 @@ public enum ActivityKind {
     public static let runtimeWarning = "runtime.warning"
     /// Tone `.error`: adapter-side provider runtime failure.
     public static let runtimeError = "runtime.error"
-    /// Server-driven turn liveness for ALL providers (codex/grok/kimi/claude/fugu):
+    /// Server-driven turn liveness for ALL providers (codex/grok/kimi/claude):
     /// tone `.error` when `state == "stalled"`, `.info` on recovery.
     /// Payload is `SessionHealthActivityPayload`. Emitted once on stall and
     /// once on recovery by the server's TurnActivityWatchdog.

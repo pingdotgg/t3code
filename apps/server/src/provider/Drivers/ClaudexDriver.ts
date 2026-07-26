@@ -85,15 +85,16 @@ function normalizeRequiredClaudexModelSelection(modelSelection: ModelSelection):
 
 const CLAUDEX_IDENTITY: ClaudeProviderIdentity = {
   provider: DRIVER_KIND,
-  displayName: "Claudex",
+  displayName: "Claude Code",
   showInteractionModeToggle: true,
-  disabledMessage: "Claudex is disabled in SergeCode settings.",
-  uncheckedMessage: "Claudex provider status has not been checked in this session yet.",
-  commandMissingMessage: "Claudex requires the Claudex CLI (`claudex`) to be installed.",
-  healthCheckFailedMessage: "Failed to execute Claudex health check.",
-  timedOutMessage: "Claudex is installed but timed out while checking provider status.",
-  commandFailedMessage: "Claudex is installed but failed to run.",
-  authUnknownMessage: "Could not verify Claudex authentication status from initialization result.",
+  disabledMessage: "Claude Code is disabled in SergeCode settings.",
+  uncheckedMessage: "Claude Code provider status has not been checked in this session yet.",
+  commandMissingMessage: "Claude Code requires the Claudex CLI (`claudex`) to be installed.",
+  healthCheckFailedMessage: "Failed to execute Claude Code health check.",
+  timedOutMessage: "Claude Code is installed but timed out while checking provider status.",
+  commandFailedMessage: "Claude Code is installed but failed to run.",
+  authUnknownMessage:
+    "Could not verify Claude Code authentication status from initialization result.",
 };
 
 const UPDATE = makeStaticProviderMaintenanceResolver(
@@ -157,7 +158,7 @@ export type ClaudexDriverEnv =
 export const ClaudexDriver: ProviderDriver<ClaudexSettingsType, ClaudexDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
-    displayName: "Claudex",
+    displayName: "Claude Code",
     supportsMultipleInstances: true,
   },
   configSchema: ClaudexSettings,

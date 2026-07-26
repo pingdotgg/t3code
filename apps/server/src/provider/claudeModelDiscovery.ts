@@ -14,23 +14,40 @@
  *
  * @module provider/claudeModelDiscovery
  */
-import {
-  ProviderDriverKind,
-  type ModelCapabilities,
-  type ServerProviderModel,
-} from "@t3tools/contracts";
-import { createModelCapabilities, normalizeModelSlug } from "@t3tools/shared/model";
+import { type ModelCapabilities, type ServerProviderModel } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 
 import { buildBooleanOptionDescriptor, buildSelectOptionDescriptor } from "./providerSnapshot.ts";
 
 /**
- * Model aliases are curated against the stock Claude provider
- * (`MODEL_SLUG_ALIASES_BY_PROVIDER.claudeAgent`). Discovery always normalizes
- * through that provider so Claude-backed drivers with their own driver kind
- * (e.g. `claude-synthero`) resolve picker aliases like `sonnet` to the same
- * canonical slugs as the built-in list.
+ * Model aliases reported by the Claude Code CLI (`sonnet`, `haiku`, …),
+ * curated against the built-in model list. Discovery always normalizes
+ * through this table so picker aliases resolve to the same canonical slugs
+ * as the built-in list and dedupe against it.
  */
-const ALIAS_PROVIDER = ProviderDriverKind.make("claudeAgent");
+const CLAUDE_MODEL_SLUG_ALIASES: Record<string, string> = {
+  opus: "claude-opus-4-8",
+  "opus-4.8": "claude-opus-4-8",
+  "claude-opus-4.8": "claude-opus-4-8",
+  "opus-4.7": "claude-opus-4-7",
+  "claude-opus-4.7": "claude-opus-4-7",
+  "opus-4.6": "claude-opus-4-6",
+  "claude-opus-4.6": "claude-opus-4-6",
+  "claude-opus-4-6-20251117": "claude-opus-4-6",
+  fable: "claude-fable-5",
+  "fable-5": "claude-fable-5",
+  sonnet: "claude-sonnet-5",
+  "sonnet-5": "claude-sonnet-5",
+  "claude-sonnet-5.0": "claude-sonnet-5",
+  "claude-sonnet-5-0": "claude-sonnet-5",
+  "sonnet-4.6": "claude-sonnet-4-6",
+  "claude-sonnet-4.6": "claude-sonnet-4-6",
+  "claude-sonnet-4-6-20251117": "claude-sonnet-4-6",
+  haiku: "claude-haiku-4-5",
+  "haiku-4.5": "claude-haiku-4-5",
+  "claude-haiku-4.5": "claude-haiku-4-5",
+  "claude-haiku-4-5-20251001": "claude-haiku-4-5",
+};
 
 /**
  * Picker entries reported by the CLI that are not concrete models. `default`
@@ -170,7 +187,7 @@ export function parseClaudeSdkDiscoveredModels(raw: unknown): ReadonlyArray<Serv
     ).trim();
     if (NON_MODEL_PICKER_VALUES.has(baseValue.toLowerCase())) continue;
 
-    const slug = normalizeModelSlug(baseValue, ALIAS_PROVIDER);
+    const slug = CLAUDE_MODEL_SLUG_ALIASES[baseValue] ?? baseValue;
     if (!slug || seen.has(slug)) continue;
     seen.add(slug);
 

@@ -68,7 +68,7 @@ struct AppModelQuickChatTests {
         await seedRunnableProviders(model)
 
         let older = ChatThread(
-            id: "t-old", projectID: "p1", title: "Old", provider: .claude,
+            id: "t-old", projectID: "p1", title: "Old", provider: .claudex,
             status: .idle, updatedAt: Date(timeIntervalSince1970: 10))
         let newer = ChatThread(
             id: "t-new", projectID: "p1", title: "New", provider: .codex,
@@ -114,7 +114,7 @@ struct AppModelQuickChatTests {
         model.enqueue(
             .providersChanged([
                 ProviderInstance(
-                    id: "provider-claude", kind: .claude, availability: .available, version: "1"),
+                    id: "provider-claude", kind: .claudex, availability: .available, version: "1"),
                 ProviderInstance(
                     id: "provider-codex", kind: .codex, availability: .available, version: "1"),
             ]))

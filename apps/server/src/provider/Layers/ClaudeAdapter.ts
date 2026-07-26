@@ -102,7 +102,7 @@ import { detectClaudeUsageLimit, isUsageLimitDetail } from "../UsageLimit.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
 
-const DEFAULT_CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
+const DEFAULT_CLAUDE_PROVIDER = ProviderDriverKind.make("claudex");
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -1663,9 +1663,8 @@ function buildClaudeImageContentBlock(input: {
  * Build a Claude SDK user message from canonical send-turn input.
  *
  * The provider dependency is threaded in so validation/read failures are
- * stamped with the active Claude-backed driver (`claudeAgent`,
- * `claude-synthero`, etc.) instead of always reporting the stock Claude
- * provider.
+ * stamped with the active Claude-backed driver (e.g. `claudex`) instead of
+ * always reporting a hardcoded provider kind.
  *
  * @param input - Canonical send-turn payload from the provider service.
  * @param dependencies - File, attachment, instance, and provider context.
@@ -2132,7 +2131,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   options?: ClaudeAdapterLiveOptions,
 ) {
   const PROVIDER = options?.driverKind ?? DEFAULT_CLAUDE_PROVIDER;
-  const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("claudeAgent");
+  const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("claudex");
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
@@ -2938,7 +2937,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(providerReportedTotalCostUsd !== undefined
             ? {
                 cost: computeUsageCost({
-                  provider: "claudeAgent",
+                  provider: PROVIDER,
                   ...(costModel !== undefined ? { model: costModel } : {}),
                   usage: usageSnapshot,
                   providerReportedTotalCostUsd,

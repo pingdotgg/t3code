@@ -365,7 +365,7 @@ struct ActivityPayloadTests {
                       "pluginName": "caveman",
                       "skillName": "cavecrew",
                       "displayName": "cavecrew",
-                      "provider": "claudeAgent"
+                      "provider": "claudex"
                     },
                     "inputs": [{ "label": "skill", "value": "caveman:cavecrew", "kind": "text" }],
                     "result": { "text": "done", "paths": [] }

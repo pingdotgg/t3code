@@ -13,7 +13,7 @@ import T3Kit
 struct AppModelBulkArchiveTests {
     private func makeThread(id: String, status: ThreadStatus) -> ChatThread {
         var thread = ChatThread(
-            id: id, projectID: "proj-1", title: "Thread \(id)", provider: .claude,
+            id: id, projectID: "proj-1", title: "Thread \(id)", provider: .claudex,
             status: status, updatedAt: Date(),
             sessionStatus: "idle")
         if status == .settled {

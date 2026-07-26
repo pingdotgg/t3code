@@ -50,14 +50,14 @@ const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabili
   optionDescriptors: [],
 });
 
-const PROVIDER = ProviderDriverKind.make("claudeAgent");
+const PROVIDER = ProviderDriverKind.make("claudex");
 
 /**
  * Presentation and messaging identity for a Claude-backed provider.
  *
- * Lets Claude-backed drivers (the stock Claude provider and forks such as
- * Claude Synthero) share the probe/snapshot logic while customizing their
- * driver kind, display name, and status/error messages.
+ * Lets Claude-backed drivers (such as Claudex) share the probe/snapshot
+ * logic while customizing their driver kind, display name, and status/error
+ * messages.
  */
 export interface ClaudeProviderIdentity {
   readonly provider: ProviderDriverKind;
@@ -74,7 +74,7 @@ export interface ClaudeProviderIdentity {
 
 const CLAUDE_IDENTITY: ClaudeProviderIdentity = {
   provider: PROVIDER,
-  displayName: "Claude",
+  displayName: "Claude Code",
   showInteractionModeToggle: true,
   disabledMessage: "Claude is disabled in SergeCode settings.",
   uncheckedMessage: "Claude provider status has not been checked in this session yet.",
@@ -722,8 +722,8 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
  * Probe a Claude-backed provider and build its server-provider snapshot.
  *
  * `identity` customizes provider kind, display name, and status messages so
- * shared Claude probing can be reused by the stock Claude provider and
- * independent Claude-backed providers such as Claude Synthero.
+ * shared Claude probing can be reused by independent Claude-backed providers
+ * such as Claudex.
  *
  * @param claudeSettings - Effective Claude runtime settings.
  * @param resolveCapabilities - Optional account/slash-command capability probe.
