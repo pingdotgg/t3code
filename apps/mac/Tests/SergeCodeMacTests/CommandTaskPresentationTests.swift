@@ -61,6 +61,30 @@ struct CommandTaskPresentationTests {
         #expect(CommandTaskPresentation.statusLine(for: task, at: now) == "Failed")
     }
 
+    @Test("a settled command still reports what it finished with")
+    func settledCommandKeepsItsSummary() {
+        var task = backgroundCommand()
+        task.latestProgress = "Process exited with code 0."
+
+        // Live: `latestProgress` is a running tool label, not a result.
+        #expect(CommandTaskPresentation.result(for: task) == nil)
+
+        task.state = .completed
+        #expect(CommandTaskPresentation.result(for: task) == "Process exited with code 0.")
+        // No streamed output, so the summary is the whole account of the run.
+        #expect(CommandTaskPresentation.output(for: task) == nil)
+    }
+
+    @Test("a failure does not print its error twice")
+    func failedCommandDoesNotDuplicateItsError() {
+        var task = backgroundCommand()
+        task.state = .failed
+        task.error = "exited with code 1"
+        task.latestProgress = "exited with code 1"
+
+        #expect(CommandTaskPresentation.result(for: task) == nil)
+    }
+
     @Test("a command without the detach flag is never labelled backgrounded")
     func attachedCommandDropsBackgroundLabelling() {
         var task = backgroundCommand()

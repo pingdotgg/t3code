@@ -771,6 +771,17 @@
             attached.description = "Compile the sidecar"
             attached.isBackgrounded = false
 
+            // Settled with a summary but no streamed output: the completion
+            // summary is the whole account of the run, so it must be on the
+            // card rather than collapsed to "Finished".
+            var summarized = running
+            summarized.taskId = "probe-command-summarized"
+            summarized.description = "Sync the release notes"
+            summarized.state = .completed
+            summarized.duration = 47
+            summarized.progressLog = []
+            summarized.latestProgress = "Process exited with code 0."
+
             // A failure with no streamed output: the error must be readable on
             // the card rather than hidden behind a chevron that expands nothing.
             var failed = running
@@ -790,10 +801,12 @@
                     CommandTaskCard(
                         task: attached, stopError: nil, onStop: {}, onClearStopError: {})
                     CommandTaskCard(
+                        task: summarized, stopError: nil, onStop: {}, onClearStopError: {})
+                    CommandTaskCard(
                         task: failed, stopError: nil, onStop: {}, onClearStopError: {})
                 }
                 .padding(16))
-            let frame = NSRect(x: 0, y: 0, width: 720, height: 760)
+            let frame = NSRect(x: 0, y: 0, width: 720, height: 860)
             hosting.frame = frame
             let window = NSWindow(
                 contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)

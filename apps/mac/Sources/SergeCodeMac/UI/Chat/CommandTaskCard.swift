@@ -35,6 +35,21 @@ enum CommandTaskPresentation {
         return chunks.joined()
     }
 
+    /// What the command reported when it settled — the provider's completion
+    /// summary ("Process exited with code 0."), which for a job that streamed
+    /// nothing is the only account of what happened. Nil while the command is
+    /// still live, where `latestProgress` is a running tool label rather than
+    /// a result.
+    static func result(for task: SubagentTaskItem) -> String? {
+        guard task.state != .running, task.state != .paused else { return nil }
+        guard let result = SubagentTaskPresentation.nonEmpty(task.latestProgress) else {
+            return nil
+        }
+        // A failure folds its error into the summary; the error is rendered on
+        // its own, so returning it here would print the same text twice.
+        return result == SubagentTaskPresentation.nonEmpty(task.error) ? nil : result
+    }
+
     /// Keeps the last `limit` lines — a running job's tail is the signal —
     /// plus a count of what was dropped.
     static func outputTail(_ text: String, limit: Int) -> (text: String, hiddenLines: Int) {
@@ -138,6 +153,18 @@ struct CommandTaskCard: View {
                         .allowsHitTesting(isHovering)
                         .accessibilityHidden(!isHovering)
                 }
+            }
+
+            // How the command reported itself finishing. A job that streamed
+            // no output has nothing else to show for itself, and the status
+            // line above is a state word.
+            if let result = CommandTaskPresentation.result(for: task) {
+                Text(result)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, TranscriptMetrics.iconColumn + 10)
             }
 
             // Failure text in full: a command's error is often several lines
