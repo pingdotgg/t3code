@@ -4,6 +4,7 @@ import { memo, useCallback } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
 import { APP_STAGE_LABEL } from "../../branding";
+import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { primaryServerConfigAtom } from "../../state/server";
 import { resolveSidebarStageBadgeLabel } from "../Sidebar.logic";
@@ -26,7 +27,13 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron: boolean;
 }) {
   const stageLabel = useSidebarStageLabel();
-  const backdropVariant = resolveSidebarStageBackdropVariant(stageLabel);
+  const sidebarStageArtworkEnabled = useClientSettings(
+    (settings) => settings.sidebarStageArtworkEnabled,
+  );
+  const backdropVariant = resolveSidebarStageBackdropVariant(
+    stageLabel,
+    sidebarStageArtworkEnabled,
+  );
 
   return (
     <SidebarHeader

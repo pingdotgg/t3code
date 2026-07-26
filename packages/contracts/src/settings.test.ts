@@ -49,6 +49,15 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
+describe("ClientSettings sidebar stage artwork", () => {
+  it("defaults the artwork on and accepts opt-out patches", () => {
+    expect(decodeClientSettings({}).sidebarStageArtworkEnabled).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ sidebarStageArtworkEnabled: false }).sidebarStageArtworkEnabled,
+    ).toBe(false);
+  });
+});
+
 describe("ClientSettings sidebar v2", () => {
   it("defaults the beta off with a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});

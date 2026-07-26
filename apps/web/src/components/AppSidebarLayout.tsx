@@ -48,6 +48,9 @@ function SidebarControl() {
   const { toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
   const stageBackdropVariant = useSidebarStageBackdropVariant();
+  const sidebarStageArtworkEnabled = useClientSettings(
+    (settings) => settings.sidebarStageArtworkEnabled,
+  );
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
 
   useEffect(() => {
@@ -83,6 +86,7 @@ function SidebarControl() {
               className={cn(
                 "pointer-events-auto",
                 isSidebarVisible &&
+                  sidebarStageArtworkEnabled &&
                   stageBackdropVariant &&
                   "[:hover,[data-pressed]]:bg-white/15 focus-visible:ring-white/90 focus-visible:ring-offset-blue-700 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white!",
               )}
