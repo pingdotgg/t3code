@@ -6,6 +6,7 @@ import {
   posixShellSingleQuote,
   resolveDesktopRelaunchPlan,
 } from "./resolveDesktopRelaunchOptions.ts";
+import { scheduleAppImageRelaunch } from "./scheduleAppImageRelaunch.ts";
 
 describe("resolveDesktopRelaunchPlan", () => {
   it.effect("schedules a delayed AppImage re-exec with flag argv only", () =>
@@ -91,5 +92,21 @@ describe("buildAppImageRelaunchShellCommand", () => {
 
       assert.equal(posixShellSingleQuote("it's"), `'it'\\''s'`);
     }),
+  );
+});
+
+describe("scheduleAppImageRelaunch", () => {
+  it.effect("resolves only once the detached helper has actually spawned", () =>
+    // Resolves on the `spawn` event, well before the helper's sleep elapses.
+    // The caller depends on this to know it is safe to release the
+    // single-instance lock and exit rather than vanishing on a failed spawn.
+    Effect.promise(() =>
+      scheduleAppImageRelaunch({
+        kind: "appimage-delayed",
+        appImagePath: "/bin/true",
+        args: [],
+        delayMs: 200,
+      }),
+    ),
   );
 });

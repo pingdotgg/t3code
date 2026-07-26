@@ -174,15 +174,14 @@ export const make = DesktopLifecycle.of({
         argumentCount: relaunchPlan.args.length,
         ...(relaunchPlan.kind === "appimage-delayed" ? { delayMs: relaunchPlan.delayMs } : {}),
       });
-      // Electron.relaunch spawns the new process while this one is still alive.
-      // Release the single-instance lock first or the child immediately exits
-      // after requestSingleInstanceLock() fails (looks like "restart never comes back").
-      yield* electronApp.releaseSingleInstanceLock;
       if (relaunchPlan.kind === "appimage-delayed") {
         // Delayed shell re-exec avoids racing the AppImage FUSE unmount, which
         // otherwise surfaces "Cannot mount AppImage, please check your FUSE setup."
-        yield* Effect.sync(() => {
-          scheduleAppImageRelaunch(relaunchPlan);
+        // Await the spawn: a failure here must not fall through to exit(0), or
+        // the app just disappears and never comes back.
+        yield* Effect.tryPromise({
+          try: () => scheduleAppImageRelaunch(relaunchPlan),
+          catch: (cause) => new DesktopLifecycleRelaunchError({ reason, cause }),
         });
       } else {
         yield* electronApp.relaunch({
@@ -190,6 +189,14 @@ export const make = DesktopLifecycle.of({
           args: relaunchPlan.args,
         });
       }
+      // Only give up the lock once the relaunch is committed. Neither path has
+      // started the next process yet (app.relaunch defers its spawn to exit,
+      // the AppImage helper sleeps first), so releasing here still beats the
+      // successor's requestSingleInstanceLock() — but if the setup above threw,
+      // the catchCause below leaves us running, and holding the lock is what
+      // keeps the next manual launch focusing this window instead of opening a
+      // second full instance.
+      yield* electronApp.releaseSingleInstanceLock;
       yield* electronApp.exit(0);
     }).pipe(
       Effect.catchCause((cause) => {

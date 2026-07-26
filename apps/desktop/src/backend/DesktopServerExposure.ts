@@ -10,8 +10,10 @@ import {
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
 import {
+  DEFAULT_TAILSCALE_SERVE_PORT,
   disableTailscaleServe,
   ensureTailscaleServe,
+  formatTailscaleServeUserMessage,
   readTailscaleStatus,
   TailscaleCommandError,
 } from "@t3tools/tailscale";
@@ -269,9 +271,13 @@ export class DesktopTailscaleServeConfigureError extends Schema.TaggedErrorClass
     const parts: string[] = [];
     if (this.detail !== undefined) {
       parts.push(this.detail);
-    } else {
+    } else if (this.enabled) {
       parts.push(
         `Failed to configure Tailscale Serve for the local backend on port ${this.localPort}.`,
+      );
+    } else {
+      parts.push(
+        `Failed to turn off Tailscale Serve on port ${this.port ?? DEFAULT_TAILSCALE_SERVE_PORT}. It may still be reachable on your tailnet.`,
       );
     }
     if (this.configureUrl !== null) {
@@ -582,8 +588,14 @@ export const make = Effect.gen(function* () {
           Effect.mapError((cause) => {
             // Lift only safe structural diagnostics from the CLI error; keep the
             // full TailscaleCommandError as cause for the error chain/stack.
+            // Exit errors already carry a vetted `detail`; spawn/timeout/output
+            // errors have none, and the generic "port N" fallback hides the most
+            // common failure (Tailscale not installed or not on PATH), so use the
+            // shared user-facing copy for those.
             const exitDetail =
-              cause._tag === "TailscaleCommandExitError" ? cause.detail : undefined;
+              cause._tag === "TailscaleCommandExitError"
+                ? cause.detail
+                : formatTailscaleServeUserMessage(cause);
             const configureUrl =
               cause._tag === "TailscaleCommandExitError" ? (cause.configureUrl ?? null) : null;
             return new DesktopTailscaleServeConfigureError({
@@ -604,6 +616,34 @@ export const make = Effect.gen(function* () {
           current.tailscaleServeEnabled && current.tailscaleServePort === servePort
             ? null
             : servePort;
+      } else {
+        // Tear Serve down here rather than leaving it to the child server's
+        // acquireRelease finalizer. That finalizer only exists when the *current*
+        // child booted with Serve enabled, so after a failed relaunch (which
+        // `lifecycle.relaunch` logs and swallows) disabling would persist
+        // `enabled: false` while `tailscale serve --https=<port>` stayed live on
+        // the tailnet. Fail loudly instead of reporting a teardown we did not do.
+        const current = yield* Ref.get(stateRef);
+        if (current.tailscaleServeEnabled) {
+          const servePort = current.tailscaleServePort;
+          yield* disableTailscaleServe({ servePort }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+            Effect.mapError((cause) => {
+              const exitDetail =
+                cause._tag === "TailscaleCommandExitError"
+                  ? cause.detail
+                  : formatTailscaleServeUserMessage(cause);
+              return new DesktopTailscaleServeConfigureError({
+                enabled: false,
+                port: servePort,
+                localPort: current.port,
+                ...(exitDetail === undefined ? {} : { detail: exitDetail }),
+                configureUrl: null,
+                cause,
+              });
+            }),
+          );
+        }
       }
 
       const result = yield* desktopSettings
