@@ -1,3 +1,4 @@
+import { CommandId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -5,8 +6,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import {
+  ProviderSessionDirectory,
+  type ProviderRuntimeBindingWithMetadata,
+} from "../Services/ProviderSessionDirectory.ts";
 import {
   ProviderSessionReaper,
   type ProviderSessionReaperShape,
@@ -25,6 +30,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
   Effect.gen(function* () {
     const providerService = yield* ProviderService;
     const directory = yield* ProviderSessionDirectory;
+    const orchestrationEngine = yield* OrchestrationEngineService;
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
     const inactivityThresholdMs = Math.max(
@@ -33,6 +39,82 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
     );
     const sweepIntervalMs = Math.max(1, options?.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS);
 
+    // Provider shutdown can persist "stopped" after runtime event consumers
+    // have closed, leaving the projection on its last transient status.
+    const reconcileStoppedBinding = Effect.fn("ProviderSessionReaper.reconcileStoppedBinding")(
+      function* (binding: ProviderRuntimeBindingWithMetadata) {
+        const thread = yield* projectionSnapshotQuery
+          .getThreadShellById(binding.threadId)
+          .pipe(Effect.map(Option.getOrUndefined));
+        const session = thread?.session;
+        if (!session || session.status === "stopped") {
+          return;
+        }
+
+        const stoppedAtMs = Date.parse(binding.lastSeenAt);
+        if (Number.isNaN(stoppedAtMs)) {
+          yield* Effect.logWarning("provider.session.reaper.invalid-last-seen", {
+            threadId: binding.threadId,
+            provider: binding.provider,
+            lastSeenAt: binding.lastSeenAt,
+          });
+          return;
+        }
+
+        const projectedAtMs = Date.parse(session.updatedAt);
+        if (!Number.isNaN(projectedAtMs) && stoppedAtMs < projectedAtMs) {
+          yield* Effect.logDebug("provider.session.reaper.skipped-stale-stopped-binding", {
+            threadId: binding.threadId,
+            provider: binding.provider,
+            bindingLastSeenAt: binding.lastSeenAt,
+            projectedSessionUpdatedAt: session.updatedAt,
+          });
+          return;
+        }
+
+        yield* orchestrationEngine
+          .dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(
+              `server:provider-session-reconcile:${binding.threadId}:${binding.lastSeenAt}`,
+            ),
+            threadId: binding.threadId,
+            session: {
+              threadId: binding.threadId,
+              status: "stopped",
+              providerName: binding.provider,
+              ...(binding.providerInstanceId !== undefined
+                ? { providerInstanceId: binding.providerInstanceId }
+                : session.providerInstanceId !== undefined
+                  ? { providerInstanceId: session.providerInstanceId }
+                  : {}),
+              runtimeMode: binding.runtimeMode ?? session.runtimeMode,
+              activeTurnId: null,
+              lastError: session.lastError,
+              updatedAt: binding.lastSeenAt,
+            },
+            createdAt: binding.lastSeenAt,
+          })
+          .pipe(
+            Effect.tap(() =>
+              Effect.logInfo("provider.session.reaper.reconciled-stopped-binding", {
+                threadId: binding.threadId,
+                provider: binding.provider,
+                stoppedAt: binding.lastSeenAt,
+                projectedStatus: session.status,
+              }),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider.session.reaper.reconcile-stopped-binding-failed", {
+                threadId: binding.threadId,
+                provider: binding.provider,
+                cause,
+              }),
+            ),
+          );
+      },
+    );
+
     const sweep = Effect.gen(function* () {
       const bindings = yield* directory.listBindings();
       const now = yield* Clock.currentTimeMillis;
@@ -40,6 +122,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
 
       for (const binding of bindings) {
         if (binding.status === "stopped") {
+          yield* reconcileStoppedBinding(binding);
           continue;
         }
 
