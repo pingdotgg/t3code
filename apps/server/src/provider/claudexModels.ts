@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
-import { buildSelectOptionDescriptor, mergeProviderModels } from "./providerSnapshot.ts";
+import { buildSelectOptionDescriptor } from "./providerSnapshot.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("claudex");
 
@@ -86,12 +86,6 @@ export function withClaudexModelCapabilities(
       capabilities: claudexModel.capabilities,
     };
   });
-}
-
-export function mergeClaudexModels(
-  models: ReadonlyArray<ServerProviderModel>,
-): ReadonlyArray<ServerProviderModel> {
-  return mergeProviderModels(CLAUDEX_MODELS, models);
 }
 
 export function normalizeClaudexEffort(

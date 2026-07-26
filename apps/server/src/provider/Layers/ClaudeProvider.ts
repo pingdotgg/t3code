@@ -470,6 +470,10 @@ export function isClaudeUltracodeEffort(effort: string | null | undefined): bool
 }
 
 export function resolveClaudeApiModelId(modelSelection: ModelSelection): string {
+  if (getClaudexModelCapabilities(modelSelection.model)) {
+    return modelSelection.model;
+  }
+
   switch (getModelSelectionStringOptionValue(modelSelection, "contextWindow")) {
     case "1m":
       return `${modelSelection.model}[1m]`;

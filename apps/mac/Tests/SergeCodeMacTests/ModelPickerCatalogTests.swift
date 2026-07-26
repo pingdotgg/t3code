@@ -60,6 +60,44 @@ struct ModelPickerCatalogTests {
         #expect(item?.option.instanceID == "codex-a")
     }
 
+    @Test("maps Claude drivers and keeps both instances in one Claude Code filter")
+    func claudeDriversShareProviderKind() {
+        #expect(
+            LiveBackend.providerKindForServerProvider(
+                instanceID: "claudeAgent", driver: "claudeAgent") == .claudex)
+        #expect(
+            LiveBackend.providerKindForServerProvider(
+                instanceID: "claudex", driver: "claudex") == .claudex)
+
+        let items = ModelPickerCatalog.items(
+            from: [
+                option(
+                    instance: "claudeAgent", modelID: "sonnet", name: "Sonnet",
+                    provider: .claudex),
+                option(
+                    instance: "claudex", modelID: "claudex-sonnet", name: "Claudex Sonnet",
+                    provider: .claudex),
+            ],
+            selectedInstanceID: nil,
+            selectedModelID: nil)
+
+        let claudeCodeItems = ModelPickerCatalog.filteredItems(
+            items,
+            providerFilter: .provider(.claudex),
+            query: "")
+
+        #expect(claudeCodeItems.count == 2)
+        #expect(
+            Set(claudeCodeItems.map(\.option.instanceID)) == Set(["claudeAgent", "claudex"]))
+    }
+
+    @Test("preserves Claude Work instance override before general Claude mapping")
+    func claudeWorkInstanceOverrideWins() {
+        #expect(
+            LiveBackend.providerKindForServerProvider(
+                instanceID: "claude-work", driver: "claudeAgent") == .claudeWork)
+    }
+
     @Test("filters by provider and searches names, ids, and providers")
     func filtersAndSearches() {
         let items = ModelPickerCatalog.items(

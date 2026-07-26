@@ -24,6 +24,7 @@ import {
   ChatGptBrowserDriver,
   type ChatGptBrowserDriverEnv,
 } from "./Drivers/ChatGptBrowserDriver.ts";
+import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { ClaudexDriver, type ClaudexDriverEnv } from "./Drivers/ClaudexDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
@@ -36,6 +37,7 @@ import type { AnyProviderDriver } from "./ProviderDriver.ts";
  * layer must provide every service in this union.
  */
 export type BuiltInDriversEnv =
+  | ClaudeDriverEnv
   | ClaudexDriverEnv
   | CodexDriverEnv
   | GrokDriverEnv
@@ -49,6 +51,7 @@ export type BuiltInDriversEnv =
  */
 export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv>> = [
   CodexDriver,
+  ClaudeDriver,
   ClaudexDriver,
   GrokDriver,
   KimiDriver,

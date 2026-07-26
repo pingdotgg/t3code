@@ -552,6 +552,7 @@ export const ServerSettings = Schema.Struct({
   // is removed entirely.
   providers: Schema.Struct({
     codex: CodexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     claudex: ClaudexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     kimi: KimiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),

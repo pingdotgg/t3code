@@ -30,9 +30,7 @@ import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
 import {
   checkClaudeProviderStatus,
-  getClaudeModelCapabilities,
   makePendingClaudeProvider,
-  normalizeClaudeCliEffort,
   probeClaudeCapabilities,
   type ClaudeProviderIdentity,
 } from "../Layers/ClaudeProvider.ts";
@@ -48,7 +46,8 @@ import { nonEmptyTrimmed, type ServerProviderDraft } from "../providerSnapshot.t
 import {
   CLAUDEX_DEFAULT_MODEL,
   CLAUDEX_MODEL_SLUGS,
-  mergeClaudexModels,
+  CLAUDEX_MODELS,
+  getClaudexModelCapabilities,
   normalizeClaudexEffort,
 } from "../claudexModels.ts";
 import {
@@ -72,23 +71,26 @@ export function normalizeClaudexModelSelection(
   modelSelection: ModelSelection | undefined,
 ): ModelSelection | undefined {
   if (modelSelection === undefined) return undefined;
+
+  const model = nonEmptyTrimmed(modelSelection.model);
+  const normalizedModel = model && CLAUDEX_MODEL_SLUGS.has(model) ? model : CLAUDEX_DEFAULT_MODEL;
+  const { options: rawOptions, ...selectionWithoutOptions } = modelSelection;
+  const options = rawOptions?.flatMap((option) => {
+    if (option.id !== "effort") return [];
+    const value =
+      typeof option.value === "string" ? normalizeClaudexEffort(option.value) : undefined;
+    return value ? [{ id: "effort", value }] : [];
+  });
+
   return {
-    ...modelSelection,
-    model: nonEmptyTrimmed(modelSelection.model) ?? CLAUDEX_DEFAULT_MODEL,
+    ...selectionWithoutOptions,
+    model: normalizedModel,
+    ...(options && options.length > 0 ? { options } : {}),
   };
 }
 
 function normalizeRequiredClaudexModelSelection(modelSelection: ModelSelection): ModelSelection {
   return normalizeClaudexModelSelection(modelSelection)!;
-}
-
-export function normalizeClaudexProviderEffort(
-  effort: string | null | undefined,
-  model: string | null | undefined,
-): string | undefined {
-  return CLAUDEX_MODEL_SLUGS.has(model ?? "")
-    ? normalizeClaudexEffort(effort, model)
-    : normalizeClaudeCliEffort(effort, model);
 }
 
 const CLAUDEX_IDENTITY: ClaudeProviderIdentity = {
@@ -133,7 +135,7 @@ export function normalizeClaudexProviderSnapshot(
 ): ServerProviderDraft {
   return {
     ...snapshot,
-    models: mergeClaudexModels(snapshot.models),
+    models: CLAUDEX_MODELS,
   };
 }
 
@@ -201,8 +203,8 @@ export const ClaudexDriver: ProviderDriver<ClaudexSettingsType, ClaudexDriverEnv
         instanceId,
         driverKind: DRIVER_KIND,
         environment: processEnv,
-        getModelCapabilities: getClaudeModelCapabilities,
-        normalizeEffort: normalizeClaudexProviderEffort,
+        getModelCapabilities: getClaudexModelCapabilities,
+        normalizeEffort: normalizeClaudexEffort,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const adapter = {
@@ -223,8 +225,8 @@ export const ClaudexDriver: ProviderDriver<ClaudexSettingsType, ClaudexDriverEnv
           }),
       } satisfies typeof rawAdapter;
       const rawTextGeneration = yield* makeClaudeTextGeneration(claudeSettings, processEnv, {
-        getModelCapabilities: getClaudeModelCapabilities,
-        normalizeEffort: normalizeClaudexProviderEffort,
+        getModelCapabilities: getClaudexModelCapabilities,
+        normalizeEffort: normalizeClaudexEffort,
       });
       const textGeneration = {
         ...rawTextGeneration,
