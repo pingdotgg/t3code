@@ -75,7 +75,7 @@
                 finish(dir: dir)
                 return
             }
-            await seedSettledSession(model: model, table: table)
+            let hasSettledSession = await seedSettledSession(model: model, table: table)
 
             // The row → content mapping is SwiftUI's business (section headers,
             // thread rows and disclosure rows share one table), so every row in
@@ -85,13 +85,21 @@
             // variants unexercised while still reporting a pass.
             var readings = await walkRows(table: table, window: window, dir: dir, pass: 1)
 
-            // Settled sessions live behind a closed disclosure, so their rows
-            // are not in the table at all on the first pass — and their menu is
-            // the "Mark as Active" variant, which nothing else exercises. Open
+            // A settled session's own row lives behind a closed disclosure, so
+            // it is not in the table on the first pass — and its menu carries
+            // the "Mark as Active" branch, which nothing else exercises. Open
             // the disclosure and walk again.
-            if readings.contains(where: { $0.identity.hasPrefix("settled:") }) {
+            //
+            // Gated on the model, not on what pass 1 saw. The disclosure's
+            // *header* row is in the table even while collapsed, so keying the
+            // reveal on having spotted a `settled:` reading conflated two
+            // different things — "a settled session exists" and "its rows are
+            // already visible" — and left the reveal at the mercy of whichever
+            // one happened to hold.
+            if hasSettledSession {
                 if await revealSettledDisclosure(in: table) {
                     readings += await walkRows(table: table, window: window, dir: dir, pass: 2)
+                    await checkRevealIsIdempotent(in: table)
                 } else {
                     UIProbeAssertions.fail(
                         "sidebar-settled-rows", "the settled disclosure never opened")
@@ -213,33 +221,75 @@
 
         // MARK: - Fixture
 
-        /// The settled disclosure row carries the third menu this PR moved onto
-        /// the Alpine surface, and it only exists once a project has a settled
-        /// session — which the mock fixture does not seed. Settle one, so the
-        /// variant is exercised instead of permanently skipped.
-        private static func seedSettledSession(model: AppModel, table: NSTableView) async {
+        /// Settles one session so the disclosure row, the row it hides, and the
+        /// "Mark as Active" menu all exist — the mock fixture seeds none.
+        /// Returns whether a settled session is now present.
+        ///
+        /// Failing to seed is a hard failure, not a skip: three of the four menu
+        /// variants this scenario exists to cover hang off it, and a run that
+        /// quietly stopped covering them is the exact thing this probe is
+        /// supposed to make impossible.
+        private static func seedSettledSession(
+            model: AppModel, table: NSTableView
+        ) async -> Bool {
+            if let existing = model.threads.first(where: { $0.status == .settled }) {
+                UIProbeAssertions.pass(
+                    "sidebar-settled-seed", "fixture already has settled=\(existing.id)")
+                return true
+            }
             guard
                 let thread = model.threads.last(where: { ThreadInboxSemantics.canSettle($0) })
             else {
-                print("UIProbe: sidebar-menus no settleable thread to seed")
-                return
+                UIProbeAssertions.fail(
+                    "sidebar-settled-seed", "no settleable thread in the fixture")
+                return false
             }
             let rowsBefore = table.numberOfRows
             await model.settleThread(thread)
-            // The list re-sorts under `Motion.structure`, so wait for the table
-            // to actually restructure rather than racing the animation.
-            for _ in 0..<20 {
-                try? await Task.sleep(for: .milliseconds(150))
-                if model.threads.first(where: { $0.id == thread.id })?.status == .settled,
-                    table.numberOfRows > 0
-                {
-                    break
-                }
+            let landed = await waitUntil {
+                model.threads.first(where: { $0.id == thread.id })?.status == .settled
             }
-            try? await Task.sleep(for: .milliseconds(500))
-            print(
-                "UIProbe: sidebar-menus seeded settled=\(thread.id) "
-                    + "rows \(rowsBefore)→\(table.numberOfRows)")
+            guard landed else {
+                UIProbeAssertions.fail(
+                    "sidebar-settled-seed", "\(thread.id) never reached .settled")
+                return false
+            }
+            // The list re-sorts under `Motion.structure`; let it land before any
+            // row is measured for clicking.
+            try? await Task.sleep(for: .milliseconds(600))
+            UIProbeAssertions.pass(
+                "sidebar-settled-seed",
+                "settled=\(thread.id) rows \(rowsBefore)→\(table.numberOfRows)")
+            return true
+        }
+
+        /// Pins the reveal as idempotent. It used to toggle, which meant a
+        /// second delivery closed the disclosure again and took the rows it had
+        /// just exposed with it — silently narrowing this scenario's coverage
+        /// instead of failing.
+        private static func checkRevealIsIdempotent(in table: NSTableView) async {
+            let revealed = table.numberOfRows
+            NotificationCenter.default.post(name: .uiProbeToggleSection, object: "settled")
+            try? await Task.sleep(for: .milliseconds(900))
+            let after = table.numberOfRows
+            if after < revealed {
+                UIProbeAssertions.fail(
+                    "sidebar-reveal-idempotent",
+                    "a second reveal closed the disclosure (\(revealed)→\(after))")
+            } else {
+                UIProbeAssertions.pass(
+                    "sidebar-reveal-idempotent", "\(after) row(s) held across a second reveal")
+            }
+        }
+
+        private static func waitUntil(
+            tries: Int = 20, _ condition: @MainActor () -> Bool
+        ) async -> Bool {
+            for _ in 0..<tries {
+                if condition() { return true }
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+            return condition()
         }
 
         // MARK: - Driving the menu
@@ -273,28 +323,30 @@
         }
 
         /// Opens every project's settled disclosure so the rows it hides join
-        /// the table and get probed. Driven through the probe's toggle
-        /// notification rather than a synthesized click on the chevron: the
-        /// disclosure state is SwiftUI `@UIState` with no other in-process
-        /// entry point, and hunting a 12pt glyph by coordinate would fail for
-        /// reasons that have nothing to do with the menus. Returns whether the
-        /// table actually grew — a reveal that silently did nothing must not
-        /// read as "no settled rows exist".
+        /// the table and get probed. Driven through the probe's notification
+        /// rather than a synthesized click on the chevron: the disclosure state
+        /// is SwiftUI `@UIState` with no other in-process entry point, and
+        /// hunting a 12pt glyph by coordinate would fail for reasons that have
+        /// nothing to do with the menus. The receiver unions rather than
+        /// toggles, so this is safe to call whatever state the disclosure is in.
+        ///
+        /// Returns whether the table actually grew. A reveal that silently did
+        /// nothing must not read as "there were no settled rows".
         private static func revealSettledDisclosure(in table: NSTableView) async -> Bool {
             let before = table.numberOfRows
             NotificationCenter.default.post(name: .uiProbeToggleSection, object: "settled")
-            for _ in 0..<20 {
-                try? await Task.sleep(for: .milliseconds(150))
-                guard table.numberOfRows > before else { continue }
-                // Let the disclosure's insert animation settle before rows are
-                // measured for clicking.
-                try? await Task.sleep(for: .milliseconds(600))
-                print(
-                    "UIProbe: sidebar-menus revealed settled rows "
-                        + "\(before)→\(table.numberOfRows)")
-                return true
+            let grew = await waitUntil { table.numberOfRows > before }
+            guard grew else {
+                print("UIProbe: sidebar-menus settled disclosure stayed at \(before) row(s)")
+                return false
             }
-            return false
+            // Let the disclosure's insert animation settle before rows are
+            // measured for clicking.
+            try? await Task.sleep(for: .milliseconds(600))
+            print(
+                "UIProbe: sidebar-menus revealed settled rows "
+                    + "\(before)→\(table.numberOfRows)")
+            return true
         }
 
         private static func postSecondaryClick(in window: NSWindow, at point: NSPoint) {

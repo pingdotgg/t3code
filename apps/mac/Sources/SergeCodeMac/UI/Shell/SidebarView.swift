@@ -162,12 +162,17 @@ struct SidebarView: View {
         // Probe hook (see UIProbeHooks): reveals every project's settled
         // disclosure, so the rows it hides — and their menus — can be driven.
         // Nothing posts this outside a probe run.
+        //
+        // A union rather than a toggle: the probe needs the disclosure *open*,
+        // and a toggle would close it again on a redelivered notification or on
+        // a group the user had already expanded, leaving the rows it was asked
+        // to reveal missing.
         .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
             guard note.object as? String == "settled" else { return }
             let groupIDs = Set(allProjectGroups.map(\.id))
             DispatchQueue.main.async {
                 withAnimation(Motion.structure) {
-                    revealedSettled = revealedSettled.isEmpty ? groupIDs : []
+                    revealedSettled.formUnion(groupIDs)
                 }
             }
         }
