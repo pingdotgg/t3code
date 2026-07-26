@@ -32,6 +32,7 @@ export function threadDetailToShell(
     title: thread.title,
     modelSelection: thread.modelSelection,
     executorModelSelection: thread.executorModelSelection,
+    executorMaxSubAgents: thread.executorMaxSubAgents,
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
     branch: thread.branch,

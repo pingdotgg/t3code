@@ -26,6 +26,7 @@ function makeThread(input: {
     runtimeMode: "full-access",
     interactionMode: "default",
     executorModelSelection: null,
+    executorMaxSubAgents: 3,
     branch: null,
     worktreePath: null,
     parentThreadId: null,

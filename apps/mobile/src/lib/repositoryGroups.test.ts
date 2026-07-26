@@ -25,6 +25,7 @@ function makeThread(
 ): EnvironmentThreadShell {
   return {
     executorModelSelection: null,
+    executorMaxSubAgents: 3,
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,

@@ -40,6 +40,7 @@ function makeThread(id: string, projectId: ProjectId): EnvironmentThreadShell {
     title: `Thread ${id}`,
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     executorModelSelection: null,
+    executorMaxSubAgents: 3,
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
