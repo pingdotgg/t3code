@@ -76,15 +76,40 @@ const withTestClock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 describe("TurnActivityWatchdog", () => {
   it("uses a 15-minute default and reads the server env override", () => {
-    assert.equal(DEFAULT_TURN_STALL_THRESHOLD_MS, 900_000);
+    assert.equal(DEFAULT_TURN_STALL_THRESHOLD_MS, 15 * 60 * 1000);
     assert.equal(readTurnStallThresholdMs({ T3CODE_TURN_STALL_THRESHOLD_MS: "45000" }), 45_000);
     for (const malformed of ["invalid", "120000ms", "1.5", "-1", "Infinity"]) {
       assert.equal(
         readTurnStallThresholdMs({ T3CODE_TURN_STALL_THRESHOLD_MS: malformed }),
-        900_000,
+        15 * 60 * 1000,
       );
     }
   });
+
+  it.effect("applies the 15-minute default threshold to non-ACP providers", () =>
+    withTestClock(
+      Effect.gen(function* () {
+        const transitions = yield* Ref.make<Array<TurnHealthTransition>>([]);
+        // No threshold override: the watchdog reads the global default, which
+        // intentionally applies to chatty non-ACP providers (claudeAgent
+        // here) the same as ACP ones.
+        const watchdog = yield* makeTurnActivityWatchdog({
+          onTransition: (transition) =>
+            Ref.update(transitions, (current) => [...current, transition]),
+        });
+
+        yield* watchdog.observe(event("turn.started"));
+        yield* TestClock.adjust(Duration.minutes(14));
+        assert.deepEqual(yield* Ref.get(transitions), []);
+
+        yield* TestClock.adjust(Duration.minutes(2));
+        assert.deepEqual(
+          (yield* Ref.get(transitions)).map((transition) => transition.state),
+          ["stalled"],
+        );
+      }),
+    ),
+  );
 
   it.effect("emits one stalled transition and one recovery after activity resumes", () =>
     withTestClock(
