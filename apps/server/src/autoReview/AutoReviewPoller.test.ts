@@ -51,6 +51,7 @@ function makeGithub(listCount: { value: number }) {
     createRepository: () => Effect.die("unused"),
     createPullRequest: () => Effect.void,
     getDefaultBranch: () => Effect.succeed("main"),
+    getViewerLogin: () => Effect.succeed("octocat"),
     checkoutPullRequest: () => Effect.void,
     getPullRequestReviewStatus: () => Effect.die("unused"),
     getPullRequestMergeState: () => Effect.die("unused"),

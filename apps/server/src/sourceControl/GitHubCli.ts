@@ -211,6 +211,7 @@ export interface GitHubPullRequestSummary {
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
   readonly headRefOid?: string | null;
+  readonly authorLogin?: string | null;
 }
 
 export interface GitHubPullRequestIssueComment {
@@ -320,6 +321,14 @@ export class GitHubCli extends Context.Service<
     }) => Effect.Effect<void, GitHubCliError>;
 
     readonly getDefaultBranch: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<string | null, GitHubCliError>;
+
+    /**
+     * Login of the authenticated `gh` user (the account reviews are posted
+     * as). Null when the login cannot be determined.
+     */
+    readonly getViewerLogin: (input: {
       readonly cwd: string;
     }) => Effect.Effect<string | null, GitHubCliError>;
 
@@ -524,7 +533,7 @@ export const make = Effect.gen(function* () {
         );
 
   const prListJsonFields =
-    "number,title,url,baseRefName,headRefName,headRefOid,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner";
+    "number,title,url,baseRefName,headRefName,headRefOid,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner,author";
 
   return GitHubCli.of({
     execute,
@@ -773,6 +782,16 @@ export const make = Effect.gen(function* () {
       execute({
         cwd: input.cwd,
         args: ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"],
+      }).pipe(
+        Effect.map((value) => {
+          const trimmed = value.stdout.trim();
+          return trimmed.length > 0 ? trimmed : null;
+        }),
+      ),
+    getViewerLogin: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["api", "user", "--jq", ".login"],
       }).pipe(
         Effect.map((value) => {
           const trimmed = value.stdout.trim();
