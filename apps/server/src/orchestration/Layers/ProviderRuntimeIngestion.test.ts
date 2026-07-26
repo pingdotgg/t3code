@@ -874,6 +874,150 @@ describe("ProviderRuntimeIngestion", () => {
     expect(second?.text).toBe("new answer");
   });
 
+  it("mints a fresh message id when a completion-only item id is recycled across turns", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // Turn 1: assistant message arrives completion-only (no content.delta).
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-completion-reuse-turn1"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-completion-reuse-1"),
+      itemId: asItemId("item-completion-shared"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "first completion-only answer",
+      },
+    });
+
+    await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-completion-shared" && !message.streaming,
+      ),
+    );
+
+    // Turn 2: same item id, again completion-only. The raw id is already
+    // taken, so this message must get its own id instead of replacing or
+    // appending into the first one.
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-completion-reuse-turn2"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-completion-reuse-2"),
+      itemId: asItemId("item-completion-shared"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "second completion-only answer",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-completion-shared:again:1" && !message.streaming,
+      ),
+    );
+
+    const first = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-completion-shared",
+    );
+    expect(first?.text).toBe("first completion-only answer");
+    expect(first?.streaming).toBe(false);
+
+    const second = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) =>
+        entry.id === "assistant:item-completion-shared:again:1",
+    );
+    expect(second?.text).toBe("second completion-only answer");
+    expect(second?.streaming).toBe(false);
+  });
+
+  it("mints a fresh id when a recycled completion correlates to a finalized message", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // Turn 1 streams and completes a message, recording the base-key
+    // correlation for "item-corr".
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-corr-turn1-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-corr-1"),
+      itemId: asItemId("item-corr"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "streamed answer",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-corr-turn1-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-corr-1"),
+      itemId: asItemId("item-corr"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-corr" && !message.streaming,
+      ),
+    );
+
+    // Turn 2 recycles the item id in a completion-only event. The base-key
+    // correlation points at the finalized turn-1 message, so this must claim
+    // a fresh id instead of finalizing the old message again.
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-corr-turn2-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-corr-2"),
+      itemId: asItemId("item-corr"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "recycled completion-only answer",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-corr:again:1" && !message.streaming,
+      ),
+    );
+
+    const first = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-corr",
+    );
+    expect(first?.text).toBe("streamed answer");
+    expect(first?.streaming).toBe(false);
+
+    const second = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-corr:again:1",
+    );
+    expect(second?.text).toBe("recycled completion-only answer");
+    expect(second?.streaming).toBe(false);
+  });
+
   it("uses assistant item completion detail when no assistant deltas were streamed", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

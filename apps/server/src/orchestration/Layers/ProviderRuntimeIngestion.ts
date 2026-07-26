@@ -1355,9 +1355,12 @@ const make = Effect.gen(function* () {
 
   /**
    * Correlation from a provider event's base key (itemId/turnId/eventId) to
-   * the (possibly collision-adjusted) message id minted for it, so the
-   * completion path resolves the same id the deltas used when no per-turn
-   * segment state exists.
+   * the (possibly collision-adjusted) message id minted for it. Written for
+   * turn-less delta mints and for every turn-scoped segment start, so the
+   * completion path resolves the same id the deltas used whenever per-turn
+   * segment state is absent (turn-less events, or state dropped early). The
+   * completion path only trusts an entry while the message it names is still
+   * live — a finalized message means the provider recycled the base key.
    */
   const claimedAssistantMessageIdByBaseKey = yield* Cache.make<string, MessageId>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -1568,6 +1571,11 @@ const make = Effect.gen(function* () {
             ...nextState,
             activeMessageId: claimedMessageId,
           });
+          yield* Cache.set(
+            claimedAssistantMessageIdByBaseKey,
+            claimedBaseKeyCacheKey(input.threadId, input.baseKey),
+            claimedMessageId,
+          );
           return claimedMessageId;
         }),
       ),
@@ -2489,24 +2497,6 @@ const make = Effect.gen(function* () {
           : Option.none<MessageId>();
         const hasAssistantMessagesForTurn =
           turnId !== undefined ? hasAssistantMessageForTurn(messages, turnId) : false;
-        // When no per-turn segment state names the message, prefer the id the
-        // deltas actually used for this base key (it may have been adjusted
-        // for a collision) over re-deriving the raw id here.
-        const claimedForBaseKey = Option.isNone(activeAssistantMessageId)
-          ? yield* Cache.getOption(
-              claimedAssistantMessageIdByBaseKey,
-              claimedBaseKeyCacheKey(
-                thread.id,
-                String(event.itemId ?? event.turnId ?? event.eventId),
-              ),
-            )
-          : Option.none<MessageId>();
-        const assistantMessageId = Option.getOrElse(activeAssistantMessageId, () =>
-          Option.getOrElse(claimedForBaseKey, () => assistantCompletion.messageId),
-        );
-        const existingAssistantMessage = findMessageById(messages, assistantMessageId);
-        const shouldApplyFallbackCompletionText =
-          !existingAssistantMessage || existingAssistantMessage.text.length === 0;
 
         const shouldSkipRedundantCompletion =
           Option.isNone(activeAssistantMessageId) &&
@@ -2515,6 +2505,40 @@ const make = Effect.gen(function* () {
           (assistantCompletion.fallbackText?.trim().length ?? 0) === 0;
 
         if (!shouldSkipRedundantCompletion) {
+          const completionBaseKey = String(event.itemId ?? event.turnId ?? event.eventId);
+          // Resolve the message this completion belongs to: the turn's active
+          // segment, else the id the deltas used for this base key, else a
+          // freshly claimed id. The completion-only path (no prior deltas)
+          // must claim too — a recycled provider item id would otherwise glue
+          // this message into the earlier one that already took the raw id.
+          const claimedForBaseKey = Option.isNone(activeAssistantMessageId)
+            ? yield* Cache.getOption(
+                claimedAssistantMessageIdByBaseKey,
+                claimedBaseKeyCacheKey(thread.id, completionBaseKey),
+              )
+            : Option.none<MessageId>();
+          // A base-key correlation only holds while the message it names is
+          // still live. Once that message finalized, the provider recycled
+          // the base key and this completion is a NEW message that must
+          // claim its own id.
+          const liveClaimedForBaseKey = Option.flatMap(claimedForBaseKey, (messageId) => {
+            const existing = findMessageById(messages, messageId);
+            return existing === undefined || existing.streaming
+              ? Option.some(messageId)
+              : Option.none();
+          });
+          const assistantMessageId = Option.isSome(activeAssistantMessageId)
+            ? activeAssistantMessageId.value
+            : Option.isSome(liveClaimedForBaseKey)
+              ? liveClaimedForBaseKey.value
+              : yield* claimAssistantMessageId({
+                  threadId: thread.id,
+                  candidateId: assistantCompletion.messageId,
+                });
+          const existingAssistantMessage = findMessageById(messages, assistantMessageId);
+          const shouldApplyFallbackCompletionText =
+            !existingAssistantMessage || existingAssistantMessage.text.length === 0;
+
           if (turnId && Option.isNone(activeAssistantMessageId)) {
             yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
           }
