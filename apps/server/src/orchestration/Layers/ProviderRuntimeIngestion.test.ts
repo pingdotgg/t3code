@@ -3056,6 +3056,47 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.title).toBe("New thread");
   });
 
+  it("skips provider thread.metadata.updated when payload.name sanitizes to empty", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-create-whitespace"),
+        threadId: ThreadId.make("thread-whitespace-name"),
+        projectId: asProjectId("project-1"),
+        title: "New thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      }),
+    );
+
+    harness.emit({
+      type: "thread.metadata.updated",
+      eventId: asEventId("evt-thread-metadata-whitespace"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-whitespace-name"),
+      payload: {
+        name: "   ",
+      },
+    });
+
+    await harness.drain();
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === "thread-whitespace-name");
+    expect(thread?.title).toBe("New thread");
+  });
+
   it("projects context window updates into normalized thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

@@ -41,6 +41,16 @@ describe("sanitizeTitle", () => {
     expect(sanitizeTitle("hello\x1Fworld")).toBe("helloworld");
   });
 
+  it("returns empty string for whitespace-only input", () => {
+    expect(sanitizeTitle("   ")).toBe("");
+    expect(sanitizeTitle(" \t ")).toBe("");
+  });
+
+  it("returns empty string for control-char-only input", () => {
+    expect(sanitizeTitle("\x00")).toBe("");
+    expect(sanitizeTitle("\x00\x00")).toBe("");
+  });
+
   it("truncates to MAX_TITLE_LENGTH", () => {
     const long = "a".repeat(1000);
     expect(sanitizeTitle(long).length).toBe(500);

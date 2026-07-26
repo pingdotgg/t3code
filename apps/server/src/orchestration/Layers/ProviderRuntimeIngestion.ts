@@ -1706,12 +1706,15 @@ const make = Effect.gen(function* () {
 
       if (event.type === "thread.metadata.updated" && event.payload.name) {
         if (isDefaultThreadTitle(thread.title)) {
-          yield* orchestrationEngine.dispatch({
-            type: "thread.meta.update",
-            commandId: yield* providerCommandId(event, "thread-meta-update"),
-            threadId: thread.id,
-            title: sanitizeTitle(event.payload.name),
-          });
+          const sanitized = sanitizeTitle(event.payload.name);
+          if (sanitized.length > 0) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.meta.update",
+              commandId: yield* providerCommandId(event, "thread-meta-update"),
+              threadId: thread.id,
+              title: sanitized,
+            });
+          }
         }
       }
 
