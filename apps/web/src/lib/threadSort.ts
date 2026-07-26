@@ -47,18 +47,59 @@ export function getThreadSortTimestamp(
   return getLatestUserMessageTimestamp(thread);
 }
 
+interface SortableThread<T> {
+  readonly thread: T;
+  readonly timestamp: number;
+}
+
+function compareSortableThreads<T extends Pick<Thread, "id">>(
+  left: SortableThread<T>,
+  right: SortableThread<T>,
+): number {
+  const byTimestamp =
+    right.timestamp === left.timestamp ? 0 : right.timestamp > left.timestamp ? 1 : -1;
+  if (byTimestamp !== 0) return byTimestamp;
+  return right.thread.id.localeCompare(left.thread.id);
+}
+
 export function sortThreads<T extends Pick<Thread, "id"> & ThreadSortInput>(
   threads: readonly T[],
   sortOrder: SidebarThreadSortOrder,
+  limit?: number,
 ): T[] {
-  return threads.toSorted((left, right) => {
-    const rightTimestamp = getThreadSortTimestamp(right, sortOrder);
-    const leftTimestamp = getThreadSortTimestamp(left, sortOrder);
-    const byTimestamp =
-      rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
-    if (byTimestamp !== 0) return byTimestamp;
-    return right.id.localeCompare(left.id);
-  });
+  const sortableThreads = threads.map((thread) => ({
+    thread,
+    timestamp: getThreadSortTimestamp(thread, sortOrder),
+  }));
+
+  if (limit === undefined || limit >= sortableThreads.length) {
+    return sortableThreads.toSorted(compareSortableThreads).map(({ thread }) => thread);
+  }
+
+  const boundedLimit = Math.floor(limit);
+  if (boundedLimit <= 0) {
+    return [];
+  }
+
+  const sortedThreads: SortableThread<T>[] = [];
+  for (const thread of sortableThreads) {
+    let insertAt = 0;
+    while (
+      insertAt < sortedThreads.length &&
+      compareSortableThreads(sortedThreads[insertAt]!, thread) <= 0
+    ) {
+      insertAt += 1;
+    }
+    if (insertAt === boundedLimit) {
+      continue;
+    }
+    sortedThreads.splice(insertAt, 0, thread);
+    if (sortedThreads.length > boundedLimit) {
+      sortedThreads.pop();
+    }
+  }
+
+  return sortedThreads.map(({ thread }) => thread);
 }
 
 export function getLatestThreadForProject<

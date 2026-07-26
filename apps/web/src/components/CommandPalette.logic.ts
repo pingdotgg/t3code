@@ -152,11 +152,10 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   const sortedThreads = sortThreads(
     input.threads.filter((thread) => thread.archivedAt === null),
     input.sortOrder,
+    input.limit,
   );
-  const visibleThreads =
-    input.limit === undefined ? sortedThreads : sortedThreads.slice(0, input.limit);
 
-  return visibleThreads.map((thread) => {
+  return sortedThreads.map((thread) => {
     const projectTitle = input.projectTitleById.get(thread.projectId);
     const descriptionParts: string[] = [];
 

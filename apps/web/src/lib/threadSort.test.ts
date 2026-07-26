@@ -164,6 +164,20 @@ describe("sortThreads", () => {
     ]);
   });
 
+  it("selects only the requested recent threads with full-sort ordering", () => {
+    const threads = Array.from({ length: 128 }, (_, index) =>
+      makeThread({
+        id: ThreadId.make(`thread-${index.toString().padStart(3, "0")}`),
+        updatedAt: `2026-03-${String((index % 28) + 1).padStart(2, "0")}T${String(
+          index % 24,
+        ).padStart(2, "0")}:00:00.000Z`,
+      }),
+    );
+    const fullySortedThreads = sortThreads(threads, "updated_at");
+
+    expect(sortThreads(threads, "updated_at", 12)).toEqual(fullySortedThreads.slice(0, 12));
+  });
+
   it("returns the latest active thread for a project", () => {
     const latestThread = getLatestThreadForProject(
       [
