@@ -4,17 +4,21 @@ import * as Effect from "effect/Effect";
 import { resolveDesktopRelaunchOptions } from "./resolveDesktopRelaunchOptions.ts";
 
 describe("resolveDesktopRelaunchOptions", () => {
-  it.effect("relaunches the outer AppImage path instead of the temporary mount binary", () =>
+  it.effect("relaunches the outer AppImage path and keeps flag argv only", () =>
     Effect.sync(() => {
       const options = resolveDesktopRelaunchOptions({
         appImagePath: "/home/user/T3-Code-0.0.28-x86_64.AppImage",
-        execPath: "/tmp/.mount_t3_codXXXX/t3-code",
-        argv: ["/tmp/.mount_t3_codXXXX/t3-code", "--some-internal-flag"],
+        execPath: "/tmp/.mount_t3_codXXXX/t3code",
+        argv: [
+          "/tmp/.mount_t3_codXXXX/t3code",
+          "--no-sandbox",
+          "/tmp/.mount_t3_codXXXX/resources/app.asar",
+        ],
       });
 
       assert.deepEqual(options, {
         execPath: "/home/user/T3-Code-0.0.28-x86_64.AppImage",
-        args: [],
+        args: ["--no-sandbox"],
       });
     }),
   );

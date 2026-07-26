@@ -166,9 +166,13 @@ export const make = DesktopLifecycle.of({
       yield* logLifecycleInfo("desktop relaunch exec", {
         reason,
         execPath: relaunchOptions.execPath,
-        argumentCount: relaunchOptions.args?.length ?? 0,
+        argumentCount: relaunchOptions.args.length,
         isAppImage: Boolean(process.env.APPIMAGE?.trim()),
       });
+      // Electron.relaunch spawns the new process while this one is still alive.
+      // Release the single-instance lock first or the child immediately exits
+      // after requestSingleInstanceLock() fails (looks like "restart never comes back").
+      yield* electronApp.releaseSingleInstanceLock;
       yield* electronApp.relaunch(relaunchOptions);
       yield* electronApp.exit(0);
     }).pipe(

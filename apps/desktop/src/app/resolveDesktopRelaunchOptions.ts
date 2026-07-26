@@ -9,7 +9,10 @@ export interface DesktopRelaunchOptions {
  * AppImage mounts the payload under a temporary directory and sets `APPIMAGE`
  * to the outer `.AppImage` path. `process.execPath` / `process.argv` point at
  * the mount, which is unmounted when the process exits — so relaunching with
- * those paths exits and never comes back. Prefer `$APPIMAGE` with empty args.
+ * those paths exits and never comes back. Prefer `$APPIMAGE`.
+ *
+ * Keep only flag-style argv entries (e.g. `--no-sandbox` from Gear Lever /
+ * Flatpak launches). Mount-local positional paths must not be reused.
  */
 export function resolveDesktopRelaunchOptions(input: {
   readonly appImagePath?: string | null | undefined;
@@ -20,7 +23,7 @@ export function resolveDesktopRelaunchOptions(input: {
   if (appImagePath) {
     return {
       execPath: appImagePath,
-      args: [],
+      args: input.argv.slice(1).filter((arg) => arg.startsWith("--")),
     };
   }
 
