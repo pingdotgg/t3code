@@ -362,7 +362,9 @@ struct AutoReviewSettingsTab: View {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
-                    .lineLimit(2)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+                    .help(error)
             }
             if let url = job.reviewURL, let link = URL(string: url) {
                 Link("Open review", destination: link)

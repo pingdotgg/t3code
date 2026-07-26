@@ -1,12 +1,26 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId } from "@t3tools/contracts";
 
+import { parseDiffAnchors } from "./diffAnchors.ts";
 import {
   buildReviewBody,
   normalizeFindings,
   partitionReviewComments,
   resolveReviewEvent,
 } from "./reviewPayload.ts";
+
+const ANCHORS = parseDiffAnchors(
+  [
+    "diff --git a/a.ts b/a.ts",
+    "--- a/a.ts",
+    "+++ b/a.ts",
+    "@@ -8,2 +8,3 @@",
+    " context",
+    "-gone",
+    "+added",
+    "+more",
+  ].join("\n"),
+);
 
 describe("reviewPayload", () => {
   it("partitions comments without lines into unanchored", () => {
@@ -29,6 +43,32 @@ describe("reviewPayload", () => {
     expect(anchorable).toHaveLength(1);
     expect(unanchored).toHaveLength(1);
     expect(anchorable[0]?.line).toBe(10);
+  });
+
+  it("demotes comments whose line is not part of the diff", () => {
+    const { anchorable, unanchored } = partitionReviewComments(
+      [
+        { path: "a.ts", line: 9, side: "RIGHT", severity: "blocking", body: "real" },
+        { path: "a.ts", line: 250, side: "RIGHT", severity: "important", body: "off-diff" },
+        { path: "untouched.ts", line: 3, side: null, severity: "nit", body: "wrong file" },
+      ],
+      ANCHORS,
+    );
+    expect(anchorable).toHaveLength(1);
+    expect(anchorable[0]?.body).toContain("real");
+    expect(unanchored.map((comment) => comment.body)).toEqual(["off-diff", "wrong file"]);
+  });
+
+  it("resolves the anchorable side when the model omits or mislabels it", () => {
+    const { anchorable } = partitionReviewComments(
+      [
+        { path: "./a.ts", line: 10, side: null, severity: "nit", body: "added line" },
+        { path: "a.ts", line: 9, side: "LEFT", severity: "nit", body: "removed line" },
+      ],
+      ANCHORS,
+    );
+    expect(anchorable.map((comment) => comment.side)).toEqual(["RIGHT", "LEFT"]);
+    expect(anchorable[0]?.path).toBe("a.ts");
   });
 
   it("maps blocking findings to request_changes regardless of model decision", () => {
