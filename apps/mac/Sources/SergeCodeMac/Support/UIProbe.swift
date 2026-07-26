@@ -833,8 +833,41 @@
                 log("after-close-review")
             }
 
+            await probeGitStripAnchor(multi: multi, dir: dir)
+
             snapshot("window-size-final", window: window, dir: dir)
             NSApp.terminate(nil)
+        }
+
+        /// Checks that the chat header's git strip starts at its trailing edge
+        /// — where the git actions menu lives — on first show and again after
+        /// each thread switch. A strip that overflows but reports a zero offset
+        /// has silently landed at the leading edge, which would bury the git
+        /// actions behind a long branch name.
+        private static func probeGitStripAnchor(
+            multi: MultiDeviceModel, dir: String
+        ) async {
+            let model = multi.local
+            let threadIDs = model.threads.prefix(3).map(\.id)
+            guard !threadIDs.isEmpty else {
+                print("UIProbe: git-strip no threads to check")
+                return
+            }
+            var failures = 0
+            for threadID in threadIDs {
+                multi.select(threadID: threadID, on: model.deviceID)
+                try? await Task.sleep(for: .seconds(2))
+                print("UIProbe: \(UIProbeGitStrip.describe())")
+                if let metrics = UIProbeGitStrip.latest, !metrics.isAtTrailingEdge {
+                    failures += 1
+                    print("UIProbe: git-strip FAIL not at trailing edge (thread=\(threadID))")
+                }
+            }
+            print(
+                failures == 0
+                    ? "UIProbe: git-strip anchor OK across \(threadIDs.count) threads"
+                    : "UIProbe: git-strip anchor FAILED on \(failures) of \(threadIDs.count)")
+            snapshot("window-size-git-strip", dir: dir)
         }
 
         /// Dumps the AppKit split-view panes backing NavigationSplitView, so

@@ -24,11 +24,47 @@ struct ChatHeaderView: View {
     /// streaming. Trailing is the starting position, not a standing rule.
     @UIState private var gitStripPosition = ScrollPosition(edge: .trailing)
 
-    private struct GitStripOverflow: Equatable {
+    /// Set once the user drags the strip, which stops the trailing follow —
+    /// the same shape as the timeline's pin-to-bottom state. Until then the
+    /// strip is held at trailing, because the initial placement alone drifts:
+    /// the container keeps narrowing as the header settles, and a scroll view
+    /// holds its old offset, which measured up to 21pt short of the trailing
+    /// edge and cut into the git actions menu.
+    @UIState private var gitStripUserScrolled = false
+
+    struct GitStripOverflow: Equatable {
         /// The strip needs more width than the header gives it.
         var isOverflowing = false
         /// Something is currently scrolled off the leading edge.
         var isScrolled = false
+    }
+
+    /// Raw scroll geometry of the git strip. Kept separate from the derived
+    /// booleans the view renders from: the offset changes continuously while
+    /// scrolling, and only the booleans should drive re-renders.
+    struct GitStripMetrics: Equatable {
+        var contentWidth: CGFloat = 0
+        var containerWidth: CGFloat = 0
+        var contentOffsetX: CGFloat = 0
+
+        /// Half a point of slack throughout: content and container widths land
+        /// on fractional values and would otherwise flicker at the seam.
+        private static let slack: CGFloat = 0.5
+
+        var overflow: GitStripOverflow {
+            GitStripOverflow(
+                isOverflowing: contentWidth > containerWidth + Self.slack,
+                isScrolled: contentOffsetX > Self.slack)
+        }
+
+        /// Whether the strip sits at its trailing edge — the position it is
+        /// placed at on first show and on a thread switch. A strip that
+        /// overflows but reports a zero offset has silently landed at the
+        /// leading edge instead, hiding the git actions menu.
+        var isAtTrailingEdge: Bool {
+            guard contentWidth > containerWidth + Self.slack else { return true }
+            return contentOffsetX >= contentWidth - containerWidth - Self.slack
+        }
     }
 
     var body: some View {
@@ -100,17 +136,37 @@ struct ChatHeaderView: View {
         .scrollPosition($gitStripPosition)
         // A new thread is a new repository state; start it at trailing again.
         .onChange(of: thread.id) { _, _ in
+            gitStripUserScrolled = false
             gitStripPosition.scrollTo(edge: .trailing)
         }
-        .onScrollGeometryChange(for: GitStripOverflow.self) { geometry in
-            GitStripOverflow(
-                // Half a point of slack: content and container widths land on
-                // fractional values and would otherwise flicker at the seam.
-                isOverflowing: geometry.contentSize.width
-                    > geometry.containerSize.width + 0.5,
-                isScrolled: geometry.contentOffset.x > 0.5)
-        } action: { _, overflow in
-            gitStripOverflow = overflow
+        // A drag hands the strip to the user; nothing re-anchors it after this
+        // until they switch threads. Programmatic scrolls report `.animating`,
+        // so holding the strip at trailing does not count as interaction.
+        .onScrollPhaseChange { _, phase in
+            if phase == .tracking || phase == .interacting {
+                gitStripUserScrolled = true
+            }
+        }
+        .onScrollGeometryChange(for: GitStripMetrics.self) { geometry in
+            GitStripMetrics(
+                contentWidth: geometry.contentSize.width,
+                containerWidth: geometry.containerSize.width,
+                contentOffsetX: geometry.contentOffset.x)
+        } action: { _, metrics in
+            // Only the derived booleans reach state; the raw offset changes on
+            // every scroll tick and must not re-render the header.
+            if gitStripOverflow != metrics.overflow {
+                gitStripOverflow = metrics.overflow
+            }
+            // Hold the trailing edge while the strip is still the app's to
+            // place: the header keeps re-measuring as the window settles, and
+            // a stale offset leaves part of the git actions menu off-screen.
+            if !gitStripUserScrolled, !metrics.isAtTrailingEdge {
+                gitStripPosition.scrollTo(edge: .trailing)
+            }
+            #if DEBUG
+                UIProbeGitStrip.record(metrics, threadID: thread.id)
+            #endif
         }
         .mask {
             // Both conditions: a trailing-anchored scroll view can report a
