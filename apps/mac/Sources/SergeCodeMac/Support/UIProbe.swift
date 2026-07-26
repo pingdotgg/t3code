@@ -1129,6 +1129,7 @@
             }
 
             await probeGitStripAnchor(multi: multi, dir: dir, window: window)
+            await probeHeaderFloorCoversWidestState(multi: multi)
             await probeLateVcsStatusAnchor(multi: multi, dir: dir)
             await probeContentGrowthDoesNotResizeWindow(
                 multi: multi, dir: dir, window: window, log: log)
@@ -1158,6 +1159,70 @@
         /// very long branch name, five-figure diff counts, a draft PR with
         /// conflicts and review comments) and checks the frame, the AppKit
         /// minimum, and the AppKit maximum against the values from before.
+        /// Holds `WindowSizing.minContentWidth` to account: the floor is a
+        /// fixed number, so it has to keep covering the header's *incompressible*
+        /// width — the provider badge, the status badge, and the title's minimum
+        /// — across every status label and repository state. The git strip
+        /// itself scrolls, so it does not participate; what would break is the
+        /// fixed chrome around it being clipped at the window minimum, which no
+        /// amount of scrolling recovers.
+        ///
+        /// Measured rather than assumed, because status labels are the widest
+        /// piece and they change with the wording (and would change again with
+        /// localisation).
+        private static func probeHeaderFloorCoversWidestState(
+            multi: MultiDeviceModel
+        ) async {
+            let model = multi.local
+            guard let thread = model.selectedThread ?? model.threads.first else {
+                UIProbeAssertions.fail("header-floor", "no thread to measure")
+                return
+            }
+            let statuses: [ThreadStatus] = [
+                .idle, .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork,
+                .error, .archived, .settled, .done, .reviewing, .fixing, .readyToMerge,
+            ]
+            // What genuinely cannot compress: the two fixed badges and the
+            // paddings and spacings around them. The title is excluded because
+            // it truncates and the git strip because it scrolls — both degrade
+            // without becoming unreachable. A few points are still reserved so
+            // the title is not reduced to literally nothing at the minimum.
+            let headerPadding: CGFloat = 32  // .padding(.horizontal, 16)
+            let clusterSpacing: CGFloat = 32  // HStack(spacing: 16), two gaps
+            let truncatedTitleRoom: CGFloat = 24
+            var widest: (status: ThreadStatus, width: CGFloat) = (.idle, 0)
+            for status in statuses {
+                let host = NSHostingView(
+                    rootView: HStack(spacing: 16) {
+                        ProviderBadge(provider: thread.provider, modelID: thread.modelID)
+                        StatusBadge(status: status, stalled: false)
+                    })
+                host.frame = NSRect(x: 0, y: 0, width: 1400, height: 90)
+                host.layoutSubtreeIfNeeded()
+                let width =
+                    host.fittingSize.width + headerPadding + clusterSpacing
+                    + truncatedTitleRoom
+                if width > widest.width { widest = (status, width) }
+            }
+            let floor = WindowSizing.minContentWidth
+            print(
+                "UIProbe: header-floor widest incompressible=\(Int(widest.width))pt at "
+                    + "status=\(widest.status.rawValue), floor=\(Int(floor))pt")
+            if widest.width <= floor {
+                UIProbeAssertions.pass(
+                    "header-floor",
+                    "floor \(Int(floor))pt covers the widest header state "
+                        + "(\(Int(widest.width))pt at \(widest.status.rawValue), "
+                        + "\(Int(floor - widest.width))pt spare)")
+            } else {
+                UIProbeAssertions.fail(
+                    "header-floor",
+                    "floor \(Int(floor))pt is under the header's incompressible width "
+                        + "\(Int(widest.width))pt at status=\(widest.status.rawValue); "
+                        + "the fixed chrome would clip at the window minimum")
+            }
+        }
+
         /// The late-arriving VCS status case, driven deterministically rather
         /// than waiting for the mock to happen to be slow: blank the strip, let
         /// it lay out empty, then hand it a status wide enough to overflow and
@@ -1440,6 +1505,17 @@
                     return
                 }
                 print("UIProbe: \(label) \(UIProbeGitStrip.describe())")
+                // Reachability, not just placement: if the fixed chrome ever ate
+                // the whole header, the strip's container would collapse and no
+                // amount of scrolling would reach the git controls.
+                if metrics.containerWidth <= 0 {
+                    failures += 1
+                    UIProbeAssertions.fail(
+                        "git-strip",
+                        "\(label) strip has no room at all (\(threadID)); "
+                            + "git controls unreachable")
+                    return
+                }
                 guard !metrics.isAtTrailingEdge else { return }
                 if startedEmpty {
                     // No longer an excuse: the strip is rebuilt when its

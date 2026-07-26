@@ -186,5 +186,14 @@ struct WindowSizingTests {
         // state where AppKit used to grow the window on the next content change.
         #expect(windowMinimum.width <= defaultWindow.width)
         #expect(windowMinimum.height <= defaultWindow.height)
+
+        // The floor is squeezed from both sides, which is why it is 280 and not
+        // rounder: it has to stay above the header's incompressible chrome
+        // (measured 255pt for the widest status label, asserted on every run by
+        // the `window-size` probe's header-floor check) while keeping the window
+        // minimum under the default size above. Raising it much further would
+        // make the app open at its own minimum; lowering it would clip the
+        // provider and status badges, which neither truncate nor scroll.
+        #expect(WindowSizing.minContentWidth >= 255)
     }
 }

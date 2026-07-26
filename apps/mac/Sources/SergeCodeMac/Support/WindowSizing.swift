@@ -15,6 +15,18 @@ enum WindowSizing {
     /// can move the window. Measured window minimums with this floor: 1100pt
     /// with every column showing, 740 with the inspector hidden, 640 with both
     /// hidden (versus 1434 and climbing before the clamp).
+    /// Not a free choice: squeezed from both sides. It has to stay above the
+    /// header's incompressible chrome — the provider and status badges, which
+    /// neither truncate nor scroll, measured at 255pt for the widest status
+    /// label — while keeping the resulting window minimum under the 1100x720
+    /// the app opens at, so the shell never launches already at its own floor.
+    /// The `window-size` probe measures the header across every status on each
+    /// run and fails if this constant stops covering it, which is what keeps
+    /// new controls or longer wording from quietly clipping.
+    ///
+    /// Everything else in the header degrades instead of clipping: the title
+    /// truncates, the git strip scrolls with a fade and a scroller, so no
+    /// control becomes unreachable below this width.
     static let minContentWidth: CGFloat = 280
     static let minContentHeight: CGFloat = 320
 }

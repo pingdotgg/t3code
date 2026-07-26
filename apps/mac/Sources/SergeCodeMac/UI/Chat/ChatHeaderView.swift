@@ -270,7 +270,9 @@ private struct GitStrip: View {
     }
 }
 
-private struct ProviderBadge: View {
+/// Internal, not private, so `UIProbe` can measure the header's
+/// incompressible trailing cluster against the window floor.
+struct ProviderBadge: View {
     let provider: ProviderKind
     let modelID: String?
 
@@ -281,7 +283,8 @@ private struct ProviderBadge: View {
     }
 }
 
-private struct StatusBadge: View {
+/// Internal for the same reason as `ProviderBadge`.
+struct StatusBadge: View {
     let status: ThreadStatus
     /// Server-reported stall for the active turn; warning-tinted (not error).
     var stalled: Bool = false
