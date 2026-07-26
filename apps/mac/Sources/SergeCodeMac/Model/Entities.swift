@@ -1330,6 +1330,19 @@ public struct GitActionOutcome: Hashable, Sendable {
     }
 }
 
+/// A one-shot celebration token for a successful PR merge. The root view
+/// overlays confetti for a few seconds, then clears it. Carries the outcome
+/// title (e.g. "Merged PR #12") so the overlay's badge can echo the win.
+public struct MergeCelebration: Hashable, Sendable, Identifiable {
+    public let id: UUID
+    public let title: String
+
+    public init(id: UUID = UUID(), title: String) {
+        self.id = id
+        self.title = title
+    }
+}
+
 /// Where new threads run: the project checkout itself or a fresh worktree.
 public enum ProjectEnvMode: String, CaseIterable, Sendable, Identifiable {
     case local, worktree
