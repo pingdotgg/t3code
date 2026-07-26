@@ -53,6 +53,24 @@ jobs:
           cache: true
           run-install: true
 
+      # `AGENTS.md` requires both of these to pass, but nothing runs them
+      # before merge today: `ci-mac.yml` is Swift-only, and `release-mac.yml`
+      # runs them after merge as part of shipping. This workflow now triggers
+      # on `packages/**`, `apps/server/**` and the workspace manifests, which
+      # makes it the only pre-merge job that sees those changes at all — so it
+      # is where they belong until a platform-neutral CI workflow exists. They
+      # run before the Rust toolchain is even installed, because a shared
+      # contract break should fail in seconds rather than after a cargo build.
+      #
+      # Kept as two steps on purpose. GitHub's `pwsh` shell propagates only the
+      # *last* command's exit code, so `vp check` failing inside a multi-line
+      # `run:` would be masked by `vp run typecheck` succeeding.
+      - name: Repository lint and format check
+        run: vp check
+
+      - name: Repository typecheck
+        run: vp run typecheck
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:

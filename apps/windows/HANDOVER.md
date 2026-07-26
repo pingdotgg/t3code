@@ -274,8 +274,25 @@ early with a pointer back to this section rather than deep inside the build.
 Authenticode is separate and worth doing — without it SmartScreen warns on
 every install. It needs an OV/EV certificate and `bundle.windows.certificateThumbprint`.
 
-Ask the user before running `Release Windows App`; it is `workflow_dispatch`-only
-and its version input must match `apps/windows/version.json` exactly.
+### Running the release
+
+`Release Windows App` is `workflow_dispatch`-only, and it has three guards
+worth knowing before you reach for it:
+
+- **It builds the ref you dispatch it from**, and then refuses anything but
+  `main`. Merge the release commit first. It does not silently fall back to
+  `main` when you pick another branch — that would have made a hotfix build
+  the wrong code.
+- **The `version` input must equal `apps/windows/version.json` exactly.**
+- **`draft` defaults to true**, and this is the switch that decides whether
+  anyone receives the update. GitHub's `releases/latest` never resolves to a
+  draft, and the updater endpoint is
+  `releases/latest/download/latest.json` — so a drafted release ships to
+  nobody until you publish it, by design, while the installer is still being
+  checked by hand. Uncheck `draft` when you actually intend to update users.
+
+Ask the user before running it at all, and before touching
+`apps/windows/version.json`.
 
 ---
 

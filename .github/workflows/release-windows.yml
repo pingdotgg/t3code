@@ -9,6 +9,14 @@ name: Release Windows App
 # `workflow_dispatch` and the version input must match version.json exactly,
 # the same rule the macOS manual path follows.
 #
+# Draft vs published matters more than it looks: the updater endpoint is
+# `releases/latest/download/latest.json`, and GitHub's `releases/latest` never
+# resolves to a draft. A drafted release therefore ships to nobody until it is
+# published — which is the right default while the installer is still being
+# eyeballed by hand, and wrong the moment you actually intend to update users.
+# So it is an input rather than a constant: default to a draft for review, pass
+# `draft: false` to publish on demand.
+#
 # See apps/windows/HANDOVER.md ▸ "Signing and updates" for the one-time setup.
 on:
   workflow_dispatch:
@@ -17,6 +25,11 @@ on:
         description: "Version from apps/windows/version.json to release"
         required: true
         type: string
+      draft:
+        description: "Create a draft for manual review. Uncheck to publish immediately — the updater cannot see a draft."
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -32,10 +45,25 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      # No `ref:` — check out exactly the ref the dispatch selected, so the
+      # artifact is built from what the operator picked in the UI. Pinning
+      # `main` here silently packaged `main` no matter what was chosen, which
+      # is precisely the wrong behaviour during a hotfix or when validating a
+      # release candidate. The guard below then refuses anything but `main`,
+      # loudly, keeping the macOS policy that releases ship from merged `main`.
       - uses: actions/checkout@v4
         with:
-          ref: main
           fetch-depth: 0
+
+      - name: Require a release from main
+        shell: pwsh
+        run: |
+          if ("${{ github.ref }}" -ne "refs/heads/main") {
+            Write-Error ("Releases ship from merged main. This run was " +
+              "dispatched from ${{ github.ref }}; merge the release commit " +
+              "first, then run this workflow from main.")
+            exit 1
+          }
 
       - name: Require the requested version to match version.json
         shell: pwsh
@@ -126,7 +154,10 @@ jobs:
         with:
           tag_name: windows-v${{ inputs.version }}
           name: SurgeCode for Windows ${{ inputs.version }}
-          draft: true
+          # A draft is invisible to `releases/latest`, which is what the
+          # updater endpoint resolves — so this is also the switch that decides
+          # whether installed apps ever see the release.
+          draft: ${{ inputs.draft }}
           # Loud rather than silent: a release that quietly ships without its
           # installer is worse than a failed workflow.
           fail_on_unmatched_files: true
