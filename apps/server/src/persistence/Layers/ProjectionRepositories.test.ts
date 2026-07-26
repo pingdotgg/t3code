@@ -80,7 +80,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         projectId: ProjectId.make("project-null-options"),
         title: "Null options thread",
         modelSelection: {
-          instanceId: ProviderInstanceId.make("claudeAgent"),
+          instanceId: ProviderInstanceId.make("claudex"),
           model: "claude-opus-4-6",
         },
         runtimeMode: "full-access",
@@ -101,6 +101,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
         deletedAt: null,
+        autoReviewPhase: null,
       });
 
       const rows = yield* sql<{
@@ -119,7 +120,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         row.modelSelection,
         // @effect-diagnostics-next-line preferSchemaOverJson:off
         JSON.stringify({
-          instanceId: ProviderInstanceId.make("claudeAgent"),
+          instanceId: ProviderInstanceId.make("claudex"),
           model: "claude-opus-4-6",
         }),
       );
@@ -128,7 +129,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         threadId: ThreadId.make("thread-null-options"),
       });
       assert.deepStrictEqual(Option.getOrNull(persisted)?.modelSelection, {
-        instanceId: ProviderInstanceId.make("claudeAgent"),
+        instanceId: ProviderInstanceId.make("claudex"),
         model: "claude-opus-4-6",
       });
     }),
@@ -148,7 +149,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         projectId: ProjectId.make("project-executor-model"),
         title: "Executor model thread",
         modelSelection: {
-          instanceId: ProviderInstanceId.make("claudeAgent"),
+          instanceId: ProviderInstanceId.make("claudex"),
           model: "claude-opus-4-6",
         },
         runtimeMode: "full-access",
@@ -169,6 +170,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
         deletedAt: null,
+        autoReviewPhase: null,
       });
 
       const rows = yield* sql<{

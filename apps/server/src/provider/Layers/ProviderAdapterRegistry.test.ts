@@ -22,7 +22,7 @@ import * as ProviderAdapterRegistryLayer from "./ProviderAdapterRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
-const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
+const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudex");
 const GROK_DRIVER = ProviderDriverKind.make("grok");
 
 const fakeCodexAdapter: CodexAdapter.CodexAdapterShape = {
@@ -85,7 +85,7 @@ const fakeGrokAdapter: GrokAdapter.GrokAdapterShape = {
 // instances whose `instanceId === defaultInstanceIdForDriver(driverKind)` so
 // they pass the default-instance filter.
 const makeFakeInstance = (
-  driverKindString: "codex" | "claudeAgent" | "grok",
+  driverKindString: "codex" | "claudex" | "grok",
   adapter: ProviderInstance["adapter"],
 ): ProviderInstance => {
   const driverKind = ProviderDriverKind.make(driverKindString);
@@ -114,7 +114,7 @@ const makeFakeInstance = (
 
 const fakeInstances: ReadonlyArray<ProviderInstance> = [
   makeFakeInstance("codex", fakeCodexAdapter),
-  makeFakeInstance("claudeAgent", fakeClaudeAdapter),
+  makeFakeInstance("claudex", fakeClaudeAdapter),
   makeFakeInstance("grok", fakeGrokAdapter),
 ];
 
@@ -155,7 +155,7 @@ it.layer(layer)("ProviderAdapterRegistryLive", (it) => {
         enabled: true,
         continuationIdentity: {
           driverKind: CLAUDE_AGENT_DRIVER,
-          continuationKey: "claudeAgent:instance:claudeAgent",
+          continuationKey: "claudex:instance:claudex",
         },
       });
 

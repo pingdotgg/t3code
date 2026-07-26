@@ -10,17 +10,14 @@ import {
   type TerminalCloseInput,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { expect, it } from "@effect/vitest";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
-import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as Duration from "effect/Duration";
-import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { ServerConfig } from "../../config.ts";
 import {
@@ -83,7 +80,12 @@ interface ArchiveHarnessCalls {
   readonly events: Array<OrchestrationEvent>;
 }
 
-async function createArchiveHarness(input?: {
+/**
+ * Builds the per-test layer graph and call log. `harness` must be run inside
+ * `Effect.scoped` with `layer` provided: the reactor and the domain-event tap
+ * are scope-bound and shut down with the test.
+ */
+function makeArchiveHarness(input?: {
   readonly bindings?: Readonly<Record<string, ProviderSessionRuntimeStatus>>;
 }) {
   const calls: ArchiveHarnessCalls = {
@@ -172,24 +174,21 @@ async function createArchiveHarness(input?: {
     ),
   );
 
-  const runtime = ManagedRuntime.make(Layer.mergeAll(reactorLayer, orchestrationLayer));
-  const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
-  const archiveReactor = await runtime.runPromise(Effect.service(ThreadArchiveReactor));
+  const layer = Layer.mergeAll(reactorLayer, orchestrationLayer);
 
-  const scope = await Effect.runPromise(Scope.make("sequential"));
-  await Effect.runPromise(archiveReactor.start().pipe(Scope.provide(scope)));
-  await Effect.runPromise(
-    Effect.forkScoped(
+  const harness = Effect.gen(function* () {
+    const engine = yield* OrchestrationEngineService;
+    const archiveReactor = yield* ThreadArchiveReactor;
+    yield* archiveReactor.start();
+    yield* Effect.forkScoped(
       Stream.runForEach(engine.streamDomainEvents, (event) =>
         Effect.sync(() => {
           calls.events.push(event);
         }),
       ),
-    ).pipe(Scope.provide(scope)),
-  );
+    );
 
-  const createProject = (projectId: string) =>
-    runtime.runPromise(
+    const createProject = (projectId: string) =>
       engine.dispatch({
         type: "project.create",
         commandId: CommandId.make(`cmd-${projectId}-create`),
@@ -198,173 +197,159 @@ async function createArchiveHarness(input?: {
         workspaceRoot: `/tmp/${projectId}`,
         defaultModelSelection,
         createdAt,
-      }),
-    );
+      });
 
-  const createThread = (input: {
-    readonly commandId: string;
-    readonly threadId: string;
-    readonly projectId: string;
-    readonly parentThreadId?: string;
-  }) =>
-    runtime.runPromise(
+    const createThread = (threadInput: {
+      readonly commandId: string;
+      readonly threadId: string;
+      readonly projectId: string;
+      readonly parentThreadId?: string;
+    }) =>
       engine.dispatch({
         type: "thread.create",
-        commandId: CommandId.make(input.commandId),
-        threadId: ThreadId.make(input.threadId),
-        projectId: asProjectId(input.projectId),
-        title: input.threadId,
+        commandId: CommandId.make(threadInput.commandId),
+        threadId: ThreadId.make(threadInput.threadId),
+        projectId: asProjectId(threadInput.projectId),
+        title: threadInput.threadId,
         modelSelection: defaultModelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "full-access",
         branch: null,
         worktreePath: null,
-        parentThreadId: input.parentThreadId ? ThreadId.make(input.parentThreadId) : null,
+        parentThreadId: threadInput.parentThreadId
+          ? ThreadId.make(threadInput.parentThreadId)
+          : null,
         createdAt,
-      }),
-    );
+      });
 
-  const archivedThreadIds = () =>
-    calls.events
-      .filter((event) => event.type === "thread.archived")
-      .map((event) => event.payload.threadId as ThreadId);
-  const sessionStopRequestedThreadIds = () =>
-    calls.events
-      .filter((event) => event.type === "thread.session-stop-requested")
-      .map((event) => event.payload.threadId as ThreadId);
+    const archivedThreadIds = () =>
+      calls.events
+        .filter((event) => event.type === "thread.archived")
+        .map((event) => event.payload.threadId as ThreadId);
+    const sessionStopRequestedThreadIds = () =>
+      calls.events
+        .filter((event) => event.type === "thread.session-stop-requested")
+        .map((event) => event.payload.threadId as ThreadId);
 
-  return {
-    calls,
-    engine,
-    archiveReactor,
-    createProject,
-    createThread,
-    archivedThreadIds,
-    sessionStopRequestedThreadIds,
-    run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
-    dispose: async () => {
-      await Effect.runPromise(Scope.close(scope, Exit.void));
-      await runtime.dispose();
-    },
-  };
-}
-
-describe("ThreadArchiveReactor", () => {
-  let harness: Awaited<ReturnType<typeof createArchiveHarness>> | null = null;
-
-  afterEach(async () => {
-    if (harness) {
-      await harness.dispose();
-    }
-    harness = null;
+    return {
+      calls,
+      engine,
+      archiveReactor,
+      createProject,
+      createThread,
+      archivedThreadIds,
+      sessionStopRequestedThreadIds,
+    };
   });
 
-  it("interrupts and stops sessions, closes terminals, and cascades archive to child threads", async () => {
-    harness = await createArchiveHarness({
+  return { calls, layer, harness };
+}
+
+it.live(
+  "interrupts and stops sessions, closes terminals, and cascades archive to child threads",
+  () => {
+    const { layer, harness } = makeArchiveHarness({
       bindings: {
         "thread-parent": "running",
         "thread-child": "running",
       },
     });
-    await harness.createProject("project-archive");
-    await harness.createThread({
-      commandId: "cmd-parent-create",
-      threadId: "thread-parent",
-      projectId: "project-archive",
-    });
-    await harness.createThread({
-      commandId: "cmd-child-create",
-      threadId: "thread-child",
-      projectId: "project-archive",
-      parentThreadId: "thread-parent",
-    });
+    return Effect.gen(function* () {
+      const h = yield* harness;
+      yield* h.createProject("project-archive");
+      yield* h.createThread({
+        commandId: "cmd-parent-create",
+        threadId: "thread-parent",
+        projectId: "project-archive",
+      });
+      yield* h.createThread({
+        commandId: "cmd-child-create",
+        threadId: "thread-child",
+        projectId: "project-archive",
+        parentThreadId: "thread-parent",
+      });
 
-    await harness.run(
-      harness.engine.dispatch({
+      yield* h.engine.dispatch({
         type: "thread.archive",
         commandId: CommandId.make("cmd-parent-archive"),
         threadId: ThreadId.make("thread-parent"),
-      }),
-    );
+      });
 
-    await harness.run(
-      waitFor(
+      yield* waitFor(
         () =>
-          harness!.archivedThreadIds().includes(ThreadId.make("thread-child")) &&
-          harness!.sessionStopRequestedThreadIds().includes(ThreadId.make("thread-child")) &&
-          harness!.calls.closedTerminals.some(
-            (input) => input.threadId === ThreadId.make("thread-child"),
-          ),
-      ),
-    );
+          h.archivedThreadIds().includes(ThreadId.make("thread-child")) &&
+          h.sessionStopRequestedThreadIds().includes(ThreadId.make("thread-child")) &&
+          h.calls.closedTerminals.some((input) => input.threadId === ThreadId.make("thread-child")),
+      );
 
-    const parent = ThreadId.make("thread-parent");
-    const child = ThreadId.make("thread-child");
-    expect(harness.archivedThreadIds()).toEqual([parent, child]);
-    expect(harness.sessionStopRequestedThreadIds()).toEqual([parent, child]);
-    expect(harness.calls.interrupted).toEqual([parent, child]);
-    expect(
-      harness.calls.closedTerminals.every(
-        (input) => input.deleteHistory === undefined || input.deleteHistory === false,
-      ),
-    ).toBe(true);
+      const parent = ThreadId.make("thread-parent");
+      const child = ThreadId.make("thread-child");
+      expect(h.archivedThreadIds()).toEqual([parent, child]);
+      expect(h.sessionStopRequestedThreadIds()).toEqual([parent, child]);
+      expect(h.calls.interrupted).toEqual([parent, child]);
+      expect(
+        h.calls.closedTerminals.every(
+          (input) => input.deleteHistory === undefined || input.deleteHistory === false,
+        ),
+      ).toBe(true);
 
-    const childArchiveEvent = harness.calls.events.find(
-      (event) => event.type === "thread.archived" && event.payload.threadId === child,
-    );
-    expect(childArchiveEvent?.commandId).toBe(
-      CommandId.make("archive-cascade:cmd-parent-archive:thread-child"),
-    );
+      const childArchiveEvent = h.calls.events.find(
+        (event) => event.type === "thread.archived" && event.payload.threadId === child,
+      );
+      expect(childArchiveEvent?.commandId).toBe(
+        CommandId.make("archive-cascade:cmd-parent-archive:thread-child"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+it.live("skips turn interrupt and session stop when the session binding is already stopped", () => {
+  const { layer, harness } = makeArchiveHarness({
+    bindings: {
+      "thread-parent": "stopped",
+    },
   });
-
-  it("skips turn interrupt and session stop when the session binding is already stopped", async () => {
-    harness = await createArchiveHarness({
-      bindings: {
-        "thread-parent": "stopped",
-      },
-    });
-    await harness.createProject("project-archive-stopped");
-    await harness.createThread({
+  return Effect.gen(function* () {
+    const h = yield* harness;
+    yield* h.createProject("project-archive-stopped");
+    yield* h.createThread({
       commandId: "cmd-stopped-parent-create",
       threadId: "thread-parent",
       projectId: "project-archive-stopped",
     });
 
-    await harness.run(
-      harness.engine.dispatch({
-        type: "thread.archive",
-        commandId: CommandId.make("cmd-stopped-parent-archive"),
-        threadId: ThreadId.make("thread-parent"),
-      }),
-    );
-
-    await harness.run(
-      waitFor(() =>
-        harness!.calls.closedTerminals.some(
-          (input) => input.threadId === ThreadId.make("thread-parent"),
-        ),
-      ),
-    );
-    await harness.run(harness.archiveReactor.drain);
-
-    expect(harness.calls.interrupted).toEqual([]);
-    expect(harness.sessionStopRequestedThreadIds()).toEqual([]);
-  });
-
-  it("does not re-archive an already-archived child when the parent archive cascades", async () => {
-    harness = await createArchiveHarness({
-      bindings: {
-        "thread-parent": "running",
-        "thread-child": "stopped",
-      },
+    yield* h.engine.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("cmd-stopped-parent-archive"),
+      threadId: ThreadId.make("thread-parent"),
     });
-    await harness.createProject("project-archive-idempotent");
-    await harness.createThread({
+
+    yield* waitFor(() =>
+      h.calls.closedTerminals.some((input) => input.threadId === ThreadId.make("thread-parent")),
+    );
+    yield* h.archiveReactor.drain;
+
+    expect(h.calls.interrupted).toEqual([]);
+    expect(h.sessionStopRequestedThreadIds()).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+it.live("does not re-archive an already-archived child when the parent archive cascades", () => {
+  const { layer, harness } = makeArchiveHarness({
+    bindings: {
+      "thread-parent": "running",
+      "thread-child": "stopped",
+    },
+  });
+  return Effect.gen(function* () {
+    const h = yield* harness;
+    yield* h.createProject("project-archive-idempotent");
+    yield* h.createThread({
       commandId: "cmd-idem-parent-create",
       threadId: "thread-parent",
       projectId: "project-archive-idempotent",
     });
-    await harness.createThread({
+    yield* h.createThread({
       commandId: "cmd-idem-child-create",
       threadId: "thread-child",
       projectId: "project-archive-idempotent",
@@ -373,45 +358,33 @@ describe("ThreadArchiveReactor", () => {
 
     // The child was already archived (e.g. auto-archive of a completed
     // sub-agent) before the parent archive.
-    await harness.run(
-      harness.engine.dispatch({
-        type: "thread.archive",
-        commandId: CommandId.make("cmd-child-archive-first"),
-        threadId: ThreadId.make("thread-child"),
-      }),
-    );
-    await harness.run(
-      waitFor(() => harness!.archivedThreadIds().includes(ThreadId.make("thread-child"))),
-    );
-    await harness.run(harness.archiveReactor.drain);
+    yield* h.engine.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("cmd-child-archive-first"),
+      threadId: ThreadId.make("thread-child"),
+    });
+    yield* waitFor(() => h.archivedThreadIds().includes(ThreadId.make("thread-child")));
+    yield* h.archiveReactor.drain;
 
-    await harness.run(
-      harness.engine.dispatch({
-        type: "thread.archive",
-        commandId: CommandId.make("cmd-parent-archive-idem"),
-        threadId: ThreadId.make("thread-parent"),
-      }),
+    yield* h.engine.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("cmd-parent-archive-idem"),
+      threadId: ThreadId.make("thread-parent"),
+    });
+    yield* waitFor(() =>
+      h.calls.closedTerminals.some((input) => input.threadId === ThreadId.make("thread-parent")),
     );
-    await harness.run(
-      waitFor(() =>
-        harness!.calls.closedTerminals.some(
-          (input) => input.threadId === ThreadId.make("thread-parent"),
-        ),
-      ),
-    );
-    await harness.run(harness.archiveReactor.drain);
+    yield* h.archiveReactor.drain;
 
     // The cascade must skip the already-archived child: exactly one archived
     // event and one terminal close per thread, and a duplicate archive of the
     // child would have been rejected by the decider instead of looping.
     expect(
-      harness.archivedThreadIds().filter((threadId) => threadId === ThreadId.make("thread-child")),
+      h.archivedThreadIds().filter((threadId) => threadId === ThreadId.make("thread-child")),
     ).toHaveLength(1);
     expect(
-      harness.calls.closedTerminals.filter(
-        (input) => input.threadId === ThreadId.make("thread-child"),
-      ),
+      h.calls.closedTerminals.filter((input) => input.threadId === ThreadId.make("thread-child")),
     ).toHaveLength(1);
-    expect(harness.archivedThreadIds()).toContain(ThreadId.make("thread-parent"));
-  });
+    expect(h.archivedThreadIds()).toContain(ThreadId.make("thread-parent"));
+  }).pipe(Effect.scoped, Effect.provide(layer));
 });

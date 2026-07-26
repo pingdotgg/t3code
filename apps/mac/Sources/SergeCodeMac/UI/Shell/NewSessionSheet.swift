@@ -18,7 +18,7 @@ struct NewSessionSheet: View {
     @UIState private var selectedDeviceID: DeviceID = .local
     @UIState private var selectedProjectID: String?
     @UIState private var projectSearch = ""
-    @UIState private var provider: ProviderKind = .claude
+    @UIState private var provider: ProviderKind = .claudex
     @UIState private var newProjectPath: String = ""
     @UIState private var isBusy = false
     @UIState private var errorMessage: String?

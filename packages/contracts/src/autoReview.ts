@@ -128,6 +128,18 @@ export type AutoReviewTrigger = typeof AutoReviewTrigger.Type;
 export const AutoReviewJobId = TrimmedNonEmptyString;
 export type AutoReviewJobId = typeof AutoReviewJobId.Type;
 
+/**
+ * A fix prompt the auto-reviewer could not dispatch yet because the origin
+ * thread was busy. Drained (dispatched as a normal turn) once the thread goes
+ * idle — auto-review never steers/injects into a running turn.
+ */
+export const AutoReviewPendingFix = Schema.Struct({
+  threadId: ThreadId,
+  prompt: Schema.String,
+  queuedAt: IsoDateTime,
+});
+export type AutoReviewPendingFix = typeof AutoReviewPendingFix.Type;
+
 export const AutoReviewJob = Schema.Struct({
   id: AutoReviewJobId,
   projectId: ProjectId,
@@ -144,6 +156,19 @@ export const AutoReviewJob = Schema.Struct({
   githubReviewId: Schema.optional(Schema.NullOr(TrimmedString)),
   originThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   autoFixEnqueued: Schema.Boolean,
+  /**
+   * Queued auto-fix waiting for the origin thread to go idle. Set instead of
+   * dispatching when the thread is busy; cleared once dispatched or dropped.
+   */
+  pendingFix: Schema.NullOr(AutoReviewPendingFix).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Review verdict produced by the reviewer, once the job succeeds. */
+  decision: Schema.NullOr(AutoReviewDecision).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** True when the findings contained blocking/important comments. */
+  actionableFindings: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   error: Schema.optional(Schema.NullOr(Schema.String)),
   skipReason: Schema.optional(Schema.NullOr(TrimmedString)),
   createdAt: IsoDateTime,

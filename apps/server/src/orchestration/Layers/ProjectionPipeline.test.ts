@@ -33,6 +33,7 @@ import {
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
+import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
@@ -2557,6 +2558,8 @@ const engineLayer = it.layer(
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), {
@@ -2661,6 +2664,80 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
           defaultModelSelection: '{"instanceId":"codex","model":"gpt-5"}',
         },
       ]);
+    }),
+  );
+
+  it.effect("projects thread.auto-review-phase.set into rows and shell snapshots", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const createdAt = "2026-01-01T00:00:00.000Z";
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-auto-review-project"),
+        projectId: ProjectId.make("project-auto-review"),
+        title: "Auto Review Project",
+        workspaceRoot: "/tmp/project-auto-review",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-auto-review-thread"),
+        threadId: ThreadId.make("thread-auto-review"),
+        projectId: ProjectId.make("project-auto-review"),
+        title: "Auto Review Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+
+      const readPhase = () =>
+        Effect.gen(function* () {
+          const rows = yield* sql<{ readonly autoReviewPhase: string | null }>`
+            SELECT auto_review_phase AS "autoReviewPhase"
+            FROM projection_threads
+            WHERE thread_id = 'thread-auto-review'
+          `;
+          const shell = yield* snapshotQuery.getShellSnapshot();
+          return {
+            rowPhase: rows[0]?.autoReviewPhase ?? null,
+            shellPhase:
+              shell.threads.find((thread) => thread.id === ThreadId.make("thread-auto-review"))
+                ?.autoReviewPhase ?? null,
+          };
+        });
+
+      assert.deepEqual(yield* readPhase(), { rowPhase: null, shellPhase: null });
+
+      yield* engine.dispatch({
+        type: "thread.auto-review-phase.set",
+        commandId: CommandId.make("cmd-auto-review-phase-set"),
+        threadId: ThreadId.make("thread-auto-review"),
+        phase: "reviewing",
+        createdAt,
+      });
+      assert.deepEqual(yield* readPhase(), { rowPhase: "reviewing", shellPhase: "reviewing" });
+
+      yield* engine.dispatch({
+        type: "thread.auto-review-phase.set",
+        commandId: CommandId.make("cmd-auto-review-phase-clear"),
+        threadId: ThreadId.make("thread-auto-review"),
+        phase: null,
+        createdAt,
+      });
+      assert.deepEqual(yield* readPhase(), { rowPhase: null, shellPhase: null });
     }),
   );
 });

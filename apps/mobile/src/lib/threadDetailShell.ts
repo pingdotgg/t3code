@@ -52,5 +52,6 @@ export function threadDetailToShell(
       proposedPlans: thread.proposedPlans,
       latestTurnId: thread.latestTurn?.turnId ?? null,
     }),
+    autoReviewPhase: thread.autoReviewPhase,
   };
 }

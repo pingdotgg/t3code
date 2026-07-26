@@ -14,7 +14,7 @@ import T3Kit
 struct ClosedPrSettleTests {
     private func makeThread(id: String, settledOverride: String? = nil) -> ChatThread {
         ChatThread(
-            id: id, projectID: "proj-1", title: "Thread \(id)", provider: .claude,
+            id: id, projectID: "proj-1", title: "Thread \(id)", provider: .claudex,
             status: .idle, updatedAt: Date(),
             settledOverride: settledOverride,
             sessionStatus: "idle")

@@ -26,10 +26,11 @@ export interface AutoReviewOriginContext {
   readonly prTitle?: string;
   readonly prBody?: string;
   readonly candidates: ReadonlyArray<ThreadLinkCandidate>;
-  readonly dispatchFixPrompt?: (input: {
+  readonly queueOrDispatchFix?: (input: {
+    readonly jobId: string;
     readonly threadId: string;
     readonly prompt: string;
-  }) => Effect.Effect<void>;
+  }) => Effect.Effect<"dispatched" | "queued">;
   readonly existingReviewBodies?: ReadonlyArray<string>;
 }
 
@@ -190,23 +191,25 @@ export const make = Effect.gen(function* () {
         candidates: context.candidates,
       });
 
+      const actionable = shouldAutoFixOriginThread(findings);
       let autoFixEnqueued = false;
-      if (originThreadId && shouldAutoFixOriginThread(findings) && context.dispatchFixPrompt) {
+      if (originThreadId && actionable && context.queueOrDispatchFix) {
         const prompt = buildOriginFixPrompt({
           prNumber: job.prNumber,
           prUrl: prMeta.url,
           headSha: job.headSha,
           findings,
         });
-        yield* context.dispatchFixPrompt({ threadId: originThreadId, prompt }).pipe(
-          Effect.asVoid,
-          Effect.orElseSucceed(() => undefined),
-        );
-        autoFixEnqueued = true;
+        const outcome = yield* context
+          .queueOrDispatchFix({ jobId: job.id, threadId: originThreadId, prompt })
+          .pipe(Effect.orElseSucceed(() => "queued" as const));
+        autoFixEnqueued = outcome === "dispatched";
       }
 
       yield* store.update(job.id, {
         status: "succeeded",
+        decision,
+        actionableFindings: actionable,
         findingsCount: findings.comments.length,
         reviewUrl,
         githubReviewId,
