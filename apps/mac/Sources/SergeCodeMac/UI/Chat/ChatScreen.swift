@@ -50,7 +50,12 @@ public struct ChatScreen: View {
                         ChatFollowUpBar(model: model)
                         if thread.status == .running || thread.status == .backgroundWork {
                             PlanProgressStrip(model: model)
-                                .frame(maxWidth: 1040)
+                                // Compact card, right-anchored to the same
+                                // 1040pt column as the Unsplash credit below
+                                // it, instead of spanning the full composer
+                                // width.
+                                .frame(maxWidth: 440, alignment: .trailing)
+                                .frame(maxWidth: 1040, alignment: .trailing)
                                 .padding(.horizontal, 20)
                                 .padding(.top, 8)
                         }
