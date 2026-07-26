@@ -158,6 +158,8 @@ import { useComposerDraftStore } from "../composerDraftStore";
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+const THREAD_TOOLTIP_DELAY_MS = 100;
+const THREAD_TOOLTIP_TRIGGER_SELECTOR = "[data-sidebar-thread-tooltip-trigger]";
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
@@ -238,9 +240,9 @@ function SidebarV2ThreadTooltip({
     <TooltipPopup
       side="right"
       align="start"
-      sideOffset={8}
+      sideOffset={4}
       variant="glass"
-      className="max-w-80 text-left whitespace-normal"
+      className="max-w-80 text-left whitespace-normal duration-100 data-ending-style:duration-0"
     >
       <div className="flex max-w-80 flex-col gap-2 p-2">
         <div className="whitespace-nowrap text-sm font-medium text-foreground">{thread.title}</div>
@@ -366,6 +368,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // the user visits the thread.
   wokeAt: string | null;
   isActive: boolean;
+  sidebarScrolling: boolean;
+  detailsTooltipOpenRequested: boolean;
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
@@ -414,6 +418,15 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
+  const [detailsTooltipOpen, setDetailsTooltipOpen] = useState(false);
+
+  useEffect(() => {
+    if (props.sidebarScrolling) {
+      setDetailsTooltipOpen(false);
+    } else if (props.detailsTooltipOpenRequested) {
+      setDetailsTooltipOpen(true);
+    }
+  }, [props.detailsTooltipOpenRequested, props.sidebarScrolling]);
 
   // Same semantics as v1 (never-visited counts as read): flipping the beta
   // flag must not light up every historical thread as unread.
@@ -732,8 +745,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         data-thread-item
         className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
       >
-        <Tooltip>
+        <Tooltip
+          open={detailsTooltipOpen}
+          onOpenChange={setDetailsTooltipOpen}
+          disabled={props.sidebarScrolling}
+        >
           <TooltipTrigger
+            data-sidebar-thread-tooltip-trigger={threadKey}
             render={
               <div
                 role="button"
@@ -841,8 +859,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       data-thread-item
       className="list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]"
     >
-      <Tooltip>
+      <Tooltip
+        open={detailsTooltipOpen}
+        onOpenChange={setDetailsTooltipOpen}
+        disabled={props.sidebarScrolling}
+      >
         <TooltipTrigger
+          data-sidebar-thread-tooltip-trigger={threadKey}
           render={
             <div
               role="button"
@@ -1036,6 +1059,31 @@ export default function SidebarV2() {
     null,
   );
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
+  const [sidebarScrolling, setSidebarScrolling] = useState(false);
+  const [detailsTooltipOpenRequest, setDetailsTooltipOpenRequest] = useState<string | null>(null);
+  const hasSidebarScrolledRef = useRef(false);
+
+  const handleSidebarScrollingChange = useCallback((scrolling: boolean) => {
+    if (scrolling) {
+      hasSidebarScrolledRef.current = true;
+      setDetailsTooltipOpenRequest(null);
+    }
+    setSidebarScrolling(scrolling);
+  }, []);
+
+  useEffect(() => {
+    if (sidebarScrolling || !hasSidebarScrolledRef.current) return;
+    const timeout = window.setTimeout(() => {
+      const hoveredTrigger = document.querySelector<HTMLElement>(
+        `${THREAD_TOOLTIP_TRIGGER_SELECTOR}:hover`,
+      );
+      setDetailsTooltipOpenRequest(
+        hoveredTrigger?.getAttribute("data-sidebar-thread-tooltip-trigger") ?? null,
+      );
+    }, THREAD_TOOLTIP_DELAY_MS);
+    return () => window.clearTimeout(timeout);
+  }, [sidebarScrolling]);
+
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
@@ -2212,6 +2260,7 @@ export default function SidebarV2() {
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         className="gap-0"
+        onScrollingChange={handleSidebarScrollingChange}
         fixedHeader={
           <SidebarGroup className="px-2 pb-2 pt-3">
             <div className="flex items-center gap-1">
@@ -2365,8 +2414,8 @@ export default function SidebarV2() {
         ) : null}
         <SidebarGroup className="px-2 py-1">
           <TooltipProvider
-            key="sidebar-thread-tooltips-150"
-            delay={150}
+            key="sidebar-thread-tooltips-100"
+            delay={THREAD_TOOLTIP_DELAY_MS}
             closeDelay={0}
             timeout={400}
           >
@@ -2425,6 +2474,8 @@ export default function SidebarV2() {
                       // rows resolve to null on their own.
                       wokeAt={threadWokeAt(thread, { now: snoozeNow })}
                       isActive={routeThreadKey === threadKey}
+                      sidebarScrolling={sidebarScrolling}
+                      detailsTooltipOpenRequested={detailsTooltipOpenRequest === threadKey}
                       jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
                       currentEnvironmentId={primaryEnvironmentId}
                       environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}

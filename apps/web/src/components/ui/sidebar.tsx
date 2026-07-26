@@ -687,14 +687,22 @@ function SidebarSeparator({ className, ...props }: React.ComponentProps<typeof S
 function SidebarContent({
   className,
   fixedHeader,
+  onScrollingChange,
   ...props
 }: React.ComponentProps<"div"> & {
   fixedHeader?: React.ReactNode;
+  onScrollingChange?: (scrolling: boolean) => void;
 }) {
   return (
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
-      <ScrollArea hideScrollbars scrollFade className="h-auto min-h-0 flex-1">
+      <ScrollArea
+        hideScrollbars
+        scrollFade
+        className="h-auto min-h-0 flex-1"
+        onScrollCapture={() => onScrollingChange?.(true)}
+        onScrollEndCapture={() => onScrollingChange?.(false)}
+      >
         <div
           className={cn(
             "flex w-full min-w-0 flex-col gap-2 group-data-[collapsible=icon]:overflow-hidden",
