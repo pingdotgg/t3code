@@ -115,14 +115,22 @@ export class DevServeFailedError extends Schema.TaggedErrorClass<DevServeFailedE
 
 export class DevShareLeaseClaimError extends Schema.TaggedErrorClass<DevShareLeaseClaimError>()(
   "DevShareLeaseClaimError",
-  { leasePath: Schema.String, cause: Schema.Defect() },
+  {
+    leasePath: Schema.String,
+    cause: Schema.Defect(),
+    restoreCause: Schema.optional(Schema.Defect()),
+  },
 ) {
   override get message(): string {
-    return `could not claim cleanup ownership at ${this.leasePath}`;
+    return this.restoreCause === undefined
+      ? `could not claim cleanup ownership at ${this.leasePath}`
+      : `could not claim cleanup ownership at ${this.leasePath} or restore the previous tailnet mapping`;
   }
 
   get hint(): string {
-    return "Check that the dev data directory is writable.";
+    return this.restoreCause === undefined
+      ? "Check that the dev data directory is writable."
+      : "Check that the dev data directory is writable, then run the share command again.";
   }
 }
 
@@ -333,7 +341,25 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
 export const acquireDevShare = Effect.fn("devShare.acquireDevShare")(function* (
   lease: DevShareLease,
 ) {
-  const host = yield* prepareDevShare({ webPort: lease.webPort });
-  yield* claimDevShareLease(lease);
-  return yield* publishDevShare({ host, webPort: lease.webPort });
+  return yield* Effect.gen(function* () {
+    const host = yield* prepareDevShare({ webPort: lease.webPort });
+    yield* claimDevShareLease(lease).pipe(
+      Effect.catch((error: DevShareLeaseClaimError) =>
+        publishDevShare({ host, webPort: lease.webPort }).pipe(
+          Effect.matchEffect({
+            onFailure: (restoreCause) =>
+              Effect.fail(
+                new DevShareLeaseClaimError({
+                  leasePath: lease.leasePath,
+                  cause: error.cause,
+                  restoreCause,
+                }),
+              ),
+            onSuccess: () => Effect.fail(error),
+          }),
+        ),
+      ),
+    );
+    return yield* publishDevShare({ host, webPort: lease.webPort });
+  }).pipe(Effect.uninterruptible);
 });

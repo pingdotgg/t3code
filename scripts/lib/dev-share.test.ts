@@ -12,6 +12,7 @@ import {
   claimDevShareLease,
   cleanupOwnedDevShare,
   type DevShareError,
+  DevShareLeaseClaimError,
   DevServeFailedError,
   shareDevServer,
   unshareDevServer,
@@ -244,6 +245,28 @@ it.layer(NodeServices.layer)("dev share cleanup ownership", (it) => {
       );
 
       assert.equal(yield* fileSystem.readFileString(leasePath), "new-runner");
+    }),
+  );
+
+  it.effect("restores the mapping when ownership cannot be claimed", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-dev-share-lease-",
+      });
+      const blockedDirectory = `${directory}/not-a-directory`;
+      const calls: Array<ReadonlyArray<string>> = [];
+
+      yield* fileSystem.writeFileString(blockedDirectory, "blocked");
+      const error = yield* acquireDevShare({
+        leasePath: `${blockedDirectory}/5788.owner`,
+        ownerId: "new-runner",
+        webPort: 5788,
+      }).pipe(Effect.provide(spawnerLayer({ calls })), Effect.flip);
+
+      assert.instanceOf(error, DevShareLeaseClaimError);
+      assert.isTrue(calls.some((args) => args.includes("off")));
+      assert.isTrue(calls.some((args) => args.includes("http://127.0.0.1:5788")));
     }),
   );
 
