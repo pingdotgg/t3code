@@ -1594,7 +1594,21 @@ private actor MockState {
             modelID: "gpt-5.2-codex"
         )
 
-        for thread in [thread1, thread2, thread3, thread4, thread5, thread6, thread7, thread8] {
+        // A live turn that has been silent for a while: the dock's thinking
+        // phase, far enough past the reassurance thresholds that the
+        // escalated copy is reachable without a probe having to wait for it.
+        let thread9 = ChatThread(
+            id: "thread-9",
+            projectID: projectB.id,
+            title: "Rework the pairing flow",
+            provider: .claude,
+            status: .running,
+            updatedAt: now.addingTimeInterval(-200)
+        )
+
+        for thread in [
+            thread1, thread2, thread3, thread4, thread5, thread6, thread7, thread8, thread9,
+        ] {
             threadsByID[thread.id] = thread
         }
 
@@ -1604,6 +1618,7 @@ private actor MockState {
         timelinesByThread[thread4.id] = MockState.timelineForErrorThread(at: now)
         timelinesByThread[thread7.id] = MockState.timelineForRunningToolThread(at: now)
         timelinesByThread[thread8.id] = MockState.timelineForAutoReviewThread(at: now)
+        timelinesByThread[thread9.id] = MockState.timelineForSilentThinkingThread(at: now)
 
         let sidebarDiff = MockState.diffForSidebarThread()
         let longLineDiff = MockState.diffForLongLineFile()
@@ -1758,6 +1773,19 @@ private actor MockState {
                 id: "t7-tool-4", name: "run_command", detail: "pnpm vitest run unifiedDiff",
                 kind: .command, status: .running, at: now.addingTimeInterval(-31),
                 output: nil, outputIsError: false),
+        ]
+    }
+
+    /// A live turn that has said nothing for over three minutes: no tool, no
+    /// streamed prose, no reasoning text. The dock's thinking phase, and the
+    /// only seeded state where its elapsed-driven copy has escalated past
+    /// the first threshold.
+    private static func timelineForSilentThinkingThread(at now: Date) -> [TimelineItem] {
+        [
+            .userMessage(
+                id: "t9-u1",
+                text: "Rework the pairing flow so a lost relay session reconnects without a new QR.",
+                attachments: [], at: now.addingTimeInterval(-200)),
         ]
     }
 

@@ -702,6 +702,35 @@
                 print("UIProbe: review pet skipped (live backend run)")
             }
 
+            // The thinking phase, and the elapsed-driven copy that goes with
+            // it. `thread-9` has been silent for over three minutes, so the
+            // escalated wording is reachable without the probe waiting out
+            // the 20s/60s/180s thresholds in real time.
+            if model.threads.contains(where: { $0.id == "thread-9" }) {
+                multi.select(threadID: "thread-9", on: model.deviceID)
+                try? await Task.sleep(for: .seconds(1.5))
+                let thinking = AgentActivityPresentation.activity(
+                    threadStatus: model.thread(threadID: "thread-9")?.status,
+                    isStalled: false,
+                    items: model.timeline(threadID: "thread-9"))
+                let elapsed = thinking?.since.map { Date().timeIntervalSince($0) } ?? 0
+                // Whichever presentation this run is configured for has to
+                // show the same escalated copy: the quiet fallback froze on
+                // "Thinking" when it was built once at body-evaluation time
+                // instead of riding a tick. Re-run with
+                // `SERGECODE_PLAYFUL_MOTION=0` for the fallback.
+                let playful = Motion.playful.showsPlayfulSurfaces
+                print(
+                    "UIProbe: activity dock thinking=\(thinking?.phase == .thinking) "
+                        + "label=\"\(AgentActivityPresentation.thinkingLabel(elapsed: elapsed))\" "
+                        + "playful=\(playful)")
+                snapshot(
+                    playful ? "20-activity-dock-thinking" : "20-activity-dock-thinking-quiet",
+                    dir: dir)
+            } else {
+                print("UIProbe: activity dock thinking skipped (live backend run)")
+            }
+
             if let previousThreadID {
                 multi.select(threadID: previousThreadID, on: model.deviceID)
                 try? await Task.sleep(for: .seconds(1))

@@ -25,6 +25,11 @@ struct ReviewPetOverlay: View {
     /// Bumped once per appearance, so a delayed exit can tell whether the
     /// appearance it was scheduled for is still the current one.
     @UIState private var appearance = 0
+    /// Bumped when the playful-motion preference changes. Part of `token`, so
+    /// the toggle re-runs the gate rather than only redrawing: switching the
+    /// preference off has to send a pet that is already on screen home, and
+    /// switching it back on has to summon one for a phase still in flight.
+    @UIState private var playfulRevision = 0
 
     private var phase: ReviewPetPhase? { ReviewPetPhase(status: status) }
 
@@ -32,7 +37,7 @@ struct ReviewPetOverlay: View {
     /// new appearance and replays the entrance; anything else leaves the
     /// running animation alone.
     private var token: String {
-        "\(threadID)|\(phase?.rawValue ?? "none")"
+        "\(threadID)|\(phase?.rawValue ?? "none")|\(playfulRevision)"
     }
 
     var body: some View {
@@ -45,6 +50,7 @@ struct ReviewPetOverlay: View {
             }
         }
         .task(id: token) { await run() }
+        .playfulMotionInvalidated($playfulRevision)
     }
 
     /// Drives one appearance: show, let the pet climb out, and — for the

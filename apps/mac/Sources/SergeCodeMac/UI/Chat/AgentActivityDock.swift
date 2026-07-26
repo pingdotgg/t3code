@@ -24,6 +24,10 @@ struct AgentActivityDock: View {
     /// through `ToolDetailParseCache` so this view never re-parses JSON.
     let subject: String?
 
+    /// Bumped when the playful-motion preference changes, purely to
+    /// invalidate this body so the branch below re-reads it.
+    @UIState private var playfulRevision = 0
+
     private var tint: Color {
         switch activity.phase {
         case .thinking: AlpineTheme.lavender
@@ -42,15 +46,14 @@ struct AgentActivityDock: View {
             if playful.showsPlayfulSurfaces {
                 dock(animated: playful.allowsCharacterMotion)
             } else {
-                QuietActivityRow(
-                    label: label(elapsed: elapsedNow),
-                    accessibilityLabel: accessibilityLabel)
+                quietRow
             }
             Spacer(minLength: 0)
         }
         .padding(.leading, TranscriptMetrics.cardPadH)
         .padding(.vertical, 2)
         .accessibilityAddTraits(.updatesFrequently)
+        .playfulMotionInvalidated($playfulRevision)
     }
 
     // MARK: - Playful dock
@@ -81,21 +84,35 @@ struct AgentActivityDock: View {
         .accessibilityLabel(accessibilityLabel)
     }
 
-    /// The label re-derives on a slow tick rather than the orb's 30fps clock:
-    /// its only time dependence is the 20s / 60s / 180s reassurance
-    /// thresholds, and rebuilding a `Text` thirty times a second to cross one
-    /// of them would be pure waste.
     private func phaseLabel(animated: Bool) -> some View {
-        TimelineView(.periodic(from: activity.since ?? .now, by: 2)) { context in
-            let elapsed = activity.since.map { context.date.timeIntervalSince($0) } ?? 0
-            ShimmerLabel(
-                text: label(elapsed: max(0, elapsed)), tint: tint, animated: animated)
+        tickingLabel { text in
+            ShimmerLabel(text: text, tint: tint, animated: animated)
         }
     }
 
-    private var elapsedNow: TimeInterval {
-        guard let since = activity.since else { return 0 }
-        return max(0, Date().timeIntervalSince(since))
+    private var quietRow: some View {
+        tickingLabel { text in
+            QuietActivityRow(label: text, accessibilityLabel: accessibilityLabel)
+        }
+    }
+
+    /// Both presentations ride this tick, and neither can go without it: the
+    /// reassurance copy is derived from elapsed time (the 20s / 60s / 180s
+    /// thresholds), but a silent stretch produces no timeline deltas to
+    /// re-render on — which is exactly the stretch where the escalation
+    /// matters. Rendering the label once at body-evaluation time froze it on
+    /// "Thinking" for the whole turn.
+    ///
+    /// 2s rather than the orb's 30fps: crossing a threshold is the only thing
+    /// this clock is for, so rebuilding a `Text` thirty times a second to
+    /// catch one would be pure waste.
+    private func tickingLabel<Content: View>(
+        @ViewBuilder content: @escaping (String) -> Content
+    ) -> some View {
+        TimelineView(.periodic(from: activity.since ?? .now, by: 2)) { context in
+            let elapsed = activity.since.map { context.date.timeIntervalSince($0) } ?? 0
+            content(label(elapsed: max(0, elapsed)))
+        }
     }
 
     private func label(elapsed: TimeInterval) -> String {

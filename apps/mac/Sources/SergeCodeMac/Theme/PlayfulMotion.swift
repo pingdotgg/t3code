@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Local preference for the app's playful motion: the live activity dock's
 /// aurora orb and the auto-review pet, plus the ongoing loops that animate
@@ -13,8 +14,40 @@ import Foundation
 public enum PlayfulMotionPreferences {
     public static let enabledKey = "motion.playful"
 
+    /// Posted whenever the preference changes.
+    ///
+    /// `Motion.playful` is read inside view bodies, and a `UserDefaults`
+    /// write invalidates nothing in SwiftUI — so without this the surfaces
+    /// keep their old presentation until some unrelated update happens to
+    /// re-render them. On a silent turn, which is exactly when the dock is on
+    /// screen, that can be minutes. Views that branch on the preference
+    /// observe this and invalidate themselves.
+    public static let didChangeNotification = Notification.Name(
+        "PlayfulMotionPreferencesDidChange")
+
+    #if DEBUG
+        /// Launch-time override for probe runs: `SERGECODE_PLAYFUL_MOTION=0`
+        /// renders every playful surface in its opt-out presentation for the
+        /// whole run.
+        ///
+        /// A probe cannot get there by flipping the preference mid-run: the
+        /// change notification fires and the policy re-resolves, but the
+        /// offscreen `cacheDisplay` capture is taken before SwiftUI flushes
+        /// the resulting update, so the PNG still shows the old presentation.
+        /// Setting it before the first render sidesteps that entirely, and
+        /// never writes to the user's stored preference.
+        private static let environmentOverride: Bool? = {
+            guard let raw = ProcessInfo.processInfo.environment["SERGECODE_PLAYFUL_MOTION"]
+            else { return nil }
+            return raw != "0"
+        }()
+    #endif
+
     public static var isEnabled: Bool {
         get {
+            #if DEBUG
+                if let environmentOverride { return environmentOverride }
+            #endif
             // Default ON when the key has never been written.
             if UserDefaults.standard.object(forKey: enabledKey) == nil {
                 return true
@@ -23,6 +56,21 @@ public enum PlayfulMotionPreferences {
         }
         set {
             UserDefaults.standard.set(newValue, forKey: enabledKey)
+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        }
+    }
+}
+
+extension View {
+    /// Invalidates this view when the playful-motion preference changes, so a
+    /// surface that branches on `Motion.playful` switches presentation the
+    /// moment the toggle flips instead of at the next unrelated re-render.
+    func playfulMotionInvalidated(_ revision: Binding<Int>) -> some View {
+        onReceive(
+            NotificationCenter.default.publisher(
+                for: PlayfulMotionPreferences.didChangeNotification)
+        ) { _ in
+            revision.wrappedValue &+= 1
         }
     }
 }
