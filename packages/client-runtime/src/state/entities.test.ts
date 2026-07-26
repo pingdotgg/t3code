@@ -105,6 +105,7 @@ const THREAD_SHELL = {
   hasPendingApprovals: false,
   hasPendingUserInput: false,
   hasActionableProposedPlan: false,
+  autoReviewPhase: null,
 } as const;
 
 const SNAPSHOT: OrchestrationShellSnapshot = {

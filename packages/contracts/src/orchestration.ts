@@ -340,6 +340,19 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+/**
+ * Server-derived auto-review lifecycle for a thread's pull request:
+ * `reviewing` while a review job is queued/running, `fixing` while an
+ * auto-fix is queued or being applied, `readyToMerge` when the latest review
+ * came back clean. Null when no review activity involves the thread.
+ */
+export const OrchestrationThreadAutoReviewPhase = Schema.Literals([
+  "reviewing",
+  "fixing",
+  "readyToMerge",
+]);
+export type OrchestrationThreadAutoReviewPhase = typeof OrchestrationThreadAutoReviewPhase.Type;
+
 export const OrchestrationWaitingReason = Schema.Literals(["scheduled-wakeup", "dependency"]);
 export type OrchestrationWaitingReason = typeof OrchestrationWaitingReason.Type;
 
@@ -463,6 +476,9 @@ export const OrchestrationThread = Schema.Struct({
   settledOverride: Schema.optional(Schema.NullOr(Schema.Literals(["settled", "active"]))),
   settledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   deletedAt: Schema.NullOr(IsoDateTime),
+  autoReviewPhase: Schema.NullOr(OrchestrationThreadAutoReviewPhase).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -525,6 +541,9 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  autoReviewPhase: Schema.NullOr(OrchestrationThreadAutoReviewPhase).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -971,6 +990,14 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadAutoReviewPhaseSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.auto-review-phase.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  phase: Schema.NullOr(OrchestrationThreadAutoReviewPhase),
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -979,6 +1006,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadAutoReviewPhaseSetCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1015,6 +1043,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.auto-review-phase-set",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1219,6 +1248,12 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+export const ThreadAutoReviewPhaseSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  phase: Schema.NullOr(OrchestrationThreadAutoReviewPhase),
+  updatedAt: IsoDateTime,
+});
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -1370,6 +1405,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.auto-review-phase-set"),
+    payload: ThreadAutoReviewPhaseSetPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
