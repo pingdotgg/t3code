@@ -81,7 +81,13 @@ struct AlpineSegmentedControl<Value: Hashable>: View {
         let isHovering = hovered == segment.value && !isSelected
 
         return Button {
-            guard !isSelected else { return }
+            guard !isSelected else {
+                // Clicking the segment you're already on has nowhere to slide
+                // the thumb; the boundary tick says "yes, and you're here".
+                Haptics.play(.boundary)
+                return
+            }
+            Haptics.play(.selection)
             selection = segment.value
         } label: {
             Text(segment.title)
@@ -121,7 +127,13 @@ struct AlpineSegmentedControl<Value: Hashable>: View {
         default:
             next = nil
         }
-        guard let next else { return }
+        guard let next else {
+            // Arrowing past the first/last segment: the control refuses to
+            // move, and says so.
+            Haptics.play(.boundary, when: direction == .left || direction == .right)
+            return
+        }
+        Haptics.play(.selection)
         selection = segments[next].value
     }
 }

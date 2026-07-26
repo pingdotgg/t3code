@@ -324,6 +324,7 @@ public struct ComposerBar: View {
                             guard semantic.isEmpty else { return .ignored }
                             if let rows = activeSuggestionRows, !rows.isEmpty {
                                 let index = min(highlightedSuggestionIndex, rows.count - 1)
+                                Haptics.play(.selection)
                                 rows[index].action()
                                 return .handled
                             }
@@ -353,6 +354,10 @@ public struct ComposerBar: View {
                                 highlightedSuggestionIndex =
                                     (highlightedSuggestionIndex - 1 + rows.count) % rows.count
                             }
+                            // Walking a suggestion list ticks per row; holding
+                            // the arrow key is rate-limited by the throttle
+                            // rather than buzzing.
+                            Haptics.play(.selection)
                             return .handled
                         }
                         // Escape dismisses whichever suggestion menu is open
@@ -386,6 +391,7 @@ public struct ComposerBar: View {
                     // draft.
                     if isThreadRunning && !showsStop {
                         Button {
+                            Haptics.play(.decision)
                             Task { await model.cancelCurrentTurn() }
                         } label: {
                             Image(systemName: "stop.fill")
@@ -419,6 +425,12 @@ public struct ComposerBar: View {
         .animation(Motion.reveal, value: dictationOverlayVisible)
         .animation(Motion.reveal, value: model.lastError)
         .animation(Motion.feedback, value: isThreadRunning)
+        // Attachments finish encoding asynchronously (file import, paste,
+        // drop), so the strip filling in is confirmed by feel as well as by
+        // sight. Removals are silent — the user already knows.
+        .haptic(.selection, trigger: attachments.count) { old, new in new > old }
+        .haptic(.failure, trigger: attachmentError) { _, new in new != nil }
+        .haptic(.failure, trigger: model.lastError) { _, new in new != nil }
         .task {
             defersSuggestionWork = ComposerPerformancePolicy.shouldDeferSuggestions(for: draft)
             model.dictation.insertHandler = { threadID, text in
@@ -549,6 +561,7 @@ public struct ComposerBar: View {
     private var smartSendStopBaseButton: some View {
         Button {
             if showsStop {
+                Haptics.play(.decision)
                 Task { await model.cancelCurrentTurn() }
             } else {
                 send()
@@ -612,6 +625,11 @@ public struct ComposerBar: View {
         .help(dictationHelp)
         .accessibilityLabel(dictationHelp)
         .animation(Motion.feedback, value: isRecording)
+        // Dictation is the one mode where the user's eyes may be off the
+        // screen: opening and closing the mic is felt, not just seen. Silence
+        // detection ends recording on its own, so this is keyed on the state
+        // rather than on the button press.
+        .haptic(.toggle, trigger: isRecording)
     }
 
     @ViewBuilder
@@ -657,6 +675,9 @@ public struct ComposerBar: View {
     /// thread selected when recording *started*, which may not be the
     /// currently selected thread anymore (see `DictationController`).
     private func insertDictated(_ text: String, into threadID: String) {
+        // The transcript landing in the draft is the payoff of the recording;
+        // it arrives asynchronously, so it announces itself.
+        Haptics.play(.selection)
         let current = model.composerDraft(for: threadID).text
         model.setComposerDraftText(DictationDraft.appending(text, to: current), for: threadID)
     }
@@ -688,6 +709,9 @@ public struct ComposerBar: View {
 
     private func send() {
         guard canSend, let threadID = model.selectedThreadID else { return }
+        // Dispatch is felt at the keystroke, not after the round trip — the
+        // draft has already left the composer by the time the server answers.
+        Haptics.play(.commit)
         let submittedDraft = ComposerDraft(text: draft, attachments: attachments)
         let outgoingText = outgoingText(for: trimmedDraft)
         let replacingID = editedMessageID
@@ -713,6 +737,7 @@ public struct ComposerBar: View {
 
     private func queue() {
         guard canQueue else { return }
+        Haptics.play(.commit)
         let text = outgoingText(for: trimmedDraft)
         let outgoing = attachments
         // Queued sends are deferred; an edit-resend must not silently become

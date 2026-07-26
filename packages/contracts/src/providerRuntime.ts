@@ -590,7 +590,14 @@ export type TaskStartedPayload = typeof TaskStartedPayload.Type;
 const TaskProgressPayload = Schema.Struct({
   taskId: RuntimeTaskId,
   entityType: Schema.optional(Schema.Literals(["subagent", "command"])),
-  description: TrimmedNonEmptyStringSchema,
+  /**
+   * The task's own description, when the progress event is in a position to
+   * restate it. Optional because clients fold it over the description from
+   * `task.started`: a progress stream that carries per-chunk text (streamed
+   * background command output) must omit it rather than overwrite the task's
+   * identity with a label for the chunk.
+   */
+  description: Schema.optional(TrimmedNonEmptyStringSchema),
   summary: Schema.optional(TrimmedNonEmptyStringSchema),
   usage: Schema.optional(Schema.Unknown),
   lastToolName: Schema.optional(TrimmedNonEmptyStringSchema),

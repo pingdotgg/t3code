@@ -148,7 +148,12 @@ struct VcsToolbar: View {
         @Environment(\.isEnabled) private var isEnabled
 
         var body: some View {
-            Button(action: action) { label }
+            Button {
+                Haptics.play(.selection)
+                action()
+            } label: {
+                label
+            }
                 .buttonStyle(.plain)
                 .font(.caption.weight(.medium))
                 .padding(.horizontal, 9)
@@ -594,9 +599,18 @@ struct VcsToolbar: View {
     private func run(_ action: GitAction, message: String?) {
         guard runningAction == nil else { return }
         runningAction = action
+        Haptics.play(.commit)
         Task {
             await model.runGitAction(action, commitMessage: message)
             runningAction = nil
+            // The outcome pill lands with a tap so a long push/PR round trip
+            // reports itself even when the user has looked away. A successful
+            // merge is skipped here — the celebration overlay owns that beat.
+            if let outcome = model.lastGitActionOutcome,
+                !(action == .mergePR && outcome.success)
+            {
+                Haptics.playOutcome(success: outcome.success)
+            }
         }
     }
 
@@ -665,8 +679,7 @@ private struct VcsMergePillButtonStyle: ButtonStyle {
             }
             .foregroundStyle(AlpineTheme.forest)
             .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
-            .scaleEffect(configuration.isPressed && !Motion.reduceMotion ? 0.97 : 1)
-            .animation(Motion.feedback, value: configuration.isPressed)
+            .pressFeedback(configuration.isPressed, event: .commit)
     }
 }
 

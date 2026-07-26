@@ -114,7 +114,12 @@ struct ComposerPickerChoiceRow: View {
     private var accent: Color { tint ?? AlpineTheme.accent }
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            // Re-picking the active choice is a no-op for the backend but
+            // still a real click, so it ticks either way.
+            Haptics.play(.selection)
+            action()
+        } label: {
             HStack(spacing: 10) {
                 if let icon {
                     Image(systemName: icon)

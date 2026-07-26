@@ -86,6 +86,7 @@
             try? await Task.sleep(for: .seconds(2))
             snapshot("1-inspector-timeline", dir: dir)
             await probeChatTurnRail(model: model, dir: dir)
+            await probeCommandTaskCard(model: model, dir: dir)
 
             // Unified activity panel: scroll to the checkpoint history, then
             // back up to the changed-files section (legacy section keys).
@@ -869,6 +870,102 @@
                 "UIProbe: turn rail turns=\(turns.count) "
                     + "visible=\(turns.count >= 2)")
             snapshot("1c-chat-turn-rail", dir: dir)
+        }
+
+        /// Command tasks render as shell work, not as delegated agents, and a
+        /// foreground command renders no task card at all (its tool row is the
+        /// whole story). The card only appears mid-transcript, so host it
+        /// directly instead of scrolling the chat to it.
+        private static func probeCommandTaskCard(model: AppModel, dir: String) async {
+            let threadID = model.selectedThreadID
+            let items = threadID.map { model.timeline(threadID: $0) } ?? []
+            let commandCards = items.filter {
+                if case .subagentTask(let task) = $0 { return task.entityKind == .command }
+                return false
+            }
+            let foregroundCards = commandCards.filter {
+                if case .subagentTask(let task) = $0 { return !task.isBackgrounded }
+                return false
+            }
+            print(
+                "UIProbe: command task cards=\(commandCards.count) "
+                    + "foreground=\(foregroundCards.count)")
+
+            let now = Date()
+            let running = SubagentTaskItem(
+                taskId: "probe-command-running", taskType: "local_bash",
+                entityKind: .command, description: "Run full mac test suite",
+                state: .running, latestProgress: nil, lastToolName: "local_bash",
+                isBackgrounded: true, startedAt: now.addingTimeInterval(-190),
+                lastActivityAt: now.addingTimeInterval(-4), duration: nil,
+                progressLog: [
+                    SubagentTaskProgressEntry(
+                        at: now.addingTimeInterval(-120), toolName: "local_bash",
+                        text: "Building for debugging..."),
+                    SubagentTaskProgressEntry(
+                        at: now.addingTimeInterval(-4), toolName: "local_bash",
+                        text: "Test Suite 'SubagentTaskPresentationTests' started\n"
+                            + "✔ subtitle prefers the completion summary (0.004s)"),
+                ])
+            var finished = running
+            finished.taskId = "probe-command-finished"
+            finished.description = "Tail deploy logs"
+            finished.state = .completed
+            finished.duration = 214
+            finished.lastActivityAt = now.addingTimeInterval(-30)
+
+            // Defensive shape: a command row that somehow arrives without the
+            // detach flag must not claim to be backgrounded.
+            var attached = running
+            attached.taskId = "probe-command-attached"
+            attached.description = "Compile the sidecar"
+            attached.isBackgrounded = false
+
+            // Settled with a summary but no streamed output: the completion
+            // summary is the whole account of the run, so it must be on the
+            // card rather than collapsed to "Finished".
+            var summarized = running
+            summarized.taskId = "probe-command-summarized"
+            summarized.description = "Sync the release notes"
+            summarized.state = .completed
+            summarized.duration = 47
+            summarized.progressLog = []
+            summarized.latestProgress = "Process exited with code 0."
+
+            // A failure with no streamed output: the error must be readable on
+            // the card rather than hidden behind a chevron that expands nothing.
+            var failed = running
+            failed.taskId = "probe-command-failed"
+            failed.description = "Publish the appcast"
+            failed.state = .failed
+            failed.duration = 12
+            failed.progressLog = []
+            failed.error = "exited with code 1\nsee /tmp/appcast.log for the full output"
+
+            let hosting = NSHostingView(
+                rootView: VStack(alignment: .leading, spacing: 12) {
+                    CommandTaskCard(
+                        task: running, stopError: nil, onStop: {}, onClearStopError: {})
+                    CommandTaskCard(
+                        task: finished, stopError: nil, onStop: {}, onClearStopError: {})
+                    CommandTaskCard(
+                        task: attached, stopError: nil, onStop: {}, onClearStopError: {})
+                    CommandTaskCard(
+                        task: summarized, stopError: nil, onStop: {}, onClearStopError: {})
+                    CommandTaskCard(
+                        task: failed, stopError: nil, onStop: {}, onClearStopError: {})
+                }
+                .padding(16))
+            let frame = NSRect(x: 0, y: 0, width: 720, height: 860)
+            hosting.frame = frame
+            let window = NSWindow(
+                contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
+            DarkAppearanceConfigurator.applyAppearance(to: window)
+            window.contentView = hosting
+            window.orderFront(nil)
+            try? await Task.sleep(for: .seconds(1))
+            snapshot("1d-command-task-cards", window: window, dir: dir)
+            window.orderOut(nil)
         }
 
         /// Captures the main window at translucency 1.0 and 0.5 and logs

@@ -160,4 +160,89 @@ struct ThreadStatusProjectionTests {
             autoReviewPhase: "readyToMerge")
         #expect(status == .readyToMerge)
     }
+
+    /// A live foreground command is part of the running turn, and session/turn
+    /// liveness — not the task count — is what projects that. Feeding it into
+    /// `activeSubagentCount` only mattered after the turn went quiet, where it
+    /// pinned an otherwise finished thread to `backgroundWork` (and put a
+    /// count in the sidebar's background badge) for a shell call nobody is
+    /// waiting on. Backgrounded commands still count: those genuinely outlive
+    /// the turn.
+    @Test("a live foreground command projects running, not background work")
+    func foregroundCommandDoesNotOutliveItsTurn() {
+        let started = activity(
+            id: "act-cmd-start", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("cmd-1"),
+                "entityType": .string("command"),
+                "taskType": .string("local_bash"),
+            ]))
+        var state = T3SubagentTaskActivityState()
+        _ = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+        #expect(state.activeTaskCount == 1)
+        #expect(state.activeBackgroundWorkCount == 0)
+
+        // Mid-turn: the turn's own liveness projects running.
+        let runningTurn = OrchestrationLatestTurn(
+            turnId: "turn-1", state: .running, requestedAt: now)
+        #expect(
+            ThreadStatusProjection.project(
+                session: OrchestrationSession(threadId: "thread-1", status: .running, updatedAt: now),
+                latestTurn: runningTurn, archivedAt: nil, settledOverride: nil,
+                hasPendingApprovals: false,
+                activeSubagentCount: state.activeBackgroundWorkCount) == .running)
+
+        // Turn over, command task never closed: the thread settles instead of
+        // spinning on background work forever.
+        let completedTurn = OrchestrationLatestTurn(
+            turnId: "turn-1", state: .completed, requestedAt: now)
+        #expect(
+            ThreadStatusProjection.project(
+                session: OrchestrationSession(threadId: "thread-1", status: .idle, updatedAt: now),
+                latestTurn: completedTurn, archivedAt: nil, settledOverride: nil,
+                hasPendingApprovals: false,
+                activeSubagentCount: state.activeBackgroundWorkCount) == .done)
+    }
+
+    @Test("a backgrounded command keeps the thread in background work")
+    func backgroundedCommandProjectsBackgroundWork() {
+        let started = activity(
+            id: "act-cmd-start", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("cmd-1"),
+                "entityType": .string("command"),
+                "taskType": .string("local_bash"),
+            ]))
+        let detached = activity(
+            id: "act-cmd-bg", kind: ActivityKind.taskUpdated,
+            at: "2026-07-04T10:00:02.000Z",
+            payload: .object([
+                "taskId": .string("cmd-1"),
+                "entityType": .string("command"),
+                "isBackgrounded": .bool(true),
+            ]))
+        var state = T3SubagentTaskActivityState()
+        _ = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+        _ = state.apply(activity: detached, at: WireDate.parse(detached.createdAt)!)
+        #expect(state.activeBackgroundWorkCount == 1)
+
+        let completedTurn = OrchestrationLatestTurn(
+            turnId: "turn-1", state: .completed, requestedAt: now)
+        #expect(
+            ThreadStatusProjection.project(
+                session: OrchestrationSession(threadId: "thread-1", status: .idle, updatedAt: now),
+                latestTurn: completedTurn, archivedAt: nil, settledOverride: nil,
+                hasPendingApprovals: false,
+                activeSubagentCount: state.activeBackgroundWorkCount) == .backgroundWork)
+    }
+
+    private func activity(
+        id: String, kind: String, at: String, payload: JSONValue
+    ) -> OrchestrationThreadActivity {
+        OrchestrationThreadActivity(
+            id: id, tone: .info, kind: kind, summary: kind, payload: payload,
+            sequence: nil, createdAt: at)
+    }
 }

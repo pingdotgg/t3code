@@ -70,6 +70,9 @@ private struct AlpineToolbarIconButtonBody: View {
             .onHover { isHovering = $0 }
             .animation(Motion.feedback, value: isHovering)
             .animation(Motion.feedback, value: configuration.isPressed)
+            // Glass buttons carry their press in the fill rather than a scale
+            // dip, so only the tap is added here.
+            .hapticPress(configuration.isPressed)
     }
 }
 

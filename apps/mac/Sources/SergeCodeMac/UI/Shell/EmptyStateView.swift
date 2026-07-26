@@ -274,7 +274,7 @@ private struct WelcomeActionCard: View {
 private struct WelcomeActionCardButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed && !Motion.reduceMotion ? 0.97 : 1)
+            .pressFeedback(configuration.isPressed)
             .opacity(configuration.isPressed ? 0.9 : 1)
             .animation(Motion.feedback, value: configuration.isPressed)
     }

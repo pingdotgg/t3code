@@ -48,6 +48,7 @@ public struct ApprovalCard: View {
             HStack {
                 Spacer()
                 Button("Deny", role: .cancel) {
+                    Haptics.play(.decision)
                     onRespond(false)
                 }
                 .buttonStyle(.glass)
@@ -55,6 +56,10 @@ public struct ApprovalCard: View {
                 .help(isActive ? "Deny (⌘⌫)" : "Deny")
 
                 Button("Approve") {
+                    // Approve and deny both hand real authority to the agent,
+                    // and both have keyboard shortcuts — the firmer level-change
+                    // tap confirms the keystroke landed on this card.
+                    Haptics.play(.decision)
                     onRespond(true)
                 }
                 .buttonStyle(.glass)

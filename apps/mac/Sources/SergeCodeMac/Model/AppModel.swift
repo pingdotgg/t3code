@@ -830,6 +830,7 @@ public final class AppModel {
             refreshCheckpointsTokens[id] = nil
             streamingIndex[id] = nil
             lastGitActionOutcomeByThread[id] = nil
+            cancelledTurnStartByThread[id] = nil
             interactionThreadByID = interactionThreadByID.filter { $0.value != id }
             pruneTimelineTasks.removeValue(forKey: id)?.cancel()
             TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
@@ -1832,11 +1833,32 @@ public final class AppModel {
 
     public func cancelCurrentTurn() async {
         guard let threadID = selectedThreadID else { return }
+        noteCancelRequested(threadID: threadID)
         do {
             try await backend.cancelTurn(threadID: threadID)
         } catch {
             lastError = String(describing: error)
         }
+    }
+
+    /// Start stamp of a turn the user asked to stop, per thread.
+    ///
+    /// A cancelled run still settles to `idle`, which is indistinguishable
+    /// from a completed one by status alone. Recording *which* turn was
+    /// stopped lets the UI tell the two apart, and a later turn carries a
+    /// newer start stamp, so the record expires on its own instead of
+    /// silencing every future completion on that thread.
+    public private(set) var cancelledTurnStartByThread: [String: Date] = [:]
+
+    private func noteCancelRequested(threadID: String) {
+        cancelledTurnStartByThread[threadID] =
+            thread(threadID: threadID)?.latestTurnStartedAt ?? .distantPast
+    }
+
+    /// Whether `thread`'s current turn is the one the user asked to stop.
+    public func isCancellationPending(for thread: ChatThread) -> Bool {
+        guard let cancelled = cancelledTurnStartByThread[thread.id] else { return false }
+        return (thread.latestTurnStartedAt ?? .distantPast) == cancelled
     }
 
     public func stopSubagentTask(taskId: String, threadID: String? = nil) async {

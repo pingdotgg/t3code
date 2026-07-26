@@ -207,6 +207,7 @@ private struct GeneralSettingsTab: View {
     @UIState private var notifyInput = AgentNotificationPreferences.isEnabled(.needsInput)
     @UIState private var notifyFailed = AgentNotificationPreferences.isEnabled(.failed)
     @UIState private var notificationsDenied = false
+    @UIState private var hapticsEnabled = HapticsPreferences.isEnabled
 
     var body: some View {
         VStack(spacing: 18) {
@@ -275,6 +276,20 @@ private struct GeneralSettingsTab: View {
                         }
                     }
                 }
+            }
+
+            SettingsSection(header: "Feedback") {
+                SettingsToggleRow(
+                    title: "Haptic feedback",
+                    description:
+                        "Trackpad taps confirm sends, approvals, level changes, and merges. Needs a Force Touch trackpad; ignored on other pointing devices.",
+                    isOn: $hapticsEnabled)
+                    // Persist + acknowledge in one call: the tap has to land on
+                    // the enabled side of the write, or switching haptics off
+                    // would be the one toggle in the app with no feedback.
+                    .onChange(of: hapticsEnabled) { _, enabled in
+                        Haptics.setPreference(enabled: enabled)
+                    }
             }
 
             SettingsSection(header: "Notifications") {
