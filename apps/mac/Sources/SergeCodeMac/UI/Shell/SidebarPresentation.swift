@@ -287,8 +287,8 @@ enum SidebarProjection {
         }
 
         let ranked = active.enumerated().sorted { lhs, rhs in
-            let leftTier = groupDisplayTier(lhs.element)
-            let rightTier = groupDisplayTier(rhs.element)
+            let leftTier = displayTier(lhs.element)
+            let rightTier = displayTier(rhs.element)
             if leftTier != rightTier { return leftTier < rightTier }
             switch leftTier {
             case 0:
@@ -307,7 +307,10 @@ enum SidebarProjection {
     }
 
     /// 0 = pinned, 1 = needs attention, 2 = in progress, 3 = everything else.
-    private static func groupDisplayTier(_ item: SidebarThreadItem) -> Int {
+    /// The sort key for a project section, and the value the sidebar row's
+    /// move trail watches: a tier change is exactly when a row is re-sorted
+    /// for a reason of its own rather than being displaced by a neighbour.
+    static func displayTier(_ item: SidebarThreadItem) -> Int {
         if item.isPinned { return 0 }
         if item.needsAttention { return 1 }
         if item.belongsInRunning { return 2 }

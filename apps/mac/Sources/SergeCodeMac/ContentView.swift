@@ -23,13 +23,14 @@ struct RootView: View {
                 }
             }
         )) {
-            SidebarView(multi: multi, scenery: scenery, onToggleSidebar: toggleSidebar)
+            SidebarView(multi: multi, scenery: scenery)
                 .navigationSplitViewColumnWidth(min: 230, ideal: 280, max: 360)
                 // The stock AppKit sidebar toggle renders larger than the custom
-                // 28×28 glass controls; the sidebar vends its own close button
-                // instead. The removal must be applied to the view inside the
-                // sidebar column to take effect (the View ▸ Toggle Sidebar menu
-                // item is unaffected).
+                // 28×28 glass controls, and SwiftUI parks it in whichever column
+                // is leading — so it hops as the column collapses. The window
+                // toolbar below vends a fixed replacement instead. The removal
+                // must be applied to the view inside the sidebar column to take
+                // effect (the View ▸ Toggle Sidebar menu item is unaffected).
                 .toolbar(removing: .sidebarToggle)
         } detail: {
             Group {
@@ -70,24 +71,23 @@ struct RootView: View {
         // instead of an opaque split-view plate over the desktop glass.
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar {
-            // Reopen affordance: the close button lives inside the
-            // sidebar, so once the column is collapsed this is the only
-            // on-screen way back (besides the View menu / shortcut and
-            // edge-drag). The whole item is gated so no empty navigation
-            // slot lingers while the sidebar is visible.
-            if columnVisibility == .detailOnly {
-                ToolbarItem(placement: .navigation) {
+            // Sidebar toggle and connection pill share one item so the toggle
+            // is anchored to the pill and cannot drift. Previously the close
+            // control lived in the sidebar's own command bar and a separate
+            // "Show Sidebar" item was vended only while collapsed, so the
+            // button the pointer had just clicked jumped to the other side of
+            // the pill (and back) on every toggle. One always-present control
+            // in one fixed slot: the sidebar moves, the button does not.
+            ToolbarItem(placement: .navigation) {
+                HStack(spacing: 7) {
                     Button(action: toggleSidebar) {
-                        Label("Show Sidebar", systemImage: "sidebar.leading")
+                        Label(sidebarToggleTitle, systemImage: "sidebar.leading")
                     }
                     .buttonStyle(AlpineToolbarIconButtonStyle())
-                    .help("Show Sidebar")
-                    .transition(.opacity)
+                    .help(sidebarToggleTitle)
+                    .accessibilityLabel(sidebarToggleTitle)
+                    ConnectionStatusPill(phase: model.connection)
                 }
-                .sharedBackgroundVisibility(.hidden)
-            }
-            ToolbarItem(placement: .navigation) {
-                ConnectionStatusPill(phase: model.connection)
             }
             .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .primaryAction) {
@@ -223,10 +223,14 @@ struct RootView: View {
         return model.projects.first { $0.id == thread.projectID }
     }
 
+    private var sidebarToggleTitle: String {
+        columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar"
+    }
+
     private func toggleSidebar() {
-        // Deferred one runloop turn: flipping the visibility re-vends the
-        // conditional "Show Sidebar" toolbar item, and on macOS 26/27 a
-        // SwiftUI toolbar re-vend during an in-layout render trips AppKit's
+        // Deferred one runloop turn: flipping the visibility re-renders the
+        // navigation toolbar item, and on macOS 26/27 a SwiftUI toolbar
+        // re-vend during an in-layout render trips AppKit's
         // layout-feedback-loop guard (same crash class as the Inspector
         // button above).
         DispatchQueue.main.async {
