@@ -85,9 +85,9 @@ function failure(message: string) {
   return { _tag: "Failure", cause: Cause.fail(new Error(message)) } as const;
 }
 
-function makeThread(id = "thread-1"): EnvironmentThreadShell {
+function makeThread(id = "thread-1", environmentId = "environment-1"): EnvironmentThreadShell {
   return {
-    environmentId: "environment-1",
+    environmentId,
     id,
     title: "Archive settings",
     session: null,
@@ -149,6 +149,27 @@ describe("useThreadListActions merged archive and settlement contract", () => {
     );
     expect(mocks.unarchiveMutation).toHaveBeenCalledOnce();
     expect(mocks.impactAsync).toHaveBeenCalledOnce();
+
+    completeFirst(success);
+    await expect(first).resolves.toBe("succeeded");
+  });
+
+  it("does not deduplicate distinct scoped threads whose ids contain separators", async () => {
+    const firstThread = makeThread("thread", "environment:one");
+    const secondThread = makeThread("one:thread", "environment");
+    let completeFirst!: (result: typeof success) => void;
+    mocks.unarchiveMutation.mockReturnValueOnce(
+      new Promise<typeof success>((resolve) => {
+        completeFirst = resolve;
+      }),
+    );
+    const actions = useArchivedThreadListActions();
+
+    const first = actions.unarchiveThread(firstThread, { reportFailure: false });
+    await expect(actions.unarchiveThread(secondThread, { reportFailure: false })).resolves.toBe(
+      "succeeded",
+    );
+    expect(mocks.unarchiveMutation).toHaveBeenCalledTimes(2);
 
     completeFirst(success);
     await expect(first).resolves.toBe("succeeded");

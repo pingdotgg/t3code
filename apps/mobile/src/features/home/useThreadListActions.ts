@@ -6,7 +6,6 @@ import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
-import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -58,6 +57,10 @@ function actionFailureTitle(action: ThreadListAction): string {
   return "Could not delete thread";
 }
 
+function threadActionKey(thread: Pick<EnvironmentThreadShell, "environmentId" | "id">): string {
+  return JSON.stringify([thread.environmentId, thread.id]);
+}
+
 /** Distinguishes successful, failed, and already-in-flight actions for bulk-action summaries. */
 function useThreadActionExecutor() {
   const archiveMutation = useAtomCommand(threadEnvironment.archive, { reportFailure: false });
@@ -73,7 +76,7 @@ function useThreadActionExecutor() {
       thread: EnvironmentThreadShell,
       options: ThreadActionOptions = {},
     ): Promise<ThreadListActionResult> => {
-      const key = scopedThreadKey(thread.environmentId, thread.id);
+      const key = threadActionKey(thread);
       if (inFlightThreadKeys.current.has(key)) {
         return "skipped";
       }
