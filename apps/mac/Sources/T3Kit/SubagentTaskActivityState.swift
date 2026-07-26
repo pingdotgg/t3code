@@ -86,6 +86,18 @@ public struct T3SubagentTaskItem: Sendable, Equatable {
 
     public var id: String { "subagent-task:\(taskId)" }
 
+    /// Whether this task earns its own transcript row.
+    ///
+    /// A plain shell command is a tool call, not delegated work: the provider
+    /// already emits a `command_execution` tool row for it, so a task card
+    /// would render the same command twice and frame it as a sub-agent. A
+    /// backgrounded command is the exception — it outlives its tool row (which
+    /// settles as soon as the process is detached) and is the only surface for
+    /// its streamed output, so it keeps a row of its own.
+    public var producesTimelineRow: Bool {
+        entityKind != .command || isBackgrounded
+    }
+
     public var duration: TimeInterval? {
         guard let completedAt else { return nil }
         return max(0, completedAt.timeIntervalSince(startedAt))
@@ -150,6 +162,15 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
 
     public var activeTaskCount: Int {
         activeTaskIDsStorage.count
+    }
+
+    /// Active tasks that represent background work a user tracks: sub-agents,
+    /// workflows, and backgrounded commands. Foreground shell commands are
+    /// excluded — they are ordinary tool calls of the running turn, so
+    /// counting them would inflate the sidebar's background badge and hold a
+    /// finished thread in `backgroundWork`.
+    public var activeBackgroundWorkCount: Int {
+        activeTaskIDsStorage.lazy.filter { tasksByID[$0]?.producesTimelineRow ?? false }.count
     }
 
     public var items: [T3SubagentTaskItem] {

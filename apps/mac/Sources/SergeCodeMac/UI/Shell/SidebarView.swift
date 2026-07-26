@@ -1085,7 +1085,7 @@ private struct SidebarThreadRow: View {
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(.quaternary, in: Capsule())
-                    .help("Background agents")
+                    .help("Background agents and commands")
             }
         }
         .padding(.vertical, 2)
