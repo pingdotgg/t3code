@@ -14,13 +14,19 @@ struct SidebarView: View {
 
     /// One project section as it will be rendered: the group plus its
     /// active/settled split. Built once per body pass so the rows and the
-    /// order signature that animates them can never disagree, and so the
-    /// grouping work is not repeated for each of them.
+    /// signature that animates them can never disagree, and so the split is
+    /// not recomputed for each of them.
     @MainActor
     private struct RenderedSection: Identifiable {
         let id: String
         let group: SidebarProjectGroup
-        let split: SidebarGroupThreads
+        let isCollapsed: Bool
+        /// Nil exactly when `isCollapsed`. A collapsed section renders no
+        /// rows and contributes only its own id to the signature, so its
+        /// ranking is never computed — otherwise every project on every
+        /// paired machine would re-rank on each multi-device tick for
+        /// sections nobody can see.
+        let split: SidebarGroupThreads?
     }
 
     private struct ProjectActionTarget {
@@ -90,8 +96,13 @@ struct SidebarView: View {
             : []
         let sections = searching
             ? []
-            : groups.map {
-                RenderedSection(id: $0.id, group: $0, split: SidebarProjection.groupThreads($0))
+            : groups.map { group -> RenderedSection in
+                let isCollapsed = collapsedProjects.contains(group.id)
+                return RenderedSection(
+                    id: group.id,
+                    group: group,
+                    isCollapsed: isCollapsed,
+                    split: isCollapsed ? nil : SidebarProjection.groupThreads(group))
             }
 
         VStack(spacing: 0) {
@@ -117,11 +128,13 @@ struct SidebarView: View {
             .listStyle(.sidebar)
             // Thread updates stream in from the backend outside any
             // transaction, so a re-sort (a thread starts running, needs
-            // approval, settles) snapped rows to their new slots. Keying on
-            // the rendered row order — and only that — gives the list a
-            // transaction to move, insert and remove rows with, while tints,
-            // titles and badges keep their own finer-grained curves.
-            .animation(Motion.structure, value: rowOrder(sections: sections, results: results))
+            // approval, settles) snapped rows to their new slots. The
+            // signature gives the list a transaction to move, insert and
+            // remove rows with, while tints, titles and badges keep their own
+            // finer-grained curves.
+            .animation(
+                Motion.structure,
+                value: rowSignature(sections: sections, results: results))
 
             Divider()
             SidebarConnectionsFooter(
@@ -224,24 +237,45 @@ struct SidebarView: View {
         }
     }
 
-    /// Identity and order of every row the list is about to render, in render
-    /// order. Deliberately excludes status, title and badge state: only a
-    /// genuine move, insertion or removal should drive the list's layout
-    /// animation.
-    private func rowOrder(
+    /// What the list animates on: which rows are on screen, in which section
+    /// and which bucket, at which sort tier — deliberately *not* their exact
+    /// order, and never their status, title or badge state.
+    ///
+    /// A full render-order fingerprint was too eager a key. Active rows also
+    /// re-sort within a tier by `updatedAt`, and a handful of chatty
+    /// streaming threads churn that permutation constantly; keying on it ran
+    /// `Motion.structure` across the whole list on every recency bump, which
+    /// reads as fidgeting rather than motion. A set changes for the moves
+    /// worth watching — a thread promoted or demoted between tiers, moved
+    /// into or out of the settled disclosure, arriving, or leaving — and
+    /// stays put for a pure recency swap, which then applies untransacted
+    /// exactly as it did before any of this animated.
+    ///
+    /// Project sections re-sort by recency for the same reason and are keyed
+    /// the same way: a section arriving or leaving animates, a section
+    /// overtaking another does not.
+    private func rowSignature(
         sections: [RenderedSection],
         results: [SidebarThreadItem]
-    ) -> [String] {
-        var order: [String] = results.map(rowKey)
+    ) -> Set<String> {
+        var signature: Set<String> = []
+        for item in results {
+            signature.insert("search/\(tieredRowKey(item))")
+        }
         for section in sections {
-            order.append("section:\(section.id)")
-            guard !collapsedProjects.contains(section.id) else { continue }
-            order.append(contentsOf: visibleActive(in: section).map(rowKey))
-            if revealedSettled.contains(section.id) {
-                order.append(contentsOf: section.split.settled.map(rowKey))
+            signature.insert("section:\(section.id)")
+            guard let split = section.split else { continue }
+            for item in visibleActive(split, sectionID: section.id) {
+                signature.insert("\(section.id)/active/\(tieredRowKey(item))")
+            }
+            guard revealedSettled.contains(section.id) else { continue }
+            // The disclosure orders purely by how recently each thread
+            // settled, so membership alone decides whether it animates.
+            for item in split.settled {
+                signature.insert("\(section.id)/settled/\(rowKey(item))")
             }
         }
-        return order
+        return signature
     }
 
     /// Stable across machines: the same thread id can appear twice when one
@@ -250,10 +284,17 @@ struct SidebarView: View {
         "\(item.member.location.id.rawValue)/\(item.thread.id)"
     }
 
-    private func visibleActive(in section: RenderedSection) -> [SidebarThreadItem] {
-        expandedProjects.contains(section.id)
-            ? section.split.active
-            : Array(section.split.active.prefix(Self.visibleThreadCap))
+    private func tieredRowKey(_ item: SidebarThreadItem) -> String {
+        "\(rowKey(item))#\(SidebarProjection.displayTier(item))"
+    }
+
+    private func visibleActive(
+        _ split: SidebarGroupThreads,
+        sectionID: String
+    ) -> [SidebarThreadItem] {
+        expandedProjects.contains(sectionID)
+            ? split.active
+            : Array(split.active.prefix(Self.visibleThreadCap))
     }
 
     @ViewBuilder
@@ -291,16 +332,15 @@ struct SidebarView: View {
         } else {
             ForEach(sections) { section in
                 let group = section.group
-                let isCollapsed = collapsedProjects.contains(group.id)
                 Section {
-                    if !isCollapsed {
-                        projectSectionContent(section)
+                    if let split = section.split {
+                        projectSectionContent(section, split: split)
                     }
                 } header: {
                     ProjectSectionHeader(
                         group: group,
                         scenery: scenery,
-                        isCollapsed: isCollapsed,
+                        isCollapsed: section.isCollapsed,
                         machineBadge: machineBadge(for: group),
                         onToggleCollapse: { toggleProjectCollapse(group.id) },
                         onNewSession: createThread,
@@ -316,9 +356,11 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private func projectSectionContent(_ section: RenderedSection) -> some View {
+    private func projectSectionContent(
+        _ section: RenderedSection,
+        split: SidebarGroupThreads
+    ) -> some View {
         let group = section.group
-        let split = section.split
         let showMachine = group.members.count > 1
         if split.active.isEmpty && split.settled.isEmpty {
             SidebarEmptyRow(
@@ -326,7 +368,7 @@ struct SidebarView: View {
                 systemImage: "bubble.left",
                 detail: "Use + above to start a session in this project.")
         } else {
-            let visible = visibleActive(in: section)
+            let visible = visibleActive(split, sectionID: section.id)
             ForEach(visible, id: \.id) { item in
                 threadRow(item, context: .project(showMachine: showMachine))
             }
@@ -1198,9 +1240,13 @@ private struct SidebarThreadRow: View {
 /// A brief status-tinted wash behind a row that just changed sort tier. The
 /// list animates the geometry of a re-sort; this is what makes it legible —
 /// several rows slide at once and nothing otherwise says which one earned its
-/// new slot. Keyed to the tier, not to the row's index, so bystanders pushed
-/// down by someone else's promotion stay quiet. Purely decorative, so Reduce
-/// Motion skips it and the row simply moves.
+/// new slot.
+///
+/// Keyed to the tier rather than the row's index, which is not the same thing
+/// (see `SidebarProjection.displayTier`): bystanders displaced by someone
+/// else's promotion stay quiet, a within-tier recency swap passes without a
+/// wash, and a lone row can wash without visibly moving. Purely decorative,
+/// so Reduce Motion skips it and the row simply moves.
 private struct SidebarRowMoveTrail: ViewModifier {
     let tier: Int
     let tint: Color

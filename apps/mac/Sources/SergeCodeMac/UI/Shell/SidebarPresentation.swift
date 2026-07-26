@@ -307,9 +307,16 @@ enum SidebarProjection {
     }
 
     /// 0 = pinned, 1 = needs attention, 2 = in progress, 3 = everything else.
-    /// The sort key for a project section, and the value the sidebar row's
-    /// move trail watches: a tier change is exactly when a row is re-sorted
-    /// for a reason of its own rather than being displaced by a neighbour.
+    /// The primary sort key for a project section, and the value the sidebar
+    /// row's move trail watches.
+    ///
+    /// It is a proxy for "this row's standing changed", not for "this row's
+    /// index changed", and the two come apart in both directions: rows also
+    /// re-sort within a tier by recency (no tier change, so no trail), and
+    /// the only row in its section can change tier without moving at all
+    /// (trail, but no visible move). Both are deliberate — the trail marks
+    /// the state change that earns a new slot, which is the part worth
+    /// following; a neighbour merely being displaced is not.
     static func displayTier(_ item: SidebarThreadItem) -> Int {
         if item.isPinned { return 0 }
         if item.needsAttention { return 1 }
