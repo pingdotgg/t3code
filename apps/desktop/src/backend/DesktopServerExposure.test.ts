@@ -61,13 +61,6 @@ function mockSpawnerLayer(statusJson = "{}") {
   );
 }
 
-function dieOnSpawnLayer() {
-  return Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make(() => Effect.die("unexpected tailscale spawn")),
-  );
-}
-
 function makeEnvironmentLayer(baseDir: string, env: Record<string, string | undefined> = {}) {
   return DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -446,8 +439,9 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
-  it.effect("does not spawn the tailscale CLI while server exposure is local-only", () =>
-    withHarness(
+  it.effect("resolves Tailscale HTTPS independently of LAN network access", () => {
+    const statusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
+    return withHarness(
       lanNetworkInterfaces,
       Effect.gen(function* () {
         const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
@@ -455,17 +449,30 @@ describe("DesktopServerExposure", () => {
         // mode stays at default "local-only", tailscaleServeEnabled stays false.
 
         const endpoints = yield* serverExposure.getAdvertisedEndpoints;
-        // Only the loopback endpoint; no tailscale spawn means the dieOnSpawnLayer
-        // would have crashed the test if the gate was missing.
         assert.deepEqual(
-          endpoints.map((endpoint) => endpoint.httpBaseUrl),
-          ["http://127.0.0.1:4173/"],
+          endpoints.map((endpoint) => ({
+            httpBaseUrl: endpoint.httpBaseUrl,
+            status: endpoint.status,
+            label: endpoint.label,
+          })),
+          [
+            {
+              httpBaseUrl: "http://127.0.0.1:4173/",
+              status: "available",
+              label: "This machine",
+            },
+            {
+              httpBaseUrl: "https://desktop.tail.ts.net/",
+              status: "unavailable",
+              label: "Tailscale HTTPS",
+            },
+          ],
         );
       }),
       {},
-      dieOnSpawnLayer(),
-    ),
-  );
+      mockSpawnerLayer(statusJson),
+    );
+  });
 
   it.effect("uses ConfigProvider desktop exposure overrides", () =>
     withHarness(
