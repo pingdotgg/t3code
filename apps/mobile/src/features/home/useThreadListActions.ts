@@ -7,6 +7,7 @@ import { Alert } from "react-native";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import type { HomeThreadGroup } from "./homeThreadList";
 
 type ThreadListAction = "archive" | "unarchive" | "settle" | "unsettle" | "delete";
 
@@ -235,6 +236,35 @@ export function useThreadListActions(): {
     confirmDeleteThread,
     confirmArchiveThreads,
   };
+}
+
+/**
+ * Turns the settled disclosure's group key into the archive-all batch, read
+ * from the groups at press time.
+ *
+ * `buildHomeThreadGroups` rebuilds `settledThreads` on every thread event, so
+ * the batch cannot ride along in the list item without churning the row's
+ * identity on unrelated updates. Reading it through a ref also keeps the
+ * returned callback referentially stable, so the memoized row does not
+ * re-render just because the groups were recomputed — and the archive always
+ * acts on the current settled set rather than whatever the row last rendered.
+ */
+export function useArchiveSettledGroup(
+  groups: ReadonlyArray<HomeThreadGroup>,
+  confirmArchiveThreads: (threads: ReadonlyArray<EnvironmentThreadShell>) => void,
+): (groupKey: string) => void {
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
+  const confirmRef = useRef(confirmArchiveThreads);
+  confirmRef.current = confirmArchiveThreads;
+
+  return useCallback((groupKey: string) => {
+    const group = groupsRef.current.find((candidate) => candidate.key === groupKey);
+    if (!group || group.settledThreads.length === 0) {
+      return;
+    }
+    confirmRef.current(group.settledThreads);
+  }, []);
 }
 
 export function useArchivedThreadListActions(

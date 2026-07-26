@@ -42,7 +42,7 @@ import {
 import { buildHomeThreadGroups } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
-import { useThreadListActions } from "../home/useThreadListActions";
+import { useArchiveSettledGroup, useThreadListActions } from "../home/useThreadListActions";
 import { WorkspaceConnectionStatus } from "../home/WorkspaceConnectionStatus";
 import { shouldShowWorkspaceConnectionStatus } from "../home/workspace-connection-status";
 import { SidebarHeaderActions } from "./sidebar-header-actions";
@@ -213,6 +213,7 @@ function ThreadNavigationSidebarPane(
       }),
     [options, pendingTasks, projects, props.searchQuery, threads],
   );
+  const archiveSettledGroup = useArchiveSettledGroup(groups, confirmArchiveThreads);
   const [groupDisplayStates, setGroupDisplayStates] = useState<
     ReadonlyMap<string, HomeGroupDisplayState>
   >(() => new Map());
@@ -475,9 +476,8 @@ function ThreadNavigationSidebarPane(
               settledCount={item.settledCount}
               revealed={item.revealed}
               groupKey={item.groupKey}
-              settledThreads={item.settledThreads}
               onGroupAction={updateGroupDisplay}
-              onArchiveSettled={confirmArchiveThreads}
+              onArchiveSettled={archiveSettledGroup}
             />
           );
         case "show-more":
@@ -494,7 +494,7 @@ function ThreadNavigationSidebarPane(
     },
     [
       archiveThread,
-      confirmArchiveThreads,
+      archiveSettledGroup,
       confirmDeletePendingTask,
       confirmDeleteThread,
       handleSelectThread,

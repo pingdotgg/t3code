@@ -45,6 +45,7 @@ import {
   type HomeListItem,
 } from "./homeListItems";
 import { buildHomeThreadGroups, type HomeProjectSortOrder } from "./homeThreadList";
+import { useArchiveSettledGroup } from "./useThreadListActions";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { WorkspaceConnectionStatus } from "./WorkspaceConnectionStatus";
 import { shouldShowWorkspaceConnectionStatus } from "./workspace-connection-status";
@@ -223,6 +224,8 @@ export function HomeScreen(props: HomeScreenProps) {
     ],
   );
 
+  const archiveSettledGroup = useArchiveSettledGroup(projectGroups, props.onArchiveSettledThreads);
+
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const listLayout = useMemo(
     () =>
@@ -308,9 +311,8 @@ export function HomeScreen(props: HomeScreenProps) {
               settledCount={item.settledCount}
               revealed={item.revealed}
               groupKey={item.groupKey}
-              settledThreads={item.settledThreads}
               onGroupAction={updateGroupDisplay}
-              onArchiveSettled={props.onArchiveSettledThreads}
+              onArchiveSettled={archiveSettledGroup}
             />
           );
         case "show-more":
@@ -329,7 +331,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableClose,
       handleSwipeableWillOpen,
       projectCwdByKey,
-      props.onArchiveSettledThreads,
+      archiveSettledGroup,
       props.onArchiveThread,
       props.onDeletePendingTask,
       props.onDeleteThread,

@@ -252,29 +252,51 @@ describe("buildHomeListLayout", () => {
     expect(itemTypes(layout.items)).toEqual(["header"]);
   });
 
-  it("carries the group's settled threads so archive-all can act on them", () => {
-    const group = makeGroup("alpha", 1, 3);
-    const layout = buildHomeListLayout({ groups: [group], displayStates: displayStates({}) });
-    const toggle = layout.items.at(-1);
+  it("keeps the settled row's identity stable when the group is rebuilt", () => {
+    // `buildHomeThreadGroups` re-sorts into a fresh `settledThreads` array on
+    // every thread event, so an equal-but-rebuilt group must not invalidate the
+    // row — otherwise unrelated activity anywhere remounts every disclosure.
+    const layout = buildHomeListLayout({
+      groups: [makeGroup("alpha", 1, 3)],
+      displayStates: displayStates({}),
+    });
+    const rebuilt = buildHomeListLayout({
+      groups: [makeGroup("alpha", 1, 3)],
+      displayStates: displayStates({}),
+    });
 
-    if (toggle?.type !== "settled-toggle") {
+    const toggle = layout.items.at(-1);
+    const rebuiltToggle = rebuilt.items.at(-1);
+    if (toggle?.type !== "settled-toggle" || !rebuiltToggle) {
       throw new Error("expected a settled-toggle item");
     }
-    expect(toggle.settledThreads).toBe(group.settledThreads);
-    expect(toggle.settledThreads.map((thread) => thread.id)).toEqual([
-      "alpha-settled-0",
-      "alpha-settled-1",
-      "alpha-settled-2",
-    ]);
-
-    // The thread array is stable across unrelated toggles, so rows carrying it
-    // must not be treated as changed on every collapse/show-more tap.
-    const rebuilt = buildHomeListLayout({ groups: [group], displayStates: displayStates({}) });
-    const rebuiltToggle = rebuilt.items.at(-1);
-    if (!rebuiltToggle) {
-      throw new Error("expected a rebuilt settled-toggle item");
-    }
     expect(homeListItemsAreEqual(toggle, rebuiltToggle)).toBe(true);
+  });
+
+  it("invalidates the settled row when the count or disclosure actually changes", () => {
+    const base = buildHomeListLayout({
+      groups: [makeGroup("alpha", 1, 3)],
+      displayStates: displayStates({}),
+    });
+    const fewer = buildHomeListLayout({
+      groups: [makeGroup("alpha", 1, 2)],
+      displayStates: displayStates({}),
+    });
+    const revealed = buildHomeListLayout({
+      groups: [makeGroup("alpha", 1, 3)],
+      displayStates: displayStates({
+        alpha: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "toggle-settled"),
+      }),
+    });
+
+    const toggle = base.items.at(-1);
+    const fewerToggle = fewer.items.at(-1);
+    const revealedToggle = revealed.items.find((item) => item.type === "settled-toggle");
+    if (!toggle || !fewerToggle || !revealedToggle) {
+      throw new Error("expected settled-toggle items");
+    }
+    expect(homeListItemsAreEqual(toggle, fewerToggle)).toBe(false);
+    expect(homeListItemsAreEqual(toggle, revealedToggle)).toBe(false);
   });
 
   it("toggles settledRevealed via nextGroupDisplayState", () => {

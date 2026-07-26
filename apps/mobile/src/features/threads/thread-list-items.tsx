@@ -198,27 +198,31 @@ export const ThreadListSettledToggleRow = memo(function ThreadListSettledToggleR
   readonly settledCount: number;
   readonly revealed: boolean;
   readonly groupKey: string;
-  readonly settledThreads: ReadonlyArray<EnvironmentThreadShell>;
   readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
   /**
    * Archives every settled thread in the group at once. macOS reveals the
    * equivalent button on hover; with no hover on iOS it sits inline and always
    * visible, and confirms before running so the row's own tap target (the
    * disclosure) cannot trigger a bulk archive by accident.
+   *
+   * Takes the group key rather than the thread batch: the batch is rebuilt on
+   * every unrelated thread event, so carrying it here would churn this row's
+   * identity, and a memoized row would archive whichever set it last rendered
+   * with. The screen resolves the current settled threads on press instead.
    */
-  readonly onArchiveSettled?: (threads: ReadonlyArray<EnvironmentThreadShell>) => void;
+  readonly onArchiveSettled?: (groupKey: string) => void;
 }) {
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const separatorColor = useThemeColor("--color-separator");
   const compact = props.variant === "compact";
-  const { groupKey, onArchiveSettled, onGroupAction, settledThreads } = props;
+  const { groupKey, onArchiveSettled, onGroupAction } = props;
   const handleToggle = useCallback(
     () => onGroupAction(groupKey, "toggle-settled"),
     [groupKey, onGroupAction],
   );
   const handleArchiveSettled = useCallback(
-    () => onArchiveSettled?.(settledThreads),
-    [onArchiveSettled, settledThreads],
+    () => onArchiveSettled?.(groupKey),
+    [groupKey, onArchiveSettled],
   );
 
   return (
