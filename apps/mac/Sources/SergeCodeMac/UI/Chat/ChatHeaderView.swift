@@ -12,6 +12,17 @@ struct ChatHeaderView: View {
     let scenery: SceneryStore
     let threadKey: String
 
+    /// Live overflow state of the git strip, so the header can say out loud
+    /// that controls continue past the leading edge.
+    @UIState private var gitStripOverflow = GitStripOverflow()
+
+    private struct GitStripOverflow: Equatable {
+        /// The strip needs more width than the header gives it.
+        var isOverflowing = false
+        /// Something is currently scrolled off the leading edge.
+        var isScrolled = false
+    }
+
     var body: some View {
         HStack(spacing: 16) {
             let names = scenery.displayNames(for: thread, threadKey: threadKey)
@@ -30,27 +41,24 @@ struct ChatHeaderView: View {
                     if model.isRemote {
                         metadataDivider
                         Label(model.deviceName ?? "Remote Mac", systemImage: "laptopcomputer")
-                            .lineLimit(1)
                     }
                 }
+                // Truncate rather than wrap: at the narrowest window widths a
+                // wrapped project name pushed the whole identity band taller.
+                .lineLimit(1)
                 .font(SurgeTypography.technicalMetadata)
                 .foregroundStyle(.primary.opacity(0.76))
             }
 
             Spacer(minLength: 8)
 
-            // The cluster is as wide as the repository state makes it — a long
-            // branch name next to PR pills asked for ~940pt on its own, which
-            // became the window's minimum width and had AppKit grow the window
-            // past whatever size the user had set. Scrolling it keeps every
-            // control reachable at any window width instead; the anchor keeps
-            // the same trailing alignment the plain HStack had, so nothing
-            // moves at widths where it already fit.
-            ScrollView(.horizontal) {
-                trailingCluster
-            }
-            .scrollIndicators(.hidden)
-            .defaultScrollAnchor(.trailing)
+            gitStrip
+
+            // Provider and status are fixed-width and never scroll away: they
+            // are the header's at-a-glance state, and pinning them also keeps
+            // the git strip's trailing anchor on the git actions menu.
+            ProviderBadge(provider: thread.provider, modelID: thread.modelID)
+            StatusBadge(status: thread.status, stalled: thread.isStalled)
         }
         .padding(.horizontal, 16)
         // Floor height shared with the inspector Activity header so the
@@ -64,14 +72,48 @@ struct ChatHeaderView: View {
     /// toolbar owns the repo-status gate and shows nothing for non-repo
     /// projects. Keyed per thread so in-flight git state never leaks across a
     /// thread switch (see VcsToolbar.threadID).
-    private var trailingCluster: some View {
-        HStack(spacing: 16) {
+    ///
+    /// This is the one part of the header whose width follows repository state
+    /// — a long branch name next to PR pills asked for ~940pt on its own,
+    /// which became the window's minimum width and had AppKit grow the window
+    /// past whatever size the user had set. It scrolls instead of widening the
+    /// window, trailing-anchored so the git actions menu is the last thing to
+    /// go, and it advertises the overflow: a fade at the leading edge plus a
+    /// visible scroller whenever there is more strip than room.
+    private var gitStrip: some View {
+        ScrollView(.horizontal) {
             VcsToolbar(model: model, threadID: thread.id)
                 .id(thread.id)
-
-            ProviderBadge(provider: thread.provider, modelID: thread.modelID)
-            StatusBadge(status: thread.status, stalled: thread.isStalled)
         }
+        .scrollIndicators(gitStripOverflow.isOverflowing ? .visible : .hidden)
+        .defaultScrollAnchor(.trailing)
+        .onScrollGeometryChange(for: GitStripOverflow.self) { geometry in
+            GitStripOverflow(
+                // Half a point of slack: content and container widths land on
+                // fractional values and would otherwise flicker at the seam.
+                isOverflowing: geometry.contentSize.width
+                    > geometry.containerSize.width + 0.5,
+                isScrolled: geometry.contentOffset.x > 0.5)
+        } action: { _, overflow in
+            gitStripOverflow = overflow
+        }
+        .mask {
+            // Both conditions: a trailing-anchored scroll view can report a
+            // small positive offset even when nothing is clipped, and fading
+            // the branch pill at full width would be a phantom cue.
+            if gitStripOverflow.isOverflowing, gitStripOverflow.isScrolled {
+                HStack(spacing: 0) {
+                    LinearGradient(
+                        colors: [.clear, .black], startPoint: .leading, endPoint: .trailing
+                    )
+                    .frame(width: 22)
+                    Rectangle()
+                }
+            } else {
+                Rectangle()
+            }
+        }
+        .animation(Motion.reveal, value: gitStripOverflow)
     }
 
     private var projectPrefs: ProjectSceneryPrefs? {
