@@ -109,6 +109,30 @@
                 try? await Task.sleep(for: .seconds(1))
             }
 
+            // Waiting rail: a live turn on a thread the mock never seeds a
+            // plan for (thread-2), so the strip must hold the row with its
+            // indeterminate state instead of leaving the credit pill alone.
+            if let planlessThread = model.threads.first(where: { $0.id == "thread-2" }) {
+                let restoreThreadID = model.selectedThreadID
+                multi.select(threadID: planlessThread.id, on: model.deviceID)
+                try? await Task.sleep(for: .seconds(1))
+                let filler = String(repeating: "keep the run alive ", count: 40)
+                Task { @MainActor in await model.send(text: "Probe: waiting rail \(filler)") }
+                try? await Task.sleep(for: .seconds(1.5))
+                let hasSteps = model.selectedThreadID
+                    .flatMap { model.threadState($0)?.planProgress?.steps.isEmpty == false } ?? false
+                print(
+                    "UIProbe: waiting rail status=\(model.selectedThread?.status.rawValue ?? "nil") "
+                        + "hasSteps=\(hasSteps)")
+                snapshot("2a-plan-rail-waiting", dir: dir)
+                await model.cancelCurrentTurn()
+                try? await Task.sleep(for: .seconds(0.5))
+                if let restoreThreadID {
+                    multi.select(threadID: restoreThreadID, on: model.deviceID)
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
+
             // Open main-area review (All Changes) via the timeline harness hook.
             if let threadID = model.selectedThreadID {
                 model.openReview(threadID: threadID, scope: .allChanges)

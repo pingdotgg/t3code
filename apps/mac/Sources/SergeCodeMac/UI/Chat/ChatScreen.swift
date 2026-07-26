@@ -25,19 +25,16 @@ public struct ChatScreen: View {
         } ?? false
     }
 
-    /// Whether the plan rail occupies the credit row for `thread`. Mirrors
-    /// PlanProgressStrip's own guard: a live run with at least one step. The
-    /// row needs the answer up front so it can drop in a `Spacer` and keep
-    /// the credit pill on the right edge when there is no plan to show.
+    /// Whether the plan rail occupies the credit row for `thread`: the whole
+    /// live turn, not just the part of it that has steps. The row needs the
+    /// answer up front so it can drop in a `Spacer` and keep the credit pill
+    /// on the right edge when there is no run — and keying on the run alone
+    /// means the rail (PlanProgressStrip shows its own waiting state until
+    /// the plan lands) never blinks out mid-turn while steps hydrate.
     /// Written as statements, not one expression — see
     /// `selectedThreadIsActive` on the Swift 6.2 type-checker limit.
     private func showsPlanRail(_ thread: ChatThread) -> Bool {
-        guard thread.status == .running || thread.status == .backgroundWork else {
-            return false
-        }
-        let steps = model.threadState(thread.id)?.planProgress?.steps
-        guard let steps else { return false }
-        return !steps.isEmpty
+        thread.status == .running || thread.status == .backgroundWork
     }
 
     public var body: some View {
