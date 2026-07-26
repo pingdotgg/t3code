@@ -92,12 +92,13 @@ export const usePendingUserInputDraftStore = create<PendingUserInputDraftStoreSt
           if (nextAnswer === requestAnswers?.[questionId]) {
             return state;
           }
-          const nextRequestAnswers: PendingUserInputDraftAnswers = { ...requestAnswers };
-          if (nextAnswer === undefined) {
-            delete nextRequestAnswers[questionId];
-          } else {
-            nextRequestAnswers[questionId] = nextAnswer;
-          }
+          // Build via literal/rest rather than assignment: `record[key] = value`
+          // hits the prototype setter for a `"__proto__"` question id instead of
+          // creating an own property, which would drop the draft on serialize.
+          const nextRequestAnswers: PendingUserInputDraftAnswers =
+            nextAnswer === undefined
+              ? removeRecordEntry(requestAnswers ?? {}, questionId)
+              : { ...requestAnswers, [questionId]: nextAnswer };
           return {
             answersByRequestId: evictOldestRequestDrafts(
               {

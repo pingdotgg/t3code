@@ -4,6 +4,7 @@ import { setPendingUserInputCustomAnswer } from "./pendingUserInput";
 import {
   clearPendingUserInputDraft,
   usePendingUserInputDraftStore,
+  type PendingUserInputDraftAnswers,
 } from "./pendingUserInputDraftStore";
 
 const store = () => usePendingUserInputDraftStore.getState();
@@ -70,6 +71,20 @@ describe("pendingUserInputDraftStore", () => {
     store().updateAnswer("request-1", "question-1", () => undefined);
 
     expect(store().answersByRequestId["request-1"]).toEqual({});
+  });
+
+  it("stores a draft under a prototype-shadowing question id as an own property", () => {
+    store().updateAnswer("request-1", "__proto__", () => ({ customAnswer: "answer" }));
+
+    const requestAnswers = store().answersByRequestId["request-1"] as PendingUserInputDraftAnswers;
+    expect(Object.hasOwn(requestAnswers, "__proto__")).toBe(true);
+    // Must survive the JSON round-trip the persist middleware performs.
+    expect(JSON.parse(JSON.stringify(requestAnswers))["__proto__"]).toEqual({
+      customAnswer: "answer",
+    });
+
+    store().updateAnswer("request-1", "__proto__", () => undefined);
+    expect(Object.hasOwn(store().answersByRequestId["request-1"] ?? {}, "__proto__")).toBe(false);
   });
 
   it("evicts the oldest drafts past the retention cap but keeps the active one", () => {
