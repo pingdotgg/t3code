@@ -34,7 +34,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
 
       expect(descriptor.policy).toBe("desktop-managed-local");
       expect(descriptor.bootstrapMethods).toEqual(["desktop-bootstrap"]);
-      expect(descriptor.sessionCookieName).toBe("t3_session_3773");
+      expect(descriptor.sessionCookieName).toBe("t3_session");
     }).pipe(
       Effect.provide(
         makeEnvironmentAuthPolicyLayer({
@@ -69,15 +69,30 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
 
       expect(descriptor.policy).toBe("loopback-browser");
       expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
-      // Port-scoped in web mode too: cookies ignore ports, so two dev servers
-      // on one hostname would otherwise clobber each other's session.
-      expect(descriptor.sessionCookieName).toBe("t3_session_13773");
+      expect(descriptor.sessionCookieName).toBe("t3_session");
     }).pipe(
       Effect.provide(
         makeEnvironmentAuthPolicyLayer({
           mode: "web",
           host: "127.0.0.1",
           port: 13773,
+        }),
+      ),
+    ),
+  );
+
+  it.effect("scopes session cookies by port only in development", () =>
+    Effect.gen(function* () {
+      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+      const descriptor = yield* policy.getDescriptor();
+
+      expect(descriptor.sessionCookieName).toBe("t3_session_13773");
+    }).pipe(
+      Effect.provide(
+        makeEnvironmentAuthPolicyLayer({
+          mode: "web",
+          port: 13773,
+          devUrl: new URL("http://127.0.0.1:5733"),
         }),
       ),
     ),

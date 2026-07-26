@@ -54,14 +54,10 @@ export const browserApiCorsLayer = Layer.unwrap(
     // origin — a tailnet name, a LAN IP, a phone. Browser dev normally proxies
     // through Vite and is same-origin (no preflight at all), so this is a
     // safety net for the desktop renderer and any direct-to-backend caller.
-    const extraDevOrigins = (process.env.T3CODE_DEV_ALLOWED_ORIGINS ?? "")
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
     return HttpRouter.cors({
       ...(devOrigin
         ? {
-            allowedOrigins: [devOrigin, ...DESKTOP_RENDERER_ORIGINS, ...extraDevOrigins],
+            allowedOrigins: [devOrigin, ...DESKTOP_RENDERER_ORIGINS, ...config.devAllowedOrigins],
             credentials: true,
           }
         : {}),

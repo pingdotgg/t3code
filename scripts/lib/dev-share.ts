@@ -22,6 +22,9 @@ import {
   type TailscaleStderrDiagnostic,
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -110,10 +113,24 @@ export class DevServeFailedError extends Schema.TaggedErrorClass<DevServeFailedE
   }
 }
 
+export class DevShareLeaseClaimError extends Schema.TaggedErrorClass<DevShareLeaseClaimError>()(
+  "DevShareLeaseClaimError",
+  { leasePath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `could not claim cleanup ownership at ${this.leasePath}`;
+  }
+
+  get hint(): string {
+    return "Check that the dev data directory is writable.";
+  }
+}
+
 export const DevShareError = Schema.Union([
   TailscaleUnavailableError,
   TailnetNameMissingError,
   DevServeFailedError,
+  DevShareLeaseClaimError,
 ]);
 export type DevShareError = typeof DevShareError.Type;
 export const isDevShareError = Schema.is(DevShareError);
@@ -162,6 +179,81 @@ export interface DevShareResult {
   readonly url: string;
   readonly host: string;
 }
+
+export interface DevShareLease {
+  readonly leasePath: string;
+  readonly ownerId: string;
+  readonly webPort: number;
+}
+
+export const claimDevShareLease = Effect.fn("devShare.claimDevShareLease")(function* (
+  lease: DevShareLease,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fileSystem.makeDirectory(path.dirname(lease.leasePath), { recursive: true }).pipe(
+    Effect.andThen(fileSystem.writeFileString(lease.leasePath, lease.ownerId)),
+    Effect.mapError((cause) => new DevShareLeaseClaimError({ leasePath: lease.leasePath, cause })),
+  );
+  return lease;
+});
+
+export type DevShareCleanupResult =
+  | { readonly status: "cleared" | "superseded" | "restored" }
+  | { readonly status: "failed"; readonly explanation: string };
+
+/**
+ * Clears only the mapping this runner owns. If a successor claims the lease
+ * while `tailscale serve off` is in flight, restore the same port mapping so
+ * the old finalizer cannot silently disconnect the new runner.
+ */
+export const cleanupOwnedDevShare = Effect.fn("devShare.cleanupOwnedDevShare")(function* (
+  lease: DevShareLease,
+): Effect.fn.Return<
+  DevShareCleanupResult,
+  never,
+  FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
+> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const readOwner = fileSystem
+    .readFileString(lease.leasePath)
+    .pipe(Effect.option, Effect.map(Option.getOrUndefined));
+  const ownerBefore = yield* readOwner;
+  if (ownerBefore !== lease.ownerId) {
+    return { status: "superseded" };
+  }
+
+  const result = yield* unshareDevServer(lease.webPort);
+  if (!result.cleared) {
+    return {
+      status: "failed",
+      explanation:
+        result.explanation ??
+        `could not remove the tailnet mapping for port ${String(lease.webPort)}`,
+    };
+  }
+
+  const ownerAfter = yield* readOwner;
+  if (ownerAfter === lease.ownerId) {
+    return { status: "cleared" };
+  }
+
+  return yield* ensureTailscaleServe({
+    localPort: lease.webPort,
+    servePort: lease.webPort,
+  }).pipe(
+    Effect.as({ status: "restored" } as const),
+    Effect.catch((cause: TailscaleCommandError) =>
+      Effect.succeed({
+        status: "failed",
+        explanation:
+          explainCommandFailure(cause) ??
+          `a newer runner claimed port ${String(lease.webPort)}, but its mapping could not be restored`,
+      } as const),
+    ),
+    Effect.uninterruptible,
+  );
+});
 
 /**
  * Publishes `webPort` on the tailnet at the same port number and returns the

@@ -1,11 +1,15 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  claimDevShareLease,
+  cleanupOwnedDevShare,
   type DevShareError,
   DevServeFailedError,
   shareDevServer,
@@ -27,11 +31,17 @@ const encode = (value: string) => Stream.make(new TextEncoder().encode(value));
  * test set the outcome of the `off` (pre-clear) and `serve` calls separately —
  * they are the same subcommand and are told apart by the trailing `off`.
  */
-const spawnerLayer = (input: { readonly off?: CallResult; readonly serve?: CallResult }) =>
+const spawnerLayer = (input: {
+  readonly off?: CallResult;
+  readonly serve?: CallResult;
+  readonly onOff?: Effect.Effect<void>;
+  readonly calls?: Array<ReadonlyArray<string>>;
+}) =>
   Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
       const args = "args" in command ? (command.args as ReadonlyArray<string>) : [];
+      input.calls?.push(args);
       const result: CallResult = args.includes("status")
         ? { exitCode: 0 }
         : args.includes("off")
@@ -41,7 +51,9 @@ const spawnerLayer = (input: { readonly off?: CallResult; readonly serve?: CallR
       return Effect.succeed(
         ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
+          exitCode: (args.includes("off") ? (input.onOff ?? Effect.void) : Effect.void).pipe(
+            Effect.as(ChildProcessSpawner.ExitCode(result.exitCode)),
+          ),
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
@@ -173,6 +185,55 @@ describe("shareDevServer", () => {
       assert.equal(error.stage, "clear-existing");
       assert.include(error.message, "could not clear the existing mapping");
       assert.include(error.message, "permission denied");
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("dev share cleanup ownership", (it) => {
+  it.effect("restores a newer runner's mapping when ownership changes during cleanup", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-dev-share-lease-",
+      });
+      const leasePath = `${directory}/5788.owner`;
+      const oldLease = { leasePath, ownerId: "old-runner", webPort: 5788 };
+      const calls: Array<ReadonlyArray<string>> = [];
+
+      yield* claimDevShareLease(oldLease);
+      const result = yield* cleanupOwnedDevShare(oldLease).pipe(
+        Effect.provide(
+          spawnerLayer({
+            calls,
+            onOff: fileSystem.writeFileString(leasePath, "new-runner").pipe(Effect.orDie),
+          }),
+        ),
+      );
+
+      assert.equal(result.status, "restored");
+      assert.isTrue(calls.some((args) => args.includes("off")));
+      assert.isTrue(calls.some((args) => args.includes("http://127.0.0.1:5788")));
+    }),
+  );
+
+  it.effect("leaves the mapping alone when a newer runner already owns it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-dev-share-lease-",
+      });
+      const leasePath = `${directory}/5788.owner`;
+      const oldLease = { leasePath, ownerId: "old-runner", webPort: 5788 };
+      const calls: Array<ReadonlyArray<string>> = [];
+
+      yield* claimDevShareLease(oldLease);
+      yield* claimDevShareLease({ ...oldLease, ownerId: "new-runner" });
+      const result = yield* cleanupOwnedDevShare(oldLease).pipe(
+        Effect.provide(spawnerLayer({ calls })),
+      );
+
+      assert.equal(result.status, "superseded");
+      assert.isEmpty(calls);
     }),
   );
 });

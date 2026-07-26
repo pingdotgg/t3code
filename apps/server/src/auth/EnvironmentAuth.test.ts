@@ -12,7 +12,7 @@ import { resolveSessionCookieName } from "./utils.ts";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
-/** Pinned so the session cookie name (which is port-scoped) is predictable. */
+/** Pinned so dev-mode cookie tests can assert the port-scoped name. */
 const TEST_SERVER_PORT = 13_773;
 
 const makeServerConfigLayer = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
@@ -47,7 +47,7 @@ const makeCookieRequest = (
     cookies: {
       // Derived, not hardcoded: the name is port-scoped so concurrent servers
       // on one hostname don't share a cookie.
-      [resolveSessionCookieName({ port: TEST_SERVER_PORT })]: sessionToken,
+      [resolveSessionCookieName({ port: TEST_SERVER_PORT, devUrl: undefined })]: sessionToken,
     },
     headers: {},
   }) as unknown as Parameters<

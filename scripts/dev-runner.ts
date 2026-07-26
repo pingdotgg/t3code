@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import * as NodeOS from "node:os";
+import * as NodeCrypto from "node:crypto";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -19,7 +20,12 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { ChildProcess } from "effect/unstable/process";
 
-import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
+import {
+  claimDevShareLease,
+  cleanupOwnedDevShare,
+  type DevShareError,
+  shareDevServer,
+} from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 
 Object.assign(process.env, loadRepoEnv());
@@ -651,6 +657,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
           "[dev-runner] --share is not supported for dev:desktop (the renderer is pinned to loopback). Use `dev`, which runs the whole browser stack.",
         );
       } else {
+        const path = yield* Path.Path;
         // acquireRelease, not share-then-addFinalizer: the mapping outlives this
         // process (and reboots), so the cleanup has to be registered atomically
         // with creating it. An interrupt landing in between would otherwise
@@ -658,23 +665,24 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         //
         // A tailnet that isn't up shouldn't stop the dev server from starting —
         // warn, and carry on serving locally.
-        const shared = yield* Effect.acquireRelease(
-          shareDevServer({ webPort: sharedWebPort }),
-          () =>
-            // Serve config outlives this process, so a cleanup that did not
-            // take leaves a tailnet URL pointing at a port nothing serves.
-            unshareDevServer(sharedWebPort).pipe(
+        const shared = yield* Effect.gen(function* () {
+          const lease = yield* claimDevShareLease({
+            leasePath: path.join(baseDir, "dev-share", `${String(sharedWebPort)}.owner`),
+            ownerId: `${String(process.pid)}:${NodeCrypto.randomUUID()}`,
+            webPort: sharedWebPort,
+          });
+          return yield* Effect.acquireRelease(shareDevServer({ webPort: sharedWebPort }), () =>
+            cleanupOwnedDevShare(lease).pipe(
               Effect.flatMap((result) =>
-                result.cleared
+                result.status !== "failed"
                   ? Effect.void
                   : Effect.logWarning(
-                      `[dev-runner] could not remove the tailnet mapping for port ${String(sharedWebPort)}${
-                        result.explanation ? `: ${result.explanation}` : ""
-                      }. Remove it with \`tailscale serve --https=${String(sharedWebPort)} off\`.`,
+                      `[dev-runner] could not safely clean up the tailnet mapping for port ${String(sharedWebPort)}: ${result.explanation}`,
                     ),
               ),
             ),
-        ).pipe(
+          );
+        }).pipe(
           Effect.tapError((error: DevShareError) =>
             Effect.logWarning(
               `[dev-runner] could not share on the tailnet: ${error.message}${
