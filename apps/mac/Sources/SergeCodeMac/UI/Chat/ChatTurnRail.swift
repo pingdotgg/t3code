@@ -50,8 +50,8 @@ struct ChatTurnRail: View {
         // One turn needs no navigation — the transcript is already one jump.
         if turns.count >= 2 {
             VStack(spacing: 9) {
-                ForEach(turns) { turn in
-                    ChatTurnNotch(preview: turn.preview) {
+                ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
+                    ChatTurnNotch(number: index + 1, preview: turn.preview) {
                         onSelect(turn.id)
                     }
                 }
@@ -60,6 +60,9 @@ struct ChatTurnRail: View {
             .frame(maxHeight: .infinity)
             // The rail floats over the scrolled content; only the notches
             // take pointer input so taps on the timeline pass through.
+            // A plain VStack is not an accessibility element, so the group has
+            // to be declared as a container or the label lands on nothing.
+            .accessibilityElement(children: .contain)
             .accessibilityLabel("Turn navigation")
         }
     }
@@ -67,6 +70,9 @@ struct ChatTurnRail: View {
 
 /// A single rail notch: a slim capsule that widens and brightens on hover.
 private struct ChatTurnNotch: View {
+    /// 1-based position in the rail; the only thing distinguishing two notches
+    /// for VoiceOver when the prompts read alike or the excerpt is empty.
+    let number: Int
     let preview: String
     let action: () -> Void
 
@@ -86,5 +92,7 @@ private struct ChatTurnNotch: View {
         .onHover { isHovering = $0 }
         .animation(Motion.feedback, value: isHovering)
         .help(preview)
+        .accessibilityLabel(
+            preview.isEmpty ? "Jump to turn \(number)" : "Jump to turn \(number): \(preview)")
     }
 }

@@ -1131,8 +1131,10 @@ private struct StreamingMarkdownBlocks: View {
                 renderedBlocks: blocks,
                 style: style,
                 // Stays true while draining after stream end so the still-
-                // growing tail block keeps deferring its syntax highlight.
-                isStreaming: true,
+                // growing tail block keeps deferring its syntax highlight. Once
+                // the reveal catches up nothing here re-runs the parent body, so
+                // the gate has to drop itself or the tail never highlights.
+                isStreaming: isStreaming || revealed != markdown,
                 showsStreamingIndicator: showsStreamingIndicator && isStreaming)
                 .onChange(of: timeline.date, initial: true) { _, date in
                     guard StreamingRevealStore.advance(

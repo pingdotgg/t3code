@@ -358,9 +358,15 @@ private struct UserMessageBubble: View {
             ) {
                 model.stageComposerText(text, editedMessageID: messageID)
             }
+            // Resend replays the text only — the persisted attachments carry no
+            // data URL to re-upload — and `sendMessage` drops an empty payload
+            // on the floor, so an attachment-only bubble must not offer retry.
             MessageActionButton(
-                systemImage: "arrow.clockwise", help: "Send this message again",
-                disabled: !canResend
+                systemImage: "arrow.clockwise",
+                help: hasText
+                    ? "Send this message again"
+                    : "Attachment-only messages can't be resent",
+                disabled: !canResend || !hasText
             ) {
                 resend()
             }
