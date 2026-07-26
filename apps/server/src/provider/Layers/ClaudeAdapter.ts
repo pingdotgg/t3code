@@ -246,6 +246,14 @@ interface ClaudeSessionContext {
   /** Active incremental readers for background Bash output files, keyed by task_id. */
   readonly backgroundTaskOutputMonitors: Map<string, BackgroundTaskOutputMonitor>;
   /**
+   * Task ids the runtime classified as shell commands. Subagent completions
+   * also carry an `output_file`, so a late-arriving one must not be mistaken
+   * for a detached command: draining it would publish shell-shaped progress
+   * (`local_bash`, "Background command output") onto a subagent's row, and
+   * marking it would reclassify that row as a command on clients.
+   */
+  readonly commandTaskIds: Set<string>;
+  /**
    * Reasoning effort the SDK query was started with, normalized to what the
    * CLI actually applies. Subagent turns inherit it, so it is the effort a
    * Task/Agent subagent runs at unless the Task tool input overrides it.
@@ -785,6 +793,7 @@ function forgetTaskToolInputForTask(
   const toolUseId = toolUseIdFromMessage ?? context.taskToolUseIdByTaskId.get(taskId);
   context.taskToolUseIdByTaskId.delete(taskId);
   context.taskModelByTaskId.delete(taskId);
+  context.commandTaskIds.delete(taskId);
   if (toolUseId) {
     context.taskToolInputsByUseId.delete(toolUseId);
     context.backgroundTaskOutputByToolUseId.delete(toolUseId);
@@ -796,6 +805,7 @@ function clearTaskToolInputMemory(context: ClaudeSessionContext): void {
   context.taskToolUseIdByTaskId.clear();
   context.taskModelByTaskId.clear();
   context.backgroundTaskOutputByToolUseId.clear();
+  context.commandTaskIds.clear();
 }
 
 /**
@@ -814,6 +824,11 @@ function pruneTaskToolInputMemoryForClosedTasks(context: ClaudeSessionContext): 
   for (const taskId of context.taskModelByTaskId.keys()) {
     if (!context.openTaskIds.has(taskId)) {
       context.taskModelByTaskId.delete(taskId);
+    }
+  }
+  for (const taskId of context.commandTaskIds) {
+    if (!context.openTaskIds.has(taskId)) {
+      context.commandTaskIds.delete(taskId);
     }
   }
   const liveToolUseIds = new Set(context.taskToolUseIdByTaskId.values());
@@ -2199,7 +2214,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         payload: {
           taskId: RuntimeTaskId.make(taskId),
           entityType: "command",
-          description: "Background command output",
+          // No description: clients fold progress descriptions over the one
+          // from task_started, so labelling each chunk here would rename a
+          // live command ("Run full mac test suite") after its first drain.
           summary,
           lastToolName: "local_bash",
           ...(context.taskToolUseIdByTaskId.get(taskId)
@@ -2247,18 +2264,79 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  /**
+   * Publish `isBackgrounded` for a command task the moment the runtime reveals
+   * it writes to a background output file. The SDK's `task_updated` patch only
+   * carries `is_backgrounded` for tasks it backgrounds itself, so without this
+   * a `Bash(run_in_background: true)` call is indistinguishable on the wire
+   * from an ordinary foreground command whose tool row already settled — and
+   * clients have nothing to hang a live background row off.
+   */
+  const markCommandTaskBackgrounded = Effect.fn("ClaudeAdapter.markCommandTaskBackgrounded")(
+    function* (context: ClaudeSessionContext, taskId: string) {
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "task.updated",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        payload: {
+          taskId: RuntimeTaskId.make(taskId),
+          entityType: "command",
+          isBackgrounded: true,
+        },
+        providerRefs: nativeProviderRefs(context),
+        raw: {
+          source: "claude.sdk.message",
+          method: "claude/background-task/backgrounded",
+          payload: { taskId },
+        },
+      });
+    },
+  );
+
+  /**
+   * The single place a background output monitor comes into existence, and
+   * therefore the single place the backgrounded transition is published.
+   * Every path that starts reading an output file routes through here — the
+   * live poller, and the terminal drain that may be the first to see the file
+   * at all (`task_notification` carries `output_file` even when no tool result
+   * ever revealed one). Returns `adopted: false` when a monitor already
+   * existed, which is also the dedupe for the patch.
+   *
+   * Callers must have established that `taskId` is a shell command: adopting
+   * publishes `entityType: "command"` and starts a drain whose progress is
+   * shell-shaped, both of which would misrepresent a subagent (whose own
+   * completion also carries an `output_file`).
+   */
+  const adoptCommandTaskOutputMonitor = Effect.fn("ClaudeAdapter.adoptCommandTaskOutputMonitor")(
+    function* (context: ClaudeSessionContext, taskId: string, outputFile: string) {
+      const existing = context.backgroundTaskOutputMonitors.get(taskId);
+      if (existing) {
+        return { monitor: existing, adopted: false } as const;
+      }
+      const monitor: BackgroundTaskOutputMonitor = {
+        outputFile,
+        decoder: new TextDecoder(),
+        offset: 0n,
+        fiber: undefined,
+      };
+      context.backgroundTaskOutputMonitors.set(taskId, monitor);
+      yield* markCommandTaskBackgrounded(context, taskId);
+      return { monitor, adopted: true } as const;
+    },
+  );
+
+  /** Callers must know `taskId` is a command — see `adoptCommandTaskOutputMonitor`. */
   const startBackgroundTaskOutputMonitor = Effect.fn(
     "ClaudeAdapter.startBackgroundTaskOutputMonitor",
   )(function* (context: ClaudeSessionContext, taskId: string, outputFile: string) {
-    if (context.backgroundTaskOutputMonitors.has(taskId)) return;
+    context.commandTaskIds.add(taskId);
+    const { monitor, adopted } = yield* adoptCommandTaskOutputMonitor(context, taskId, outputFile);
+    if (!adopted) return;
 
-    const monitor: BackgroundTaskOutputMonitor = {
-      outputFile,
-      decoder: new TextDecoder(),
-      offset: 0n,
-      fiber: undefined,
-    };
-    context.backgroundTaskOutputMonitors.set(taskId, monitor);
     const loop = Effect.gen(function* () {
       while (!context.stopped && context.openTaskIds.has(taskId)) {
         yield* drainBackgroundTaskOutput(context, taskId, monitor).pipe(
@@ -2283,16 +2361,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     "ClaudeAdapter.stopBackgroundTaskOutputMonitor",
   )(function* (context: ClaudeSessionContext, taskId: string, outputFile?: string) {
     let monitor = context.backgroundTaskOutputMonitors.get(taskId);
-    if (!monitor && outputFile) {
-      monitor = {
-        outputFile,
-        decoder: new TextDecoder(),
-        offset: 0n,
-        fiber: undefined,
-      };
-      context.backgroundTaskOutputMonitors.set(taskId, monitor);
+    if (!monitor) {
+      // A *command* whose output file is first revealed by its own completion
+      // was backgrounded all along; adopting it here (rather than hand-rolling
+      // a monitor) is what publishes that, so the drained output lands on a row
+      // the client actually shows. A subagent completion carries an
+      // `output_file` too, and it is none of those things: adopting it would
+      // reclassify the row as a command and pour shell-shaped progress into a
+      // subagent's log, so an unrecognized task is left alone.
+      if (!outputFile || !context.commandTaskIds.has(taskId)) return;
+      monitor = (yield* adoptCommandTaskOutputMonitor(context, taskId, outputFile)).monitor;
     }
-    if (!monitor) return;
 
     if (monitor.fiber && monitor.fiber.pollUnsafe() === undefined) {
       yield* Fiber.interrupt(monitor.fiber);
@@ -3812,6 +3891,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const effort = resolveSubagentTaskEffort(context, toolUseId);
         context.openTaskIds.add(message.task_id);
         rememberTaskToolUseId(context, message.task_id, toolUseId);
+        // Remembered because a later `output_file` (on a tool result or on the
+        // completion itself) is only a background-command signal for a task
+        // the runtime classified as a command in the first place.
+        if (entityType === "command") {
+          context.commandTaskIds.add(message.task_id);
+        }
         if (model) {
           context.taskModelByTaskId.set(message.task_id, model);
         }
@@ -3939,6 +4024,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           readOptionalTrimmedString((message as { task_type?: unknown }).task_type),
           readOptionalTrimmedString((message as { subagent_type?: unknown }).subagent_type),
         );
+        // The completion may be the first message to classify this task; a
+        // command's `output_file` is only adoptable once it is known to be one.
+        if (entityType === "command") {
+          context.commandTaskIds.add(message.task_id);
+        }
         yield* stopBackgroundTaskOutputMonitor(context, message.task_id, outputFile);
         context.openTaskIds.delete(message.task_id);
         forgetTaskToolInputForTask(context, message.task_id, toolUseId);
@@ -4871,6 +4961,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         taskModelByTaskId: new Map(),
         backgroundTaskOutputByToolUseId: new Map(),
         backgroundTaskOutputMonitors: new Map(),
+        commandTaskIds: new Set(),
         sessionEffort: effectiveEffort ?? undefined,
         openTaskIds: new Set(),
         syntheticallyStoppedTaskIds: new Set(),

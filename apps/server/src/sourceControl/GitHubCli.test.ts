@@ -548,4 +548,123 @@ describe("GitHubCli.layer", () => {
       assert.strictEqual(result, null);
     }).pipe(Effect.provide(layer)),
   );
+
+  it.effect("surfaces the GitHub API message when a review is rejected", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed({
+          exitCode: ChildProcessSpawner.ExitCode(1),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          stdout: JSON.stringify({
+            message: "Unprocessable Entity",
+            errors: [
+              {
+                resource: "PullRequestReviewComment",
+                field: "line",
+                code: "custom",
+                message: "line must be part of the diff",
+              },
+            ],
+          }),
+          stderr: "gh: Unprocessable Entity (HTTP 422)",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .submitPullRequestReview({
+          cwd: "/repo",
+          reference: "12",
+          commitId: "abc",
+          body: "review",
+          event: "COMMENT",
+          comments: [{ path: "a.ts", body: "bad", line: 9, side: "RIGHT" }],
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "GitHubPullRequestReviewRejectedError");
+      assert.equal(error.message.includes("line must be part of the diff"), true);
+      assert.equal(
+        error._tag === "GitHubPullRequestReviewRejectedError" && error.inlineCommentRejected,
+        true,
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("does not blame inline comments on an unrelated field validation", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed({
+          exitCode: ChildProcessSpawner.ExitCode(1),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          stdout: JSON.stringify({
+            message: "Validation Failed",
+            errors: [
+              {
+                resource: "PullRequestReview",
+                field: "path",
+                code: "invalid",
+                message: "path is not valid",
+              },
+            ],
+          }),
+          stderr: "gh: Validation Failed (HTTP 422)",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .submitPullRequestReview({
+          cwd: "/repo",
+          reference: "12",
+          commitId: "abc",
+          body: "review",
+          event: "COMMENT",
+          comments: [{ path: "a.ts", body: "bad", line: 9, side: "RIGHT" }],
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(
+        error._tag === "GitHubPullRequestReviewRejectedError" && error.inlineCommentRejected,
+        false,
+      );
+      assert.equal(error.message.includes("path is not valid"), true);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("does not blame inline comments on a body-only rejection", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed({
+          exitCode: ChildProcessSpawner.ExitCode(1),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          stdout: JSON.stringify({ message: "Not Found" }),
+          stderr: "gh: Not Found (HTTP 404)",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .submitPullRequestReview({
+          cwd: "/repo",
+          reference: "12",
+          commitId: "abc",
+          body: "review",
+          event: "COMMENT",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(
+        error._tag === "GitHubPullRequestReviewRejectedError" && error.inlineCommentRejected,
+        false,
+      );
+      assert.equal(error.message.includes("Not Found"), true);
+    }).pipe(Effect.provide(layer)),
+  );
 });

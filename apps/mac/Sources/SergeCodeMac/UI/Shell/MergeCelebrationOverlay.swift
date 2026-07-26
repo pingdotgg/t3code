@@ -40,6 +40,10 @@ struct MergeCelebrationOverlay: View {
             withAnimation(Motion.delight) {
                 badgeIn = true
             }
+            // The rarest success in the app gets the app's only two-tap
+            // outcome. Reduce Motion strips the confetti, not the tap: the
+            // haptic is the non-visual half of the announcement.
+            Haptics.play(.success)
         }
     }
 

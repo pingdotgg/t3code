@@ -43,6 +43,9 @@
             case "min-size":
                 await runMinSize(multi: multi, scenery: scenery)
                 return
+            case "tool-group-receive":
+                await runToolGroupReceive(model: model, multi: multi, dir: dir)
+                return
             default:
                 break
             }
@@ -62,6 +65,7 @@
             try? await Task.sleep(for: .seconds(2))
             snapshot("1-inspector-timeline", dir: dir)
             await probeChatTurnRail(model: model, dir: dir)
+            await probeCommandTaskCard(model: model, dir: dir)
 
             // Unified activity panel: scroll to the checkpoint history, then
             // back up to the changed-files section (legacy section keys).
@@ -81,12 +85,96 @@
                     remote, multi: multi, scenery: scenery, dir: dir)
             }
 
-            // Plan strip above the composer: expand, snapshot, collapse.
-            toggleSection("plan")
-            try? await Task.sleep(for: .seconds(1))
-            snapshot("2-plan-expanded", dir: dir)
-            toggleSection("plan")
-            try? await Task.sleep(for: .seconds(1))
+            // Plan strip above the composer: collapsed rail (it shares the
+            // credit row with the Unsplash pill), then expand, snapshot,
+            // collapse. The mock seeds plan progress on thread-1, but the
+            // rail only mounts while a run is live — start one if needed and
+            // hand the thread back idle afterwards. `isLiveTurn` is the same
+            // predicate ChatScreen mounts the rail with: a `.backgroundWork`
+            // thread is already active, so synthesizing a send there would
+            // mutate seeded probe state for no reason.
+            let planRunStarted = !(model.selectedThread?.status.isLiveTurn ?? false)
+            if planRunStarted {
+                // `send` only returns when the mock finishes streaming, so
+                // fire it off and snapshot while the turn is still live. The
+                // padded text lengthens the canned reply enough that the turn
+                // outlives both snapshots (80ms per chunk) — a backstop for
+                // the waits below, not the guarantee.
+                let filler = String(repeating: "keep the run alive ", count: 40)
+                Task { @MainActor in await model.send(text: "Probe: plan rail \(filler)") }
+            }
+            // Capture the rail in the state it is meant to show: live turn,
+            // steps hydrated. The snapshots are gated on that precondition —
+            // a PNG written from the wrong state is worse than a missing one,
+            // because it looks like evidence.
+            let planRailReady = await waitUntil("plan rail is live with steps") {
+                guard model.selectedThread?.status.isLiveTurn == true else { return false }
+                guard let threadID = model.selectedThreadID else { return false }
+                return model.threadState(threadID)?.planProgress?.steps.isEmpty == false
+            }
+            if planRailReady {
+                snapshot("2-plan-rail", dir: dir)
+                toggleSection("plan")
+                // Re-checked, since a turn that ended between the shots would
+                // leave a credit-only row behind.
+                let stillLive = await waitUntil("plan rail still live when expanded") {
+                    model.selectedThread?.status.isLiveTurn == true
+                }
+                try? await Task.sleep(for: .seconds(0.5))
+                if stillLive {
+                    snapshot("2-plan-expanded", dir: dir)
+                } else {
+                    print("UIProbe: FAIL skipped 2-plan-expanded — turn ended before the capture")
+                }
+                toggleSection("plan")
+                try? await Task.sleep(for: .seconds(0.5))
+            } else {
+                print(
+                    "UIProbe: FAIL skipped 2-plan-rail and 2-plan-expanded — "
+                        + "the rail never reached its live+steps state")
+            }
+            if planRunStarted {
+                await model.cancelCurrentTurn()
+                _ = await waitUntil("plan thread settled after cancel") {
+                    model.selectedThread?.status.isLiveTurn == false
+                }
+            }
+
+            // Reserved slot: a live turn on a thread the mock never seeds a
+            // plan for (thread-2). The strip draws nothing there but holds
+            // the rail's height, so the credit pill keeps the exact position
+            // it has in `2-plan-rail` above.
+            if let planlessThread = model.threads.first(where: { $0.id == "thread-2" }) {
+                let restoreThreadID = model.selectedThreadID
+                multi.select(threadID: planlessThread.id, on: model.deviceID)
+                _ = await waitUntil("planless thread selected") {
+                    model.selectedThreadID == planlessThread.id
+                }
+                let filler = String(repeating: "keep the run alive ", count: 40)
+                Task { @MainActor in await model.send(text: "Probe: reserved slot \(filler)") }
+                let reservedReady = await waitUntil("planless turn is live without steps") {
+                    guard model.selectedThread?.status.isLiveTurn == true else { return false }
+                    guard let threadID = model.selectedThreadID else { return false }
+                    return model.threadState(threadID)?.planProgress?.steps.isEmpty != false
+                }
+                if reservedReady {
+                    snapshot("2a-plan-row-reserved", dir: dir)
+                } else {
+                    print(
+                        "UIProbe: FAIL skipped 2a-plan-row-reserved — "
+                            + "the planless turn never went live")
+                }
+                await model.cancelCurrentTurn()
+                _ = await waitUntil("planless thread settled after cancel") {
+                    model.selectedThread?.status.isLiveTurn == false
+                }
+                if let restoreThreadID {
+                    multi.select(threadID: restoreThreadID, on: model.deviceID)
+                    _ = await waitUntil("previous thread reselected") {
+                        model.selectedThreadID == restoreThreadID
+                    }
+                }
+            }
 
             // Open main-area review (All Changes) via the timeline harness hook.
             if let threadID = model.selectedThreadID {
@@ -558,6 +646,98 @@
             NSApp.terminate(nil)
         }
 
+        /// Window-relative band (bottom-left origin, points) covering the last
+        /// collapsed tool group in the default 1653x720 probe window. Fixed
+        /// rather than measured: the probe drives a fixed fixture, so the row
+        /// lands in the same place every run.
+        private static let toolGroupBand = NSRect(x: 400, y: 195, width: 900, height: 170)
+
+        /// Drives a live tool burst past `liveAutoCollapseToolThreshold` so the
+        /// mid-turn collapse kicks in, then feeds one more finished tool and
+        /// captures the collapsed group across the receive flight.
+        ///
+        /// The flight is a `KeyframeAnimator`, which re-evaluates the SwiftUI
+        /// body at each interpolated value rather than handing a CoreAnimation
+        /// layer to the render server — so an in-process `cacheDisplay` really
+        /// does capture the deck mid-open instead of snapping to the end state.
+        private static func runToolGroupReceive(
+            model: AppModel, multi: MultiDeviceModel, dir: String
+        ) async {
+            try? await Task.sleep(for: .seconds(2))
+            guard let mock = model.backendForShutdown as? MockBackend else {
+                print("UIProbe: tool-group-receive skipped (live backend run)")
+                NSApp.terminate(nil)
+                return
+            }
+            guard
+                let threadID = model.threads.first(where: { $0.id == "thread-1" })?.id
+                    ?? model.threads.first?.id
+            else {
+                print("UIProbe: tool-group-receive failed: no thread")
+                NSApp.terminate(nil)
+                return
+            }
+            multi.select(threadID: threadID, on: model.deviceID)
+            try? await Task.sleep(for: .seconds(2))
+
+            let burst: [(String, String, ToolEventKind)] = [
+                ("read_file", "Sources/App/Model.swift", .fileRead),
+                ("run_command", "swift build", .command),
+                ("edit_file", "Sources/App/View.swift", .fileChange),
+                ("read_file", "Sources/App/Theme.swift", .fileRead),
+                ("web_search", "swiftui keyframe animator", .webSearch),
+                ("run_command", "swift test", .command),
+                ("edit_file", "Sources/App/Row.swift", .fileChange),
+                ("mcp_call", "linear.issue", .mcpCall),
+                ("read_file", "Package.swift", .fileRead),
+            ]
+            for (name, detail, kind) in burst {
+                await mock.probeAppendRunningToolEvent(
+                    threadID: threadID, name: name, detail: detail, kind: kind)
+                try? await Task.sleep(for: .milliseconds(120))
+            }
+            try? await Task.sleep(for: .seconds(1))
+            print("UIProbe: tool-group-receive \(describeToolGroup(model: model, threadID: threadID))")
+            snapshot("tg-0-collapsed-at-rest", dir: dir)
+
+            // One more finished tool: the row below vanishes into the summary,
+            // and the deck should fan open to take its chip in. Captured
+            // back-to-back and named by measured elapsed time — a window
+            // `cacheDisplay` costs enough that a fixed sleep cadence samples
+            // the flight far later than it claims to.
+            let started = Date()
+            await mock.probeAppendRunningToolEvent(
+                threadID: threadID, name: "run_command", detail: "swift build --package-path apps/mac",
+                kind: .command)
+            for index in 0..<24 {
+                let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+                snapshotRegion(
+                    "tg-frame-\(String(format: "%02d", index))-\(elapsed)ms",
+                    rect: Self.toolGroupBand, dir: dir)
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            print("UIProbe: tool-group-receive \(describeToolGroup(model: model, threadID: threadID))")
+            print("UIProbe: tool-group-receive done")
+            NSApp.terminate(nil)
+        }
+
+        /// Shape of the selected thread's display rows, for the probe log:
+        /// how many rows render, and the collapsed group's headline count.
+        private static func describeToolGroup(model: AppModel, threadID: String) -> String {
+            let settled = model.thread(threadID: threadID)?.status.isSettled ?? false
+            let display = model.timeline(threadID: threadID)
+                .groupedForDisplay(threadIsSettled: settled, includeSeparators: false)
+            let groups = display.compactMap { item -> Int? in
+                guard case .toolGroup(_, _, let summary) = item else { return nil }
+                return summary.toolCount
+            }
+            let liveRows = display.count { item in
+                guard case .single(let single) = item, case .toolEvent = single else { return false }
+                return true
+            }
+            return "rows=\(display.count) groupToolCounts=\(groups) liveToolRows=\(liveRows)"
+        }
+
         private static func probeRemoteDevice(
             _ session: RemoteDeviceSession,
             multi: MultiDeviceModel,
@@ -630,6 +810,102 @@
                 "UIProbe: turn rail turns=\(turns.count) "
                     + "visible=\(turns.count >= 2)")
             snapshot("1c-chat-turn-rail", dir: dir)
+        }
+
+        /// Command tasks render as shell work, not as delegated agents, and a
+        /// foreground command renders no task card at all (its tool row is the
+        /// whole story). The card only appears mid-transcript, so host it
+        /// directly instead of scrolling the chat to it.
+        private static func probeCommandTaskCard(model: AppModel, dir: String) async {
+            let threadID = model.selectedThreadID
+            let items = threadID.map { model.timeline(threadID: $0) } ?? []
+            let commandCards = items.filter {
+                if case .subagentTask(let task) = $0 { return task.entityKind == .command }
+                return false
+            }
+            let foregroundCards = commandCards.filter {
+                if case .subagentTask(let task) = $0 { return !task.isBackgrounded }
+                return false
+            }
+            print(
+                "UIProbe: command task cards=\(commandCards.count) "
+                    + "foreground=\(foregroundCards.count)")
+
+            let now = Date()
+            let running = SubagentTaskItem(
+                taskId: "probe-command-running", taskType: "local_bash",
+                entityKind: .command, description: "Run full mac test suite",
+                state: .running, latestProgress: nil, lastToolName: "local_bash",
+                isBackgrounded: true, startedAt: now.addingTimeInterval(-190),
+                lastActivityAt: now.addingTimeInterval(-4), duration: nil,
+                progressLog: [
+                    SubagentTaskProgressEntry(
+                        at: now.addingTimeInterval(-120), toolName: "local_bash",
+                        text: "Building for debugging..."),
+                    SubagentTaskProgressEntry(
+                        at: now.addingTimeInterval(-4), toolName: "local_bash",
+                        text: "Test Suite 'SubagentTaskPresentationTests' started\n"
+                            + "✔ subtitle prefers the completion summary (0.004s)"),
+                ])
+            var finished = running
+            finished.taskId = "probe-command-finished"
+            finished.description = "Tail deploy logs"
+            finished.state = .completed
+            finished.duration = 214
+            finished.lastActivityAt = now.addingTimeInterval(-30)
+
+            // Defensive shape: a command row that somehow arrives without the
+            // detach flag must not claim to be backgrounded.
+            var attached = running
+            attached.taskId = "probe-command-attached"
+            attached.description = "Compile the sidecar"
+            attached.isBackgrounded = false
+
+            // Settled with a summary but no streamed output: the completion
+            // summary is the whole account of the run, so it must be on the
+            // card rather than collapsed to "Finished".
+            var summarized = running
+            summarized.taskId = "probe-command-summarized"
+            summarized.description = "Sync the release notes"
+            summarized.state = .completed
+            summarized.duration = 47
+            summarized.progressLog = []
+            summarized.latestProgress = "Process exited with code 0."
+
+            // A failure with no streamed output: the error must be readable on
+            // the card rather than hidden behind a chevron that expands nothing.
+            var failed = running
+            failed.taskId = "probe-command-failed"
+            failed.description = "Publish the appcast"
+            failed.state = .failed
+            failed.duration = 12
+            failed.progressLog = []
+            failed.error = "exited with code 1\nsee /tmp/appcast.log for the full output"
+
+            let hosting = NSHostingView(
+                rootView: VStack(alignment: .leading, spacing: 12) {
+                    CommandTaskCard(
+                        task: running, stopError: nil, onStop: {}, onClearStopError: {})
+                    CommandTaskCard(
+                        task: finished, stopError: nil, onStop: {}, onClearStopError: {})
+                    CommandTaskCard(
+                        task: attached, stopError: nil, onStop: {}, onClearStopError: {})
+                    CommandTaskCard(
+                        task: summarized, stopError: nil, onStop: {}, onClearStopError: {})
+                    CommandTaskCard(
+                        task: failed, stopError: nil, onStop: {}, onClearStopError: {})
+                }
+                .padding(16))
+            let frame = NSRect(x: 0, y: 0, width: 720, height: 860)
+            hosting.frame = frame
+            let window = NSWindow(
+                contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
+            DarkAppearanceConfigurator.applyAppearance(to: window)
+            window.contentView = hosting
+            window.orderFront(nil)
+            try? await Task.sleep(for: .seconds(1))
+            snapshot("1d-command-task-cards", window: window, dir: dir)
+            window.orderOut(nil)
         }
 
         /// Captures the main window at translucency 1.0 and 0.5 and logs
@@ -1146,6 +1422,30 @@
             print("UIProbe: toggled section '\(key)'")
         }
 
+        /// Polls `condition` until it holds, then returns true. A fixed sleep
+        /// snapshots whatever the app happens to be doing at that instant —
+        /// this makes the intended state a precondition of the capture and
+        /// prints a FAIL line (rather than silently shooting the wrong frame)
+        /// when it never arrives.
+        private static func waitUntil(
+            _ label: String,
+            timeout: Duration = .seconds(8),
+            _ condition: @MainActor () -> Bool
+        ) async -> Bool {
+            let step = Duration.milliseconds(50)
+            var waited = Duration.zero
+            while waited < timeout {
+                if condition() {
+                    print("UIProbe: PASS \(label) after \(waited)")
+                    return true
+                }
+                try? await Task.sleep(for: step)
+                waited += step
+            }
+            print("UIProbe: FAIL \(label) still false after \(timeout)")
+            return false
+        }
+
         private static func userMessageCount(_ model: AppModel) -> Int {
             model.selectedTimeline().count {
                 if case .userMessage = $0 { return true } else { return false }
@@ -1281,6 +1581,24 @@
                 return
             }
             snapshot(name, window: window, dir: dir)
+        }
+
+        /// Captures just `rect` of the main window (view coordinates, so the
+        /// origin is bottom-left). A full-window `cacheDisplay` costs ~230 ms,
+        /// which is more than a whole transition lasts; a narrow band is cheap
+        /// enough to sample an animation frame by frame.
+        private static func snapshotRegion(_ name: String, rect: NSRect, dir: String) {
+            guard let window = NSApp.windows.first(where: { $0.isVisible }),
+                let view = window.contentView?.superview ?? window.contentView,
+                let rep = view.bitmapImageRepForCachingDisplay(in: rect)
+            else {
+                print("UIProbe: region snapshot \(name) failed (no window)")
+                return
+            }
+            view.cacheDisplay(in: rect, to: rep)
+            guard let data = rep.representation(using: .png, properties: [:]) else { return }
+            let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).png")
+            try? data.write(to: url)
         }
 
         private static func snapshot(_ name: String, window: NSWindow, dir: String) {

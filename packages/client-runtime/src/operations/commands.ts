@@ -40,6 +40,7 @@ export type UnsettleThreadInput = CommandInput<"thread.unsettle">;
 export type UpdateThreadMetadataInput = CommandInput<"thread.meta.update">;
 export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
 export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
+export type SetThreadExecutorModelInput = CommandInput<"thread.executor-model.set">;
 export type StartThreadTurnInput = CommandInput<"thread.turn.start">;
 export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
 export type StopThreadTaskInput = CommandInput<"thread.task.stop">;
@@ -204,6 +205,23 @@ export const setThreadInteractionMode: (input: SetThreadInteractionModeInput) =>
     return yield* dispatch({
       ...input,
       type: "thread.interaction-mode.set",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+/**
+ * Sets the advisor-mode executor binding for a thread: which model delegated
+ * sub-agents run on (null clears it back to advise-only) and, when supplied,
+ * how many of them may run concurrently. Omitting `executorMaxSubAgents`
+ * leaves the thread's current cap untouched.
+ */
+export const setThreadExecutorModel: (input: SetThreadExecutorModelInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.setThreadExecutorModel")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "thread.executor-model.set",
       commandId: metadata.commandId,
       createdAt: metadata.createdAt,
     });

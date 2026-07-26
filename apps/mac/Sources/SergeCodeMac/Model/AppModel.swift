@@ -779,6 +779,7 @@ public final class AppModel {
                 previousStatus: previousStatus,
                 previousStalled: previousStalled,
                 thread: thread)
+            clearPlanProgressOnSettle(previousStatus: previousStatus, thread: thread)
             updateProjectPathIndex(for: thread)
             // No VCS event fires when a watched PR's thread merely goes
             // idle — re-evaluate the cached merged/closed state so the
@@ -812,6 +813,7 @@ public final class AppModel {
             refreshCheckpointsTokens[id] = nil
             streamingIndex[id] = nil
             lastGitActionOutcomeByThread[id] = nil
+            cancelledTurnStartByThread[id] = nil
             interactionThreadByID = interactionThreadByID.filter { $0.value != id }
             pruneTimelineTasks.removeValue(forKey: id)?.cancel()
             TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
@@ -1461,6 +1463,27 @@ public final class AppModel {
         threads.first { $0.id == threadID }.flatMap { projectName(for: $0) }
     }
 
+    /// A plan belongs to the turn that produced it. `turn.plan.updated` only
+    /// ever carries steps — there is no "plan cleared" event — so without
+    /// this, a finished plan stays in thread state and the next turn opens
+    /// showing the previous turn's steps (usually a full "Plan complete"
+    /// bar) until, or unless, a new plan lands.
+    ///
+    /// Cleared on the settle edge rather than the start edge on purpose: a
+    /// `turn.plan.updated` that races just ahead of the `running` upsert must
+    /// survive, and by the time a turn settles nothing renders the progress
+    /// any more (the rail is mounted for live turns only).
+    ///
+    /// The edge is `isSettled`, not `isLiveTurn`: a turn that pauses on an
+    /// approval or an input request leaves the live statuses but is not over,
+    /// and its plan has to come back with it.
+    private func clearPlanProgressOnSettle(previousStatus: ThreadStatus?, thread: ChatThread) {
+        guard let previousStatus, !previousStatus.isSettled, thread.status.isSettled else {
+            return
+        }
+        threadStates[thread.id]?.planProgress = nil
+    }
+
     private func considerAgentNotification(
         previousStatus: ThreadStatus?,
         previousStalled: Bool,
@@ -1776,11 +1799,32 @@ public final class AppModel {
 
     public func cancelCurrentTurn() async {
         guard let threadID = selectedThreadID else { return }
+        noteCancelRequested(threadID: threadID)
         do {
             try await backend.cancelTurn(threadID: threadID)
         } catch {
             lastError = String(describing: error)
         }
+    }
+
+    /// Start stamp of a turn the user asked to stop, per thread.
+    ///
+    /// A cancelled run still settles to `idle`, which is indistinguishable
+    /// from a completed one by status alone. Recording *which* turn was
+    /// stopped lets the UI tell the two apart, and a later turn carries a
+    /// newer start stamp, so the record expires on its own instead of
+    /// silencing every future completion on that thread.
+    public private(set) var cancelledTurnStartByThread: [String: Date] = [:]
+
+    private func noteCancelRequested(threadID: String) {
+        cancelledTurnStartByThread[threadID] =
+            thread(threadID: threadID)?.latestTurnStartedAt ?? .distantPast
+    }
+
+    /// Whether `thread`'s current turn is the one the user asked to stop.
+    public func isCancellationPending(for thread: ChatThread) -> Bool {
+        guard let cancelled = cancelledTurnStartByThread[thread.id] else { return false }
+        return (thread.latestTurnStartedAt ?? .distantPast) == cancelled
     }
 
     public func stopSubagentTask(taskId: String, threadID: String? = nil) async {

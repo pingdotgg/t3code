@@ -13,13 +13,23 @@ const modelSelection = {
   model: "gpt-5.4",
 };
 
+const DIFF = [
+  "diff --git a/a.ts b/a.ts",
+  "--- a/a.ts",
+  "+++ b/a.ts",
+  "@@ -1,1 +1,2 @@",
+  " const y = 0",
+  "+const x = 1",
+  "",
+].join("\n");
+
 const makeGithub = (overrides: Partial<GitHubCli.GitHubCli["Service"]> = {}) =>
   GitHubCli.GitHubCli.of({
     execute: () => Effect.die("unused"),
     listOpenPullRequests: () => Effect.succeed([]),
     listRepositoryOpenPullRequests: () => Effect.succeed([]),
     listPullRequestIssueComments: () => Effect.succeed([]),
-    getPullRequestDiff: () => Effect.succeed("diff --git a/a.ts b/a.ts\n+const x = 1\n"),
+    getPullRequestDiff: () => Effect.succeed(DIFF),
     submitPullRequestReview: () =>
       Effect.succeed({
         reviewId: "r1",
@@ -532,6 +542,192 @@ describe("AutoReviewRunner", () => {
                       submits.push(input);
                       return { reviewId: "r1", url: "u" };
                     }),
+                }),
+              ),
+            ),
+            Layer.provide(Layer.succeed(TextGeneration.TextGeneration, makeText())),
+          ),
+        ),
+      ),
+      Effect.runPromise,
+    );
+  });
+
+  it("moves findings that are not on the diff into the review body", async () => {
+    const submits: Array<{
+      body: string;
+      comments?: ReadonlyArray<GitHubCli.GitHubPullRequestReviewCommentInput>;
+    }> = [];
+    await Effect.gen(function* () {
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      const runner = yield* AutoReviewRunner.AutoReviewRunner;
+      const enqueued = yield* store.enqueue({
+        projectId: "proj",
+        prNumber: 1,
+        headSha: "abc123def456",
+        trigger: "open_or_push",
+        modelSelection,
+      });
+      yield* store.update(enqueued.job.id, { status: "running" });
+      yield* runner.runJob(enqueued.job.id, { cwd: "/repo", candidates: [] });
+
+      const job = yield* store.get(enqueued.job.id);
+      expect(job?.status).toBe("succeeded");
+      expect(submits).toHaveLength(1);
+      // Line 2 is in the diff, line 900 is not.
+      expect(submits[0]?.comments?.map((comment) => comment.line)).toEqual([2]);
+      expect(submits[0]?.body).toContain("Could not anchor");
+      expect(submits[0]?.body).toContain("off diff");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          AutoReviewJobStore.layerInMemory,
+          AutoReviewRunner.layer.pipe(
+            Layer.provide(AutoReviewJobStore.layerInMemory),
+            Layer.provide(
+              Layer.succeed(
+                GitHubCli.GitHubCli,
+                makeGithub({
+                  submitPullRequestReview: (input) =>
+                    Effect.sync(() => {
+                      submits.push(input);
+                      return { reviewId: "r1", url: "u" };
+                    }),
+                }),
+              ),
+            ),
+            Layer.provide(
+              Layer.succeed(
+                TextGeneration.TextGeneration,
+                makeText({
+                  generateAutoReviewFindings: () =>
+                    Effect.succeed({
+                      summary: "Found issues",
+                      decision: "comment",
+                      comments: [
+                        {
+                          path: "a.ts",
+                          line: 2,
+                          side: "RIGHT",
+                          severity: "important",
+                          body: "on diff",
+                        },
+                        {
+                          path: "a.ts",
+                          line: 900,
+                          side: "RIGHT",
+                          severity: "important",
+                          body: "off diff",
+                        },
+                      ],
+                    }),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+      Effect.runPromise,
+    );
+  });
+
+  it("retries body-only when GitHub rejects the inline comments", async () => {
+    const submits: Array<{
+      body: string;
+      comments?: ReadonlyArray<GitHubCli.GitHubPullRequestReviewCommentInput>;
+    }> = [];
+    await Effect.gen(function* () {
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      const runner = yield* AutoReviewRunner.AutoReviewRunner;
+      const enqueued = yield* store.enqueue({
+        projectId: "proj",
+        prNumber: 1,
+        headSha: "abc123def456",
+        trigger: "open_or_push",
+        modelSelection,
+      });
+      yield* store.update(enqueued.job.id, { status: "running" });
+      yield* runner.runJob(enqueued.job.id, { cwd: "/repo", candidates: [] });
+
+      const job = yield* store.get(enqueued.job.id);
+      expect(job?.status).toBe("succeeded");
+      expect(submits).toHaveLength(2);
+      expect(submits[1]?.comments ?? []).toHaveLength(0);
+      expect(submits[1]?.body).toContain("bug");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          AutoReviewJobStore.layerInMemory,
+          AutoReviewRunner.layer.pipe(
+            Layer.provide(AutoReviewJobStore.layerInMemory),
+            Layer.provide(
+              Layer.succeed(
+                GitHubCli.GitHubCli,
+                makeGithub({
+                  submitPullRequestReview: (input) =>
+                    Effect.suspend(() => {
+                      submits.push(input);
+                      if ((input.comments ?? []).length > 0) {
+                        return Effect.fail(
+                          new GitHubCli.GitHubPullRequestReviewRejectedError({
+                            command: "gh",
+                            cwd: "/repo",
+                            exitCode: 1,
+                            apiMessage: "line must be part of the diff",
+                            inlineCommentRejected: true,
+                            cause: new Error("422"),
+                          }),
+                        );
+                      }
+                      return Effect.succeed({ reviewId: "r1", url: "u" });
+                    }),
+                }),
+              ),
+            ),
+            Layer.provide(Layer.succeed(TextGeneration.TextGeneration, makeText())),
+          ),
+        ),
+      ),
+      Effect.runPromise,
+    );
+  });
+
+  it("records a readable failure message instead of a cause dump", async () => {
+    await Effect.gen(function* () {
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      const runner = yield* AutoReviewRunner.AutoReviewRunner;
+      const enqueued = yield* store.enqueue({
+        projectId: "proj",
+        prNumber: 1,
+        headSha: "abc123def456",
+        trigger: "open_or_push",
+        modelSelection,
+      });
+      yield* store.update(enqueued.job.id, { status: "running" });
+      yield* runner.runJob(enqueued.job.id, { cwd: "/repo", candidates: [] });
+
+      const job = yield* store.get(enqueued.job.id);
+      expect(job?.status).toBe("failed");
+      expect(job?.error).toContain("gh auth login");
+      expect(job?.error).not.toContain("\n");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          AutoReviewJobStore.layerInMemory,
+          AutoReviewRunner.layer.pipe(
+            Layer.provide(AutoReviewJobStore.layerInMemory),
+            Layer.provide(
+              Layer.succeed(
+                GitHubCli.GitHubCli,
+                makeGithub({
+                  getPullRequestDiff: () =>
+                    Effect.fail(
+                      new GitHubCli.GitHubCliAuthenticationError({
+                        command: "gh",
+                        cwd: "/repo",
+                        cause: new Error("exit 1"),
+                      }),
+                    ),
                 }),
               ),
             ),

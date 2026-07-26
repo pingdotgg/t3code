@@ -20,7 +20,12 @@ import {
   type OrchestrationThreadAutoReviewPhase,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
-import { deriveAutoReviewThreadPhase, isAutoReviewFixThreadBusy } from "@t3tools/shared/autoReview";
+import {
+  deriveAutoReviewThreadPhase,
+  isAutoReviewFixThreadBusy,
+  resolveAutoReviewJobOriginThread,
+  type ThreadLinkCandidate,
+} from "@t3tools/shared/autoReview";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -168,14 +173,29 @@ export const makeSyncThreadPhases = (deps: {
     }
     const jobs = yield* deps.store.list({ limit: AUTO_REVIEW_JOB_LIST_LIMIT });
     const now = DateTime.formatIso(yield* DateTime.now);
+    // Candidate pool for provisionally attributing in-flight (still unlinked)
+    // jobs to a thread, mirroring what the runner passes on success.
+    const candidates: ReadonlyArray<ThreadLinkCandidate> = shell.threads.map((thread) => ({
+      threadId: String(thread.id),
+      projectId: String(thread.projectId),
+      deletedAt: thread.archivedAt,
+      updatedAt: thread.updatedAt,
+      status: thread.session?.status ?? "idle",
+      prNumber: null,
+      prState: null,
+      branch: thread.branch,
+    }));
+    const attributedThreadId = new Map<string, string | null>(
+      jobs.map((job) => [job.id, resolveAutoReviewJobOriginThread({ job, candidates })]),
+    );
     for (const thread of shell.threads) {
       if (thread.archivedAt != null) {
         continue;
       }
-      // Jobs carry no branch, so relevance is origin-thread linkage only; an
-      // unlinked queued/running job simply leaves the phase null until the
-      // runner links it on success.
-      const relevant = jobs.filter((job) => String(job.originThreadId ?? "") === String(thread.id));
+      // Relevance is origin-thread linkage, plus queued/running jobs whose
+      // head branch resolves to this thread — those are not linked yet, and
+      // without them the thread would read as idle/done mid-review.
+      const relevant = jobs.filter((job) => attributedThreadId.get(job.id) === String(thread.id));
       const desired = deriveAutoReviewThreadPhase({
         jobs: relevant,
         threadId: String(thread.id),

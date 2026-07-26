@@ -746,4 +746,100 @@ struct SubagentTaskActivityStateTests {
         #expect(T3SubagentTaskEntityKind(nil, taskType: "general-purpose") == .subagent)
         #expect(T3SubagentTaskEntityKind(nil, taskType: nil) == .subagent)
     }
+
+    @Test("a foreground command earns no row until it is backgrounded")
+    func commandRowsAppearOnlyWhenBackgrounded() throws {
+        let started = activity(
+            id: "act-cmd-start", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("cmd-1"),
+                "entityType": .string("command"),
+                "taskType": .string("local_bash"),
+                "description": .string("Run full mac test suite"),
+            ]))
+        let backgrounded = activity(
+            id: "act-cmd-bg", kind: ActivityKind.taskUpdated,
+            at: "2026-07-04T10:00:02.000Z",
+            payload: .object([
+                "taskId": .string("cmd-1"),
+                "entityType": .string("command"),
+                "isBackgrounded": .bool(true),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        let startedResult = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+        let foreground = try #require(startedResult)
+        #expect(foreground.producesTimelineRow == false)
+        #expect(state.activeTaskCount == 1)
+        #expect(state.activeBackgroundWorkCount == 0)
+
+        let backgroundedResult = state.apply(
+            activity: backgrounded, at: WireDate.parse(backgrounded.createdAt)!)
+        let detached = try #require(backgroundedResult)
+        #expect(detached.isBackgrounded)
+        #expect(detached.producesTimelineRow)
+        #expect(state.activeBackgroundWorkCount == 1)
+    }
+
+    @Test("streamed output keeps the command's own description")
+    func streamedOutputDoesNotRenameTheCommand() throws {
+        let started = activity(
+            id: "act-cmd-start", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("cmd-1"),
+                "entityType": .string("command"),
+                "taskType": .string("local_bash"),
+                "description": .string("Run full mac test suite"),
+            ]))
+        // Background output chunks carry a summary and no description; the
+        // fold must not blank or replace the title the task started with.
+        let output = activity(
+            id: "act-cmd-output", kind: ActivityKind.taskProgress,
+            at: "2026-07-04T10:00:05.000Z",
+            payload: .object([
+                "taskId": .string("cmd-1"),
+                "entityType": .string("command"),
+                "summary": .string("Building for debugging..."),
+                "lastToolName": .string("local_bash"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        _ = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+        let progressResult = state.apply(activity: output, at: WireDate.parse(output.createdAt)!)
+        let item = try #require(progressResult)
+
+        #expect(item.description == "Run full mac test suite")
+        #expect(item.progressLog.last?.text == "Building for debugging...")
+    }
+
+    @Test("sub-agents and workflows always earn a row")
+    func delegatedWorkAlwaysProducesRows() throws {
+        let subagent = activity(
+            id: "act-agent", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("agent-1"),
+                "entityType": .string("subagent"),
+            ]))
+        let workflow = activity(
+            id: "act-workflow", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:01.000Z",
+            payload: .object([
+                "taskId": .string("workflow-1"),
+                "entityType": .string("workflow"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        let agentResult = state.apply(activity: subagent, at: WireDate.parse(subagent.createdAt)!)
+        let workflowResult = state.apply(
+            activity: workflow, at: WireDate.parse(workflow.createdAt)!)
+        let agentItem = try #require(agentResult)
+        let workflowItem = try #require(workflowResult)
+
+        #expect(agentItem.producesTimelineRow)
+        #expect(workflowItem.producesTimelineRow)
+        #expect(state.activeBackgroundWorkCount == 2)
+    }
 }

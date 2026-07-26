@@ -67,6 +67,11 @@ export interface Preferences {
   /** Code/diff font size override; null/absent means derived from baseFontSize. */
   readonly codeFontSize?: number | null;
   readonly codeWordBreak?: boolean;
+  /**
+   * Composer "create PR when done" toggle. Global rather than per-thread (as
+   * on macOS) so the choice survives thread switches and relaunches.
+   */
+  readonly autoCreatePullRequest?: boolean;
 }
 
 async function readStorageItem(key: MobileStorageKeyValue): Promise<string | null> {
@@ -165,6 +170,7 @@ export async function loadPreferences(): Promise<Preferences> {
     markdownFontSize?: number;
     codeFontSize?: number | null;
     codeWordBreak?: boolean;
+    autoCreatePullRequest?: boolean;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -184,6 +190,9 @@ export async function loadPreferences(): Promise<Preferences> {
   }
   if (typeof parsed.codeWordBreak === "boolean") {
     preferences.codeWordBreak = parsed.codeWordBreak;
+  }
+  if (typeof parsed.autoCreatePullRequest === "boolean") {
+    preferences.autoCreatePullRequest = parsed.autoCreatePullRequest;
   }
 
   return preferences;

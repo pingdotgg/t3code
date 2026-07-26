@@ -20,9 +20,27 @@ public struct ChatScreen: View {
     /// tipped the Swift 6.2 (Xcode 26.x) type checker over its limit in
     /// release builds (`circular reference` / type-check timeout on CI).
     private var selectedThreadIsActive: Bool {
-        model.selectedThread.map {
-            $0.status == .running || $0.status == .backgroundWork
-        } ?? false
+        model.selectedThread?.status.isLiveTurn ?? false
+    }
+
+    /// `PlanRailPolicy.showsRail` for `thread` — see that type for the rule.
+    /// Written as statements, not one expression — see
+    /// `selectedThreadIsActive` on the Swift 6.2 type-checker limit.
+    private func showsPlanRail(_ thread: ChatThread, hasPhoto: Bool) -> Bool {
+        let steps = model.threadState(thread.id)?.planProgress?.steps
+        let hasSteps = !(steps?.isEmpty ?? true)
+        return PlanRailPolicy.showsRail(
+            isLiveTurn: thread.status.isLiveTurn, hasPhoto: hasPhoto, hasSteps: hasSteps)
+    }
+
+    /// Identity + status of the thread on screen, so switching to an already
+    /// idle thread never reports as "the run just finished".
+    private var watchedThreadSnapshot: ThreadStatusSnapshot {
+        guard let thread = model.selectedThread else { return ThreadStatusSnapshot() }
+        return ThreadStatusSnapshot(
+            threadID: thread.id,
+            status: thread.status,
+            cancellationPending: model.isCancellationPending(for: thread))
     }
 
     public var body: some View {
@@ -48,29 +66,35 @@ public struct ChatScreen: View {
                         )
                         .id(thread.id)
                         ChatFollowUpBar(model: model)
-                        if thread.status == .running || thread.status == .backgroundWork {
-                            PlanProgressStrip(model: model)
-                                // Compact card, right-anchored to the same
-                                // 1040pt column as the Unsplash credit below
-                                // it, instead of spanning the full composer
-                                // width.
-                                .frame(maxWidth: 440, alignment: .trailing)
-                                .frame(maxWidth: 1040, alignment: .trailing)
-                                .padding(.horizontal, 20)
-                                .padding(.top, 8)
-                        }
-                        // Unsplash credit rides in the layout flow above the
-                        // composer, right-aligned to the same 1040pt column.
-                        // A floating corner overlay used to overlap the
-                        // composer glass on narrower windows.
-                        if let photo = scenery.photo(for: threadKey) {
-                            HStack {
-                                Spacer(minLength: 0)
-                                SceneryAttributionTag(photo: photo)
+                        // One shared row above the composer: the plan rail
+                        // takes all the free width on the left, the Unsplash
+                        // credit keeps the right edge of the same 1040pt
+                        // column. (The credit rides in the layout flow rather
+                        // than a floating corner overlay, which used to
+                        // overlap the composer glass on narrow windows.)
+                        // With a credit on the row, the rail mounts for the
+                        // whole live turn and holds its height while the plan
+                        // hydrates, so the pill never moves. With no credit
+                        // the row exists only for the rail, so it waits for
+                        // actual steps rather than reserving empty space that
+                        // would push the composer down for every run.
+                        let photo = scenery.photo(for: threadKey)
+                        let showsPlanRail = showsPlanRail(thread, hasPhoto: photo != nil)
+                        if showsPlanRail || photo != nil {
+                            HStack(alignment: .bottom, spacing: 10) {
+                                if showsPlanRail {
+                                    PlanProgressStrip(
+                                        model: model, reservesSlotWhileEmpty: photo != nil)
+                                } else {
+                                    Spacer(minLength: 0)
+                                }
+                                if let photo {
+                                    SceneryAttributionTag(photo: photo)
+                                }
                             }
                             .frame(maxWidth: 1040)
                             .padding(.horizontal, 20)
-                            .padding(.top, 6)
+                            .padding(.top, 8)
                         }
                         ComposerBar(
                             model: model,
@@ -115,6 +139,13 @@ public struct ChatScreen: View {
             Motion.structure,
             value: model.selectedThreadID.flatMap { model.threadState($0)?.planProgress } != nil
         )
+        // The watched thread finishing, failing, or stopping to ask something
+        // is exactly the case macOS banners suppress (see
+        // AgentNotificationPolicy), so it lands as a tap instead.
+        .onChange(of: watchedThreadSnapshot) { old, new in
+            guard let event = ThreadStatusHaptics.event(from: old, to: new) else { return }
+            Haptics.play(event)
+        }
         .background {
             // The thread's scene as a full chat wallpaper; the wash inside
             // keeps timeline text readable (see SceneryChatBackground).

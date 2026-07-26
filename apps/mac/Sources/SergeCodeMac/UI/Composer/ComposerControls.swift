@@ -158,6 +158,7 @@ private struct AutoPRToggle: View {
 
     var body: some View {
         Button {
+            Haptics.play(.toggle)
             isOn.toggle()
         } label: {
             ComposerSegmentLabel(
@@ -232,9 +233,11 @@ private struct RunProfileMenu: View {
                 let firstObservation = lastEffort == nil
                 lastEffort = newEffort
                 lastThreadID = thread.id
-                guard sameThread, !firstObservation, oldEffort != newEffort,
-                    Motion.profile.allowsDecorativeEffects
-                else { return }
+                guard sameThread, !firstObservation, oldEffort != newEffort else { return }
+                // The effort ramp is a level, so its change is felt as one —
+                // the ripple is decorative and can be off, the step is not.
+                Haptics.play(.step)
+                guard Motion.profile.allowsDecorativeEffects else { return }
                 burstToken += 1
             }
             .popover(isPresented: $isPresented, arrowEdge: .top) {
@@ -607,7 +610,16 @@ private struct InteractionModeMenu: View {
             Slider(
                 value: Binding(
                     get: { maxSubAgentsDraft ?? Double(thread.executorMaxSubAgents) },
-                    set: { maxSubAgentsDraft = $0 }
+                    set: { newValue in
+                        let previous = Int(maxSubAgentsDraft ?? Double(thread.executorMaxSubAgents))
+                        maxSubAgentsDraft = newValue
+                        // A stepped slider has detents in its values but none
+                        // under the finger; each whole-number crossing ticks,
+                        // and the two ends thud instead.
+                        let next = Int(newValue)
+                        guard next != previous else { return }
+                        Haptics.play(next == 1 || next == 10 ? .boundary : .step)
+                    }
                 ),
                 in: 1...10,
                 step: 1,

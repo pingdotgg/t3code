@@ -929,7 +929,9 @@ public actor LiveBackend: BackendService {
                 Self.isTaskLifecycleActivity(activity),
                 let task = subagentState.apply(activity: activity, at: at)
             {
-                items.upsertTimelineItem(mapSubagentTask(task), indexByID: &indexByID)
+                if let item = mapTaskRow(task) {
+                    items.upsertTimelineItem(item, indexByID: &indexByID)
+                }
                 continue
             }
             guard
@@ -2810,12 +2812,14 @@ public actor LiveBackend: BackendService {
             // each transitioned row or they spin "running" until thread reopen.
             let stoppedTasks = subagentTasksByThread[shell.id]?.clearActiveTasks() ?? []
             for task in stoppedTasks {
+                guard let item = mapTaskRow(task) else { continue }
                 emitOrdered(
                     threadID: shell.id,
-                    event: .timelineAppended(threadID: shell.id, item: mapSubagentTask(task)))
+                    event: .timelineAppended(threadID: shell.id, item: item))
             }
         }
-        let activeSubagentCount = subagentTasksByThread[shell.id]?.activeTaskCount ?? 0
+        let activeSubagentCount =
+            subagentTasksByThread[shell.id]?.activeBackgroundWorkCount ?? 0
         let status = mapStatus(
             session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
             settledOverride: shell.settledOverride,
@@ -3047,9 +3051,14 @@ public actor LiveBackend: BackendService {
         var state = subagentTasksByThread[threadID] ?? T3SubagentTaskActivityState()
         guard let task = state.apply(activity: activity, at: at) else { return false }
         subagentTasksByThread[threadID] = state
-        emitOrdered(
-            threadID: threadID,
-            event: .timelineAppended(threadID: threadID, item: mapSubagentTask(task)))
+        // A suppressed row (a foreground command) still counts as handled:
+        // the generic mapper must not fall through and render the raw task
+        // activity as a notice.
+        if let item = mapTaskRow(task) {
+            emitOrdered(
+                threadID: threadID,
+                event: .timelineAppended(threadID: threadID, item: item))
+        }
         reemitThreadWithCurrentProjection(threadID: threadID)
         return true
     }
@@ -3062,7 +3071,7 @@ public actor LiveBackend: BackendService {
             return
         }
         guard var thread = threadsByID[threadID] else { return }
-        let activeCount = subagentTasksByThread[threadID]?.activeTaskCount ?? 0
+        let activeCount = subagentTasksByThread[threadID]?.activeBackgroundWorkCount ?? 0
         thread.backgroundAgentCount = activeCount
         thread.health = uiThreadHealth(for: threadID)
         if thread.status == .idle, activeCount > 0 {
@@ -3072,6 +3081,17 @@ public actor LiveBackend: BackendService {
         }
         threadsByID[threadID] = thread
         emitOrdered(threadID: threadID, event: .threadUpserted(thread))
+    }
+
+    /// Timeline row for a provider task, or nil when the task earns no row of
+    /// its own. Foreground shell commands are the nil case: the provider
+    /// already emits a `command_execution` tool row for the same call, so a
+    /// task card would print the command twice and dress a shell call up as a
+    /// delegated agent. Backgrounded commands keep their row — see
+    /// `T3SubagentTaskItem.producesTimelineRow`.
+    private func mapTaskRow(_ task: T3SubagentTaskItem) -> TimelineItem? {
+        guard task.producesTimelineRow else { return nil }
+        return mapSubagentTask(task)
     }
 
     private func mapSubagentTask(_ task: T3SubagentTaskItem) -> TimelineItem {

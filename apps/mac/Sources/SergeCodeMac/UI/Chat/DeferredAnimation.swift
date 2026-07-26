@@ -34,11 +34,16 @@ extension Transaction {
 /// (the AppKit layout-feedback-loop guard above), then applies the animation
 /// via a transaction marked as user-initiated so timeline-level animation
 /// suppression does not flatten the expand/collapse the user just asked for.
+///
+/// Every timeline disclosure routes through here, so this is also where the
+/// expand/collapse tap lives — one funnel instead of a haptic call on each
+/// tool row, plan card, and delegated-task card.
 @MainActor
 func withDeferredDisclosureAnimation(
     _ animation: Animation = Motion.structure,
     action: @escaping @MainActor @Sendable () -> Void
 ) {
+    Haptics.play(.toggle)
     DispatchQueue.main.async {
         var transaction = Transaction(animation: animation)
         transaction.isIntentionalDisclosure = true

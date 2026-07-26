@@ -278,6 +278,7 @@ struct SidebarView: View {
             let hiddenCount = split.active.count - visibleActive.count
             if hiddenCount > 0 {
                 Button {
+                    Haptics.play(.toggle)
                     withAnimation(Motion.structure) {
                         // `_ =`: as a single-expression closure this would
                         // implicitly return Set.insert's (inserted,
@@ -313,6 +314,7 @@ struct SidebarView: View {
         let isRevealed = revealedSettled.contains(group.id)
         HStack(spacing: 6) {
             Button {
+                Haptics.play(.toggle)
                 withAnimation(Motion.structure) {
                     // `_ =`: keep the Set.insert/remove results out of
                     // `withAnimation`'s generic Result inference (see the
@@ -349,6 +351,7 @@ struct SidebarView: View {
             // stay quiet; kept in the layout at 0 opacity so the row never
             // resizes on hover.
             Button {
+                Haptics.play(.commit)
                 Task { await archiveAllSettled(settled) }
             } label: {
                 Image(systemName: "archivebox")
@@ -405,6 +408,7 @@ struct SidebarView: View {
                     item.isPinned ? "Unpin" : "Pin",
                     systemImage: item.isPinned ? "pin.slash" : "pin")
                 {
+                    Haptics.play(.toggle)
                     model.togglePinned(item.thread)
                 }
                 .disabled(!item.isSelectable)
@@ -433,6 +437,7 @@ struct SidebarView: View {
                     .disabled(!item.isSelectable)
                 }
                 Button("Archive", systemImage: "archivebox") {
+                    Haptics.play(.commit)
                     Task { await model.archiveThread(item.thread) }
                 }
                 .disabled(!item.isSelectable)
@@ -464,6 +469,7 @@ struct SidebarView: View {
     }
 
     private func settle(_ item: SidebarThreadItem) {
+        Haptics.play(.commit)
         let wasSelected = multi.selection == item.id
         let next = activeThreads.first { $0.id != item.id && $0.isSelectable }
         Task {
@@ -545,6 +551,7 @@ struct SidebarView: View {
     }
 
     private func toggleProjectCollapse(_ projectID: String) {
+        Haptics.play(.toggle)
         withAnimation(Motion.structure) {
             // `_ =`: see the expandedProjects toggle above.
             if collapsedProjects.contains(projectID) {
@@ -797,7 +804,12 @@ private struct SidebarProviderChoiceRow: View {
     @UIState private var isHovering = false
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            // Picking a provider here starts a session — a commit, not a
+            // browse.
+            Haptics.play(.commit)
+            action()
+        } label: {
             HStack(spacing: 10) {
                 ProviderIcon(provider: provider, size: 15)
                     .foregroundStyle(isEnabled ? AlpineTheme.forest : Color.secondary)
@@ -1085,7 +1097,7 @@ private struct SidebarThreadRow: View {
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(.quaternary, in: Capsule())
-                    .help("Background agents")
+                    .help("Background agents and commands")
             }
         }
         .padding(.vertical, 2)

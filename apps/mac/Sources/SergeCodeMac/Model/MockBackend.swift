@@ -72,6 +72,14 @@ public final class MockBackend: BackendService, @unchecked Sendable {
             await state.appendSessionExit(
                 threadID: threadID, summary: summary, stderrTail: stderrTail)
         }
+
+        /// Probe hook: append one finished tool row to a mid-turn thread.
+        public func probeAppendRunningToolEvent(
+            threadID: String, name: String, detail: String, kind: ToolEventKind
+        ) async {
+            await state.appendRunningToolEvent(
+                threadID: threadID, name: name, detail: detail, kind: kind)
+        }
     #endif
 
     public func providers() async throws -> [ProviderInstance] {
@@ -376,6 +384,16 @@ public final class MockBackend: BackendService, @unchecked Sendable {
 // MARK: - Actor-isolated mutable state + demo data
 
 private actor MockState {
+    /// The in-turn todo list the primary thread works through. Re-emitted at
+    /// the start of every one of its turns (see `sendMessage`).
+    static let planFixture = PlanProgress(
+        steps: [
+            PlanStep(id: 0, title: "Reproduce the scroll jump", status: .completed),
+            PlanStep(id: 1, title: "Pin sort to explicit reorder", status: .inProgress),
+            PlanStep(id: 2, title: "Verify with 200-thread seed", status: .pending),
+        ],
+        explanation: nil)
+
     private let seedVariant: String?
     private let primaryThreadID: String
 
@@ -486,16 +504,7 @@ private actor MockState {
             .contextWindowUpdated(
                 threadID: primaryThreadID,
                 status: ContextWindowStatus(usedTokens: 72_000, maxTokens: 200_000)))
-        emit(
-            .planProgressUpdated(
-                threadID: primaryThreadID,
-                progress: PlanProgress(
-                    steps: [
-                        PlanStep(id: 0, title: "Reproduce the scroll jump", status: .completed),
-                        PlanStep(id: 1, title: "Pin sort to explicit reorder", status: .inProgress),
-                        PlanStep(id: 2, title: "Verify with 200-thread seed", status: .pending),
-                    ],
-                    explanation: nil)))
+        emit(.planProgressUpdated(threadID: primaryThreadID, progress: Self.planFixture))
         lifecycleTask = Task { await self.runSubagentLifecycleDemo() }
         if seedVariant != nil {
             connectionWobbleTask = Task { await self.runConnectionWobble() }
@@ -766,6 +775,13 @@ private actor MockState {
         threadsByID[threadID] = thread
         emit(.threadUpserted(thread))
 
+        // A plan belongs to the turn that produced it — the app drops plan
+        // progress when a thread settles — so the fixture has to arrive with
+        // each new turn, the way a real provider streams `turn.plan.updated`.
+        if threadID == primaryThreadID {
+            emit(.planProgressUpdated(threadID: threadID, progress: Self.planFixture))
+        }
+
         let messageID = nextID("asst")
         let key = StreamingKey(threadID: threadID, messageID: messageID)
         let reply = MockState.canned(for: text)
@@ -892,6 +908,27 @@ private actor MockState {
     func appendSessionExit(threadID: String, summary: String, stderrTail: String) {
         let item = TimelineItem.sessionExit(
             id: nextID("exit"), summary: summary, stderrTail: stderrTail, at: Date())
+        timelinesByThread[threadID, default: []].append(item)
+        emit(.timelineAppended(threadID: threadID, item: item))
+    }
+
+    /// Holds a thread mid-turn and appends one finished tool event, as if the
+    /// agent had closed a tool's lifecycle while still working. Repeated calls
+    /// reproduce the live tool burst that drives `liveAutoCollapseToolThreshold`
+    /// collapse and the collapsed group's receive animation.
+    func appendRunningToolEvent(
+        threadID: String, name: String, detail: String, kind: ToolEventKind
+    ) {
+        let now = Date()
+        if var thread = threadsByID[threadID], thread.status != .running {
+            thread.status = .running
+            thread.updatedAt = now
+            threadsByID[threadID] = thread
+            emit(.threadUpserted(thread))
+        }
+        let item = TimelineItem.toolEvent(
+            id: nextID("tool"), name: name, detail: detail, kind: kind,
+            status: .succeeded, at: now, output: nil, outputIsError: false)
         timelinesByThread[threadID, default: []].append(item)
         emit(.timelineAppended(threadID: threadID, item: item))
     }
@@ -1738,6 +1775,34 @@ private actor MockState {
                 isStreaming: false,
                 at: now.addingTimeInterval(-12)
             ),
+            // A foreground command is its tool row and nothing else — the
+            // elapsed clock carries the "still running" signal. Compare with
+            // the backgrounded command below, which is the only command shape
+            // that also earns a task row.
+            .toolEvent(
+                id: "t1-tool13", name: "Running command",
+                detail: "Bash: swift build --package-path apps/mac", kind: .command,
+                status: .running, at: now.addingTimeInterval(-11),
+                output: nil, outputIsError: false),
+            .subagentTask(
+                SubagentTaskItem(
+                    taskId: "mock-command-1", taskType: "local_bash",
+                    entityKind: .command,
+                    description: "Run full mac test suite",
+                    state: .running, latestProgress: nil,
+                    lastToolName: "local_bash",
+                    isBackgrounded: true,
+                    startedAt: now.addingTimeInterval(-240),
+                    lastActivityAt: now.addingTimeInterval(-6), duration: nil,
+                    progressLog: [
+                        SubagentTaskProgressEntry(
+                            at: now.addingTimeInterval(-120), toolName: "local_bash",
+                            text: "Building for debugging..."),
+                        SubagentTaskProgressEntry(
+                            at: now.addingTimeInterval(-6), toolName: "local_bash",
+                            text: "Test Suite 'SubagentTaskPresentationTests' started\n"
+                                + "✔ subtitle prefers the completion summary (0.004s)"),
+                    ])),
         ]
     }
 

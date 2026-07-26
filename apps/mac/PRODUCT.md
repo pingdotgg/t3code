@@ -31,3 +31,5 @@ Do not resemble a generic browser dashboard, a decorative AI chat wrapper, or a 
 ## Accessibility & Inclusion
 
 Use native SwiftUI semantics, labels, focus behavior, and keyboard conventions. Respect macOS Reduce Motion, never rely on color alone for status, and keep text and controls legible in the app's dark appearance.
+
+Feedback has two halves: `Motion` owns what a response looks like, `Haptics` owns what it feels like on a Force Touch trackpad. Feedback is never haptic-only — every tap accompanies a visible change, so the app is unchanged for users without an actuator or with haptics switched off (Settings ▸ General ▸ Feedback). Route new taps through a `HapticEvent` rather than calling AppKit directly, and keep them tied to something the user did; ambient agent progress belongs in notifications, not in the trackpad.

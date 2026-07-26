@@ -54,7 +54,8 @@ Two per-thread fields on the thread read model and shell:
 - `executorModelSelection: ModelSelection | null` — the executor model. Null
   means advise only (delegation falls back to the thread's own model).
 - `executorMaxSubAgents: number` (1–10, default 3) — the max concurrent
-  executor sub-agents, exposed in the mac composer as a slider.
+  executor sub-agents, exposed in the mac composer as a slider and in the
+  mobile composer as a 1–10 menu.
 
 - Command: `thread.executor-model.set` with `{ executorModelSelection,
 executorMaxSubAgents? }` (`null` clears the executor → advise only; an absent
@@ -133,6 +134,25 @@ The composer's mode capsule:
   cap.
 - **`/advisor`** is the built-in slash command (wire value `"advisor"`).
 
+## Native control surface (iOS)
+
+The mobile composer's options menu mirrors the same axes through native
+submenus (`apps/mobile/src/lib/interactionModes.ts` builds them for both the
+thread composer and the new-task draft screen):
+
+- **Runtime** — all four runtime modes.
+- **Interaction** — Default / Plan / Advisor/Planner.
+- When Advisor/Planner is selected, **Executor model** lists every available
+  model grouped by provider plus "None — advise only", and **Max sub-agents**
+  offers 1–10. Both dispatch `thread.executor-model.set` immediately rather
+  than riding along with the next queued message, because executor config is
+  thread state and not part of the draft.
+- **`/advisor`** is available as a built-in slash command.
+
+The new-task draft screen offers the interaction mode but not the executor
+configuration: the thread does not exist server-side until the first message
+is sent, so there is nothing to bind an executor to yet.
+
 ## Known gaps
 
 - **Grok does not steer** (above).
@@ -141,5 +161,6 @@ The composer's mode capsule:
   design so they can implement.
 - **Claude's advisor steering leans on denying `ExitPlanMode`.** Write access is
   still governed by the thread's runtime mode.
-- **Mobile has no advisor UI yet.** The mode decodes everywhere, but the
-  executor picker and slider are mac-only for now.
+- **Mobile picks the sub-agent cap from a menu, not a slider.** A native
+  submenu of 1–10 is the idiomatic iOS equivalent of the mac slider; the wire
+  command and bounds are identical.
