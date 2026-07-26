@@ -181,6 +181,7 @@ const makeDefaultOrchestrationReadModel = () => {
         proposedPlans: [],
         checkpoints: [],
         deletedAt: null,
+        autoReviewPhase: null,
       },
     ],
   };
@@ -210,6 +211,7 @@ const makeDefaultOrchestrationThreadShell = (
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    autoReviewPhase: null,
     ...overrides,
   };
 };
@@ -5091,6 +5093,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             proposedPlans: [],
             checkpoints: [],
             deletedAt: null,
+            autoReviewPhase: null,
           },
         ],
       };

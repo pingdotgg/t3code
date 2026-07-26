@@ -47,6 +47,7 @@ function makeThread(
     updatedAt: "2026-04-01T00:00:00.000Z",
     archivedAt: null,
     deletedAt: null,
+    autoReviewPhase: null,
     messages: [],
     proposedPlans: [],
     activities: [],

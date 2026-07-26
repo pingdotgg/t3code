@@ -75,7 +75,7 @@ const makeText = (overrides: Partial<TextGeneration.TextGeneration["Service"]> =
 describe("AutoReviewRunner", () => {
   it("posts a review and auto-fixes when an origin thread is linked", async () => {
     const submits: unknown[] = [];
-    const fixes: Array<{ threadId: string; prompt: string }> = [];
+    const fixes: Array<{ jobId: string; threadId: string; prompt: string }> = [];
 
     await Effect.gen(function* () {
       const store = yield* AutoReviewJobStore.AutoReviewJobStore;
@@ -103,18 +103,22 @@ describe("AutoReviewRunner", () => {
             branch: "feat",
           },
         ],
-        dispatchFixPrompt: (input) =>
+        queueOrDispatchFix: (input) =>
           Effect.sync(() => {
             fixes.push(input);
+            return "dispatched" as const;
           }),
       });
 
       const job = yield* store.get(enqueued.job.id);
       expect(job?.status).toBe("succeeded");
       expect(job?.autoFixEnqueued).toBe(true);
+      expect(job?.actionableFindings).toBe(true);
+      expect(job?.decision).toBe("comment");
       expect(job?.originThreadId).toBe("thread-1");
       expect(submits.length).toBe(1);
       expect(fixes[0]?.threadId).toBe("thread-1");
+      expect(fixes[0]?.jobId).toBe(enqueued.job.id);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -137,6 +141,139 @@ describe("AutoReviewRunner", () => {
               ),
             ),
             Layer.provide(Layer.succeed(TextGeneration.TextGeneration, makeText())),
+          ),
+        ),
+      ),
+      Effect.runPromise,
+    );
+  });
+
+  it("does not mark autoFixEnqueued when the fix was queued for a busy thread", async () => {
+    const fixes: Array<{ jobId: string; threadId: string; prompt: string }> = [];
+
+    await Effect.gen(function* () {
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      const runner = yield* AutoReviewRunner.AutoReviewRunner;
+      const enqueued = yield* store.enqueue({
+        projectId: "proj",
+        prNumber: 1,
+        headSha: "abc123def456",
+        trigger: "open_or_push",
+        modelSelection,
+      });
+      yield* store.update(enqueued.job.id, { status: "running" });
+
+      yield* runner.runJob(enqueued.job.id, {
+        cwd: "/repo",
+        candidates: [
+          {
+            threadId: "thread-1",
+            projectId: "proj",
+            deletedAt: null,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            status: "running",
+            prNumber: 1,
+            prState: "open",
+            branch: "feat",
+          },
+        ],
+        queueOrDispatchFix: (input) =>
+          Effect.sync(() => {
+            fixes.push(input);
+            return "queued" as const;
+          }),
+      });
+
+      const job = yield* store.get(enqueued.job.id);
+      expect(job?.status).toBe("succeeded");
+      expect(job?.autoFixEnqueued).toBe(false);
+      expect(job?.actionableFindings).toBe(true);
+      expect(job?.decision).toBe("comment");
+      expect(fixes[0]?.threadId).toBe("thread-1");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          AutoReviewJobStore.layerInMemory,
+          AutoReviewRunner.layer.pipe(
+            Layer.provide(AutoReviewJobStore.layerInMemory),
+            Layer.provide(Layer.succeed(GitHubCli.GitHubCli, makeGithub())),
+            Layer.provide(Layer.succeed(TextGeneration.TextGeneration, makeText())),
+          ),
+        ),
+      ),
+      Effect.runPromise,
+    );
+  });
+
+  it("does not queue a fix when findings have no blocking or important comments", async () => {
+    const fixes: Array<{ jobId: string; threadId: string; prompt: string }> = [];
+
+    await Effect.gen(function* () {
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      const runner = yield* AutoReviewRunner.AutoReviewRunner;
+      const enqueued = yield* store.enqueue({
+        projectId: "proj",
+        prNumber: 1,
+        headSha: "abc123def456",
+        trigger: "open_or_push",
+        modelSelection,
+      });
+      yield* store.update(enqueued.job.id, { status: "running" });
+
+      yield* runner.runJob(enqueued.job.id, {
+        cwd: "/repo",
+        candidates: [
+          {
+            threadId: "thread-1",
+            projectId: "proj",
+            deletedAt: null,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            status: "idle",
+            prNumber: 1,
+            prState: "open",
+            branch: "feat",
+          },
+        ],
+        queueOrDispatchFix: (input) =>
+          Effect.sync(() => {
+            fixes.push(input);
+            return "dispatched" as const;
+          }),
+      });
+
+      const job = yield* store.get(enqueued.job.id);
+      expect(job?.status).toBe("succeeded");
+      expect(job?.autoFixEnqueued).toBe(false);
+      expect(job?.actionableFindings).toBe(false);
+      expect(fixes).toHaveLength(0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          AutoReviewJobStore.layerInMemory,
+          AutoReviewRunner.layer.pipe(
+            Layer.provide(AutoReviewJobStore.layerInMemory),
+            Layer.provide(Layer.succeed(GitHubCli.GitHubCli, makeGithub())),
+            Layer.provide(
+              Layer.succeed(
+                TextGeneration.TextGeneration,
+                makeText({
+                  generateAutoReviewFindings: () =>
+                    Effect.succeed({
+                      summary: "Clean",
+                      decision: "comment",
+                      comments: [
+                        {
+                          path: "a.ts",
+                          line: 2,
+                          side: "RIGHT",
+                          severity: "nit",
+                          body: "style",
+                        },
+                      ],
+                    }),
+                }),
+              ),
+            ),
           ),
         ),
       ),

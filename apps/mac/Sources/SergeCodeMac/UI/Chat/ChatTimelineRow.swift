@@ -743,9 +743,10 @@ private struct ToolEventRow: View {
         case .failed: return .failed
         case .running:
             switch threadStatus {
-            case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork, nil:
+            case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork,
+                .reviewing, .fixing, nil:
                 return .running
-            case .idle, .archived, .error, .settled: return .settled
+            case .idle, .archived, .error, .settled, .done, .readyToMerge: return .settled
             }
         }
     }

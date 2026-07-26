@@ -47,11 +47,13 @@ public struct Project: Identifiable, Hashable, Sendable {
 
 public enum ThreadStatus: String, Sendable {
     case idle, running, waiting, waitingApproval, waitingInput, backgroundWork, error, archived, settled
+    case done, reviewing, fixing, readyToMerge
 
     public var isSettled: Bool {
         switch self {
-        case .idle, .archived, .error, .settled: true
-        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork: false
+        case .idle, .archived, .error, .settled, .done, .readyToMerge: true
+        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork, .reviewing, .fixing:
+            false
         }
     }
 }

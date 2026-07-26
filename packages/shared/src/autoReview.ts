@@ -101,6 +101,93 @@ export function shouldAutoFixOriginThread(findings: Pick<AutoReviewFindings, "co
   );
 }
 
+/**
+ * Grace window for a queued turn start: session adoption takes seconds, so a
+ * user message still unadopted after this bound is a failed start (or stale
+ * data), not pending work. Mirrors QUEUED_TURN_START_GRACE_MS in
+ * packages/client-runtime/src/state/threadSettled.ts.
+ */
+export const AUTO_REVIEW_QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+
+/**
+ * Whether the origin thread must not receive an auto-fix prompt right now.
+ * Busy when the session is coming alive or working, the latest turn is still
+ * running, or a queued turn start is in flight (a user message strictly newer
+ * than every latest-turn timestamp within the adoption grace window). Mirrors
+ * the hasQueuedTurnStart heuristic in threadSettled.ts and the server-side
+ * twin in apps/server/src/orchestration/decider.ts, including the exemption
+ * for a failed session start (status "error").
+ */
+export function isAutoReviewFixThreadBusy(input: {
+  readonly sessionStatus: string | null;
+  readonly latestTurnState: string | null;
+  readonly latestUserMessageAt: string | null;
+  readonly latestTurnTimestamps: ReadonlyArray<string | null>;
+  readonly now: string;
+}): boolean {
+  if (input.sessionStatus === "starting" || input.sessionStatus === "running") {
+    return true;
+  }
+  if (input.latestTurnState === "running") {
+    return true;
+  }
+  // A failed session start clears the queued state: the failure is already
+  // visible, not pending work.
+  if (input.sessionStatus === "error") {
+    return false;
+  }
+  if (input.latestUserMessageAt == null) {
+    return false;
+  }
+  const messageAt = Date.parse(input.latestUserMessageAt);
+  const nowMs = Date.parse(input.now);
+  if (Number.isNaN(messageAt) || Number.isNaN(nowMs)) {
+    return false;
+  }
+  // Bounded on both sides: message timestamps may come from a device whose
+  // clock is ahead, and a negative age must not extend the busy window.
+  if (Math.abs(nowMs - messageAt) > AUTO_REVIEW_QUEUED_TURN_START_GRACE_MS) {
+    return false;
+  }
+  return input.latestTurnTimestamps.every(
+    (candidate) => candidate == null || Date.parse(candidate) < messageAt,
+  );
+}
+
+/**
+ * Phase shown on a thread shell for auto-review activity. `jobs` must be
+ * pre-filtered to the jobs relevant to this thread (origin-thread linkage,
+ * plus unlinked queued/running jobs matched by the caller).
+ */
+export function deriveAutoReviewThreadPhase(input: {
+  readonly jobs: ReadonlyArray<AutoReviewJob>;
+  readonly threadId: string;
+  readonly threadBusy: boolean;
+}): "reviewing" | "fixing" | "readyToMerge" | null {
+  if (input.jobs.length === 0) {
+    return null;
+  }
+  if (input.jobs.some((job) => job.status === "queued" || job.status === "running")) {
+    return "reviewing";
+  }
+  const latestSucceeded = input.jobs
+    .filter((job) => job.status === "succeeded")
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (!latestSucceeded) {
+    return null;
+  }
+  const hasPendingFix =
+    latestSucceeded.pendingFix != null &&
+    String(latestSucceeded.pendingFix.threadId) === input.threadId;
+  if (hasPendingFix || (latestSucceeded.autoFixEnqueued && input.threadBusy)) {
+    return "fixing";
+  }
+  if (!latestSucceeded.actionableFindings) {
+    return "readyToMerge";
+  }
+  return null;
+}
+
 export function shouldEnqueueAutoReviewJob(input: {
   readonly mode: AutoReviewMode;
   readonly existingStatus: AutoReviewJobStatus | null | undefined;
