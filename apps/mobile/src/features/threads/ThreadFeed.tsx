@@ -949,6 +949,7 @@ function renderFeedEntry(
             />
           ) : (
             <Markdown
+              selectable
               options={{ gfm: true }}
               renderers={styles.renderers}
               styles={styles.styles}
@@ -1048,6 +1049,7 @@ function UserMessageContent(props: {
     }
     return (
       <Markdown
+        selectable
         options={{ gfm: true }}
         renderers={props.markdownStyles.renderers}
         styles={props.markdownStyles.styles}
@@ -1088,6 +1090,7 @@ function UserMessageContent(props: {
         ) : (
           <Markdown
             key={segment.id}
+            selectable
             options={{ gfm: true }}
             renderers={props.markdownStyles.renderers}
             styles={props.markdownStyles.styles}

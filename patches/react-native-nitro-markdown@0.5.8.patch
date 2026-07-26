@@ -1,0 +1,317 @@
+diff --git a/lib/commonjs/markdown.js b/lib/commonjs/markdown.js
+index a489ad48db790aa997d15057f8c54033063dbcf1..b9ee414d371c2fc4ed0d3fcfbce255258de57f1b 100644
+--- a/lib/commonjs/markdown.js
++++ b/lib/commonjs/markdown.js
+@@ -188,7 +188,8 @@ const Markdown = ({
+   virtualizationMinBlocks = 40,
+   virtualization,
+   tableOptions,
+-  highlightCode
++  highlightCode,
++  selectable = false
+ }) => {
+   const parserOptionGfm = options?.gfm;
+   const parserOptionMath = options?.math;
+@@ -255,8 +256,9 @@ const Markdown = ({
+     stylingStrategy,
+     onLinkPress,
+     tableOptions,
+-    highlightCode
+-  }), [renderers, theme, nodeStyles, stylingStrategy, onLinkPress, tableOptions, highlightCode]);
++    highlightCode,
++    selectable
++  }), [renderers, theme, nodeStyles, stylingStrategy, onLinkPress, tableOptions, highlightCode, selectable]);
+   const topLevelBlocks = parseResult.ast?.type === "document" ? parseResult.ast.children ?? [] : parseResult.ast ? [parseResult.ast] : [];
+   const shouldVirtualizeBySetting = virtualize === true || virtualize === "auto" && topLevelBlocks.length >= virtualizationMinBlocks;
+   const shouldVirtualize = parseResult.ast !== null && shouldVirtualizeBySetting;
+@@ -317,7 +319,8 @@ const NodeRendererComponent = ({
+   const {
+     renderers,
+     theme,
+-    styles: nodeStyles
++    styles: nodeStyles,
++    selectable
+   } = (0, _MarkdownContext.useMarkdownContext)();
+   const baseStyles = getBaseStyles(theme);
+   const renderChildren = (children, childInListItem = false, childParentIsText = false) => {
+@@ -345,7 +348,8 @@ const NodeRendererComponent = ({
+         } else {
+           const Wrapper = childParentIsText ? _react.Fragment : _reactNative.Text;
+           const wrapperProps = childParentIsText ? {} : {
+-            style: baseStyles.text
++            style: baseStyles.text,
++            selectable
+           };
+           elements.push(/*#__PURE__*/(0, _jsxRuntime.jsx)(Wrapper, {
+             ...wrapperProps,
+@@ -443,6 +447,7 @@ const NodeRendererComponent = ({
+         });
+       }
+       return /*#__PURE__*/(0, _jsxRuntime.jsx)(_reactNative.Text, {
++        selectable,
+         style: [baseStyles.text, nodeStyles?.text],
+         children: node.content
+       });
+diff --git a/lib/commonjs/renderers/heading.js b/lib/commonjs/renderers/heading.js
+index 7e56d037a9620a78c77bc79894d578b1d81740be..f2b136d1e37e0e967322be44561ae2d13d016d39 100644
+--- a/lib/commonjs/renderers/heading.js
++++ b/lib/commonjs/renderers/heading.js
+@@ -15,11 +15,13 @@ const Heading = ({
+   style
+ }) => {
+   const {
+-    theme
++    theme,
++    selectable
+   } = (0, _MarkdownContext.useMarkdownContext)();
+   const styles = (0, _styleCache.getCachedStyles)(stylesCache, theme, createStyles);
+   const headingStyles = [styles.heading, level === 1 && styles.h1, level === 2 && styles.h2, level === 3 && styles.h3, level === 4 && styles.h4, level === 5 && styles.h5, level === 6 && styles.h6];
+   return /*#__PURE__*/(0, _jsxRuntime.jsx)(_reactNative.Text, {
++    selectable,
+     style: [...headingStyles, style],
+     children: children
+   });
+diff --git a/lib/module/markdown.js b/lib/module/markdown.js
+index c97a209c1f8c01f8d6ba17e0f77ea174b82d1d7e..fc8798ff28984fc27733a8c9b955432881044c41 100644
+--- a/lib/module/markdown.js
++++ b/lib/module/markdown.js
+@@ -184,7 +184,8 @@ export const Markdown = ({
+   virtualizationMinBlocks = 40,
+   virtualization,
+   tableOptions,
+-  highlightCode
++  highlightCode,
++  selectable = false
+ }) => {
+   const parserOptionGfm = options?.gfm;
+   const parserOptionMath = options?.math;
+@@ -251,8 +252,9 @@ export const Markdown = ({
+     stylingStrategy,
+     onLinkPress,
+     tableOptions,
+-    highlightCode
+-  }), [renderers, theme, nodeStyles, stylingStrategy, onLinkPress, tableOptions, highlightCode]);
++    highlightCode,
++    selectable
++  }), [renderers, theme, nodeStyles, stylingStrategy, onLinkPress, tableOptions, highlightCode, selectable]);
+   const topLevelBlocks = parseResult.ast?.type === "document" ? parseResult.ast.children ?? [] : parseResult.ast ? [parseResult.ast] : [];
+   const shouldVirtualizeBySetting = virtualize === true || virtualize === "auto" && topLevelBlocks.length >= virtualizationMinBlocks;
+   const shouldVirtualize = parseResult.ast !== null && shouldVirtualizeBySetting;
+@@ -312,7 +314,8 @@ const NodeRendererComponent = ({
+   const {
+     renderers,
+     theme,
+-    styles: nodeStyles
++    styles: nodeStyles,
++    selectable
+   } = useMarkdownContext();
+   const baseStyles = getBaseStyles(theme);
+   const renderChildren = (children, childInListItem = false, childParentIsText = false) => {
+@@ -340,7 +343,8 @@ const NodeRendererComponent = ({
+         } else {
+           const Wrapper = childParentIsText ? Fragment : Text;
+           const wrapperProps = childParentIsText ? {} : {
+-            style: baseStyles.text
++            style: baseStyles.text,
++            selectable
+           };
+           elements.push(/*#__PURE__*/_jsx(Wrapper, {
+             ...wrapperProps,
+@@ -438,6 +442,7 @@ const NodeRendererComponent = ({
+         });
+       }
+       return /*#__PURE__*/_jsx(Text, {
++        selectable,
+         style: [baseStyles.text, nodeStyles?.text],
+         children: node.content
+       });
+diff --git a/lib/module/renderers/heading.js b/lib/module/renderers/heading.js
+index e8964caa5c663c196c0995f7a85177288854c10f..bcd10dba7b752a85548a8a75fb1d5db23e364a0c 100644
+--- a/lib/module/renderers/heading.js
++++ b/lib/module/renderers/heading.js
+@@ -11,11 +11,13 @@ export const Heading = ({
+   style
+ }) => {
+   const {
+-    theme
++    theme,
++    selectable
+   } = useMarkdownContext();
+   const styles = getCachedStyles(stylesCache, theme, createStyles);
+   const headingStyles = [styles.heading, level === 1 && styles.h1, level === 2 && styles.h2, level === 3 && styles.h3, level === 4 && styles.h4, level === 5 && styles.h5, level === 6 && styles.h6];
+   return /*#__PURE__*/_jsx(Text, {
++    selectable,
+     style: [...headingStyles, style],
+     children: children
+   });
+diff --git a/lib/typescript/commonjs/MarkdownContext.d.ts b/lib/typescript/commonjs/MarkdownContext.d.ts
+index 79104e1b0f43f0d670a2a0669891dfa6d10bbd2a..9b9de6c1aea4fc96067e90491890e352e495e29d 100644
+--- a/lib/typescript/commonjs/MarkdownContext.d.ts
++++ b/lib/typescript/commonjs/MarkdownContext.d.ts
+@@ -66,6 +66,7 @@ export type MarkdownContextValue = {
+         minColumnWidth?: number;
+         measurementStabilizeMs?: number;
+     };
++    selectable?: boolean;
+ };
+ export declare const MarkdownContext: import("react").Context<MarkdownContextValue>;
+ export declare const useMarkdownContext: () => MarkdownContextValue;
+diff --git a/lib/typescript/commonjs/markdown.d.ts b/lib/typescript/commonjs/markdown.d.ts
+index 6d2a60212fbbce22ef94f49060186fec60e1b2a1..5153ed2e2c460a370e8fae20ac971f03ef437c1c 100644
+--- a/lib/typescript/commonjs/markdown.d.ts
++++ b/lib/typescript/commonjs/markdown.d.ts
+@@ -147,6 +147,13 @@ export type MarkdownProps = {
+      * Pass `true` to use the built-in tokenizer, or a custom highlighter function.
+      */
+     highlightCode?: boolean | CodeHighlighter;
++    /**
++     * Makes prose text selectable so users can copy fragments.
++     * Applied to the root Text nodes (inline groups, standalone text, headings),
++     * which is where the platform honors the prop.
++     * @default false
++     */
++    selectable?: boolean;
+ };
+ export declare const Markdown: FC<MarkdownProps>;
+ //# sourceMappingURL=markdown.d.ts.map
+\ No newline at end of file
+diff --git a/lib/typescript/module/MarkdownContext.d.ts b/lib/typescript/module/MarkdownContext.d.ts
+index 79104e1b0f43f0d670a2a0669891dfa6d10bbd2a..9b9de6c1aea4fc96067e90491890e352e495e29d 100644
+--- a/lib/typescript/module/MarkdownContext.d.ts
++++ b/lib/typescript/module/MarkdownContext.d.ts
+@@ -66,6 +66,7 @@ export type MarkdownContextValue = {
+         minColumnWidth?: number;
+         measurementStabilizeMs?: number;
+     };
++    selectable?: boolean;
+ };
+ export declare const MarkdownContext: import("react").Context<MarkdownContextValue>;
+ export declare const useMarkdownContext: () => MarkdownContextValue;
+diff --git a/lib/typescript/module/markdown.d.ts b/lib/typescript/module/markdown.d.ts
+index 6d2a60212fbbce22ef94f49060186fec60e1b2a1..5153ed2e2c460a370e8fae20ac971f03ef437c1c 100644
+--- a/lib/typescript/module/markdown.d.ts
++++ b/lib/typescript/module/markdown.d.ts
+@@ -147,6 +147,13 @@ export type MarkdownProps = {
+      * Pass `true` to use the built-in tokenizer, or a custom highlighter function.
+      */
+     highlightCode?: boolean | CodeHighlighter;
++    /**
++     * Makes prose text selectable so users can copy fragments.
++     * Applied to the root Text nodes (inline groups, standalone text, headings),
++     * which is where the platform honors the prop.
++     * @default false
++     */
++    selectable?: boolean;
+ };
+ export declare const Markdown: FC<MarkdownProps>;
+ //# sourceMappingURL=markdown.d.ts.map
+\ No newline at end of file
+diff --git a/src/MarkdownContext.ts b/src/MarkdownContext.ts
+index 2d93f0da14a8664724913d27e895e7f19f66a56c..6e72ce92da941185541ed7a773aa9de9c95f6191 100644
+--- a/src/MarkdownContext.ts
++++ b/src/MarkdownContext.ts
+@@ -97,6 +97,7 @@ export type MarkdownContextValue = {
+     minColumnWidth?: number;
+     measurementStabilizeMs?: number;
+   };
++  selectable?: boolean;
+ };
+ 
+ export const MarkdownContext = createContext<MarkdownContextValue>({
+diff --git a/src/markdown.tsx b/src/markdown.tsx
+index 50147a1c217f92353dc2f04b97a726d5289247ad..71205619e1b47d1f4a1f238fdcd8b6797bbadbea 100644
+--- a/src/markdown.tsx
++++ b/src/markdown.tsx
+@@ -435,6 +435,13 @@ export type MarkdownProps = {
+    * Pass `true` to use the built-in tokenizer, or a custom highlighter function.
+    */
+   highlightCode?: boolean | CodeHighlighter;
++  /**
++   * Makes prose text selectable so users can copy fragments.
++   * Applied to the root Text nodes (inline groups, standalone text, headings),
++   * which is where the platform honors the prop.
++   * @default false
++   */
++  selectable?: boolean;
+ };
+ 
+ export const Markdown: FC<MarkdownProps> = ({
+@@ -458,6 +465,7 @@ export const Markdown: FC<MarkdownProps> = ({
+   virtualization,
+   tableOptions,
+   highlightCode,
++  selectable = false,
+ }) => {
+   const parserOptionGfm = options?.gfm;
+   const parserOptionMath = options?.math;
+@@ -564,6 +572,7 @@ export const Markdown: FC<MarkdownProps> = ({
+       onLinkPress,
+       tableOptions,
+       highlightCode,
++      selectable,
+     }),
+     [
+       renderers,
+@@ -573,6 +582,7 @@ export const Markdown: FC<MarkdownProps> = ({
+       onLinkPress,
+       tableOptions,
+       highlightCode,
++      selectable,
+     ],
+   );
+ 
+@@ -658,7 +668,7 @@ const NodeRendererComponent: FC<NodeRendererProps> = ({
+   inListItem,
+   parentIsText = false,
+ }) => {
+-  const { renderers, theme, styles: nodeStyles } = useMarkdownContext();
++  const { renderers, theme, styles: nodeStyles, selectable } = useMarkdownContext();
+   const baseStyles = getBaseStyles(theme);
+ 
+   const renderChildren = (
+@@ -703,7 +713,7 @@ const NodeRendererComponent: FC<NodeRendererProps> = ({
+           const Wrapper = childParentIsText ? Fragment : Text;
+           const wrapperProps = childParentIsText
+             ? {}
+-            : { style: baseStyles.text };
++            : { style: baseStyles.text, selectable };
+ 
+           elements.push(
+             <Wrapper key={`inline-group-${elements.length}`} {...wrapperProps}>
+@@ -814,7 +824,9 @@ const NodeRendererComponent: FC<NodeRendererProps> = ({
+         return <Text>{node.content}</Text>;
+       }
+       return (
+-        <Text style={[baseStyles.text, nodeStyles?.text]}>{node.content}</Text>
++        <Text selectable={selectable} style={[baseStyles.text, nodeStyles?.text]}>
++          {node.content}
++        </Text>
+       );
+ 
+     case "bold":
+diff --git a/src/renderers/heading.tsx b/src/renderers/heading.tsx
+index b388247dbd79554dc17f3eaab37616101589b95e..44785e8c4aef7079e64edddafdf1fa64187cf802 100644
+--- a/src/renderers/heading.tsx
++++ b/src/renderers/heading.tsx
+@@ -21,7 +21,7 @@ const ANDROID_SYSTEM_FONTS = new Set([
+ ]);
+ 
+ export const Heading: FC<HeadingProps> = ({ level, children, style }) => {
+-  const { theme } = useMarkdownContext();
++  const { theme, selectable } = useMarkdownContext();
+   const styles = getCachedStyles(stylesCache, theme, createStyles);
+ 
+   const headingStyles = [
+@@ -34,7 +34,11 @@ export const Heading: FC<HeadingProps> = ({ level, children, style }) => {
+     level === 6 && styles.h6,
+   ];
+ 
+-  return <Text style={[...headingStyles, style]}>{children}</Text>;
++  return (
++    <Text selectable={selectable} style={[...headingStyles, style]}>
++      {children}
++    </Text>
++  );
+ };
+ 
+ type HeadingStyles = ReturnType<typeof createStyles>;

@@ -117,6 +117,7 @@ patchedDependencies:
   expo-modules-jsi@56.0.10: patches/expo-modules-jsi@56.0.10.patch
   react-native-gesture-handler@2.31.2: patches/react-native-gesture-handler@2.31.2.patch
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
+  react-native-nitro-markdown@0.5.8: patches/react-native-nitro-markdown@0.5.8.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
   react-native-screens@4.25.2: patches/react-native-screens@4.25.2.patch
 
