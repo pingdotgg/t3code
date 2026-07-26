@@ -70,6 +70,9 @@
             case "min-size":
                 await runMinSize(multi: multi, scenery: scenery)
                 return
+            case "sidebar-menus":
+                await SidebarMenuProbe.run(multi: multi, scenery: scenery, dir: dir)
+                return
             case "tool-group-receive":
                 await runToolGroupReceive(model: model, multi: multi, dir: dir)
                 return

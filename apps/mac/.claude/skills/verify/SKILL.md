@@ -29,6 +29,12 @@ another's PNGs (or a crashed run's leftovers). The probe echoes
   prompt), scrolls the diff panel's NSScrollView programmatically, logs
   `UIProbe:` lines to stdout, then quits itself. Extend that file to drive
   new flows; keep it `#if DEBUG`.
+- `SERGECODE_UI_PROBE_SCENARIO=<name>` runs one focused scenario instead of
+  the default sweep. `sidebar-menus` synthesizes a right-click on every
+  visible sidebar row and asserts each opens an Alpine popover (never an
+  `NSMenu`), writing `menu-row<N>.png` plus a `-content` capture per row. Use
+  the `-content` PNG to judge the menu: the window's theme frame carries the
+  system glass rim, which `cacheDisplay` turns into a saturated halo.
 - Success is the final `UIProbe: done` line with no `FAIL=` suffix. Soft
   check failures and the watchdog timeout both report as
   `UIProbe: done FAIL=<reasons>`; a failed capture prints
