@@ -84,6 +84,37 @@ export class GitHubCliCommandError extends Schema.TaggedErrorClass<GitHubCliComm
   }
 }
 
+/**
+ * A review submission GitHub answered with an API error.
+ *
+ * `gh` writes the API response body to stdout and only a terse
+ * `gh: <status>` line to stderr, and `VcsProcessExitError` deliberately drops
+ * stderr — so a plain exit-code failure surfaces as "GitHub CLI command
+ * failed." with no clue why. Reviews are the one call where the reason is
+ * actionable (an inline comment that does not sit on the diff), so keep the
+ * API message on the error instead.
+ */
+export class GitHubPullRequestReviewRejectedError extends Schema.TaggedErrorClass<GitHubPullRequestReviewRejectedError>()(
+  "GitHubPullRequestReviewRejectedError",
+  {
+    command: Schema.Literal("gh"),
+    cwd: Schema.String,
+    exitCode: Schema.Number,
+    apiMessage: Schema.String,
+    /** True when GitHub rejected the inline comments, not the review itself. */
+    inlineCommentRejected: Schema.Boolean,
+    cause: Schema.Defect(),
+  },
+) {
+  get detail(): string {
+    return this.apiMessage;
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in submitPullRequestReview: ${this.apiMessage}`;
+  }
+}
+
 const gitHubCliDecodeFields = {
   command: Schema.Literal("gh"),
   cwd: Schema.String,
@@ -160,6 +191,7 @@ export const GitHubCliError = Schema.Union([
   GitHubCliAuthenticationError,
   GitHubPullRequestNotFoundError,
   GitHubCliCommandError,
+  GitHubPullRequestReviewRejectedError,
   GitHubPullRequestListDecodeError,
   GitHubChangeRequestListDecodeError,
   GitHubPullRequestDecodeError,
@@ -434,6 +466,98 @@ function normalizeMergeStateStatus(
   }
 }
 
+/**
+ * GitHub's REST errors nest the useful text under `errors[].message`, with a
+ * generic `message` ("Unprocessable Entity") at the top. Prefer the specific
+ * one, fall back through the generic message to `gh`'s own stderr line.
+ */
+export function summarizeGitHubApiFailure(input: {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
+}): { readonly apiMessage: string; readonly inlineCommentRejected: boolean } {
+  const details: Array<string> = [];
+  let topLevel = "";
+  // A named review-comment/thread resource is proof the inline batch was the
+  // problem. A bare comment-shaped `field` on an unnamed resource is only a
+  // hint — an unrelated validation using `field: "path"` should not cost an
+  // extra POST — so it is weighed after the message check below.
+  let resourceRejected = false;
+  let fieldHint = false;
+
+  try {
+    const parsed: unknown = JSON.parse(input.stdout.trim() || "{}");
+    if (typeof parsed === "object" && parsed !== null) {
+      const record = parsed as Record<string, unknown>;
+      if (typeof record["message"] === "string") {
+        topLevel = record["message"].trim();
+      }
+      const errors = record["errors"];
+      if (Array.isArray(errors)) {
+        for (const entry of errors) {
+          if (typeof entry !== "object" || entry === null) {
+            continue;
+          }
+          const fields = entry as Record<string, unknown>;
+          const resource = typeof fields["resource"] === "string" ? fields["resource"] : "";
+          const field = typeof fields["field"] === "string" ? fields["field"] : "";
+          const detail =
+            typeof fields["message"] === "string"
+              ? fields["message"].trim()
+              : `${resource || "request"}.${field || "field"} is invalid`;
+          if (detail) {
+            details.push(detail);
+          }
+          const normalizedResource = resource.toLowerCase();
+          if (
+            normalizedResource.includes("pullrequestreviewcomment") ||
+            normalizedResource.includes("pullrequestreviewthread")
+          ) {
+            resourceRejected = true;
+          } else if (
+            resource === "" &&
+            (field === "line" ||
+              field === "path" ||
+              field === "side" ||
+              field === "position" ||
+              field === "start_line" ||
+              field === "start_side")
+          ) {
+            fieldHint = true;
+          }
+        }
+      }
+    }
+  } catch {
+    // Non-JSON body (network error text, HTML error page): fall through.
+  }
+
+  const stderrLine =
+    input.stderr
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? "";
+
+  const combined = details.join("; ");
+  const apiMessage =
+    combined ||
+    topLevel ||
+    stderrLine ||
+    `GitHub rejected the review submission (exit ${input.exitCode}).`;
+
+  const haystack = `${combined} ${topLevel} ${stderrLine}`.toLowerCase();
+  const messageRejected =
+    haystack.includes("must be part of the diff") ||
+    haystack.includes("line must be") ||
+    haystack.includes("pull_request_review_thread") ||
+    haystack.includes("pull_request_review_comment");
+
+  return {
+    apiMessage,
+    inlineCommentRejected: resourceRejected || messageRejected || fieldHint,
+  };
+}
+
 function parsePullRequestNumber(reference: string): number | null {
   const trimmed = reference.trim();
   const hashMatch = /^#?(\d+)$/.exec(trimmed);
@@ -507,6 +631,27 @@ export const make = Effect.gen(function* () {
         args: input.args,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+      })
+      .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+
+  /**
+   * Like `execute`, but keeps a non-zero exit as data so the caller can read
+   * the API response body `gh` wrote to stdout.
+   */
+  const executeAllowingApiFailure = (input: {
+    readonly cwd: string;
+    readonly args: ReadonlyArray<string>;
+    readonly stdin?: string;
+  }) =>
+    process
+      .run({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: input.args,
+        cwd: input.cwd,
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        allowNonZeroExit: true,
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
       })
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
@@ -662,7 +807,7 @@ export const make = Effect.gen(function* () {
           ...(comments.length > 0 ? { comments } : {}),
         };
 
-        const raw = yield* execute({
+        const result = yield* executeAllowingApiFailure({
           cwd: input.cwd,
           args: [
             "api",
@@ -682,7 +827,27 @@ export const make = Effect.gen(function* () {
                 }),
             ),
           ),
-        }).pipe(Effect.map((result) => result.stdout.trim() || "{}"));
+        });
+
+        if (result.exitCode !== 0) {
+          const summary = summarizeGitHubApiFailure({
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+          });
+          return yield* new GitHubPullRequestReviewRejectedError({
+            command: "gh",
+            cwd: input.cwd,
+            exitCode: result.exitCode,
+            apiMessage: summary.apiMessage,
+            // A submission carrying no inline comments cannot have failed on
+            // one, whatever the response text looks like.
+            inlineCommentRejected: comments.length > 0 && summary.inlineCommentRejected,
+            cause: new Error(summary.apiMessage),
+          });
+        }
+
+        const raw = result.stdout.trim() || "{}";
 
         const ReviewResponseSchema = Schema.Struct({
           id: Schema.Union([Schema.Number, Schema.String]),

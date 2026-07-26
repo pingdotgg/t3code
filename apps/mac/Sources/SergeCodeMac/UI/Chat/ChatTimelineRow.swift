@@ -588,12 +588,53 @@ private func loadNSImage(from url: URL) async throws -> NSImage {
     return image
 }
 
+/// Animated state of one "group receives a finished tool" flight.
+///
+/// Driven by a `KeyframeAnimator` off its own clock rather than by a state
+/// change, which matters here: the chat timeline clears `transaction.animation`
+/// on its whole subtree while the agent is working (see
+/// `ChatTimelineScrollPolicy.shouldFlattenAnimation`), so a state-driven
+/// version of this would be flattened into a pop exactly when it is needed.
+private struct ToolGroupReceiveFrame {
+    /// Distance the arriving chip still has to climb, in points.
+    var chipY: CGFloat = 0
+    var chipScale: CGFloat = 1
+    var chipOpacity = 0.0
+    /// How far open the deck is, 0…1.
+    var fanSplay: CGFloat = 0
+}
+
 /// A finished burst of tool work, condensed to one disclosure row once the
 /// agent has moved on. The collapsed row leads with a fanned stack of the
 /// burst's tool-kind chips; expanding reveals the original tool/reasoning rows.
+///
+/// Mid-turn this row keeps eating its neighbour. Past
+/// `liveAutoCollapseToolThreshold` tools the finished prefix collapses while
+/// the agent is still working, so every tool that completes leaves the
+/// transcript and joins this summary — which used to happen with no motion at
+/// all: a row below simply blinked out and a count ticked up. `receiveToken`
+/// plays a short flight instead. The chip deck fans open, the newcomer's chip
+/// rises into the gap from below and tucks under the front chip, the deck
+/// closes, and the headline count rolls. Every part of it is a render-time
+/// transform (offset / rotation / scale / opacity), so no sibling row is
+/// re-measured and the streaming `LazyVStack` cannot blank.
 private struct ToolGroupRow: View {
     /// Kinds fanned out on the collapsed row; more than this reads as noise.
     private static let maxFannedChips = 5
+    /// Where the received chip starts, measured down from its resting slot in
+    /// the deck. Deliberately short: it peeks into the 14pt gap below the
+    /// collapsed card but never reaches the live tool row, which is a later
+    /// `LazyVStack` sibling and would paint over the flight.
+    private static let receiveTravel: CGFloat = 26
+    /// Deck geometry while open: how far each successive chip slides right,
+    /// and how much the resting alternating tilt is amplified. The step times
+    /// `maxFannedChips - 1` has to stay under the 10pt gap to the headline —
+    /// the deck opens by transform, so a wider splay would slide the front
+    /// chip over the text rather than pushing it aside.
+    private static let receiveSplayStep: CGFloat = 2.5
+    private static let receiveTiltGain = 0.7
+    /// Resting tilt of the deck, alternating by position.
+    private static let restingTilt = 6.0
 
     let items: [TimelineItem]
     let summary: ToolGroupSummary
@@ -602,6 +643,11 @@ private struct ToolGroupRow: View {
 
     @UIState private var isExpanded = false
     @UIState private var isHovering = false
+    /// Kind of the tool that most recently flew into this group, plus a token
+    /// that re-fires the keyframes. Neither is ever cleared: the arriving chip
+    /// rests at zero opacity, so a stale kind draws nothing between flights.
+    @UIState private var receivedKind: ToolEventKind?
+    @UIState private var receiveToken = 0
 
     /// Distinct tool kinds in the burst, in first-appearance order.
     private var fannedKinds: [ToolEventKind] {
@@ -630,6 +676,14 @@ private struct ToolGroupRow: View {
                     Text(headline)
                         .font(SurgeTypography.toolTitle)
                         .foregroundStyle(.secondary)
+                        // The count rolling rather than swapping is what ties
+                        // the flight to a number: the group took in the row
+                        // that just vanished below it. Attached to the text
+                        // rather than the stack so the timeline's mid-run
+                        // suppressor — an ancestor `.transaction` — cannot
+                        // flatten it; downstream modifiers win.
+                        .contentTransition(.numericText(value: Double(summary.toolCount)))
+                        .animation(Motion.reveal, value: summary.toolCount)
                     Spacer()
                     if summary.failedCount > 0 {
                         Image(systemName: "exclamationmark.circle.fill")
@@ -657,19 +711,81 @@ private struct ToolGroupRow: View {
         .transcriptCard(fill: .quaternary.opacity(isHovering ? 0.55 : 0.4))
         .animation(Motion.feedback, value: isHovering)
         .onHover { isHovering = $0 }
+        // While expanded the arriving row is already visible in the body, so
+        // there is nothing to explain and the flight would only draw over it.
+        .onChange(of: items.count) { previousCount, _ in
+            guard !isExpanded,
+                let kind = ToolGroupAbsorption.receivedKind(
+                    previousItemCount: previousCount, items: items)
+            else { return }
+            receivedKind = kind
+            receiveToken += 1
+        }
     }
 
     /// Overlapping chips with alternating tilt, popping in with a clamped
-    /// stagger (`.control` entrances are delay-only, so this stays cheap).
+    /// stagger (`.control` entrances are delay-only, so this stays cheap), and
+    /// fanning open to take in each tool the group absorbs mid-turn.
     private var chipFan: some View {
-        HStack(spacing: -6) {
-            ForEach(Array(fannedKinds.enumerated()), id: \.offset) { index, kind in
-                ActivityIconChip(style: kind.activityStyle, size: 24)
-                    .rotationEffect(.degrees(index.isMultiple(of: 2) ? -6 : 6))
-                    .zIndex(Double(index))
-                    .entrance(.control, index: index)
+        // Reduce Motion keeps the receive legible but still: the arriving chip
+        // fades in place and the deck never opens.
+        let movement = Motion.profile.usesMovement
+        return KeyframeAnimator(
+            initialValue: ToolGroupReceiveFrame(),
+            trigger: receiveToken
+        ) { frame in
+            HStack(spacing: -6) {
+                ForEach(Array(fannedKinds.enumerated()), id: \.offset) { index, kind in
+                    ActivityIconChip(style: kind.activityStyle, size: 24)
+                        .rotationEffect(.degrees(fanTilt(index: index, splay: frame.fanSplay)))
+                        .offset(x: CGFloat(index) * Self.receiveSplayStep * frame.fanSplay)
+                        .zIndex(Double(index))
+                        .entrance(.control, index: index)
+                }
+            }
+            // Behind the deck, not over it: the newcomer slides *under* the
+            // front chip as it lands, which is what sells "taken in" rather
+            // than "dropped on top".
+            .background(alignment: .trailing) {
+                if let receivedKind {
+                    ActivityIconChip(style: receivedKind.activityStyle, size: 24)
+                        .scaleEffect(frame.chipScale)
+                        .opacity(frame.chipOpacity)
+                        .offset(y: frame.chipY)
+                        .allowsHitTesting(false)
+                }
+            }
+        } keyframes: { _ in
+            KeyframeTrack(\.chipY) {
+                MoveKeyframe(movement ? Self.receiveTravel : 0)
+                SpringKeyframe(0, duration: 0.34, spring: .snappy)
+                LinearKeyframe(0, duration: 0.08)
+            }
+            KeyframeTrack(\.chipScale) {
+                MoveKeyframe(movement ? 0.82 : 1)
+                LinearKeyframe(1, duration: 0.20)
+                LinearKeyframe(movement ? 0.72 : 1, duration: 0.22)
+            }
+            KeyframeTrack(\.chipOpacity) {
+                MoveKeyframe(0)
+                LinearKeyframe(1, duration: 0.12)
+                LinearKeyframe(1, duration: 0.14)
+                LinearKeyframe(0, duration: 0.16)
+            }
+            KeyframeTrack(\.fanSplay) {
+                MoveKeyframe(0)
+                SpringKeyframe(movement ? 1 : 0, duration: 0.18, spring: .bouncy)
+                LinearKeyframe(movement ? 1 : 0, duration: 0.10)
+                SpringKeyframe(0, duration: 0.20, spring: .snappy)
             }
         }
+    }
+
+    /// Resting alternating tilt, amplified while the deck is open so the fan
+    /// reads as hinging apart rather than sliding sideways.
+    private func fanTilt(index: Int, splay: CGFloat) -> Double {
+        let base = index.isMultiple(of: 2) ? -Self.restingTilt : Self.restingTilt
+        return base * (1 + Double(splay) * Self.receiveTiltGain)
     }
 
     private var headline: String {

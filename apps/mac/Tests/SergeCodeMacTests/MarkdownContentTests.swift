@@ -124,6 +124,84 @@ struct MarkdownContentTests {
         #expect(text(trailing) == "trailing paragraph")
     }
 
+    // MARK: Streaming reveal render plan
+
+    @Test("only assistant messages with an ID can use the streaming reveal")
+    func renderPlanRequiresIdentifiedAssistant() {
+        #expect(
+            !AssistantMarkdownRenderPlan.usesStreamingReveal(
+                style: .userBubble, messageID: "m", isStreaming: true,
+                reduceMotion: false, hasPendingReveal: true))
+        #expect(
+            !AssistantMarkdownRenderPlan.usesStreamingReveal(
+                style: .assistant, messageID: "", isStreaming: true,
+                reduceMotion: false, hasPendingReveal: true))
+        #expect(
+            AssistantMarkdownRenderPlan.usesStreamingReveal(
+                style: .assistant, messageID: "m", isStreaming: true,
+                reduceMotion: false, hasPendingReveal: false))
+    }
+
+    @Test("a finished message stays on the reveal only while backlog remains")
+    func renderPlanDrainsAfterStreamEnd() {
+        #expect(
+            AssistantMarkdownRenderPlan.usesStreamingReveal(
+                style: .assistant, messageID: "m", isStreaming: false,
+                reduceMotion: false, hasPendingReveal: true))
+        #expect(
+            !AssistantMarkdownRenderPlan.usesStreamingReveal(
+                style: .assistant, messageID: "m", isStreaming: false,
+                reduceMotion: false, hasPendingReveal: false))
+        // Reduce Motion never lags behind the stream, so there is no backlog
+        // to drain and the settled renderer takes over immediately.
+        #expect(
+            !AssistantMarkdownRenderPlan.usesStreamingReveal(
+                style: .assistant, messageID: "m", isStreaming: false,
+                reduceMotion: true, hasPendingReveal: true))
+        // A live stream ignores Reduce Motion here: the reveal path is still
+        // what renders the growing text, it just snaps instead of gliding.
+        #expect(
+            AssistantMarkdownRenderPlan.usesStreamingReveal(
+                style: .assistant, messageID: "m", isStreaming: true,
+                reduceMotion: true, hasPendingReveal: false))
+    }
+
+    /// Regression: the answer changes over time for identical view inputs, so
+    /// `AssistantMarkdownView` must capture it once in `init` (next to the
+    /// parse it gates) instead of re-asking in `body`. Recomputing it after
+    /// the drain finished used to select the settled branch on a view that
+    /// had deliberately parsed nothing, blanking finished messages until a
+    /// scroll or thread switch rebuilt the row.
+    @Test("the reveal decision flips as the store drains, so it must be captured once")
+    func renderPlanDecisionIsTimeVarying() {
+        StreamingRevealStore.resetForTesting()
+        defer { StreamingRevealStore.resetForTesting() }
+
+        let markdown = String(repeating: "streamed sentence. ", count: 40)
+        let policy = StreamingRevealPolicy(reduceMotion: false, isFinal: true)
+        var now = Date(timeIntervalSinceReferenceDate: 0)
+        _ = StreamingRevealStore.advance(
+            threadID: "t", messageID: "m", target: markdown, at: now, policy: policy)
+
+        func plan() -> Bool {
+            AssistantMarkdownRenderPlan.usesStreamingReveal(
+                style: .assistant, messageID: "m", isStreaming: false, reduceMotion: false,
+                hasPendingReveal: StreamingRevealStore.hasPendingReveal(
+                    threadID: "t", messageID: "m", target: markdown))
+        }
+
+        #expect(plan())
+        for _ in 0..<200 {
+            now.addTimeInterval(1.0 / 60)
+            _ = StreamingRevealStore.advance(
+                threadID: "t", messageID: "m", target: markdown, at: now, policy: policy)
+        }
+        #expect(
+            StreamingRevealStore.revealed(threadID: "t", messageID: "m", target: markdown)
+                == markdown)
+        #expect(!plan())
+    }
+
     @Test("gates every block in the trailing streaming source span")
     func streamingHighlightGateCoversNestedBlocks() throws {
         let document = parseMarkdownDocument(
