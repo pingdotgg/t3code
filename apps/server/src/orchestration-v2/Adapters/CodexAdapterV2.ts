@@ -105,7 +105,7 @@ import {
 import {
   appendSubagentActivity,
   defaultSubagentRole,
-  mergeSubagentUsage,
+  mergeCumulativeSubagentUsage,
   subagentActivationId,
 } from "../SubagentObservability.ts";
 
@@ -900,6 +900,27 @@ type CodexCollabAgentToolCallItem = Extract<
   CodexSchema.V2ItemCompletedNotification__ThreadItem,
   { readonly type: "collabAgentToolCall" }
 >;
+type CodexCollabAgentStatus = CodexCollabAgentToolCallItem["agentsStates"][string]["status"];
+
+export function codexCollabAgentStatus(
+  status: CodexCollabAgentStatus,
+): OrchestrationV2Subagent["status"] {
+  switch (status) {
+    case "pendingInit":
+      return "pending";
+    case "running":
+      return "running";
+    case "completed":
+      return "idle";
+    case "interrupted":
+      return "interrupted";
+    case "errored":
+    case "notFound":
+      return "failed";
+    case "shutdown":
+      return "cancelled";
+  }
+}
 
 type CodexSubAgentActivityItem = Extract<
   | CodexSchema.V2ItemStartedNotification__ThreadItem
@@ -1739,7 +1760,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               status: input.status,
               ...(input.progress === undefined ? {} : { progress: input.progress }),
               result: input.result === undefined ? input.subagent.task.result : input.result,
-              usage: mergeSubagentUsage(input.subagent.task.usage, input.usage),
+              usage: mergeCumulativeSubagentUsage(input.subagent.task.usage, input.usage),
               currentActivationId:
                 input.currentActivationId !== undefined
                   ? input.currentActivationId
@@ -1775,7 +1796,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 nativeItemRef: task.nativeTaskRef,
                 parentItemId: null,
                 ordinal: input.subagent.turnItemOrdinal,
-                status: task.status,
+                // The task identity is reusable and therefore idle between
+                // turns; this timeline item represents the completed turn.
+                status: task.status === "idle" ? "completed" : task.status,
                 title: task.title,
                 startedAt: task.startedAt,
                 completedAt: task.completedAt,
@@ -2274,18 +2297,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               if (subagent === undefined) {
                 continue;
               }
-              const nativeStatus = String(state.status);
-              const status: OrchestrationV2Subagent["status"] =
-                nativeStatus === "completed"
-                  ? "completed"
-                  : nativeStatus === "failed" || nativeStatus === "errored"
-                    ? "failed"
-                    : nativeStatus === "cancelled" || nativeStatus === "closed"
-                      ? "cancelled"
-                      : "running";
               yield* emitSubagentTaskUpdate({
                 subagent,
-                status,
+                status: codexCollabAgentStatus(state.status),
                 ...(state.message === null ? {} : { result: state.message }),
               });
             }

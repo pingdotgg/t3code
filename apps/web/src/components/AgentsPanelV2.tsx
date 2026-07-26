@@ -151,15 +151,17 @@ function AgentCard(props: {
 }
 
 export function AgentsPanelV2(props: { projection: OrchestrationV2ThreadProjection | null }) {
+  const subagents = props.projection?.subagents ?? null;
+  const activations = props.projection?.subagentActivations ?? null;
   const panel = useMemo(
     () =>
-      props.projection === null
+      subagents === null || activations === null
         ? null
         : deriveOrchestrationV2SubagentPanelState({
-            subagents: props.projection.subagents,
-            activations: props.projection.subagentActivations,
+            subagents,
+            activations,
           }),
-    [props.projection],
+    [activations, subagents],
   );
 
   if (panel === null || panel.groups.length === 0) {
@@ -187,7 +189,9 @@ export function AgentsPanelV2(props: { projection: OrchestrationV2ThreadProjecti
           <BotIcon className="size-4" />
           <h2 className="text-sm font-medium">Agents</h2>
           <span className="ml-auto font-mono text-xs text-muted-foreground">
-            {formatSubagentTokenCount(panel.totalTokens)} tokens
+            {panel.totalTokens === null
+              ? "Usage unavailable"
+              : `${formatSubagentTokenCount(panel.totalTokens)} tokens`}
           </span>
         </div>
         <div className="mt-2 flex flex-wrap gap-3 font-mono text-[10px] text-muted-foreground">

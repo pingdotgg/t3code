@@ -25,7 +25,7 @@ export interface OrchestrationV2SubagentPanelState {
   readonly activeCount: number;
   readonly waitingCount: number;
   readonly settledCount: number;
-  readonly totalTokens: number;
+  readonly totalTokens: number | null;
 }
 
 export const isSettledOrchestrationV2Subagent = (agent: OrchestrationV2Subagent) =>
@@ -101,6 +101,11 @@ export function deriveOrchestrationV2SubagentPanelState(input: {
       return workflowId === undefined ? [] : [workflowId];
     }),
   );
+  const reportedUsage = input.subagents.flatMap((agent) =>
+    agent.usage === null || (agent.kind === "workflow" && workflowIdsWithMembers.has(agent.id))
+      ? []
+      : [agent.usage.totalTokens],
+  );
   return {
     groups,
     activationsBySubagentId,
@@ -108,14 +113,10 @@ export function deriveOrchestrationV2SubagentPanelState(input: {
       .length,
     waitingCount: workers.filter((agent) => agent.status === "waiting").length,
     settledCount: workers.filter(isSettledOrchestrationV2Subagent).length,
-    totalTokens: input.subagents.reduce(
-      (total, agent) =>
-        total +
-        (agent.kind === "workflow" && workflowIdsWithMembers.has(agent.id)
-          ? 0
-          : (agent.usage?.totalTokens ?? 0)),
-      0,
-    ),
+    totalTokens:
+      reportedUsage.length === 0
+        ? null
+        : reportedUsage.reduce((total, tokens) => total + tokens, 0),
   };
 }
 

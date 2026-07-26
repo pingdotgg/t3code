@@ -137,6 +137,20 @@ describe("deriveOrchestrationV2SubagentPanelState", () => {
     expect(result.activationsBySubagentId.get(researcher.id)).toEqual(activations);
   });
 
+  it("distinguishes unavailable usage from a reported zero", () => {
+    const unavailable = deriveOrchestrationV2SubagentPanelState({
+      subagents: [agent("unreported")],
+      activations: [],
+    });
+    const reportedZero = deriveOrchestrationV2SubagentPanelState({
+      subagents: [agent("reported-zero", { usage: { totalTokens: 0 } })],
+      activations: [],
+    });
+
+    expect(unavailable.totalTokens).toBeNull();
+    expect(reportedZero.totalTokens).toBe(0);
+  });
+
   it("formats compact token counts", () => {
     expect(formatSubagentTokenCount(999)).toBe("999");
     expect(formatSubagentTokenCount(1_200)).toBe("1.2k");

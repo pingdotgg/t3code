@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  accumulateSubagentUsage,
+  accumulateCumulativeSubagentUsage,
   appendSubagentActivity,
   defaultSubagentRole,
-  mergeSubagentUsage,
+  mergeCumulativeSubagentUsage,
   providerSubagentRole,
 } from "./SubagentObservability.ts";
 import * as DateTime from "effect/DateTime";
@@ -19,13 +19,13 @@ describe("subagent observability", () => {
   });
 
   it("accumulates activation deltas into stable lifetime usage", () => {
-    const first = accumulateSubagentUsage(null, null, {
+    const first = accumulateCumulativeSubagentUsage(null, null, {
       totalTokens: 100,
       inputTokens: 70,
       outputTokens: 30,
       toolUses: 2,
     });
-    const firstAdvanced = accumulateSubagentUsage(
+    const firstAdvanced = accumulateCumulativeSubagentUsage(
       first,
       {
         totalTokens: 100,
@@ -40,7 +40,7 @@ describe("subagent observability", () => {
         toolUses: 3,
       },
     );
-    const resumed = accumulateSubagentUsage(firstAdvanced, null, {
+    const resumed = accumulateCumulativeSubagentUsage(firstAdvanced, null, {
       totalTokens: 80,
       inputTokens: 50,
       outputTokens: 30,
@@ -82,28 +82,51 @@ describe("subagent observability", () => {
 
   it("merges cumulative provider counters without double-counting", () => {
     expect(
-      mergeSubagentUsage(
+      mergeCumulativeSubagentUsage(
         { totalTokens: 100, outputTokens: 25 },
         { totalTokens: 140, outputTokens: 20 },
       ),
     ).toEqual({ totalTokens: 140, outputTokens: 25 });
   });
 
+  it("is idempotent for duplicate and late cumulative snapshots", () => {
+    const latest = {
+      totalTokens: 140,
+      inputTokens: 95,
+      outputTokens: 45,
+      toolUses: 3,
+    };
+    const duplicate = mergeCumulativeSubagentUsage(latest, latest);
+    const late = mergeCumulativeSubagentUsage(duplicate, {
+      totalTokens: 100,
+      inputTokens: 70,
+      outputTokens: 30,
+      toolUses: 2,
+    });
+
+    expect(duplicate).toEqual(latest);
+    expect(late).toEqual(latest);
+    expect(accumulateCumulativeSubagentUsage(latest, latest, duplicate)).toEqual(latest);
+  });
+
   it("preserves omitted activation counters when they reappear", () => {
     const firstActivation = { totalTokens: 100, inputTokens: 70 };
-    const withoutInput = mergeSubagentUsage(firstActivation, { totalTokens: 140 });
-    const lifetimeWithoutInput = accumulateSubagentUsage(firstActivation, firstActivation, {
-      totalTokens: 140,
-    });
-    const restoredInput = mergeSubagentUsage(withoutInput, {
+    const withoutInput = mergeCumulativeSubagentUsage(firstActivation, { totalTokens: 140 });
+    const lifetimeWithoutInput = accumulateCumulativeSubagentUsage(
+      firstActivation,
+      firstActivation,
+      {
+        totalTokens: 140,
+      },
+    );
+    const restoredInput = mergeCumulativeSubagentUsage(withoutInput, {
       totalTokens: 180,
       inputTokens: 100,
     });
 
     expect(withoutInput).toEqual({ totalTokens: 140, inputTokens: 70 });
-    expect(accumulateSubagentUsage(lifetimeWithoutInput, withoutInput, restoredInput)).toEqual({
-      totalTokens: 180,
-      inputTokens: 100,
-    });
+    expect(
+      accumulateCumulativeSubagentUsage(lifetimeWithoutInput, withoutInput, restoredInput),
+    ).toEqual({ totalTokens: 180, inputTokens: 100 });
   });
 });

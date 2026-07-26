@@ -32,7 +32,6 @@ export function isV2LifecycleItem(item: OrchestrationV2TurnItem): boolean {
 // Aborted subagents (cancelled/interrupted) keep whatever result text had
 // streamed before the abort, so only completed/failed results are final.
 const FINAL_RESULT_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
-  "idle",
   "completed",
   "failed",
 ]);
@@ -40,7 +39,6 @@ const FINAL_RESULT_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]
 // Once a subagent stops, its last streamed result says more than the stale
 // progress line; while it runs, live progress comes first.
 const TERMINAL_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
-  "idle",
   "completed",
   "failed",
   "cancelled",

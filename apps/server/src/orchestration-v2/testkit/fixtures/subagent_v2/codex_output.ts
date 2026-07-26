@@ -62,6 +62,7 @@ export function assertSubagentV2Output(
   if (parentItem?.type !== "subagent") {
     throw new Error(`Missing parent lifecycle item for subagent ${subagent.id}`);
   }
+  assert.equal(parentItem.status, "completed");
   assert.equal(parentItem.result, subagent.result);
   if (subagent.childThreadId === null) {
     throw new Error(`Subagent ${subagent.id} is missing its child thread`);

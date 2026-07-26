@@ -49,6 +49,7 @@ import {
   CODEX_DEFAULT_INSTANCE_ID,
   CODEX_DRIVER_KIND,
   codexBackgroundCommandDetail,
+  codexCollabAgentStatus,
   codexThreadRuntimeParams,
   type CodexAgentMessageDeltaUpdate,
   type CodexAppServerClientFactoryShape,
@@ -60,6 +61,17 @@ import {
   resolveCodexRollbackTurnCount,
 } from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig } from "./CodexAdapterV2.testkit.ts";
+
+describe("CodexAdapterV2 subagent status mapping", () => {
+  it("maps every provider state without treating terminal states as running", () => {
+    assert.deepEqual(
+      ["pendingInit", "running", "completed", "interrupted", "errored", "shutdown", "notFound"].map(
+        (status) => codexCollabAgentStatus(status as Parameters<typeof codexCollabAgentStatus>[0]),
+      ),
+      ["pending", "running", "idle", "interrupted", "failed", "cancelled", "failed"],
+    );
+  });
+});
 
 describe("CodexAdapterV2 assistant message streaming", () => {
   it.effect("makes accumulated assistant text visible after the bounded flush interval", () =>

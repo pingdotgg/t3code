@@ -48,7 +48,10 @@ export const appendSubagentActivity = (
 const cumulative = (previous: number | undefined, next: number | undefined) =>
   next === undefined ? previous : Math.max(previous ?? 0, next);
 
-export const mergeSubagentUsage = (
+// Provider progress frames are cumulative snapshots within one scope, not
+// deltas. Taking the maximum makes duplicate and late out-of-order frames
+// idempotent without inventing usage the provider did not report.
+export const mergeCumulativeSubagentUsage = (
   previous: OrchestrationV2SubagentUsage | null,
   next: OrchestrationV2SubagentUsage | null | undefined,
 ): OrchestrationV2SubagentUsage | null => {
@@ -88,7 +91,10 @@ const accumulated = (
 ) =>
   next === undefined ? previous : (previous ?? 0) + Math.max(0, next - (previousActivation ?? 0));
 
-export const accumulateSubagentUsage = (
+// Lifetime usage advances only by the change since the prior snapshot for the
+// current activation. Pass no prior activation snapshot when a new activation
+// starts so its first cumulative snapshot is added in full.
+export const accumulateCumulativeSubagentUsage = (
   previous: OrchestrationV2SubagentUsage | null,
   previousActivation: OrchestrationV2SubagentUsage | null | undefined,
   next: OrchestrationV2SubagentUsage | null | undefined,

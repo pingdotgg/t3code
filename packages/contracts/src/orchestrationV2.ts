@@ -778,7 +778,6 @@ export const OrchestrationV2TurnItemStatus = Schema.Literals([
   "pending",
   "running",
   "waiting",
-  "idle",
   "completed",
   "failed",
   "cancelled",

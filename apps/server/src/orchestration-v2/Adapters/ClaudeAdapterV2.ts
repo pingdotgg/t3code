@@ -114,9 +114,9 @@ import {
   subagentThreadTitle,
 } from "../SubagentProjection.ts";
 import {
-  accumulateSubagentUsage,
+  accumulateCumulativeSubagentUsage,
   appendSubagentActivity,
-  mergeSubagentUsage,
+  mergeCumulativeSubagentUsage,
   providerSubagentRole,
   subagentActivationId,
 } from "../SubagentObservability.ts";
@@ -2474,7 +2474,7 @@ export function makeClaudeAdapterV2(
               : { workflowMembership: input.workflowMembership }),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
             ...(input.result === undefined ? {} : { result: input.result }),
-            usage: accumulateSubagentUsage(
+            usage: accumulateCumulativeSubagentUsage(
               priorTask?.usage ?? null,
               startsActivation ? undefined : existingSubagent?.activation.usage,
               input.usage,
@@ -2508,7 +2508,7 @@ export function makeClaudeAdapterV2(
             : ({
                 ...existingSubagent.activation,
                 status: input.status,
-                usage: mergeSubagentUsage(existingSubagent.activation.usage, input.usage),
+                usage: mergeCumulativeSubagentUsage(existingSubagent.activation.usage, input.usage),
                 completedAt: settled ? now : null,
                 updatedAt: now,
               } satisfies OrchestrationV2SubagentActivation);

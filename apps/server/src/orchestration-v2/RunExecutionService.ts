@@ -97,7 +97,6 @@ const backgroundCapableTurnItemTypes: ReadonlySet<OrchestrationV2TurnItem["type"
 
 function isTerminalTurnItemStatus(status: OrchestrationV2TurnItem["status"]): boolean {
   return (
-    status === "idle" ||
     status === "completed" ||
     status === "interrupted" ||
     status === "failed" ||
