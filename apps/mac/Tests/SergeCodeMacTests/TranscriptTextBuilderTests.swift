@@ -114,6 +114,86 @@ struct TranscriptTextBuilderTests {
         #expect(rawText.contains("Tools"))
         #expect(!rawText.contains("Today"))
     }
+
+    @Test("command headers claim background only when the task detached")
+    func commandHeadersFollowTheDetachFlag() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let backgrounded = commandTask(
+            taskId: "cmd-bg", description: "Run full mac test suite", isBackgrounded: true, at: now)
+        let attached = commandTask(
+            taskId: "cmd-fg", description: "Compile the sidecar", isBackgrounded: false, at: now)
+        let undescribed = commandTask(
+            taskId: "cmd-bare", description: nil, isBackgrounded: false, at: now)
+
+        let plain = TranscriptTextBuilder.attributedString(from: [
+            .single(.subagentTask(backgrounded)),
+            .single(.subagentTask(attached)),
+            .single(.subagentTask(undescribed)),
+        ]).string
+
+        #expect(plain.contains("Background command · Run full mac test suite"))
+        #expect(plain.contains("Command · Compile the sidecar"))
+        // No description: the label stands alone rather than inventing one.
+        #expect(!plain.contains("Command · Background command"))
+        #expect(!plain.contains("Command · Command"))
+    }
+
+    @Test("sub-agent headers stay distinct from command headers")
+    func subagentHeaderIsUnchanged() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let task = SubagentTaskItem(
+            taskId: "agent-1", taskType: "general-purpose",
+            description: "Audit the timeline", state: .running, latestProgress: nil,
+            startedAt: now, lastActivityAt: now, duration: nil)
+
+        let plain = TranscriptTextBuilder.attributedString(from: [.single(.subagentTask(task))])
+            .string
+
+        #expect(plain.contains("Subagent · Audit the timeline"))
+        #expect(!plain.contains("Command"))
+    }
+
+    @Test("each task kind keeps its own label in copied text")
+    func headersDistinguishTaskKinds() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let workflow = SubagentTaskItem(
+            taskId: "wf-1", taskType: "workflow", entityKind: .workflow,
+            description: "Migrate the call sites", workflowName: "spec",
+            state: .running, latestProgress: nil,
+            startedAt: now, lastActivityAt: now, duration: nil)
+        // Undescribed rows fall back to the identity the card's badge shows.
+        let undescribedWorkflow = SubagentTaskItem(
+            taskId: "wf-2", taskType: "workflow", entityKind: .workflow,
+            description: nil, workflowName: "review-changes",
+            state: .running, latestProgress: nil,
+            startedAt: now, lastActivityAt: now, duration: nil)
+        let undescribedSubagent = SubagentTaskItem(
+            taskId: "agent-2", taskType: "general-purpose", description: nil,
+            subagentType: "Explore", state: .running, latestProgress: nil,
+            startedAt: now, lastActivityAt: now, duration: nil)
+
+        let plain = TranscriptTextBuilder.attributedString(from: [
+            .single(.subagentTask(workflow)),
+            .single(.subagentTask(undescribedWorkflow)),
+            .single(.subagentTask(undescribedSubagent)),
+        ]).string
+
+        #expect(plain.contains("Workflow · Migrate the call sites"))
+        #expect(plain.contains("Workflow · review-changes"))
+        #expect(plain.contains("Subagent · Explore"))
+        // A workflow is not a sub-agent in copied text either.
+        #expect(!plain.contains("Subagent · Migrate the call sites"))
+    }
+
+    private func commandTask(
+        taskId: String, description: String?, isBackgrounded: Bool, at: Date
+    ) -> SubagentTaskItem {
+        SubagentTaskItem(
+            taskId: taskId, taskType: "local_bash", entityKind: .command,
+            description: description, state: .running, latestProgress: nil,
+            lastToolName: "local_bash", isBackgrounded: isBackgrounded,
+            startedAt: at, lastActivityAt: at, duration: nil)
+    }
 }
 
 @Suite("File change diff text")

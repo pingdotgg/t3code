@@ -878,6 +878,9 @@ function runtimeEventToActivities(
     }
 
     case "task.progress": {
+      // Streamed progress (background command output) carries only a summary;
+      // a task that restates its description contributes it too.
+      const progressDetail = event.payload.summary ?? event.payload.description;
       return [
         {
           id: event.eventId,
@@ -888,7 +891,7 @@ function runtimeEventToActivities(
           payload: {
             taskId: event.payload.taskId,
             ...(event.payload.entityType ? { entityType: event.payload.entityType } : {}),
-            detail: truncateDetail(event.payload.summary ?? event.payload.description),
+            ...(progressDetail ? { detail: truncateDetail(progressDetail) } : {}),
             ...(event.payload.description
               ? { description: truncateDetail(event.payload.description) }
               : {}),

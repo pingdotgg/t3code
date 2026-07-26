@@ -344,10 +344,26 @@ enum TranscriptTextBuilder {
 
         case .subagentTask(let task):
             if leadingBreak { appendBlankLine(to: result) }
-            let title =
-                task.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                ? task.description! : "Subagent task"
-            appendHeader("Subagent · \(title)", to: result)
+            // Copied text carries the same claims the row makes on screen: the
+            // kind of work it was, "background" only for a task that actually
+            // detached, and no filler title for one the provider never
+            // described — falling back to whatever identity the card's badge
+            // would have shown instead.
+            let label: String
+            let identity: String?
+            switch task.entityKind {
+            case .command:
+                label = task.isBackgrounded ? "Background command" : "Command"
+                identity = nil
+            case .workflow:
+                label = "Workflow"
+                identity = SubagentTaskPresentation.nonEmpty(task.workflowName)
+            case .subagent:
+                label = "Subagent"
+                identity = SubagentTaskPresentation.nonEmpty(task.subagentType)
+            }
+            let title = SubagentTaskPresentation.nonEmpty(task.description) ?? identity
+            appendHeader(title.map { "\(label) · \($0)" } ?? label, to: result)
             if let progress = task.latestProgress?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !progress.isEmpty
             {
