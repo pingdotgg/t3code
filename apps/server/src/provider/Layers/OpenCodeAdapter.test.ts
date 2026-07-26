@@ -64,6 +64,7 @@ const runtimeMock = {
     closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     promptCalls: [] as Array<unknown>,
+    commandCalls: [] as Array<unknown>,
     promptAsyncError: null as Error | null,
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
@@ -84,6 +85,7 @@ const runtimeMock = {
     this.state.closeCalls.length = 0;
     this.state.revertCalls.length = 0;
     this.state.promptCalls.length = 0;
+    this.state.commandCalls.length = 0;
     this.state.promptAsyncError = null;
     this.state.closeError = null;
     this.state.messages = [];
@@ -182,6 +184,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           if (runtimeMock.state.promptAsyncError) {
             throw runtimeMock.state.promptAsyncError;
           }
+        },
+        command: async (input: unknown) => {
+          runtimeMock.state.commandCalls.push(input);
         },
         messages: async () => ({ data: runtimeMock.state.messages }),
         revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
@@ -384,6 +389,76 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         sessionId: "ses_persisted",
       });
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("dispatches leading slash commands through the OpenCode command endpoint", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-command");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "/review src/provider",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/sonnet",
+          [
+            { id: "agent", value: "build" },
+            { id: "variant", value: "high" },
+          ],
+        ),
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.commandCalls, [
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          command: "review",
+          arguments: "src/provider",
+          model: "anthropic/sonnet",
+          agent: "build",
+          variant: "high",
+        },
+      ]);
+      NodeAssert.deepEqual(runtimeMock.state.promptCalls, []);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("supplies empty arguments for slash commands without arguments", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-command-without-arguments");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "/quota",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/big-pickle",
+        ),
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.commandCalls, [
+        {
+          sessionID: "http://127.0.0.1:9999/session",
+          command: "quota",
+          arguments: "",
+          model: "opencode/big-pickle",
+        },
+      ]);
+      NodeAssert.deepEqual(runtimeMock.state.promptCalls, []);
       yield* adapter.stopSession(threadId);
     }),
   );
@@ -855,6 +930,64 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       });
     }).pipe(Effect.provide(adapterLayer));
   });
+
+  it.effect("uses the plan agent when interaction mode overrides the selected agent", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-plan-mode-agent");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Draft a plan",
+        interactionMode: "plan",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/claude-sonnet-4-5",
+          [{ id: "agent", value: "build" }],
+        ),
+      });
+
+      NodeAssert.equal(
+        (runtimeMock.state.promptCalls.at(-1) as { agent?: string } | undefined)?.agent,
+        "plan",
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("repairs a stale plan agent selection when returning to default mode", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-default-mode-agent");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Implement the plan",
+        interactionMode: "default",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "anthropic/claude-sonnet-4-5",
+          [{ id: "agent", value: "plan" }],
+        ),
+      });
+
+      NodeAssert.equal(
+        (runtimeMock.state.promptCalls.at(-1) as { agent?: string } | undefined)?.agent,
+        "build",
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 
   it.effect("uses the bound custom instance id for fallback sendTurn model selection", () => {
     const instanceId = ProviderInstanceId.make("opencode_zen");

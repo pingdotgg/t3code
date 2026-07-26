@@ -1458,7 +1458,11 @@ export function makeOpenCodeAdapter(
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
 
       context.activeTurnId = turnId;
-      context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
+      // Build and plan are OpenCode's built-in interaction modes, not model
+      // traits. Plan mode always wins; default mode also repairs stale model
+      // selections created when `plan` was exposed in the agent picker.
+      context.activeAgent =
+        input.interactionMode === "plan" ? "plan" : agent === "plan" ? "build" : agent;
       context.activeVariant = variant;
       yield* updateProviderSession(
         context,
@@ -1481,15 +1485,31 @@ export function makeOpenCodeAdapter(
         });
       }
 
-      yield* runOpenCodeSdk("session.promptAsync", () =>
-        context.client.session.promptAsync({
-          sessionID: context.openCodeSessionId,
-          model: parsedModel,
-          ...(context.activeAgent ? { agent: context.activeAgent } : {}),
-          ...(context.activeVariant ? { variant: context.activeVariant } : {}),
-          parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
-        }),
-      ).pipe(
+      const slashCommand = text?.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
+      const command = slashCommand?.[1];
+      const request: Effect.Effect<unknown, OpenCodeRuntimeError> = command
+        ? runOpenCodeSdk("session.command", () =>
+            context.client.session.command({
+              sessionID: context.openCodeSessionId,
+              command,
+              arguments: slashCommand?.[2] ?? "",
+              ...(modelSelection?.model ? { model: modelSelection.model } : {}),
+              ...(context.activeAgent ? { agent: context.activeAgent } : {}),
+              ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+              ...(fileParts.length > 0 ? { parts: fileParts } : {}),
+            }),
+          )
+        : runOpenCodeSdk("session.promptAsync", () =>
+            context.client.session.promptAsync({
+              sessionID: context.openCodeSessionId,
+              model: parsedModel,
+              ...(context.activeAgent ? { agent: context.activeAgent } : {}),
+              ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+              parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
+            }),
+          );
+
+      yield* request.pipe(
         Effect.mapError(toRequestError),
         // On failure of a fresh turn: clear active-turn state, flip the
         // session back to ready with lastError set, emit turn.aborted, then

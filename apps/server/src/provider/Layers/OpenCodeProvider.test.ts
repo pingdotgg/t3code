@@ -38,6 +38,8 @@ const runtimeMock = {
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
+      commands: [] as unknown[],
+      skills: [] as unknown[],
     } as unknown,
   },
   reset() {
@@ -48,6 +50,8 @@ const runtimeMock = {
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
+      commands: [] as unknown[],
+      skills: [] as unknown[],
     };
   },
 };
@@ -182,11 +186,14 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
           { name: "build", hidden: false, mode: "primary" },
           { name: "plan", hidden: false, mode: "primary" },
         ],
+        commands: [],
+        skills: [],
       };
 
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
       const model = snapshot.models.find((entry) => entry.slug === "openai/gpt-5.4");
 
+      NodeAssert.equal(snapshot.showInteractionModeToggle, true);
       NodeAssert.ok(model);
       const variantDescriptor = model.capabilities?.optionDescriptors?.find(
         (descriptor) => descriptor.id === "variant" && descriptor.type === "select",
@@ -199,19 +206,137 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       const agentDescriptor = model.capabilities?.optionDescriptors?.find(
         (descriptor) => descriptor.id === "agent" && descriptor.type === "select",
       );
-      NodeAssert.ok(agentDescriptor && agentDescriptor.type === "select");
-      NodeAssert.equal(
-        agentDescriptor.options.find((option) => option.isDefault === true)?.id,
-        "build",
-      );
+      NodeAssert.equal(agentDescriptor, undefined);
     }),
   );
 
-  it.effect("does not spawn a local server for health check (uses CLI instead)", () =>
+  it.effect("keeps custom agents selectable without duplicating build and plan modes", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["openai"],
+          all: [
+            {
+              id: "openai",
+              name: "OpenAI",
+              source: "env",
+              env: [],
+              models: {
+                "gpt-5.4": {
+                  id: "gpt-5.4",
+                  providerID: "openai",
+                  name: "GPT-5.4",
+                  family: "gpt",
+                  api: { id: "gpt-5.4", url: "", npm: "" },
+                  capabilities: {
+                    temperature: true,
+                    reasoning: true,
+                    attachment: true,
+                    toolcall: true,
+                    input: { text: true, audio: false, image: true, video: false, pdf: true },
+                    output: { text: true, audio: false, image: false, video: false, pdf: false },
+                    interleaved: false,
+                  },
+                  cost: { input: 0, output: 0 },
+                  limit: { context: 128_000, output: 16_384 },
+                  status: "active",
+                  options: {},
+                  headers: {},
+                  release_date: "2026-01-01",
+                  variants: {},
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [
+          { name: "build", hidden: false, mode: "primary" },
+          { name: "plan", hidden: false, mode: "primary" },
+          { name: "reviewer", hidden: false, mode: "primary" },
+        ],
+        commands: [],
+        skills: [],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      const model = snapshot.models.find((entry) => entry.slug === "openai/gpt-5.4");
+      const agentDescriptor = model?.capabilities?.optionDescriptors?.find(
+        (descriptor) => descriptor.id === "agent" && descriptor.type === "select",
+      );
+
+      NodeAssert.ok(agentDescriptor && agentDescriptor.type === "select");
+      NodeAssert.deepEqual(agentDescriptor.options, [{ id: "reviewer", label: "Reviewer" }]);
+      NodeAssert.equal(agentDescriptor.currentValue, undefined);
+    }),
+  );
+
+  it.effect("closes the scoped local server after the authoritative inventory probe", () =>
     Effect.gen(function* () {
       yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
-      NodeAssert.equal(runtimeMock.state.closeCalls, 0);
+      NodeAssert.equal(runtimeMock.state.closeCalls, 1);
+    }),
+  );
+
+  it.effect("normalizes OpenCode slash commands and skill scopes", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: { connected: ["openai"], all: [], default: {} },
+        agents: [],
+        commands: [
+          {
+            name: "Review",
+            description: "Review changes",
+            template: "",
+            hints: ["[path]", "  [focus]  "],
+          },
+          {
+            name: "review",
+            description: "Duplicate",
+            template: "",
+            hints: [],
+          },
+        ],
+        skills: [
+          {
+            name: "customize-opencode",
+            description: "Customize OpenCode",
+            location: "<built-in>",
+            content: "",
+          },
+          {
+            name: "project-skill",
+            description: "Project guidance",
+            location: `${process.cwd()}/.agents/skills/project-skill/SKILL.md`,
+            content: "",
+          },
+          {
+            name: "personal-skill",
+            description: "Personal guidance",
+            location: "/home/test/.agents/skills/personal-skill/SKILL.md",
+            content: "",
+          },
+        ],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.deepEqual(snapshot.slashCommands, [
+        {
+          name: "Review",
+          description: "Review changes",
+          input: { hint: "[path] [focus]" },
+        },
+      ]);
+      NodeAssert.deepEqual(
+        snapshot.skills.map(({ name, scope, enabled }) => ({ name, scope, enabled })),
+        [
+          { name: "customize-opencode", scope: "system", enabled: true },
+          { name: "personal-skill", scope: "user", enabled: true },
+          { name: "project-skill", scope: "project", enabled: true },
+        ],
+      );
     }),
   );
 

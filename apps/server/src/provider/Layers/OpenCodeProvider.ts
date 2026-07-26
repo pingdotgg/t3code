@@ -2,6 +2,8 @@ import {
   type ModelCapabilities,
   type OpenCodeSettings,
   type ServerProviderModel,
+  type ServerProviderSkill,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
@@ -26,7 +28,7 @@ import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 
 const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
-  showInteractionModeToggle: false,
+  showInteractionModeToggle: true,
 } as const;
 const MINIMUM_OPENCODE_VERSION = "1.14.19";
 
@@ -160,10 +162,6 @@ function inferDefaultVariant(
   return undefined;
 }
 
-function inferDefaultAgent(agents: ReadonlyArray<Agent>): string | undefined {
-  return agents.find((agent) => agent.name === "build")?.name ?? agents[0]?.name ?? undefined;
-}
-
 const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
@@ -183,12 +181,13 @@ function openCodeCapabilitiesForModel(input: {
   const primaryAgents = input.agents.filter(
     (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
   );
-  const defaultAgent = inferDefaultAgent(primaryAgents);
-  const agentOptions = primaryAgents.map((agent) =>
-    defaultAgent === agent.name
-      ? { id: agent.name, label: titleCaseSlug(agent.name), isDefault: true as const }
-      : { id: agent.name, label: titleCaseSlug(agent.name) },
-  );
+  // OpenCode's built-in `build` and `plan` agents are represented by the
+  // provider interaction mode. Listing them as model traits creates two
+  // independent controls for the same state. Keep only user-defined primary
+  // agents here; an absent selection lets OpenCode use its normal build agent.
+  const agentOptions = primaryAgents
+    .filter((agent) => agent.name !== "build" && agent.name !== "plan")
+    .map((agent) => ({ id: agent.name, label: titleCaseSlug(agent.name) }));
   return createModelCapabilities({
     optionDescriptors: [
       ...(variantOptions.length > 0
@@ -209,7 +208,6 @@ function openCodeCapabilitiesForModel(input: {
               label: "Agent",
               type: "select" as const,
               options: agentOptions,
-              ...(defaultAgent ? { currentValue: defaultAgent } : {}),
             },
           ]
         : []),
@@ -248,6 +246,72 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
   }
 
   return models.toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+function openCodeSlashCommands(
+  inventory: OpenCodeInventory,
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const commandsByName = new Map<string, ServerProviderSlashCommand>();
+
+  for (const command of inventory.commands) {
+    const name = nonEmptyTrimmed(command.name);
+    if (!name) {
+      continue;
+    }
+    const description = nonEmptyTrimmed(command.description);
+    const hint = command.hints
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+      .join(" ");
+    const key = name.toLowerCase();
+    const existing = commandsByName.get(key);
+    commandsByName.set(key, {
+      name: existing?.name ?? name,
+      ...(existing?.description
+        ? { description: existing.description }
+        : description
+          ? { description }
+          : {}),
+      ...(existing?.input ? { input: existing.input } : hint ? { input: { hint } } : {}),
+    });
+  }
+
+  return [...commandsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function openCodeSkills(
+  inventory: OpenCodeInventory,
+  cwd: string,
+): ReadonlyArray<ServerProviderSkill> {
+  const normalizedCwd = cwd.replaceAll("\\", "/").replace(/\/+$/, "");
+  const skillsByName = new Map<string, ServerProviderSkill>();
+
+  for (const skill of inventory.skills) {
+    const name = nonEmptyTrimmed(skill.name);
+    const location = nonEmptyTrimmed(skill.location);
+    if (!name || !location) {
+      continue;
+    }
+    const normalizedLocation = location.replaceAll("\\", "/");
+    const scope =
+      location === "<built-in>"
+        ? "system"
+        : normalizedCwd &&
+            (normalizedLocation === normalizedCwd ||
+              normalizedLocation.startsWith(`${normalizedCwd}/`))
+          ? "project"
+          : "user";
+    const description = nonEmptyTrimmed(skill.description);
+    skillsByName.set(name, {
+      name,
+      path: location,
+      scope,
+      enabled: true,
+      ...(description ? { description } : {}),
+    });
+  }
+
+  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export const makePendingOpenCodeProvider = (
@@ -391,29 +455,23 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   }
 
   const inventoryExit = yield* Effect.exit(
-    (isExternalServer
-      ? Effect.scoped(
-          Effect.gen(function* () {
-            const server = yield* openCodeRuntime.connectToOpenCodeServer({
-              binaryPath: openCodeSettings.binaryPath,
-              serverUrl: openCodeSettings.serverUrl,
-              environment: resolvedEnvironment,
-            });
-            return yield* openCodeRuntime.loadOpenCodeInventory(
-              openCodeRuntime.createOpenCodeSdkClient({
-                baseUrl: server.url,
-                directory: cwd,
-                ...(openCodeSettings.serverPassword
-                  ? { serverPassword: openCodeSettings.serverPassword }
-                  : {}),
-              }),
-            );
-          }),
-        )
-      : openCodeRuntime.loadInventoryFromCli({
+    Effect.scoped(
+      Effect.gen(function* () {
+        const server = yield* openCodeRuntime.connectToOpenCodeServer({
           binaryPath: openCodeSettings.binaryPath,
+          ...(isExternalServer ? { serverUrl: openCodeSettings.serverUrl } : {}),
           environment: resolvedEnvironment,
-        })
+        });
+        return yield* openCodeRuntime.loadOpenCodeInventory(
+          openCodeRuntime.createOpenCodeSdkClient({
+            baseUrl: server.url,
+            directory: cwd,
+            ...(openCodeSettings.serverPassword
+              ? { serverPassword: openCodeSettings.serverPassword }
+              : {}),
+          }),
+        );
+      }),
     ).pipe(
       Effect.mapError(
         (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
@@ -429,12 +487,16 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
+  const slashCommands = openCodeSlashCommands(inventoryExit.value);
+  const skills = openCodeSkills(inventoryExit.value, cwd);
   const connectedCount = inventoryExit.value.providerList.connected.length;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,
     checkedAt,
     models,
+    slashCommands,
+    skills,
     probe: {
       installed: true,
       version,
