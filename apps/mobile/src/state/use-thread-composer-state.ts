@@ -11,9 +11,11 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { applyCreatePullRequestSuffix } from "@t3tools/shared/createPullRequestPrompt";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
+import { clampMaxSubAgents } from "../lib/interactionModes";
 import {
   convertPastedImagesToAttachments,
   pasteComposerClipboard,
@@ -39,6 +41,9 @@ import { setPendingConnectionError } from "../state/use-remote-environment-regis
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
+import { getAutoCreatePullRequest } from "./use-auto-create-pull-request";
+import { threadEnvironment } from "./threads";
+import { useAtomCommand } from "./use-atom-command";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
 
 export function appendReviewCommentToDraft(input: {
@@ -77,6 +82,7 @@ export function useThreadComposerState() {
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  const setExecutorModel = useAtomCommand(threadEnvironment.setExecutorModel);
 
   useEffect(() => {
     ensureComposerDraftsLoaded();
@@ -148,13 +154,19 @@ export function useThreadComposerState() {
 
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
+    const outgoingText = applyCreatePullRequestSuffix({
+      text,
+      autoCreatePullRequest: getAutoCreatePullRequest(),
+      // The shell owns latestUserMessageAt; the detail projection does not.
+      threadHasStarted: selectedThreadShell.latestUserMessageAt !== null,
+    });
     try {
       await enqueueThreadOutboxMessage({
         environmentId: selectedThreadShell.environmentId,
         threadId: selectedThreadShell.id,
         messageId,
         commandId: CommandId.make(metadata.commandId),
-        text,
+        text: outgoingText,
         attachments,
         modelSelection: draft.modelSelection ?? thread.modelSelection,
         runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
@@ -292,6 +304,54 @@ export function useThreadComposerState() {
     [selectedThreadKey],
   );
 
+  // Executor config is thread state rather than draft state: unlike model /
+  // runtime / interaction mode it is not replayed with the next message, so it
+  // is dispatched straight away (the same way the macOS composer does it)
+  // instead of waiting for the outbox to drain.
+  const onUpdateExecutorModel = useCallback(
+    (value: ModelSelection | null) => {
+      if (!selectedThreadShell) {
+        return;
+      }
+      void setExecutorModel({
+        environmentId: selectedThreadShell.environmentId,
+        input: {
+          threadId: selectedThreadShell.id,
+          executorModelSelection: value,
+          // Clearing the executor keeps the stored cap so re-binding a model
+          // restores the user's previous choice.
+          ...(value === null
+            ? {}
+            : {
+                executorMaxSubAgents: clampMaxSubAgents(selectedThread?.executorMaxSubAgents),
+              }),
+        },
+      });
+    },
+    [selectedThread?.executorMaxSubAgents, selectedThreadShell, setExecutorModel],
+  );
+
+  const onUpdateExecutorMaxSubAgents = useCallback(
+    (value: number) => {
+      if (!selectedThreadShell) {
+        return;
+      }
+      const executorModelSelection = selectedThread?.executorModelSelection ?? null;
+      if (executorModelSelection === null) {
+        return;
+      }
+      void setExecutorModel({
+        environmentId: selectedThreadShell.environmentId,
+        input: {
+          threadId: selectedThreadShell.id,
+          executorModelSelection,
+          executorMaxSubAgents: clampMaxSubAgents(value),
+        },
+      });
+    },
+    [selectedThread?.executorModelSelection, selectedThreadShell, setExecutorModel],
+  );
+
   return {
     selectedThreadFeed,
     selectedThreadQueueCount,
@@ -311,5 +371,7 @@ export function useThreadComposerState() {
     onUpdateModelSelection,
     onUpdateRuntimeMode,
     onUpdateInteractionMode,
+    onUpdateExecutorModel,
+    onUpdateExecutorMaxSubAgents,
   };
 }

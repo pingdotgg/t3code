@@ -42,7 +42,7 @@ import {
 import { buildHomeThreadGroups } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
-import { useThreadListActions } from "../home/useThreadListActions";
+import { useArchiveSettledGroup, useThreadListActions } from "../home/useThreadListActions";
 import { WorkspaceConnectionStatus } from "../home/WorkspaceConnectionStatus";
 import { shouldShowWorkspaceConnectionStatus } from "../home/workspace-connection-status";
 import { SidebarHeaderActions } from "./sidebar-header-actions";
@@ -169,8 +169,13 @@ function ThreadNavigationSidebarPane(
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const headerIsOverContentRef = useRef(false);
   const sidebarScrollGesture = useMemo(() => Gesture.Native(), []);
-  const { archiveThread, settleThread, unsettleThread, confirmDeleteThread } =
-    useThreadListActions();
+  const {
+    archiveThread,
+    settleThread,
+    unsettleThread,
+    confirmDeleteThread,
+    confirmArchiveThreads,
+  } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -208,6 +213,7 @@ function ThreadNavigationSidebarPane(
       }),
     [options, pendingTasks, projects, props.searchQuery, threads],
   );
+  const archiveSettledGroup = useArchiveSettledGroup(groups, confirmArchiveThreads);
   const [groupDisplayStates, setGroupDisplayStates] = useState<
     ReadonlyMap<string, HomeGroupDisplayState>
   >(() => new Map());
@@ -471,6 +477,7 @@ function ThreadNavigationSidebarPane(
               revealed={item.revealed}
               groupKey={item.groupKey}
               onGroupAction={updateGroupDisplay}
+              onArchiveSettled={archiveSettledGroup}
             />
           );
         case "show-more":
@@ -487,6 +494,7 @@ function ThreadNavigationSidebarPane(
     },
     [
       archiveThread,
+      archiveSettledGroup,
       confirmDeletePendingTask,
       confirmDeleteThread,
       handleSelectThread,

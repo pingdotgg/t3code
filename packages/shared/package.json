@@ -27,6 +27,10 @@
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"
     },
+    "./createPullRequestPrompt": {
+      "types": "./src/createPullRequestPrompt.ts",
+      "import": "./src/createPullRequestPrompt.ts"
+    },
     "./logging": {
       "types": "./src/logging.ts",
       "import": "./src/logging.ts"

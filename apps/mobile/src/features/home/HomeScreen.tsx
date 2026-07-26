@@ -45,6 +45,7 @@ import {
   type HomeListItem,
 } from "./homeListItems";
 import { buildHomeThreadGroups, type HomeProjectSortOrder } from "./homeThreadList";
+import { useArchiveSettledGroup } from "./useThreadListActions";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { WorkspaceConnectionStatus } from "./WorkspaceConnectionStatus";
 import { shouldShowWorkspaceConnectionStatus } from "./workspace-connection-status";
@@ -74,6 +75,8 @@ interface HomeScreenProps {
   readonly onStartNewTask: () => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
+  /** Archives every settled thread in one project group at once. */
+  readonly onArchiveSettledThreads: (threads: ReadonlyArray<EnvironmentThreadShell>) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
@@ -221,6 +224,8 @@ export function HomeScreen(props: HomeScreenProps) {
     ],
   );
 
+  const archiveSettledGroup = useArchiveSettledGroup(projectGroups, props.onArchiveSettledThreads);
+
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const listLayout = useMemo(
     () =>
@@ -307,6 +312,7 @@ export function HomeScreen(props: HomeScreenProps) {
               revealed={item.revealed}
               groupKey={item.groupKey}
               onGroupAction={updateGroupDisplay}
+              onArchiveSettled={archiveSettledGroup}
             />
           );
         case "show-more":
@@ -325,6 +331,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableClose,
       handleSwipeableWillOpen,
       projectCwdByKey,
+      archiveSettledGroup,
       props.onArchiveThread,
       props.onDeletePendingTask,
       props.onDeleteThread,

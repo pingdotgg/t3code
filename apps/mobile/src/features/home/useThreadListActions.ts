@@ -4,9 +4,11 @@ import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 
+import { claimThreadsForBatch, releaseThreadKeys } from "../../lib/inFlightThreadKeys";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import type { HomeThreadGroup } from "./homeThreadList";
 
 type ThreadListAction = "archive" | "unarchive" | "settle" | "unsettle" | "delete";
 
@@ -40,7 +42,22 @@ function actionFailureTitle(action: ThreadListAction): string {
   return "Could not delete thread";
 }
 
+/**
+ * Thread keys with a mutation in flight, shared by the single-thread actions
+ * and the group archive so neither can submit a second command for a thread
+ * the other is already acting on. `thread.archive` is not idempotent — the
+ * decider rejects it via `requireThreadNotArchived` — and the command
+ * scheduler serializes per thread, so an unguarded overlap does not race, it
+ * deterministically fails the second submission.
+ */
+type InFlightThreadKeys = { readonly current: Set<string> };
+
+function useInFlightThreadKeys(): InFlightThreadKeys {
+  return useRef(new Set<string>());
+}
+
 function useThreadActionExecutor(
+  inFlightThreadKeys: InFlightThreadKeys,
   onCompleted?: (action: ThreadListAction, thread: EnvironmentThreadShell) => void,
 ) {
   const archiveMutation = useAtomCommand(threadEnvironment.archive, { reportFailure: false });
@@ -48,7 +65,6 @@ function useThreadActionExecutor(
   const settleMutation = useAtomCommand(threadEnvironment.settle, { reportFailure: false });
   const unsettleMutation = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
   const deleteMutation = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
-  const inFlightThreadKeys = useRef(new Set<string>());
 
   const executeAction = useCallback(
     async (action: ThreadListAction, thread: EnvironmentThreadShell) => {
@@ -93,6 +109,7 @@ function useThreadActionExecutor(
     [
       archiveMutation,
       deleteMutation,
+      inFlightThreadKeys,
       onCompleted,
       settleMutation,
       unarchiveMutation,
@@ -127,13 +144,85 @@ function useConfirmDeleteThread(
   );
 }
 
+/**
+ * Batch archive, used by the settled disclosure's archive-all action (mac
+ * `AppModel.archiveThreads` parity). Individual failures do not stop the run,
+ * and the outcome is reported once instead of one alert per thread. A group
+ * can span environments, so each thread carries its own environment id.
+ */
+function useConfirmArchiveThreads(inFlightThreadKeys: InFlightThreadKeys) {
+  const archiveMutation = useAtomCommand(threadEnvironment.archive, { reportFailure: false });
+
+  const archiveThreads = useCallback(
+    async (threads: ReadonlyArray<EnvironmentThreadShell>) => {
+      const claimed = claimThreadsForBatch(threads, inFlightThreadKeys.current);
+      if (claimed.length === 0) {
+        return;
+      }
+
+      selectionHaptic();
+      try {
+        let failures = 0;
+        let firstFailure: string | null = null;
+        for (const { thread } of claimed) {
+          const result = await archiveMutation({
+            environmentId: thread.environmentId,
+            input: { threadId: thread.id },
+          });
+          if (result._tag === "Failure") {
+            failures += 1;
+            firstFailure ??= actionFailureMessage("archive", result.cause);
+          }
+        }
+        if (firstFailure !== null) {
+          Alert.alert(
+            actionFailureTitle("archive"),
+            failures === claimed.length
+              ? firstFailure
+              : `Failed to archive ${failures} of ${claimed.length} threads: ${firstFailure}`,
+          );
+        }
+      } finally {
+        releaseThreadKeys(claimed, inFlightThreadKeys.current);
+      }
+    },
+    [archiveMutation, inFlightThreadKeys],
+  );
+
+  return useCallback(
+    (threads: ReadonlyArray<EnvironmentThreadShell>) => {
+      if (threads.length === 0) {
+        return;
+      }
+      Alert.alert(
+        `Archive ${threads.length} settled thread${threads.length === 1 ? "" : "s"}?`,
+        "They move to Archive and can be unarchived from there.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Archive",
+            onPress: () => {
+              void archiveThreads(threads);
+            },
+          },
+        ],
+      );
+    },
+    [archiveThreads],
+  );
+}
+
 export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => void;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
+  readonly confirmArchiveThreads: (threads: ReadonlyArray<EnvironmentThreadShell>) => void;
 } {
-  const executeAction = useThreadActionExecutor();
+  // One in-flight set for both paths: the group archive and the swipe/context
+  // actions must not both submit for the same thread.
+  const inFlightThreadKeys = useInFlightThreadKeys();
+  const executeAction = useThreadActionExecutor(inFlightThreadKeys);
 
   const archiveThread = useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -157,8 +246,44 @@ export function useThreadListActions(): {
   );
 
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
+  const confirmArchiveThreads = useConfirmArchiveThreads(inFlightThreadKeys);
 
-  return { archiveThread, settleThread, unsettleThread, confirmDeleteThread };
+  return {
+    archiveThread,
+    settleThread,
+    unsettleThread,
+    confirmDeleteThread,
+    confirmArchiveThreads,
+  };
+}
+
+/**
+ * Turns the settled disclosure's group key into the archive-all batch, read
+ * from the groups at press time.
+ *
+ * `buildHomeThreadGroups` rebuilds `settledThreads` on every thread event, so
+ * the batch cannot ride along in the list item without churning the row's
+ * identity on unrelated updates. Reading it through a ref also keeps the
+ * returned callback referentially stable, so the memoized row does not
+ * re-render just because the groups were recomputed — and the archive always
+ * acts on the current settled set rather than whatever the row last rendered.
+ */
+export function useArchiveSettledGroup(
+  groups: ReadonlyArray<HomeThreadGroup>,
+  confirmArchiveThreads: (threads: ReadonlyArray<EnvironmentThreadShell>) => void,
+): (groupKey: string) => void {
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
+  const confirmRef = useRef(confirmArchiveThreads);
+  confirmRef.current = confirmArchiveThreads;
+
+  return useCallback((groupKey: string) => {
+    const group = groupsRef.current.find((candidate) => candidate.key === groupKey);
+    if (!group || group.settledThreads.length === 0) {
+      return;
+    }
+    confirmRef.current(group.settledThreads);
+  }, []);
 }
 
 export function useArchivedThreadListActions(
@@ -173,7 +298,9 @@ export function useArchivedThreadListActions(
     },
     [onCompleted],
   );
-  const executeAction = useThreadActionExecutor(handleCompleted);
+  // The archive list has no group archive to coordinate with, so it keeps its
+  // own set rather than sharing the thread list's.
+  const executeAction = useThreadActionExecutor(useInFlightThreadKeys(), handleCompleted);
   const unarchiveThread = useCallback(
     (thread: EnvironmentThreadShell) => {
       void executeAction("unarchive", thread);
