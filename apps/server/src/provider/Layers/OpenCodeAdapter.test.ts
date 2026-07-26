@@ -68,6 +68,12 @@ const runtimeMock = {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    providerList: {
+      all: [],
+      default: {},
+      connected: [],
+    } as Record<string, unknown>,
+    providerListCalls: 0,
     sessionGetIds: [] as string[],
     missingSessionIds: new Set<string>(),
     transientErrorSessionIds: new Set<string>(),
@@ -88,6 +94,12 @@ const runtimeMock = {
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.providerList = {
+      all: [],
+      default: {},
+      connected: [],
+    };
+    this.state.providerListCalls = 0;
     this.state.sessionGetIds.length = 0;
     this.state.missingSessionIds.clear();
     this.state.transientErrorSessionIds.clear();
@@ -211,6 +223,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             }
           })(),
         }),
+      },
+      provider: {
+        list: async () => {
+          runtimeMock.state.providerListCalls += 1;
+          return { data: runtimeMock.state.providerList };
+        },
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
@@ -1187,6 +1205,94 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.ok(metadataUpdated);
       if (metadataUpdated.type === "thread.metadata.updated") {
         NodeAssert.equal(metadataUpdated.payload.name, "Investigate OpenCode title sync");
+      }
+    }),
+  );
+
+  it.effect("emits context-window usage from completed assistant messages", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-token-usage");
+      runtimeMock.state.providerList = {
+        all: [
+          {
+            id: "anthropic",
+            models: {
+              "claude-sonnet-4": {
+                id: "claude-sonnet-4",
+                limit: {
+                  context: 200_000,
+                  output: 64_000,
+                },
+              },
+            },
+          },
+        ],
+        default: {},
+        connected: ["anthropic"],
+      };
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            info: {
+              id: "msg-token-usage",
+              sessionID: "http://127.0.0.1:9999/session",
+              role: "assistant",
+              time: { created: 1, completed: 2 },
+              parentID: "msg-user",
+              modelID: "claude-sonnet-4",
+              providerID: "anthropic",
+              mode: "build",
+              agent: "build",
+              path: { cwd: "/repo", root: "/repo" },
+              cost: 0,
+              tokens: {
+                input: 40_000,
+                output: 2_000,
+                reasoning: 1_000,
+                cache: {
+                  read: 5_000,
+                  write: 500,
+                },
+              },
+            },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const usageEvent = events.find((event) => event.type === "thread.token-usage.updated");
+      NodeAssert.equal(runtimeMock.state.providerListCalls, 1);
+      NodeAssert.equal(usageEvent?.type, "thread.token-usage.updated");
+      if (usageEvent?.type === "thread.token-usage.updated") {
+        NodeAssert.deepEqual(usageEvent.payload.usage, {
+          usedTokens: 48_500,
+          maxTokens: 200_000,
+          inputTokens: 45_500,
+          cachedInputTokens: 5_000,
+          outputTokens: 2_000,
+          reasoningOutputTokens: 1_000,
+          lastUsedTokens: 48_500,
+          lastInputTokens: 45_500,
+          lastCachedInputTokens: 5_000,
+          lastOutputTokens: 2_000,
+          lastReasoningOutputTokens: 1_000,
+        });
       }
     }),
   );

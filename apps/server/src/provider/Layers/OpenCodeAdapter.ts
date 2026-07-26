@@ -7,6 +7,7 @@ import {
   type ProviderSession,
   RuntimeItemId,
   RuntimeRequestId,
+  type ThreadTokenUsageSnapshot,
   ThreadId,
   type ToolLifecycleItemType,
   TurnId,
@@ -23,7 +24,14 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
+import type {
+  AssistantMessage,
+  OpencodeClient,
+  Part,
+  PermissionRequest,
+  ProviderListResponse,
+  QuestionRequest,
+} from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -204,6 +212,73 @@ function openCodeEventSessionTitle(event: OpenCodeSubscribedEvent): string | und
   return trimText(event.properties.info.title);
 }
 
+function finiteNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : undefined;
+}
+
+function finitePositiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : undefined;
+}
+
+function openCodeModelSlug(providerID: string, modelID: string): string {
+  return `${providerID}/${modelID}`;
+}
+
+function collectOpenCodeModelContextWindows(
+  providerList: ProviderListResponse | undefined,
+): ReadonlyMap<string, number> {
+  const result = new Map<string, number>();
+  for (const provider of providerList?.all ?? []) {
+    for (const [modelID, model] of Object.entries(provider.models)) {
+      const contextWindow = finitePositiveInteger(model.limit.context);
+      if (contextWindow === undefined) {
+        continue;
+      }
+      result.set(openCodeModelSlug(provider.id, modelID), contextWindow);
+      result.set(openCodeModelSlug(provider.id, model.id), contextWindow);
+    }
+  }
+  return result;
+}
+
+function normalizeOpenCodeTokenUsage(
+  tokens: AssistantMessage["tokens"] | undefined,
+  contextWindow?: number,
+): ThreadTokenUsageSnapshot | undefined {
+  if (!tokens) {
+    return undefined;
+  }
+  const nonCachedInputTokens = finiteNonNegativeInteger(tokens.input) ?? 0;
+  const cachedInputTokens = finiteNonNegativeInteger(tokens.cache.read) ?? 0;
+  const cacheWriteInputTokens = finiteNonNegativeInteger(tokens.cache.write) ?? 0;
+  const inputTokens = nonCachedInputTokens + cachedInputTokens + cacheWriteInputTokens;
+  const outputTokens = finiteNonNegativeInteger(tokens.output) ?? 0;
+  const reasoningOutputTokens = finiteNonNegativeInteger(tokens.reasoning) ?? 0;
+  const usedTokens = inputTokens + outputTokens + reasoningOutputTokens;
+  if (usedTokens <= 0) {
+    return undefined;
+  }
+
+  const maxTokens = finitePositiveInteger(contextWindow);
+  return {
+    usedTokens,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    lastUsedTokens: usedTokens,
+    lastInputTokens: inputTokens,
+    lastCachedInputTokens: cachedInputTokens,
+    lastOutputTokens: outputTokens,
+    lastReasoningOutputTokens: reasoningOutputTokens,
+  };
+}
+
 interface OpenCodeSessionContext {
   session: ProviderSession;
   readonly client: OpencodeClient;
@@ -213,6 +288,7 @@ interface OpenCodeSessionContext {
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
+  readonly modelContextWindowBySlug: ReadonlyMap<string, number>;
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
   readonly completedAssistantPartIds: Set<string>;
@@ -826,10 +902,28 @@ export function makeOpenCodeAdapter(
         }
 
         case "message.updated": {
-          context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
-          if (event.properties.info.role === "assistant") {
+          const info = event.properties.info;
+          context.messageRoleById.set(info.id, info.role);
+          if (info.role === "assistant") {
+            const usage = normalizeOpenCodeTokenUsage(
+              info.tokens,
+              context.modelContextWindowBySlug.get(
+                openCodeModelSlug(info.providerID, info.modelID),
+              ),
+            );
+            if (usage) {
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  raw: event,
+                })),
+                type: "thread.token-usage.updated",
+                payload: { usage },
+              });
+            }
             for (const part of context.partById.values()) {
-              if (part.messageID !== event.properties.info.id) {
+              if (part.messageID !== info.id) {
                 continue;
               }
               yield* emitAssistantTextDelta(context, part, turnId, event);
@@ -1214,6 +1308,16 @@ export function makeOpenCodeAdapter(
                 directory,
                 ...(server.external && serverPassword ? { serverPassword } : {}),
               });
+              const modelContextWindowBySlug = yield* runOpenCodeSdk("provider.list", () =>
+                client.provider.list(),
+              ).pipe(
+                Effect.map((response) => collectOpenCodeModelContextWindows(response.data)),
+                Effect.catch((cause) =>
+                  Effect.logWarning(
+                    `Failed to load OpenCode model context windows: ${cause.detail}`,
+                  ).pipe(Effect.as(new Map<string, number>())),
+                ),
+              );
               const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
               if (mcpSession && !server.external) {
                 yield* runOpenCodeSdk("mcp.add", () =>
@@ -1320,6 +1424,7 @@ export function makeOpenCodeAdapter(
                 client,
                 openCodeSession: resolved.openCodeSession,
                 created: resolved.created,
+                modelContextWindowBySlug,
               };
             }).pipe(Effect.provideService(Scope.Scope, sessionScope)),
           );
@@ -1379,6 +1484,7 @@ export function makeOpenCodeAdapter(
           partById: new Map(),
           emittedTextByPartId: new Map(),
           messageRoleById: new Map(),
+          modelContextWindowBySlug: started.modelContextWindowBySlug,
           completedAssistantPartIds: new Set(),
           turns: [],
           activeTurnId: undefined,
