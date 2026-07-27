@@ -73,10 +73,9 @@ enum Motion {
         return value
     }
 
-    /// Drops both memos. Called from the observers below and directly by the
-    /// playful-motion setter, which posts its notification synchronously and
-    /// must not race the next body evaluation.
-    static func invalidatePreferenceCaches() {
+    /// Drops both memos. Both are derived from `reduceMotion`, so either
+    /// notification has to clear both.
+    private static func invalidatePreferenceCaches() {
         cachedReduceMotion = nil
         cachedPlayful = nil
     }

@@ -132,7 +132,7 @@ struct ChatTimelineScrollView: View {
     /// the pointer, including during the programmatic pin-scroll that follows
     /// a thread switch. Long enough for the clamped stagger plus the row
     /// curve, so a genuinely arriving row still lands inside it.
-    private static let entranceWindow: Double = 0.5
+    private static let entranceWindowDuration: Double = 0.5
 
     var body: some View {
         // `threadID` is an immutable input rather than a second read of the
@@ -212,11 +212,11 @@ struct ChatTimelineScrollView: View {
                                 //
                                 // Arrival motion for every row, hydrated or
                                 // agent-produced (SER-144). Safe during a run
-                                // where `rowTransition` is not: entrance only
-                                // animates the row's own opacity and offset,
-                                // which are render-time transforms, so no
-                                // sibling is re-measured and the stack cannot
-                                // blank. Its transaction is marked
+                                // where a transition is not: entrance only
+                                // animates the row's own opacity, scale and
+                                // offset, which are render-time transforms, so
+                                // no sibling is re-measured and the stack
+                                // cannot blank. Its transaction is marked
                                 // `isEntranceAnimation` so the suppressor
                                 // below lets it play instead of flattening it
                                 // into a pop. Unstaggered on purpose — the
@@ -291,7 +291,7 @@ struct ChatTimelineScrollView: View {
                     // window reopens on every structural change, so rows the
                     // agent actually produces still animate their arrival.
                     .entranceWindow(
-                        resetOn: displayItems.count, duration: Self.entranceWindow)
+                        resetOn: displayItems.count, duration: Self.entranceWindowDuration)
                 }
                 // Turn navigation replaces the scrollbar: indicators are
                 // hidden and the leading-edge rail jumps between turns.

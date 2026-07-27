@@ -57,8 +57,6 @@ enum ChatTurnRailCache {
         var turns: [ChatTurnRailModel.Turn]
         /// Cells indexed by the opening user message's row id.
         var tape: [String: RunTapeCell]
-
-        static let empty = Rail(turns: [], tape: [:])
     }
 
     private struct Entry {

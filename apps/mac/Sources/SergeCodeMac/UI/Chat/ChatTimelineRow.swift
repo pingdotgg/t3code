@@ -911,6 +911,11 @@ private struct ToolEventRow: View {
     /// `firstNonBlankLine` rather than `split(separator:).first`: a command or
     /// a tool payload can be thousands of lines, and this is recomputed for
     /// every visible row on every timeline mutation.
+    ///
+    /// It also skips whitespace-only leading lines, which the old spelling
+    /// did not — `omittingEmptySubsequences` drops empty lines but keeps
+    /// blank ones, so a payload starting with an indented blank line trimmed
+    /// down to "" and the row showed no preview at all.
     private var preview: (text: String, fullPath: String?)? {
         switch parsed {
         case .command(let command):

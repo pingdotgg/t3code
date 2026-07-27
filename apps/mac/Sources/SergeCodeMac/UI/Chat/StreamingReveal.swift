@@ -139,10 +139,15 @@ struct StreamingRevealAdoption: Equatable, Sendable {
 ///
 /// Keyed by (scopedThreadKey, messageID) like `StreamingMarkdownCache`, so
 /// the reveal survives view recreation (a `LazyVStack` un-realizing and
-/// re-realizing the tail row mid-stream) instead of rewinding to empty.
+/// re-realizing the tail row mid-stream) instead of rewinding to empty — but
+/// only for as long as something keeps driving it. Once it goes quiet, or
+/// once it opens against a message that already has real text,
+/// `StreamingRevealAdoption` takes over and the store snaps rather than
+/// replaying text nobody was there to watch arrive.
+///
 /// `revealed` is always a grapheme-safe prefix of every target seen so far,
 /// which is exactly the append-only invariant `StreamingMarkdownCache`
-/// requires of its input.
+/// requires of its input; adopting a whole target preserves that.
 @MainActor
 enum StreamingRevealStore {
     private struct SessionKey: Equatable {
