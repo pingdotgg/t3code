@@ -2558,7 +2558,7 @@ export default function SidebarV2() {
                     onClick={openAddProjectCommandPalette}
                     className="inline-flex items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-[11px] font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                   >
-                    <PlusIcon className="size-3" />
+                    <PlusIcon className="-mx-0.5 size-3" />
                     Add project
                   </button>
                 </>
