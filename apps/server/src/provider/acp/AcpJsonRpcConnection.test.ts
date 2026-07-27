@@ -13,6 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
+import { waitForFileContent } from "../testing/waitForFileContent.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
@@ -20,6 +21,37 @@ const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const mockAgentCommand = "node";
 const mockAgentArgs = [mockAgentPath];
+
+/**
+ * A private file for one test to read the mock agent's received requests from.
+ *
+ * The spawn env is part of the statically built layer, so the path has to exist
+ * before the effect runs — hence the synchronous mkdtemp. One directory per
+ * test keeps concurrently running files from reading each other's log.
+ */
+function makeRequestLogPath(name: string): string {
+  return NodePath.join(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-runtime-log-")),
+    `${name}.ndjson`,
+  );
+}
+
+/**
+ * Block until the mock agent has actually received `session/prompt`.
+ *
+ * `runtime.cancel` only interrupts a prompt it can see in `activePromptFiberRef`,
+ * and the agent only tears a turn down if it got the prompt first. Cancelling
+ * before either is true leaves the hang-forever mock with nothing to cancel and
+ * the test waits out its full timeout. A wall-clock delay is not a barrier for
+ * that: it held on an idle machine and deadlocked as soon as the server suite
+ * started running its files in parallel.
+ *
+ * 400 attempts at 25ms is a 10s ceiling — long enough to survive a loaded
+ * machine, short enough to fail before the 120s test timeout.
+ */
+function waitForPromptReceived(requestLogPath: string): Effect.Effect<string> {
+  return waitForFileContent(requestLogPath, 400, '"method":"session/prompt"');
+}
 
 describe("AcpSessionRuntime", () => {
   it.effect("merges custom initialize client capabilities into the ACP handshake", () => {
@@ -259,6 +291,7 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  const silentCancelRequestLog = makeRequestLogPath("silent-cancel");
   it.effect("releases a fully silent prompt when session/cancel is requested", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
@@ -270,7 +303,7 @@ describe("AcpSessionRuntime", () => {
         })
         .pipe(Effect.forkChild({ startImmediately: true }));
 
-      yield* TestClock.adjust("500 millis");
+      yield* waitForPromptReceived(silentCancelRequestLog);
       yield* runtime.cancel;
 
       const firstPromptResult = yield* Fiber.join(promptFiber);
@@ -288,6 +321,7 @@ describe("AcpSessionRuntime", () => {
             args: mockAgentArgs,
             env: {
               T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+              T3_ACP_REQUEST_LOG_PATH: silentCancelRequestLog,
             },
           },
           cwd: process.cwd(),
@@ -297,9 +331,11 @@ describe("AcpSessionRuntime", () => {
       ),
       Effect.scoped,
       Effect.provide(NodeServices.layer),
+      TestClock.withLive,
     ),
   );
 
+  const gatedCancelRequestLog = makeRequestLogPath("gated-cancel");
   it.effect("gates a follow-up prompt on the cancelled turn finishing agent-side", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
@@ -311,7 +347,7 @@ describe("AcpSessionRuntime", () => {
         })
         .pipe(Effect.forkChild({ startImmediately: true }));
 
-      yield* TestClock.adjust("500 millis");
+      yield* waitForPromptReceived(gatedCancelRequestLog);
       yield* runtime.cancel;
 
       const firstPromptResult = yield* Fiber.join(promptFiber);
@@ -334,6 +370,7 @@ describe("AcpSessionRuntime", () => {
               T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
               T3_ACP_REJECT_PROMPT_WHILE_TURN_ACTIVE: "1",
               T3_ACP_CANCEL_TEARDOWN_DELAY_MS: "200",
+              T3_ACP_REQUEST_LOG_PATH: gatedCancelRequestLog,
             },
           },
           cwd: process.cwd(),
@@ -343,6 +380,7 @@ describe("AcpSessionRuntime", () => {
       ),
       Effect.scoped,
       Effect.provide(NodeServices.layer),
+      TestClock.withLive,
     ),
   );
 
