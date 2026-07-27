@@ -1,34 +1,10 @@
 /**
- * Protocol for values that can render themselves as HTTP server responses.
+ * Converts supported values into HTTP server responses.
  *
- * This module lets server-side domain errors, HTTP API errors, and helper
- * values describe the response they should send to a client. Implement
- * `Respondable` when a value should choose its own status, headers, cookies, or
- * body during route error handling without forcing every call site to construct
- * an `HttpServerResponse` directly.
- *
- * **Mental model**
- *
- * A respondable value owns the last step from domain-level information to an
- * `HttpServerResponse`. Server error handling can ask the value for a response,
- * while unknown failures still go through a caller-provided fallback response.
- * Existing `HttpServerResponse` values are already respondable for conversion
- * purposes and are returned directly.
- *
- * **Common tasks**
- *
- * Use `toResponse` when the value is known to implement the protocol and
- * conversion failures should become defects. Use `toResponseOrElse` when
- * handling unknown failures from route effects and a fallback response should be
- * used when no conversion is available. Use `toResponseOrElseDefect` for defect
- * recovery, where only explicit response-like values receive special handling.
- *
- * **Gotchas**
- *
- * Fallback conversion is intentionally conservative. Schema errors become `400`
- * responses, no-such-element errors become `404` responses, and other values use
- * the supplied fallback. The fallback helpers also catch failures raised while
- * running a respondable conversion; `toResponse` does not.
+ * Server-side errors and helper values can implement `Respondable` when they
+ * know which status, headers, cookies, or body should be sent to the client.
+ * This module detects those values and converts them to `HttpServerResponse`
+ * values, with fallback handling for schema errors and missing values.
  *
  * @since 4.0.0
  */

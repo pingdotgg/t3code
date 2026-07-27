@@ -1,6 +1,6 @@
 # `@effect/sql-sqlite-bun`
 
-An `@effect/sql` implementation using the `bun:sqlite` library.
+An Effect SQL implementation using the `bun:sqlite` library.
 
 ## Documentation
 

@@ -1,0 +1,12 @@
+[project]
+name = "alchemy-python-fastapi-fixture"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+  # ASGI framework + pydantic (validation) — Pyodide-built-in packages
+  "fastapi",
+  # compiled-extension wheel (emscripten-wasm32 ABI) from the Pyodide index
+  "numpy",
+  # async HTTP client — the only kind Python Workers support
+  "httpx",
+]

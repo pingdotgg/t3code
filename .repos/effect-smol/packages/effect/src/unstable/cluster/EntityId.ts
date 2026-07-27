@@ -4,30 +4,6 @@
  * hashes, stores in entity addresses, and uses when sending messages to a
  * running entity.
  *
- * **Mental model**
- *
- * - An entity id is a stable string with a brand; at runtime it is still the
- *   original string
- * - Uniqueness is scoped by entity type, so two different entity types may use
- *   the same id without addressing the same entity
- * - Routing depends on the exact string value, including casing and
- *   normalization
- *
- * **Common tasks**
- *
- * - Brand trusted ids with {@link make} before passing them to cluster APIs
- * - Use the {@link EntityId} schema when decoding or encoding ids at
- *   boundaries
- * - Store ids alongside entity type and shard id when building entity
- *   addresses
- *
- * **Gotchas**
- *
- * - {@link make} does not validate, normalize, or ensure uniqueness
- * - Avoid display names, emails that may change, or values with inconsistent
- *   casing or whitespace
- * - Changing an id changes the shard routing target for that entity
- *
  * @since 4.0.0
  */
 import * as Schema from "../../Schema.ts"
