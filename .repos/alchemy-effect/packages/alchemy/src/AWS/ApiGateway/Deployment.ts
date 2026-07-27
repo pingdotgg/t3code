@@ -1,5 +1,6 @@
 import * as ag from "@distilled.cloud/aws/api-gateway";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { createHash } from "node:crypto";
 import { deepEqual, isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
@@ -26,13 +27,21 @@ export interface DeploymentProps {
    * explicitly only when not using `restApi`.
    */
   restApiId?: Input<string>;
+  /** Description of the deployment. */
   description?: string;
+  /** Name of a stage API Gateway creates alongside the deployment (legacy pattern — prefer a separate `Stage`). */
   stageName?: string;
+  /** Description of the stage created via `stageName`. */
   stageDescription?: string;
+  /** Enable a cache cluster on the stage created via `stageName`. */
   cacheClusterEnabled?: boolean;
+  /** Cache cluster size for the stage created via `stageName`. */
   cacheClusterSize?: ag.CacheClusterSize;
+  /** Stage variables for the stage created via `stageName`. */
   variables?: { [key: string]: string | undefined };
+  /** Canary settings applied to the deployment. */
   canarySettings?: ag.DeploymentCanarySettings;
+  /** Enable X-Ray tracing on the stage created via `stageName`. */
   tracingEnabled?: boolean;
   /**
    * Opaque key/value map; when any value changes, a replacement deployment
@@ -65,7 +74,7 @@ export interface DeploymentType extends Resource<
 /**
  * A point-in-time snapshot of a REST API, ready to be served through a
  * `Stage`.
- *
+ * @resource
  * @section Creating a deployment
  * A Deployment captures whatever methods, integrations, resources, and
  * authorizers currently exist on the REST API and produces an immutable
@@ -155,7 +164,7 @@ export const Deployment = (id: string, props: DeploymentInputProps) =>
       for (const b of bindings) {
         autoTriggers[`@alchemy:binding:${b.sid}`] = bindingDigest(b.data);
       }
-      triggers = { ...autoTriggers, ...(triggers ?? {}) };
+      triggers = { ...autoTriggers, ...triggers };
     }
     return yield* DeploymentResource(id, {
       ...rest,
@@ -205,6 +214,45 @@ export const DeploymentProvider = () =>
     Effect.gen(function* () {
       return {
         stables: ["deploymentId", "restApiId"] as const,
+        // Deployments are sub-resources keyed by `restApiId`. Enumerate every
+        // RestApi in the account/region, then page every deployment under each
+        // one and flatten — yielding the same Attributes shape `read` returns.
+        list: () =>
+          Effect.gen(function* () {
+            const restApiIds = yield* ag.getRestApis.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) =>
+                  (page.items ?? [])
+                    .map((api) => api.id)
+                    .filter((id): id is string => id != null),
+                ),
+              ),
+            );
+            const rows = yield* Effect.forEach(
+              restApiIds,
+              (restApiId) =>
+                ag.getDeployments.pages({ restApiId }).pipe(
+                  Stream.runCollect,
+                  Effect.map((chunk) =>
+                    Array.from(chunk).flatMap((page) =>
+                      (page.items ?? [])
+                        .filter(
+                          (d): d is ag.Deployment & { id: string } =>
+                            d.id != null,
+                        )
+                        .map((d) => ({
+                          deploymentId: d.id,
+                          restApiId,
+                          description: d.description,
+                        })),
+                    ),
+                  ),
+                ),
+              { concurrency: 10 },
+            );
+            return rows.flat();
+          }),
         diff: Effect.fn(function* ({ news: newsIn, olds }) {
           if (!isResolved(newsIn)) return;
           const news = newsIn as Input.ResolveProps<DeploymentProps>;

@@ -1,35 +1,12 @@
 /**
  * Parent-side Node.js support for Effect workers.
  *
- * This module installs the `WorkerPlatform` used by a Node program that owns
- * workers. It supports both `node:worker_threads` workers and IPC-enabled child
- * processes, routing messages through Effect's worker protocol so higher-level
- * worker clients can treat either runtime as the same parent-side transport.
- *
- * **Mental model**
- *
- * `NodeWorker` runs in the parent process. The worker entrypoint should install
- * `NodeWorkerRunner`, which receives parent messages, runs the registered
- * Effect handler, and sends replies back over the same channel. Use `layer`
- * when you want this module to provide both the platform and a `Worker.Spawner`;
- * use `layerPlatform` when the spawner is provided elsewhere.
- *
- * **Common tasks**
- *
- * - Spawn CPU-bound or resource-isolated work in `worker_threads`.
- * - Spawn a child process that was created with an IPC channel.
- * - Share one parent-side worker implementation across both Node transports.
- *
- * **Gotchas**
- *
- * Worker-thread spawners can use `postMessage` transfer lists for values such as
- * `ArrayBuffer` and `MessagePort`; transferring moves ownership, and invalid
- * transfer lists surface as send or receive failures. Child-process spawners
- * must provide an IPC channel, for example via `child_process.fork` or
- * `stdio: "ipc"`; their messages use Node IPC serialization and transfer lists
- * are not forwarded to `ChildProcess.send`. Scope finalization sends the worker
- * close signal and waits for exit before falling back to `terminate()` or
- * `SIGKILL`.
+ * `layerPlatform` installs the `WorkerPlatform` used by a Node program that
+ * owns workers. It supports both `node:worker_threads` workers and IPC-enabled
+ * child processes, routing messages through Effect's worker protocol. `layer`
+ * combines that platform with a `Spawner` callback, and the platform asks
+ * workers to close on scope finalization before forcefully terminating them on
+ * timeout.
  *
  * @since 4.0.0
  */

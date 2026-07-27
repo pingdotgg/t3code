@@ -3,25 +3,8 @@
  *
  * This module opens `node:net` connections or wraps existing Node `Duplex`
  * streams and presents them as `Socket.Socket` values, socket channels, or
- * layers. It is the low-level bridge for TCP clients, Unix domain socket
- * clients, and protocols that already expose a Node duplex stream.
- *
- * **Mental model**
- *
- * A socket acquired here is scoped. `makeNet` dials with
- * `net.createConnection`, `fromDuplex` adapts any duplex returned by an Effect,
- * `makeNetChannel` exposes the socket as a `Channel`, and `layerNet` provides
- * it through the Effect environment. While a socket handler is running,
- * `NetSocket` gives access to the underlying Node `net.Socket` for cases that
- * need Node-specific operations.
- *
- * **Gotchas**
- *
- * `openTimeout` only limits opening the connection. Writes complete when Node
- * accepts or flushes a chunk, close events are translated to `SocketError`
- * values, and finalizers close or destroy the stream when the surrounding scope
- * ends. Unix socket paths are supplied through `NetConnectOpts.path`, so use
- * the same platform path rules as Node.
+ * layers. It also exposes the current underlying `NetSocket` service for code
+ * running inside a socket handler and re-exports the `ws` package namespace.
  *
  * @since 4.0.0
  */
@@ -51,7 +34,7 @@ export * as NodeWS from "ws"
  * Service tag for the underlying Node `net.Socket` associated with the current
  * socket connection.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export class NetSocket extends Context.Service<NetSocket, Net.Socket>()(

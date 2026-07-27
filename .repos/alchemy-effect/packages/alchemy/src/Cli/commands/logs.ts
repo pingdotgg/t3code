@@ -62,7 +62,7 @@ export const logsCommand = Command.make(
       "alchemy.limit": a.limit,
     }),
   )(
-    Effect.fnUntraced(function* ({
+    Effect.fn(function* ({
       main,
       stage,
       envFile,
@@ -126,6 +126,7 @@ export const logsCommand = Command.make(
 
             const lines = yield* provider.logs({
               id: resource.LogicalId,
+              fqn,
               instanceId: (resourceState as any).instanceId,
               props: (resourceState as any).props,
               output: (resourceState as any).attr,

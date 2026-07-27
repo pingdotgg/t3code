@@ -138,33 +138,6 @@ export const encodeResource = (resource: Resource): Uint8Array =>
       : new Uint8Array(0)
   )
 
-// Trace types (opentelemetry.proto.trace.v1)
-
-/**
- * Status code enum
- *
- * @internal
- */
-export const StatusCode = {
-  Unset: 0,
-  Ok: 1,
-  Error: 2
-} as const
-
-/**
- * SpanKind enum
- *
- * @internal
- */
-export const SpanKind = {
-  Unspecified: 0,
-  Internal: 1,
-  Server: 2,
-  Client: 3,
-  Producer: 4,
-  Consumer: 5
-} as const
-
 /**
  * Encodes a Status message.
  *
@@ -375,19 +348,6 @@ export const encodeResourceSpans = (resourceSpans: ResourceSpan): Uint8Array =>
  */
 export const encodeTracesData = (tracesData: TraceData): Uint8Array =>
   Proto.repeatedField(1, tracesData.resourceSpans, encodeResourceSpans)
-
-// Metrics types (opentelemetry.proto.metrics.v1)
-
-/**
- * AggregationTemporality enum
- *
- * @internal
- */
-export const AggregationTemporality = {
-  Unspecified: 0,
-  Delta: 1,
-  Cumulative: 2
-} as const
 
 /**
  * Encodes a NumberDataPoint message.
@@ -630,41 +590,6 @@ export const encodeResourceMetrics = (resourceMetrics: {
 export const encodeMetricsData = (metricsData: {
   readonly resourceMetrics: ReadonlyArray<Parameters<typeof encodeResourceMetrics>[0]>
 }): Uint8Array => Proto.repeatedField(1, metricsData.resourceMetrics, encodeResourceMetrics)
-
-// Logs types (opentelemetry.proto.logs.v1)
-
-/**
- * SeverityNumber enum
- *
- * @internal
- */
-export const SeverityNumber = {
-  Unspecified: 0,
-  Trace: 1,
-  Trace2: 2,
-  Trace3: 3,
-  Trace4: 4,
-  Debug: 5,
-  Debug2: 6,
-  Debug3: 7,
-  Debug4: 8,
-  Info: 9,
-  Info2: 10,
-  Info3: 11,
-  Info4: 12,
-  Warn: 13,
-  Warn2: 14,
-  Warn3: 15,
-  Warn4: 16,
-  Error: 17,
-  Error2: 18,
-  Error3: 19,
-  Error4: 20,
-  Fatal: 21,
-  Fatal2: 22,
-  Fatal3: 23,
-  Fatal4: 24
-} as const
 
 /**
  * Encodes a LogRecord message.

@@ -1,8 +1,8 @@
 import { describe, it } from "@effect/vitest"
-import { assertNone, assertSome, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
+import { assertNone, assertSome, assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import { Effect, Stream } from "effect"
 import * as Option from "effect/Option"
-import { HttpClientRequest } from "effect/unstable/http"
+import { Headers, HttpClientRequest } from "effect/unstable/http"
 
 describe("HttpClientRequest", () => {
   describe("appendUrl", () => {
@@ -79,6 +79,61 @@ describe("HttpClientRequest", () => {
 
       strictEqual(request.headers["content-type"], undefined)
       strictEqual(request.headers["content-length"], undefined)
+    })
+  })
+
+  describe("removeHeader", () => {
+    it("removes an existing header", () => {
+      const request = HttpClientRequest.get("/").pipe(
+        HttpClientRequest.setHeader("X-Test", "ok"),
+        HttpClientRequest.removeHeader("X-Test")
+      )
+
+      strictEqual(request.headers["x-test"], undefined)
+    })
+
+    it("no-ops on a missing header", () => {
+      const request = HttpClientRequest.get("/").pipe(
+        HttpClientRequest.setHeader("X-Test", "ok")
+      )
+      const removed = HttpClientRequest.removeHeader(request, "X-Missing")
+
+      deepStrictEqual(removed.headers, request.headers)
+    })
+
+    it("preserves the request prototype", () => {
+      const request = HttpClientRequest.get("/").pipe(
+        HttpClientRequest.removeHeader("X-Test")
+      )
+
+      assertTrue(HttpClientRequest.isHttpClientRequest(request))
+    })
+  })
+
+  describe("updateHeaders", () => {
+    it("transforms the header collection", () => {
+      const request = HttpClientRequest.get("/").pipe(
+        HttpClientRequest.setHeaders({ "X-A": "a", "X-B": "b" }),
+        HttpClientRequest.updateHeaders((headers) => Headers.set(Headers.remove(headers, "X-A"), "X-C", "c"))
+      )
+
+      deepStrictEqual(request.headers, Headers.fromInput({ "x-b": "b", "x-c": "c" }))
+    })
+
+    it("preserves the request prototype", () => {
+      const request = HttpClientRequest.get("/").pipe(
+        HttpClientRequest.updateHeaders(Headers.set("X-Test", "ok"))
+      )
+
+      assertTrue(HttpClientRequest.isHttpClientRequest(request))
+      strictEqual(request.headers["x-test"], "ok")
+    })
+
+    it("supports the data-first overload", () => {
+      const request = HttpClientRequest.get("/")
+      const updated = HttpClientRequest.updateHeaders(request, Headers.set("X-Test", "ok"))
+
+      strictEqual(updated.headers["x-test"], "ok")
     })
   })
 

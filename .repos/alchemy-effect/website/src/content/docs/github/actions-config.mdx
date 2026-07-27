@@ -1,0 +1,256 @@
+---
+title: Actions secrets & variables
+description: Manage GitHub Actions secrets and variables as Stack resources — encrypted secrets, plain-text variables, bulk helpers, and CI credentials provisioned as code.
+---
+
+GitHub Actions workflows read configuration from two places:
+**secrets** (encrypted, never readable back) and **variables**
+(plain text, visible in logs). The GitHub provider manages both as
+resources, so the values CI needs — API tokens, role ARNs, regions —
+are declared next to the infrastructure that produces them instead
+of pasted into repo settings.
+
+Use `Secret` for anything sensitive and `Variable` for everything
+else. `Secrets` and `Variables` are bulk helpers over the same
+resources.
+
+## Create a secret
+
+`GitHub.Secret` manages one encrypted secret. The value must be
+wrapped with `Redacted.make` so it never appears in logs or state:
+
+```typescript
+import * as GitHub from "alchemy/GitHub";
+import * as Redacted from "effect/Redacted";
+
+yield* GitHub.Secret("deploy-token", {
+  owner: "my-org",
+  repository: "my-repo",
+  name: "DEPLOY_TOKEN",
+  value: Redacted.make("my-secret-value"),
+});
+```
+
+The value is encrypted client-side with the repository's public key
+(via libsodium) before it's sent to GitHub. The resource is
+idempotent — redeploying with the same name updates the secret in
+place, and destroying the stack deletes it.
+
+GitHub never returns a secret's value, so there's nothing to diff:
+alchemy re-encrypts and re-uploads on every deploy.
+
+## Scope a secret to an environment
+
+Pass `environment` to scope the secret to a GitHub Actions
+environment (e.g. `production`) instead of the whole repository:
+
+```typescript
+yield* GitHub.Secret("deploy-key", {
+  owner: "my-org",
+  repository: "my-repo",
+  environment: "production",
+  name: "DEPLOY_KEY",
+  value: Redacted.make("my-secret-value"),
+});
+```
+
+Environment secrets are only released to workflows once the
+environment's protection rules are satisfied.
+
+## Manage the environment itself
+
+`GitHub.Environment` manages the deployment environment as a resource —
+including its protection rules — so the environment a secret targets is
+declared in the same deploy:
+
+```typescript
+const production = yield* GitHub.Environment("production", {
+  owner: "my-org",
+  repository: "my-repo",
+  name: "production",
+  waitTimer: 30,
+  preventSelfReview: true,
+  reviewers: {
+    users: ["release-manager"],
+    teams: ["platform"],
+  },
+  deploymentBranchPolicy: {
+    customBranchPolicies: ["main", "release/*"],
+  },
+});
+
+yield* GitHub.Secret("deploy-key", {
+  owner: "my-org",
+  repository: "my-repo",
+  environment: production,
+  name: "DEPLOY_KEY",
+  value: Redacted.make("my-secret-value"),
+});
+```
+
+The `environment` prop on secrets and variables accepts either a name
+string or the `Environment` resource itself. Reviewers are referenced by
+user login and team slug — alchemy resolves them to the IDs GitHub's API
+expects. `deploymentBranchPolicy` restricts
+which branches can deploy: `{ protectedBranches: true }` or a list of
+branch name patterns via `customBranchPolicies`. Environments on private
+repositories are plan-gated (Pro/Team/Enterprise); public repositories
+get them on every plan.
+
+## Create a variable
+
+`GitHub.Variable` manages a plain-text repository variable —
+suitable for non-sensitive configuration like regions, stage labels,
+or feature flags. Workflows read it as `${{ vars.NAME }}`:
+
+```typescript
+yield* GitHub.Variable("aws-region", {
+  owner: "my-org",
+  repository: "my-repo",
+  name: "AWS_REGION",
+  value: "us-east-1",
+});
+```
+
+Unlike secrets, variable values are readable back, so alchemy diffs
+the live value and skips the API call when nothing changed.
+
+Variables take the same `environment` prop as secrets to scope the
+variable to one Actions environment instead of the whole repository:
+
+```typescript
+yield* GitHub.Variable("region", {
+  owner: "my-org",
+  repository: "my-repo",
+  environment: "production",
+  name: "AWS_REGION",
+  value: "us-east-1",
+});
+```
+
+## Wire in outputs from other resources
+
+The values don't have to be literals — pass output attributes from
+other resources and alchemy resolves them at deploy time:
+
+```typescript
+const role = yield* AWS.IAM.Role("ci-role", { ... });
+
+yield* GitHub.Secret("ci-role-arn", {
+  owner: "my-org",
+  repository: "my-repo",
+  name: "AWS_ROLE_ARN",
+  value: Redacted.make(role.roleArn),
+});
+```
+
+This is the whole point: the credential and the secret that stores
+it live in the same deploy, so rotating one rotates the other.
+
+## Bulk-seed with Secrets and Variables
+
+When you have more than a couple of values, `GitHub.Secrets` and
+`GitHub.Variables` fan a map out into individual resources — the map
+key becomes both the logical id and the name:
+
+```typescript
+yield* GitHub.Secrets({
+  owner: "my-org",
+  repository: "my-repo",
+  secrets: {
+    AXIOM_INGEST_TOKEN: tokenValue,
+    AXIOM_DATASET_TRACES: traces.name,
+  },
+});
+
+yield* GitHub.Variables({
+  owner: "my-org",
+  repository: "my-repo",
+  variables: {
+    AWS_ROLE_ARN: role.roleArn,
+    AWS_REGION: region,
+  },
+});
+```
+
+`Secrets` accepts plain strings, `Redacted` values, or unresolved
+inputs (outputs of other resources, `Config` values) — plain strings
+are wrapped with `Redacted.make` automatically. Both helpers take an
+`environment` to scope every entry in the map to one Actions
+environment.
+
+## Provision CI credentials as code
+
+The canonical use is a small, one-shot stack that mints a scoped
+cloud credential and writes it straight into your repo — the raw
+token never touches your terminal or the GitHub UI:
+
+```typescript
+// stacks/github.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as GitHub from "alchemy/GitHub";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "github",
+  {
+    providers: Layer.mergeAll(
+      Cloudflare.providers(),
+      GitHub.providers(),
+    ),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const apiToken = yield* Cloudflare.ApiToken.AccountApiToken("CIToken", {
+      // scoped permission policies ...
+    });
+
+    yield* GitHub.Secret("cf-api-token", {
+      owner: "your-org",
+      repository: "your-repo",
+      name: "CLOUDFLARE_API_TOKEN",
+      value: apiToken.value,
+    });
+  }),
+);
+```
+
+Deploy it once from your laptop under an elevated profile:
+
+```sh
+alchemy deploy stacks/github.ts --profile admin
+```
+
+Re-run it only when you want to rotate the credential or change its
+permissions. [Part 5: CI/CD](/cloudflare/tutorial/part-5) walks
+through the full Cloudflare version step by step;
+[Continuous Integration](/environments/ci) covers the AWS equivalents
+(OIDC role ARNs as variables, access keys as secrets).
+
+## Token scope
+
+Writing secrets and variables uses the GitHub credential from
+`GitHub.providers()` — env vars, a stored PAT, the `gh` CLI, or
+OAuth (see [Setup](/github/setup)). The token needs the `repo` scope
+for private repositories, or `public_repo` for public ones.
+
+## Where next
+
+- [Continuous Integration](/environments/ci) — the full GitHub Actions
+  setup: deploy workflow, PR previews, and provider credentials.
+- [Part 5: CI/CD (Cloudflare)](/cloudflare/tutorial/part-5) — mint a
+  scoped API token and push it into your repo, step by step.
+- [Part 5: CI/CD (AWS)](/aws/tutorial/part-5) — the OIDC-based AWS
+  version.
+- [Repository](/github/repository) — manage the repo itself as a
+  resource.
+
+Reference:
+
+- [Environment](/providers/github/environment) ·
+  [Secret](/providers/github/secret) ·
+  [Secrets](/providers/github/secrets) ·
+  [Variable](/providers/github/variable) ·
+  [Variables](/providers/github/variables)

@@ -7,8 +7,8 @@ import { Context, Effect, flow, Layer, Schedule, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 
 class Todo extends Schema.Class<Todo>("Todo")({
-  userId: Schema.Number,
-  id: Schema.Number,
+  userId: Schema.Int,
+  id: Schema.Int,
   title: Schema.String,
   completed: Schema.Boolean
 }) {}
@@ -98,5 +98,5 @@ export class JsonPlaceholder extends Context.Service<JsonPlaceholder, {
 }
 
 export class JsonPlaceholderError extends Schema.TaggedErrorClass<JsonPlaceholderError>()("JsonPlaceholderError", {
-  cause: Schema.Defect
+  cause: Schema.Defect()
 }) {}

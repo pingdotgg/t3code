@@ -1,17 +1,17 @@
 {
   "name": "@effect/platform-node-shared",
   "type": "module",
-  "version": "4.0.0-beta.73",
+  "version": "4.0.0-beta.102",
   "license": "MIT",
   "description": "Unified interfaces for common platform-specific services",
   "homepage": "https://effect.website",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Effect-TS/effect-smol.git",
+    "url": "https://github.com/Effect-TS/effect.git",
     "directory": "packages/platform-node-shared"
   },
   "bugs": {
-    "url": "https://github.com/Effect-TS/effect-smol/issues"
+    "url": "https://github.com/Effect-TS/effect/issues"
   },
   "tags": [
     "typescript",
@@ -55,7 +55,6 @@
   "scripts": {
     "codegen": "effect-utils codegen",
     "build": "tsc -b tsconfig.json && pnpm babel",
-    "build:tsgo": "tsgo -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
     "check": "tsc -b tsconfig.json",
     "test": "vitest",
@@ -65,12 +64,12 @@
     "effect": "workspace:^"
   },
   "devDependencies": {
-    "@types/node": "^25.7.0",
+    "@types/node": "^26.1.1",
     "effect": "workspace:^",
-    "tar": "^7.5.15"
+    "tar": "^7.5.19"
   },
   "dependencies": {
     "@types/ws": "^8.18.1",
-    "ws": "^8.20.0"
+    "ws": "^8.21.0"
   }
 }

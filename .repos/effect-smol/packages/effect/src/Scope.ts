@@ -1,46 +1,11 @@
 /**
- * The `Scope` module manages resource lifetimes by collecting finalizers and
- * running them when a scope is closed. It is the low-level mechanism behind
- * scoped resource acquisition: acquire work registers cleanup with the current
- * scope, and closing the scope releases those resources with the same `Exit`
- * that ended the scoped workflow.
+ * Controls how long resources stay open.
  *
- * Scopes are useful when code needs explicit control over a lifetime boundary,
- * for example when building services, sharing a resource across multiple
- * effects, or wiring lower-level infrastructure. Most application code can use
- * higher-level scoped APIs, but this module exposes the primitives those APIs
- * are built from.
- *
- * **Mental model**
- *
- * - A {@link Scope} is a mutable lifetime boundary that can accept finalizers
- *   while open and run them when closed
- * - A {@link Closeable} scope can be closed explicitly with {@link close} or
- *   automatically around an effect with {@link use}
- * - Sequential scopes run finalizers one after another in reverse registration
- *   order; parallel scopes run registered finalizers concurrently
- * - {@link addFinalizer} registers cleanup that ignores the closing exit, while
- *   {@link addFinalizerExit} registers cleanup that can inspect it
- * - {@link fork} creates a child scope whose lifetime is connected to a parent
- *   scope
- *
- * **Common tasks**
- *
- * - Create scopes with {@link make} or the lower-level {@link makeUnsafe}
- * - Provide an existing scope to an effect with {@link provide}
- * - Register cleanup with {@link addFinalizer} or {@link addFinalizerExit}
- * - Create child scopes with {@link fork} or {@link forkUnsafe}
- * - Close scopes with {@link close}, or run and close with {@link use}
- *
- * **Gotchas**
- *
- * - Closing a scope is itself an `Effect`; finalizers run only when that effect
- *   is executed
- * - Adding a finalizer to an already closed scope runs the finalizer
- *   immediately with the stored exit value
- * - The unsafe constructors and closing helpers are for low-level integration;
- *   prefer the effectful APIs when ordinary Effect code can express the
- *   lifetime
+ * A scope is a lifetime boundary. Code can register cleanup effects on it, and
+ * closing the scope runs those cleanups with the `Exit` value that ended the
+ * work. Most application code uses higher-level APIs such as `Effect.scoped`
+ * and `Layer`, while this module is useful when code needs to create, provide,
+ * fork, close, or inspect scopes directly.
  *
  * @since 2.0.0
  */
@@ -253,7 +218,7 @@ export declare namespace State {
  * const scoped = Effect.scoped(program)
  * ```
  *
- * @category tags
+ * @category services
  * @since 2.0.0
  */
 export const Scope: Context.Service<Scope, Scope> = effect.scopeTag
@@ -289,6 +254,11 @@ export const make: (finalizerStrategy?: "sequential" | "parallel") => Effect<Clo
  * Creates a new `Scope` synchronously without wrapping it in an `Effect`.
  * This is useful when you need a scope immediately but should be used with caution
  * as it doesn't provide the same safety guarantees as the `Effect`-wrapped version.
+ *
+ * **When to use**
+ *
+ * Use when a scope must be allocated synchronously and the caller will close it
+ * manually.
  *
  * **Example** (Creating a scope synchronously)
  *
@@ -351,6 +321,11 @@ export const provide: {
 
 /**
  * Registers an exit-aware finalizer on a scope.
+ *
+ * **When to use**
+ *
+ * Use when cleanup needs to know whether the scope closed with success,
+ * failure, or interruption.
  *
  * **Details**
  *
@@ -468,6 +443,11 @@ export const fork: (
 
 /**
  * Creates a closeable child scope synchronously and registers it with a parent scope.
+ *
+ * **When to use**
+ *
+ * Use when a child scope must be created synchronously and the caller controls
+ * both parent and child scope lifetimes.
  *
  * **Details**
  *

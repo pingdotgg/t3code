@@ -1,14 +1,14 @@
-import { Region } from "@distilled.cloud/aws/Region";
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import { hasAlchemyTags } from "../../Tags.ts";
-import type { Providers } from "../Providers.ts";
 import { AWSEnvironment, type AccountID } from "../Environment.ts";
+import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
 import {
   createName,
@@ -44,10 +44,15 @@ export interface MetricStream extends Resource<
   "AWS.CloudWatch.MetricStream",
   MetricStreamProps,
   {
+    /** Physical name of the metric stream. */
     metricStreamName: MetricStreamName;
+    /** ARN of the metric stream. */
     metricStreamArn: MetricStreamArn;
+    /** Current state of the stream (`running` or `stopped`). */
     state: string | undefined;
+    /** The full metric stream description as last read from CloudWatch. */
     metricStream: cloudwatch.GetMetricStreamOutput;
+    /** Tags on the metric stream, including the internal Alchemy ownership tags. */
     tags: Record<string, string>;
   },
   never,
@@ -55,8 +60,9 @@ export interface MetricStream extends Resource<
 > {}
 
 /**
- * A CloudWatch metric stream.
- *
+ * A CloudWatch metric stream — continuously exports CloudWatch metrics to
+ * a Kinesis Data Firehose delivery stream (and on to S3, Datadog, etc.).
+ * @resource
  * @section Creating Metric Streams
  * @example Firehose Delivery Stream
  * ```typescript
@@ -65,6 +71,27 @@ export interface MetricStream extends Resource<
  *   RoleArn: "arn:aws:iam::123456789012:role/example",
  *   OutputFormat: "json",
  * });
+ * ```
+ *
+ * @example Stream Only Selected Namespaces
+ * ```typescript
+ * const stream = yield* MetricStream("LambdaMetricsExport", {
+ *   FirehoseArn: firehose.deliveryStreamArn,
+ *   RoleArn: role.roleArn,
+ *   OutputFormat: "json",
+ *   IncludeFilters: [{ Namespace: "AWS/Lambda" }],
+ * });
+ * ```
+ *
+ * @section Reading Metric Streams at Runtime
+ * @example Read the Stream's State from a Function
+ * ```typescript
+ * // init — bind the stream to the function (see GetMetricStream)
+ * const getMetricStream = yield* AWS.CloudWatch.GetMetricStream(stream);
+ *
+ * // runtime
+ * const result = yield* getMetricStream();
+ * const state = result.State; // "running" | "stopped"
  * ```
  */
 export const MetricStream = Resource<MetricStream>(
@@ -75,15 +102,18 @@ export const MetricStreamProvider = () =>
   Provider.effect(
     MetricStream,
     Effect.gen(function* () {
-      const region = yield* Region;
-      const { accountId } = yield* AWSEnvironment;
       const createMetricStreamName = (
         id: string,
         props: { name?: string } = {},
       ) => createName(id, props.name, 255);
 
       const metricStreamArn = (name: string) =>
-        `arn:aws:cloudwatch:${region}:${accountId}:metric-stream/${name}` as MetricStreamArn;
+        AWSEnvironment.current.pipe(
+          Effect.map(
+            (env) =>
+              `arn:aws:cloudwatch:${env.region}:${env.accountId}:metric-stream/${name}` as MetricStreamArn,
+          ),
+        );
 
       const readMetricStream = Effect.fn(function* (name: string) {
         const output = yield* cloudwatch
@@ -159,6 +189,32 @@ export const MetricStreamProvider = () =>
             return { action: "replace" } as const;
           }
         }),
+        list: () =>
+          Effect.gen(function* () {
+            // Enumerate every metric stream in the account/region. The list
+            // op only returns summary entries, so re-read each by name to
+            // produce the full Attributes shape `read` returns.
+            const entries = yield* cloudwatch.listMetricStreams.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) => page.Entries ?? []),
+              ),
+            );
+
+            const results = yield* Effect.forEach(
+              entries,
+              (entry) =>
+                entry.Name
+                  ? readMetricStream(entry.Name)
+                  : Effect.succeed(undefined),
+              { concurrency: 10 },
+            );
+
+            return results.filter(
+              (state): state is NonNullable<typeof state> =>
+                state !== undefined,
+            );
+          }),
         read: Effect.fn(function* ({ id, olds, output }) {
           const name =
             output?.metricStreamName ??
@@ -198,12 +254,12 @@ export const MetricStreamProvider = () =>
           // otherwise fall back to what we observed (adoption path).
           const tags = yield* updateResourceTags({
             id,
-            resourceArn: metricStreamArn(name),
+            resourceArn: yield* metricStreamArn(name),
             olds: olds?.tags ?? existing?.tags,
             news: news.tags,
           });
 
-          yield* session.note(metricStreamArn(name));
+          yield* session.note(yield* metricStreamArn(name));
 
           const state = yield* readMetricStream(name);
           if (!state) {

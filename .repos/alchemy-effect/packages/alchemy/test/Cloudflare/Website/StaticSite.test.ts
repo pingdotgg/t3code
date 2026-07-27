@@ -1,7 +1,9 @@
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import * as Cloudflare from "@/Cloudflare/index.ts";
-import * as Test from "@/Test/Vitest";
-import { expect } from "@effect/vitest";
+import { Stack } from "@/Stack";
+import { type ResourceState, State } from "@/State";
+import * as Test from "@/Test/Alchemy";
+import { expect } from "alchemy-test";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -29,7 +31,7 @@ test.provider(
   "StaticSite: editing a source file republishes the assets in a single deploy",
   (stack) =>
     Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
+      const { accountId } = yield* yield* CloudflareEnvironment;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
 
@@ -47,7 +49,10 @@ test.provider(
 
       const site1 = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.StaticSite("FixSite", staticSiteProps(cwd));
+          return yield* Cloudflare.Website.StaticSite(
+            "FixSite",
+            staticSiteProps(cwd),
+          );
         }),
       );
 
@@ -68,7 +73,10 @@ test.provider(
 
       const site2 = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.StaticSite("FixSite", staticSiteProps(cwd));
+          return yield* Cloudflare.Website.StaticSite(
+            "FixSite",
+            staticSiteProps(cwd),
+          );
         }),
       );
 
@@ -88,6 +96,48 @@ test.provider(
       // replaced the previous content rather than coexisting with it.
       yield* expectUrlAbsent(`${site2.url!}/index.html`, v1Marker, {
         timeout: "30 seconds",
+      });
+
+      yield* stack.destroy();
+      yield* waitForWorkerToBeDeleted(site1.workerName, accountId);
+    }).pipe(logLevel),
+  { timeout: 360_000 },
+);
+
+test.provider(
+  "StaticSite: class form deploys and serves the built assets",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+
+      yield* stack.destroy();
+
+      const cwd = yield* cloneFixture(fixtureDir, {
+        prefix: "alchemy-staticsite-class-",
+        entries: ["src", "build.sh"],
+      });
+      const indexPath = path.join(cwd, "src", "index.html");
+
+      const marker = `staticsite-class-${Date.now()}`;
+      yield* fs.writeFileString(indexPath, htmlPage(marker));
+
+      const site1 = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* class FixSite extends Cloudflare.Website.StaticSite<FixSite>()(
+            "FixSite",
+            staticSiteProps(cwd),
+          ) {};
+        }),
+      );
+
+      expect(site1.url).toBeDefined();
+      expect(site1.hash?.assets).toBeDefined();
+      yield* expectWorkerExists(site1.workerName, accountId);
+      yield* expectUrlContains(`${site1.url!}/index.html`, marker, {
+        timeout: "120 seconds",
+        label: "class form marker",
       });
 
       yield* stack.destroy();
@@ -117,7 +167,7 @@ test.provider(
   "StaticSite: relocating the project (and deleting the old one) preserves hash.assets",
   (stack) =>
     Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
+      const { accountId } = yield* yield* CloudflareEnvironment;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
 
@@ -142,7 +192,7 @@ test.provider(
 
       const site1 = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.StaticSite(
+          return yield* Cloudflare.Website.StaticSite(
             "RelocSite",
             staticSiteProps(cwdA),
           );
@@ -171,7 +221,7 @@ test.provider(
 
       const site2 = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.StaticSite(
+          return yield* Cloudflare.Website.StaticSite(
             "RelocSite",
             staticSiteProps(cwdB),
           );
@@ -200,7 +250,7 @@ test.provider(
   "StaticSite: a bundle-only change keeps the asset manifest (hash.assets stable)",
   (stack) =>
     Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
+      const { accountId } = yield* yield* CloudflareEnvironment;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
 
@@ -237,10 +287,13 @@ test.provider(
       const deploy = () =>
         stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.StaticSite("BundleOnlyStaticSite", {
-              ...staticSiteProps(cwd),
-              main: workerPath,
-            });
+            return yield* Cloudflare.Website.StaticSite(
+              "BundleOnlyStaticSite",
+              {
+                ...staticSiteProps(cwd),
+                main: workerPath,
+              },
+            );
           }),
         );
 
@@ -268,8 +321,247 @@ test.provider(
   { timeout: 360_000 },
 );
 
-const staticSiteProps = (cwd: string) => ({
+test.provider(
+  "StaticSite: rebuilds when the build output is missing despite unchanged inputs",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+
+      yield* stack.destroy();
+
+      const cwd = yield* cloneFixture(fixtureDir, {
+        prefix: "alchemy-staticsite-missing-output-",
+        entries: ["src", "build.sh", ".gitignore"],
+      });
+      const marker = `staticsite-missing-output-${Date.now()}`;
+      yield* fs.writeFileString(
+        path.join(cwd, "src", "index.html"),
+        htmlPage(marker),
+      );
+      const outdir = path.join(cwd, "dist");
+
+      const deploy = () =>
+        stack.deploy(
+          Effect.gen(function* () {
+            return yield* Cloudflare.Website.StaticSite(
+              "MissingOutputStaticSite",
+              staticSiteProps(cwd),
+            );
+          }),
+        );
+
+      const v1 = yield* deploy();
+      expect(v1.hash?.assets).toBeDefined();
+      expect(yield* fs.exists(outdir)).toBe(true);
+      yield* expectUrlContains(`${v1.url!}/index.html`, marker, {
+        timeout: "120 seconds",
+        label: "v1 marker",
+      });
+
+      // Blow away the build output without touching any inputs. The input
+      // hash is unchanged, so memoization alone would skip the rebuild — but
+      // the Build provider also detects the missing output and forces an
+      // update, otherwise the Worker would have no assets to publish.
+      yield* fs.remove(outdir, { recursive: true });
+      expect(yield* fs.exists(outdir)).toBe(false);
+
+      const v2 = yield* deploy();
+      // The build re-ran: the output directory is back and the asset hash is
+      // identical (same source content reproduced the same manifest).
+      expect(yield* fs.exists(outdir)).toBe(true);
+      expect(v2.hash?.assets).toEqual(v1.hash?.assets);
+      yield* expectUrlContains(`${v2.url!}/index.html`, marker, {
+        timeout: "60 seconds",
+        label: "v2 marker (output rebuilt)",
+      });
+
+      yield* stack.destroy();
+      yield* waitForWorkerToBeDeleted(v1.workerName, accountId);
+    }).pipe(logLevel),
+  { timeout: 360_000 },
+);
+
+// ─────────────────────────────────────────────────────────────────────
+// Legacy state migration
+//
+// `StaticSite`'s build sub-resource was renamed `Build.Command` →
+// `Command.Build` and its `attr.hash` shape changed from a bare `string`
+// to `{ input, output }`. An existing deployment upgrading across the
+// rename has the old row on disk. Deploying the new `StaticSite` over it
+// must not error — it re-runs the build (the memoization shape changed)
+// and republishes the assets, migrating the row to the new type.
+// ─────────────────────────────────────────────────────────────────────
+test.provider(
+  "StaticSite: deploys over legacy Build.Command state and republishes assets",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const state = yield* yield* State;
+      const stk = yield* Stack;
+
+      yield* stack.destroy();
+
+      const cwd = yield* cloneFixture(fixtureDir, {
+        prefix: "alchemy-staticsite-migrate-",
+        entries: ["src", "build.sh", ".gitignore"],
+      });
+      const marker = `staticsite-migrate-${Date.now()}`;
+      yield* fs.writeFileString(
+        path.join(cwd, "src", "index.html"),
+        htmlPage(marker),
+      );
+
+      // Mirror `examples/.../Website__Build.json`: a pre-rename
+      // `Build.Command` row at the build sub-resource's FQN, carrying the
+      // legacy `attr.hash` string (pre-`{ input, output }`).
+      yield* state.set({
+        stack: stk.name,
+        stage: stk.stage,
+        fqn: "MigSite/Build",
+        value: {
+          status: "created",
+          fqn: "MigSite/Build",
+          logicalId: "Build",
+          instanceId: "606bcaf4c0a931156f5a314ba7b57fc3",
+          resourceType: "Build.Command",
+          props: { command: "bash build.sh", outdir: "dist", env: {} },
+          attr: {
+            outdir: "dist",
+            hash: "a41cbcecfdeb355f6f98130ca4ff8269d0ad5cc3a628f1918d956c71f859648c",
+          },
+          bindings: [],
+          providerVersion: 0,
+          downstream: ["MigSite/Worker"],
+          removalPolicy: "destroy",
+          namespace: { Id: "MigSite" },
+        } satisfies ResourceState,
+      });
+
+      const site = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Website.StaticSite(
+            "MigSite",
+            staticSiteProps(cwd),
+          );
+        }),
+      );
+
+      expect(site.url).toBeDefined();
+      expect(site.hash?.assets).toBeDefined();
+      yield* expectWorkerExists(site.workerName, accountId);
+      yield* expectUrlContains(`${site.url!}/index.html`, marker, {
+        timeout: "120 seconds",
+        label: "migrated site marker",
+      });
+
+      // The build sub-resource row migrated to the new resource type.
+      const build = (yield* state.get({
+        stack: stk.name,
+        stage: stk.stage,
+        fqn: "MigSite/Build",
+      })) as ResourceState | undefined;
+      expect(build?.resourceType).toBe("Command.Build");
+
+      yield* stack.destroy();
+      yield* waitForWorkerToBeDeleted(site.workerName, accountId);
+    }).pipe(logLevel),
+  { timeout: 360_000 },
+);
+
+// ─────────────────────────────────────────────────────────────────────
+// Orphaned dev-server cleanup across the rename
+//
+// A prior `alchemy dev` run writes a `Build.DevServer` row at the
+// StaticSite's `Dev` sub-resource FQN. A subsequent normal `deploy` never
+// declares that dev resource, so the row is orphaned and must be torn
+// down. Before the `Renamed("Build.DevServer" → "Command.Dev")` shim
+// existed, that teardown failed: the engine couldn't resolve a provider
+// for the now-nonexistent `Build.DevServer` type and the deploy errored.
+// This guards that the deploy succeeds and the orphan is reaped.
+// ─────────────────────────────────────────────────────────────────────
+test.provider(
+  "StaticSite: deploys cleanly when a legacy Build.DevServer row is orphaned",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const state = yield* yield* State;
+      const stk = yield* Stack;
+
+      yield* stack.destroy();
+
+      const cwd = yield* cloneFixture(fixtureDir, {
+        prefix: "alchemy-staticsite-orphan-dev-",
+        entries: ["src", "build.sh", ".gitignore"],
+      });
+      const marker = `staticsite-orphan-dev-${Date.now()}`;
+      yield* fs.writeFileString(
+        path.join(cwd, "src", "index.html"),
+        htmlPage(marker),
+      );
+
+      // Mirror `examples/.../Website__Dev.json`: a pre-rename
+      // `Build.DevServer` row left behind by an earlier `alchemy dev` run,
+      // sitting at the `Dev` sub-resource FQN that a normal deploy never
+      // declares.
+      yield* state.set({
+        stack: stk.name,
+        stage: stk.stage,
+        fqn: "MigSite/Dev",
+        value: {
+          status: "created",
+          fqn: "MigSite/Dev",
+          logicalId: "Dev",
+          instanceId: "b4ca740550ef6e2e409481cedf9314c7",
+          resourceType: "Build.DevServer",
+          props: { command: "zola serve", env: {} },
+          attr: { url: "http://127.0.0.1:1024" },
+          bindings: [],
+          providerVersion: 0,
+          downstream: ["MigSite/Worker"],
+          removalPolicy: "destroy",
+          namespace: { Id: "MigSite" },
+        } satisfies ResourceState,
+      });
+
+      const site = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Website.StaticSite(
+            "MigSite",
+            staticSiteProps(cwd),
+          );
+        }),
+      );
+
+      expect(site.url).toBeDefined();
+      yield* expectWorkerExists(site.workerName, accountId);
+      yield* expectUrlContains(`${site.url!}/index.html`, marker, {
+        timeout: "120 seconds",
+        label: "orphan-dev site marker",
+      });
+
+      // The orphaned dev-server row was reaped via the renamed provider.
+      const orphan = yield* state.get({
+        stack: stk.name,
+        stage: stk.stage,
+        fqn: "MigSite/Dev",
+      });
+      expect(orphan).toBeUndefined();
+
+      yield* stack.destroy();
+      yield* waitForWorkerToBeDeleted(site.workerName, accountId);
+    }).pipe(logLevel),
+  { timeout: 360_000 },
+);
+
+const staticSiteProps = (cwd: string): Cloudflare.Website.StaticSiteProps => ({
   command: "bash build.sh",
+  shell: true,
   cwd,
   outdir: "dist",
   main: workerEntry,

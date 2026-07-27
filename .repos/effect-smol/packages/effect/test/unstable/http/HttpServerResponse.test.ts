@@ -1,6 +1,8 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, References, Stream } from "effect"
+import { Context, Effect, Stream } from "effect"
 import { HttpClientRequest, HttpClientResponse, HttpServerResponse } from "effect/unstable/http"
+
+const TestValue = Context.Reference<number>("test/TestValue", { defaultValue: () => 0 })
 
 describe("HttpServerResponse", () => {
   it.effect("fromClientResponse preserves status, headers, cookies, and json", () =>
@@ -29,7 +31,7 @@ describe("HttpServerResponse", () => {
     Effect.gen(function*() {
       const clientResponse = HttpServerResponse.toClientResponse(
         HttpServerResponse.stream(
-          Stream.fromEffect(References.CurrentConcurrency).pipe(
+          Stream.fromEffect(TestValue).pipe(
             Stream.map(String),
             Stream.encodeText
           )
@@ -39,7 +41,7 @@ describe("HttpServerResponse", () => {
       const response = HttpServerResponse.fromClientResponse(clientResponse)
       const roundTrip = HttpServerResponse.toClientResponse(response)
       const text = yield* roundTrip.text.pipe(
-        Effect.provideService(References.CurrentConcurrency, 420)
+        Effect.provideService(TestValue, 420)
       )
 
       assert.strictEqual(text, "420")

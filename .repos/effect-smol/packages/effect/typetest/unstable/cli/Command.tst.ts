@@ -1,8 +1,28 @@
-import { Effect } from "effect"
+import { Context, Effect } from "effect"
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli"
 import { describe, expect, it } from "tstyche"
 
 describe("Command", () => {
+  describe("withSubcommands", () => {
+    it("unions errors and requirements across multiple subcommands", () => {
+      class _ServiceA extends Context.Service<_ServiceA, string>()("ServiceA") {}
+      class _ServiceB extends Context.Service<_ServiceB, string>()("ServiceB") {}
+      class _ServiceC extends Context.Service<_ServiceC, string>()("ServiceC") {}
+
+      const childA = Command.make("child-a", {}, () => Effect.void as Effect.Effect<void, "err-a", _ServiceA>)
+      const childB = Command.make("child-b", {}, () => Effect.void as Effect.Effect<void, "err-b", _ServiceB>)
+      const childC = Command.make("child-c", {}, () => Effect.void as Effect.Effect<void, "err-c", _ServiceC>)
+
+      const root = Command.make("root").pipe(
+        Command.withSubcommands([childA, childB, childC])
+      )
+
+      expect(root).type.toBe<
+        Command.Command<"root", {}, {}, "err-a" | "err-b" | "err-c", _ServiceA | _ServiceB | _ServiceC>
+      >()
+    })
+  })
+
   describe("withSharedFlags", () => {
     it("adds shared flags to command input and parent context", () => {
       const root = Command.make("root", {
@@ -116,6 +136,29 @@ describe("Command", () => {
             yield* Format
           })),
         [VerboseAction, Format]
+      )
+
+      expect(command).type.toBe<Command.Command<"example", {}, {}, never, never>>()
+    })
+  })
+
+  describe("built-in global flags", () => {
+    it("strips built-in setting context from Command.make handlers", () => {
+      const command = Command.make("example", {}, () =>
+        Effect.gen(function*() {
+          yield* GlobalFlag.LogLevel
+        }))
+
+      expect(command).type.toBe<Command.Command<"example", {}, {}, never, never>>()
+    })
+
+    it("strips built-in setting context from Command.withHandler handlers", () => {
+      const command = Command.make("example").pipe(
+        Command.withHandler(() =>
+          Effect.gen(function*() {
+            yield* GlobalFlag.LogLevel
+          })
+        )
       )
 
       expect(command).type.toBe<Command.Command<"example", {}, {}, never, never>>()

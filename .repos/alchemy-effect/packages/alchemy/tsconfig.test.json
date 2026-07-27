@@ -3,7 +3,8 @@
   "include": ["package.json", "test"],
   "exclude": [
     "test/Local/fixtures/rpc-server-entry.ts",
-    "test/Local/fixtures/rpc-spawner-parent.ts"
+    "test/Local/fixtures/rpc-spawner-parent.ts",
+    "test/Local/fixtures/rpc-spawner-devserver-parent.ts"
   ],
   "compilerOptions": {
     "composite": true,
@@ -24,6 +25,9 @@
   "references": [
     {
       "path": "./tsconfig.json"
+    },
+    {
+      "path": "../alchemy-test/tsconfig.json"
     },
     {
       "path": "./tsconfig.bin.json"

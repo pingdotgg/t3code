@@ -16,12 +16,10 @@ import { DESTINATION, SendEmail, SENDER } from "./Email.ts";
 export default class Api extends Cloudflare.Worker<Api>()(
   "Api",
   {
-    main: import.meta.filename,
-    subdomain: { enabled: true, previewsEnabled: false },
-    compatibility: { date: "2024-09-23", flags: ["nodejs_compat"] },
+    main: import.meta.url,
   },
   Effect.gen(function* () {
-    const email = yield* Cloudflare.SendEmail.bind(SendEmail);
+    const email = yield* Cloudflare.Email.Send(SendEmail);
 
     return {
       fetch: Effect.gen(function* () {
@@ -63,5 +61,5 @@ export default class Api extends Cloudflare.Worker<Api>()(
         return HttpServerResponse.text("not found", { status: 404 });
       }),
     };
-  }).pipe(Effect.provide(Cloudflare.SendEmailBindingLive)),
+  }).pipe(Effect.provide(Cloudflare.Email.SendBinding)),
 ) {}

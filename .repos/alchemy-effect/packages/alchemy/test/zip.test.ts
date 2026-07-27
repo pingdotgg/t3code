@@ -1,7 +1,7 @@
 import { sha256 } from "@/Util/sha256";
 import { zipCode } from "@/Util/zip";
 import * as Effect from "effect/Effect";
-import { expect, test } from "vitest";
+import { expect, test } from "alchemy-test";
 
 test("zipCode is deterministic for identical inputs", async () => {
   const hash = () =>

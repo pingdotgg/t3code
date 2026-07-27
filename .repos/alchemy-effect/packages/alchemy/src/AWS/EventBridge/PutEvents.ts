@@ -1,10 +1,6 @@
-import { Region } from "@distilled.cloud/aws/Region";
 import * as eventbridge from "@distilled.cloud/aws/eventbridge";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { AWSEnvironment } from "../Environment.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { EventBus } from "./EventBus.ts";
 
 export interface PutEventsRequest extends Omit<
@@ -14,8 +10,58 @@ export interface PutEventsRequest extends Omit<
   Entries: Array<Omit<eventbridge.PutEventsRequestEntry, "EventBusName">>;
 }
 
-export class PutEvents extends Binding.Service<
+/**
+ * Publishes events to an EventBridge event bus (`events:PutEvents`).
+ *
+ * Bind this operation to an {@link EventBus} inside a function runtime to get
+ * a callable that automatically injects the bus name into every entry. Omit
+ * the bus argument to publish to the account's default event bus. Provide the
+ * `PutEventsHttp` layer on the Function to satisfy the binding.
+ * @binding
+ * @section Publishing Events
+ * @example Publish an Event from a Handler
+ * ```typescript
+ * // init — bind the bus (provide AWS.EventBridge.PutEventsHttp on the Function)
+ * const putEvents = yield* AWS.EventBridge.PutEvents(bus);
+ *
+ * return {
+ *   fetch: Effect.gen(function* () {
+ *     // runtime — publish an event
+ *     const result = yield* putEvents({
+ *       Entries: [
+ *         {
+ *           Source: "my.app",
+ *           DetailType: "OrderCreated",
+ *           Detail: JSON.stringify({ orderId: "123" }),
+ *         },
+ *       ],
+ *     });
+ *     return HttpServerResponse.json({
+ *       failedEntryCount: result.FailedEntryCount ?? 0,
+ *     });
+ *   }),
+ * };
+ * ```
+ *
+ * @example Publish to the Default Event Bus
+ * ```typescript
+ * // omit the bus argument to target the account's default bus
+ * const putEvents = yield* AWS.EventBridge.PutEvents();
+ *
+ * yield* putEvents({
+ *   Entries: [
+ *     {
+ *       Source: "my.app",
+ *       DetailType: "Heartbeat",
+ *       Detail: JSON.stringify({ at: new Date().toISOString() }),
+ *     },
+ *   ],
+ * });
+ * ```
+ */
+export interface PutEvents extends Binding.Service<
   PutEvents,
+  "AWS.EventBridge.PutEvents",
   (
     bus?: EventBus,
   ) => Effect.Effect<
@@ -26,66 +72,7 @@ export class PutEvents extends Binding.Service<
       eventbridge.PutEventsError
     >
   >
->()("AWS.EventBridge.PutEvents") {}
-
-export const PutEventsLive = Layer.effect(
-  PutEvents,
-  Effect.gen(function* () {
-    const Policy = yield* PutEventsPolicy;
-    const putEvents = yield* eventbridge.putEvents;
-
-    return Effect.fn(function* (bus?: EventBus) {
-      const EventBusName = bus ? yield* bus.eventBusName : undefined;
-      yield* Policy(bus);
-      return Effect.fn(function* (request: PutEventsRequest) {
-        const eventBusName = EventBusName ? yield* EventBusName : undefined;
-        return yield* putEvents({
-          ...request,
-          Entries: request.Entries.map((entry) => ({
-            ...entry,
-            EventBusName:
-              eventBusName && eventBusName !== "default"
-                ? eventBusName
-                : undefined,
-          })),
-        });
-      });
-    });
-  }),
-);
-
-export class PutEventsPolicy extends Binding.Policy<
-  PutEventsPolicy,
-  (bus?: EventBus) => Effect.Effect<void>
->()("AWS.EventBridge.PutEvents") {}
-
-export const PutEventsPolicyLive = PutEventsPolicy.layer.effect(
-  Effect.gen(function* () {
-    const region = yield* Region;
-    const { accountId } = yield* AWSEnvironment;
-
-    return Effect.fn(function* (host, bus?: EventBus) {
-      if (isFunction(host)) {
-        const resource = bus
-          ? yield* yield* bus.eventBusArn
-          : (`arn:aws:events:${region}:${accountId}:event-bus/default` as const);
-
-        yield* host.bind`Allow(${host}, AWS.EventBridge.PutEvents(${bus ?? "default"}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["events:PutEvents"],
-                Resource: [resource],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `PutEventsPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    });
-  }),
+> {}
+export const PutEvents = Binding.Service<PutEvents>(
+  "AWS.EventBridge.PutEvents",
 );

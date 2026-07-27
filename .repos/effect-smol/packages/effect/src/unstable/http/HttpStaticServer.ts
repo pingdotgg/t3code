@@ -1,36 +1,11 @@
 /**
- * Static file serving for Effect HTTP applications.
+ * Serves static files for Effect HTTP applications.
  *
- * `HttpStaticServer` turns HTTP requests into file responses rooted at a
- * configured directory. Use {@link make} when you need an application value, or
- * {@link layer} when static files should be mounted onto an `HttpRouter`,
- * optionally under a URL prefix.
- *
- * **Mental model**
- *
- * The request path is decoded, normalized, and resolved below `root`. Invalid
- * paths, null bytes, and `..` traversal outside `root` fail as route-not-found
- * errors. A matching file is served through `HttpPlatform.fileResponse`, a
- * matching directory serves `index` when configured, and `spa: true` falls back
- * to the index file for extensionless HTML requests.
- *
- * **Common tasks**
- *
- * - Serve a public assets directory with {@link make}
- * - Mount static assets beside API routes with {@link layer}
- * - Add `Cache-Control` headers with `cacheControl`
- * - Extend MIME type detection with `mimeTypes`
- * - Support single-page application routing with `spa: true`
- *
- * **Gotchas**
- *
- * - {@link layer} installs `GET` routes only; handle other methods elsewhere.
- * - Dotfiles are served when they live under `root`; keep secrets outside the
- *   served tree.
- * - Symlinks or generated files reachable from `root` may expose more than
- *   expected.
- * - Conditional requests and byte ranges depend on metadata supplied by
- *   `HttpPlatform`.
+ * `HttpStaticServer` turns request paths into file responses under a configured
+ * root directory. It can be used as an application value or mounted onto an
+ * `HttpRouter`, and it handles index files, optional single-page application
+ * fallback, MIME type headers, cache-control headers, byte ranges, and
+ * conditional `304 Not Modified` responses.
  *
  * @since 4.0.0
  */

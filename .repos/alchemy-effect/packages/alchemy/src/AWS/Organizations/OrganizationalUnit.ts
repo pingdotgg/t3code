@@ -36,10 +36,25 @@ export interface OrganizationalUnit extends Resource<
   "AWS.Organizations.OrganizationalUnit",
   OrganizationalUnitProps,
   {
+    /**
+     * ID of the OU (e.g. `ou-examplerootid-exampleouid`).
+     */
     ouId: OrganizationalUnitId;
+    /**
+     * ARN of the OU.
+     */
     ouArn: OrganizationalUnitArn;
+    /**
+     * Name of the OU.
+     */
     name: string;
+    /**
+     * ID of the parent root or OU.
+     */
     parentId: string | undefined;
+    /**
+     * Tags on the OU.
+     */
     tags: Record<string, string>;
   },
   never,
@@ -48,7 +63,7 @@ export interface OrganizationalUnit extends Resource<
 
 /**
  * An AWS Organizations organizational unit.
- *
+ * @resource
  * @section Creating OUs
  * @example Nested OU
  * ```typescript
@@ -81,6 +96,37 @@ export const OrganizationalUnitProvider = () =>
             return { action: "update" } as const;
           }
         }),
+        // OUs form a tree: enumerate roots, then recursively fan out over
+        // `listOrganizationalUnitsForParent` (bounded concurrency) to discover
+        // every OU. Each discovered OU is hydrated through `readOUById` so the
+        // element shape exactly matches `read`. When the account isn't an
+        // organization management account, the typed
+        // `AWSOrganizationsNotInUseException` / `AccessDeniedException` degrade
+        // to `[]` rather than throwing.
+        list: () =>
+          Effect.gen(function* () {
+            const roots = yield* listAllRoots();
+            const rootIds = roots
+              .map((root) => root.Id)
+              .filter((rootId): rootId is string => rootId !== undefined);
+            const ouIds = yield* collectDescendantOUIds(rootIds);
+            const hydrated = yield* Effect.forEach(
+              ouIds,
+              (ouId) => readOUById(ouId),
+              { concurrency: 10 },
+            );
+            const result: OrganizationalUnit["Attributes"][] = hydrated.filter(
+              (ou): ou is NonNullable<typeof ou> => ou !== undefined,
+            );
+            return result;
+          }).pipe(
+            Effect.catchTags({
+              AWSOrganizationsNotInUseException: () =>
+                Effect.succeed([] as OrganizationalUnit["Attributes"][]),
+              AccessDeniedException: () =>
+                Effect.succeed([] as OrganizationalUnit["Attributes"][]),
+            }),
+          ),
         read: Effect.fn(function* ({ id, olds, output }) {
           const state = output?.ouId
             ? yield* readOUById(output.ouId)
@@ -204,6 +250,36 @@ const listOUsForParent = (parentId: string) =>
       }),
     (page) => page.OrganizationalUnits,
   ).pipe(retryOrganizations);
+
+const listAllRoots = () =>
+  collectPages(
+    (NextToken) => organizations.listRoots({ NextToken }),
+    (page) => page.Roots,
+  ).pipe(retryOrganizations);
+
+// Walk the OU tree breadth-first. Each level fans out across its parents with
+// bounded concurrency so a wide/deep org doesn't issue an unbounded burst.
+const collectDescendantOUIds = (
+  parentIds: readonly string[],
+): Effect.Effect<
+  string[],
+  Effect.Error<ReturnType<typeof listOUsForParent>>,
+  Effect.Services<ReturnType<typeof listOUsForParent>>
+> =>
+  Effect.gen(function* () {
+    if (parentIds.length === 0) return [];
+    const childLists = yield* Effect.forEach(
+      parentIds,
+      (parentId) => listOUsForParent(parentId),
+      { concurrency: 10 },
+    );
+    const childIds = childLists
+      .flat()
+      .map((ou) => ou.Id)
+      .filter((ouId): ouId is string => ouId !== undefined);
+    const descendants = yield* collectDescendantOUIds(childIds);
+    return [...childIds, ...descendants];
+  });
 
 const readParentId = (childId: string) =>
   collectPages(

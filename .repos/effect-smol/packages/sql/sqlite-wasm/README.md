@@ -1,6 +1,6 @@
 # `@effect/sql-sqlite-wasm`
 
-An `@effect/sql` implementation using the `@sqlite.org/sqlite-wasm` library.
+An Effect SQL implementation using the `@sqlite.org/sqlite-wasm` library.
 
 ## Documentation
 

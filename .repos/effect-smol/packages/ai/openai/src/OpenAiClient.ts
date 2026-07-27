@@ -1,36 +1,10 @@
 /**
- * The `OpenAiClient` module provides the handwritten Effect service used by
- * the OpenAI integration for Responses API and embedding requests. It builds on
- * the Effect HTTP client, applies OpenAI authentication and organization or
- * project headers, decodes the minimal schemas needed by higher-level modules,
- * and maps transport or decoding failures into `AiError`.
- *
- * The service exposes a configured HTTP client plus helpers for non-streaming
- * responses, server-sent event response streams, and embeddings. It also
- * includes WebSocket mode for response streams when an application wants to use
- * OpenAI's WebSocket transport instead of the default SSE path.
- *
- * **Common tasks**
- *
- * - Construct the service directly with {@link make}
- * - Provide the service with {@link layer} or load settings from `Config` with
- *   {@link layerConfig}
- * - Call `createResponse`, `createResponseStream`, or `createEmbedding` from
- *   code that depends on the `OpenAiClient` service
- * - Enable WebSocket streaming around an effect with {@link withWebSocketMode}
- *   or through layers with {@link layerWebSocketMode}
- *
- * **Gotchas**
- *
- * - The default base URL is `https://api.openai.com/v1`; set `apiUrl` for
- *   proxies, local gateways, or compatible deployments.
- * - A constructor `transformClient` is applied when the service is built, while
- *   scoped `OpenAiConfig` transforms are applied by request helpers when they
- *   run.
- * - WebSocket mode requires a supported `Socket.WebSocketConstructor` layer and
- *   serializes response streams through the shared socket service.
- * - This module is intentionally narrower than the generated OpenAI client; use
- *   `OpenAiClientGenerated` for direct access to generated endpoint helpers.
+ * The `OpenAiClient` module defines the low-level Effect service used by the
+ * OpenAI integration for Responses API and embedding requests. It builds a
+ * configured HTTP client with authentication and OpenAI organization or project
+ * headers, exposes helpers for non-streaming responses, SSE response streams,
+ * WebSocket response streams, and embeddings, and maps transport or decoding
+ * failures into `AiError`.
  *
  * @since 4.0.0
  */
@@ -143,7 +117,7 @@ export class OpenAiClient extends Context.Service<OpenAiClient, Service>()(
 /**
  * Options for configuring the OpenAI client.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export type Options = {
@@ -184,13 +158,17 @@ const RedactedOpenAiHeaders = {
   OpenAiProject: "OpenAI-Project"
 }
 
+const withRedactedHeaders = Effect.updateService(
+  Headers.CurrentRedactedNames,
+  Array.appendAll(Object.values(RedactedOpenAiHeaders))
+)
+
 /**
  * Creates an OpenAI client service with the given options.
  *
  * **When to use**
  *
- * Use to construct the OpenAI client service inside an effect when you need the
- * service value directly.
+ * Use when you need the OpenAI client service value inside an effect.
  *
  * **Details**
  *
@@ -259,25 +237,27 @@ export const make = Effect.fnUntraced(
       [body: typeof OpenAiSchema.Response.Type, response: HttpClientResponse.HttpClientResponse],
       AiError.AiError
     > =>
-      Effect.flatMap(resolveHttpClient, (client) =>
-        client.execute(
-          HttpClientRequest.post("/responses", {
+      resolveHttpClient.pipe(
+        Effect.flatMap((client) =>
+          client.execute(HttpClientRequest.post("/responses", {
             body: HttpBody.jsonUnsafe(payload)
-          })
-        ).pipe(
-          Effect.flatMap((response) =>
-            decodeResponse(response).pipe(
-              Effect.map((body): [typeof OpenAiSchema.Response.Type, HttpClientResponse.HttpClientResponse] => [
-                body,
-                response
-              ])
-            )
-          ),
-          Effect.catchTags({
-            HttpClientError: (error) => Errors.mapHttpClientError(error, "createResponse"),
-            SchemaError: (error) => Effect.fail(Errors.mapSchemaError(error, "createResponse"))
-          })
-        ))
+          })).pipe(
+            Effect.flatMap((response) =>
+              decodeResponse(response).pipe(
+                Effect.map((body): [typeof OpenAiSchema.Response.Type, HttpClientResponse.HttpClientResponse] => [
+                  body,
+                  response
+                ])
+              )
+            ),
+            Effect.catchTags({
+              HttpClientError: (error) => Errors.mapHttpClientError(error, "createResponse"),
+              SchemaError: (error) => Effect.fail(Errors.mapSchemaError(error, "createResponse"))
+            })
+          )
+        ),
+        withRedactedHeaders
+      )
 
     const buildResponseStream = (
       response: HttpClientResponse.HttpClientResponse
@@ -307,18 +287,20 @@ export const make = Effect.fnUntraced(
       Effect.contextWith((services) => {
         const socket = Context.getOrUndefined(services, OpenAiSocket)
         if (socket) return socket.createResponseStream(payload)
-        return Effect.flatMap(resolveHttpClient, (client) =>
-          client.execute(
-            HttpClientRequest.post("/responses", {
+        return resolveHttpClient.pipe(
+          Effect.flatMap((client) =>
+            client.execute(HttpClientRequest.post("/responses", {
               body: HttpBody.jsonUnsafe({ ...payload, stream: true })
-            })
-          ).pipe(
-            Effect.map(buildResponseStream),
-            Effect.catchTag(
-              "HttpClientError",
-              (error) => Errors.mapHttpClientError(error, "createResponseStream")
+            })).pipe(
+              Effect.map(buildResponseStream),
+              Effect.catchTag(
+                "HttpClientError",
+                (error) => Errors.mapHttpClientError(error, "createResponseStream")
+              )
             )
-          ))
+          ),
+          withRedactedHeaders
+        )
       })
 
     const decodeEmbedding = HttpClientResponse.schemaBodyJson(OpenAiSchema.CreateEmbeddingResponse)
@@ -326,18 +308,20 @@ export const make = Effect.fnUntraced(
     const createEmbedding = (
       payload: typeof OpenAiSchema.CreateEmbeddingRequest.Encoded
     ): Effect.Effect<typeof OpenAiSchema.CreateEmbeddingResponse.Type, AiError.AiError> =>
-      Effect.flatMap(resolveHttpClient, (client) =>
-        client.execute(
-          HttpClientRequest.post("/embeddings", {
+      resolveHttpClient.pipe(
+        Effect.flatMap((client) =>
+          client.execute(HttpClientRequest.post("/embeddings", {
             body: HttpBody.jsonUnsafe(payload)
-          })
-        ).pipe(
-          Effect.flatMap(decodeEmbedding),
-          Effect.catchTags({
-            HttpClientError: (error) => Errors.mapHttpClientError(error, "createEmbedding"),
-            SchemaError: (error) => Effect.fail(Errors.mapSchemaError(error, "createEmbedding"))
-          })
-        ))
+          })).pipe(
+            Effect.flatMap(decodeEmbedding),
+            Effect.catchTags({
+              HttpClientError: (error) => Errors.mapHttpClientError(error, "createEmbedding"),
+              SchemaError: (error) => Effect.fail(Errors.mapSchemaError(error, "createEmbedding"))
+            })
+          )
+        ),
+        withRedactedHeaders
+      )
 
     return OpenAiClient.of({
       client: httpClient,
@@ -346,10 +330,7 @@ export const make = Effect.fnUntraced(
       createEmbedding
     })
   },
-  Effect.updateService(
-    Headers.CurrentRedactedNames,
-    Array.appendAll(Object.values(RedactedOpenAiHeaders))
-  )
+  withRedactedHeaders
 )
 
 // =============================================================================
@@ -378,8 +359,8 @@ export const layer = (options: Options): Layer.Layer<OpenAiClient, never, HttpCl
  *
  * **When to use**
  *
- * Use when client settings should be read from Effect `Config` values while
- * providing `OpenAiClient` as a `Layer`.
+ * Use when you need client settings for OpenAI-compatible APIs to be read from
+ * Effect `Config` values while providing `OpenAiClient` as a `Layer`.
  *
  * **Details**
  *
@@ -461,7 +442,7 @@ export type ResponseStreamEvent = typeof OpenAiSchema.ResponseStreamEvent.Type
  *
  * **When to use**
  *
- * Use when code needs direct access to the WebSocket-backed response streaming
+ * Use when you need direct access to the WebSocket-backed response streaming
  * service rather than wrapping an effect with WebSocket mode.
  *
  * **Details**
@@ -575,7 +556,11 @@ const makeSocket = Effect.gen(function*() {
                 method: "createResponseStream",
                 reason: AiError.reasonFromHttpStatus({
                   description: json,
-                  status: isNaN(status) ? errorTypeToStatus[error.type] ?? 500 : status,
+                  status: isNaN(status) ?
+                    Object.hasOwn(errorTypeToStatus, error.type)
+                      ? errorTypeToStatus[error.type]
+                      : 500 :
+                    status,
                   metadata: error as any,
                   http: {
                     body: json,
@@ -669,7 +654,7 @@ const makeSocket = Effect.gen(function*() {
 
 const ErrorEvent = Schema.Struct({
   type: Schema.Literal("error"),
-  status: Schema.Number.pipe(
+  status: Schema.Int.pipe(
     Schema.withDecodingDefault(Effect.succeed(500))
   ),
   error: Schema.Struct({
@@ -704,7 +689,8 @@ const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(AllEvents))
  * - `NodeSocket.layerWebSocketConstructorWS`
  * - `BunSocket.layerWebSocketConstructor`
  *
- * This is because it needs to use non-standard options for setting the Authorization header.
+ * These constructor layers support the non-standard options needed to set the
+ * Authorization header.
  *
  * @see {@link layerWebSocketMode} for providing WebSocket mode through a layer
  * @see {@link OpenAiSocket} for direct access to the WebSocket-backed streaming service
@@ -741,7 +727,8 @@ export const withWebSocketMode = <A, E, R>(
  * - `NodeSocket.layerWebSocketConstructorWS`
  * - `BunSocket.layerWebSocketConstructor`
  *
- * This is because it needs to use non-standard options for setting the Authorization header.
+ * These constructor layers support the non-standard options needed to set the
+ * Authorization header.
  *
  * @see {@link withWebSocketMode} for enabling WebSocket mode around a single effect
  *

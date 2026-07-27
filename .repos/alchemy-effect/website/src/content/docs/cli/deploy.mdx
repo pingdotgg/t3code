@@ -1,0 +1,87 @@
+---
+title: deploy
+description: Compute a plan, ask for approval, and create/update/delete resources to match the desired state.
+---
+
+import Terminal from "../../../components/Terminal.astro";
+
+```sh
+alchemy deploy [file] [options]
+```
+
+`deploy` computes a plan, asks for approval, and creates/updates/deletes resources to match the desired state.
+
+<Terminal content={`[u]Plan[/u]: [g]2 to create[/g]
+
+[g]+[/g] [b]Bucket[/b] [d](Cloudflare.R2.Bucket)[/d]
+[g]+[/g] [b]Worker[/b] [d](Cloudflare.Worker)[/d] [c](1 bindings)[/c]
+[s2][g]+[/g] [c]Bucket[/c]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]Bucket[/b] [d](Cloudflare.R2.Bucket)[/d] [g]created[/g]
+[g]✓[/g] [b]Worker[/b] [d](Cloudflare.Worker)[/d] [g]created[/g]
+[s2][d]• Uploading worker (14.20 KB) ...[/d]
+[s2][d]• Enabling workers.dev subdomain...[/d]
+{
+[s2]url: "https://myapp-worker-dev-you-abc123.workers.dev",
+}`} />
+
+On subsequent deploys, only changed resources are updated:
+
+<Terminal content={`[u]Plan[/u]: [y]1 to update[/y]
+
+[y]~[/y] [b]Worker[/b] [d](Cloudflare.Worker)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]Worker[/b] [d](Cloudflare.Worker)[/d] [y]updated[/y]
+[s2][d]• Uploading worker (15.10 KB) ...[/d]
+{
+[s2]url: "https://myapp-worker-dev-you-abc123.workers.dev",
+}`} />
+
+When the plan contains no changes, the approval prompt is skipped automatically.
+
+## Flags
+
+| Option              | Description                                                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `[file]`            | Stack file to deploy (defaults to `alchemy.run.ts`)                                                                        |
+| `--stage <name>`    | Stage to deploy to (defaults to `dev_$USER`)                                                                               |
+| `--yes`             | Skip the approval prompt                                                                                                   |
+| `--dry-run`         | Show the plan without applying (same as `alchemy plan`)                                                                    |
+| `--force`           | Force updates for resources that would otherwise no-op                                                                     |
+| `--adopt`           | Adopt pre-existing cloud resources that conflict with this stack instead of failing. Useful for re-importing into a fresh state store. |
+| `--profile <name>`  | Auth profile to use (defaults to `default` or `$ALCHEMY_PROFILE`)                                                          |
+| `--env-file <path>` | Load environment variables from a file                                                                                     |
+
+How `--adopt` decides what to take over is covered in [Adopting Resources](/cli/adopting-resources).
+
+`--dry-run` runs the exact same code path as [`alchemy plan`](/cli/plan) — see that page for the plan output format.
+
+## Examples
+
+```sh
+# Deploy to production, skip the prompt
+alchemy deploy --stage prod --yes
+
+# Deploy a PR preview environment
+alchemy deploy --stage pr-42
+
+# Deploy a different stack file
+alchemy deploy stacks/github.ts
+
+# Preview what would change
+alchemy deploy --dry-run
+
+# Re-import existing cloud resources into a fresh state store
+alchemy deploy --adopt
+```
+
+## Where next
+
+- [plan](/cli/plan) — preview changes without applying
+- [destroy](/cli/destroy) — delete everything in a stack
+- [Adopting Resources](/cli/adopting-resources) — take over pre-existing infrastructure
+- [Resource Lifecycle](/infrastructure-as-code/resource-lifecycle) — what happens inside a deploy

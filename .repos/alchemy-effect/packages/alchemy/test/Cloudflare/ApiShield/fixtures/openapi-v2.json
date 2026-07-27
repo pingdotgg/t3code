@@ -1,0 +1,21 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "alchemy user schema fixture", "version": "2.0.0" },
+  "servers": [{ "url": "https://alchemy-test-2.us" }],
+  "paths": {
+    "/api/v2/things/{thingId}": {
+      "get": {
+        "operationId": "getThingV2",
+        "parameters": [
+          {
+            "name": "thingId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}

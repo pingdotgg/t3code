@@ -64,8 +64,16 @@ export interface LogStreamChart extends BaseChart {
   readonly type: "LogStream";
 }
 
-export interface NoteChart extends BaseChart {
+/**
+ * A free-form markdown note. Unlike data charts, `Note` has no `query`
+ * or `name` — Axiom's payload is strictly `{ id, type, text, variant? }`.
+ */
+export interface NoteChart {
+  readonly id: string;
   readonly type: "Note";
+  /** Markdown body rendered in the note cell. */
+  readonly text: string;
+  readonly variant?: "default";
 }
 
 /**

@@ -1,0 +1,199 @@
+---
+title: Vector search with Vectorize
+description: Create a Vectorize index, bind it to a Worker with SearchIndex, and run filtered nearest-neighbor queries over vector embeddings.
+sidebar:
+  order: 21
+---
+
+Vectorize is Cloudflare's globally distributed vector database.
+In alchemy it's three pieces: a `Vectorize.Index` resource that
+holds the vectors, an optional `Vectorize.MetadataIndex` that makes
+a metadata property filterable, and a `Vectorize.SearchIndex`
+binding that gives a Worker a typed client to insert and query.
+
+## Create an index
+
+Declare the index once at module scope so both the stack and the
+Worker can reference it:
+
+```typescript
+// src/embeddings.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Embeddings = Cloudflare.Vectorize.Index("Embeddings", {
+  dimensions: 768,
+  metric: "cosine",
+});
+```
+
+`dimensions` must match the embedding model you'll use (768 for
+`bge-base`, 1536 for `text-embedding-ada-002`, …) and `metric` is
+one of `cosine`, `euclidean`, or `dot-product`. A Vectorize index is
+immutable — changing dimensions, metric, preset, or description
+triggers a replacement, and the replacement is a fresh, empty index.
+
+:::note
+Instead of `dimensions` + `metric`, you can pass a managed embedding
+model preset — `preset: "@cf/baai/bge-base-en-v1.5"` — which fixes
+both to match the named model.
+:::
+
+## Index a metadata property
+
+To filter query results by a metadata property, that property needs
+a metadata index. Create it after resolving the parent index:
+
+```typescript
+const index = yield* Embeddings;
+
+yield* Cloudflare.Vectorize.MetadataIndex("KindMeta", {
+  indexName: index.indexName,
+  propertyName: "kind",
+  indexType: "string",
+});
+```
+
+`indexType` is `string`, `number`, or `boolean`, matching the values
+stored under `propertyName`. Create metadata indexes **before**
+inserting vectors — only vectors inserted after the metadata index
+exists are filterable. Like the parent, a metadata index is
+immutable, and replacing the parent index replaces it too.
+
+## Bind the index to a Worker
+
+`Cloudflare.Vectorize.SearchIndex(index)` in the Worker's init phase
+attaches the native `vectorize` binding at deploy time and resolves
+to an Effect-native client at runtime:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Embeddings } from "./embeddings.ts";
+
+export default Cloudflare.Worker(
+  "Search",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const index = yield* Embeddings;
+    const vec = yield* Cloudflare.Vectorize.SearchIndex(index);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        // routes below use `vec`
+        return HttpServerResponse.text("ok");
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Vectorize.SearchIndexBinding)),
+);
+```
+
+The client exposes `upsert`, `insert`, `query`, `queryById`,
+`getByIds`, `deleteByIds`, and `describe`, plus `raw` for direct
+access to the underlying runtime binding.
+
+## Insert vectors
+
+`upsert` writes vectors, replacing any with matching ids
+(`insert` instead fails on duplicate ids):
+
+```typescript
+const mutation = yield* vec.upsert([
+  { id: "doc-1", values: embedding, metadata: { kind: "article" } },
+  { id: "doc-2", values: other, metadata: { kind: "note" } },
+]);
+// mutation.mutationId identifies the async write
+```
+
+Each `values` array must have exactly the index's `dimensions`
+entries. `metadata` is an arbitrary JSON object stored alongside the
+vector — properties covered by a metadata index become filterable.
+
+:::note
+Vectorize mutations are asynchronous — `upsert` returns a
+`mutationId` immediately, and a query right after may not see the
+new vectors yet. Poll with a bounded `Effect.repeat` when a test or
+follow-up read depends on the write being visible.
+:::
+
+## Query nearest neighbors
+
+`query` finds the vectors closest to the one you pass:
+
+```typescript
+const results = yield* vec.query(queryEmbedding, {
+  topK: 5,
+  returnMetadata: "all",
+});
+// results.matches: [{ id, score, metadata }, ...] best match first
+```
+
+`topK` caps the number of matches, and `returnMetadata: "all"`
+includes each match's stored metadata in the response.
+
+## Filter by metadata
+
+Pass a `filter` to restrict matches to vectors whose metadata
+satisfies it — this is what the metadata index enables:
+
+```typescript
+const articles = yield* vec.query(queryEmbedding, {
+  topK: 5,
+  returnMetadata: "all",
+  filter: { kind: { $eq: "article" } },
+});
+```
+
+Only vectors with `kind === "article"` are considered. A property
+without a metadata index cannot be used in a `filter`, so declare
+the `MetadataIndex` up front.
+
+## Deploy it
+
+The stack ties it together — index, metadata index, then the Worker
+that binds them:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { Embeddings } from "./src/embeddings.ts";
+import Worker from "./src/worker.ts";
+
+export default Alchemy.Stack(
+  "VectorSearch",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const index = yield* Embeddings;
+    yield* Cloudflare.Vectorize.MetadataIndex("KindMeta", {
+      indexName: index.indexName,
+      propertyName: "kind",
+      indexType: "string",
+    });
+    const worker = yield* Worker;
+    return { url: worker.url.as<string>() };
+  }),
+);
+```
+
+```sh
+bun alchemy deploy
+```
+
+## Where next
+
+- [AI Search](/cloudflare/ai/ai-search) — managed RAG that
+  handles embedding and indexing for you; reach for Vectorize when
+  you want control over the vectors themselves.
+- [Workers](/cloudflare/compute/workers) — the two-phase Worker model the
+  `SearchIndex` binding lives inside.
+- Reference: [Index](/providers/cloudflare/vectorize/index),
+  [MetadataIndex](/providers/cloudflare/vectorize/metadataindex),
+  [SearchIndex](/providers/cloudflare/vectorize/searchindex)

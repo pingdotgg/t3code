@@ -101,7 +101,7 @@ export interface ResponseHeadersPolicy extends Resource<
  * X-Content-Type-Options, Referrer-Policy, etc.), Server-Timing, custom
  * headers and explicit header removal. They are referenced by ID on a
  * Distribution's default behavior or per-path cache behaviors.
- *
+ * @resource
  * @section Creating Response Headers Policies
  * @example Standard security + CORS
  * ```typescript
@@ -226,6 +226,33 @@ export const ResponseHeadersPolicyProvider = () =>
           if (!found) return undefined;
           return toAttrs(found.id, found.config, found.etag);
         }),
+        list: () =>
+          Effect.gen(function* () {
+            // CloudFront is global; paginate via Marker/NextMarker. Only
+            // `Type: "custom"` policies are ours — AWS-managed ones are
+            // shared and not deletable, so they are skipped.
+            const items: ReturnType<typeof toAttrs>[] = [];
+            let marker: string | undefined = undefined;
+            do {
+              const listed: cloudfront.ListResponseHeadersPoliciesResult =
+                yield* cloudfront.listResponseHeadersPolicies({
+                  Type: "custom",
+                  Marker: marker,
+                });
+              for (const summary of listed.ResponseHeadersPolicyList?.Items ??
+                []) {
+                if (summary.Type !== "custom") continue;
+                const id = summary.ResponseHeadersPolicy?.Id;
+                const config =
+                  summary.ResponseHeadersPolicy?.ResponseHeadersPolicyConfig;
+                if (!id || !config) continue;
+                const found = yield* getById(id);
+                items.push(toAttrs(id, found?.config ?? config, found?.etag));
+              }
+              marker = listed.ResponseHeadersPolicyList?.NextMarker;
+            } while (marker);
+            return items;
+          }),
         reconcile: Effect.fn(function* ({ id, news, output, session }) {
           const name = yield* createName(id, news);
 

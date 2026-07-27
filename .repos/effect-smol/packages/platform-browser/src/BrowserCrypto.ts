@@ -6,43 +6,6 @@
  * browser programs can use the standard implementation while tests or embedded
  * runtimes can provide their own `Crypto` object.
  *
- * **Mental model**
- *
- * {@link layer} reads {@link WebCrypto}, adapts `getRandomValues` to the
- * random byte primitive used by `effect/Crypto`, and delegates digest requests
- * to `crypto.subtle.digest`. Higher-level helpers such as UUID generation are
- * derived by the core Crypto service from those primitives.
- *
- * **Common tasks**
- *
- * - Provide cryptographic randomness, UUID generation, and digest operations in
- *   browser Effect programs with {@link layer}
- * - Override {@link WebCrypto} in tests to make randomness or digest output
- *   deterministic
- *
- * **Gotchas**
- *
- * - The browser must expose `globalThis.crypto`; otherwise layer acquisition
- *   dies because no secure randomness source is available.
- * - Digest support depends on `crypto.subtle.digest` and the algorithms the
- *   browser accepts. Rejected digest operations fail with `PlatformError`.
- *
- * **Example** (Provide browser crypto)
- *
- * ```ts
- * import { BrowserCrypto } from "@effect/platform-browser"
- * import { Crypto, Effect } from "effect"
- *
- * const program = Effect.gen(function*() {
- *   const crypto = yield* Crypto.Crypto
- *   return yield* crypto.randomUUIDv4
- * })
- *
- * Effect.runPromise(
- *   program.pipe(Effect.provide(BrowserCrypto.layer))
- * ).then(console.log)
- * ```
- *
  * @since 1.0.0
  */
 import * as Context from "effect/Context"

@@ -1,40 +1,63 @@
-import { Schema } from "effect"
-import * as InternalArbitrary from "effect/internal/schema/arbitrary"
-import { TestSchema } from "effect/testing"
+import { BigDecimal, Chunk, DateTime, Effect, HashMap, HashSet, Option, Order, Schema, SchemaIssue } from "effect"
+import { FastCheck, TestSchema } from "effect/testing"
 import { describe, it } from "vitest"
-import { deepStrictEqual, throws } from "../utils/assert.ts"
+import { assertInclude, assertInstanceOf, deepStrictEqual, strictEqual, throws } from "../utils/assert.ts"
 
-function assertUnsupportedSchema(schema: Schema.Top, message: string) {
+function assertUnsupportedSchema(schema: Schema.Constraint, message: string) {
   throws(() => Schema.toArbitrary(schema), message)
 }
 
-function assertContext(schema: Schema.Schema<any>, ctx: Schema.Annotations.ToArbitrary.Context) {
-  const ast = schema.ast
-  const filters = InternalArbitrary.getFilters(ast.checks)
-  const f = InternalArbitrary.constraintContext(filters)
-  deepStrictEqual(f({}), ctx)
-}
-
-function assertIntegerConstraints(
-  schema: Schema.Schema<any>,
-  expected: { readonly min?: number; readonly max?: number }
-) {
-  let constraints: { readonly min?: number; readonly max?: number } | undefined
-  const arbitrary = {
-    filter: () => arbitrary
-  }
-  Schema.toArbitraryLazy(schema)({
-    integer: (c: { readonly min?: number; readonly max?: number }) => {
-      constraints = c
-      return arbitrary
-    }
-  } as any)
-  deepStrictEqual(constraints, expected)
-}
-
-function verifyGeneration<S extends Schema.Codec<unknown, unknown, never, unknown>>(schema: S) {
+function verifyGeneration<S extends Schema.ConstraintCodec<unknown, unknown>>(schema: S, numRuns?: number) {
   const asserts = new TestSchema.Asserts(schema)
-  asserts.arbitrary().verifyGeneration()
+  if (numRuns === undefined) {
+    asserts.arbitrary().verifyGeneration()
+  } else {
+    asserts.arbitrary().verifyGeneration({ params: { numRuns } })
+  }
+}
+
+// Guard for "fast but wrong" regressions: samples the derived arbitrary and
+// asserts an output invariant (length/size/property-count bounds) over many runs.
+function assertInvariant(schema: Schema.Constraint, predicate: (value: any) => boolean, numRuns = 200) {
+  FastCheck.assert(FastCheck.property(Schema.toArbitrary(schema), predicate), { numRuns })
+}
+
+function assertRecursiveNoFiniteGenerationPath(schema: Schema.Constraint) {
+  throws(
+    () => Schema.toArbitrary(schema),
+    (e) => {
+      assertInstanceOf(e, Error)
+      assertInclude(
+        e.message,
+        "Unable to derive an arbitrary for a recursive schema without a finite generation path"
+      )
+    }
+  )
+}
+
+function minSizeOne<A>(size: (a: A) => number) {
+  return Schema.makeFilter((a: A) => size(a) >= 1, {
+    expected: "a value with a size of at least 1",
+    arbitrary: {
+      constraint: {
+        minLength: 1
+      }
+    }
+  })
+}
+
+function CustomArray<A extends Schema.Constraint>(
+  value: A,
+  toArbitrary: Schema.Annotations.ToArbitrary.Declaration<ReadonlyArray<A["Type"]>, readonly [A]>
+) {
+  return Schema.declareConstructor<ReadonlyArray<A["Type"]>>()(
+    [value],
+    () => (input, ast) =>
+      globalThis.Array.isArray(input)
+        ? Effect.succeed(input as ReadonlyArray<A["Type"]>)
+        : Effect.fail(new SchemaIssue.InvalidType(ast, Option.some(input))),
+    { toArbitrary }
+  )
 }
 
 describe("Arbitrary generation", () => {
@@ -54,18 +77,317 @@ describe("Arbitrary generation", () => {
   at ["a"]`
       )
     })
+
+    it("impossible object property constraints", () => {
+      assertUnsupportedSchema(
+        Schema.Struct({ a: Schema.Number }).check(Schema.isMinProperties(2)),
+        "Unable to derive an arbitrary for object property constraints"
+      )
+    })
+
+    it("impossible object max property constraints", () => {
+      assertUnsupportedSchema(
+        Schema.Struct({ a: Schema.Number }).check(Schema.isMaxProperties(0)),
+        "Unable to derive an arbitrary for object property constraints"
+      )
+    })
+
+    it("impossible number constraints", () => {
+      assertUnsupportedSchema(
+        Schema.Number.check(Schema.isGreaterThan(1), Schema.isLessThan(1)),
+        "Unable to derive an arbitrary for number constraints"
+      )
+    })
+
+    it("impossible integer constraints", () => {
+      assertUnsupportedSchema(
+        Schema.Int.check(Schema.isGreaterThan(1), Schema.isLessThan(2)),
+        "Unable to derive an arbitrary for integer constraints"
+      )
+    })
+
+    it("impossible ordered bigint constraints", () => {
+      assertUnsupportedSchema(
+        Schema.BigInt.check(Schema.isGreaterThanBigInt(1n), Schema.isLessThanBigInt(2n)),
+        "Unable to derive an arbitrary for the ordered bigint constraints"
+      )
+    })
+
+    it("impossible array constraints", () => {
+      assertUnsupportedSchema(
+        Schema.Array(Schema.String).check(Schema.isMinLength(2), Schema.isMaxLength(1)),
+        "Unable to derive an arbitrary for array constraints"
+      )
+    })
+
+    it("impossible size constraints", () => {
+      assertUnsupportedSchema(
+        Schema.ReadonlySet(Schema.String).check(Schema.isMinSize(2), Schema.isMaxSize(1)),
+        "Unable to derive an arbitrary for size constraints"
+      )
+    })
   })
 
-  it("should pass constraints to the override annotation", () => {
-    let constraints: Schema.Annotations.ToArbitrary.NumberConstraints | undefined
+  it("should pass the constraint to the override annotation", () => {
+    let constraint: Schema.Annotations.ToArbitrary.GenerationConstraint | undefined
     const schema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })).annotate({
       toArbitrary: () => (fc, ctx) => {
-        constraints = ctx.constraints?.number
-        return fc.float(constraints)
+        constraint = ctx.constraint
+        return fc.constant(1)
       }
     })
     verifyGeneration(schema)
-    deepStrictEqual(constraints, { min: 1, max: 100, isInteger: true })
+    deepStrictEqual(constraint, {
+      integer: true,
+      ordered: {
+        order: Order.Number,
+        minimum: 1,
+        maximum: 100
+      }
+    })
+  })
+
+  it("should keep noNaN and noInfinity as separate number constraints", () => {
+    const constraints: Array<unknown> = []
+    const fc = {
+      ...FastCheck,
+      float: (constraint?: Parameters<typeof FastCheck.float>[0]) => {
+        constraints.push(constraint)
+        return FastCheck.constant(0)
+      }
+    } as typeof FastCheck
+    const noNaN = Schema.makeFilter((n: number) => !globalThis.Number.isNaN(n), {
+      arbitrary: {
+        constraint: {
+          noNaN: true
+        }
+      }
+    })
+    const noInfinity = Schema.makeFilter(
+      (n: number) => n !== globalThis.Number.POSITIVE_INFINITY && n !== globalThis.Number.NEGATIVE_INFINITY,
+      {
+        arbitrary: {
+          constraint: {
+            noInfinity: true
+          }
+        }
+      }
+    )
+
+    Schema.toArbitraryLazy(Schema.Number.check(noNaN))(fc)
+    Schema.toArbitraryLazy(Schema.Number.check(noInfinity))(fc)
+    Schema.toArbitraryLazy(Schema.Finite)(fc)
+
+    deepStrictEqual(constraints, [
+      { noNaN: true },
+      { noDefaultInfinity: true },
+      { noDefaultInfinity: true, noNaN: true }
+    ])
+  })
+
+  describe("report and candidates", () => {
+    it("should use filter candidates with the merged constraint context", () => {
+      let constraint: Schema.Annotations.ToArbitrary.GenerationConstraint | undefined
+      const schema = Schema.String.check(
+        Schema.isMinLength(9),
+        Schema.makeFilter((s: string) => s === "candidate", {
+          expected: "candidate",
+          arbitrary: {
+            candidate: {
+              make: (fc, ctx) => {
+                constraint = ctx.constraint
+                return fc.constant("candidate")
+              }
+            }
+          }
+        })
+      )
+      const result = Schema.toArbitrary(schema, { report: true })
+
+      deepStrictEqual(result.report.warnings, [])
+      deepStrictEqual(constraint, { minLength: 9 })
+      FastCheck.assert(FastCheck.property(result.value, (s) => s === "candidate"), { numRuns: 20 })
+    })
+
+    it("should allow candidates to be disabled for a context", () => {
+      let calls = 0
+      const schema = Schema.String.check(
+        Schema.makeFilter(() => true, {
+          arbitrary: {
+            candidate: {
+              make: () => {
+                calls++
+                return undefined
+              }
+            }
+          }
+        })
+      )
+      const result = Schema.toArbitrary(schema, { report: true })
+
+      strictEqual(calls, 1)
+      deepStrictEqual(result.report.warnings, [])
+    })
+
+    it("should fail fast for invalid candidate weights", () => {
+      const makeSchema = (weight: number) =>
+        Schema.String.check(
+          Schema.makeFilter(() => true, {
+            arbitrary: {
+              candidate: {
+                weight,
+                make: (fc) => fc.constant("candidate")
+              }
+            }
+          })
+        )
+
+      throws(
+        () => Schema.toArbitrary(makeSchema(0)),
+        "Unable to derive an arbitrary for a candidate with an invalid weight"
+      )
+      throws(
+        () => Schema.toArbitrary(makeSchema(0.5)),
+        "Unable to derive an arbitrary for a candidate with an invalid weight"
+      )
+    })
+
+    it("should report opaque filters", () => {
+      const schema = Schema.Struct({
+        a: Schema.String.check(Schema.makeFilter((s: string) => s.length > 0, { expected: "a custom string" }))
+      })
+      const result = Schema.toArbitrary(schema, { report: true })
+
+      deepStrictEqual(result.report.warnings, [
+        { _tag: "OpaqueFilter", path: ["a"], description: "a custom string" }
+      ])
+      FastCheck.assert(FastCheck.property(result.value, (a) => a.a.length > 0), { numRuns: 5 })
+    })
+
+    it("should not report child filters when a filter group provides arbitrary metadata", () => {
+      const schema = Schema.String.check(
+        Schema.makeFilterGroup(
+          [
+            Schema.makeFilter((s: string) => s.startsWith("a"), { expected: "starts with a" }),
+            Schema.makeFilter((s: string) => s.endsWith("a"), { expected: "ends with a" })
+          ],
+          {
+            arbitrary: {
+              candidate: {
+                make: (fc) => fc.constant("a")
+              }
+            }
+          }
+        )
+      )
+      const result = Schema.toArbitrary(schema, { report: true })
+
+      deepStrictEqual(result.report.warnings, [])
+      FastCheck.assert(FastCheck.property(result.value, (s) => s === "a"), { numRuns: 20 })
+    })
+
+    it("should not report warnings for constructive built-in filters", () => {
+      const schema = Schema.Struct({
+        string: Schema.String.check(Schema.isMinLength(1), Schema.isStartsWith("a")),
+        number: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10 })),
+        array: Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isUnique()),
+        object: Schema.Record(Schema.String, Schema.Number).check(Schema.isMinProperties(1), Schema.isMaxProperties(3)),
+        set: Schema.ReadonlySet(Schema.String).check(Schema.isMinSize(1), Schema.isMaxSize(3))
+      })
+      const result = Schema.toArbitrary(schema, { report: true })
+
+      deepStrictEqual(result.report.warnings, [])
+    })
+  })
+
+  describe("object property counts", () => {
+    it("enforces minProperties on optional-only structs", () => {
+      const schema = Schema.Struct({
+        a: Schema.optionalKey(Schema.String),
+        b: Schema.optionalKey(Schema.String),
+        c: Schema.optionalKey(Schema.String)
+      }).check(Schema.isMinProperties(2))
+      FastCheck.assert(
+        FastCheck.property(Schema.toArbitrary(schema), (o) => globalThis.Object.keys(o).length >= 2),
+        { numRuns: 100 }
+      )
+      verifyGeneration(schema)
+    })
+
+    it("enforces maxProperties on optional-only structs", () => {
+      const schema = Schema.Struct({
+        a: Schema.optionalKey(Schema.String),
+        b: Schema.optionalKey(Schema.String),
+        c: Schema.optionalKey(Schema.String)
+      }).check(Schema.isMaxProperties(1))
+      FastCheck.assert(
+        FastCheck.property(Schema.toArbitrary(schema), (o) => globalThis.Object.keys(o).length <= 1),
+        { numRuns: 100 }
+      )
+      verifyGeneration(schema)
+    })
+
+    it("enforces minProperties with symbol optional keys", () => {
+      const key = Symbol.for("toArbitrary/optional")
+      const schema = Schema.Struct({
+        [key]: Schema.optionalKey(Schema.String),
+        b: Schema.optionalKey(Schema.String)
+      }).check(Schema.isMinProperties(2))
+      FastCheck.assert(
+        FastCheck.property(Schema.toArbitrary(schema), (o) =>
+          globalThis.Reflect.ownKeys(o).length >= 2 &&
+          globalThis.Object.hasOwn(o, key)),
+        { numRuns: 100 }
+      )
+      verifyGeneration(schema)
+    })
+
+    it("enforces a property-count range with required and optional keys", () => {
+      const schema = Schema.Struct({
+        r: Schema.String,
+        a: Schema.optionalKey(Schema.String),
+        b: Schema.optionalKey(Schema.String),
+        c: Schema.optionalKey(Schema.String)
+      }).check(Schema.isPropertiesLengthBetween(2, 3))
+      FastCheck.assert(
+        FastCheck.property(Schema.toArbitrary(schema), (o) => {
+          const n = globalThis.Object.keys(o).length
+          return n >= 2 && n <= 3
+        }),
+        { numRuns: 100 }
+      )
+      verifyGeneration(schema)
+    })
+
+    it("fails fast when optional keys cannot satisfy minProperties", () => {
+      assertUnsupportedSchema(
+        Schema.Struct({ r: Schema.String, a: Schema.optionalKey(Schema.String) }).check(Schema.isMinProperties(3)),
+        "Unable to derive an arbitrary for object property constraints"
+      )
+    })
+
+    it("fails fast when required keys already exceed maxProperties", () => {
+      assertUnsupportedSchema(
+        Schema.Struct({ r: Schema.String, a: Schema.optionalKey(Schema.String) }).check(Schema.isMaxProperties(0)),
+        "Unable to derive an arbitrary for object property constraints"
+      )
+    })
+
+    // Regression guard: with the previous discard-based generation, requiring
+    // every optional key to be present is astronomically unlikely (~0.75 ** 64),
+    // so sampling would effectively hang. The count-controlled subset generates
+    // these instantly.
+    it("generates dense optional-key structs without excessive filtering", () => {
+      const fields: Record<string, Schema.optionalKey<typeof Schema.String>> = {}
+      for (let i = 0; i < 64; i++) {
+        fields[`k${i}`] = Schema.optionalKey(Schema.String)
+      }
+      const schema = Schema.Struct(fields).check(Schema.isMinProperties(64))
+      FastCheck.assert(
+        FastCheck.property(Schema.toArbitrary(schema), (o) => globalThis.Object.keys(o).length === 64),
+        { numRuns: 100 }
+      )
+    })
   })
 
   it("Any", () => {
@@ -155,6 +477,16 @@ describe("Arbitrary generation", () => {
       verifyGeneration(schema)
     })
 
+    it("${number} excludes non-finite values", () => {
+      const schema = Schema.TemplateLiteral([Schema.Number])
+      assertInvariant(schema, (s) => s !== "NaN" && s !== "Infinity" && s !== "-Infinity")
+    })
+
+    it("${number | \"a\"} excludes non-finite values", () => {
+      const schema = Schema.TemplateLiteral([Schema.Union([Schema.Number, Schema.Literal("a")])])
+      assertInvariant(schema, (s) => s !== "NaN" && s !== "Infinity" && s !== "-Infinity")
+    })
+
     it("a", () => {
       const schema = Schema.TemplateLiteral([Schema.Literal("a")])
       verifyGeneration(schema)
@@ -167,6 +499,11 @@ describe("Arbitrary generation", () => {
 
     it("a${string}b", () => {
       const schema = Schema.TemplateLiteral([Schema.Literal("a"), Schema.String, Schema.Literal("b")])
+      verifyGeneration(schema)
+    })
+
+    it("user_${uuid}", () => {
+      const schema = Schema.TemplateLiteral(["user_", Schema.String.check(Schema.isUUID())])
       verifyGeneration(schema)
     })
 
@@ -398,7 +735,177 @@ describe("Arbitrary generation", () => {
       verifyGeneration(schema)
     })
 
-    it.skip("mutually suspended schemas", { retry: 5 }, () => {
+    it("required recursive field without finite generation path", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.Struct({
+        a: Rec
+      })
+      throws(
+        () => Schema.toArbitrary(schema),
+        (e) => {
+          assertInstanceOf(e, Error)
+          assertInclude(
+            e.message,
+            "Unable to derive an arbitrary for a recursive schema without a finite generation path"
+          )
+          assertInclude(e.message, `at ["a"]`)
+        }
+      )
+    })
+
+    it("non-empty recursive array without finite generation path", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.Array(Rec).check(Schema.isMinLength(1))
+      throws(
+        () => Schema.toArbitrary(schema),
+        (e) => {
+          assertInstanceOf(e, Error)
+          assertInclude(
+            e.message,
+            "Unable to derive an arbitrary for a recursive schema without a finite generation path"
+          )
+          assertInclude(e.message, "at [0]")
+        }
+      )
+    })
+
+    it("optional-key recursive tuple made non-empty without finite generation path", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.Tuple([Schema.optionalKey(Rec)]).check(Schema.isMinLength(1))
+      assertRecursiveNoFiniteGenerationPath(schema)
+    })
+
+    it("optional-key recursive struct made non-empty without finite generation path", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.Struct({
+        a: Schema.optionalKey(Rec)
+      }).check(Schema.isMinProperties(1))
+      assertRecursiveNoFiniteGenerationPath(schema)
+    })
+
+    it("purely recursive tuple rest made non-empty without finite generation path", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.TupleWithRest(Schema.Tuple([Schema.String]), [Rec]).check(Schema.isMinLength(2))
+      assertRecursiveNoFiniteGenerationPath(schema)
+    })
+
+    // Regression guard: the terminal rest branch must honor the remaining
+    // minLength after fixed elements. Otherwise it generates an empty rest, the
+    // value fails the minLength filter, and sampling hangs.
+    it("non-empty recursive tuple rest with a finite union branch", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.TupleWithRest(
+        Schema.Tuple([Schema.String]),
+        [Schema.Union([Schema.Number, Rec])]
+      ).check(Schema.isMinLength(2))
+      FastCheck.assert(
+        FastCheck.property(Schema.toArbitrary(schema), (a) => (a as Array<unknown>).length >= 2),
+        { numRuns: 100 }
+      )
+    })
+
+    it("should use filter candidates in recursive terminal paths", () => {
+      const Leaf = Schema.String.check(
+        Schema.makeFilter((s: string) => s === "leaf", {
+          expected: "leaf",
+          arbitrary: {
+            candidate: {
+              make: (fc) => fc.constant("leaf")
+            }
+          }
+        })
+      )
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.Union([
+        Leaf,
+        Schema.Array(Rec).check(Schema.isMinLength(1))
+      ])
+
+      verifyGeneration(schema, 20)
+    })
+
+    it("non-empty recursive ReadonlySet without finite generation path", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.ReadonlySet(Rec).check(Schema.isMinSize(1))
+      assertRecursiveNoFiniteGenerationPath(schema)
+    })
+
+    it("non-empty recursive HashSet without finite generation path", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.HashSet(Rec).check(minSizeOne(HashSet.size))
+      assertRecursiveNoFiniteGenerationPath(schema)
+    })
+
+    it("non-empty recursive Chunk without finite generation path", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.Chunk(Rec).check(minSizeOne(Chunk.size))
+      assertRecursiveNoFiniteGenerationPath(schema)
+    })
+
+    it("non-empty recursive ReadonlyMap without finite generation path", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.ReadonlyMap(Schema.String, Rec).check(Schema.isMinSize(1))
+      assertRecursiveNoFiniteGenerationPath(schema)
+    })
+
+    it("non-empty recursive HashMap without finite generation path", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.HashMap(Schema.String, Rec).check(minSizeOne(HashMap.size))
+      assertRecursiveNoFiniteGenerationPath(schema)
+    })
+
+    it("non-empty recursive collections with finite union branches", () => {
+      const SetRec = Schema.suspend((): Schema.Codec<unknown> => setSchema)
+      const setSchema: any = Schema.ReadonlySet(Schema.Union([Schema.String, SetRec])).check(Schema.isMinSize(1))
+      verifyGeneration(setSchema, 20)
+
+      const HashSetRec = Schema.suspend((): Schema.Codec<unknown> => hashSetSchema)
+      const hashSetSchema: any = Schema.HashSet(Schema.Union([Schema.String, HashSetRec])).check(
+        minSizeOne(HashSet.size)
+      )
+      verifyGeneration(hashSetSchema, 20)
+
+      const ChunkRec = Schema.suspend((): Schema.Codec<unknown> => chunkSchema)
+      const chunkSchema: any = Schema.Chunk(Schema.Union([Schema.String, ChunkRec])).check(minSizeOne(Chunk.size))
+      verifyGeneration(chunkSchema, 20)
+
+      const MapRec = Schema.suspend((): Schema.Codec<unknown> => mapSchema)
+      const mapSchema: any = Schema.ReadonlyMap(Schema.String, Schema.Union([Schema.Number, MapRec])).check(
+        Schema.isMinSize(1)
+      )
+      verifyGeneration(mapSchema, 20)
+
+      const HashMapRec = Schema.suspend((): Schema.Codec<unknown> => hashMapSchema)
+      const hashMapSchema: any = Schema.HashMap(Schema.String, Schema.Union([Schema.Number, HashMapRec])).check(
+        minSizeOne(HashMap.size)
+      )
+      verifyGeneration(hashMapSchema, 20)
+    })
+
+    it("custom generic declaration with an explicit terminal branch", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = CustomArray(Rec, ([value]) => (fc, ctx) => {
+        const terminal = fc.constant([])
+        const arbitrary = fc.array(value.arbitrary, { maxLength: 2 })
+        return {
+          arbitrary: ctx.recursion === undefined ? arbitrary : fc.oneof(ctx.recursion, terminal, arbitrary),
+          terminal
+        }
+      })
+
+      verifyGeneration(schema, 20)
+    })
+
+    it("custom generic declaration without a terminal branch", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = CustomArray(Rec, ([value]) => (fc) => {
+        return fc.array(value.arbitrary, { minLength: 1, maxLength: 1 })
+      })
+
+      assertRecursiveNoFiniteGenerationPath(schema)
+    })
+
+    it("mutually suspended schemas", () => {
       interface Expression {
         readonly type: "expression"
         readonly value: number | Operation
@@ -450,6 +957,77 @@ describe("Arbitrary generation", () => {
       const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
       const schema = Schema.HashMap(Schema.String, Rec)
       verifyGeneration(schema)
+    })
+  })
+
+  // Extended safety net for the recursion × constraint code paths (terminal
+  // length minimization, optional inclusion, rest minLength, constraint
+  // merging). Each test asserts an output invariant over many runs: a refactor
+  // that makes generation "fast but wrong" (a value that violates the
+  // constraint) fails here cleanly.
+  describe("recursion × constraint guards", () => {
+    it("recursive array with a finite branch honors minLength", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.Array(Schema.Union([Schema.String, Rec])).check(Schema.isMinLength(2))
+      assertInvariant(schema, (a) => globalThis.Array.isArray(a) && a.length >= 2)
+    })
+
+    it("recursive tuple rest with a post-rest element honors minLength", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.TupleWithRest(
+        Schema.Tuple([Schema.String]),
+        [Schema.Union([Schema.Number, Rec]), Schema.Boolean]
+      ).check(Schema.isMinLength(3))
+      assertInvariant(schema, (a) => (a as Array<unknown>).length >= 3)
+    })
+
+    it("recursive struct with required + optional self-ref honors minProperties", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.Struct({
+        a: Schema.String,
+        self: Schema.optionalKey(Rec)
+      }).check(Schema.isMinProperties(1))
+      assertInvariant(
+        schema,
+        (o) => globalThis.Object.keys(o).length >= 1 && globalThis.Object.hasOwn(o, "a")
+      )
+    })
+
+    it("recursive record value with a finite branch honors minProperties", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.Record(Schema.String, Schema.Union([Schema.Number, Rec])).check(
+        Schema.isMinProperties(1)
+      )
+      assertInvariant(schema, (o) => globalThis.Object.keys(o).length >= 1)
+    })
+
+    it("recursive ReadonlySet with a finite branch honors minSize", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.ReadonlySet(Schema.Union([Schema.String, Rec])).check(Schema.isMinSize(1))
+      assertInvariant(schema, (s: any) => s.size >= 1)
+    })
+
+    it("recursive ReadonlyMap with a finite branch honors minSize", () => {
+      const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
+      const schema: any = Schema.ReadonlyMap(Schema.String, Schema.Union([Schema.Number, Rec])).check(
+        Schema.isMinSize(1)
+      )
+      assertInvariant(schema, (m: any) => m.size >= 1)
+    })
+
+    it("merges multiple minLength filters (takes the maximum)", () => {
+      const schema = Schema.Array(Schema.String).check(Schema.isMinLength(2), Schema.isMinLength(4))
+      assertInvariant(schema, (a: any) => a.length >= 4)
+    })
+
+    it("merges minLength and maxLength filters into a range", () => {
+      const schema = Schema.Array(Schema.String).check(Schema.isMinLength(2), Schema.isMaxLength(5))
+      assertInvariant(schema, (a: any) => a.length >= 2 && a.length <= 5)
+    })
+
+    it("merges ordered numeric bounds from multiple filters", () => {
+      const schema = Schema.Number.check(Schema.isGreaterThan(3), Schema.isLessThan(10))
+      assertInvariant(schema, (n: any) => n > 3 && n < 10, 300)
     })
   })
 
@@ -576,10 +1154,6 @@ describe("Arbitrary generation", () => {
       })))
     })
 
-    it("DateValid", () => {
-      verifyGeneration(Schema.DateValid)
-    })
-
     it("isGreaterThanOrEqualToBigInt", () => {
       verifyGeneration(Schema.BigInt.check(Schema.isGreaterThanOrEqualToBigInt(BigInt(0))))
     })
@@ -607,6 +1181,53 @@ describe("Arbitrary generation", () => {
         exclusiveMinimum: true,
         exclusiveMaximum: true
       })))
+    })
+
+    it("isBetweenBigDecimal", () => {
+      verifyGeneration(
+        Schema.BigDecimal.check(
+          Schema.isBetweenBigDecimal({
+            minimum: BigDecimal.make(100n, 0),
+            maximum: BigDecimal.make(200n, 0)
+          })
+        )
+      )
+    })
+
+    it("isBetweenBigDecimal with decimal scale", () => {
+      verifyGeneration(
+        Schema.BigDecimal.check(
+          Schema.isBetweenBigDecimal({
+            minimum: BigDecimal.fromStringUnsafe("1.01"),
+            maximum: BigDecimal.fromStringUnsafe("1.02")
+          })
+        )
+      )
+    })
+
+    it("non-natural Number order", () => {
+      const order = Order.flip(Order.Number)
+      verifyGeneration(Schema.Finite.check(Schema.makeIsGreaterThan({ order })(0)))
+    })
+
+    it("non-natural Int order", () => {
+      const order = Order.flip(Order.Number)
+      verifyGeneration(Schema.Int.check(Schema.makeIsGreaterThan({ order })(0)))
+    })
+
+    it("non-natural Date order", () => {
+      const order = Order.flip(Order.Date)
+      verifyGeneration(Schema.Date.check(Schema.makeIsGreaterThan({ order })(new Date(0))))
+    })
+
+    it("non-natural BigInt order", () => {
+      const order = Order.flip(Order.BigInt)
+      verifyGeneration(Schema.BigInt.check(Schema.makeIsGreaterThan({ order })(BigInt(0))))
+    })
+
+    it("non-natural BigDecimal order", () => {
+      const order = Order.flip(BigDecimal.Order)
+      verifyGeneration(Schema.BigDecimal.check(Schema.makeIsGreaterThan({ order })(BigDecimal.make(0n, 0))))
     })
   })
 
@@ -638,6 +1259,24 @@ describe("Arbitrary generation", () => {
     verifyGeneration(Schema.DateTimeUtc)
   })
 
+  it("DateTimeUtc with ordered DateTime constraints", () => {
+    const start = DateTime.makeUnsafe(0)
+    verifyGeneration(
+      Schema.DateTimeUtc.check(
+        Schema.makeIsGreaterThan({ order: DateTime.Order })(start)
+      )
+    )
+  })
+
+  it("DateTimeUtc with non-natural DateTime order", () => {
+    const order = Order.flip(DateTime.Order)
+    verifyGeneration(
+      Schema.DateTimeUtc.check(
+        Schema.makeIsGreaterThan({ order })(DateTime.makeUnsafe(0))
+      )
+    )
+  })
+
   it("TimeZoneOffset", () => {
     verifyGeneration(Schema.TimeZoneOffset)
   })
@@ -652,6 +1291,24 @@ describe("Arbitrary generation", () => {
 
   it("DateTimeZoned", () => {
     verifyGeneration(Schema.DateTimeZoned)
+  })
+
+  it("DateTimeZoned with ordered DateTime constraints", () => {
+    const start = DateTime.makeZonedUnsafe(0, { timeZone: "UTC" })
+    verifyGeneration(
+      Schema.DateTimeZoned.check(
+        Schema.makeIsGreaterThan({ order: DateTime.Order })(start)
+      )
+    )
+  })
+
+  it("DateTimeZoned with non-natural DateTime order", () => {
+    const order = Order.flip(DateTime.Order)
+    verifyGeneration(
+      Schema.DateTimeZoned.check(
+        Schema.makeIsGreaterThan({ order })(DateTime.makeZonedUnsafe(0, { timeZone: "UTC" }))
+      )
+    )
   })
 
   it("Uint8Array", () => {
@@ -724,383 +1381,322 @@ describe("Arbitrary generation", () => {
     })
   })
 
-  describe("context constraints", () => {
+  describe("constraint behavior", () => {
     it("String", () => {
-      assertContext(Schema.String, {
-        constraints: {}
-      })
+      verifyGeneration(Schema.String)
     })
 
     it("String & nonEmpty", () => {
-      assertContext(Schema.NonEmptyString, {
-        constraints: {
-          array: {
-            minLength: 1
-          },
-          string: {
-            minLength: 1
-          }
-        }
-      })
+      verifyGeneration(Schema.NonEmptyString)
     })
 
     it("String & isNonEmpty & isMinLength(2)", () => {
-      assertContext(Schema.String.check(Schema.isNonEmpty()).check(Schema.isMinLength(2)), {
-        constraints: {
-          array: {
-            minLength: 2
-          },
-          string: {
-            minLength: 2
-          }
-        }
-      })
+      verifyGeneration(Schema.String.check(Schema.isNonEmpty()).check(Schema.isMinLength(2)))
     })
 
     it("String & isMinLength(2) & isNonEmpty", () => {
-      assertContext(Schema.String.check(Schema.isMinLength(2)).check(Schema.isNonEmpty()), {
-        constraints: {
-          array: {
-            minLength: 2
-          },
-          string: {
-            minLength: 2
-          }
-        }
-      })
+      verifyGeneration(Schema.String.check(Schema.isMinLength(2)).check(Schema.isNonEmpty()))
     })
 
     it("String & isNonEmpty & isMaxLength(2)", () => {
-      assertContext(Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(2)), {
-        constraints: {
-          array: {
-            minLength: 1,
-            maxLength: 2
-          },
-          string: {
-            minLength: 1,
-            maxLength: 2
-          }
-        }
-      })
+      verifyGeneration(Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(2)))
     })
 
     it("String & isLength(2)", () => {
-      assertContext(Schema.String.check(Schema.isLengthBetween(2, 2)), {
-        constraints: {
-          array: {
-            minLength: 2,
-            maxLength: 2
-          },
-          string: {
-            minLength: 2,
-            maxLength: 2
-          }
-        }
-      })
+      verifyGeneration(Schema.String.check(Schema.isLengthBetween(2, 2)))
     })
 
     it("isStartsWith", () => {
-      assertContext(Schema.String.check(Schema.isStartsWith("a")), {
-        constraints: {
-          string: {
-            patterns: ["^a"]
-          }
-        }
-      })
+      verifyGeneration(Schema.String.check(Schema.isStartsWith("a")))
     })
 
     it("isEndsWith", () => {
-      assertContext(Schema.String.check(Schema.isEndsWith("a")), {
-        constraints: {
-          string: {
-            patterns: ["a$"]
-          }
-        }
-      })
+      verifyGeneration(Schema.String.check(Schema.isEndsWith("a")))
+    })
+
+    it("literal string checks with regexp syntax", () => {
+      verifyGeneration(Schema.String.check(Schema.isStartsWith("a.b")))
+      verifyGeneration(Schema.String.check(Schema.isEndsWith("a+b")))
+      verifyGeneration(Schema.String.check(Schema.isIncludes("[")))
     })
 
     it("Number", () => {
-      assertContext(Schema.Number, {
-        constraints: {}
-      })
+      verifyGeneration(Schema.Number)
     })
 
     it("isFinite", () => {
-      assertContext(Schema.Number.check(Schema.isFinite()), {
-        constraints: {
-          number: {
-            noDefaultInfinity: true,
-            noNaN: true
-          }
-        }
-      })
+      verifyGeneration(Schema.Number.check(Schema.isFinite()))
     })
 
     it("isInt", () => {
-      assertContext(Schema.Number.check(Schema.isInt()), {
-        constraints: {
-          number: {
-            isInteger: true
-          }
-        }
-      })
+      verifyGeneration(Schema.Number.check(Schema.isInt()))
     })
 
     it("isFinite & isInt", () => {
-      assertContext(Schema.Number.check(Schema.isFinite(), Schema.isInt()), {
-        constraints: {
-          number: {
-            noDefaultInfinity: true,
-            noNaN: true,
-            isInteger: true
-          }
-        }
-      })
+      verifyGeneration(Schema.Number.check(Schema.isFinite(), Schema.isInt()))
     })
 
     it("isInt32", () => {
-      assertContext(Schema.Number.check(Schema.isInt32()), {
-        constraints: {
-          number: {
-            isInteger: true,
-            max: 2147483647,
-            min: -2147483648
-          }
-        }
-      })
+      verifyGeneration(Schema.Number.check(Schema.isInt32()))
     })
 
     it("isGreaterThan", () => {
-      assertContext(Schema.Number.check(Schema.isGreaterThan(10)), {
-        constraints: {
-          number: {
-            min: 10,
-            minExcluded: true
-          }
-        }
-      })
+      verifyGeneration(Schema.Number.check(Schema.isGreaterThan(10)))
+    })
+
+    it("isBetween", () => {
+      verifyGeneration(Schema.Number.check(Schema.isBetween({ minimum: 1, maximum: 10 })))
+    })
+
+    it("Number with non-natural order", () => {
+      const order = Order.flip(Order.Number)
+      verifyGeneration(Schema.Finite.check(Schema.makeIsGreaterThan({ order })(0)))
+    })
+
+    it("ordered lower bounds keep the strongest bound", () => {
+      verifyGeneration(Schema.Number.check(Schema.isGreaterThan(1), Schema.isGreaterThanOrEqualTo(3)))
+    })
+
+    it("ordered lower bounds preserve exclusivity for equal bounds", () => {
+      verifyGeneration(Schema.Number.check(Schema.isGreaterThan(1), Schema.isGreaterThanOrEqualTo(1)))
+    })
+
+    it("ordered upper bounds keep the strongest bound", () => {
+      verifyGeneration(Schema.Number.check(Schema.isLessThan(10), Schema.isLessThanOrEqualTo(8)))
+    })
+
+    it("ordered upper bounds preserve exclusivity for equal bounds", () => {
+      verifyGeneration(Schema.Number.check(Schema.isLessThan(1), Schema.isLessThanOrEqualTo(1)))
     })
 
     it("isInt & isGreaterThan", () => {
-      assertIntegerConstraints(Schema.Int.check(Schema.isGreaterThan(1)), { min: 2 })
+      verifyGeneration(Schema.Int.check(Schema.isGreaterThan(1)))
     })
 
     it("isInt & isGreaterThan fractional", () => {
-      assertIntegerConstraints(Schema.Int.check(Schema.isGreaterThan(1.2)), { min: 2 })
+      verifyGeneration(Schema.Int.check(Schema.isGreaterThan(1.2)))
     })
 
     it("isInt & isLessThan", () => {
-      assertIntegerConstraints(Schema.Int.check(Schema.isLessThan(10)), { max: 9 })
+      verifyGeneration(Schema.Int.check(Schema.isLessThan(10)))
     })
 
     it("isInt & isLessThan fractional", () => {
-      assertIntegerConstraints(Schema.Int.check(Schema.isLessThan(10.8)), { max: 10 })
+      verifyGeneration(Schema.Int.check(Schema.isLessThan(10.8)))
     })
 
     it("isInt & isBetween with fractional bounds", () => {
-      assertIntegerConstraints(Schema.Int.check(Schema.isBetween({ minimum: 1.2, maximum: 10.8 })), {
-        min: 2,
-        max: 10
-      })
+      verifyGeneration(Schema.Int.check(Schema.isBetween({ minimum: 1.2, maximum: 10.8 })))
     })
 
     it("isInt & isBetween with exclusive bounds", () => {
-      assertIntegerConstraints(
-        Schema.Int.check(Schema.isBetween({
-          minimum: 1,
-          maximum: 10,
-          exclusiveMinimum: true,
-          exclusiveMaximum: true
-        })),
-        {
-          min: 2,
-          max: 9
-        }
-      )
+      verifyGeneration(Schema.Int.check(Schema.isBetween({
+        minimum: 1,
+        maximum: 10,
+        exclusiveMinimum: true,
+        exclusiveMaximum: true
+      })))
+    })
+
+    it("Int with non-natural order", () => {
+      const order = Order.flip(Order.Number)
+      verifyGeneration(Schema.Int.check(Schema.makeIsGreaterThan({ order })(0)))
     })
 
     it("isGreaterThanDate", () => {
-      assertContext(Schema.Date.check(Schema.isGreaterThanDate(new Date(0))), {
-        constraints: {
-          date: {
-            min: new Date(1)
-          }
-        }
-      })
+      verifyGeneration(Schema.Date.check(Schema.isGreaterThanDate(new Date(0))))
     })
 
     it("isGreaterThanOrEqualToDate", () => {
-      assertContext(Schema.Date.check(Schema.isGreaterThanOrEqualToDate(new Date(0))), {
-        constraints: {
-          date: {
-            min: new Date(0)
-          }
-        }
-      })
+      verifyGeneration(Schema.Date.check(Schema.isGreaterThanOrEqualToDate(new Date(0))))
     })
 
     it("isLessThanDate", () => {
-      assertContext(Schema.Date.check(Schema.isLessThanDate(new Date(10))), {
-        constraints: {
-          date: {
-            max: new Date(9)
-          }
-        }
-      })
+      verifyGeneration(Schema.Date.check(Schema.isLessThanDate(new Date(10))))
     })
 
     it("isLessThanOrEqualToDate", () => {
-      assertContext(Schema.Date.check(Schema.isLessThanOrEqualToDate(new Date(10))), {
-        constraints: {
-          date: {
-            max: new Date(10)
-          }
-        }
-      })
+      verifyGeneration(Schema.Date.check(Schema.isLessThanOrEqualToDate(new Date(10))))
     })
 
     it("isBetweenDate", () => {
-      assertContext(Schema.Date.check(Schema.isBetweenDate({ minimum: new Date(0), maximum: new Date(10) })), {
-        constraints: {
-          date: {
-            min: new Date(0),
-            max: new Date(10)
-          }
-        }
-      })
+      verifyGeneration(Schema.Date.check(Schema.isBetweenDate({ minimum: new Date(0), maximum: new Date(10) })))
     })
 
     it("isBetweenDate with exclusive bounds", () => {
-      assertContext(
-        Schema.Date.check(Schema.isBetweenDate({
-          minimum: new Date(0),
-          maximum: new Date(10),
-          exclusiveMinimum: true,
-          exclusiveMaximum: true
-        })),
-        {
-          constraints: {
-            date: {
-              min: new Date(1),
-              max: new Date(9)
-            }
-          }
-        }
-      )
+      verifyGeneration(Schema.Date.check(Schema.isBetweenDate({
+        minimum: new Date(0),
+        maximum: new Date(10),
+        exclusiveMinimum: true,
+        exclusiveMaximum: true
+      })))
     })
 
-    it("isValidDate", () => {
-      assertContext(Schema.Date.check(Schema.isDateValid()), {
-        constraints: {
-          date: {
-            noInvalidDate: true
-          }
-        }
-      })
-    })
-
-    it("isValidDate & isGreaterThanOrEqualToDate", () => {
-      assertContext(Schema.Date.check(Schema.isDateValid(), Schema.isGreaterThanOrEqualToDate(new Date(0))), {
-        constraints: {
-          date: {
-            noInvalidDate: true,
-            min: new Date(0)
-          }
-        }
-      })
+    it("Date with non-natural order", () => {
+      const order = Order.flip(Order.Date)
+      verifyGeneration(Schema.Date.check(Schema.makeIsGreaterThan({ order })(new Date(0))))
     })
 
     it("isGreaterThanOrEqualToBigInt", () => {
-      assertContext(Schema.BigInt.check(Schema.isGreaterThanOrEqualToBigInt(BigInt(0))), {
-        constraints: {
-          bigint: {
-            min: BigInt(0)
-          }
-        }
-      })
+      verifyGeneration(Schema.BigInt.check(Schema.isGreaterThanOrEqualToBigInt(BigInt(0))))
     })
 
     it("isGreaterThanBigInt", () => {
-      assertContext(Schema.BigInt.check(Schema.isGreaterThanBigInt(BigInt(0))), {
-        constraints: {
-          bigint: {
-            min: BigInt(1)
-          }
-        }
-      })
+      verifyGeneration(Schema.BigInt.check(Schema.isGreaterThanBigInt(BigInt(0))))
     })
 
     it("isLessThanOrEqualToBigInt", () => {
-      assertContext(Schema.BigInt.check(Schema.isLessThanOrEqualToBigInt(BigInt(10))), {
-        constraints: {
-          bigint: {
-            max: BigInt(10)
-          }
-        }
-      })
+      verifyGeneration(Schema.BigInt.check(Schema.isLessThanOrEqualToBigInt(BigInt(10))))
     })
 
     it("isLessThanBigInt", () => {
-      assertContext(Schema.BigInt.check(Schema.isLessThanBigInt(BigInt(10))), {
-        constraints: {
-          bigint: {
-            max: BigInt(9)
-          }
-        }
-      })
+      verifyGeneration(Schema.BigInt.check(Schema.isLessThanBigInt(BigInt(10))))
     })
 
     it("isBetweenBigInt", () => {
-      assertContext(Schema.BigInt.check(Schema.isBetweenBigInt({ minimum: BigInt(0), maximum: BigInt(10) })), {
-        constraints: {
-          bigint: {
-            min: BigInt(0),
-            max: BigInt(10)
-          }
-        }
-      })
+      verifyGeneration(Schema.BigInt.check(Schema.isBetweenBigInt({ minimum: BigInt(0), maximum: BigInt(10) })))
     })
 
     it("isBetweenBigInt with exclusive bounds", () => {
-      assertContext(
-        Schema.BigInt.check(Schema.isBetweenBigInt({
-          minimum: BigInt(0),
-          maximum: BigInt(10),
+      verifyGeneration(Schema.BigInt.check(Schema.isBetweenBigInt({
+        minimum: BigInt(0),
+        maximum: BigInt(10),
+        exclusiveMinimum: true,
+        exclusiveMaximum: true
+      })))
+    })
+
+    it("BigInt with non-natural order", () => {
+      const order = Order.flip(Order.BigInt)
+      verifyGeneration(Schema.BigInt.check(Schema.makeIsGreaterThan({ order })(BigInt(0))))
+    })
+
+    it("isGreaterThanOrEqualToBigDecimal", () => {
+      verifyGeneration(Schema.BigDecimal.check(Schema.isGreaterThanOrEqualToBigDecimal(BigDecimal.make(0n, 0))))
+    })
+
+    it("isGreaterThanBigDecimal", () => {
+      verifyGeneration(Schema.BigDecimal.check(Schema.isGreaterThanBigDecimal(BigDecimal.make(0n, 0))))
+    })
+
+    it("isLessThanOrEqualToBigDecimal", () => {
+      verifyGeneration(Schema.BigDecimal.check(Schema.isLessThanOrEqualToBigDecimal(BigDecimal.make(10n, 0))))
+    })
+
+    it("isLessThanBigDecimal", () => {
+      verifyGeneration(Schema.BigDecimal.check(Schema.isLessThanBigDecimal(BigDecimal.make(10n, 0))))
+    })
+
+    it("isBetweenBigDecimal", () => {
+      verifyGeneration(Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
+        minimum: BigDecimal.make(100n, 0),
+        maximum: BigDecimal.make(200n, 0)
+      })))
+    })
+
+    it("isBetweenBigDecimal with decimal scale", () => {
+      verifyGeneration(Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
+        minimum: BigDecimal.fromStringUnsafe("1.01"),
+        maximum: BigDecimal.fromStringUnsafe("1.02")
+      })))
+    })
+
+    it("isBetweenBigDecimal with exclusive decimal bounds", () => {
+      verifyGeneration(
+        Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
+          minimum: BigDecimal.fromStringUnsafe("1.01"),
+          maximum: BigDecimal.fromStringUnsafe("1.02"),
           exclusiveMinimum: true,
           exclusiveMaximum: true
         })),
-        {
-          constraints: {
-            bigint: {
-              min: BigInt(1),
-              max: BigInt(9)
-            }
-          }
-        }
+        1_000
+      )
+    })
+
+    it("isBetweenBigDecimal with exclusive negative decimal bounds", () => {
+      verifyGeneration(
+        Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
+          minimum: BigDecimal.fromStringUnsafe("-1.02"),
+          maximum: BigDecimal.fromStringUnsafe("-1.01"),
+          exclusiveMinimum: true,
+          exclusiveMaximum: true
+        })),
+        1_000
+      )
+    })
+
+    it("isBetweenBigDecimal with a single inclusive decimal value", () => {
+      verifyGeneration(
+        Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
+          minimum: BigDecimal.fromStringUnsafe("1.01"),
+          maximum: BigDecimal.fromStringUnsafe("1.01")
+        })),
+        1_000
+      )
+    })
+
+    it("isBetweenBigDecimal with exclusive bounds requiring a higher scale", () => {
+      verifyGeneration(
+        Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
+          minimum: BigDecimal.fromStringUnsafe("0"),
+          maximum: BigDecimal.fromStringUnsafe("0.00000000000000000001"),
+          exclusiveMinimum: true,
+          exclusiveMaximum: true
+        })),
+        1_000
+      )
+    })
+
+    it("isBetweenBigDecimal with impossible exclusive bounds", () => {
+      throws(() =>
+        Schema.toArbitrary(Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
+          minimum: BigDecimal.fromStringUnsafe("1.01"),
+          maximum: BigDecimal.fromStringUnsafe("1.01"),
+          exclusiveMinimum: true,
+          exclusiveMaximum: true
+        }))), "Unable to derive an arbitrary for the ordered BigDecimal constraints")
+    })
+
+    it("isGreaterThanBigDecimal + isLessThanBigDecimal with impossible bounds", () => {
+      throws(() =>
+        Schema.toArbitrary(Schema.BigDecimal.check(
+          Schema.isGreaterThanBigDecimal(BigDecimal.fromStringUnsafe("1.01")),
+          Schema.isLessThanBigDecimal(BigDecimal.fromStringUnsafe("1.01"))
+        )), "Unable to derive an arbitrary for the ordered BigDecimal constraints")
+    })
+
+    it("isGreaterThanBigDecimal + isLessThanBigDecimal", () => {
+      verifyGeneration(
+        Schema.BigDecimal.check(
+          Schema.isGreaterThanBigDecimal(BigDecimal.fromStringUnsafe("1.01")),
+          Schema.isLessThanBigDecimal(BigDecimal.fromStringUnsafe("1.02"))
+        ),
+        1_000
+      )
+    })
+
+    it("BigDecimal with non-natural order", () => {
+      const order = Order.flip(BigDecimal.Order)
+      verifyGeneration(Schema.BigDecimal.check(Schema.makeIsGreaterThan({ order })(BigDecimal.make(0n, 0))))
+    })
+
+    it("DateTimeUtc with non-natural order", () => {
+      const order = Order.flip(DateTime.Order)
+      verifyGeneration(Schema.DateTimeUtc.check(Schema.makeIsGreaterThan({ order })(DateTime.makeUnsafe(0))))
+    })
+
+    it("DateTimeZoned with non-natural order", () => {
+      const order = Order.flip(DateTime.Order)
+      verifyGeneration(
+        Schema.DateTimeZoned.check(
+          Schema.makeIsGreaterThan({ order })(DateTime.makeZonedUnsafe(0, { timeZone: "UTC" }))
+        )
       )
     })
 
     it("UniqueArray", () => {
-      const comparator = Schema.toEquivalence(Schema.String)
-      assertContext(Schema.UniqueArray(Schema.String), {
-        constraints: {
-          array: {
-            comparator
-          }
-        }
-      })
-      assertContext(Schema.UniqueArray(Schema.String).check(Schema.isMaxLength(2)), {
-        constraints: {
-          array: {
-            maxLength: 2,
-            comparator
-          },
-          string: {
-            maxLength: 2
-          }
-        }
-      })
+      verifyGeneration(Schema.UniqueArray(Schema.String))
+      verifyGeneration(Schema.UniqueArray(Schema.String).check(Schema.isMaxLength(2)))
     })
   })
 })

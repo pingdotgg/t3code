@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import { Gateway } from "./src/AiGateway.ts";
 import Api from "./src/Api.ts";
 import { Bucket } from "./src/Bucket.ts";
+import SandboxLive from "./src/Sandbox.ts";
 import SecondaryApiLive, { SecondaryApi } from "./src/SecondaryApi.ts";
 import WorkerTagLive, { WorkerTag } from "./src/WorkerTag.ts";
 
@@ -36,8 +37,8 @@ export default Alchemy.Stack(
     // Sandbox ContainerApplication. See SecondaryApi.ts for details.
     const secondaryApi = yield* SecondaryApi;
     // The Queue consumer is wired automatically by
-    // `Cloudflare.messages(Queue).subscribe(...)` inside src/Api.ts —
-    // no explicit `Cloudflare.QueueConsumer(...)` is needed here.
+    // `Cloudflare.Queues.consumeQueueMessages(Queue, handler)` inside src/Api.ts —
+    // no explicit `Cloudflare.Queues.Consumer(...)` is needed here.
 
     const announcement = yield* AnnounceDeploy({
       url: api.url.as<string>(),
@@ -52,5 +53,5 @@ export default Alchemy.Stack(
       secondaryApiUrl: secondaryApi.url.as<string>(),
       deployedAt: announcement.deployedAt,
     };
-  }).pipe(Effect.provide(WorkerTagLive), Effect.provide(SecondaryApiLive)),
+  }).pipe(Effect.provide([WorkerTagLive, SecondaryApiLive, SandboxLive])),
 );

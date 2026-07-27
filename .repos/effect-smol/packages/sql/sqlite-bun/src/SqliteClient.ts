@@ -1,46 +1,10 @@
 /**
- * Bun SQLite client implementation for Effect SQL, backed by `bun:sqlite`.
+ * Connects Effect SQL to SQLite when running on Bun, using `bun:sqlite`.
  *
- * This module provides the Bun-specific SQLite driver used by Effect SQL. It
- * can create a scoped {@link SqliteClient} directly with {@link make}, or
- * provide both the SQLite-specific client and the generic `SqlClient` service
- * with {@link layer} or {@link layerConfig}. It is intended for Bun
- * applications, local tools, migrations, integration tests, and embedded
- * persistence that use file-backed or in-memory SQLite databases.
- *
- * ## Mental model
- *
- * A client owns one scoped `bun:sqlite` `Database` handle. Because Bun's SQLite
- * API executes statements synchronously, this implementation serializes access
- * to that handle. A transaction keeps the serialized connection permit for the
- * transaction scope, so other fibers using the same client wait until the
- * transaction completes.
- *
- * The client uses the Effect SQL statement compiler and result-name transforms,
- * then adds SQLite-specific capabilities such as database export and native
- * extension loading.
- *
- * ## Common tasks
- *
- * - Use {@link layer} when a Bun service should provide both `SqliteClient` and
- *   the generic `SqlClient` from a concrete configuration.
- * - Use {@link layerConfig} when the filename or open flags should come from
- *   Effect `Config`.
- * - Use {@link make} inside a custom scoped layer when the surrounding runtime
- *   needs to manage the client lifecycle explicitly.
- * - Use `client.export` to serialize the database, or `client.loadExtension` to
- *   load a native SQLite extension.
- *
- * ## Gotchas
- *
- * WAL mode is enabled by default. Set `disableWAL` for read-only databases or
- * when the database file or directory cannot be updated with SQLite WAL side
- * files. Separate database handles or processes can still contend for SQLite
- * write locks even though access through a single client is serialized.
- *
- * Safe integer handling follows the generic `SqlClient` fiber-local setting.
- * `executeStream` is not implemented for this driver, and SQLite does not
- * support `updateValues`.
+ * This module opens a SQLite database and exposes it as both `SqliteClient` and
+ * the generic Effect SQL client. It serializes access to the database, enables
+ * WAL mode unless disabled, and supports database export and extension loading.
+ * Streaming queries and `updateValues` are not supported by this driver.
  *
  * @since 4.0.0
  */
@@ -104,7 +68,7 @@ export interface SqliteClient extends Client.SqlClient {
  *
  * Use to access or provide a Bun SQLite client through the Effect context.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const SqliteClient = Context.Service<SqliteClient>("@effect/sql-sqlite-bun/Client")
@@ -162,17 +126,21 @@ export const make = (
         db.run("PRAGMA journal_mode = WAL;")
       }
 
+      const prepare = (sql: string, useSafeIntegers: boolean) => {
+        const statement = db.query(sql)
+        // @ts-ignore bun-types missing safeIntegers method, fixed in https://github.com/oven-sh/bun/pull/26627
+        statement.safeIntegers(useSafeIntegers)
+        return statement
+      }
+
       const run = (
         sql: string,
         params: ReadonlyArray<unknown> = []
       ) =>
         Effect.withFiber<Array<any>, SqlError>((fiber) => {
-          const statement = db.query(sql)
           const useSafeIntegers = Context.get(fiber.context, Client.SafeIntegers)
-          // @ts-ignore bun-types missing safeIntegers method, fixed in https://github.com/oven-sh/bun/pull/26627
-          statement.safeIntegers(useSafeIntegers)
           try {
-            return Effect.succeed((statement.all(...(params as any)) ?? []) as Array<any>)
+            return Effect.succeed((prepare(sql, useSafeIntegers).all(...(params as any)) ?? []) as Array<any>)
           } catch (cause) {
             return Effect.fail(new SqlError({ reason: classifyError(cause, "Failed to execute statement", "execute") }))
           }
@@ -183,14 +151,13 @@ export const make = (
         params: ReadonlyArray<unknown> = []
       ) =>
         Effect.withFiber<Array<any>, SqlError>((fiber) => {
-          const statement = db.query(sql)
           const useSafeIntegers = Context.get(fiber.context, Client.SafeIntegers)
-          // @ts-ignore bun-types missing safeIntegers method, fixed in https://github.com/oven-sh/bun/pull/26627
-          statement.safeIntegers(useSafeIntegers)
           try {
-            return Effect.succeed((statement.values(...(params as any)) ?? []) as Array<any>)
+            return Effect.succeed((prepare(sql, useSafeIntegers).values(...(params as any)) ?? []) as Array<any>)
           } catch (cause) {
-            return Effect.fail(new SqlError({ reason: classifyError(cause, "Failed to execute statement", "execute") }))
+            return Effect.fail(
+              new SqlError({ reason: classifyError(cause, "Failed to execute statement", "executeValues") })
+            )
           }
         })
 
@@ -204,6 +171,9 @@ export const make = (
           return run(sql, params)
         },
         executeValues(sql, params) {
+          return runValues(sql, params)
+        },
+        executeValuesUnprepared(sql, params) {
           return runValues(sql, params)
         },
         executeUnprepared(sql, params, transformRows) {

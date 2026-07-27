@@ -8,7 +8,7 @@ const destinationAddress = process.env.CLOUDFLARE_TEST_EMAIL_TO;
  * sender/destination pair supplied via env so the e2e test exercises a
  * real `.send()` round-trip against Cloudflare.
  */
-export const Email = Cloudflare.SendEmail("Email", {
+export const Email = Cloudflare.Email.SendEmail("Email", {
   allowedSenderAddresses: senderAddress ? [senderAddress] : undefined,
   destinationAddress,
 });

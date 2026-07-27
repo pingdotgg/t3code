@@ -170,7 +170,7 @@ describe("HttpApi", () => {
       const MLive = Layer.succeed(
         M,
         (_, { endpoint }) =>
-          endpoint.name === "unauthorized"
+          endpoint.identifier === "unauthorized"
             ? Effect.fail(new HttpApiError.Unauthorized({}))
             : Effect.fail(new HttpApiError.Forbidden({}))
       )
@@ -222,7 +222,7 @@ describe("HttpApi", () => {
         const MClient = HttpApiMiddleware.layerClient(
           M,
           Effect.fnUntraced(function*({ endpoint, group, next, request }) {
-            yield* Ref.set(metadata, { group: group.identifier, endpoint: endpoint.name })
+            yield* Ref.set(metadata, { group: group.identifier, endpoint: endpoint.identifier })
             return yield* next(HttpClientRequest.setHeader(request, "x-client", "from-client"))
           })
         )
@@ -597,14 +597,14 @@ describe("HttpApi", () => {
       const M1Live = Layer.succeed(
         M1,
         (effect, { endpoint, group }) =>
-          Effect.sync(() => calls.push(`m1:${group.identifier}.${endpoint.name}`)).pipe(
+          Effect.sync(() => calls.push(`m1:${group.identifier}.${endpoint.identifier}`)).pipe(
             Effect.flatMap(() => effect)
           )
       )
       const M2Live = Layer.succeed(
         M2,
         (effect, { endpoint, group }) =>
-          Effect.sync(() => calls.push(`m2:${group.identifier}.${endpoint.name}`)).pipe(
+          Effect.sync(() => calls.push(`m2:${group.identifier}.${endpoint.identifier}`)).pipe(
             Effect.flatMap(() => effect)
           )
       )

@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { AGENT_PROMPT as PROMPT } from "./agentPrompt";
+import { useAgentPrompt } from "./agentPrompt";
 
 export default function CopyForAgent() {
   const [copied, setCopied] = useState(false);
+  const PROMPT = useAgentPrompt();
 
   const onCopy = async () => {
     try {

@@ -3,10 +3,11 @@ import { Distribution, OriginAccessControl } from "@/AWS/CloudFront";
 import type { PolicyStatement } from "@/AWS/IAM/Policy";
 import { Bucket } from "@/AWS/S3";
 import * as Output from "@/Output";
-import * as Test from "@/Test/Vitest";
+import * as Provider from "@/Provider";
+import * as Test from "@/Test/Alchemy";
 import * as cloudfront from "@distilled.cloud/aws/cloudfront";
 import * as S3 from "@distilled.cloud/aws/s3";
-import { expect } from "@effect/vitest";
+import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 
@@ -112,6 +113,18 @@ test.provider.skipIf(process.env.ALCHEMY_RUN_LIVE_AWS_WEBSITE_TESTS !== "true")(
   { timeout: 600_000 },
 );
 
+test.provider(
+  "list returns [] for the non-listable ephemeral invalidation",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(
+        AWS.CloudFront.Invalidation,
+      );
+      const all = yield* provider.list();
+      expect(all).toEqual([]);
+    }),
+);
+
 const assertDistributionDeleted = (distributionId: string) =>
   cloudfront.getDistribution({ Id: distributionId }).pipe(
     Effect.flatMap(() => Effect.fail(new Error("DistributionStillExists"))),
@@ -119,8 +132,9 @@ const assertDistributionDeleted = (distributionId: string) =>
     Effect.retry({
       while: (error) =>
         error instanceof Error && error.message === "DistributionStillExists",
-      schedule: Schedule.fixed("10 seconds").pipe(
-        Schedule.both(Schedule.recurs(60)),
-      ),
+      schedule: Schedule.max([
+        Schedule.fixed("10 seconds"),
+        Schedule.recurs(60),
+      ]),
     }),
   );

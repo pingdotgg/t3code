@@ -42,3 +42,31 @@ Run targeted type-level tests with:
 ```sh
 pnpm test-types <filename>
 ```
+
+### Testing Displayed Types
+
+Ordinary Tstyche assertions such as `toBe` compare types structurally. They cannot
+catch regressions where a public type is semantically correct but TypeScript
+displays an internal alias or an unsimplified intersection in editor quick info.
+
+To test the displayed form, deliberately produce an assignment error and use
+Tstyche's checked `@ts-expect-error` message to match a distinctive substring of
+the rendered type:
+
+```typescript
+it("simplifies the displayed type", () => {
+  const value = null as unknown as PublicType
+
+  // @ts-expect-error Type '{ readonly value: string; }'
+  const displayed: never = value
+
+  void displayed
+})
+```
+
+Before accepting the test, temporarily restore the broken type and confirm that
+the diagnostic-message match fails. Keep the expected substring as small as
+possible while still distinguishing the desired public type from the leaked
+implementation type, because diagnostic wording can change between TypeScript
+versions. Run the targeted test against every TypeScript version configured by
+`pnpm test-types`.

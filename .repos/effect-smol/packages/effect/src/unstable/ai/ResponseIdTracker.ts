@@ -7,32 +7,6 @@
  * objects were included in each provider response and prepares a shorter prompt
  * when a later call extends the same conversation.
  *
- * **Mental model**
- *
- * The tracker is an optimization cache, not conversation storage. `markParts`
- * associates the exact message objects that were sent with the response ID the
- * provider returned. `prepareUnsafe` scans a future prompt, finds the latest
- * assistant-message boundary whose prefix is tracked, and returns that response
- * ID with only the messages after the boundary. If the prompt cannot be matched
- * safely, the cache is cleared and no incremental send is attempted.
- *
- * **Common tasks**
- *
- * - Provide `ResponseIdTracker` to a language model implementation that can use
- *   provider previous-response IDs
- * - Mark prompt messages after a successful provider response
- * - Prepare follow-up prompts so unchanged history is replaced by
- *   `previousResponseId`
- *
- * **Gotchas**
- *
- * - Tracking is based on object identity; equivalent message values are not
- *   recognized unless they are the same objects.
- * - The service is mutable and intentionally exposes `Unsafe` methods because
- *   callers coordinate it inside provider request/response code.
- * - A mismatch clears tracked state to avoid reusing a response ID for the
- *   wrong prompt prefix.
- *
  * @since 4.0.0
  */
 import * as Context from "../../Context.ts"
@@ -83,8 +57,9 @@ export interface Service {
  *
  * **When to use**
  *
- * Use when when provided, language model operations can use the tracker to send only new
- * prompt messages together with the provider's prior response ID.
+ * Use when you provide a language model with previous-response ID tracking so
+ * later calls can send only new prompt messages together with the provider's
+ * prior response ID.
  *
  * @category services
  * @since 4.0.0

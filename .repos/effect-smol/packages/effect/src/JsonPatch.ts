@@ -5,62 +5,10 @@
  * difference between two JSON documents, serialize that difference, and replay
  * it without mutating the original input.
  *
- * **Mental model**
- *
- * - A {@link JsonPatch} is applied from left to right; each operation observes
- *   the document produced by the operations before it.
- * - Paths use JSON Pointer syntax. The empty path `""` targets the whole
- *   document, and `/users/0/name` targets a nested property or array element.
- * - This module implements the deterministic `add`, `remove`, and `replace`
- *   subset of RFC 6902. It does not model `test`, `move`, or `copy`.
- * - {@link get} compares JSON structure, not domain meaning. It can detect that
- *   a value changed, but it does not infer semantic edits such as array moves.
- * - {@link apply} copies changed containers and returns a new JSON value. An
- *   empty patch returns the original document reference.
- *
- * **Common tasks**
- *
- * - Compute a structural diff between two JSON values with {@link get}.
- * - Apply generated or hand-written operations with {@link apply}.
- * - Accept, store, or serialize complete patch documents as {@link JsonPatch}.
- * - Type individual operations with {@link JsonPatchOperation}.
- *
- * **Gotchas**
- *
- * - Generated patches are deterministic, but not guaranteed to be minimal.
- * - Array removals are emitted from highest index to lowest so later removals do
- *   not shift earlier targets.
- * - `"-"` is valid only as the final token for array append operations.
- * - Invalid paths, missing properties, and out-of-bounds array indices throw.
- * - Root `add` and `replace` operations replace the whole document; root
- *   `remove` is unsupported.
- *
- * **Example** (Computing and applying a patch)
- *
- * ```ts
- * import { JsonPatch } from "effect"
- *
- * const before = { title: "draft", tags: ["fp"] }
- * const after = { title: "published", tags: ["fp", "effect"] }
- *
- * const patch = JsonPatch.get(before, after)
- * // [
- * //   { op: "add", path: "/tags/1", value: "effect" },
- * //   { op: "replace", path: "/title", value: "published" }
- * // ]
- *
- * const updated = JsonPatch.apply(patch, before)
- * // { title: "published", tags: ["fp", "effect"] }
- * ```
- *
- * **See also**
- *
- * - `JsonPointer` for escaping and unescaping JSON Pointer path tokens.
- * - {@link Schema.Json} for the JSON value shape accepted by this module.
- *
  * @since 4.0.0
  */
 import { format } from "./Formatter.ts"
+import * as InternalRecord from "./internal/record.ts"
 import { escapeToken, unescapeToken } from "./JsonPointer.ts"
 import * as Predicate from "./Predicate.ts"
 import type * as Schema from "./Schema.ts"
@@ -82,7 +30,7 @@ import type * as Schema from "./Schema.ts"
  * discriminated by the `op` field, and the optional `description` field can be
  * used for documentation.
  *
- * **Example** (All operation types)
+ * **Example** (Defining all operation types)
  *
  * ```ts
  * import { JsonPatch } from "effect"
@@ -166,7 +114,7 @@ export type JsonPatchOperation =
  * operations observe the document state produced by earlier operations. An empty
  * array represents a no-op patch and returns the original document.
  *
- * **Example** (Multi-operation patch)
+ * **Example** (Defining a multi-operation patch)
  *
  * ```ts
  * import { JsonPatch } from "effect"
@@ -194,9 +142,8 @@ export type JsonPatch = ReadonlyArray<JsonPatchOperation>
  *
  * **When to use**
  *
- * Use to compute differences between JSON documents, detect structural
- * changes, or create deterministic update operations from before and after
- * states.
+ * Use to compute a JSON Patch from before and after JSON documents, detect
+ * structural changes, or create deterministic update operations.
  *
  * **Details**
  *
@@ -412,7 +359,7 @@ function addAt(doc: Schema.Json, pointer: string, val: Schema.Json): Schema.Json
 
   if (isJsonObject(parent)) {
     const updated = { ...parent }
-    updated[lastToken] = val
+    InternalRecord.assignProperty(updated, lastToken, val)
     return rebuildFromStack(stack, updated)
   }
 
@@ -453,7 +400,7 @@ function setAt(
     }
     const updated = { ...parent }
     if (mode === "remove") delete updated[lastToken]
-    else updated[lastToken] = val!
+    else InternalRecord.assignProperty(updated, lastToken, val!)
     return rebuildFromStack(stack, updated)
   }
 
@@ -514,7 +461,7 @@ function rebuildFromStack(stack: ReadonlyArray<StackEntry>, newParent: Schema.Js
       acc = copy
     } else {
       const copy = { ...(container as Schema.JsonObject) }
-      copy[token as string] = acc
+      InternalRecord.assignProperty(copy, token as string, acc)
       acc = copy
     }
   }

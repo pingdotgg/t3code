@@ -9,7 +9,7 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
-    const worker = yield* Cloudflare.Vite("Vue", {
+    const worker = yield* Cloudflare.Website.Vite("Vue", {
       compatibility: {
         flags: ["nodejs_compat"],
       },

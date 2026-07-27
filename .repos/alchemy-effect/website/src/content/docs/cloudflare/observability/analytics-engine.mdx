@@ -1,0 +1,137 @@
+---
+title: Analytics Engine
+description: Write time-series data points from a Worker with Workers Analytics Engine — declare a dataset, bind it with WriteDataset, and query it later over Cloudflare's SQL API.
+sidebar:
+  order: 24
+---
+
+Workers Analytics Engine is Cloudflare's write-heavy time-series
+store: Workers write unlimited-cardinality data points (events,
+metrics, usage counters) at request time, and you query them later
+with SQL. In alchemy a dataset is a one-line declaration and the
+Worker writes to it through a typed binding.
+
+## Declare a dataset
+
+```typescript
+// src/dataset.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Events = Cloudflare.AnalyticsEngine.Dataset("Events", {
+  dataset: "app_events",
+});
+```
+
+A dataset is pure configuration — there is no create/delete API call
+behind it. Cloudflare materializes the dataset the first time a
+Worker writes to it, so declaring one costs nothing. `dataset` is the
+name you'll reference in SQL queries; omit it and the logical ID
+(`"Events"`) is used.
+
+## Write data points from a Worker
+
+Bind the dataset with `WriteDataset` in the Worker's init phase and
+provide `WriteDatasetBinding` as a layer:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Events } from "./dataset.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const analytics = yield* Cloudflare.AnalyticsEngine.WriteDataset(Events);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const url = new URL(request.url, "http://localhost");
+
+        if (url.pathname === "/signup") {
+          yield* analytics.writeDataPoint({
+            indexes: ["account-1"],
+            blobs: ["signup"],
+            doubles: [1],
+          });
+          return yield* HttpServerResponse.json({ ok: true });
+        }
+
+        return HttpServerResponse.text("ok");
+      }).pipe(
+        Effect.catchTag("DatasetError", (error) =>
+          Effect.succeed(
+            HttpServerResponse.text(error.message, { status: 500 }),
+          ),
+        ),
+      ),
+    };
+  }).pipe(Effect.provide(Cloudflare.AnalyticsEngine.WriteDatasetBinding)),
+);
+```
+
+A data point has three optional field groups — `indexes` (the
+sampling key, typically a customer or tenant ID), `blobs` (string
+dimensions to group by), and `doubles` (numeric values to aggregate).
+Writes are fire-and-forget at the edge; a failure surfaces as a typed
+`DatasetError` that Effect keeps in the type system until you handle
+it. The client also exposes `raw` if you need the underlying native
+binding object directly.
+
+## Deploy it
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import Worker from "./src/worker.ts";
+
+export default Alchemy.Stack(
+  "AnalyticsApp",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const worker = yield* Worker;
+    return { url: worker.url.as<string>() };
+  }),
+);
+```
+
+```sh
+bun alchemy deploy
+```
+
+Deploying the Worker attaches the `analytics_engine` binding; hit
+`/signup` and the data point lands in `app_events`.
+
+## Querying your data
+
+The binding is write-only — that mirrors the platform, where Workers
+can only write to Analytics Engine. Reads go through Cloudflare's
+[SQL API](https://developers.cloudflare.com/analytics/analytics-engine/sql-api/),
+an HTTP endpoint you query with an API token:
+
+```sql
+SELECT blob1 AS event, SUM(_sample_interval * double1) AS count
+FROM app_events
+WHERE timestamp > NOW() - INTERVAL '1' DAY
+GROUP BY event
+```
+
+Alchemy doesn't ship a query binding yet, so run queries from
+dashboards, cron jobs, or your backend via plain HTTP.
+
+## Where next
+
+- [Workers](/cloudflare/compute/workers) — the two-phase Worker model the
+  binding lives inside.
+- [Axiom](/axiom) — full observability (logs, traces, dashboards)
+  when you outgrow roll-your-own analytics.
+- [WriteDataset API reference](/providers/cloudflare/analyticsengine/writedataset)

@@ -14,6 +14,7 @@ export default {
         NULL: env.NULL,
         OBJ: env.OBJ,
         ARR: env.ARR,
+        OUTPUT_STR: env.OUTPUT_STR,
         SECRET_STR: env.SECRET_STR,
         // Redacted<Json> is JSON-stringified into secret_text on the way in,
         // so the async runtime sees a string here. Parse it back so the
@@ -25,6 +26,7 @@ export default {
         CONFIG_STR: env.CONFIG_STR,
         CONFIG_NUM: env.CONFIG_NUM,
         CONFIG_REDACTED: env.CONFIG_REDACTED,
+        VERSION_METADATA: env.CF_VERSION_METADATA,
       }),
       { headers: { "content-type": "application/json" } },
     );

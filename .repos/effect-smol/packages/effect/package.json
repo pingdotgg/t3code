@@ -1,17 +1,17 @@
 {
   "name": "effect",
   "type": "module",
-  "version": "4.0.0-beta.73",
+  "version": "4.0.0-beta.102",
   "license": "MIT",
   "description": "The missing standard library for TypeScript, for writing production-grade software.",
   "homepage": "https://effect.website",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Effect-TS/effect-smol.git",
+    "url": "https://github.com/Effect-TS/effect.git",
     "directory": "packages/effect"
   },
   "bugs": {
-    "url": "https://github.com/Effect-TS/effect-smol/issues"
+    "url": "https://github.com/Effect-TS/effect/issues"
   },
   "tags": [
     "typescript",
@@ -96,7 +96,6 @@
   "scripts": {
     "codegen": "effect-utils codegen",
     "build": "tsc -b tsconfig.json && pnpm babel",
-    "build:tsgo": "tsgo -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
     "check": "tsc -b tsconfig.json",
     "test": "vitest --sequence.concurrent=false",
@@ -104,24 +103,24 @@
   },
   "devDependencies": {
     "@types/ini": "^4.1.1",
-    "@types/node": "^25.7.0",
+    "@types/node": "^26.1.1",
     "ajv": "^8.20.0",
-    "arktype": "^2.2.0",
+    "arktype": "^2.2.3",
     "ast-types": "^0.14.2",
-    "immer": "^11.1.8",
-    "tinybench": "^6.0.1",
-    "valibot": "^1.4.0"
+    "immer": "^11.1.11",
+    "tinybench": "^6.0.2",
+    "valibot": "^1.4.2"
   },
   "dependencies": {
     "@standard-schema/spec": "^1.1.0",
-    "fast-check": "^4.8.0",
+    "fast-check": "^4.9.0",
     "find-my-way-ts": "^0.1.6",
     "ini": "^7.0.0",
     "kubernetes-types": "^1.30.0",
-    "msgpackr": "^2.0.1",
-    "multipasta": "^0.2.7",
-    "toml": "^4.1.1",
-    "uuid": "^14.0.0",
+    "msgpackr": "^2.0.4",
+    "multipasta": "^0.2.8",
+    "toml": "^4.1.2",
+    "uuid": "^14.0.1",
     "yaml": "^2.9.0"
   }
 }

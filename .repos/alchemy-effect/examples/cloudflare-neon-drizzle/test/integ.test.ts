@@ -26,6 +26,12 @@ const stack = beforeAll(deploy(Stack));
 
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
+// Fresh `workers.dev` URLs transiently 404 (route still propagating) or 5xx
+// (Hyperdrive/Neon binding still settling). `Test.getWhenReady` fails on that
+// cold-start window and retries until the worker answers; the first hit in
+// each test rides it, subsequent requests run against the warmed worker.
+const { getWhenReady } = Test;
+
 test(
   "worker exposes a URL, hyperdrive id, and neon branch id",
   Effect.gen(function* () {
@@ -37,29 +43,13 @@ test(
   }),
 );
 
-// workers.dev subdomain takes a few seconds to propagate after first
-// enable; retry until the worker actually answers.
-const getOnce = (url: string) =>
-  Effect.gen(function* () {
-    const response = yield* HttpClient.get(url);
-    if (response.status === 404) {
-      return yield* Effect.fail(new Error("workers.dev not yet propagated"));
-    }
-    return response;
-  }).pipe(
-    Effect.tapError((err) =>
-      Effect.logError(`${url} not available: ${err.message}`),
-    ),
-    Effect.retry({ schedule: Schedule.spaced("1 second"), times: 30 }),
-  );
-
 test(
   "worker exposes user CRUD through Drizzle / Hyperdrive / Neon",
   Effect.gen(function* () {
     const { url } = yield* stack;
     const baseUrl = url.replace(/\/+$/, "");
 
-    const initialResponse = yield* getOnce(baseUrl);
+    const initialResponse = yield* getWhenReady(baseUrl);
     expect(initialResponse.status).toBe(200);
 
     const initialBody = (yield* initialResponse.json) as unknown as {
@@ -133,7 +123,10 @@ test(
       false,
     );
   }),
-  { timeout: 20_000 },
+  // The cold-start `getWhenReady` window plus a full CRUD round-trip against a
+  // freshly-warmed Neon/Hyperdrive connection routinely exceeds 20s. Match the
+  // sequential-query case's budget.
+  { timeout: 120_000 },
 );
 
 test(
@@ -142,7 +135,7 @@ test(
     const { url } = yield* stack;
     const baseUrl = url.replace(/\/+$/, "");
 
-    yield* getOnce(baseUrl);
+    yield* getWhenReady(baseUrl);
 
     const queryOnce = Effect.gen(function* () {
       const response = yield* HttpClient.get(baseUrl);

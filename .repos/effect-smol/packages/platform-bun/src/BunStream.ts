@@ -7,28 +7,6 @@
  * `ReadableStream` adapter that uses Bun's `readMany` reader method to pull
  * batches of values into an Effect `Stream`.
  *
- * **Mental model**
- *
- * Consuming the returned `Stream` drives reads from the underlying
- * `ReadableStreamDefaultReader`. Each pull asks Bun for the next batch, empty
- * batches are skipped, read failures are translated with `onError`, and the
- * reader is finalized with the surrounding Effect scope.
- *
- * **Common tasks**
- *
- * Use {@link fromReadableStream} for Bun `Request` and `Response` bodies,
- * multipart uploads, and other Web stream sources that should be transformed,
- * decoded, or piped with Effect stream operators. Use the re-exported Node
- * stream adapters for APIs that expose Bun's Node-compatible `stream` types.
- *
- * **Gotchas**
- *
- * Web stream readers hold an exclusive lock. Request and response bodies are
- * also one-shot; once consumed they are disturbed and should not be read through
- * another API. By default finalization cancels the reader; set
- * `releaseLockOnEnd` when the stream is externally owned and only the reader
- * lock should be released.
- *
  * @since 4.0.0
  */
 import * as Arr from "effect/Array"
@@ -65,26 +43,25 @@ export const fromReadableStream = <A, E>(
       scope,
       options.releaseLockOnEnd ? Effect.sync(() => reader.releaseLock()) : Effect.promise(() => reader.cancel())
     )
-    const readMany = Effect.callback<Bun.ReadableStreamDefaultReadManyResult<A>, E>((resume) => {
+    function readMany(): Pull.Pull<Arr.NonEmptyReadonlyArray<A>, E> {
       const result = reader.readMany()
       if ("then" in result) {
-        result.then((_) => resume(Effect.succeed(_)), (e) => resume(Effect.fail(options.onError(e))))
-      } else {
-        resume(Effect.succeed(result))
+        return Effect.callback<Arr.NonEmptyReadonlyArray<A>, E | Cause.Done>((resume) => {
+          result.then((_) => resume(handleResult(_)), (e) => resume(Effect.fail(options.onError(e))))
+        })
       }
-    })
+      return handleResult(result)
+    }
+    function handleResult(
+      result: Bun.ReadableStreamDefaultReadManyResult<A>
+    ): Pull.Pull<Arr.NonEmptyReadonlyArray<A>, E> {
+      if (result.done) {
+        return Cause.done()
+      } else if (!Arr.isReadonlyArrayNonEmpty(result.value)) {
+        return readMany()
+      }
+      return Effect.succeed(result.value)
+    }
     // @effect-diagnostics-next-line returnEffectInGen:off
-    return Effect.flatMap(
-      readMany,
-      function loop(
-        { done, value }
-      ): Pull.Pull<Arr.NonEmptyReadonlyArray<A>, E> {
-        if (done) {
-          return Cause.done()
-        } else if (!Arr.isReadonlyArrayNonEmpty(value)) {
-          return Effect.flatMap(readMany, loop)
-        }
-        return Effect.succeed(value)
-      }
-    )
+    return Effect.suspend(readMany)
   })))

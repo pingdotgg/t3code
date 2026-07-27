@@ -1,8 +1,7 @@
 import * as rdsdata from "@distilled.cloud/aws/rds-data";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
+import type { RuntimeContext } from "../../RuntimeContext.ts";
 import type { DBCluster } from "../RDS/DBCluster.ts";
 import type { Secret } from "../SecretsManager/Secret.ts";
 
@@ -16,10 +15,33 @@ export interface RollbackTransactionRequest extends Omit<
 > {}
 
 /**
- * Runtime binding for `rds-data:RollbackTransaction`.
+ * Runtime binding for `rds-data:RollbackTransaction` — roll back a Data API
+ * transaction opened with `AWS.RDSData.BeginTransaction`, discarding every
+ * statement executed under its `transactionId`.
+ *
+ * Bind it to the same `DBCluster` and credentials secret as the rest of the
+ * transaction; provide the implementation with
+ * `Effect.provide(AWS.RDSData.RollbackTransactionHttp)`.
+ * @binding
+ * @section Transactions
+ * @example Roll Back on Failure
+ * ```typescript
+ * // init
+ * const rollbackTransaction = yield* AWS.RDSData.RollbackTransaction(
+ *   db.cluster,
+ *   { secret: db.secret },
+ * );
+ *
+ * // runtime — abandon the transaction; its inserts never become visible
+ * const rollback = yield* rollbackTransaction({
+ *   transactionId: tx.transactionId!,
+ * });
+ * // rollback.transactionStatus === "Rollback Complete"
+ * ```
  */
-export class RollbackTransaction extends Binding.Service<
+export interface RollbackTransaction extends Binding.Service<
   RollbackTransaction,
+  "AWS.RDSData.RollbackTransaction",
   (
     cluster: DBCluster,
     options: RollbackTransactionOptions,
@@ -28,78 +50,12 @@ export class RollbackTransaction extends Binding.Service<
       request: RollbackTransactionRequest,
     ) => Effect.Effect<
       rdsdata.RollbackTransactionResponse,
-      rdsdata.RollbackTransactionError
+      rdsdata.RollbackTransactionError,
+      RuntimeContext
     >
   >
->()("AWS.RDSData.RollbackTransaction") {}
+> {}
 
-export const RollbackTransactionLive = Layer.effect(
-  RollbackTransaction,
-  Effect.gen(function* () {
-    const Policy = yield* RollbackTransactionPolicy;
-    const rollbackTransaction = yield* rdsdata.rollbackTransaction;
-
-    return Effect.fn(function* (
-      cluster: DBCluster,
-      options: RollbackTransactionOptions,
-    ) {
-      const resourceArn = yield* cluster.dbClusterArn;
-      const secretArn = yield* options.secret.secretArn;
-      yield* Policy(cluster, options);
-      return Effect.fn(function* (request: RollbackTransactionRequest) {
-        const clusterArn = yield* resourceArn;
-        const resolvedSecretArn = yield* secretArn;
-        return yield* rollbackTransaction({
-          ...request,
-          resourceArn: clusterArn,
-          secretArn: resolvedSecretArn,
-        });
-      });
-    });
-  }),
+export const RollbackTransaction = Binding.Service<RollbackTransaction>(
+  "AWS.RDSData.RollbackTransaction",
 );
-
-export class RollbackTransactionPolicy extends Binding.Policy<
-  RollbackTransactionPolicy,
-  (
-    cluster: DBCluster,
-    options: RollbackTransactionOptions,
-  ) => Effect.Effect<void>
->()("AWS.RDSData.RollbackTransaction") {}
-
-export const RollbackTransactionPolicyLive =
-  RollbackTransactionPolicy.layer.succeed(
-    Effect.fn(function* (host, cluster, options) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.RDSData.RollbackTransaction(${cluster}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["rds-data:RollbackTransaction"],
-                Resource: [cluster.dbClusterArn, options.secret.secretArn],
-              },
-            ],
-          },
-        );
-        yield* host.bind`Allow(${host}, AWS.SecretsManager.GetSecretValue(${options.secret}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: [
-                  "secretsmanager:GetSecretValue",
-                  "secretsmanager:DescribeSecret",
-                ],
-                Resource: [options.secret.secretArn],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `RollbackTransactionPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

@@ -1,40 +1,69 @@
-import { describe, expect, it } from "@effect/vitest"
-import { Array, Duration, Effect, Fiber, Pull, Random, Schedule } from "effect"
+import { assert, describe, expect, it } from "@effect/vitest"
+import { Array, Deferred, Duration, Effect, Fiber, Pull, Random, Result, Schedule } from "effect"
 import { constant, constUndefined } from "effect/Function"
 import { TestClock } from "effect/testing"
 
 describe("Schedule", () => {
-  describe("collecting", () => {
-    it.effect("collectInputs - should collect all schedule inputs", () =>
+  describe("combining", () => {
+    it.effect("max - outputs the slowest schedule duration", () =>
       Effect.gen(function*() {
-        const schedule = Schedule.collectInputs(Schedule.forever)
-        const inputs = Array.range(1, 5)
-        const outputs = yield* runLast(schedule, inputs)
-        expect(outputs).toEqual(inputs)
+        const schedule = Schedule.max([
+          Schedule.fixed("5 seconds"),
+          Schedule.exponential("5 seconds"),
+          Schedule.spaced("10 seconds")
+        ])
+        const inputs = Array.makeBy(3, constUndefined)
+        const outputs = yield* runDelays(schedule, inputs)
+        assert.deepStrictEqual(outputs, [
+          Duration.seconds(10),
+          Duration.seconds(10),
+          Duration.seconds(20)
+        ])
       }))
 
-    it.effect("collectOutputs - should collect all schedule outputs", () =>
+    it.effect("max - stops when any schedule completes", () =>
       Effect.gen(function*() {
-        const schedule = Schedule.collectOutputs(Schedule.forever)
-        const inputs = Array.makeBy(5, constUndefined)
-        const outputs = yield* runLast(schedule, inputs)
-        expect(outputs).toEqual([0, 1, 2, 3, 4])
+        const schedule = Schedule.max([
+          Schedule.duration("1 second"),
+          Schedule.spaced("5 seconds")
+        ])
+        const inputs = Array.makeBy(3, constUndefined)
+        const outputs = yield* runDelays(schedule, inputs)
+        assert.deepStrictEqual(outputs, [
+          Duration.seconds(5),
+          Duration.zero
+        ])
       }))
 
-    it.effect("collectWhile - should collect while the predicate holds", () =>
+    it.effect("min - outputs the fastest schedule duration", () =>
       Effect.gen(function*() {
-        const schedule = Schedule.collectWhile(Schedule.forever, ({ output }) => Effect.succeed(output < 3))
-        const inputs = Array.makeBy(5, constUndefined)
-        const outputs = yield* runLast(schedule, inputs)
-        expect(outputs).toEqual([0, 1, 2, 3])
+        const schedule = Schedule.min([
+          Schedule.fixed("5 seconds"),
+          Schedule.exponential("5 seconds"),
+          Schedule.spaced("10 seconds")
+        ])
+        const inputs = Array.makeBy(3, constUndefined)
+        const outputs = yield* runDelays(schedule, inputs)
+        assert.deepStrictEqual(outputs, [
+          Duration.seconds(5),
+          Duration.seconds(5),
+          Duration.seconds(5)
+        ])
       }))
 
-    it.effect("collectWhile - should collect while the effectful predicate holds", () =>
+    it.effect("min - continues after a schedule completes", () =>
       Effect.gen(function*() {
-        const schedule = Schedule.collectWhile(Schedule.forever, ({ output }) => Effect.succeed(output < 3))
-        const inputs = Array.makeBy(5, constUndefined)
-        const outputs = yield* runLast(schedule, inputs)
-        expect(outputs).toEqual([0, 1, 2, 3])
+        const schedule = Schedule.min([
+          Schedule.duration("1 second"),
+          Schedule.spaced("5 seconds")
+        ])
+        const inputs = Array.makeBy(3, constUndefined)
+        const outputs = yield* runDelays(schedule, inputs)
+        assert.deepStrictEqual(outputs, [
+          Duration.seconds(1),
+          Duration.seconds(5),
+          Duration.seconds(5)
+        ])
       }))
   })
 
@@ -79,7 +108,89 @@ describe("Schedule", () => {
         ])
       }))
 
-    it.effect("andThenResult - executes schedules sequentially to completion", () =>
+    it.effect("modifyDelay - provides full metadata", () =>
+      Effect.gen(function*() {
+        const observed: Array<Schedule.Metadata<number, string>> = []
+        const schedule = Schedule.spaced(Duration.millis(250)).pipe(
+          Schedule.modifyDelay((metadata: Schedule.Metadata<number, string>) =>
+            Effect.sync(() => {
+              observed.push(metadata)
+              return Duration.sum(metadata.duration, Duration.millis(metadata.elapsedSincePrevious))
+            })
+          )
+        )
+        const step = yield* Schedule.toStep(schedule)
+        const first = yield* step(1_000, "a")
+        const second = yield* step(1_250, "b")
+
+        assert.deepStrictEqual(first, [0, Duration.millis(250)])
+        assert.deepStrictEqual(second, [1, Duration.millis(500)])
+        assert.deepStrictEqual(observed, [
+          {
+            input: "a",
+            output: 0,
+            duration: Duration.millis(250),
+            attempt: 1,
+            start: 1_000,
+            now: 1_000,
+            elapsed: 0,
+            elapsedSincePrevious: 0
+          },
+          {
+            input: "b",
+            output: 1,
+            duration: Duration.millis(250),
+            attempt: 2,
+            start: 1_000,
+            now: 1_250,
+            elapsed: 250,
+            elapsedSincePrevious: 250
+          }
+        ])
+      }))
+
+    it.effect("addDelay - provides full metadata", () =>
+      Effect.gen(function*() {
+        const observed: Array<Schedule.Metadata<number, string>> = []
+        const schedule = Schedule.spaced(Duration.millis(250)).pipe(
+          Schedule.addDelay((metadata: Schedule.Metadata<number, string>) =>
+            Effect.sync(() => {
+              observed.push(metadata)
+              return Duration.millis(metadata.elapsedSincePrevious)
+            })
+          )
+        )
+        const step = yield* Schedule.toStep(schedule)
+        const first = yield* step(1_000, "a")
+        const second = yield* step(1_250, "b")
+
+        assert.deepStrictEqual(first, [0, Duration.millis(250)])
+        assert.deepStrictEqual(second, [1, Duration.millis(500)])
+        assert.deepStrictEqual(observed, [
+          {
+            input: "a",
+            output: 0,
+            duration: Duration.millis(250),
+            attempt: 1,
+            start: 1_000,
+            now: 1_000,
+            elapsed: 0,
+            elapsedSincePrevious: 0
+          },
+          {
+            input: "b",
+            output: 1,
+            duration: Duration.millis(250),
+            attempt: 2,
+            start: 1_000,
+            now: 1_250,
+            elapsed: 250,
+            elapsedSincePrevious: 250
+          }
+        ])
+      }))
+
+    it.effect("andThenResult - sequences self then other when collecting delays", () =>
       Effect.gen(function*() {
         const left = Schedule.fixed("500 millis").pipe(
           Schedule.while(({ attempt }) => Effect.succeed(attempt <= 3))
@@ -98,7 +209,7 @@ describe("Schedule", () => {
         ])
       }))
 
-    it.effect("andThenResult - emits right completion when right schedule is finite", () =>
+    it.effect("andThenResult - includes finite other completion when collecting delays", () =>
       Effect.gen(function*() {
         const left = Schedule.fixed("500 millis").pipe(
           Schedule.while(({ attempt }) => Effect.succeed(attempt <= 2))
@@ -112,6 +223,23 @@ describe("Schedule", () => {
           Duration.millis(500),
           Duration.seconds(1),
           Duration.zero
+        ])
+      }))
+
+    it.effect("andThenResult - wraps self outputs as Failure and other outputs as Success", () =>
+      Effect.gen(function*() {
+        const left = Schedule.identity<string>().pipe(Schedule.upTo({ times: 2 }))
+        const right = Schedule.identity<string>()
+        const step = yield* Schedule.toStep(Schedule.andThenResult(left, right))
+
+        const first = yield* step(0, "left-1")
+        const second = yield* step(0, "left-2")
+        const third = yield* step(0, "right-1")
+
+        assert.deepStrictEqual([first, second, third], [
+          [Result.fail("left-1"), Duration.zero],
+          [Result.fail("left-2"), Duration.zero],
+          [Result.succeed("right-1"), Duration.zero]
         ])
       }))
   })
@@ -187,6 +315,19 @@ describe("Schedule", () => {
           "Wed Jan 24 2024 04:30:00"
         ])
       }))
+
+    it.effect("does not fail when the test clock is adjusted to infinity", () =>
+      Effect.gen(function*() {
+        const latch = yield* Deferred.make<void>()
+        const fiber = yield* Deferred.await(latch).pipe(
+          Effect.repeat(Schedule.cron("0 0 4 8-14 * *", "UTC")),
+          Effect.forkChild
+        )
+
+        yield* TestClock.adjust(Infinity)
+        yield* Deferred.succeed(latch, void 0)
+        yield* Fiber.join(fiber)
+      }))
   })
 
   describe("duration", () => {
@@ -199,15 +340,74 @@ describe("Schedule", () => {
       }))
   })
 
-  describe("reduce", () => {
-    it.effect("accumulates state with synchronous combine", () =>
+  describe("upTo", () => {
+    it.effect("limits by times", () =>
       Effect.gen(function*() {
-        const schedule = Schedule.forever.pipe(
-          Schedule.reduce(() => 0, (state, output) => state + output)
-        )
-        const inputs = Array.makeBy(5, constUndefined)
-        const output = yield* runCollect(schedule, inputs)
-        expect(output).toEqual([0, 1, 3, 6, 10])
+        const schedule = Schedule.identity<string>().pipe(Schedule.upTo({ times: 2 }))
+        const step = yield* Schedule.toStep(schedule)
+
+        const first = yield* step(0, "a")
+        const second = yield* step(0, "b")
+        const third = yield* Pull.matchEffect(step(0, "c"), {
+          onSuccess: () => Effect.succeed("unexpected success"),
+          onFailure: () => Effect.succeed("unexpected failure"),
+          onDone: (value) => Effect.succeed(value)
+        })
+
+        assert.deepStrictEqual([first, second, third], [
+          ["a", Duration.zero],
+          ["b", Duration.zero],
+          "c"
+        ])
+      }))
+
+    it.effect("limits by duration", () =>
+      Effect.gen(function*() {
+        const schedule = Schedule.identity<string>().pipe(Schedule.upTo({ duration: "1 second" }))
+        const step = yield* Schedule.toStep(schedule)
+
+        const first = yield* step(0, "a")
+        const second = yield* step(1_000, "b")
+        const third = yield* Pull.matchEffect(step(1_001, "c"), {
+          onSuccess: () => Effect.succeed("unexpected success"),
+          onFailure: () => Effect.succeed("unexpected failure"),
+          onDone: (value) => Effect.succeed(value)
+        })
+
+        assert.deepStrictEqual([first, second, third], [
+          ["a", Duration.zero],
+          ["b", Duration.zero],
+          "c"
+        ])
+      }))
+
+    it.effect("limits by the first exhausted option", () =>
+      Effect.gen(function*() {
+        const schedule = Schedule.identity<string>().pipe(Schedule.upTo({ duration: "1 hour", times: 1 }))
+        const step = yield* Schedule.toStep(schedule)
+
+        const first = yield* step(0, "a")
+        const second = yield* Pull.matchEffect(step(0, "b"), {
+          onSuccess: () => Effect.succeed("unexpected success"),
+          onFailure: () => Effect.succeed("unexpected failure"),
+          onDone: (value) => Effect.succeed(value)
+        })
+
+        assert.deepStrictEqual([first, second], [["a", Duration.zero], "b"])
+      }))
+
+    it.effect("leaves the schedule unchanged when no options are specified", () =>
+      Effect.gen(function*() {
+        const schedule = Schedule.identity<string>().pipe(Schedule.upTo({}))
+        const step = yield* Schedule.toStep(schedule)
+
+        const first = yield* step(0, "a")
+        const second = yield* step(0, "b")
+
+        assert.deepStrictEqual([first, second], [
+          ["a", Duration.zero],
+          ["b", Duration.zero]
+        ])
       }))
   })
 
@@ -259,16 +459,15 @@ describe("Schedule", () => {
         const delays: Array<Duration.Duration> = []
         const schedule = Schedule.fixed("1 seconds").pipe(
           Schedule.while(({ attempt }) => Effect.succeed(attempt <= 5)),
-          Schedule.delays,
-          Schedule.map((delay) =>
+          Schedule.tap((metadata) =>
             Effect.sync(() => {
-              delays.push(delay)
-              return delays
+              delays.push(metadata.duration)
             })
           )
         )
         yield* Effect.sleep("500 millis").pipe(
           Effect.schedule(schedule),
+          Effect.andThen(Effect.sync(() => delays.push(Duration.zero))),
           Effect.forkChild
         )
         yield* TestClock.setTime(Number.POSITIVE_INFINITY)
@@ -287,16 +486,15 @@ describe("Schedule", () => {
         const delays: Array<Duration.Duration> = []
         const schedule = Schedule.fixed("1 seconds").pipe(
           Schedule.while(({ attempt }) => Effect.succeed(attempt <= 5)),
-          Schedule.delays,
-          Schedule.map((delay) =>
+          Schedule.tap((metadata) =>
             Effect.sync(() => {
-              delays.push(delay)
-              return delays
+              delays.push(metadata.duration)
             })
           )
         )
         yield* Effect.sleep("1.5 seconds").pipe(
           Effect.schedule(schedule),
+          Effect.andThen(Effect.sync(() => delays.push(Duration.zero))),
           Effect.forkChild
         )
         yield* TestClock.setTime(Number.POSITIVE_INFINITY)
@@ -325,16 +523,15 @@ describe("Schedule", () => {
         const delays: Array<Duration.Duration> = []
         const schedule = Schedule.windowed("1 seconds").pipe(
           Schedule.while(({ attempt }) => Effect.succeed(attempt <= 5)),
-          Schedule.delays,
-          Schedule.map((delay) =>
+          Schedule.tap((metadata) =>
             Effect.sync(() => {
-              delays.push(delay)
-              return delays
+              delays.push(metadata.duration)
             })
           )
         )
         yield* Effect.sleep("1.5 seconds").pipe(
           Effect.schedule(schedule),
+          Effect.andThen(Effect.sync(() => delays.push(Duration.zero))),
           Effect.forkChild
         )
         yield* TestClock.setTime(Number.POSITIVE_INFINITY)
@@ -356,35 +553,23 @@ const run = Effect.fnUntraced(function*<A, E, R>(effect: Effect.Effect<A, E, R>)
   return yield* Fiber.join(fiber)
 })
 
-const runCollect = Effect.fnUntraced(function*<Output, Input, Error, Env>(
-  schedule: Schedule.Schedule<Output, Input, Error, Env>,
-  input: Iterable<Input>
-) {
-  const step = yield* Schedule.toStepWithSleep(schedule)
-  const out: Array<Output> = []
-  yield* Effect.gen(function*() {
-    for (const value of input) {
-      out.push(yield* step(value))
-    }
-  }).pipe(Pull.catchDone((value) => {
-    out.push(value as Output)
-    return Effect.void
-  }))
-  return out
-}, run)
-
 const runDelays = <Output, Input, Error, Env>(
   schedule: Schedule.Schedule<Output, Input, Error, Env>,
   input: Iterable<Input>
-) => runCollect(Schedule.delays(schedule), input)
-
-const runLast = <Output, Input, Error, Env>(
-  schedule: Schedule.Schedule<Output, Input, Error, Env>,
-  input: Iterable<Input>
 ) =>
-  runCollect(schedule, input).pipe(
-    Effect.map((outputs) => outputs[outputs.length - 1])
-  )
+  Effect.gen(function*() {
+    const step = yield* Schedule.toStepWithMetadata(schedule)
+    const out: Array<Duration.Duration> = []
+    yield* Effect.gen(function*() {
+      for (const value of input) {
+        out.push((yield* step(value)).duration)
+      }
+    }).pipe(Pull.catchDone(() => {
+      out.push(Duration.zero)
+      return Effect.void
+    }))
+    return out
+  }).pipe(run)
 
 const format = (timestamp: number | string | Date): string => {
   const date = new Date(timestamp)

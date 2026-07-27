@@ -1,8 +1,6 @@
 import * as sns from "@distilled.cloud/aws/sns";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Topic } from "./Topic.ts";
 
 export interface PublishRequest extends Omit<
@@ -10,8 +8,48 @@ export interface PublishRequest extends Omit<
   "TopicArn" | "TargetArn" | "PhoneNumber"
 > {}
 
-export class Publish extends Binding.Service<
+/**
+ * Runtime binding for `sns:Publish`.
+ *
+ * Bind this operation to a {@link Topic} inside a function runtime to get a
+ * callable that automatically injects the `TopicArn`. The binding grants the
+ * host function `sns:Publish` on the topic. Provide the `PublishHttp` layer
+ * on the Function to implement the binding.
+ * @binding
+ * @section Publishing Messages
+ * @example Publish from a Lambda Function
+ * ```typescript
+ * export class ApiFunction extends Lambda.Function<Lambda.Function>()(
+ *   "ApiFunction",
+ * ) {}
+ *
+ * export default ApiFunction.make(
+ *   { main: import.meta.url, url: true },
+ *   Effect.gen(function* () {
+ *     const topic = yield* SNS.Topic("Events");
+ *
+ *     // init: bind the operation to the topic (grants sns:Publish)
+ *     const publish = yield* SNS.Publish(topic);
+ *
+ *     return {
+ *       fetch: Effect.gen(function* () {
+ *         // runtime: TopicArn is injected automatically
+ *         const response = yield* publish({
+ *           Message: "order shipped",
+ *           Subject: "order-update",
+ *         });
+ *         return yield* HttpServerResponse.json({
+ *           messageId: response.MessageId,
+ *         });
+ *       }).pipe(Effect.orDie),
+ *     };
+ *   }).pipe(Effect.provide(SNS.PublishHttp)),
+ * );
+ * ```
+ */
+export interface Publish extends Binding.Service<
   Publish,
+  "AWS.SNS.Publish",
   (
     topic: Topic,
   ) => Effect.Effect<
@@ -19,48 +57,6 @@ export class Publish extends Binding.Service<
       request: PublishRequest,
     ) => Effect.Effect<sns.PublishResponse, sns.PublishError>
   >
->()("AWS.SNS.Publish") {}
+> {}
 
-export const PublishLive = Layer.effect(
-  Publish,
-  Effect.gen(function* () {
-    const Policy = yield* PublishPolicy;
-    const publish = yield* sns.publish;
-
-    return Effect.fn(function* (topic: Topic) {
-      const TopicArn = yield* topic.topicArn;
-      yield* Policy(topic);
-      return Effect.fn(function* (request: PublishRequest) {
-        return yield* publish({
-          ...request,
-          TopicArn: yield* TopicArn,
-        });
-      });
-    });
-  }),
-);
-
-export class PublishPolicy extends Binding.Policy<
-  PublishPolicy,
-  (topic: Topic) => Effect.Effect<void>
->()("AWS.SNS.Publish") {}
-
-export const PublishPolicyLive = PublishPolicy.layer.succeed(
-  Effect.fn(function* (host, topic) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.SNS.Publish(${topic}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["sns:Publish"],
-            Resource: [topic.topicArn],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `PublishPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
-);
+export const Publish = Binding.Service<Publish>("AWS.SNS.Publish");

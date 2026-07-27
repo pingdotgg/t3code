@@ -1,35 +1,12 @@
 /**
- * The `Entity` module defines sharded, addressable actors for Effect Cluster.
- * An entity type pairs a stable entity name with an RPC protocol and describes
- * how requests for individual entity ids are routed to shard groups and
- * runners.
+ * Defines addressable entity types for Effect Cluster.
  *
- * **Mental model**
- *
- * - An `Entity` is the cluster-facing definition for one logical actor type
- * - Each entity id maps deterministically to a shard group and shard id
- * - Clients are created per entity id and send typed RPC messages through the
- *   cluster sharding layer
- * - Server layers register handlers or mailbox processors for the entity type
- *
- * **Common tasks**
- *
- * - Define an entity protocol with RPCs and create an entity with {@link make}
- * - Send messages to a specific entity id with {@link Entity.client}
- * - Register typed RPC handlers with {@link Entity.toLayer}
- * - Process envelopes directly with {@link Entity.toLayerQueue}
- * - Access the current entity or runner address with {@link CurrentAddress} and
- *   {@link CurrentRunnerAddress}
- *
- * **Gotchas**
- *
- * - Entity ids are part of routing: changing id formats can move work to
- *   different shards
- * - Entity type names should be stable and unique within a cluster deployment
- * - Mailbox capacity and concurrency determine back pressure and duplicate
- *   processing behavior
- * - Persistence, mailbox, and already-processing failures are surfaced through
- *   the generated clients
+ * An entity gives a stable name and RPC protocol to a group of values that are
+ * addressed by id. The cluster uses that information to choose a shard and
+ * route each request to the runner responsible for that id. This module
+ * includes constructors for entity definitions, helpers for creating sharded
+ * clients, layer builders for registering handlers, and services that expose
+ * the current entity address while a request is being handled.
  *
  * @since 4.0.0
  */
@@ -372,7 +349,7 @@ const Proto = {
           ),
           Stream.unwrap
         )
-      const handlers: Record<string, any> = {}
+      const handlers: Record<string, any> = Object.create(null)
       for (const rpc_ of this.protocol.requests.values()) {
         const rpc = rpc_ as any as Rpc.AnyWithProps
         handlers[rpc._tag] = RpcSchema.isStreamSchema(rpc.successSchema) ? streamHandler : handler
@@ -574,7 +551,7 @@ export declare namespace Replier {
  * It includes the underlying request envelope plus the last stream reply chunk
  * that was sent, allowing handlers to resume chunk sequencing after a restart.
  *
- * @category Request
+ * @category request
  * @since 4.0.0
  */
 export class Request<Rpc extends Rpc.Any> extends Data.Class<
@@ -641,11 +618,7 @@ export const makeTestClient: <Type extends string, Rpcs extends Rpc.Any, LA, LE,
       Rpc.ServicesClient<Rpcs> | Rpc.ServicesServer<Rpcs> | Rpc.Middleware<Rpcs> | LR
     >
     readonly concurrency: number | "unbounded"
-    readonly build: Effect.Effect<
-      Context.Context<Rpc.ToHandler<Rpcs>>,
-      never,
-      Scope | CurrentAddress
-    >
+    readonly build: Effect.Effect<Context.Context<Rpc.ToHandler<Rpcs>>>
   }>()
   const sharding = shardingTag.of({
     ...({} as Sharding["Service"]),
@@ -654,13 +627,7 @@ export const makeTestClient: <Type extends string, Rpcs extends Rpc.Any, LA, LE,
         entityMap.set(entity.type, {
           context: context as any,
           concurrency: options?.concurrency ?? 1,
-          build: entity.protocol.toHandlers(handlers as any).pipe(
-            Effect.provideContext(Context.mutate(context, (context) =>
-              context.pipe(
-                Context.add(CurrentRunnerAddress, runnerAddress),
-                Context.omit(Scope)
-              )))
-          ) as any
+          build: entity.protocol.toHandlers(handlers as any) as any
         })
         return Effect.void
       })
@@ -677,8 +644,15 @@ export const makeTestClient: <Type extends string, Rpcs extends Rpc.Any, LA, LE,
       entityId: entityId as EntityId,
       shardId: makeShardId(entityId)
     })
+    const scope = yield* Effect.scope
+    const handlerContext = Context.mutate(entityEntry.context, (context) =>
+      context.pipe(
+        Context.add(CurrentRunnerAddress, runnerAddress),
+        Context.add(CurrentAddress, address),
+        Context.add(Scope, scope)
+      ))
     const handlers = yield* entityEntry.build.pipe(
-      Effect.provideService(CurrentAddress, address)
+      Effect.setContext(handlerContext as Context.Context<any>)
     )
 
     // oxlint-disable-next-line prefer-const
@@ -688,7 +662,9 @@ export const makeTestClient: <Type extends string, Rpcs extends Rpc.Any, LA, LE,
       onFromServer(response) {
         return client.write(response)
       }
-    }).pipe(Effect.provide(handlers))
+    }).pipe(
+      Effect.setContext(Context.merge(handlerContext, handlers))
+    )
 
     client = yield* RpcClient.makeNoSerialization(entity.protocol, {
       supportsAck: true,

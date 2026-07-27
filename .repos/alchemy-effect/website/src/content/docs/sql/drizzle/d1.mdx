@@ -1,0 +1,163 @@
+---
+title: D1
+description: Drizzle on Cloudflare D1 — declare the schema, generate and apply migrations on deploy, and query from a Worker with Drizzle.D1.
+---
+
+Drizzle on D1, end to end: a schema module, a `Drizzle.Schema`
+resource that generates migration SQL on deploy, a D1 database that
+applies it, and a Worker that queries through `Drizzle.D1`.
+
+Install the toolchain — all optional peers of alchemy:
+
+```sh
+bun add drizzle-orm @effect/sql-d1
+bun add -D drizzle-kit
+```
+
+## Define the schema
+
+Drizzle schemas are plain TypeScript modules using the
+`sqlite-core` column builders:
+
+```typescript
+// src/schema.ts
+import { defineRelations, sql } from "drizzle-orm";
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+
+export const Users = sqliteTable("users", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull().unique(),
+  name: text("name").notNull(),
+});
+
+export const Posts = sqliteTable("posts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => Users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+});
+
+export const relations = defineRelations({ Users, Posts }, (t) => ({
+  Users: { posts: t.many.Posts() },
+  Posts: {
+    user: t.one.Users({ from: t.Posts.userId, to: t.Users.id }),
+  },
+}));
+```
+
+## Declare the schema resource and database
+
+`Drizzle.Schema` diffs the schema module on each deploy and writes
+pending migration SQL to `out`. Passing `schema.out` as the
+database's `migrationsDir` creates the dependency edge: generate
+first, apply second, in one `alchemy deploy`:
+
+```typescript
+// src/db.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle";
+import * as Effect from "effect/Effect";
+
+export const Database = Effect.gen(function* () {
+  const schema = yield* Drizzle.Schema("app-schema", {
+    schema: "./src/schema.ts",
+    out: "./migrations",
+    dialect: "sqlite",
+  });
+
+  return yield* Cloudflare.D1.Database("app-db", {
+    migrationsDir: schema.out,
+    migrationsTable: "drizzle_migrations",
+  });
+});
+```
+
+Register `Drizzle.providers()` alongside `Cloudflare.providers()` in
+your Stack. [Migrations](/sql/drizzle/migrations) covers what the
+schema resource does — and does not — decide on your behalf.
+
+## Connect in a Worker
+
+Bind the database with `Cloudflare.D1.QueryDatabase` and hand the
+client to `Drizzle.D1`:
+
+```typescript
+// src/api.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Database } from "./db.ts";
+import { relations, Users } from "./schema.ts";
+
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const database = yield* Database;
+    const d1 = yield* Cloudflare.D1.QueryDatabase(database);
+    const db = yield* Drizzle.D1(d1, { relations });
+
+    return {
+      fetch: Effect.gen(function* () {
+        const users = yield* db.select().from(Users);
+        return yield* HttpServerResponse.json({ users });
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.D1.QueryDatabaseBinding)),
+) {}
+```
+
+Nothing connects at init — the client is built on the first query of
+an event and reused for every query in that event (see
+[Connection lifecycle](/sql/effect-sql/lifecycle)). Plan and deploy
+never touch D1.
+
+## Queries are Effects
+
+Every builder yields directly, with `SqlError` in the typed error
+channel:
+
+```typescript
+const [created] = yield* db
+  .insert(Users)
+  .values({ name, email })
+  .returning();
+
+const [removed] = yield* db
+  .delete(Users)
+  .where(eq(Users.id, id))
+  .returning();
+```
+
+Because `relations` was passed to `Drizzle.D1`, the typed
+`db.query.*` API is available:
+
+```typescript
+const user = yield* db.query.Users.findFirst({
+  where: { id },
+  with: { posts: true },
+});
+```
+
+D1 has no session transactions — for atomic multi-statement writes
+use the binding's `batch` (see
+[Batches instead of transactions](/sql/effect-sql/d1#batches-instead-of-transactions)).
+
+## Local dev
+
+`alchemy dev` runs the same Worker against a local D1 database via
+miniflare — `Drizzle.D1` works unchanged because it resolves
+whatever `D1Database` binding the runtime provides.
+
+## Where next
+
+- [Migrations](/sql/drizzle/migrations) — what deploy-time schema
+  generation actually does, and when it asks for a decision.
+- [Drizzle on D1 (Cloudflare tutorial)](/cloudflare/data/d1-drizzle)
+  — the same flow in the Cloudflare hub, with deploy walkthrough.
+- [Example: cloudflare-d1-drizzle](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-d1-drizzle)
+  — the complete runnable project.
+- [Effect SQL: D1](/sql/effect-sql/d1) — tagged-template SQL over
+  the same binding, no ORM.

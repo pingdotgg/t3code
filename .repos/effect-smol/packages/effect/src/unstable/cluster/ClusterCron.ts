@@ -1,31 +1,11 @@
 /**
- * The `ClusterCron` module provides a small integration between cron schedules
- * and cluster sharding. It turns a `Cron.Cron` schedule into a `Layer` that
- * coordinates one recurring job across a cluster by registering a singleton for
- * the initial scheduling step and a persisted entity message for each run.
+ * Runs recurring cron jobs through cluster sharding.
  *
- * This is useful for distributed maintenance work such as periodic cleanup,
- * reconciliation, report generation, cache refreshes, or polling external
- * systems where the job should be owned by the cluster rather than by every
- * runner independently.
- *
- * **Mental model**
- *
- * - {@link make} registers a named cluster cron job as a layer
- * - a singleton schedules the first run for the selected shard group
- * - each run is delivered as a persisted entity message at its scheduled time
- * - after a run exits, the handler schedules the next occurrence
- * - stale runs can be skipped with `skipIfOlderThan`
- *
- * **Gotchas**
- *
- * - Job effects should be idempotent because persisted messages, retries, and
- *   runner failover are part of normal distributed execution.
- * - By default, the next run is calculated from the current time after the
- *   handler exits; use `calculateNextRunFromPrevious` when preserving the
- *   schedule cadence is more important than catching up from delays.
- * - Long outages can produce old scheduled messages; keep `skipIfOlderThan`
- *   aligned with the job's business semantics.
+ * This module turns a `Cron.Cron` schedule into a `Layer` that coordinates one
+ * recurring job across a cluster. It registers a singleton for the initial
+ * scheduling step and a persisted entity message for each run. This is useful
+ * for distributed maintenance work where the job should be owned by the cluster
+ * rather than by every runner independently.
  *
  * @since 4.0.0
  */
@@ -87,8 +67,7 @@ export const make = <E, R>(options: {
    *
    * **When to use**
    *
-   * Use when this is useful to prevent running jobs that were scheduled too far in the
-   * past.
+   * Use to prevent running jobs that were scheduled too far in the past.
    *
    * **Details**
    *
@@ -168,9 +147,10 @@ export const make = <E, R>(options: {
   return Layer.merge(InitialRun, EntityLayer)
 }
 
-const retryPolicy = Schedule.exponential(200, 1.5).pipe(
-  Schedule.either(Schedule.spaced("1 minute"))
-)
+const retryPolicy = Schedule.min([
+  Schedule.exponential(200, 1.5),
+  Schedule.spaced("1 minute")
+])
 
 class CronPayload extends Schema.Class<CronPayload>("effect/cluster/ClusterCron/CronPayload")({
   dateTime: Schema.DateTimeUtc

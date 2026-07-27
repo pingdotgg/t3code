@@ -1,0 +1,84 @@
+---
+title: APIs
+description: Every Function and Server returns { fetch, ...rpcs } — schemaless typed calls are the default for internal communication; Effect RPC and Effect HTTP add schemas where data crosses a trust boundary.
+---
+
+Every Function and Server in alchemy returns `{ fetch, ...rpcs }` from its
+[Effectful Constructor](/infrastructure-as-effects/functions-and-servers#the-effectful-constructor-pattern) —
+you already saw the "return what you expose" half. The `rpcs` are the other
+half: plain functions returning `Effect` or `Stream`, no schema, no
+decorators:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class BindingTargetWorker extends Cloudflare.Worker<BindingTargetWorker>()(
+  "BindingTargetWorker",
+  {
+    main: import.meta.url,
+  },
+  Effect.gen(function* () {
+    return {
+      greet: (name: string) => Effect.succeed(`hello ${name}`),
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("hello from BindingTargetWorker");
+      }),
+    };
+  }),
+) {}
+```
+
+Any other resource that binds this Worker gets a **fully typed client**:
+`yield* target.greet("world")` is an ordinary Effect call, the return type is
+inferred from the class, and serialization is handled automatically. The same
+model holds across every pairing — a Durable Object bound into a Worker, a
+Container called from a Durable Object, a MicroVM called from a Lambda
+Function.
+
+That schemaless path is the **default for internal communication**. Schemas
+enter only when data crosses a **trust boundary** — a web app, an external
+service, anything you don't deploy yourself.
+
+## The three modalities
+
+| Modality                            | Schema     | Per-request cost                                                                                                   | Use when                                                                                                          | Clients                                                                                     |
+| ----------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| [Schemaless RPC](/apis/schemaless)   | None       | Proxy dispatch + structured clone (native Bindings) or JSON args (fetch transport) + an envelope-tag check — zero validation | Internal service-to-service: Worker → Worker, Worker → Durable Object, Durable Object → Container, Lambda → MicroVM | Any resource that binds the class (MicroVMs connect explicitly via `connectMicrovm`)          |
+| [Effect RPC](/apis/effect-rpc)       | `RpcGroup` | Wire-frame parse + Schema decode of the payload + handler + Schema encode of the result — mirrored on the client    | Data needs sanitizing or crosses a trust boundary (web app, external service) and consumers are Effect/TypeScript  | The schema + a reference to the Fetcher — a Binding or just a URL                             |
+| [Effect HTTP](/apis/effect-http)     | `HttpApi`  | Same profile as Effect RPC                                                                                          | Same trust-boundary case, but consumers are non-Effect / non-TypeScript                                            | Plain HTTP — real URLs, path params, query strings, headers, content types, `curl`            |
+
+## Choosing
+
+Default to **Schemaless RPC for anything internal**. There is no schema to
+write, no runtime checking, and no per-request validation cost — and internal
+callers already get end-to-end types for free, because the client type *is*
+the class you bound.
+
+**Effect RPC and Effect HTTP are for trust boundaries.** They are discouraged
+for internal service-to-service calls: every request pays a Schema decode and
+encode on both sides, which buys you nothing when you control both ends. Reach
+for them when data needs sanitizing — a browser, a partner service, anything
+outside your deploy.
+
+Between the two schema'd modalities the choice is about the **external
+consumer**: an Effect/TypeScript client combines your schema with a Fetcher
+and gets a typed RPC client — use [Effect RPC](/apis/effect-rpc); anyone else
+wants a real HTTP surface they can hit with a plain HTTP client — use
+[Effect HTTP](/apis/effect-http).
+
+The three interoperate on one host: the schema'd modalities build an
+`HttpEffect` returned from `fetch`, so a single Worker or Function can serve
+schemaless methods internally **and** a schema'd surface externally.
+
+## Where next
+
+1. [Schemaless RPC](/apis/schemaless) — the internal default: typed clients, Streams, and error propagation with no schema.
+2. [Effect RPC](/apis/effect-rpc) — `RpcGroup` schemas, handler Layers, and clients built from the schema + a Fetcher.
+3. [Effect HTTP](/apis/effect-http) — the same idea as real REST endpoints for non-Effect consumers.
+
+Then see it wired up in the hubs:
+
+- **Cloudflare** — [Schemaless RPC](/cloudflare/apis/schemaless-rpc), [Effect RPC](/cloudflare/apis/effect-rpc), [Effect HTTP](/cloudflare/apis/effect-http-api)
+- **AWS** — [Schemaless RPC](/aws/apis/schemaless-rpc), [Effect RPC](/aws/apis/effect-rpc), [Effect HTTP](/aws/apis/effect-http-api)

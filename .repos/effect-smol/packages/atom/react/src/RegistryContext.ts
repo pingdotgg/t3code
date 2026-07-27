@@ -1,25 +1,8 @@
 /**
- * The `RegistryContext` module provides the React context used by Effect Atom
- * hooks to share an `AtomRegistry` across a component tree. The registry owns
- * atom state, scheduling, and idle cleanup, so components that read or write
- * atoms can coordinate through the same runtime instead of each creating an
- * isolated registry.
- *
- * **Common tasks**
- *
- * - Use {@link RegistryProvider} to scope atom state to a React subtree
- * - Seed atoms for tests, stories, or server-provided data with `initialValues`
- * - Override scheduling or idle timing for custom rendering environments
- * - Read {@link RegistryContext} when integrating lower-level atom APIs
- *
- * **Gotchas**
- *
- * - This is a client module because it depends on React runtime hooks and the
- *   scheduler package
- * - A provider keeps the registry stable across renders and disposes it shortly
- *   after unmount, allowing React remounts to reuse the same registry
- * - Overriding `scheduleTask` changes when atom work is flushed, so it should
- *   return a cancellation function compatible with React unmounts
+ * React context and provider for the Atom registry used by Effect Atom hooks.
+ * The registry stores atom values, schedules update work, and cleans up unused
+ * atoms. Sharing one registry through React context lets components in the same
+ * subtree read and write the same atom state.
  *
  * @since 4.0.0
  */

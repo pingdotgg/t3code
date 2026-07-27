@@ -1,45 +1,10 @@
 /**
- * The `ClusterError` module defines the tagged, schema-backed error values used
- * by the unstable cluster runtime. These errors describe failures at routing,
- * runner membership, serialization, persistence, mailbox capacity, and duplicate
- * envelope boundaries.
+ * Defines the structured errors used by the unstable cluster runtime.
  *
- * **Mental model**
- *
- * - Cluster operations fail with typed values so callers can distinguish retry,
- *   supervision, decoding, and storage failures.
- * - Each error has a stable `_tag` and schema representation for transport or
- *   storage boundaries.
- * - Static `is` helpers recognize errors from this module at runtime, and
- *   `refail` helpers map lower-level failures into cluster errors.
- *
- * **Common tasks**
- *
- * - Report wrong-runner delivery with {@link EntityNotAssignedToRunner}.
- * - Surface runner membership and liveness failures with
- *   {@link RunnerNotRegistered} or {@link RunnerUnavailable}.
- * - Convert encode and decode failures to {@link MalformedMessage}.
- * - Preserve storage failures as {@link PersistenceError}.
- * - Signal mailbox pressure with {@link MailboxFull}.
- * - Reject duplicate in-flight envelopes with
- *   {@link AlreadyProcessingMessage}.
- *
- * **Gotchas**
- *
- * - Ownership and health can change while a message is in flight, so routing
- *   and availability errors are often retryable by higher-level cluster logic.
- * - {@link MalformedMessage} means the payload crossed a schema or
- *   serialization boundary incorrectly; it is not an entity handler failure.
- * - {@link AlreadyProcessingMessage} is per-envelope protection, not a general
- *   entity lock.
- *
- * **See also**
- *
- * - {@link EntityNotAssignedToRunner}, {@link RunnerUnavailable}, and
- *   {@link RunnerNotRegistered} for routing and membership failures.
- * - {@link MalformedMessage} and {@link PersistenceError} for boundary
- *   failures.
- * - {@link MailboxFull} and {@link AlreadyProcessingMessage} for mailbox state.
+ * These tagged, schema-backed errors describe failures at routing, runner
+ * membership, serialization, persistence, mailbox capacity, and duplicate
+ * envelope boundaries. Cluster clients, runners, and storage adapters use these
+ * shared error values to report failures through typed Effect errors.
  *
  * @since 4.0.0
  */
@@ -97,7 +62,7 @@ export class EntityNotAssignedToRunner
  */
 export class MalformedMessage extends Schema.ErrorClass<MalformedMessage>(`${TypeId}/MalformedMessage`)({
   _tag: Schema.tag("MalformedMessage"),
-  cause: Schema.Defect
+  cause: Schema.Defect()
 }) {
   /**
    * Marks this value as a cluster error for runtime guards.
@@ -136,7 +101,7 @@ export class MalformedMessage extends Schema.ErrorClass<MalformedMessage>(`${Typ
  */
 export class PersistenceError extends Schema.ErrorClass<PersistenceError>(`${TypeId}/PersistenceError`)({
   _tag: Schema.tag("PersistenceError"),
-  cause: Schema.Defect
+  cause: Schema.Defect()
 }) {
   /**
    * Marks this value as a cluster error for runtime guards.

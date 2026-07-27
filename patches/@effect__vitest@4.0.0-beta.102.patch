@@ -1,0 +1,124 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index bc52d20f3116059904e99498447451bd4083c0fe..43cf0824f9f294cb441d9ee4cc12de9f82c04e46 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -7,11 +7,11 @@ import type * as Layer from "effect/Layer";
+ import type * as Schema from "effect/Schema";
+ import type * as Scope from "effect/Scope";
+ import type * as FC from "effect/testing/FastCheck";
+-import * as V from "vitest";
++import * as V from "vite-plus/test";
+ /**
+  * @since 4.0.0
+  */
+-export * from "vitest";
++export * from "vite-plus/test";
+ /**
+  * @since 4.0.0
+  */
+diff --git a/dist/index.js b/dist/index.js
+index 938c9c817abe9aeddb9ad8c74e099c62cbf5f091..760ecc47fec5e9df2efd75de17c05ba4b0700ec1 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,9 +1,9 @@
+-import * as V from "vitest";
++import * as V from "vite-plus/test";
+ import * as internal from "./internal/internal.js";
+ /**
+  * @since 4.0.0
+  */
+-export * from "vitest";
++export * from "vite-plus/test";
+ /**
+  * @since 4.0.0
+  */
+diff --git a/dist/internal/internal.js b/dist/internal/internal.js
+index 29ea5844d6c7db5f8ee9cb40eea09fa06306ac76..45461c6610983e6b55cb0b303f3064fe0e12574c 100644
+--- a/dist/internal/internal.js
++++ b/dist/internal/internal.js
+@@ -1,7 +1,7 @@
+ /**
+  * @since 4.0.0
+  */
+-import { getCurrentSuite } from "@vitest/runner";
++import { getCurrentSuite } from "vite-plus/test/plugins/runner";
+ import * as Cause from "effect/Cause";
+ import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";
+@@ -16,7 +16,7 @@ import * as Scope from "effect/Scope";
+ import * as fc from "effect/testing/FastCheck";
+ import * as TestClock from "effect/testing/TestClock";
+ import * as TestConsole from "effect/testing/TestConsole";
+-import * as V from "vitest";
++import * as V from "vite-plus/test";
+ const runPromise = /*#__PURE__*/Effect.fnUntraced(function* (effect, _ctx) {
+   const exit = yield* Effect.exit(effect);
+   if (Exit.isFailure(exit)) {
+diff --git a/dist/utils.js b/dist/utils.js
+index cfb2c39847518b491ca5db87ef693947a75e5e53..c044d7a01c2dd9d86e35db3910aed384eca53a3b 100644
+--- a/dist/utils.js
++++ b/dist/utils.js
+@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
+ import * as Predicate from "effect/Predicate";
+ import * as Result from "effect/Result";
+ import * as assert from "node:assert";
+-import { assert as vassert } from "vitest";
++import { assert as vassert } from "vite-plus/test";
+ // ----------------------------
+ // Primitives
+ // ----------------------------
+diff --git a/src/index.ts b/src/index.ts
+index 37886fb6c37a12710f73ccee87a3ff6ca8b2c9fa..2207df940dfae2a346211d09b8d39554e0c00d34 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -7,13 +7,13 @@ import type * as Layer from "effect/Layer"
+ import type * as Schema from "effect/Schema"
+ import type * as Scope from "effect/Scope"
+ import type * as FC from "effect/testing/FastCheck"
+-import * as V from "vitest"
++import * as V from "vite-plus/test"
+ import * as internal from "./internal/internal.ts"
+ 
+ /**
+  * @since 4.0.0
+  */
+-export * from "vitest"
++export * from "vite-plus/test"
+ 
+ /**
+  * @since 4.0.0
+diff --git a/src/internal/internal.ts b/src/internal/internal.ts
+index 59c35ec9e65c93df8e2ba21299a5b23f2ce27772..38475742e3d39e8cb30c5ab6a1a45916882cdca4 100644
+--- a/src/internal/internal.ts
++++ b/src/internal/internal.ts
+@@ -2,7 +2,7 @@
+  * @since 4.0.0
+  */
+ 
+-import { getCurrentSuite } from "@vitest/runner"
++import { getCurrentSuite } from "vite-plus/test/plugins/runner"
+ import * as Cause from "effect/Cause"
+ import * as Duration from "effect/Duration"
+ import * as Effect from "effect/Effect"
+@@ -17,7 +17,7 @@ import * as Scope from "effect/Scope"
+ import * as fc from "effect/testing/FastCheck"
+ import * as TestClock from "effect/testing/TestClock"
+ import * as TestConsole from "effect/testing/TestConsole"
+-import * as V from "vitest"
++import * as V from "vite-plus/test"
+ import type * as Vitest from "../index.ts"
+ 
+ const runPromise: <E, A>(
+diff --git a/src/utils.ts b/src/utils.ts
+index 09c824139056c992bf978c15dc3836b3dd2257a9..6cd39bf9c0f332ba65842e555cc1c3fe0675e923 100644
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -16,7 +16,7 @@ import * as Option from "effect/Option"
+ import * as Predicate from "effect/Predicate"
+ import * as Result from "effect/Result"
+ import * as assert from "node:assert"
+-import { assert as vassert } from "vitest"
++import { assert as vassert } from "vite-plus/test"
+ 
+ // ----------------------------
+ // Primitives

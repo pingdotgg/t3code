@@ -8,32 +8,6 @@
  * streaming, acknowledgement, interrupt, keepalive, and defect signals as the
  * built-in HTTP, socket, worker, and test transports.
  *
- * **Mental model**
- *
- * A request is identified by a `RequestId` from the first `Request` through any
- * `Chunk` batches, the terminal `Exit`, optional `Ack`s, and optional
- * `Interrupt`s. Decoded messages carry branded ids, typed RPC tags, headers,
- * and typed payload, chunk, or exit values. Encoded messages use string ids and
- * `unknown` payloads that have already crossed the schema serialization
- * boundary.
- *
- * **Message families**
- *
- * Client-to-server messages start work (`Request`), acknowledge streamed chunks
- * (`Ack`), cancel in-flight work (`Interrupt`), close client input (`Eof`), or
- * check liveness (`Ping`). Server-to-client messages stream successful values
- * (`Chunk`), complete work (`Exit`), report connection-level defects
- * (`Defect`), end a client connection (`ClientEnd`), answer keepalives
- * (`Pong`), or report client protocol errors.
- *
- * **Gotchas**
- *
- * `Ack` is part of streaming back pressure, not call completion. `Eof` closes
- * client input but does not replace terminal `Exit` responses. `Ping` and
- * `Pong` are connection liveness messages. Transports must preserve request ids
- * exactly across encoded strings and decoded branded values, or responses,
- * interrupts, and acknowledgements can be routed to the wrong in-flight call.
- *
  * @since 4.0.0
  */
 import type { NonEmptyReadonlyArray } from "../../Array.ts"
@@ -66,7 +40,7 @@ export type FromClientEncoded = RequestEncoded | AckEncoded | InterruptEncoded |
  * @category request
  * @since 4.0.0
  */
-export type RequestId = Branded<bigint, "~effect/rpc/RpcMessage/RequestId">
+export type RequestId = Branded<string | number, "~effect/rpc/RpcMessage/RequestId">
 
 /**
  * Converts a bigint or string request id into the branded `RequestId` type.
@@ -74,8 +48,7 @@ export type RequestId = Branded<bigint, "~effect/rpc/RpcMessage/RequestId">
  * @category request
  * @since 4.0.0
  */
-export const RequestId = (id: bigint | string): RequestId =>
-  typeof id === "bigint" ? id as RequestId : BigInt(id) as RequestId
+export const RequestId = (id: string | number): RequestId => id as RequestId
 
 /**
  * The transport-encoded RPC request envelope, including the string request id,
@@ -86,7 +59,7 @@ export const RequestId = (id: bigint | string): RequestId =>
  */
 export interface RequestEncoded {
   readonly _tag: "Request"
-  readonly id: string
+  readonly id: string | number
   readonly tag: string
   readonly payload: unknown
   readonly headers: ReadonlyArray<[string, string]>
@@ -145,7 +118,7 @@ export interface Interrupt {
  */
 export interface AckEncoded {
   readonly _tag: "Ack"
-  readonly requestId: string
+  readonly requestId: string | number
 }
 
 /**
@@ -156,7 +129,7 @@ export interface AckEncoded {
  */
 export interface InterruptEncoded {
   readonly _tag: "Interrupt"
-  readonly requestId: string
+  readonly requestId: string | number
 }
 
 /**
@@ -255,7 +228,7 @@ export type ResponseId = Branded<number, ResponseIdTypeId>
  */
 export interface ResponseChunkEncoded {
   readonly _tag: "Chunk"
-  readonly requestId: string
+  readonly requestId: string | number
   readonly values: NonEmptyReadonlyArray<unknown>
 }
 
@@ -308,7 +281,7 @@ export type ExitEncoded<A, E> = {
  */
 export interface ResponseExitEncoded {
   readonly _tag: "Exit"
-  readonly requestId: string
+  readonly requestId: string | number
   readonly exit: ExitEncoded<unknown, unknown>
 }
 
@@ -350,11 +323,11 @@ export interface ResponseDefectEncoded {
   readonly defect: unknown
 }
 
-const encodeDefect = Schema.encodeSync(Schema.Defect)
+const encodeDefect = Schema.encodeSync(Schema.Defect())
 
 /**
  * Creates an encoded terminal response for a request whose exit is a defect
- * encoded with `Schema.Defect`.
+ * encoded with `Schema.Defect()`.
  *
  * @category response
  * @since 4.0.0
@@ -364,7 +337,7 @@ export const ResponseExitDieEncoded = (options: {
   readonly defect: unknown
 }): ResponseExitEncoded => ({
   _tag: "Exit",
-  requestId: options.requestId.toString(),
+  requestId: options.requestId,
   exit: {
     _tag: "Failure",
     cause: [{
@@ -376,7 +349,7 @@ export const ResponseExitDieEncoded = (options: {
 
 /**
  * Creates a transport-encoded defect response by encoding the input with
- * `Schema.Defect`.
+ * `Schema.Defect()`.
  *
  * @category response
  * @since 4.0.0
@@ -426,3 +399,22 @@ export interface Pong {
  * @since 4.0.0
  */
 export const constPong: Pong = { _tag: "Pong" }
+
+/**
+ * Checks if the response type is terminal.
+ *
+ * @category guards
+ * @since 4.0.0
+ */
+export const isTerminalResponse = (response: FromServerEncoded): boolean => {
+  switch (response._tag) {
+    case "Exit":
+    case "Defect":
+    case "ClientProtocolError": {
+      return true
+    }
+    default: {
+      return false
+    }
+  }
+}

@@ -17,8 +17,17 @@ export interface OrganizationResourcePolicy extends Resource<
   "AWS.Organizations.OrganizationResourcePolicy",
   OrganizationResourcePolicyProps,
   {
+    /**
+     * ID of the resource policy.
+     */
     resourcePolicyId: string;
+    /**
+     * ARN of the resource policy.
+     */
     resourcePolicyArn: string;
+    /**
+     * Parsed resource policy document as stored by AWS Organizations.
+     */
     document: PolicyDocument;
   },
   never,
@@ -26,7 +35,39 @@ export interface OrganizationResourcePolicy extends Resource<
 > {}
 
 /**
- * The singleton AWS Organizations resource policy.
+ * The singleton AWS Organizations resource policy — an org-level
+ * resource-based policy that grants other principals (typically delegated
+ * administrator accounts) permission to call Organizations APIs.
+ *
+ * There is at most one per organization; Alchemy adopts and reconciles the
+ * existing policy if one is already in place.
+ * @resource
+ * @section Setting the Resource Policy
+ * @example Allow a Member Account to Describe the Organization
+ * ```typescript
+ * const security = yield* Account("Security", {
+ *   name: "security",
+ *   email: "aws-security@example.com",
+ *   parentId: root.rootId,
+ * });
+ *
+ * yield* OrganizationResourcePolicy("OrgResourcePolicy", {
+ *   document: {
+ *     Version: "2012-10-17",
+ *     Statement: [
+ *       {
+ *         Effect: "Allow",
+ *         Principal: { AWS: security.accountId },
+ *         Action: [
+ *           "organizations:DescribeOrganization",
+ *           "organizations:ListAccounts",
+ *         ],
+ *         Resource: "*",
+ *       },
+ *     ],
+ *   },
+ * });
+ * ```
  */
 export const OrganizationResourcePolicy = Resource<OrganizationResourcePolicy>(
   "AWS.Organizations.OrganizationResourcePolicy",
@@ -62,6 +103,16 @@ export const OrganizationResourcePolicyProvider = () =>
         read: Effect.fn(function* () {
           return yield* readResourcePolicy();
         }),
+        // Org singleton: there is no list API. Describe the single resource
+        // policy and return a one-element array if it exists, else []. A
+        // missing policy or an account that isn't an org both yield [].
+        list: () =>
+          readResourcePolicy().pipe(
+            Effect.map((policy) => (policy ? [policy] : [])),
+            Effect.catchTag("AWSOrganizationsNotInUseException", () =>
+              Effect.succeed([] as OrganizationResourcePolicy["Attributes"][]),
+            ),
+          ),
         reconcile: Effect.fn(function* ({ news, session }) {
           const desiredContent = JSON.stringify(news.document);
 

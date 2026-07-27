@@ -1,17 +1,17 @@
 {
   "name": "@effect/sql-mysql2",
-  "version": "4.0.0-beta.73",
+  "version": "4.0.0-beta.102",
   "type": "module",
   "license": "MIT",
   "description": "A MySQL toolkit for Effect",
   "homepage": "https://effect.website",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Effect-TS/effect-smol.git",
+    "url": "https://github.com/Effect-TS/effect.git",
     "directory": "packages/sql/mysql2"
   },
   "bugs": {
-    "url": "https://github.com/Effect-TS/effect-smol/issues"
+    "url": "https://github.com/Effect-TS/effect/issues"
   },
   "tags": [
     "typescript",
@@ -52,7 +52,6 @@
   "scripts": {
     "codegen": "effect-utils codegen",
     "build": "tsc -b tsconfig.json && pnpm babel",
-    "build:tsgo": "tsgo -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
     "check": "tsc -b tsconfig.json",
     "test": "vitest",
@@ -66,6 +65,6 @@
     "effect": "workspace:^"
   },
   "dependencies": {
-    "mysql2": "^3.22.3"
+    "mysql2": "^3.22.6"
   }
 }

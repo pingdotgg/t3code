@@ -1,5 +1,6 @@
 import * as iam from "@distilled.cloud/aws/iam";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -25,11 +26,17 @@ export interface SSHPublicKey extends Resource<
   "AWS.IAM.SSHPublicKey",
   SSHPublicKeyProps,
   {
+    /** The IAM user the SSH public key belongs to. */
     userName: string;
+    /** The unique ID of the SSH public key. */
     sshPublicKeyId: string;
+    /** The MD5 fingerprint of the SSH public key. */
     fingerprint: string;
+    /** The SSH public key material. */
     sshPublicKeyBody: string;
+    /** Whether the key is `Active` or `Inactive`. */
     status: iam.StatusType;
+    /** When the key was uploaded. */
     uploadDate: Date | undefined;
   },
   never,
@@ -41,7 +48,7 @@ export interface SSHPublicKey extends Resource<
  *
  * `SSHPublicKey` uploads and manages a user's public key for services such as
  * AWS CodeCommit that authenticate through IAM-backed SSH credentials.
- *
+ * @resource
  * @section Managing SSH Keys
  * @example Upload an SSH Public Key
  * ```typescript
@@ -158,5 +165,65 @@ export const SSHPublicKeyProvider = () =>
           SSHPublicKeyId: output.sshPublicKeyId,
         })
         .pipe(Effect.catchTag("NoSuchEntityException", () => Effect.void));
+    }),
+    // IAM is a global service. `listSSHPublicKeys` requires a `UserName`, so we
+    // enumerate every IAM user first (paginated) and then list each user's keys
+    // (also paginated) with bounded concurrency. The list metadata omits the
+    // fingerprint and key body, so each key is hydrated with `getSSHPublicKey`
+    // to produce the full `Attributes` shape that `read` returns.
+    list: Effect.fn(function* () {
+      const users = yield* iam.listUsers.pages({}).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) => Array.from(chunk).flatMap((page) => page.Users)),
+      );
+      const perUser = yield* Effect.forEach(
+        users,
+        (user) =>
+          iam.listSSHPublicKeys.pages({ UserName: user.UserName }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) => page.SSHPublicKeys ?? []),
+            ),
+            Effect.flatMap((metas) =>
+              Effect.forEach(
+                metas,
+                (meta) =>
+                  iam
+                    .getSSHPublicKey({
+                      UserName: meta.UserName,
+                      SSHPublicKeyId: meta.SSHPublicKeyId,
+                      Encoding: "SSH",
+                    })
+                    .pipe(
+                      Effect.map((r) => r.SSHPublicKey),
+                      // The key may be deleted between enumeration and
+                      // hydration.
+                      Effect.catchTag("NoSuchEntityException", () =>
+                        Effect.succeed(undefined),
+                      ),
+                    ),
+                { concurrency: 10 },
+              ),
+            ),
+            Effect.map((keys) =>
+              keys
+                .filter(
+                  (key): key is iam.SSHPublicKey => key?.SSHPublicKeyId != null,
+                )
+                .map((key) => ({
+                  userName: key.UserName,
+                  sshPublicKeyId: key.SSHPublicKeyId,
+                  fingerprint: key.Fingerprint,
+                  sshPublicKeyBody: key.SSHPublicKeyBody,
+                  status: key.Status,
+                  uploadDate: key.UploadDate,
+                })),
+            ),
+            // The user may be deleted between enumeration and per-user list.
+            Effect.catchTag("NoSuchEntityException", () => Effect.succeed([])),
+          ),
+        { concurrency: 10 },
+      );
+      return perUser.flat();
     }),
   });

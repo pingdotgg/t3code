@@ -2,34 +2,11 @@
  * Node.js multipart parsing for HTTP `multipart/form-data` request bodies.
  *
  * `NodeMultipart` adapts a Node `Readable` plus incoming HTTP headers into
- * Effect's shared multipart model. It can expose form parts as a stream for
- * incremental processing, or collect a complete persisted form by writing file
- * uploads to scoped temporary files through the current `FileSystem` and `Path`
- * services.
- *
- * **Mental model**
- *
- * Multipart request bodies are one-shot byte streams. {@link stream} parses the
- * body as it arrives: fields are decoded to strings and file parts keep their
- * underlying Node readable stream. {@link persisted} consumes the same kind of
- * body, builds a `Multipart.Persisted` record, and ties temporary upload files
- * to the surrounding `Scope`.
- *
- * **Common tasks**
- *
- * - Use {@link stream} when a route validates fields while piping file uploads
- *   to storage.
- * - Use {@link persisted} when a route needs a complete form value with scoped
- *   temporary files.
- * - Use {@link fileToReadable} when a downstream Node library expects a
- *   `Readable`.
- *
- * **Gotchas**
- *
- * Consume a request body with only one parser. File parts must be drained,
- * piped, or persisted so the request can finish reading. `contentEffect` loads
- * an uploaded file into memory, so reserve it for small files. Client-supplied
- * filenames are metadata, not trusted filesystem paths.
+ * Effect's shared multipart model. It can expose form parts as a stream or
+ * collect a complete persisted form by writing file uploads to scoped temporary
+ * files through the current `FileSystem` and `Path` services. `fileToReadable`
+ * returns the underlying Node readable stream for file parts produced by this
+ * parser.
  *
  * @since 4.0.0
  */

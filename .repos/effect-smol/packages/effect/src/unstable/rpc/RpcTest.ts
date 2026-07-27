@@ -7,30 +7,6 @@
  * middleware metadata travel through the normal client/server machinery without
  * opening HTTP, socket, worker, or serializer infrastructure.
  *
- * **Mental model**
- *
- * `makeClient` builds an in-memory server, wires the client and server write
- * callbacks together, and returns the scoped generated client. The handlers,
- * server middleware, client middleware, and `Scope` still come from the Effect
- * environment just as they would for a real transport; only the byte-level
- * protocol is skipped.
- *
- * **Common tasks**
- *
- * Use this module for tests that should exercise RPC routing, handler lookup,
- * middleware, headers, typed errors, interruptions, and streaming behavior
- * quickly. Use a real transport plus `RpcSerialization` coverage when you need
- * to test HTTP status handling, socket framing, worker transferables, schema
- * encoding or decoding, or wire compatibility.
- *
- * **Gotchas**
- *
- * Because no serialization happens, invalid wire payloads and mismatched codecs
- * will not be discovered here. The client is scoped to the in-memory
- * connection; acquire it inside a scoped test or provide `Scope` explicitly.
- * The `flatten` option matches `RpcClient.makeNoSerialization`, and
- * acknowledgements are enabled to mirror the bidirectional streaming protocol.
- *
  * @since 4.0.0
  */
 import * as Effect from "../../Effect.ts"

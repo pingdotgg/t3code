@@ -346,7 +346,37 @@ describe("Metric", () => {
       }))
   })
 
+  it.effect("uses finite extrema for empty histogram and summary states", () =>
+    Effect.gen(function*() {
+      const histogram = Metric.histogram(nextId(), { boundaries: [] })
+      const summary = Metric.summary(nextId(), {
+        maxAge: "1 minute",
+        maxSize: 10,
+        quantiles: []
+      })
+      const histogramState = yield* Metric.value(histogram)
+      const summaryState = yield* Metric.value(summary)
+      assert.deepStrictEqual(
+        { min: histogramState.min, max: histogramState.max },
+        { min: Number.MAX_VALUE, max: -Number.MAX_VALUE }
+      )
+      assert.deepStrictEqual(
+        { min: summaryState.min, max: summaryState.max },
+        { min: Number.MAX_VALUE, max: -Number.MAX_VALUE }
+      )
+    }))
+
   describe("Histogram", () => {
+    it.effect("reports the maximum for negative-only observations", () =>
+      Effect.gen(function*() {
+        const histogram = Metric.histogram(nextId(), { boundaries: [-10, -5, 0] })
+        yield* Metric.update(histogram, -10)
+        yield* Metric.update(histogram, -5)
+        const result = yield* Metric.value(histogram)
+        assert.strictEqual(result.min, -10)
+        assert.strictEqual(result.max, -5)
+      }))
+
     it.effect("custom observe with value", () =>
       Effect.gen(function*() {
         const id = nextId()
@@ -403,6 +433,20 @@ describe("Metric", () => {
   })
 
   describe("Summary", () => {
+    it.effect("reports the maximum for negative-only observations", () =>
+      Effect.gen(function*() {
+        const summary = Metric.summary(nextId(), {
+          maxAge: "1 minute",
+          maxSize: 10,
+          quantiles: [0.5]
+        })
+        yield* Metric.update(summary, -10)
+        yield* Metric.update(summary, -5)
+        const result = yield* Metric.value(summary)
+        assert.strictEqual(result.min, -10)
+        assert.strictEqual(result.max, -5)
+      }))
+
     it.effect("custom observe with value", () =>
       Effect.gen(function*() {
         const id = nextId()

@@ -1,6 +1,6 @@
 # `@effect/sql-d1`
 
-An `@effect/sql` implementation for [Cloudflare D1](https://developers.cloudflare.com/d1/).
+An Effect SQL implementation for [Cloudflare D1](https://developers.cloudflare.com/d1/).
 
 ## Documentation
 

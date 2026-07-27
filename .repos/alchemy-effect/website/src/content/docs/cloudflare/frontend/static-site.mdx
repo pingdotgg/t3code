@@ -1,0 +1,167 @@
+---
+title: Static sites
+description: Deploy any build command's output directory as Cloudflare Worker static assets with Cloudflare.Website.StaticSite — custom edge Workers, framework-native local dev, and memoized rebuilds.
+sidebar:
+  order: 3
+---
+
+`Cloudflare.Website.StaticSite` runs a build command, content-hashes the
+output directory, and deploys it as a Cloudflare Worker serving static
+assets. The build is a plain shell command (a
+[`Command.Build`](/providers/command/build) resource under the hood — see
+[Memoization](/command/memoization) for what gets hashed and when it
+re-runs), so it works for anything that produces a directory of files — a
+Zola or Hugo site, a bash script, or the static output of a framework the
+[Vite resource](/cloudflare/frontend/vite) doesn't support yet.
+
+If you provide neither `main` nor `script`, Alchemy injects a fallback
+passthrough Worker in front of the assets:
+
+```typescript
+export default { fetch: (request, env) => env.ASSETS.fetch(request) };
+```
+
+Every request delegates straight to the `ASSETS` binding — you get a pure
+static site with no Worker code of your own. Provide `main` to put a real
+Worker in front instead (see
+[below](#a-custom-worker-in-front-of-your-assets)).
+
+## Deploy a Zola site
+
+Point `command` at the build, `outdir` at where it writes files, and return
+the Worker's `url` as a stack output:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "CloudflareStatic",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Cloudflare.Website.StaticSite("Website", {
+      command: "zola build",
+      outdir: "public",
+      dev: {
+        command: "zola serve",
+      },
+      assets: {
+        notFoundHandling: "404-page",
+      },
+    });
+
+    return { url: site.url };
+  }),
+);
+```
+
+`alchemy deploy` runs `zola build`, hashes `public/`, and uploads it as the
+Worker's static assets; `notFoundHandling: "404-page"` serves Zola's
+generated 404 page for unmatched paths. The runnable version lives at
+[`examples/cloudflare-static-site`](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-static-site).
+
+## Props
+
+The build contract is two required props, plus a handful of optional ones:
+
+- `command` — the shell command that builds the site (e.g. `"zola build"`).
+- `outdir` — the directory the command writes, relative to the working
+  directory. This is what gets deployed.
+- `cwd` — working directory for the command. Defaults to `process.cwd()`.
+- `env` — extra environment variables passed to the build command on top of
+  `process.env`, so outputs from other resources (like an API URL) flow into
+  the build. `Redacted` values stay out of logs and state.
+- `memo` — `MemoOptions | boolean`. By default every non-gitignored file in
+  `cwd` (plus the nearest lockfile) is hashed to decide whether the build
+  re-runs; `memo: { include: [...] }` narrows the scope, and `memo: false`
+  disables memoization so the build runs on every deploy.
+- `main` — an optional custom Worker entrypoint served in front of the
+  assets, instead of the fallback passthrough.
+- `assets` — asset routing behavior (`notFoundHandling`, `htmlHandling`,
+  `runWorkerFirst`, ...), passed flat.
+
+Everything else a [Worker](/cloudflare/compute/workers) accepts —
+`domain`, `compatibility`, bindings via `env` — applies too, since a
+`StaticSite` is a Worker underneath.
+
+## A custom Worker in front of your assets
+
+The alchemy.run docs site itself — an Astro/Starlight app — deploys this
+way, with a hand-written Worker at the edge:
+
+```typescript
+// website/alchemy.run.ts — how alchemy.run deploys itself
+const Website = Cloudflare.Website.StaticSite(
+  "Website",
+  Alchemy.Stack.useSync((stack) => ({
+    command: "bun run build",
+    outdir: "dist",
+    main: "./src/worker.ts",
+    domain: stack.stage === "prod" ? "alchemy.run" : undefined,
+    memo: {
+      include: [
+        "src/**",
+        "astro.config.mjs",
+        "package.json",
+        "plugins/**",
+        "public/**",
+        "scripts/**",
+        "../bun.lock",
+      ],
+    },
+    compatibility: {
+      date: "2026-04-02",
+      flags: ["nodejs_compat"],
+    },
+    assets: {
+      runWorkerFirst: true,
+    },
+  })),
+);
+```
+
+`main` points at a Worker that runs *before* asset serving thanks to
+`assets: { runWorkerFirst: true }` — the docs site uses it to rewrite OG and
+canonical tags with `HTMLRewriter` and serve 301 redirects, then delegates
+everything else to `env.ASSETS.fetch(request)`. For the Astro-specific
+framing of this setup, see [Astro on Cloudflare](/cloudflare/frontend/astro).
+
+## Local dev
+
+During `alchemy dev`, the `dev` prop replaces the build with your
+framework's own dev server:
+
+```typescript
+const site = yield* Cloudflare.Website.StaticSite("Website", {
+  command: "zola build",
+  outdir: "public",
+  dev: {
+    command: "zola serve",
+  },
+});
+```
+
+`dev.command` is spawned as a long-lived sidecar process tied to the stack's
+scope — the build is skipped and the Worker runs in external mode against
+the dev server's URL, detected from the command's stdout. `dev` also accepts
+`cwd` and `env` overrides for the dev process, and `dev.url` to pin the URL
+explicitly when stdout detection fails. The sidecar mechanics — spawn, URL
+detection, teardown — are covered in [Dev servers](/command/dev-servers).
+
+## Frameworks the Vite resource doesn't support yet
+
+`StaticSite` is the documented workaround for frameworks whose build isn't
+pure Vite. [Astro](/cloudflare/frontend/astro) is the verified case — its
+build is driven by the `astro` CLI, so the Vite resource can't build it, but
+`command: "astro build"` + `outdir: "dist"` deploys it exactly as shown
+above. [Nuxt](/cloudflare/frontend/nuxt) has no example or test in the repo
+yet; deploying a statically generated (`nuxt generate`) output through
+`StaticSite` is an untested suggestion, not a verified path. If your app
+*is* pure Vite — `vite build` with framework plugins in `vite.config.ts` —
+use [`Cloudflare.Website.Vite`](/cloudflare/frontend/vite) instead and skip
+the build contract entirely.

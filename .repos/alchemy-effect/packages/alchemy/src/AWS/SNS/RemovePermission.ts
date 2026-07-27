@@ -1,8 +1,6 @@
 import * as sns from "@distilled.cloud/aws/sns";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Topic } from "./Topic.ts";
 
 export interface RemovePermissionRequest extends Omit<
@@ -10,8 +8,28 @@ export interface RemovePermissionRequest extends Omit<
   "TopicArn"
 > {}
 
-export class RemovePermission extends Binding.Service<
+/**
+ * Runtime binding for `sns:RemovePermission`.
+ *
+ * Bind this operation to a {@link Topic} inside a function runtime to remove
+ * a policy statement previously added with {@link AddPermission} by its
+ * label. The binding grants the host function `sns:RemovePermission` on the
+ * topic. Provide the `RemovePermissionHttp` layer on the Function to
+ * implement the binding.
+ * @binding
+ * @section Managing Topic Permissions
+ * @example Remove a Permission by Label
+ * ```typescript
+ * // init (provide SNS.RemovePermissionHttp on the Function)
+ * const removePermission = yield* SNS.RemovePermission(topic);
+ *
+ * // runtime
+ * yield* removePermission({ Label: "PartnerPublish" });
+ * ```
+ */
+export interface RemovePermission extends Binding.Service<
   RemovePermission,
+  "AWS.SNS.RemovePermission",
   (
     topic: Topic,
   ) => Effect.Effect<
@@ -19,48 +37,8 @@ export class RemovePermission extends Binding.Service<
       request: RemovePermissionRequest,
     ) => Effect.Effect<sns.RemovePermissionResponse, sns.RemovePermissionError>
   >
->()("AWS.SNS.RemovePermission") {}
+> {}
 
-export const RemovePermissionLive = Layer.effect(
-  RemovePermission,
-  Effect.gen(function* () {
-    const Policy = yield* RemovePermissionPolicy;
-    const removePermission = yield* sns.removePermission;
-
-    return Effect.fn(function* (topic: Topic) {
-      const TopicArn = yield* topic.topicArn;
-      yield* Policy(topic);
-      return Effect.fn(function* (request: RemovePermissionRequest) {
-        return yield* removePermission({
-          ...request,
-          TopicArn: yield* TopicArn,
-        });
-      });
-    });
-  }),
-);
-
-export class RemovePermissionPolicy extends Binding.Policy<
-  RemovePermissionPolicy,
-  (topic: Topic) => Effect.Effect<void>
->()("AWS.SNS.RemovePermission") {}
-
-export const RemovePermissionPolicyLive = RemovePermissionPolicy.layer.succeed(
-  Effect.fn(function* (host, topic) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.SNS.RemovePermission(${topic}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["sns:RemovePermission"],
-            Resource: [topic.topicArn],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `RemovePermissionPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const RemovePermission = Binding.Service<RemovePermission>(
+  "AWS.SNS.RemovePermission",
 );

@@ -6,30 +6,6 @@
  * page containing the OpenAPI document produced from the supplied `HttpApi` and
  * boots Scalar in the browser.
  *
- * ## Mental model
- *
- * {@link layer} serves the UI with the bundled Scalar script. {@link layerCdn}
- * serves the same UI while loading Scalar from jsDelivr, optionally pinned with
- * `version`. Both helpers register a `GET` route, defaulting to `/docs`, and
- * pass {@link ScalarConfig} through to Scalar's HTML configuration.
- *
- * ## Common tasks
- *
- * - Use {@link layer} when the application should serve the bundled Scalar
- *   assets without depending on a CDN at runtime.
- * - Use {@link layerCdn} when a CDN-loaded Scalar bundle is preferred, and pin
- *   `version` when repeatable output matters.
- * - Set `path` to mount the documentation UI somewhere other than `/docs`.
- * - Set `proxyUrl`, theme, layout, and `baseServerURL` in `ScalarConfig` for
- *   request testing, styling, and relative server URLs.
- *
- * ## Gotchas
- *
- * The mounted route is an HTML documentation page, not a raw OpenAPI JSON
- * endpoint. If clients, gateways, or documentation pipelines need the OpenAPI
- * document directly, expose it separately with `HttpApiBuilder.layer`'s
- * `openapiPath` option.
- *
  * @since 4.0.0
  */
 import * as Effect from "../../Effect.ts"
@@ -80,6 +56,8 @@ export type ScalarConfig = {
   layout?: "modern" | "classic"
   /** URL to a request proxy for the API client */
   proxyUrl?: string
+  /** Browser JavaScript function expression used by Scalar for documents and test requests */
+  customFetch?: string
   /** Whether to show the sidebar */
   showSidebar?: boolean
   /**
@@ -109,7 +87,7 @@ export type ScalarConfig = {
   /**
    * Path to a favicon image.
    *
-   * **Example** (Relative favicon)
+   * **Example** (Setting a relative favicon)
    *
    * ```ts
    * const favicon = "/favicon.svg"
@@ -129,7 +107,7 @@ export type ScalarConfig = {
    * Browsers can derive the origin from `window.location.origin`; server
    * rendering needs this value supplied explicitly.
    *
-   * **Example** (Local server URL)
+   * **Example** (Setting a local server URL)
    *
    * ```ts
    * const baseServerURL = "http://localhost:3000"
@@ -173,16 +151,26 @@ type ScalarSource =
     readonly source: string
   }
 
-const makeHandler = <Id extends string, Groups extends HttpApiGroup.Any>(options: {
+const makeHandler = <Id extends string, Groups extends HttpApiGroup.Constraint>(options: {
   readonly api: HttpApi.HttpApi<Id, Groups>
   readonly source: ScalarSource
   readonly scalar: ScalarConfig | undefined
 }) => {
   const spec = OpenApi.fromApi(options.api)
+  const { customFetch, ...scalar } = options.scalar ?? {}
   const scalarConfig = {
     _integration: "html",
-    ...options.scalar
+    ...scalar
   }
+  const scalarScript = options.source._tag === "Cdn"
+    ? `<script src="${
+      Html.escapeAttribute(
+        `https://cdn.jsdelivr.net/npm/@scalar/api-reference@${
+          encodeURIComponent(options.source.version ?? "latest")
+        }/dist/browser/standalone.min.js`
+      )
+    }" crossorigin></script>`
+    : `<script>${options.source.source}</script>`
   const response = HttpServerResponse.html(`<!doctype html>
 <html>
   <head>
@@ -191,31 +179,29 @@ const makeHandler = <Id extends string, Groups extends HttpApiGroup.Any>(options
     ${
     !spec.info.description
       ? ""
-      : `<meta name="description" content="${Html.escape(spec.info.description)}"/>`
+      : `<meta name="description" content="${Html.escapeAttribute(spec.info.description)}"/>`
   }
     ${
     !spec.info.description
       ? ""
-      : `<meta name="og:description" content="${Html.escape(spec.info.description)}"/>`
+      : `<meta name="og:description" content="${Html.escapeAttribute(spec.info.description)}"/>`
   }
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1" />
   </head>
   <body>
-    <script id="api-reference" type="application/json">
-      ${Html.escapeJson(spec)}
-    </script>
+    <div id="api-reference-container"></div>
+    ${scalarScript}
     <script>
-      document.getElementById('api-reference').dataset.configuration = JSON.stringify(${Html.escapeJson(scalarConfig)})
-    </script>
-    ${
-    options.source._tag === "Cdn"
-      ? `<script src="${`https://cdn.jsdelivr.net/npm/@scalar/api-reference@${
-        options.source.version ?? "latest"
-      }/dist/browser/standalone.min.js`}" crossorigin></script>`
-      : `<script>${options.source.source}</script>`
+      window.Scalar.createApiReference(document.getElementById('api-reference-container'), {
+        ...${Html.escapeJson(scalarConfig)},
+        content: ${Html.escapeJson(spec)}${
+    customFetch === undefined ? "" : `,
+        customFetch: ${customFetch}`
   }
+      })
+    </script>
   </body>
 </html>`)
   return Effect.succeed(response)
@@ -232,7 +218,7 @@ const makeHandler = <Id extends string, Groups extends HttpApiGroup.Any>(options
  * @category layers
  * @since 4.0.0
  */
-export const layer = <Id extends string, Groups extends HttpApiGroup.Any>(
+export const layer = <Id extends string, Groups extends HttpApiGroup.Constraint>(
   api: HttpApi.HttpApi<Id, Groups>,
   options?: {
     readonly path?: `/${string}` | undefined
@@ -263,7 +249,7 @@ export const layer = <Id extends string, Groups extends HttpApiGroup.Any>(
  * @category layers
  * @since 4.0.0
  */
-export const layerCdn = <Id extends string, Groups extends HttpApiGroup.Any>(
+export const layerCdn = <Id extends string, Groups extends HttpApiGroup.Constraint>(
   api: HttpApi.HttpApi<Id, Groups>,
   options?: {
     readonly path?: `/${string}` | undefined

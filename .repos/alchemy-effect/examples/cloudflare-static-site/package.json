@@ -1,18 +1,17 @@
 {
-  "name": "cloudflare-vite-example",
+  "name": "cloudflare-static-site-example",
   "version": "0.0.0",
   "private": true,
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
     "directory": "examples/cloudflare-static-site"
   },
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "dev:vite": "vite",
-    "preview": "vite preview",
+    "build": "zola build",
+    "serve": "zola serve",
     "deploy": "alchemy deploy",
     "dev": "alchemy dev",
     "destroy": "alchemy destroy"
@@ -24,7 +23,6 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "typescript": "catalog:",
-    "vite": "catalog:"
+    "typescript": "catalog:"
   }
 }

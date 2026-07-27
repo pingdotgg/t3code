@@ -1,0 +1,284 @@
+---
+title: Scheduled jobs with Cron Triggers
+description: Run Worker code on a schedule — declare a cron expression with an Effect handler, deploy it, and prove the trigger fires with a bounded polling test.
+sidebar:
+  order: 17
+---
+
+Cron Triggers invoke a Worker on a schedule — nightly cleanups,
+periodic syncs, heartbeats. In alchemy, a single call declares both
+halves of a scheduled Worker: `Cloudflare.Workers.cron(expression,
+handler)` attaches the cron expression to the Worker at deploy time
+*and* registers the runtime `scheduled` listener that runs your
+Effect on each fire.
+
+## Declare a cron on the Worker
+
+Call `cron` in the Worker's init phase and provide
+`CronEventSourceLive` as a layer:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    yield* Cloudflare.Workers.cron("0 12 * * *", (controller) =>
+      Effect.log(`scheduled at ${controller.scheduledTime}`),
+    );
+
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("ok");
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Workers.CronEventSourceLive)),
+);
+```
+
+At deploy time the call binds `0 12 * * *` onto the Worker's Cron
+Triggers; at runtime it registers a `scheduled` listener that runs
+your handler every day at noon UTC. The `controller` is Cloudflare's
+`ScheduledController` — `controller.scheduledTime` is the fire time
+and `controller.cron` is the expression that fired.
+
+:::note
+A failing handler won't crash the Worker — the event source catches
+the failure and moves on. If you need visibility into failed runs,
+log or report the error inside the handler yourself.
+:::
+
+## Multiple schedules
+
+Register `cron` once per schedule; each handler only runs for fires
+of its own expression:
+
+```typescript
+yield* Cloudflare.Workers.cron("*/5 * * * *", () => syncFeeds);
+yield* Cloudflare.Workers.cron("0 0 * * *", () => purgeExpired);
+```
+
+The listener checks `controller.cron` against the expression it was
+registered with, so a fire of `0 0 * * *` never runs the `*/5`
+handler and vice versa.
+
+:::note
+Workers whose `main` module exports its own `scheduled` handler can
+attach schedules with the Worker's `crons` prop instead:
+`{ main, crons: ["0 12 * * *"] }`. Pass an empty array to remove all
+Cron Triggers.
+:::
+
+## Deploy it
+
+Wire the Worker into a Stack and expose its URL and attached crons
+as outputs:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import Worker from "./src/worker.ts";
+
+export default Alchemy.Stack(
+  "CronApp",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const worker = yield* Worker;
+    return {
+      url: worker.url.as<string>(),
+      crons: worker.crons,
+    };
+  }),
+);
+```
+
+`worker.crons` is an output attribute listing every cron expression
+attached to the deployed Worker — the test below asserts against it.
+
+```sh
+bun alchemy deploy
+```
+
+## Test it: record each fire in a Durable Object
+
+Cloudflare's minimum cron granularity is one minute, so you can't
+just sleep and assert — you need the handler to leave evidence you
+can poll for. A Durable Object that records each `scheduledTime` is
+perfect:
+
+```typescript
+// src/cron-counter.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default class CronCounter extends Cloudflare.DurableObject<CronCounter>()(
+  "CronCounter",
+  Effect.gen(function* () {
+    const state = yield* Cloudflare.DurableObjectState;
+    return Effect.gen(function* () {
+      let times = (yield* state.storage.get<number[]>("times")) ?? [];
+      return {
+        record: Effect.fn(function* (time: number) {
+          times = [...times, time];
+          yield* state.storage.put("times", times);
+        }),
+        snapshot: () => Effect.succeed({ times }),
+        reset: Effect.fn(function* () {
+          times = [];
+          yield* state.storage.put("times", times);
+        }),
+      };
+    });
+  }),
+) {}
+```
+
+`record` appends a fire timestamp to transactional storage,
+`snapshot` returns everything recorded so far, and `reset` clears
+leftover state between test runs.
+
+## Wire the cron to the counter
+
+Point the cron at the DO and expose the recordings over HTTP. The
+trigger is `* * * * *` — every minute, the fastest schedule
+Cloudflare supports — so the test doesn't wait long:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import CronCounter from "./cron-counter.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const counters = yield* CronCounter;
+
+    yield* Cloudflare.Workers.cron("* * * * *", (controller) =>
+      counters.getByName("default").record(controller.scheduledTime),
+    );
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const url = new URL(request.url, "http://localhost");
+
+        if (request.method === "GET" && url.pathname === "/times") {
+          const snapshot = yield* counters.getByName("default").snapshot();
+          return yield* HttpServerResponse.json(snapshot);
+        }
+
+        if (request.method === "POST" && url.pathname === "/reset") {
+          yield* counters.getByName("default").reset();
+          return yield* HttpServerResponse.json({ ok: true });
+        }
+
+        return HttpServerResponse.text("Not Found", { status: 404 });
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Workers.CronEventSourceLive)),
+);
+```
+
+Each fire records `controller.scheduledTime` on the `"default"`
+counter instance; `GET /times` reads it back and `POST /reset`
+wipes it so reruns start clean.
+
+## Poll until it fires
+
+The test deploys the Stack once, resets the counter, then polls
+`/times` with a bounded `Effect.repeat` until a fire newer than the
+reset shows up:
+
+```typescript
+// test/cron.test.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Test from "alchemy/Test/Vitest";
+import { expect } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: Cloudflare.providers(),
+  state: Cloudflare.state(),
+});
+
+const stack = beforeAll(deploy(Stack));
+afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
+
+test(
+  "the scheduled handler fires on its cron trigger",
+  Effect.gen(function* () {
+    const { url, crons } = yield* stack;
+    expect(crons).toContain("* * * * *");
+
+    const client = yield* HttpClient.HttpClient;
+
+    // Reset leftover state from prior runs. Doubles as a readiness
+    // probe — a fresh workers.dev URL takes a few seconds to start
+    // serving 200s.
+    yield* Effect.gen(function* () {
+      const res = yield* client.post(`${url}/reset`);
+      if (res.status !== 200) {
+        return yield* Effect.fail(new Error(`Worker not ready: ${res.status}`));
+      }
+    }).pipe(
+      Effect.retry({
+        schedule: Schedule.exponential("500 millis"),
+        times: 10,
+      }),
+    );
+    const resetAt = Date.now();
+
+    // Cron granularity is one minute and there's some propagation
+    // delay after deploy, so poll up to ~3 minutes for the first fire.
+    const times = yield* Effect.gen(function* () {
+      const res = yield* client.get(`${url}/times`);
+      if (res.status !== 200) return [];
+      const body = (yield* res.json) as { times?: number[] };
+      return (body.times ?? []).filter((t) => t >= resetAt);
+    }).pipe(
+      Effect.catch(() => Effect.succeed([])),
+      Effect.repeat({
+        schedule: Schedule.spaced("5 seconds"),
+        until: (recent) => recent.length > 0,
+        times: 36,
+      }),
+    );
+
+    expect(times.length).toBeGreaterThan(0);
+  }),
+  { timeout: 240_000 },
+);
+```
+
+The poll is declarative and bounded: `Schedule.spaced("5 seconds")`
+with `times: 36` caps it at ~3 minutes, `until` stops as soon as a
+recent fire appears, and `Effect.catch` treats transient fetch
+errors as "not yet" instead of failing the test. Never write a
+`while (Date.now() < deadline)` loop for this — it ignores
+interruption and hides intent.
+
+## Where next
+
+- [Workers](/cloudflare/compute/workers) — the two-phase Worker model that
+  cron handlers live inside.
+- [Durable Objects](/cloudflare/compute/durable-objects) — the stateful
+  building block the test uses to record fires.
+- [Workflows](/cloudflare/compute/workflows) — for multi-step jobs
+  that outgrow a single scheduled handler.
+- [cron API reference](/providers/cloudflare/workers/cron)

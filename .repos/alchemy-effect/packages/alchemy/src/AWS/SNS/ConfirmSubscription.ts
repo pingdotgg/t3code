@@ -1,8 +1,6 @@
 import * as sns from "@distilled.cloud/aws/sns";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Subscription } from "./Subscription.ts";
 
 export interface ConfirmSubscriptionRequest extends Omit<
@@ -10,8 +8,30 @@ export interface ConfirmSubscriptionRequest extends Omit<
   "TopicArn"
 > {}
 
-export class ConfirmSubscription extends Binding.Service<
+/**
+ * Runtime binding for `sns:ConfirmSubscription`.
+ *
+ * Bind this operation to a {@link Subscription} inside a function runtime to
+ * confirm a pending subscription with the token SNS delivered to the
+ * endpoint (e.g. from an `https` or `email` confirmation message). The
+ * binding grants the host function `sns:ConfirmSubscription` on the topic.
+ * Provide the `ConfirmSubscriptionHttp` layer on the Function to implement
+ * the binding.
+ * @binding
+ * @section Confirming Subscriptions
+ * @example Confirm with a Delivered Token
+ * ```typescript
+ * // init (provide SNS.ConfirmSubscriptionHttp on the Function)
+ * const confirmSubscription = yield* SNS.ConfirmSubscription(subscription);
+ *
+ * // runtime: token comes from the SubscriptionConfirmation message
+ * const response = yield* confirmSubscription({ Token: token });
+ * // response.SubscriptionArn
+ * ```
+ */
+export interface ConfirmSubscription extends Binding.Service<
   ConfirmSubscription,
+  "AWS.SNS.ConfirmSubscription",
   (
     subscription: Subscription,
   ) => Effect.Effect<
@@ -22,51 +42,7 @@ export class ConfirmSubscription extends Binding.Service<
       sns.ConfirmSubscriptionError
     >
   >
->()("AWS.SNS.ConfirmSubscription") {}
-
-export const ConfirmSubscriptionLive = Layer.effect(
-  ConfirmSubscription,
-  Effect.gen(function* () {
-    const Policy = yield* ConfirmSubscriptionPolicy;
-    const confirmSubscription = yield* sns.confirmSubscription;
-
-    return Effect.fn(function* (subscription: Subscription) {
-      const TopicArn = yield* subscription.topicArn;
-      yield* Policy(subscription);
-      return Effect.fn(function* (request: ConfirmSubscriptionRequest) {
-        return yield* confirmSubscription({
-          ...request,
-          TopicArn: yield* TopicArn,
-        });
-      });
-    });
-  }),
+> {}
+export const ConfirmSubscription = Binding.Service<ConfirmSubscription>(
+  "AWS.SNS.ConfirmSubscription",
 );
-
-export class ConfirmSubscriptionPolicy extends Binding.Policy<
-  ConfirmSubscriptionPolicy,
-  (subscription: Subscription) => Effect.Effect<void>
->()("AWS.SNS.ConfirmSubscription") {}
-
-export const ConfirmSubscriptionPolicyLive =
-  ConfirmSubscriptionPolicy.layer.succeed(
-    Effect.fn(function* (host, subscription) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.SNS.ConfirmSubscription(${subscription}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["sns:ConfirmSubscription"],
-                Resource: [subscription.topicArn],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `ConfirmSubscriptionPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

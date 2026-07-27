@@ -1,0 +1,187 @@
+---
+/**
+ * Mobile product switcher — the docs tab bar's counterpart inside the
+ * hamburger drawer. Desktop hides it (the horizontal tab bar owns
+ * navigation there); on mobile the tab bar is hidden and this switcher
+ * is how you move between hubs.
+ *
+ * A disclosure (<details>), not a native <select>, so brand marks and
+ * the More-menu category headings render exactly like the desktop
+ * dropdown. Picking a product navigates to that hub's landing page.
+ */
+import { DOCS_TABS, activeTab } from "../../docs-tabs";
+import { TAB_ICONS } from "../../docs-icons";
+
+const current = activeTab(Astro.url.pathname);
+
+/**
+ * Mobile taxonomy. The desktop More ▾ categories only classify the
+ * overflow residents; here the whole tab list renders at once, so the
+ * grouping is redesigned — e.g. PlanetScale and Neon belong under Data
+ * next to Drizzle, not in the ungrouped primary run.
+ */
+const MOBILE_GROUPS: { heading?: string; labels: string[] }[] = [
+  { labels: ["Core", "CLI"] },
+  { heading: "Clouds", labels: ["Cloudflare", "AWS"] },
+  { heading: "Data", labels: ["PlanetScale", "Neon", "Drizzle"] },
+  { heading: "Containers", labels: ["Docker", "Kubernetes"] },
+  { heading: "Observability", labels: ["Axiom"] },
+  { heading: "Source & CI", labels: ["GitHub"] },
+  { heading: "Toolchain", labels: ["Command"] },
+  { heading: "Meta", labels: ["Reference", "Blog"] },
+];
+
+const byLabel = new Map(DOCS_TABS.map((tab) => [tab.label, tab]));
+const grouped = MOBILE_GROUPS.map((group) => ({
+  heading: group.heading,
+  tabs: group.labels.flatMap((label) => byLabel.get(label) ?? []),
+})).filter((group) => group.tabs.length > 0);
+
+// Any tab the taxonomy doesn't name still renders (trailing, ungrouped)
+// so a newly added provider can never silently vanish from mobile.
+const covered = new Set(MOBILE_GROUPS.flatMap((group) => group.labels));
+const leftover = DOCS_TABS.filter((tab) => !covered.has(tab.label));
+if (leftover.length > 0) grouped.push({ heading: "More", tabs: leftover });
+---
+
+<details class="alc-switcher">
+  <summary class="alc-switcher__current">
+    {
+      TAB_ICONS[current.label] && (
+        <svg
+          class="alc-switcher__icon"
+          aria-hidden="true"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          set:html={TAB_ICONS[current.label]}
+        />
+      )
+    }
+    <span>{current.label}</span>
+    <svg
+      class="alc-switcher__chevron"
+      aria-hidden="true"
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  </summary>
+  <div class="alc-switcher__panel">
+    {
+      grouped.map((group) => (
+        <>
+          {group.heading && (
+            <div class="alc-switcher__heading">{group.heading}</div>
+          )}
+          {group.tabs.map((tab) => (
+            <a
+              href={tab.href}
+              class:list={["alc-switcher__item", { "alc-switcher__item--active": tab.label === current.label }]}
+              aria-current={tab.label === current.label ? "true" : undefined}
+            >
+              {TAB_ICONS[tab.label] && (
+                <svg
+                  class="alc-switcher__icon"
+                  aria-hidden="true"
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  set:html={TAB_ICONS[tab.label]}
+                />
+              )}
+              <span>{tab.label}</span>
+            </a>
+          ))}
+        </>
+      ))
+    }
+  </div>
+</details>
+
+<style>
+  /* Mobile-only: the desktop tab bar owns product navigation there. */
+  .alc-switcher {
+    margin: 0 0 0.75rem;
+  }
+  @media (min-width: 50rem) {
+    .alc-switcher {
+      display: none;
+    }
+  }
+  .alc-switcher__current {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 13px;
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 10px;
+    font-size: var(--sl-text-base);
+    font-weight: 600;
+    color: var(--sl-color-white);
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+  }
+  .alc-switcher__current::marker,
+  .alc-switcher__current::-webkit-details-marker {
+    display: none;
+  }
+  .alc-switcher[open] .alc-switcher__current {
+    border-color: var(--alc-accent-deep);
+  }
+  .alc-switcher__icon {
+    flex-shrink: 0;
+    opacity: 0.9;
+  }
+  .alc-switcher__chevron {
+    margin-inline-start: auto;
+    color: var(--alc-fg-4);
+    transition: transform var(--alc-dur, 0.2s) var(--alc-ease, ease);
+  }
+  .alc-switcher[open] .alc-switcher__chevron {
+    transform: rotateZ(180deg);
+  }
+  .alc-switcher__panel {
+    margin-top: 6px;
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 12px;
+    background: var(--alc-bg-elev-1, var(--sl-color-bg-nav));
+    padding: 6px 0;
+    overflow: hidden;
+  }
+  .alc-switcher__heading {
+    padding: 8px 14px 3px;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--alc-fg-4);
+    border-top: 1px solid var(--alc-hairline);
+    margin-top: 5px;
+  }
+  .alc-switcher__item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    font-size: var(--sl-text-sm);
+    color: var(--alc-fg-2);
+    text-decoration: none;
+  }
+  .alc-switcher__item:hover {
+    color: var(--alc-accent-deep);
+  }
+  .alc-switcher__item--active {
+    color: var(--alc-accent-deep);
+    font-weight: 600;
+    background: color-mix(in srgb, var(--alc-accent-deep) 10%, transparent);
+  }
+</style>

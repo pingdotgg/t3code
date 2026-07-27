@@ -1,5 +1,5 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import type { HttpEffect } from "alchemy/Http";
+import * as Cloudflare from "@/Cloudflare";
+import type { HttpEffect } from "@/Http";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -15,7 +15,7 @@ let counter = 0;
 export default class RpcHttpTestWorker extends Cloudflare.Worker<RpcHttpTestWorker>()(
   "RpcHttpTestWorker",
   {
-    main: import.meta.filename,
+    main: import.meta.url,
   },
   Effect.gen(function* () {
     const rpcDO = yield* RpcHttpTestObject;

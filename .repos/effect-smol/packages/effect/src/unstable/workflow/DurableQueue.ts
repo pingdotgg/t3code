@@ -8,31 +8,6 @@
  * records the handler's `Exit` through that token so the original workflow can
  * continue with the typed success or error.
  *
- * **Mental model**
- *
- * A `DurableQueue` definition names the persisted queue and carries the payload,
- * success, and error schemas shared by producers and workers. The
- * `idempotencyKey` becomes the persisted queue item id, while `process` also
- * stores trace context and a deferred token alongside the payload. Worker
- * concurrency is local to the worker layer; delivery and retry behavior come
- * from the underlying `PersistedQueue`.
- *
- * **Common tasks**
- *
- * Use `make` to define the queue once, call `process` from workflow code, and
- * run `worker` in the service responsible for executing queued work. Tune
- * `process` retries for transient persistence failures, and tune worker
- * concurrency for the downstream system being called.
- *
- * **Gotchas**
- *
- * Queue names, schemas, result types, and idempotency keys are persisted
- * coordination state. Keep them deterministic and stable across deployments;
- * changing them is a persistence migration. Delivery is at least once according
- * to the backing `PersistedQueue`, so handlers should be idempotent and prepared
- * for retries, duplicate observations, worker restarts, and completions that are
- * decoded by a later version of the queue definition.
- *
  * @since 4.0.0
  */
 import * as Effect from "../../Effect.ts"
@@ -104,8 +79,7 @@ export interface DurableQueue<
  *   }
  * })
  *
- * const MyWorkflow = Workflow.make({
- *   name: "MyWorkflow",
+ * const MyWorkflow = Workflow.make("MyWorkflow", {
  *   payload: {
  *     id: Schema.String
  *   },
@@ -265,9 +239,10 @@ export const process: <
   return yield* DurableDeferred.await(deferred)
 })
 
-const defaultRetrySchedule = Schedule.exponential(500, 1.5).pipe(
-  Schedule.either(Schedule.spaced("1 minute"))
-)
+const defaultRetrySchedule = Schedule.min([
+  Schedule.exponential(500, 1.5),
+  Schedule.spaced("1 minute")
+])
 
 /**
  * Create a worker effect that processes items from the durable queue.

@@ -27,7 +27,7 @@ describe("Rpc", () => {
             return this
           }
         },
-        requestId: RequestId(1n),
+        requestId: RequestId("1"),
         headers: Headers.empty
       })
       assert.strictEqual(result, "two")

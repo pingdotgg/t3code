@@ -3,36 +3,8 @@
  * implementation of Effect AI's `LanguageModel` service. It translates Effect
  * AI prompts, files, tools, structured output requests, reasoning metadata, and
  * provider options into OpenAI response requests, then converts OpenAI
- * responses and streams back into Effect AI response parts.
- *
- * **Mental model**
- *
- * `OpenAiClient` owns HTTP transport and provider calls. This module owns
- * protocol translation: request assembly, tool choice conversion, structured
- * output codecs, streaming event handling, response metadata, and GenAI
- * telemetry annotations. {@link model}, {@link layer}, and {@link make} all
- * build the same OpenAI-backed `LanguageModel.LanguageModel` service from a
- * model id and optional request defaults.
- *
- * **Common tasks**
- *
- * - Provide an OpenAI-backed `LanguageModel.LanguageModel` from an existing
- *   `OpenAiClient`
- * - Generate text or stream text through Effect AI's provider-neutral language
- *   model API
- * - Use OpenAI provider metadata for files, reasoning items, tool calls, and
- *   response parts
- * - Scope Responses API defaults with {@link Config} and
- *   {@link withConfigOverride}
- *
- * **Gotchas**
- *
- * - Some OpenAI model families receive system instructions as developer
- *   messages because the Responses API treats them differently.
- * - File prompt parts are sent either as provider file ids or as base64
- *   content, depending on `fileIdPrefixes`.
- * - Structured output and tool-call behavior depends on both Effect AI tool
- *   definitions and OpenAI model capabilities.
+ * non-streaming or streaming response results back into Effect AI response
+ * content and metadata.
  *
  * @since 4.0.0
  */
@@ -591,8 +563,8 @@ export const model = (
  *
  * **When to use**
  *
- * Use when an Effect needs to construct a `LanguageModel.Service` value backed
- * by `OpenAiClient`.
+ * Use to construct an OpenAI Responses API language model service backed by
+ * `OpenAiClient`.
  *
  * **Details**
  *
@@ -844,7 +816,7 @@ const prepareMessages = Effect.fnUntraced(
         case "system": {
           messages.push({
             role: getSystemMessageMode(config.model as string),
-            content: message.content
+            content: [{ type: "input_text", text: message.content }]
           })
           break
         }
@@ -913,7 +885,8 @@ const prepareMessages = Effect.fnUntraced(
         }
 
         case "assistant": {
-          const reasoningMessages: Record<string, DeepMutable<typeof OpenAiSchema.ReasoningItem.Encoded>> = {}
+          const reasoningMessages: Record<string, DeepMutable<typeof OpenAiSchema.ReasoningItem.Encoded>> = Object
+            .create(null)
 
           for (const part of message.content) {
             switch (part.type) {
@@ -1710,7 +1683,7 @@ const makeStreamResponse = Effect.fnUntraced(
     }
 
     // Track active reasoning items with state machine for proper concluding logic
-    const activeReasoning: Record<string, ReasoningPart> = {}
+    const activeReasoning: Record<string, ReasoningPart> = Object.create(null)
 
     const getOrCreateReasoningPart = (
       itemId: string,
@@ -2918,13 +2891,13 @@ const unsupportedSchemaError = (error: unknown, method: string): AiError.AiError
     })
   })
 
-const tryCodecTransform = <S extends Schema.Top>(schema: S, method: string) =>
+const tryCodecTransform = <S extends Schema.Constraint>(schema: S, method: string) =>
   Effect.try({
     try: () => toCodecOpenAI(schema),
     catch: (error) => unsupportedSchemaError(error, method)
   })
 
-const tryJsonSchema = <S extends Schema.Top>(schema: S, method: string) =>
+const tryJsonSchema = <S extends Schema.Constraint>(schema: S, method: string) =>
   Effect.try({
     try: () => Tool.getJsonSchemaFromSchema(schema, { transformer: toCodecOpenAI }),
     catch: (error) => unsupportedSchemaError(error, method)
@@ -3081,15 +3054,16 @@ const getUsage = (usage: OpenAiSchema.ResponseUsage | null | undefined): Respons
 
   const inputTokens = usage.input_tokens
   const outputTokens = usage.output_tokens
-  const cachedTokens = getUsageTokenDetail(usage.input_tokens_details, "cached_tokens")
-  const reasoningTokens = getUsageTokenDetail(usage.output_tokens_details, "reasoning_tokens")
+  const cachedTokens = getUsageTokenDetail(usage.input_tokens_details, "cached_tokens") ?? 0
+  const cacheWriteTokens = getUsageTokenDetail(usage.input_tokens_details, "cache_write_tokens")
+  const reasoningTokens = getUsageTokenDetail(usage.output_tokens_details, "reasoning_tokens") ?? 0
 
   return {
     inputTokens: {
       uncached: inputTokens - cachedTokens,
       total: inputTokens,
       cacheRead: cachedTokens,
-      cacheWrite: undefined
+      cacheWrite: cacheWriteTokens
     },
     outputTokens: {
       total: outputTokens,
@@ -3120,8 +3094,8 @@ const toServiceTier = (value: string | undefined): {
   }
 }
 
-const getUsageTokenDetail = (details: unknown, key: string): number =>
-  Predicate.hasProperty(details, key) && typeof details[key] === "number" ? details[key] : 0
+const getUsageTokenDetail = (details: unknown, key: string): number | undefined =>
+  Predicate.hasProperty(details, key) && typeof details[key] === "number" ? details[key] : undefined
 
 const transformToolCallParams = Effect.fnUntraced(function*<Tools extends ReadonlyArray<Tool.Any>>(
   tools: Tools,

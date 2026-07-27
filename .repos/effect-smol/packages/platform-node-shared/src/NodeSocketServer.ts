@@ -8,32 +8,6 @@
  * `Socket.Socket` backed by `ws` and have access to the per-connection
  * WebSocket and `IncomingMessage` services.
  *
- * **Mental model**
- *
- * Calling {@link make} or {@link makeWebSocket} starts the underlying server in
- * the current scope and returns the bound address. `run` installs the
- * connection handler for that server, forks each accepted connection into a
- * child scope, and closes those fibers when `run` finalizes. Connections
- * accepted before `run` is installed are queued and then handed to the handler.
- *
- * **Common tasks**
- *
- * - Bind TCP ports or Unix socket paths with {@link make} or {@link layer}.
- * - Expose `ws` WebSocket endpoints with {@link makeWebSocket} or
- *   {@link layerWebSocket}.
- * - Read the returned `address` after binding port `0` or a wildcard host.
- * - Inspect `NodeSocket.NetSocket`, `Socket.WebSocket`, or
- *   {@link IncomingMessage} from handler context when lower-level details are
- *   needed.
- *
- * **Gotchas**
- *
- * A constructor listens before it returns, so open errors fail construction
- * rather than the first `run`. The server lifetime belongs to the scope that
- * created it, while each `run` call owns its connection fibers. WebSocket
- * handlers run with the `ws` connection and Node request in context, but TCP
- * handlers expose only the underlying Node socket context.
- *
  * @since 4.0.0
  */
 import type { Cause } from "effect/Cause"
@@ -58,7 +32,7 @@ import { NodeWS } from "./NodeSocket.ts"
  * Service tag for the Node `IncomingMessage` associated with the current
  * WebSocket server connection.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export class IncomingMessage extends Context.Service<

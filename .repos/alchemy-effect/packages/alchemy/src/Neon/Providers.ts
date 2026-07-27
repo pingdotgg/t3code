@@ -6,16 +6,11 @@ import * as Provider from "../Provider.ts";
 import { NeonAuth } from "./AuthProvider.ts";
 import { Branch, BranchProvider } from "./Branch.ts";
 import * as Credentials from "./Credentials.ts";
-import { NeonEnvironment, fromProfile } from "./NeonEnvironment.ts";
 import { Project, ProjectProvider } from "./Project.ts";
-
-export { NeonEnvironment } from "./NeonEnvironment.ts";
 
 export class Providers extends Provider.ProviderCollection<Providers>()(
   "Neon",
 ) {}
-
-export type ProviderRequirements = Layer.Services<ReturnType<typeof providers>>;
 
 /**
  * Build a layer that registers all Neon resource providers, the Neon
@@ -48,7 +43,6 @@ export const providers = () =>
   Layer.effect(Providers, Provider.collection([Project, Branch])).pipe(
     Layer.provide(Layer.mergeAll(ProjectProvider(), BranchProvider())),
     Layer.provideMerge(Credentials.fromAuthProvider()),
-    Layer.provideMerge(fromProfile()),
     Layer.provideMerge(NeonAuth),
     Layer.provideMerge(ProfileLive),
     Layer.provideMerge(CredentialsStoreLive),

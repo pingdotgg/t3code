@@ -1,8 +1,6 @@
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Dashboard } from "./Dashboard.ts";
 
 export interface GetDashboardRequest extends Omit<
@@ -11,10 +9,27 @@ export interface GetDashboardRequest extends Omit<
 > {}
 
 /**
- * Runtime binding for `cloudwatch:GetDashboard`.
+ * Runtime binding for `cloudwatch:GetDashboard` — read the body and
+ * metadata of the bound {@link Dashboard}; the dashboard name is injected
+ * automatically.
+ *
+ * Provide `CloudWatch.GetDashboardHttp` on the hosting Lambda Function to
+ * satisfy the requirement.
+ * @binding
+ * @section Reading Dashboards
+ * @example Read a Bound Dashboard
+ * ```typescript
+ * // init — grants cloudwatch:GetDashboard on the dashboard
+ * const getDashboard = yield* AWS.CloudWatch.GetDashboard(dashboard);
+ *
+ * // runtime
+ * const result = yield* getDashboard();
+ * const widgets = JSON.parse(result.DashboardBody ?? "{}").widgets;
+ * ```
  */
-export class GetDashboard extends Binding.Service<
+export interface GetDashboard extends Binding.Service<
   GetDashboard,
+  "AWS.CloudWatch.GetDashboard",
   (
     dashboard: Dashboard,
   ) => Effect.Effect<
@@ -25,51 +40,8 @@ export class GetDashboard extends Binding.Service<
       cloudwatch.GetDashboardError
     >
   >
->()("AWS.CloudWatch.GetDashboard") {}
+> {}
 
-export const GetDashboardLive = Layer.effect(
-  GetDashboard,
-  Effect.gen(function* () {
-    const Policy = yield* GetDashboardPolicy;
-    const getDashboard = yield* cloudwatch.getDashboard;
-
-    return Effect.fn(function* (dashboard: Dashboard) {
-      const DashboardName = yield* dashboard.dashboardName;
-      yield* Policy(dashboard);
-
-      return Effect.fn(function* (request: GetDashboardRequest = {}) {
-        return yield* getDashboard({
-          ...request,
-          DashboardName: yield* DashboardName,
-        });
-      });
-    });
-  }),
-);
-
-export class GetDashboardPolicy extends Binding.Policy<
-  GetDashboardPolicy,
-  (dashboard: Dashboard) => Effect.Effect<void>
->()("AWS.CloudWatch.GetDashboard") {}
-
-export const GetDashboardPolicyLive = GetDashboardPolicy.layer.succeed(
-  Effect.fn(function* (host, dashboard) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.CloudWatch.GetDashboard(${dashboard}))`(
-        {
-          policyStatements: [
-            {
-              Effect: "Allow",
-              Action: ["cloudwatch:GetDashboard"],
-              Resource: [dashboard.dashboardArn],
-            },
-          ],
-        },
-      );
-    } else {
-      return yield* Effect.die(
-        `GetDashboardPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const GetDashboard = Binding.Service<GetDashboard>(
+  "AWS.CloudWatch.GetDashboard",
 );

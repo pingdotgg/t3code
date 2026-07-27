@@ -1,7 +1,8 @@
 import * as AWS from "@/AWS";
-import * as Test from "@/Test/Vitest";
+import * as Test from "@/Test/Alchemy";
+import * as SNS from "@distilled.cloud/aws/sns";
 import * as SQS from "@distilled.cloud/aws/sqs";
-import { describe, expect } from "@effect/vitest";
+import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -15,9 +16,10 @@ import {
 
 const { test } = Test.make({ providers: AWS.providers() });
 
-const readinessPolicy = Schedule.fixed("2 seconds").pipe(
-  Schedule.both(Schedule.recurs(75)),
-);
+const readinessPolicy = Schedule.max([
+  Schedule.fixed("2 seconds"),
+  Schedule.recurs(14),
+]);
 
 describe.sequential("SNS Bindings", () => {
   test.provider(
@@ -59,10 +61,11 @@ describe.sequential("SNS Bindings", () => {
         // here waits until the policy is actually live before any assertions.
         const readinessUrl = `${baseUrl}/topic-attributes`;
         yield* Effect.logInfo(
-          `SNS test setup: probing IAM readiness at ${readinessUrl} (150s budget)`,
+          `SNS test setup: probing IAM readiness at ${readinessUrl} (150s bounded budget)`,
         );
 
         yield* HttpClient.get(readinessUrl).pipe(
+          Effect.timeout("8 seconds"),
           Effect.flatMap((response) =>
             response.status === 200
               ? Effect.succeed(response)
@@ -83,7 +86,13 @@ describe.sequential("SNS Bindings", () => {
 
         const getJson = (path: string) =>
           HttpClient.get(`${baseUrl}${path}`).pipe(
+            Effect.tap((response) =>
+              Effect.flatMap(response.text, (text) =>
+                Effect.logInfo(`GET ${path} -> ${text.slice(0, 400)}`),
+              ),
+            ),
             Effect.flatMap((response) => response.json),
+            Effect.timeout("20 seconds"),
           );
 
         const postJson = (path: string, body: unknown) =>
@@ -97,6 +106,7 @@ describe.sequential("SNS Bindings", () => {
               Effect.flatMap(response.text, Effect.logInfo),
             ),
             Effect.flatMap((response) => response.json),
+            Effect.timeout("20 seconds"),
           );
 
         const deleteJson = (path: string, body: unknown) =>
@@ -105,7 +115,16 @@ describe.sequential("SNS Bindings", () => {
               HttpClientRequest.delete(`${baseUrl}${path}`),
               body,
             ),
-          ).pipe(Effect.flatMap((response) => response.json));
+          ).pipe(
+            Effect.flatMap((response) => response.json),
+            Effect.timeout("20 seconds"),
+          );
+
+        const bufferedQueueMessages: Array<{
+          message: string;
+          topicArn: string;
+          subject?: string;
+        }> = [];
 
         const waitForQueueMessage = Effect.fn(function* (
           predicate: (body: {
@@ -114,42 +133,59 @@ describe.sequential("SNS Bindings", () => {
             subject?: string;
           }) => boolean,
         ) {
-          return yield* SQS.receiveMessage({
-            QueueUrl: queueUrl,
-            MaxNumberOfMessages: 1,
-            WaitTimeSeconds: 20,
-            VisibilityTimeout: 30,
+          const takeBuffered = () => {
+            const index = bufferedQueueMessages.findIndex(predicate);
+            return index < 0
+              ? undefined
+              : bufferedQueueMessages.splice(index, 1)[0];
+          };
+
+          return yield* Effect.gen(function* () {
+            const buffered = takeBuffered();
+            if (buffered) return buffered;
+
+            const result = yield* SQS.receiveMessage({
+              QueueUrl: queueUrl,
+              MaxNumberOfMessages: 10,
+              WaitTimeSeconds: 5,
+              VisibilityTimeout: 30,
+            });
+            const messages = (result.Messages ?? []).filter(
+              (message) => message.Body && message.ReceiptHandle,
+            );
+            if (messages.length === 0) {
+              return yield* Effect.fail(new QueueMessageNotReady());
+            }
+
+            yield* Effect.forEach(
+              messages,
+              (message) =>
+                SQS.deleteMessage({
+                  QueueUrl: queueUrl,
+                  ReceiptHandle: message.ReceiptHandle!,
+                }),
+              { concurrency: "unbounded" },
+            );
+            bufferedQueueMessages.push(
+              ...messages.map(
+                (message) =>
+                  JSON.parse(message.Body!) as {
+                    message: string;
+                    topicArn: string;
+                    subject?: string;
+                  },
+              ),
+            );
+
+            const received = takeBuffered();
+            return yield* received
+              ? Effect.succeed(received)
+              : Effect.fail(new QueueMessageNotReady());
           }).pipe(
-            Effect.flatMap((result) => {
-              const message = result.Messages?.[0];
-              if (!message?.Body || !message.ReceiptHandle) {
-                return Effect.fail(new QueueMessageNotReady());
-              }
-
-              const body = JSON.parse(message.Body) as {
-                message: string;
-                topicArn: string;
-                subject?: string;
-              };
-
-              return SQS.deleteMessage({
-                QueueUrl: queueUrl,
-                ReceiptHandle: message.ReceiptHandle,
-              }).pipe(
-                Effect.flatMap(() =>
-                  predicate(body)
-                    ? Effect.succeed(body)
-                    : Effect.fail(new QueueMessageNotReady()),
-                ),
-              );
-            }),
-            // Each attempt already long-polls up to 20s, so a handful of
-            // retries spans a generous (~3min) delivery window without the
-            // short-poll spin that made this flaky — and stays under the
-            // test's 360s budget even across the multiple waits per run.
+            // Five-second long polls keep the complete retry window below 45s.
             Effect.retry({
               while: (error) => error._tag === "QueueMessageNotReady",
-              schedule: Schedule.recurs(9),
+              schedule: Schedule.recurs(8),
             }),
           );
         });
@@ -227,9 +263,10 @@ describe.sequential("SNS Bindings", () => {
           }).pipe(
             Effect.retry({
               while: (e) => e._tag === "TopicAttributeNotPropagated",
-              schedule: Schedule.fixed("1 second").pipe(
-                Schedule.both(Schedule.recurs(15)),
-              ),
+              schedule: Schedule.max([
+                Schedule.fixed("1 second"),
+                Schedule.recurs(15),
+              ]),
             }),
           );
         });
@@ -311,9 +348,10 @@ describe.sequential("SNS Bindings", () => {
           }).pipe(
             Effect.retry({
               while: (e) => e._tag === "SubscriptionNotListed",
-              schedule: Schedule.fixed("2 seconds").pipe(
-                Schedule.both(Schedule.recurs(15)),
-              ),
+              schedule: Schedule.max([
+                Schedule.fixed("2 seconds"),
+                Schedule.recurs(15),
+              ]),
             }),
           );
           expect(arns).toContain(subscriptionArn);
@@ -394,27 +432,173 @@ describe.sequential("SNS Bindings", () => {
           expect((response as any).error).toBeTruthy();
         });
 
-        // TopicSink
+        // Subscribe + Unsubscribe — subscribe the notifications queue at
+        // runtime, assert a concrete ARN came back, then unsubscribe it in
+        // the same request so no stray subscription survives.
         yield* Effect.gen(function* () {
-          const first = `sink-1-${crypto.randomUUID()}`;
-          const second = `sink-2-${crypto.randomUUID()}`;
+          const response = yield* postJson("/subscribe-cycle", {});
+          expect((response as any).ok).toBe(true);
+          expect((response as any).subscriptionArn).toContain("arn:aws:sns:");
+        });
 
-          const response = yield* postJson("/sink", {
-            messages: [first, second],
+        // GetSMSAttributes
+        yield* Effect.gen(function* () {
+          const response = yield* getJson("/sms/attributes");
+          expect((response as any).attributes).toBeDefined();
+        });
+
+        // SetSMSAttributes — set the default type to Transactional (a safe
+        // idempotent default for the testing account) and read it back.
+        yield* Effect.gen(function* () {
+          yield* postJson("/sms/attributes", { type: "Transactional" });
+          const response = yield* getJson("/sms/attributes");
+          expect((response as any).attributes.DefaultSMSType).toBe(
+            "Transactional",
+          );
+        });
+
+        // ListPhoneNumbersOptedOut
+        yield* Effect.gen(function* () {
+          const response = yield* getJson("/sms/opted-out");
+          expect(Array.isArray((response as any).phoneNumbers)).toBe(true);
+        });
+
+        // CheckIfPhoneNumberIsOptedOut — reserved fictional number; never
+        // opted out.
+        yield* Effect.gen(function* () {
+          const response = yield* postJson("/sms/check-opt-out", {
+            phoneNumber: "+15555550100",
           });
+          expect((response as any).isOptedOut).toBe(false);
+        });
+
+        // OptInPhoneNumber — the fictional number was never opted out, so
+        // SNS either succeeds (no-op) or rejects with a typed error; both
+        // prove the binding + IAM wiring.
+        yield* Effect.gen(function* () {
+          const response = yield* postJson("/sms/opt-in", {
+            phoneNumber: "+15555550100",
+          });
+          expect(response).toBeDefined();
+        });
+
+        // ListOriginationNumbers
+        yield* Effect.gen(function* () {
+          const response = yield* getJson("/sms/origination-numbers");
+          expect(Array.isArray((response as any).PhoneNumbers)).toBe(true);
+        });
+
+        // GetSMSSandboxAccountStatus
+        yield* Effect.gen(function* () {
+          const response = yield* getJson("/sms/sandbox-status");
+          expect(typeof (response as any).IsInSandbox).toBe("boolean");
+        });
+
+        // ListSMSSandboxPhoneNumbers
+        yield* Effect.gen(function* () {
+          const response = yield* getJson("/sms/sandbox-numbers");
+          expect(Array.isArray((response as any).PhoneNumbers)).toBe(true);
+        });
+
+        // CreateSMSSandboxPhoneNumber — malformed number surfaces the typed
+        // error (never sends a real OTP text).
+        yield* Effect.gen(function* () {
+          const response = yield* postJson("/sms/sandbox-create", {
+            phoneNumber: "not-a-phone-number",
+          });
+          expect((response as any).ok).toBe(false);
+          expect((response as any).error).toBeTruthy();
+        });
+
+        // VerifySMSSandboxPhoneNumber — unregistered number surfaces the
+        // typed error.
+        yield* Effect.gen(function* () {
+          const response = yield* postJson("/sms/sandbox-verify", {
+            phoneNumber: "+15555550100",
+            otp: "000000",
+          });
+          expect((response as any).ok).toBe(false);
+          expect((response as any).error).toBeTruthy();
+        });
+
+        // DeleteSMSSandboxPhoneNumber — unregistered number surfaces the
+        // typed error (idempotent wiring proof).
+        yield* Effect.gen(function* () {
+          const response = yield* postJson("/sms/sandbox-delete", {
+            phoneNumber: "+15555550100",
+          });
+          expect((response as any).ok).toBe(false);
+          expect((response as any).error).toBeTruthy();
+        });
+
+        // PublishSms — in the SMS sandbox the fictional number is not
+        // verified so SNS rejects with a typed error; out of the sandbox it
+        // accepts and returns a MessageId. Either proves the binding.
+        yield* Effect.gen(function* () {
+          const response = yield* postJson("/sms/publish", {
+            phoneNumber: "+15555550100",
+            message: "alchemy sns binding test",
+          });
+          const ok =
+            typeof (response as any).MessageId === "string" ||
+            (response as any).ok === false;
+          expect(ok).toBe(true);
+        });
+
+        // ListPlatformApplications
+        yield* Effect.gen(function* () {
+          const response = yield* getJson("/platform/applications");
+          expect(Array.isArray((response as any).PlatformApplications)).toBe(
+            true,
+          );
+        });
+
+        // TopicSink — 12 messages > the PublishBatch limit of 10, so the
+        // batched sink must split the chunk into 2 sequential API calls
+        // (10 + 2) and every message must still arrive.
+        yield* Effect.gen(function* () {
+          const prefix = `sink-${crypto.randomUUID()}`;
+          const markers = Array.from(
+            { length: 12 },
+            (_, i) => `${prefix}-${i}`,
+          );
+
+          const response = yield* postJson("/sink", { messages: markers });
           expect((response as any).ok).toBe(true);
 
-          const bodies = yield* waitForQueueMessages(2);
-          const messages = bodies.map((body) => body.message);
-          expect(messages).toContain(first);
-          expect(messages).toContain(second);
+          const received: string[] = [];
+          while (received.length < markers.length) {
+            const body = yield* waitForQueueMessage((candidate) =>
+              candidate.message.startsWith(prefix),
+            );
+            received.push(body.message);
+          }
+          expect(received.sort()).toEqual([...markers].sort());
         });
 
         if (!process.env.NO_DESTROY) {
           yield* stack.destroy();
+          yield* assertTopicGone(topicArn);
         }
       }),
-    { timeout: 360_000 },
+    { timeout: 240_000 },
+  );
+});
+
+class TopicStillExists extends Data.TaggedError("TopicStillExists") {}
+
+// Out-of-band proof the trailing destroy left nothing behind: the fixture
+// topic must be observably gone (typed NotFoundException) after destroy.
+const assertTopicGone = Effect.fn(function* (topicArn: string) {
+  yield* SNS.getTopicAttributes({ TopicArn: topicArn }).pipe(
+    Effect.flatMap(() => Effect.fail(new TopicStillExists())),
+    Effect.retry({
+      while: (error) => error._tag === "TopicStillExists",
+      schedule: Schedule.exponential(100),
+      times: 8,
+    }),
+    Effect.catchTag("NotFoundException", () => Effect.void),
+    Effect.catchTag("InvalidParameterException", () => Effect.void),
   );
 });
 

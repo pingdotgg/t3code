@@ -36,7 +36,7 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/setup
       - run: pnpm check
-      - run: pnpm test-types --target '>=5.8'
+      - run: pnpm test-types --target '>=5.9'
 
   build:
     name: Build
@@ -65,7 +65,7 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/setup
         with:
-          deno-version: v2.6.x
+          deno-version: v2.8.3
       - name: Set strip internals config
         run: |
           sed -i 's/"stripInternal": false/"stripInternal": true/' tsconfig.base.json
@@ -95,8 +95,8 @@ jobs:
           sed -i 's/"stripInternal": false/"stripInternal": true/' base/tsconfig.base.json
       - name: Build
         run: |
-          pnpm build:tsgo &
-          cd base && pnpm install && pnpm build:tsgo &
+          pnpm build &
+          cd base && pnpm install && pnpm build &
           wait
       - name: Compare bundle size
         run: node ./packages/tools/bundle/src/bin.ts compare --base-dir base/packages/tools/bundle/fixtures
@@ -143,7 +143,7 @@ jobs:
         if: matrix.runtime == 'Deno'
         uses: ./.github/actions/setup
         with:
-          deno-version: v2.6.x
+          deno-version: v2.8.3
       - name: Test
         if: matrix.runtime == 'Deno'
         run: deno task test --shard ${{ matrix.shard }}

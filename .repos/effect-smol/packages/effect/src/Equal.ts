@@ -1,71 +1,11 @@
 /**
- * Structural and custom equality for Effect values.
+ * Compares values with Effect's structural equality rules.
  *
- * The `Equal` module provides deep structural comparison for primitives, plain
- * objects, arrays, Maps, Sets, Dates, and RegExps. Types that implement the
- * {@link Equal} interface can supply their own comparison logic while staying
- * compatible with the rest of the ecosystem (HashMap, HashSet, etc.).
- *
- * ## Mental model
- *
- * - **Structural equality** — two values are equal when their contents match,
- *   not when they share the same reference.
- * - **Hash-first shortcut** — before comparing fields, the module checks
- *   {@link Hash.hash}. If the hashes differ the objects are unequal without
- *   further traversal.
- * - **Equal interface** — any object that implements both {@link symbol} (the
- *   equality method) and `Hash.symbol` (the hash method) can define custom
- *   comparison logic.
- * - **Caching** — comparison results for object pairs are cached in a WeakMap.
- *   This makes repeated checks fast but **requires immutability** after the
- *   first comparison.
- * - **By-reference opt-out** — {@link byReference} and {@link byReferenceUnsafe}
- *   let you switch individual objects back to reference equality when you need
- *   mutable identity semantics.
- *
- * ## Common tasks
- *
- * - Compare two values → {@link equals}
- * - Check if a value implements `Equal` → {@link isEqual}
- * - Use `equals` where an `Equivalence` is expected → {@link asEquivalence}
- * - Implement custom equality on a class → implement {@link Equal} (see
- *   example on the interface)
- * - Opt an object out of structural equality → {@link byReference} /
- *   {@link byReferenceUnsafe}
- *
- * ## Gotchas
- *
- * - Objects **must be treated as immutable** after their first equality check.
- *   Results are cached; mutating an object afterwards yields stale results.
- * - `NaN` is considered equal to `NaN` (unlike `===`).
- * - Functions without an `Equal` implementation are compared by reference.
- * - Map and Set comparisons are order-independent but O(n²) in size.
- * - If only one of two objects implements `Equal`, they are never equal.
- *
- * ## Quickstart
- *
- * **Example** (basic structural comparison)
- *
- * ```ts
- * import { Equal } from "effect"
- *
- * // Primitives
- * console.log(Equal.equals(1, 1))       // true
- * console.log(Equal.equals("a", "b"))   // false
- *
- * // Objects and arrays
- * console.log(Equal.equals({ x: 1 }, { x: 1 })) // true
- * console.log(Equal.equals([1, 2], [1, 2]))       // true
- *
- * // Curried form
- * const is42 = Equal.equals(42)
- * console.log(is42(42)) // true
- * console.log(is42(0))  // false
- * ```
- *
- * @see {@link equals} — the main comparison function
- * @see {@link Equal} — the interface for custom equality
- * @see {@link Hash} — the companion hashing module
+ * `equals` compares primitives, arrays, plain objects, maps, sets, dates,
+ * regular expressions, and values that implement the `Equal` interface. This
+ * module also defines the equality symbol, guards, adapters, map and set
+ * comparison builders, and helpers for marking objects that should compare only
+ * by reference.
  *
  * @since 2.0.0
  */
@@ -79,16 +19,14 @@ import { hasProperty } from "./Predicate.ts"
  *
  * **When to use**
  *
- * Use when you use it as the computed property key when implementing custom equality on a
- *   class or object literal.
- * - Use it to check manually whether an object carries an equality method (prefer
- *   {@link isEqual} instead).
+ * Use when you implement custom equality and need the computed property key for
+ * the equality method.
  *
  * **Details**
  *
  * This is a pure constant with no allocation or side effects.
  *
- * **Example** (Implementing Equal on a Class)
+ * **Example** (Implementing Equal on a class)
  *
  * ```ts
  * import { Equal, Hash } from "effect"
@@ -118,7 +56,7 @@ export const symbol = "~effect/interfaces/Equal"
  *
  * **When to use**
  *
- * Use when when you need value-based equality for a class (e.g. domain IDs,
+ * Use when you need value-based equality for a class (e.g. domain IDs,
  *   coordinates, money values).
  * - When your type will be stored in `HashMap` or `HashSet`.
  * - When the default structural comparison is too broad or too narrow for
@@ -136,7 +74,7 @@ export const symbol = "~effect/interfaces/Equal"
  * - {@link equals} delegates to this method when both operands implement it.
  *   If only one operand implements `Equal`, they are considered unequal.
  *
- * **Example** (Coordinate with Value Equality)
+ * **Example** (Comparing coordinates by value)
  *
  * ```ts
  * import { Equal, Hash } from "effect"
@@ -174,30 +112,24 @@ export interface Equal extends Hash.Hash {
  *
  * **When to use**
  *
- * Use when as the default equality check throughout Effect code.
- * - In data-level assertions or conditional logic where structural comparison
- *   is needed.
- * - In its curried (single-argument) form to build reusable predicates.
+ * Use when you need Effect's default structural equality check.
  *
  * **Details**
  *
- * - Returns a `boolean`; never throws.
- * - Primitives: compared by value. `NaN` equals `NaN`.
- * - Objects implementing {@link Equal}: delegates to their
- *   `[Equal.symbol]` method. If only one operand implements `Equal`, the
- *   result is `false`.
- * - Dates: compared by ISO string representation.
- * - RegExps: compared by string representation.
- * - Arrays: element-by-element recursive comparison (order matters).
- * - Maps / Sets: structural comparison of entries (order-independent).
- * - Plain objects: all own and inherited enumerable keys are compared
- *   recursively.
- * - Functions without an `Equal` implementation are compared by reference.
- * - Circular references are handled; two structures that are circular at the
- *   same depth are considered equal.
- * - Hash values are checked first as a fast-path rejection.
- * - Supports dual (data-last) usage: call with one argument to get a curried
- *   predicate.
+ * Returns a `boolean` and never throws. Primitives are compared by value, and
+ * `NaN` equals `NaN`. Objects implementing `Equal` delegate to their
+ * `[Equal.symbol]` method; if only one operand implements `Equal`, the result
+ * is `false`.
+ *
+ * Dates compare by ISO string, RegExps compare by string representation,
+ * arrays compare element-by-element, Maps and Sets compare entries
+ * order-independently, and plain objects compare enumerable keys recursively.
+ * Functions without an `Equal` implementation compare by reference. Circular
+ * references are handled when both structures are circular at the same depth.
+ *
+ * Hash values are checked first as a fast-path rejection. The function also
+ * supports dual data-last usage: call it with one argument to get a curried
+ * predicate.
  *
  * **Gotchas**
  *
@@ -205,7 +137,7 @@ export interface Equal extends Hash.Hash {
  *   mutated after their first comparison.**
  * - Map and Set comparisons are O(n²) in size.
  *
- * **Example** (Comparing Values)
+ * **Example** (Comparing values)
  *
  * ```ts
  * import { Equal } from "effect"
@@ -462,10 +394,8 @@ const compareSets = makeCompareSet(compareBoth)
  *
  * **When to use**
  *
- * Use when to branch on whether a value supports custom equality before calling
- *   its `[Equal.symbol]` method directly.
- * - In generic utility code that needs to distinguish `Equal` implementors
- *   from plain values.
+ * Use when you need generic utility code to distinguish `Equal` implementors
+ * from plain values before calling `[Equal.symbol]` directly.
  *
  * **Details**
  *
@@ -474,7 +404,7 @@ const compareSets = makeCompareSet(compareBoth)
  *   {@link symbol}.
  * - Acts as a TypeScript type guard, narrowing the input to {@link Equal}.
  *
- * **Example** (Type Guard)
+ * **Example** (Checking Equal values)
  *
  * ```ts
  * import { Equal, Hash } from "effect"
@@ -506,8 +436,8 @@ export const isEqual = (u: unknown): u is Equal => hasProperty(u, symbol)
  *
  * **When to use**
  *
- * Use when when an API (e.g. `Array.dedupeWith`, `Equivalence.mapInput`) requires an
- *   `Equivalence` and you want to reuse `Equal.equals`.
+ * Use when you want to pass `Equal.equals` to APIs that require an
+ * `Equivalence`.
  *
  * **Details**
  *
@@ -515,7 +445,7 @@ export const isEqual = (u: unknown): u is Equal => hasProperty(u, symbol)
  *   {@link equals}.
  * - Pure; allocates a thin wrapper on each call.
  *
- * **Example** (Deduplicating with Equal Semantics)
+ * **Example** (Deduplicating with Equal semantics)
  *
  * ```ts
  * import { Array, Equal } from "effect"
@@ -536,10 +466,8 @@ export const asEquivalence: <A>() => Equivalence<A> = () => equals
  *
  * **When to use**
  *
- * Use when when you have a plain object or array that should be compared by identity
- *   (reference), not by contents.
- * - When you want to preserve the original object unchanged and get a new
- *   reference-equal handle.
+ * Use when you need to compare a plain object or array by identity without
+ * mutating the original value.
  *
  * **Details**
  *
@@ -551,7 +479,7 @@ export const asEquivalence: <A>() => Equivalence<A> = () => equals
  * - Each call creates a **new** proxy, so `byReference(x) !== byReference(x)`.
  * - Does **not** mutate the original object (unlike {@link byReferenceUnsafe}).
  *
- * **Example** (Opting Out of Structural Equality)
+ * **Example** (Opting out of structural equality)
  *
  * ```ts
  * import { Equal } from "effect"
@@ -570,7 +498,7 @@ export const asEquivalence: <A>() => Equivalence<A> = () => equals
  * @see {@link byReferenceUnsafe} — same effect without a proxy (mutates the
  *   original)
  * @see {@link equals} — the comparison function affected by this opt-out
- * @category utility
+ * @category equality
  * @since 4.0.0
  */
 export const byReference = <T extends object>(obj: T): T => byReferenceUnsafe(new Proxy(obj, {}))
@@ -580,9 +508,8 @@ export const byReference = <T extends object>(obj: T): T => byReferenceUnsafe(ne
  *
  * **When to use**
  *
- * Use when when you want reference equality semantics and can accept that the
- *   original object is **permanently** modified.
- * - When proxy overhead is unacceptable (hot paths, large collections).
+ * Use when you need reference equality without proxy allocation and accept
+ * permanently marking the original object for reference-only equality.
  *
  * **Details**
  *
@@ -597,7 +524,7 @@ export const byReference = <T extends object>(obj: T): T => byReferenceUnsafe(ne
  *
  * The marking is irreversible for the lifetime of the object.
  *
- * **Example** (Marking an Object for Reference Equality)
+ * **Example** (Marking an object for reference equality)
  *
  * ```ts
  * import { Equal } from "effect"
@@ -614,7 +541,7 @@ export const byReference = <T extends object>(obj: T): T => byReferenceUnsafe(ne
  *
  * @see {@link byReference} — safer alternative that creates a proxy
  * @see {@link equals} — the comparison function affected by this opt-out
- * @category utility
+ * @category unsafe
  * @since 4.0.0
  */
 export const byReferenceUnsafe = <T extends object>(obj: T): T => {

@@ -25,7 +25,7 @@ export const DESTINATION = process.env.CLOUDFLARE_EMAIL_TO ?? "sam@alchemy.run";
  * receiving mail (rules) and sending mail from a Worker (`send_email`
  * sender domain).
  */
-export const Routing = Cloudflare.EmailRouting("Routing", {
+export const Routing = Cloudflare.Email.Routing("Routing", {
   zone: ZONE,
 });
 
@@ -34,7 +34,7 @@ export const Routing = Cloudflare.EmailRouting("Routing", {
  * verification link the first time this address is added; until the
  * recipient clicks it, rules forwarding here will silently drop.
  */
-export const Destination = Cloudflare.EmailAddress("Destination", {
+export const Destination = Cloudflare.Email.Address("Destination", {
   email: DESTINATION,
 });
 
@@ -43,7 +43,7 @@ export const Destination = Cloudflare.EmailAddress("Destination", {
  * matcher is a literal `to:` match; everything else falls through to
  * whatever catch-all rule (if any) is configured on the zone.
  */
-export const InboxRule = Cloudflare.EmailRule("InboxRule", {
+export const InboxRule = Cloudflare.Email.Rule("InboxRule", {
   zone: ZONE,
   name: "Forward inbox to destination",
   matchers: [{ type: "literal", field: "to", value: `inbox@${ZONE}` }],
@@ -54,7 +54,7 @@ export const InboxRule = Cloudflare.EmailRule("InboxRule", {
  * `send_email` Worker binding restricted to the sender/destination pair
  * above so the Worker can't be tricked into emailing arbitrary recipients.
  */
-export const SendEmail = Cloudflare.SendEmail("Email", {
+export const SendEmail = Cloudflare.Email.SendEmail("Email", {
   allowedSenderAddresses: [SENDER],
   destinationAddress: DESTINATION,
 });

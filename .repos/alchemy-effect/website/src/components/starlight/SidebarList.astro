@@ -1,0 +1,203 @@
+---
+/**
+ * Drop-in replacement for Starlight's internal `SidebarSublist`, keeping its
+ * markup, classes, and persistence hooks, plus one addition: group headings
+ * get a monochrome icon resolved from the label (lucide concepts, official
+ * simple-icons brand marks for providers) — see `src/docs-icons.ts`.
+ * The mockup styling itself (small-caps headings, accent bar) lives in
+ * `styles/custom.css`.
+ */
+import { Badge } from "@astrojs/starlight/components";
+import type { StarlightRouteData } from "@astrojs/starlight/route-data";
+import { sidebarGroupIcon } from "../../docs-icons";
+
+type SidebarEntry = StarlightRouteData["sidebar"][number];
+
+interface Props {
+  sublist: SidebarEntry[];
+  nested?: boolean;
+}
+
+const { sublist, nested } = Astro.props;
+
+const isCurrentDeep = (entries: SidebarEntry[]): boolean =>
+  entries.some((entry) =>
+    entry.type === "link" ? entry.isCurrent : isCurrentDeep(entry.entries),
+  );
+
+// Mirror of Starlight's internal SidebarRestorePoint: a running per-request
+// index that `SidebarPersister` uses to persist <details> open state.
+const currentGroupIndexSymbol = Symbol.for("starlight-sidebar-group-index");
+const locals = Astro.locals as App.Locals & {
+  [currentGroupIndexSymbol]?: number;
+};
+const nextGroupIndex = () => {
+  const index = locals[currentGroupIndexSymbol] || 0;
+  locals[currentGroupIndexSymbol] = index + 1;
+  return index;
+};
+---
+
+<ul class:list={{ "top-level": !nested }}>
+  {
+    sublist.map((entry) => (
+      <li>
+        {entry.type === "link" ? (
+          <a
+            href={entry.href}
+            aria-current={entry.isCurrent && "page"}
+            class:list={[{ large: !nested }, entry.attrs.class]}
+            {...entry.attrs}
+          >
+            <span>{entry.label}</span>
+            {entry.badge && (
+              <Badge
+                variant={entry.badge.variant}
+                class={entry.badge.class}
+                text={entry.badge.text}
+              />
+            )}
+          </a>
+        ) : (
+          <details open={isCurrentDeep(entry.entries) || !entry.collapsed}>
+            <sl-sidebar-restore data-index={nextGroupIndex()} />
+            <summary>
+              <div class="group-label">
+                {sidebarGroupIcon(entry.label) && (
+                  <svg
+                    class="group-icon"
+                    aria-hidden="true"
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    set:html={sidebarGroupIcon(entry.label)}
+                  />
+                )}
+                <span class="large">{entry.label}</span>
+                {entry.badge && (
+                  <Badge
+                    variant={entry.badge.variant}
+                    class={entry.badge.class}
+                    text={entry.badge.text}
+                  />
+                )}
+              </div>
+              <svg
+                aria-hidden="true"
+                class="caret"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z" />
+              </svg>
+            </summary>
+            <Astro.self sublist={entry.entries} nested />
+          </details>
+        )}
+      </li>
+    ))
+  }
+</ul>
+
+<style>
+  ul {
+    --sl-sidebar-item-padding-inline: 0.5rem;
+    list-style: none;
+    padding: 0;
+  }
+
+  li {
+    overflow-wrap: anywhere;
+  }
+
+  ul ul li {
+    margin-inline-start: var(--sl-sidebar-item-padding-inline);
+    border-inline-start: 1px solid var(--sl-color-hairline-light);
+    padding-inline-start: var(--sl-sidebar-item-padding-inline);
+  }
+
+  .large {
+    font-size: var(--sl-text-lg);
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+
+  .top-level > li + li {
+    margin-top: 0.75rem;
+  }
+
+  summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.2em var(--sl-sidebar-item-padding-inline);
+    line-height: 1.4;
+    cursor: pointer;
+    user-select: none;
+  }
+  summary::marker,
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .group-label {
+    display: flex;
+    align-items: center;
+  }
+  .group-icon {
+    flex-shrink: 0;
+    color: var(--alc-fg-4);
+  }
+
+  .caret {
+    transition: transform 0.2s ease-in-out;
+    flex-shrink: 0;
+  }
+  :global([dir="rtl"]) .caret {
+    transform: rotateZ(180deg);
+  }
+  [open] > summary .caret {
+    transform: rotateZ(90deg);
+  }
+
+  a {
+    display: block;
+    border-radius: 0.25rem;
+    text-decoration: none;
+    color: var(--sl-color-gray-2);
+    padding: 0.3em var(--sl-sidebar-item-padding-inline);
+    line-height: 1.4;
+  }
+
+  a:hover,
+  a:focus {
+    color: var(--sl-color-white);
+  }
+
+  [aria-current="page"],
+  [aria-current="page"]:hover,
+  [aria-current="page"]:focus {
+    font-weight: 600;
+    color: var(--sl-color-text-invert);
+    background-color: var(--sl-color-text-accent);
+  }
+
+  a > :global(*:not(:last-child)),
+  .group-label > :global(*:not(:last-child)) {
+    margin-inline-end: 0.35em;
+  }
+
+  @media (min-width: 50rem) {
+    .top-level > li + li {
+      margin-top: 0.5rem;
+    }
+    .large {
+      font-size: var(--sl-text-base);
+    }
+    a {
+      font-size: var(--sl-text-sm);
+    }
+  }
+</style>

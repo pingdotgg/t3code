@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -22,17 +22,15 @@ const corsLayer = HttpRouter.cors({
   allowedHeaders: ["Content-Type"],
 });
 
-const Bucket = Cloudflare.R2Bucket("Tasks");
+const Bucket = Cloudflare.R2.Bucket("Tasks");
 
 export default class HttpApiTestWorker extends Cloudflare.Worker<HttpApiTestWorker>()(
   "HttpApiTestWorker",
   {
-    main: import.meta.filename,
-    subdomain: { enabled: true, previewsEnabled: false },
-    compatibility: { date: "2024-09-23", flags: ["nodejs_compat"] },
+    main: import.meta.url,
   },
   Effect.gen(function* () {
-    const tasks = yield* Cloudflare.R2Bucket.bind(Bucket);
+    const tasks = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
     const tasksDO = yield* TasksObject;
 
     const getTaskDO = (id: string = "default") =>
@@ -96,5 +94,5 @@ export default class HttpApiTestWorker extends Cloudflare.Worker<HttpApiTestWork
         HttpRouter.toHttpEffect,
       ),
     };
-  }).pipe(Effect.provide(Cloudflare.R2BucketBindingLive)),
+  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
 ) {}

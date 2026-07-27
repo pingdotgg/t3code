@@ -6,30 +6,6 @@
  * and wraps them in the current RPC serialization protocol. `layerSocketServer`
  * exposes the socket server that receives incoming runner RPC traffic.
  *
- * **Mental model**
- *
- * The cluster runtime decides which runners exist, which shards they own, and
- * which messages must be delivered. This module only provides the TCP transport
- * those services use after a runner address has been selected. The client side
- * dials an advertised runner address; the server side listens on the address
- * configured for the local runner.
- *
- * **Common tasks**
- *
- * Add these layers when a Node or Node-compatible cluster deployment should use
- * direct socket RPC instead of an HTTP transport. Configure `runnerAddress` as
- * the address other runners can reach, and configure `runnerListenAddress` when
- * the local process must bind a different host or port.
- *
- * **Gotchas**
- *
- * Containers, port mappings, and Kubernetes services often require different
- * advertised and listening addresses. Serialization is provided by the
- * surrounding layer, not by this module. A reachable socket confirms only that
- * TCP transport is available; gossip, shard ownership, health checks, and
- * persisted message notification are coordinated by the cluster services that
- * use this transport.
- *
  * @since 4.0.0
  */
 import * as Effect from "effect/Effect"

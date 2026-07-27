@@ -1,29 +1,12 @@
 /**
- * The `Pull` module provides the low-level pull-step abstraction used by
- * stream-like consumers. A `Pull<A, E, Done, R>` is an `Effect` that can
- * produce one value of type `A`, fail with an ordinary error `E`, or signal
- * end-of-input with a `Cause.Done<Done>` value.
+ * Models one low-level pull step for stream-like consumers.
  *
- * **Mental model**
- *
- * - `Pull` is an `Effect` with a distinguished completion signal in the error channel
- * - ordinary failures and completion are both represented by `Cause`, but can be separated with the helpers in this module
- * - the `Done` value can carry leftover state or a final value needed by a downstream consumer
- * - `Pull` is useful when repeatedly evaluating an effect until it either produces values, fails, or reports that no more input is available
- *
- * **Common tasks**
- *
- * - Extract type parameters from a pull: {@link Success}, {@link Error}, {@link Leftover}, {@link Services}
- * - Detect and filter completion: {@link isDoneCause}, {@link filterDone}, {@link filterNoDone}
- * - Recover from completion while preserving ordinary failures: {@link catchDone}
- * - Convert done causes to successful exits: {@link doneExitFromCause}
- * - Handle all outcomes explicitly: {@link matchEffect}
- *
- * **Gotchas**
- *
- * - `Cause.Done` is not an ordinary failure; use this module's helpers before treating a pull failure as an error
- * - `Done` lives in the error channel, so generic `Effect` error handling can catch it unless you filter it deliberately
- * - `Pull` is a low-level primitive; most user-facing stream workflows should prefer higher-level stream APIs when available
+ * A `Pull<A, E, Done, R>` is an `Effect` that can produce one `A`, fail with an
+ * ordinary error `E`, or signal end-of-input with `Cause.Done<Done>`. The
+ * separate done signal lets low-level consumers distinguish normal completion
+ * from failure. This module includes type extractors and helpers for detecting,
+ * filtering, catching, converting, and matching done signals separately from
+ * ordinary failures.
  *
  * @since 4.0.0
  */
@@ -190,8 +173,8 @@ export const catchDone: {
  *
  * **When to use**
  *
- * Use to test a whole pull failure cause for normal completion when you only
- * need a boolean branch and do not need the done payload.
+ * Use when you need to test whether a pull failure cause represents normal
+ * completion and only need a boolean result.
  *
  * @see {@link isDoneFailure} for checking a single `Cause.Reason`
  * @see {@link filterDone} for extracting the `Cause.Done` value from a `Cause`
@@ -208,8 +191,8 @@ export const isDoneCause = <E>(cause: Cause.Cause<E>): boolean => cause.reasons.
  *
  * **When to use**
  *
- * Use as a predicate when traversing `cause.reasons` and you need to identify
- * done completion reasons before handling ordinary failures.
+ * Use when you need to identify done completion reasons while traversing
+ * `cause.reasons`, before handling ordinary failures.
  *
  * @see {@link isDoneCause} for checking an entire `Cause` for any done reason
  * @see {@link filterDone} for extracting the `Cause.Done` value from a `Cause`

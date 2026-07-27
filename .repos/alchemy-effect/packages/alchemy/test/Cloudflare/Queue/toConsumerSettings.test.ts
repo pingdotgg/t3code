@@ -1,6 +1,6 @@
-import { toConsumerSettings } from "@/Cloudflare/Queue/QueueEventSource.ts";
+import { toConsumerSettings } from "@/Cloudflare/Queues/EventSource.ts";
 import * as Duration from "effect/Duration";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "alchemy-test";
 
 describe("toConsumerSettings", () => {
   it("passes scalar fields through unchanged", () => {

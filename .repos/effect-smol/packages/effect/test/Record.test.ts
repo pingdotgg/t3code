@@ -1,4 +1,4 @@
-import { assertFalse, assertNone, assertSome, assertTrue, deepStrictEqual } from "@effect/vitest/utils"
+import { assertFalse, assertNone, assertSome, assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import { Equivalence, Number as Num, Option, Record, Result } from "effect"
 import { pipe } from "effect/Function"
 import { describe, it } from "vitest"
@@ -61,6 +61,11 @@ describe("Record", () => {
       })
 
       deepStrictEqual(Record.fromIterableBy(["a", symA], (s) => s), { a: "a", [symA]: symA })
+
+      deepStrictEqual(pipe(users, Record.fromIterableBy((user) => user.id)), {
+        "2": { id: "2", name: "name2" },
+        "1": { id: "1", name: "name1" }
+      })
     })
 
     it("fromEntries", () => {
@@ -156,6 +161,20 @@ describe("Record", () => {
         deepStrictEqual(Record.set(stringRecord, "c", 3), { a: 1, [symA]: null, c: 3 })
 
         deepStrictEqual(Record.set(symbolRecord, symC, 3), { [symA]: 1, [symB]: 2, [symC]: 3 })
+      })
+    })
+
+    describe("assignProperty", () => {
+      it("preserves __proto__ as an own property", () => {
+        const record: Record<string, unknown> = {}
+        const prototype = Object.getPrototypeOf(record)
+        const value = { polluted: true }
+
+        Record.assignProperty(record, "__proto__", value)
+
+        strictEqual(Object.getPrototypeOf(record), prototype)
+        assertTrue(Object.hasOwn(record, "__proto__"))
+        strictEqual(record["__proto__"], value)
       })
     })
 

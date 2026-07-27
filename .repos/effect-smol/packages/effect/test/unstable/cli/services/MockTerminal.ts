@@ -1,6 +1,5 @@
 import * as Array from "effect/Array"
 import type * as Cause from "effect/Cause"
-import * as Console from "effect/Console"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -14,6 +13,7 @@ import * as Terminal from "effect/Terminal"
 // =============================================================================
 
 export interface MockTerminal extends Terminal.Terminal {
+  readonly displayLines: Effect.Effect<ReadonlyArray<string>>
   readonly inputText: (text: string) => Effect.Effect<void>
   readonly inputKey: (key: string, modifiers?: Partial<MockTerminal.Modifiers>) => Effect.Effect<void>
 }
@@ -39,6 +39,7 @@ export const MockTerminal = Context.Service<Terminal.Terminal, MockTerminal>()(
 // =============================================================================
 
 export const make = Effect.gen(function*() {
+  const output: Array<string> = []
   const queue = yield* Effect.acquireRelease(
     Queue.make<Terminal.UserInput, Cause.Done>(),
     (queue) => Queue.shutdown(queue)
@@ -57,7 +58,10 @@ export const make = Effect.gen(function*() {
     return shouldQuit(input) ? Queue.end(queue) : Queue.offer(queue, input).pipe(Effect.asVoid)
   }
 
-  const display: MockTerminal["display"] = (input) => Console.log(input)
+  const display: MockTerminal["display"] = (input) =>
+    Effect.sync(() => {
+      output.push(input)
+    })
 
   const readInput: MockTerminal["readInput"] = Effect.succeed(Queue.asDequeue(queue))
 
@@ -70,6 +74,7 @@ export const make = Effect.gen(function*() {
   })
 
   return Object.assign(terminal, {
+    displayLines: Effect.sync(() => output.slice()),
     inputKey,
     inputText
   })
@@ -88,6 +93,11 @@ export const layer: Layer.Layer<Terminal.Terminal> = Layer.effect(MockTerminal, 
 export const columns: Effect.Effect<number, never, Terminal.Terminal> = Effect.flatMap(
   MockTerminal,
   (terminal) => terminal.columns
+)
+
+export const displayLines: Effect.Effect<ReadonlyArray<string>, never, Terminal.Terminal> = Effect.flatMap(
+  MockTerminal,
+  (terminal) => terminal.displayLines
 )
 
 export const readInput: Effect.Effect<

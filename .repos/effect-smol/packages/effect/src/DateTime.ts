@@ -1,52 +1,12 @@
 /**
- * The `DateTime` module provides immutable data types and utilities for working
- * with instants, UTC date-times, zoned date-times, and time zones. A
- * `DateTime` is always an absolute point in time, represented internally by
- * epoch milliseconds, and may also carry a `TimeZone` for zone-aware calendar
- * parts and formatting.
+ * Works with absolute instants, UTC date-times, zoned date-times, and time
+ * zones.
  *
- * **Mental model**
- *
- * - `DateTime` is a discriminated union: `Utc | Zoned`
- * - `Utc` stores an absolute instant without an associated time zone
- * - `Zoned` stores the same kind of absolute instant plus a `TimeZone`
- * - Time zones can be fixed offsets or named IANA zones such as `"Europe/Rome"`
- * - Comparison and ordering use the instant, so two values in different zones
- *   can still be equivalent
- * - Calendar parts and formatted output depend on whether you ask for UTC parts
- *   or zone-adjusted parts
- *
- * **Common tasks**
- *
- * - Construct values: {@link make}, {@link makeUnsafe}, {@link makeZoned}, {@link makeZonedUnsafe}
- * - Get the current instant: {@link now}, {@link nowInCurrentZone}
- * - Create time zones: {@link zoneMakeOffset}, {@link zoneMakeNamed}, {@link zoneFromString}
- * - Attach or change zones: {@link setZone}, {@link setZoneNamed}, {@link setZoneCurrent}, {@link toUtc}
- * - Convert to platform values or parts: {@link toDate}, {@link toDateUtc}, {@link toEpochMillis}, {@link toParts}, {@link toPartsUtc}
- * - Compare and bound values: {@link Equivalence}, {@link Order}, {@link distance}, {@link min}, {@link max}, {@link clamp}, {@link between}
- * - Transform values: {@link add}, {@link subtract}, {@link startOf}, {@link endOf}, {@link nearest}, {@link setParts}, {@link mutate}
- * - Format values: {@link format}, {@link formatUtc}, {@link formatLocal}, {@link formatIntl}, {@link formatIso}, {@link formatIsoZoned}
- * - Provide an application time zone: {@link CurrentTimeZone}, {@link withCurrentZone}, {@link layerCurrentZone}
- *
- * **Gotchas**
- *
- * - `make` and `makeZoned` return `Option`; unsafe constructors throw on invalid
- *   input
- * - `DateTime` equality is instant-based, not display-time-based
- * - `setZone` changes the zone used for local parts and formatting without
- *   changing the represented instant
- * - Use `adjustForTimeZone` with {@link makeZoned} when input parts should be
- *   interpreted as wall-clock time in the target zone
- * - Daylight-saving gaps and repeated local times are resolved with
- *   `Disambiguation`
- * - Prefer the Clock-backed {@link now} and `CurrentTimeZone` services in
- *   Effect workflows; unsafe helpers read from the host environment directly
- *
- * **See also**
- *
- * - {@link DateTime} for the UTC/zoned data model
- * - {@link TimeZone} for offset and named time-zone values
- * - {@link Disambiguation} for daylight-saving ambiguity handling
+ * A `DateTime` always represents an absolute point in time with epoch
+ * milliseconds. It may also carry a `TimeZone` for calendar parts, formatting,
+ * and zone-aware transformations. This module includes constructors, time-zone
+ * helpers, comparisons, date arithmetic, current-time effects, and formatting
+ * functions.
  *
  * @since 3.6.0
  */
@@ -477,8 +437,8 @@ export const isTimeZone: (u: unknown) => u is TimeZone = Internal.isTimeZone
  *
  * **When to use**
  *
- * Use when narrowing an unknown or union `TimeZone` value to the fixed-offset
- * variant before reading its offset in milliseconds.
+ * Use when you need to narrow an unknown or union `TimeZone` value to the
+ * fixed-offset variant before reading its offset in milliseconds.
  *
  * @see {@link isTimeZone} for checking either time zone variant
  * @see {@link isTimeZoneNamed} for narrowing to named time zones
@@ -659,6 +619,11 @@ export const fromDateUnsafe: (date: Date) => Utc = Internal.fromDateUnsafe
 /**
  * Create a `DateTime` from supported input values.
  *
+ * **When to use**
+ *
+ * Use when creating a `DateTime` from trusted input and construction failures
+ * should throw an `IllegalArgumentError` instead of returning `Option.none`.
+ *
  * **Details**
  *
  * - A `DateTime`
@@ -692,6 +657,11 @@ export const makeUnsafe: <A extends DateTime.Input>(input: A) => DateTime.Preser
 
 /**
  * Create a `DateTime.Zoned` using `DateTime.makeUnsafe` and a time zone.
+ *
+ * **When to use**
+ *
+ * Use when the date/time input and zone options are trusted and invalid or
+ * rejected ambiguous times should throw instead of returning `Option.none`.
  *
  * **Details**
  *
@@ -889,6 +859,11 @@ export const nowAsDate: Effect.Effect<Date> = Internal.nowAsDate
 /**
  * Gets the current time using `Date.now`.
  *
+ * **When to use**
+ *
+ * Use when synchronous wall-clock access outside an Effect program is
+ * acceptable and testability through the `Clock` service is not needed.
+ *
  * **Details**
  *
  * This is a synchronous version of `now` that directly uses `Date.now()`
@@ -1010,6 +985,11 @@ export const setZoneOffset: {
 /**
  * Attempts to create a named time zone from an IANA time zone identifier.
  *
+ * **When to use**
+ *
+ * Use when the IANA zone id is trusted and invalid zones should throw instead
+ * of returning `Option.none` or failing in `Effect`.
+ *
  * **Details**
  *
  * If the time zone is invalid, an `IllegalArgumentError` will be thrown.
@@ -1087,9 +1067,10 @@ export const zoneMakeNamed: (zoneId: string) => Option.Option<TimeZone.Named> = 
 /**
  * Creates a named time zone effectfully from an IANA time zone identifier.
  *
- * **Details**
+ * **When to use**
  *
- * If the time zone is invalid, it will fail with an `IllegalArgumentError`.
+ * Use when invalid IANA zone ids should fail in the Effect error channel
+ * instead of returning `Option.none` or throwing.
  *
  * **Example** (Creating named time zones effectfully)
  *
@@ -1465,6 +1446,11 @@ export const isFuture: (self: DateTime) => Effect.Effect<boolean> = Internal.isF
 /**
  * Checks synchronously if a `DateTime` is in the future compared to the current time.
  *
+ * **When to use**
+ *
+ * Use when checking whether a `DateTime` is in the future with a synchronous
+ * live-clock read and `Clock`-based testability is not needed.
+ *
  * **Details**
  *
  * This is a synchronous version that uses `Date.now()` directly.
@@ -1512,6 +1498,11 @@ export const isPast: (self: DateTime) => Effect.Effect<boolean> = Internal.isPas
 
 /**
  * Checks synchronously if a `DateTime` is in the past compared to the current time.
+ *
+ * **When to use**
+ *
+ * Use when checking whether a `DateTime` is in the past with a synchronous
+ * live-clock read and `Clock`-based testability is not needed.
  *
  * **Details**
  *
@@ -2172,7 +2163,7 @@ export const mapEpochMillis: {
  * `DateTime.Zoned` values. Use `DateTime.withDateUtc` when the callback should
  * receive the UTC instant.
  *
- * **Example** (Using time zone adjusted Dates)
+ * **Example** (Applying time zone adjusted Dates)
  *
  * ```ts
  * import { DateTime } from "effect"
@@ -2200,7 +2191,7 @@ export const withDate: {
  * This ignores any associated time zone. Use `DateTime.withDate` when the
  * callback should receive the time-zone-adjusted wall-clock date.
  *
- * **Example** (Using UTC Dates)
+ * **Example** (Applying UTC Dates)
  *
  * ```ts
  * import { DateTime } from "effect"
@@ -2539,10 +2530,6 @@ export const format: {
 /**
  * Formats a `DateTime` with `Intl.DateTimeFormat` using the system local time
  * zone and locale.
- *
- * **Details**
- *
- * It will use the system's local time zone & locale.
  *
  * **Example** (Formatting DateTime values locally)
  *

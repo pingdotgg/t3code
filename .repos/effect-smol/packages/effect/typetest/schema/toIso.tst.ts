@@ -1,9 +1,9 @@
 import type { Brand, Cause, Exit, Optic, Option } from "effect"
-import { Data, Schema, SchemaUtils } from "effect"
+import { Schema } from "effect"
 import { describe, expect, it } from "tstyche"
 
 class Value extends Schema.Class<Value, { readonly brand: unique symbol }>("Value")({
-  a: Schema.DateValid
+  a: Schema.Date
 }) {}
 
 describe("toIso", () => {
@@ -240,14 +240,14 @@ it("Cause", () => {
 })
 
 it("Error", () => {
-  const schema = Schema.Error
+  const schema = Schema.Error()
   const optic = Schema.toIso(schema)
 
   expect(optic).type.toBe<Optic.Iso<Error, Error>>()
 })
 
 it("Exit", () => {
-  const schema = Schema.Exit(Value, Schema.Error, Schema.Defect)
+  const schema = Schema.Exit(Value, Schema.Error(), Schema.Defect())
   const optic = Schema.toIso(schema)
 
   expect(optic).type.toBe<
@@ -261,22 +261,5 @@ it("ReadonlyMap", () => {
 
   expect(optic).type.toBe<
     Optic.Iso<ReadonlyMap<string, Value>, ReadonlyArray<readonly [string, { readonly a: Date }]>>
-  >()
-})
-
-it("getNativeClassSchema", () => {
-  const Props = Schema.Struct({
-    message: Schema.String
-  })
-  class Err extends Data.Error<typeof Props.Type> {
-    constructor(props: typeof Props.Type) {
-      super(Props.make(props))
-    }
-  }
-  const schema = SchemaUtils.getNativeClassSchema(Err, { encoding: Props })
-  const optic = Schema.toIso(schema)
-
-  expect(optic).type.toBe<
-    Optic.Iso<Err, { readonly message: string }>
   >()
 })

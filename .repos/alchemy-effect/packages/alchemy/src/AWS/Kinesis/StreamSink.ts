@@ -1,68 +1,58 @@
-import * as Kinesis from "@distilled.cloud/aws/kinesis";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Sink from "effect/Sink";
+import type * as Kinesis from "@distilled.cloud/aws/kinesis";
+import type * as Effect from "effect/Effect";
+import type * as Sink from "effect/Sink";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
-import { PutRecords } from "./PutRecords.ts";
+import type { BatchRetryExhaustedError } from "../internal/BatchedSink.ts";
 import type { Stream } from "./Stream.ts";
 
 export type StreamSinkRecord = Kinesis.PutRecordsRequestEntry;
 
-export class StreamSink extends Binding.Service<
-  StreamSink,
-  (
-    stream: Stream,
-  ) => Effect.Effect<
-    Sink.Sink<void, StreamSinkRecord, readonly StreamSinkRecord[], never>
-  >
->()("AWS.Kinesis.StreamSink") {}
+export type StreamSinkError =
+  | Kinesis.PutRecordsError
+  | BatchRetryExhaustedError<StreamSinkRecord>;
 
 /**
- * A partition-aware sink for batching `PutRecords` requests into a stream.
+ * A partition-aware sink for batching `PutRecords` requests into a stream
+ * (500 records / 5 MiB per call).
  *
  * Each input element is a raw `PutRecordsRequestEntry`, so callers stay in
  * control of `PartitionKey` and optional `ExplicitHashKey`.
+ *
+ * Records the API reports as failed (`FailedRecordCount > 0`, per-record
+ * `ErrorCode` — throughput exceeded or internal failure) are re-submitted on
+ * a bounded schedule; exhausting retries fails the sink with a typed
+ * `BatchRetryExhaustedError` carrying the stranded records.
+ *
+ * Provide the implementation with `Effect.provide(AWS.Kinesis.StreamSinkHttp)`.
+ * @binding
+ * @section Writing Streams of Records
+ * @example Run an Effect Stream into a Kinesis Stream
+ * ```typescript
+ * // init — bind the sink to the stream
+ * const sink = yield* AWS.Kinesis.StreamSink(stream);
+ *
+ * // runtime — batches into PutRecords calls of up to 500 records / 5 MiB
+ * yield* Stream.fromIterable(
+ *   orders.map((order) => ({
+ *     PartitionKey: order.id,
+ *     Data: new TextEncoder().encode(JSON.stringify(order)),
+ *   })),
+ * ).pipe(Stream.run(sink));
+ * ```
  */
-export const StreamSinkLive = Layer.effect(
+export interface StreamSink extends Binding.Service<
   StreamSink,
-  Effect.gen(function* () {
-    const Policy = yield* StreamSinkPolicy;
-    const putRecords = yield* PutRecords;
+  "AWS.Kinesis.StreamSink",
+  (
+    stream: Stream,
+  ) => Effect.Effect<
+    Sink.Sink<
+      void,
+      StreamSinkRecord,
+      readonly StreamSinkRecord[],
+      StreamSinkError
+    >
+  >
+> {}
 
-    return Effect.fn(function* (stream: Stream) {
-      yield* Policy(stream);
-      const publish = yield* putRecords(stream);
-      return Sink.forEachArray((records: readonly StreamSinkRecord[]) =>
-        publish({
-          Records: [...records],
-        }).pipe(Effect.orDie, Effect.asVoid),
-      );
-    });
-  }),
-);
-
-export class StreamSinkPolicy extends Binding.Policy<
-  StreamSinkPolicy,
-  (stream: Stream) => Effect.Effect<void>
->()("AWS.Kinesis.StreamSink") {}
-
-export const StreamSinkPolicyLive = StreamSinkPolicy.layer.succeed(
-  Effect.fn(function* (host, stream) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.Kinesis.StreamSink(${stream}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["kinesis:PutRecords"],
-            Resource: [stream.streamArn],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `StreamSinkPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
-);
+export const StreamSink = Binding.Service<StreamSink>("AWS.Kinesis.StreamSink");

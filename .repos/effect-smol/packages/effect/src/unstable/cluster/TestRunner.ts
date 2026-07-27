@@ -6,27 +6,6 @@
  * coordination, and mailbox persistence without starting RPC servers or
  * external databases.
  *
- * **Mental model**
- *
- * The layer behaves like a single in-process runner using the default
- * `ShardingConfig`. Sharding still computes shard ids, acquires in-memory shard
- * locks, stores persisted messages, and emits registration events, but remote
- * runner communication is deliberately absent.
- *
- * **Common tasks**
- *
- * - Provide cluster services around tests for sharded entities and singletons
- * - Exercise persisted mailbox behavior with the in-memory message store
- * - Observe registration events without starting a real runner process
- *
- * **Gotchas**
- *
- * - State is scoped to each layer instance and disappears when the layer closes
- * - No-op runner transport cannot deliver work to another process, so
- *   multi-runner tests should provide their own `Runners` implementation
- * - No-op health checks treat every runner as healthy and do not model
- *   failure-driven rebalancing
- *
  * @since 4.0.0
  */
 import * as Layer from "../../Layer.ts"

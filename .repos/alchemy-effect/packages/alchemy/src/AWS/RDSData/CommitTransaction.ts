@@ -1,8 +1,7 @@
 import * as rdsdata from "@distilled.cloud/aws/rds-data";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
+import type { RuntimeContext } from "../../RuntimeContext.ts";
 import type { DBCluster } from "../RDS/DBCluster.ts";
 import type { Secret } from "../SecretsManager/Secret.ts";
 
@@ -16,10 +15,29 @@ export interface CommitTransactionRequest extends Omit<
 > {}
 
 /**
- * Runtime binding for `rds-data:CommitTransaction`.
+ * Runtime binding for `rds-data:CommitTransaction` — commit a Data API
+ * transaction opened with `AWS.RDSData.BeginTransaction`.
+ *
+ * Bind it to the same `DBCluster` and credentials secret as the rest of the
+ * transaction; provide the implementation with
+ * `Effect.provide(AWS.RDSData.CommitTransactionHttp)`.
+ * @binding
+ * @section Transactions
+ * @example Commit a Transaction
+ * ```typescript
+ * // init
+ * const commitTransaction = yield* AWS.RDSData.CommitTransaction(db.cluster, {
+ *   secret: db.secret,
+ * });
+ *
+ * // runtime — after statements executed with tx.transactionId
+ * const commit = yield* commitTransaction({ transactionId: tx.transactionId! });
+ * // commit.transactionStatus === "Transaction Committed"
+ * ```
  */
-export class CommitTransaction extends Binding.Service<
+export interface CommitTransaction extends Binding.Service<
   CommitTransaction,
+  "AWS.RDSData.CommitTransaction",
   (
     cluster: DBCluster,
     options: CommitTransactionOptions,
@@ -28,75 +46,12 @@ export class CommitTransaction extends Binding.Service<
       request: CommitTransactionRequest,
     ) => Effect.Effect<
       rdsdata.CommitTransactionResponse,
-      rdsdata.CommitTransactionError
+      rdsdata.CommitTransactionError,
+      RuntimeContext
     >
   >
->()("AWS.RDSData.CommitTransaction") {}
+> {}
 
-export const CommitTransactionLive = Layer.effect(
-  CommitTransaction,
-  Effect.gen(function* () {
-    const Policy = yield* CommitTransactionPolicy;
-    const commitTransaction = yield* rdsdata.commitTransaction;
-
-    return Effect.fn(function* (
-      cluster: DBCluster,
-      options: CommitTransactionOptions,
-    ) {
-      const resourceArn = yield* cluster.dbClusterArn;
-      const secretArn = yield* options.secret.secretArn;
-      yield* Policy(cluster, options);
-      return Effect.fn(function* (request: CommitTransactionRequest) {
-        const clusterArn = yield* resourceArn;
-        const resolvedSecretArn = yield* secretArn;
-        return yield* commitTransaction({
-          ...request,
-          resourceArn: clusterArn,
-          secretArn: resolvedSecretArn,
-        });
-      });
-    });
-  }),
+export const CommitTransaction = Binding.Service<CommitTransaction>(
+  "AWS.RDSData.CommitTransaction",
 );
-
-export class CommitTransactionPolicy extends Binding.Policy<
-  CommitTransactionPolicy,
-  (cluster: DBCluster, options: CommitTransactionOptions) => Effect.Effect<void>
->()("AWS.RDSData.CommitTransaction") {}
-
-export const CommitTransactionPolicyLive =
-  CommitTransactionPolicy.layer.succeed(
-    Effect.fn(function* (host, cluster, options) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.RDSData.CommitTransaction(${cluster}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["rds-data:CommitTransaction"],
-                Resource: [cluster.dbClusterArn, options.secret.secretArn],
-              },
-            ],
-          },
-        );
-        yield* host.bind`Allow(${host}, AWS.SecretsManager.GetSecretValue(${options.secret}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: [
-                  "secretsmanager:GetSecretValue",
-                  "secretsmanager:DescribeSecret",
-                ],
-                Resource: [options.secret.secretArn],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `CommitTransactionPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

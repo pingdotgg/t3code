@@ -1,25 +1,12 @@
 /**
- * Provides an Effect layer for configuring OpenTelemetry in Node.js
- * processes. The module wires the Effect tracer, metrics producer, and logger
- * into OpenTelemetry SDK providers when span processors, metric readers, or log
- * record processors are supplied, and it builds the shared resource from
- * `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, and optional explicit
- * service metadata.
+ * Node.js OpenTelemetry setup for Effect applications.
  *
- * Use this module in Node services, workers, CLIs, or server runtimes that need
- * Effect spans, metrics, and logs exported through OpenTelemetry processors and
- * exporters. Telemetry is enabled only for the configured signal types, so an
- * application can install tracing alone, metrics alone, logging alone, or any
- * combination of them from the same layer.
- *
- * The layer is scoped. Tracer and logger providers are force-flushed and shut
- * down when the scope is released, metric readers are shut down with the same
- * lifecycle, and all shutdown waits are bounded by `shutdownTimeout` with a
- * default of three seconds. Keep the layer scope alive for the lifetime of the
- * process and release it during graceful shutdown so batched exporters have a
- * chance to export final telemetry. When combining this layer with Node
- * auto-instrumentations, register instrumentation before importing modules that
- * should be patched, because many Node instrumentations hook module loading.
+ * This module exports a `Configuration` type and layers for installing
+ * tracing, metrics, and logging in Node.js. The main `layer` builds the shared
+ * OpenTelemetry resource from environment variables and optional service
+ * metadata, then enables only the signal types that have processors or readers
+ * configured. `layerTracerProvider` creates a scoped Node tracer provider, and
+ * `layerEmpty` provides an empty resource.
  *
  * @since 4.0.0
  */
@@ -34,10 +21,10 @@ import * as Effect from "effect/Effect"
 import { constant, type LazyArg } from "effect/Function"
 import * as Layer from "effect/Layer"
 import { isNonEmpty } from "./internal/utilities.ts"
-import * as Logger from "./Logger.ts"
-import * as Metrics from "./Metrics.ts"
+import * as Logger from "./OtelLogger.ts"
+import * as Metrics from "./OtelMetrics.ts"
+import * as Tracer from "./OtelTracer.ts"
 import * as Resource from "./Resource.ts"
-import * as Tracer from "./Tracer.ts"
 
 /**
  * Configuration for the Node OpenTelemetry layer, including optional tracing, metrics, logging, resource, and shutdown settings.

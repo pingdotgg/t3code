@@ -1,0 +1,129 @@
+---
+title: "Memoization: builds & one-off commands"
+description: Content-hash memoization shared by Command.Build and Command.Exec — what gets hashed, when a command re-runs, and the outdir contract on destroy.
+---
+
+`Command.Build` and `Command.Exec` content-hash their inputs so a
+deploy skips any build or one-off command whose inputs haven't
+changed — an unchanged frontend isn't rebuilt, unchanged schema
+files don't re-run codegen. Both resources share the same memo
+semantics, covered here. For what the Command provider is and how
+it's registered, start at the [Command hub](/command).
+
+## A memoized build
+
+`Command.Build` runs a command that must produce an output path and
+tracks it in state:
+
+```typescript
+import * as Command from "alchemy/Command";
+import * as Console from "effect/Console";
+
+const build = yield* Command.Build("vite-build", {
+  command: "npm run build",
+  cwd: "./frontend",
+  outdir: "dist",
+});
+yield* Console.log(build.outdir); // path to the dist directory, relative to process.cwd()
+yield* Console.log(build.hash.output); // hash of the output files (when memo is enabled)
+```
+
+Reconcile runs the command, then verifies it actually produced
+`outdir` — if the path doesn't exist afterwards, the deploy fails
+with a `CommandError` whose reason is `OutputNotFound`. On success
+the resource records two hashes: `hash.input` (the files that
+produced the build) and `hash.output` (the files inside `outdir`).
+
+## What gets hashed
+
+By default, every non-gitignored file under `cwd`: `include`
+defaults to `["**/*"]`, and `exclude` defaults to the `.gitignore`
+rules collected from `cwd` up to the repository root, plus
+`**/.git/**`. The nearest package-manager lockfile (`bun.lock`,
+`package-lock.json`, `pnpm-lock.yaml`, or `yarn.lock`, found by
+walking upward — so a monorepo-root lockfile counts) is hashed too.
+Narrow the scope with explicit globs when the default is too broad:
+
+```typescript
+yield* Command.Exec("codegen", {
+  command: "npm run codegen",
+  memo: { include: ["schema/**"] },
+});
+```
+
+The lockfile default only applies when both `include` and `exclude`
+are unset — with custom globs like the above, set `lockfile: true`
+explicitly if you still want it in the hash. Setting `memo: false`
+disables hashing entirely and re-runs the command on every deploy.
+
+## When it re-runs
+
+Diff rehashes the inputs on every deploy and returns `noop` when
+nothing changed, so the command never runs. A change to any prop —
+`command`, `cwd`, `env` — forces a re-run even though the file
+hashes are unchanged (e.g. a recreated database's connection URL
+with identical files: the hash tracks input files only, so the
+re-run is driven by the prop change, not the hash). For `Build`,
+diff rehashes the output too, so a deleted `outdir` triggers a
+rebuild even with unchanged inputs — `rm -rf dist` followed by a
+deploy rebuilds instead of silently no-oping.
+
+## The outdir contract
+
+`build.outdir` is stored relative to `process.cwd()`, not absolute,
+so state is portable across machines — a CI runner's
+`/home/runner/work/.../dist` resolves correctly on a local laptop
+and vice versa. Consumers resolve it against their own cwd:
+
+```typescript
+import * as Path from "effect/Path";
+
+const path = yield* Path.Path;
+const absolute = path.resolve(build.outdir);
+```
+
+On destroy, `Build`'s delete removes the outdir recursively —
+tearing down the stack cleans up the build artifacts along with the
+state.
+
+## One-off commands
+
+`Command.Exec` runs a command purely for its side effects — codegen,
+seeding data, setup steps — and succeeds as long as the exit code is
+`0`. It memoizes the same way as `Build`, minus the output half:
+only `hash.input` is recorded.
+
+```typescript
+import * as Redacted from "effect/Redacted";
+
+yield* Command.Exec("migrate", {
+  command: "npm run db:migrate",
+  env: {
+    DATABASE_URL: Redacted.make("postgres://..."),
+  },
+});
+```
+
+`Redacted` env values are unwrapped at spawn time, so the secret
+reaches the child process without appearing in logs or state. The
+full re-run matrix:
+
+- Unchanged inputs — the run is skipped.
+- A changed memoized file, an env-only change, or a command-only
+  change — each re-runs the command.
+- Destroy — delete is a no-op; the command's side effects are never
+  reversed.
+- After a destroy, an unchanged redeploy runs the command again —
+  destroy forgets the run key.
+
+## Where next
+
+- [Static site](/cloudflare/frontend/static-site) — deploy the build
+  output; `StaticSite` is a `Command.Build` resource under the hood.
+- [Dev servers](/command/dev-servers) — long-lived local processes
+  with `Command.Dev` during `alchemy dev`.
+
+Reference:
+
+- [Build](/providers/command/build) ·
+  [Exec](/providers/command/exec)

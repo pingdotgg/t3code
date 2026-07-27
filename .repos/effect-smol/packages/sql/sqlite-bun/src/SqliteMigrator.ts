@@ -1,23 +1,10 @@
 /**
- * Utilities for applying Effect SQL migrations to Bun SQLite databases.
+ * Runs database migrations for Bun SQLite projects that use Effect SQL.
  *
- * This module re-exports the shared `Migrator` loaders and error types, then
- * provides `run` and `layer` helpers for applying ordered migrations through
- * the current Bun-backed SQLite `SqlClient`. It is typically used at
- * application startup, in deployment or setup scripts that prepare a local
- * SQLite file, in integration tests with temporary database files, or in layer
- * graphs that must install the schema before dependent services are acquired.
- *
- * Migrations are recorded in `effect_sql_migrations` by default and are loaded
- * using the shared `<id>_<name>` file or record-key convention. Only migrations
- * with an id greater than the latest recorded id are applied, so every client
- * involved in startup should point at the same SQLite filename and use a
- * writable Bun SQLite configuration. The Bun client enables WAL by default and
- * serializes access through a single `bun:sqlite` database handle, but separate
- * handles or processes can still contend for SQLite write locks. Bun's SQLite
- * driver runs statements synchronously, so large migration sets can block the
- * invoking runtime thread, and this adapter does not currently write SQLite
- * schema dumps for `schemaDirectory`.
+ * This module re-exports the shared migration loaders and errors, then provides
+ * `run` and `layer` helpers that apply pending migration files with the current
+ * `SqlClient`. It does not add Bun-specific schema dump support; migration
+ * execution is handled by the shared SQL migrator.
  *
  * @since 4.0.0
  */

@@ -1,0 +1,79 @@
+---
+title: Dev servers
+description: Run a framework dev server as a Command.Dev resource — started by alchemy dev, a no-op on alchemy deploy, with the server's URL surfaced back into your stack.
+---
+
+`Command.Dev` is a long-lived process scoped to the stack instance:
+started during [`alchemy dev`](/cli/dev), restarted when its inputs
+change, and a literal no-op during `alchemy deploy` — the deploy
+provider returns `{ url: undefined }` without spawning anything.
+This page assumes the [Command provider](/command) is registered.
+
+## Declare a dev server
+
+Pass the command that starts your framework's dev server:
+
+```typescript
+import * as Command from "alchemy/Command";
+
+const dev = yield* Command.Dev("Frontend", {
+  command: "npm run dev",
+});
+yield* Console.log(dev.url); // e.g. "http://localhost:5173"
+```
+
+Like every Command resource, `Dev` accepts `cwd` (for monorepo
+packages), `env` (merged on top of `process.env`, with `Redacted`
+values kept out of logs and state), and `shell` — without it the
+command string is whitespace-split into binary and arguments, with
+no quoting support.
+
+## Where the process lives
+
+The child process runs inside the dev sidecar (see
+`Command/Local.ts`) rather than in your Alchemy program's own
+process, so it survives user-code HMR — Alchemy's user process can
+restart without killing your `npm run dev` server. Its stdout and
+stderr are mirrored to the terminal, preserving colored output.
+
+## The url attribute
+
+`dev.url` is best-effort: Alchemy scans both stdout and stderr for
+the first `http(s)://…` URL within a hard 5-second window, stripping
+ANSI escape sequences first so Vite- and Next-style colored output
+still matches. If nothing matches within the window, `url` is
+`undefined` and the process keeps running.
+
+## Lifecycle
+
+A `Dev` resource restarts its process when props change, keeps the
+same PID across unchanged redeploys, and kills the process on
+destroy. If the command exits within the 5-second startup window,
+the deploy fails with a typed `CommandError` whose reason is
+`UnexpectedExit` — match it with the exported guard, as the test
+suite does:
+
+```typescript
+assert(Command.isCommandError(error));
+assert(error.reason._tag === "UnexpectedExit");
+expect(error.reason.exitCode).toBe(1);
+```
+
+## With StaticSite
+
+You rarely declare `Command.Dev` by hand for a frontend:
+`StaticSite`'s `dev` prop declares one for you during `alchemy dev`
+and skips the build entirely, letting your framework's own dev
+server serve the site. See
+[Static sites](/cloudflare/frontend/static-site) for the full story.
+
+## Where next
+
+- [`alchemy dev`](/cli/dev) — the CLI mode that activates `Dev`
+  resources.
+- [Memoized builds](/command/memoization) — `Command.Build` and
+  `Command.Exec`, the deploy-time counterparts.
+
+Reference:
+
+- [Dev API reference](/providers/command/dev)

@@ -1,53 +1,12 @@
 /**
- * The `Ref` module provides fiber-safe mutable references for state inside
- * Effect programs. A `Ref<A>` holds one value of type `A` and exposes reads,
- * writes, and atomic transformations as effects, so state changes compose with
- * Effect's concurrency model.
+ * Stores fiber-safe mutable state inside Effect programs.
  *
- * **Mental model**
- *
- * - {@link make} creates a reference with an initial value
- * - {@link get} reads the current value, and {@link set} replaces it
- * - {@link update}, {@link updateAndGet}, and {@link getAndUpdate} transform
- *   the current value atomically
- * - {@link modify} updates the value and returns a separate result computed
- *   from the previous value
- * - The `Some` variants use `Option` to leave the value unchanged when a
- *   partial update does not apply
- *
- * **Common tasks**
- *
- * - Create refs: {@link make}, {@link makeUnsafe}
- * - Read and write: {@link get}, {@link set}, {@link getAndSet},
- *   {@link setAndGet}
- * - Update state: {@link update}, {@link updateAndGet}, {@link getAndUpdate}
- * - Update conditionally: {@link updateSome}, {@link updateSomeAndGet},
- *   {@link getAndUpdateSome}, {@link modifySome}
- * - Compute while updating: {@link modify}
- *
- * **Example** (Updating shared state)
- *
- * ```ts
- * import { Effect, Ref } from "effect"
- *
- * const program = Effect.gen(function*() {
- *   const counter = yield* Ref.make(0)
- *
- *   const next = yield* Ref.updateAndGet(counter, (n) => n + 1)
- *   const label = yield* Ref.modify(counter, (n) => [`count=${n}`, n + 1])
- *
- *   return { label, next }
- * })
- * ```
- *
- * **Gotchas**
- *
- * - Each `Ref` operation is atomic for that reference, but multiple refs are
- *   not updated transactionally as a group
- * - If the new value depends on the old value, prefer {@link update} or
- *   {@link modify} over a separate {@link get} followed by {@link set}
- * - Unsafe operations are synchronous low-level accessors; prefer effectful
- *   operations in application code
+ * A `Ref<A>` holds one value and exposes reads, writes, and atomic
+ * transformations as effects, so state changes compose with Effect's
+ * concurrency model. This module includes constructors, safe and unsafe reads,
+ * set and get-and-set helpers, update and modify helpers, and conditional
+ * update variants that leave the value unchanged when an `Option.none` result
+ * is returned.
  *
  * @since 2.0.0
  */
@@ -205,7 +164,7 @@ export const makeUnsafe = <A>(value: A): Ref<A> => {
  *
  * **When to use**
  *
- * Use to create shared mutable state inside an Effect program.
+ * Use to create a `Ref` for shared mutable state inside an Effect program.
  *
  * **Example** (Creating a ref)
  *
@@ -231,7 +190,7 @@ export const make = <A>(value: A): Effect.Effect<Ref<A>> => Effect.sync(() => ma
  *
  * **When to use**
  *
- * Use to read the current value without changing it.
+ * Use to read the current `Ref` value without changing it.
  *
  * **Example** (Getting the current value)
  *
@@ -257,7 +216,7 @@ export const get = <A>(self: Ref<A>) => Effect.sync(() => self.ref.current)
  *
  * **When to use**
  *
- * Use to replace the current value with a known value.
+ * Use to replace the current `Ref` value with a known value.
  *
  * **Example** (Setting a value)
  *
@@ -296,7 +255,7 @@ export const set = dual<
  *
  * **When to use**
  *
- * Use to replace the value while returning the previous value.
+ * Use to replace a plain `Ref` value while returning the previous value.
  *
  * **Example** (Replacing a value atomically)
  *
@@ -318,7 +277,7 @@ export const set = dual<
  * @see {@link set} for setting without returning the previous value
  * @see {@link getAndUpdate} for deriving the new value from the previous value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const getAndSet = dual<
@@ -336,7 +295,7 @@ export const getAndSet = dual<
  *
  * **When to use**
  *
- * Use to derive a new value while returning the previous value.
+ * Use to derive a new `Ref` value while returning the previous value.
  *
  * **Example** (Updating and returning the previous value)
  *
@@ -358,7 +317,7 @@ export const getAndSet = dual<
  * @see {@link update} for updating without returning the previous value
  * @see {@link updateAndGet} for returning the new value instead
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const getAndUpdate = dual<
@@ -376,7 +335,7 @@ export const getAndUpdate = dual<
  *
  * **When to use**
  *
- * Use to return the previous value while applying a conditional update.
+ * Use to return the previous `Ref` value while applying a conditional update.
  *
  * **Details**
  *
@@ -417,7 +376,7 @@ export const getAndUpdate = dual<
  * @see {@link getAndUpdate} for always applying an update
  * @see {@link updateSome} for conditional updates without returning the previous value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const getAndUpdateSome = dual<
@@ -438,7 +397,7 @@ export const getAndUpdateSome = dual<
  *
  * **When to use**
  *
- * Use when you want to set a value and immediately get it back in one
+ * Use when you want to set a `Ref` value and immediately get it back in one
  * atomic operation.
  *
  * **Example** (Setting and returning the new value)
@@ -467,7 +426,7 @@ export const getAndUpdateSome = dual<
  * })
  * ```
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const setAndGet = dual<
@@ -480,8 +439,8 @@ export const setAndGet = dual<
  *
  * **When to use**
  *
- * Use to compute both a separate return value and the next stored value in one
- * atomic update.
+ * Use to compute both a separate return value and the next stored `Ref` value
+ * in one atomic update.
  *
  * **Details**
  *
@@ -543,7 +502,7 @@ export const modify = dual<
  *
  * **When to use**
  *
- * Use to compute a return value while optionally updating the stored value.
+ * Use to compute a return value while optionally updating a plain `Ref`.
  *
  * **Details**
  *
@@ -618,7 +577,7 @@ export const modifySome: {
  *
  * **When to use**
  *
- * Use to apply a state transition without returning a value.
+ * Use to apply a `Ref` state transition without returning a value.
  *
  * **Example** (Updating a value)
  *
@@ -663,7 +622,7 @@ export const update = dual<
  *
  * **When to use**
  *
- * Use to apply a state transition and return the new stored value.
+ * Use to apply a `Ref` state transition and return the new stored value.
  *
  * **Example** (Updating and returning the new value)
  *
@@ -686,7 +645,7 @@ export const update = dual<
  * @see {@link update} for updating without returning the new value
  * @see {@link getAndUpdate} for returning the previous value instead
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const updateAndGet = dual<
@@ -699,7 +658,7 @@ export const updateAndGet = dual<
  *
  * **When to use**
  *
- * Use to apply a conditional update without returning a value.
+ * Use to apply a conditional `Ref` update without returning a value.
  *
  * **Details**
  *
@@ -757,7 +716,8 @@ export const updateSome = dual<
  *
  * **When to use**
  *
- * Use to apply a conditional update and return the resulting current value.
+ * Use to apply a conditional `Ref` update and return the resulting current
+ * value.
  *
  * **Details**
  *
@@ -792,7 +752,7 @@ export const updateSome = dual<
  * @see {@link updateSome} for conditional updates without returning a value
  * @see {@link updateAndGet} for always updating and returning the new value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const updateSomeAndGet = dual<

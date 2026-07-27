@@ -1,0 +1,137 @@
+---
+title: Rate limiting
+description: Throttle requests inside a Worker with Cloudflare's Rate Limiting binding — declare the limit on the binding, count arbitrary keys at runtime, handle failures as typed errors.
+sidebar:
+  order: 12
+---
+
+The Rate Limiting binding gives a Worker a counter it can consult on
+every request: pass a key — an IP, a user id, an API token — and get
+back whether that key is within its budget. There is no backing cloud
+resource to deploy; the limit configuration lives on the binding
+itself and ships with the Worker.
+
+## Bind a rate limit to a Worker
+
+`yield*` `Cloudflare.RateLimit(name, props)` in the Worker's init
+phase and provide `RateLimitBinding` as a layer:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default Cloudflare.Worker(
+  "ThrottledWorker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const throttle = yield* Cloudflare.RateLimit("THROTTLE", {
+      namespaceId: 1001,
+      simple: { limit: 10, period: 60 },
+    });
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const ip = request.headers["cf-connecting-ip"] ?? "unknown";
+
+        const { success } = yield* throttle
+          .limit({ key: ip })
+          .pipe(Effect.orDie);
+
+        return success
+          ? HttpServerResponse.text("ok")
+          : HttpServerResponse.text("rate limited", { status: 429 });
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Workers.RateLimitBinding)),
+);
+```
+
+`simple.limit` is the number of requests allowed per `simple.period`
+seconds — the period must be `10` or `60`. `namespaceId` is a number
+or string that uniquely identifies this limit configuration within
+the account; reuse the same id to share one budget across Workers,
+use distinct ids for independent limits.
+
+## Count independent keys
+
+Every key passed to `limit` gets its own budget. With
+`limit: 2, period: 10`, two calls for `"alice"` succeed and the third
+is denied, while `"bob"` still has a full budget:
+
+```typescript
+const a1 = yield* throttle.limit({ key: "alice" }); // { success: true }
+const a2 = yield* throttle.limit({ key: "alice" }); // { success: true }
+const a3 = yield* throttle.limit({ key: "alice" }); // { success: false }
+const b1 = yield* throttle.limit({ key: "bob" });   // { success: true }
+```
+
+Counting is approximate and local to the Cloudflare location serving
+the request — the binding is built for cheap, fast abuse protection,
+not globally consistent quotas. For exact global counting, put the
+counter in a [Durable Object](/cloudflare/compute/durable-objects).
+
+## Handle failures as typed errors
+
+`limit` fails with a typed `RateLimitError` if the runtime call
+itself blows up (as opposed to the key being over budget, which is
+the `success: false` case). It lives in the Effect error channel like
+any other tagged error:
+
+```typescript
+const { success } = yield* throttle.limit({ key }).pipe(
+  // fail open: allow the request if the limiter itself errors
+  Effect.catchTag("RateLimitError", () =>
+    Effect.succeed({ success: true }),
+  ),
+);
+```
+
+## Declare the binding as env metadata
+
+Workers whose `main` module exports a plain async `fetch` handler
+declare the limit on `env` instead — `InferEnv` types it as
+Cloudflare's native `RateLimit` binding:
+
+```typescript
+// alchemy.run.ts
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: {
+    THROTTLE: Cloudflare.RateLimit("THROTTLE", {
+      namespaceId: 1001,
+      simple: { limit: 10, period: 60 },
+    }),
+  },
+});
+
+export type WorkerEnv = Cloudflare.InferEnv<typeof Worker>;
+```
+
+```typescript
+// src/worker.ts
+import type { WorkerEnv } from "../alchemy.run.ts";
+
+export default {
+  async fetch(req: Request, env: WorkerEnv) {
+    const { success } = await env.THROTTLE.limit({
+      key: req.headers.get("cf-connecting-ip") ?? "unknown",
+    });
+    return new Response(success ? "ok" : "rate limited", {
+      status: success ? 200 : 429,
+    });
+  },
+};
+```
+
+## Where next
+
+- [Workers](/cloudflare/compute/workers) — the two-phase Worker model
+  the binding lives inside.
+- [Durable Objects](/cloudflare/compute/durable-objects) — exact,
+  globally consistent counters when approximate isn't enough.
+- [RateLimit API reference](/providers/cloudflare/workers/ratelimit) —
+  props and client types.

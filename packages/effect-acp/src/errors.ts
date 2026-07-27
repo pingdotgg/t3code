@@ -13,6 +13,9 @@ export const AcpRequestOperation = Schema.Literals([
 ]);
 export type AcpRequestOperation = typeof AcpRequestOperation.Type;
 
+export const AcpRequestId = Schema.Union([Schema.String, Schema.Number]);
+export type AcpRequestId = typeof AcpRequestId.Type;
+
 export const AcpSchemaIssueKind = Schema.Literals([
   "Filter",
   "Encoding",
@@ -68,7 +71,7 @@ const schemaIssueDiagnostics = (root: SchemaIssue.Issue): AcpSchemaIssueDiagnost
 
 export interface AcpRequestDiagnostics {
   readonly method?: string;
-  readonly requestId?: string;
+  readonly requestId?: AcpRequestId;
   readonly operation?: AcpRequestOperation;
   readonly cause?: unknown;
   readonly issueCount?: number;
@@ -114,7 +117,7 @@ export class AcpProtocolParseError extends Schema.TaggedErrorClass<AcpProtocolPa
   {
     operation: AcpProtocolParseOperation,
     method: Schema.optionalKey(Schema.String),
-    requestId: Schema.optionalKey(Schema.String),
+    requestId: Schema.optionalKey(AcpRequestId),
     issueCount: Schema.optionalKey(Schema.Number),
     issueKinds: Schema.optionalKey(Schema.Array(AcpSchemaIssueKind)),
     maximumPathDepth: Schema.optionalKey(Schema.Number),
@@ -141,7 +144,7 @@ export class AcpProtocolParseError extends Schema.TaggedErrorClass<AcpProtocolPa
 
   static fromEncodingError(
     method: string | undefined,
-    requestId: string | undefined,
+    requestId: AcpRequestId | undefined,
     cause: unknown,
   ) {
     return new AcpProtocolParseError({
@@ -187,7 +190,7 @@ export class AcpRequestError extends Schema.TaggedErrorClass<AcpRequestError>()(
   errorMessage: Schema.String,
   data: Schema.optional(Schema.Unknown),
   method: Schema.optionalKey(Schema.String),
-  requestId: Schema.optionalKey(Schema.String),
+  requestId: Schema.optionalKey(AcpRequestId),
   operation: Schema.optionalKey(AcpRequestOperation),
   issueCount: Schema.optionalKey(Schema.Number),
   issueKinds: Schema.optionalKey(Schema.Array(AcpSchemaIssueKind)),
@@ -202,7 +205,7 @@ export class AcpRequestError extends Schema.TaggedErrorClass<AcpRequestError>()(
     error: AcpSchema.Error,
     context: {
       readonly method: string;
-      readonly requestId?: string;
+      readonly requestId?: AcpRequestId;
       readonly cause?: unknown;
     },
   ) {
@@ -217,7 +220,7 @@ export class AcpRequestError extends Schema.TaggedErrorClass<AcpRequestError>()(
     });
   }
 
-  static fromExtensionResponseFailure(method: string, requestId: string, cause: unknown) {
+  static fromExtensionResponseFailure(method: string, requestId: AcpRequestId, cause: unknown) {
     return AcpRequestError.internalError("Extension request failed", undefined, {
       method,
       requestId,
@@ -228,7 +231,7 @@ export class AcpRequestError extends Schema.TaggedErrorClass<AcpRequestError>()(
 
   static fromExtensionResponseEncodingError(
     method: string,
-    requestId: string,
+    requestId: AcpRequestId,
     cause: AcpProtocolParseError,
   ) {
     return AcpRequestError.internalError("Internal error", undefined, {
@@ -239,7 +242,7 @@ export class AcpRequestError extends Schema.TaggedErrorClass<AcpRequestError>()(
     });
   }
 
-  static unsupportedStreamingResponse(method: string, requestId: string) {
+  static unsupportedStreamingResponse(method: string, requestId: AcpRequestId) {
     return AcpRequestError.internalError(
       "Streaming extension responses are not supported",
       undefined,

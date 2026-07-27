@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
@@ -11,9 +11,6 @@ import { Counter, CounterLive } from "./object.ts";
 // instances of the same `Counter` class.
 export class WorkerC extends Cloudflare.Worker<WorkerC, {}, Counter>()(
   "WorkerC",
-  {
-    main: import.meta.filename,
-  },
 ) {}
 
 // Layer — uses `Counter.from(WorkerC)` (self-reference) instead of
@@ -21,6 +18,9 @@ export class WorkerC extends Cloudflare.Worker<WorkerC, {}, Counter>()(
 // `.from(Self)` form is the recommended style for code that may be
 // extracted into a reusable Layer.
 export default WorkerC.make(
+  {
+    main: import.meta.url,
+  },
   Effect.gen(function* () {
     const counter = yield* Counter.from(WorkerC);
 
@@ -51,7 +51,7 @@ export default WorkerC.make(
     };
   }).pipe(
     Effect.provide(
-      CounterLive.pipe(Layer.provide(Cloudflare.D1ConnectionLive)),
+      CounterLive.pipe(Layer.provide(Cloudflare.D1.QueryDatabaseBinding)),
     ),
   ),
 );

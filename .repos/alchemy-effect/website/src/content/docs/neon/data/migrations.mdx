@@ -1,0 +1,107 @@
+---
+title: Migrations
+description: Apply SQL migrations and seed data to Neon projects and branches as part of every deploy — ordered, hashed, and tracked in a neon_migrations table.
+---
+
+Both `Neon.Project` and `Neon.Branch` accept a `migrationsDir` — a
+folder of `.sql` files applied in order as part of every deploy. On a
+project, migrations run against the default branch's primary
+database; on a branch, they run against the branch itself:
+
+```typescript
+const project = yield* Neon.Project("my-project", {
+  migrationsDir: "./migrations",
+});
+```
+
+Because branches are copy-on-write forks, a branch created from a
+migrated parent already contains the parent's schema — and its
+tracking table. Point the branch at the same `migrationsDir` and only
+migrations added after the fork are applied:
+
+```typescript
+const featureBranch = yield* Neon.Branch("feature", {
+  project,
+  migrationsDir: "./migrations",
+});
+```
+
+## Ordering and hashing
+
+Files are discovered recursively under `migrationsDir` and sorted by
+their numeric prefix (`0001_init.sql`, `0002_users.sql`, …), falling
+back to name order for files without one. Each file's contents are
+SHA-256 hashed and the hashes are persisted in the resource's state
+(`migrationsHashes`), so adding a migration file — or editing an
+existing one — is what marks the resource for an update on the next
+deploy. When nothing changed, the migration step is skipped
+entirely.
+
+## The tracking table
+
+Applied migrations are recorded in a `neon_migrations` table
+(created automatically) with one row per file:
+
+```sql
+CREATE TABLE IF NOT EXISTS "neon_migrations" (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+On each deploy, files whose names already appear in the table are
+skipped. Use `migrationsTable` to point at a different table — for
+example one written by another migration tool:
+
+```typescript
+const project = yield* Neon.Project("my-project", {
+  migrationsDir: "./migrations",
+  migrationsTable: "my_migrations",
+});
+```
+
+## Transactional apply
+
+Each pending migration runs inside a transaction together with its
+bookkeeping `INSERT` into the tracking table, so partial application
+is impossible: a failing statement rolls the whole file back and
+fails the deploy, while migrations that already committed stay
+applied. Fix the file and re-deploy — the run resumes from the
+failed migration.
+
+## Seed data with importFiles
+
+`importFiles` lists additional `.sql` files to apply after
+migrations. Paths are resolved relative to the working directory:
+
+```typescript
+const project = yield* Neon.Project("my-project", {
+  migrationsDir: "./migrations",
+  importFiles: ["./seed/users.sql"],
+});
+```
+
+Unlike migrations, import files are not recorded in the tracking
+table. Each file is content-hashed and re-applied whenever its
+contents change, so write them to be safe to run more than once
+(`INSERT ... ON CONFLICT DO NOTHING`, `CREATE OR REPLACE`, and the
+like). Files whose hashes match the previous deploy are skipped.
+
+## Where next
+
+Guides:
+
+- [Add Drizzle ORM](/cloudflare/data/drizzle) — typed schemas and
+  generated migrations.
+
+Related:
+
+- [Neon overview](/neon) — projects, branches, and composing with
+  your cloud.
+- [Setup](/neon/setup) — credentials and provider registration.
+
+Reference:
+
+- [Project API reference](/providers/neon/project)
+- [Branch API reference](/providers/neon/branch)

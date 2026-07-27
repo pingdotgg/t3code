@@ -1,10 +1,11 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import * as KV from "@/Cloudflare/KV/index";
+import * as Provider from "@/Provider";
 import { State } from "@/State";
-import * as Test from "@/Test/Vitest";
+import * as Test from "@/Test/Alchemy";
 import * as kv from "@distilled.cloud/cloudflare/kv";
-import { expect } from "@effect/vitest";
+import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
@@ -19,13 +20,13 @@ const logLevel = Effect.provideService(
 
 test.provider("create and delete namespace with default props", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
 
     yield* stack.destroy();
 
     const namespace = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* KV.KVNamespace("DefaultNamespace");
+        return yield* KV.Namespace("DefaultNamespace");
       }),
     );
 
@@ -46,13 +47,13 @@ test.provider("create and delete namespace with default props", (stack) =>
 
 test.provider("create, update, delete namespace", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
 
     yield* stack.destroy();
 
     const namespace = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* KV.KVNamespace("TestNamespace");
+        return yield* KV.Namespace("TestNamespace");
       }),
     );
 
@@ -65,7 +66,7 @@ test.provider("create, update, delete namespace", (stack) =>
 
     const updatedNamespace = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* KV.KVNamespace("TestNamespace", {
+        return yield* KV.Namespace("TestNamespace", {
           title: namespace.title + "-updated",
         });
       }),
@@ -84,6 +85,31 @@ test.provider("create, update, delete namespace", (stack) =>
   }).pipe(logLevel),
 );
 
+// Canonical `list()` test (account-scoped collection): deploy a real
+// namespace, resolve the provider from context via `findProviderByType`,
+// call `list()`, and assert the deployed namespace appears in the
+// exhaustively-paginated result.
+test.provider("list enumerates the deployed namespace", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const namespace = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* KV.Namespace("ListNamespace");
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(KV.Namespace);
+    const all = yield* provider.list();
+
+    expect(all.some((ns) => ns.namespaceId === namespace.namespaceId)).toBe(
+      true,
+    );
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
+);
+
 // Engine-level adoption: KV namespaces have no ownership signal (Cloudflare
 // doesn't expose tags on KV), so a name match in `read` is treated as silent
 // adoption. The test wipes local state mid-run while leaving the namespace
@@ -93,23 +119,21 @@ test.provider(
   "existing namespace (matching title) is silently adopted without --adopt",
   (stack) =>
     Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
       yield* stack.destroy();
 
-      // Use a fixed title so the namespace's identity persists across a
-      // state-store wipe.
-      const title = `alchemy-test-kv-adopt-${Math.random()
-        .toString(36)
-        .slice(2, 8)}`;
-
-      // Phase 1: deploy normally so a real KV namespace exists on Cloudflare.
+      // Phase 1: deploy normally so a real KV namespace exists on
+      // Cloudflare. No explicit `title` — the engine generates a
+      // random-suffixed physical name (collision-free across concurrent
+      // runs); the deploy output hands back the real title, which pins the
+      // namespace's identity for the adoption phase below.
       const initial = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* KV.KVNamespace("AdoptableNamespace", { title });
+          return yield* KV.Namespace("AdoptableNamespace");
         }),
       );
-      expect(initial.title).toEqual(title);
+      const title = initial.title;
       const initialId = initial.namespaceId;
       expect(initialId).toBeDefined();
 
@@ -128,7 +152,7 @@ test.provider(
       // returns plain attrs — silent adoption.
       const adopted = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* KV.KVNamespace("AdoptableNamespace", { title });
+          return yield* KV.Namespace("AdoptableNamespace", { title });
         }),
       );
 

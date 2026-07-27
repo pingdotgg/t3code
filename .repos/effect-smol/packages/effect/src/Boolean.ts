@@ -1,57 +1,10 @@
 /**
- * Operations for working with TypeScript `boolean` values in expression-oriented
- * code. Use this module to narrow unknown input, branch without inline
- * conditionals, combine boolean flags with named logical operators, and reduce
- * boolean collections.
+ * Works with TypeScript `boolean` values.
  *
- * **Mental model**
- *
- * Boolean values are plain JavaScript booleans. The module adds a small
- * vocabulary around them: {@link match} for choosing between two lazy branches,
- * logical combinators such as {@link and}, {@link or}, {@link xor}, and
- * {@link implies}, and collection helpers such as {@link every} and
- * {@link some}. The exported {@link Order} sorts `false` before `true`, and
- * {@link Equivalence} compares booleans with strict equality.
- *
- * **Common tasks**
- *
- * - Coerce or narrow input: {@link Boolean}, {@link isBoolean}
- * - Branch on a boolean: {@link match}
- * - Invert and combine flags: {@link not}, {@link and}, {@link or},
- *   {@link nand}, {@link nor}, {@link xor}, {@link eqv}, {@link implies}
- * - Check boolean collections: {@link every}, {@link some}
- * - Pass boolean instances to generic APIs: {@link Order}, {@link Equivalence},
- *   {@link ReducerAnd}, {@link ReducerOr}
- *
- * **Gotchas**
- *
- * - {@link Boolean} is the native JavaScript constructor. It follows truthiness
- *   rules, so values such as `"false"` and `[]` coerce to `true`.
- * - {@link every} returns `true` for an empty iterable, matching logical AND.
- *   {@link some} returns `false` for an empty iterable, matching logical OR.
- * - {@link ReducerAnd} and {@link ReducerOr} are for APIs that consume a
- *   `Reducer`; use {@link every} or {@link some} when you want direct iterable
- *   checks.
- *
- * **Quickstart**
- *
- * **Example** (Combining validation flags)
- *
- * ```ts
- * import { Boolean } from "effect"
- *
- * const hasName = true
- * const hasEmail = false
- *
- * const isComplete = Boolean.and(hasName, hasEmail)
- * console.log(isComplete) // false
- *
- * const message = Boolean.match(isComplete, {
- *   onFalse: () => "missing fields",
- *   onTrue: () => "ready"
- * })
- * console.log(message) // "missing fields"
- * ```
+ * This module exposes the native `Boolean` constructor together with helpers
+ * for checking values, choosing between lazy branches, combining booleans with
+ * logical operations, checking collections with `every` or `some`, ordering
+ * booleans, and reducing boolean values.
  *
  * @since 2.0.0
  */
@@ -163,8 +116,8 @@ export const match: {
  *
  * **When to use**
  *
- * Use when sorting or comparing boolean values through APIs that accept an
- * ordering instance where `false` comes before `true`.
+ * Use when you need to sort or compare boolean values through APIs that accept
+ * an ordering instance where `false` comes before `true`.
  *
  * **Example** (Comparing booleans)
  *
@@ -257,7 +210,7 @@ export const and: {
 } = dual(2, (self: boolean, that: boolean): boolean => self && that)
 
 /**
- * Combines two boolean using NAND: `!(self && that)`.
+ * Combines two booleans using NAND: `!(self && that)`.
  *
  * **When to use**
  *
@@ -284,7 +237,7 @@ export const nand: {
 } = dual(2, (self: boolean, that: boolean): boolean => !(self && that))
 
 /**
- * Combines two boolean using OR: `self || that`.
+ * Combines two booleans using OR: `self || that`.
  *
  * **When to use**
  *
@@ -438,7 +391,7 @@ export const implies: {
  * @see {@link some} for checking whether at least one value is `true`
  * @see {@link ReducerAnd} for reducing booleans with AND through a `Reducer`
  *
- * @category utils
+ * @category predicates
  * @since 2.0.0
  */
 export const every = (collection: Iterable<boolean>): boolean => {
@@ -470,7 +423,7 @@ export const every = (collection: Iterable<boolean>): boolean => {
  * @see {@link every} for checking whether all values are `true`
  * @see {@link ReducerOr} for reducing booleans with OR through a `Reducer`
  *
- * @category utils
+ * @category predicates
  * @since 2.0.0
  */
 export const some = (collection: Iterable<boolean>): boolean => {

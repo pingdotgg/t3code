@@ -1,44 +1,12 @@
 /**
- * Schema-backed declarations for individual RPC procedures.
+ * Defines schema-backed contracts for individual RPC procedures.
  *
- * An {@link Rpc} is the shared contract for one remote procedure. It records
- * the procedure tag, payload schema, success schema, error schema, defect
- * schema, middleware, annotations, and the type information used to derive
- * client calls and server handler signatures. The declaration is transport
- * independent; RPC groups, clients, and servers all read the same metadata.
- *
- * **Mental model**
- *
- * An RPC definition is data. The tag names the procedure, the schemas describe
- * the values crossing the wire, and middleware or annotations attach
- * procedure-local behavior and metadata. Nothing is sent or handled until the
- * definition is placed in a group and interpreted by a client or server.
- *
- * **Common tasks**
- *
- * Use {@link make} for ordinary request/response procedures, {@link custom} for
- * constructors that transform success or error schemas, and the instance
- * methods on {@link Rpc} to refine payloads, attach middleware, prefix tags, or
- * add annotations. Helper types such as {@link Payload}, {@link Success},
- * {@link Error}, and {@link ToHandlerFn} expose the derived TypeScript shapes
- * used by client and handler code. Server handlers can wrap object results with
- * {@link fork} or {@link uninterruptible} to control how those results are run.
- *
- * **Gotchas**
- *
- * - Payloads default to `Schema.Void`; passing struct fields creates a
- *   `Schema.Struct`, while `primaryKey` creates a payload class with a derived
- *   `PrimaryKey`
- * - Success values default to `Schema.Void`, ordinary errors default to
- *   `Schema.Never`, and middleware errors are included in the effective RPC
- *   error channel
- * - Streaming RPCs store element and stream-error schemas in
- *   `RpcSchema.Stream`; the immediate exit success is `void` and the ordinary
- *   RPC error schema is `Schema.Never`
- * - Defects use a separate defect schema, defaulting to `Schema.Defect`; custom
- *   defect schemas must not require decoding or encoding services
- * - Schema services are directional: clients encode payloads and decode
- *   responses, while servers decode payloads and encode responses
+ * An `Rpc` describes one remote procedure by recording its tag, payload schema,
+ * success schema, error schema, defect schema, middleware, and annotations.
+ * Clients and servers read the same declaration, so the procedure contract is
+ * independent of the transport used to call it. This module includes
+ * constructors, type helpers for deriving client and handler shapes, exit
+ * schemas, and handler wrappers for special execution modes.
  *
  * @since 4.0.0
  */
@@ -83,7 +51,6 @@ export const isRpc = (u: unknown): u is Rpc<any, any, any> => Predicate.hasPrope
  * @since 4.0.0
  */
 export interface DefectSchema extends Schema.Top {
-  readonly Type: unknown
   make(input: null, options?: Schema.MakeOptions): unknown
   make(input: undefined, options?: Schema.MakeOptions): unknown
   make(input: {}, options?: Schema.MakeOptions): unknown
@@ -839,7 +806,7 @@ const Proto = {
       middlewares: this.middlewares
     })
   },
-  setPayload(this: AnyWithProps, payloadSchema: Schema.Struct<any> | Schema.Struct.Fields) {
+  setPayload(this: AnyWithProps, payloadSchema: Schema.Struct<Schema.Struct.Fields> | Schema.Struct.Fields) {
     return makeProto({
       _tag: this._tag,
       payloadSchema: Schema.isSchema(payloadSchema) ? payloadSchema as any : Schema.Struct(payloadSchema as any),
@@ -908,7 +875,7 @@ const makeProto = <
   readonly payloadSchema: Payload
   readonly successSchema: Success
   readonly errorSchema: Error
-  readonly defectSchema: Schema.Top
+  readonly defectSchema: Schema.Constraint
   readonly annotations: Context.Context<never>
   readonly middlewares: ReadonlySet<Middleware>
 }): Rpc<Tag, Payload, Success, Error, Middleware, Requires> => {
@@ -956,7 +923,7 @@ export const make = <
 > => {
   const successSchema = options?.success ?? Schema.Void
   const errorSchema = options?.error ?? Schema.Never
-  const defectSchema = options?.defect ?? Schema.Defect
+  const defectSchema = options?.defect ?? Schema.Defect()
   let payloadSchema: any
   if (options?.primaryKey) {
     payloadSchema = class Payload extends Schema.Class<Payload>(`effect/rpc/Rpc/${tag}`)(options.payload as any) {
@@ -987,7 +954,7 @@ export const make = <
 /**
  * Creates a custom `Rpc` constructor that can transform the output schemas.
  *
- * **Example** (Paginated RPC constructor)
+ * **Example** (Defining a paginated RPC constructor)
  *
  * ```ts
  * import { Schema } from "effect"
@@ -1003,7 +970,7 @@ export const make = <
  * }
  *
  * // The type definition for the transformed success schema.
- * export interface Paginated<S extends Schema.Top> extends
+ * export interface Paginated<S extends Schema.Constraint> extends
  *   Schema.Struct<{
  *     readonly offset: Schema.Number
  *     readonly total: Schema.Number
@@ -1027,7 +994,7 @@ export const make = <
  * })
  * ```
  *
- * @category Custom constructors
+ * @category constructors
  * @since 4.0.0
  */
 export const custom = <Def extends Custom>(
@@ -1058,7 +1025,7 @@ export const custom = <Def extends Custom>(
 > => {
   const success = options?.success ?? Schema.Void
   const error = options?.error ?? Schema.Never
-  const defect = options?.defect ?? Schema.Defect
+  const defect = options?.defect ?? Schema.Defect()
   const out = f({
     success,
     error,
@@ -1080,7 +1047,7 @@ export const custom = <Def extends Custom>(
  * A custom constructor receives the original success, error, and defect schemas
  * and returns transformed output schemas through `out`.
  *
- * @category Custom constructors
+ * @category constructors
  * @since 4.0.0
  */
 export interface Custom {
@@ -1099,12 +1066,12 @@ export declare namespace Custom {
   /**
    * The transformed schemas produced by a custom RPC constructor.
    *
-   * @category Custom constructors
+   * @category constructors
    * @since 4.0.0
    */
   export interface Out<
-    Success extends Schema.Top,
-    Error extends Schema.Top
+    Success extends Schema.Constraint,
+    Error extends Schema.Constraint
   > {
     readonly success: Success
     readonly error: Error
@@ -1115,7 +1082,7 @@ export declare namespace Custom {
    * The default custom-constructor output shape for arbitrary success and error
    * schemas.
    *
-   * @category Custom constructors
+   * @category constructors
    * @since 4.0.0
    */
   export type OutDefault = Out<Schema.Top, Schema.Top>
@@ -1124,13 +1091,13 @@ export declare namespace Custom {
    * Applies a custom constructor definition to concrete success and error
    * schemas and returns its transformed output schema type.
    *
-   * @category Custom constructors
+   * @category constructors
    * @since 4.0.0
    */
   export type Kind<
     Def extends Custom,
-    Success extends Schema.Top,
-    Error extends Schema.Top
+    Success extends Schema.Constraint,
+    Error extends Schema.Constraint
   > = (Def & {
     readonly success: Success
     readonly error: Error

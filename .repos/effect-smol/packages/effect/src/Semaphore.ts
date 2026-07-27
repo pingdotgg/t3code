@@ -1,34 +1,12 @@
 /**
- * The `Semaphore` module provides counting semaphores for limiting concurrent
- * access to shared resources. A semaphore owns a pool of permits; effects take
- * permits before running protected work and return them when the work exits.
+ * Limits how many effects can use a shared resource at the same time.
  *
- * **Mental model**
- *
- * - The permit count is the maximum amount of guarded work that can run at once
- * - {@link withPermit} and {@link withPermits} acquire permits around one
- *   effect and release them on success, failure, or interruption
- * - {@link take} and {@link release} expose the lower-level protocol when
- *   acquisition and release cannot be scoped to one effect
- * - {@link resize} changes future availability while preserving permits that
- *   are already taken
- *
- * **Common tasks**
- *
- * - Create a semaphore: {@link make}, {@link makeUnsafe}
- * - Guard one effect: {@link withPermit}, {@link withPermits}
- * - Run only when permits are immediately available:
- *   {@link withPermitsIfAvailable}
- * - Manage permits manually: {@link take}, {@link release}, {@link releaseAll}
- * - Change capacity: {@link resize}
- *
- * **Gotchas**
- *
- * - Pending acquisitions wait until enough permits are available
- * - {@link withPermitsIfAvailable} never waits; it returns `Option.none` when
- *   the requested permits are not available immediately
- * - Manual {@link take} / {@link release} usage must keep permit counts
- *   balanced; prefer scoped helpers when possible
+ * A `Semaphore` owns a number of permits. Work can run only after acquiring the
+ * permits it needs, and those permits are returned when the work finishes. This
+ * module includes constructors, automatic wrappers that acquire and release
+ * permits around an effect, manual permit operations, a non-waiting variant for
+ * work that should only run immediately, and resizing support for an existing
+ * semaphore.
  *
  * @since 4.0.0
  */
@@ -140,9 +118,11 @@ export interface Semaphore {
   ): <A, E, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<Option.Option<A>, E, R>
 
   /**
-   * Acquires the specified number of permits and returns the resulting
-   * available permits, suspending the task if they are not yet available.
-   * Concurrent pending `take` calls are processed in a first-in, first-out manner.
+   * Acquires the specified number of permits and returns the acquired permit
+   * count, suspending the task if they are not yet available. Pending `take`
+   * calls are scanned in registration order, but a request is served only when
+   * enough permits are available, so a smaller later request may overtake a
+   * larger earlier request.
    *
    * **When to use**
    *
@@ -469,7 +449,7 @@ export const withPermitsIfAvailable: {
  *
  * **When to use**
  *
- * Use to manually acquire permits when a lower-level permit protocol needs
+ * Use when you need manual permit acquisition for a lower-level protocol with
  * explicit acquisition and release control.
  *
  * **Details**
@@ -494,8 +474,8 @@ export const take: {
  *
  * **When to use**
  *
- * Use to manually return permits acquired with `take` when a lower-level
- * permit protocol needs explicit release control.
+ * Use when you need to return permits acquired with `take` in a lower-level
+ * permit protocol with explicit release control.
  *
  * **Details**
  *

@@ -3,15 +3,15 @@ import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
-export const Bucket = Cloudflare.R2Bucket("Bucket");
+export const Bucket = Cloudflare.R2.Bucket("Bucket");
 
 export default class Backend extends Cloudflare.Worker<Backend>()(
   "Backend",
   {
-    main: import.meta.path,
+    main: import.meta.url,
   },
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
 
     return {
       // RPC method — read an object from R2 by key, returning the body as
@@ -61,5 +61,5 @@ export default class Backend extends Cloudflare.Worker<Backend>()(
         ),
       ),
     };
-  }).pipe(Effect.provide(Cloudflare.R2BucketBindingLive)),
+  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
 ) {}

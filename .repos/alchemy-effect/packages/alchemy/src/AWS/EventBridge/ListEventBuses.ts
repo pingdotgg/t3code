@@ -1,14 +1,29 @@
 import * as eventbridge from "@distilled.cloud/aws/eventbridge";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 
 export interface ListEventBusesRequest
   extends eventbridge.ListEventBusesRequest {}
 
-export class ListEventBuses extends Binding.Service<
+/**
+ * Lists the event buses in the account (`events:ListEventBuses`).
+ *
+ * An account-level operation — bind it with no resource argument. Provide the
+ * `ListEventBusesHttp` layer on the Function to satisfy the binding.
+ * @binding
+ * @section Listing Event Buses
+ * @example List All Event Buses
+ * ```typescript
+ * // init — no resource argument (provide AWS.EventBridge.ListEventBusesHttp on the Function)
+ * const listEventBuses = yield* AWS.EventBridge.ListEventBuses();
+ *
+ * // runtime — list buses, optionally filtered by name prefix
+ * const { EventBuses } = yield* listEventBuses({ NamePrefix: "my-app" });
+ * ```
+ */
+export interface ListEventBuses extends Binding.Service<
   ListEventBuses,
+  "AWS.EventBridge.ListEventBuses",
   () => Effect.Effect<
     (
       request?: ListEventBusesRequest,
@@ -17,44 +32,7 @@ export class ListEventBuses extends Binding.Service<
       eventbridge.ListEventBusesError
     >
   >
->()("AWS.EventBridge.ListEventBuses") {}
-
-export const ListEventBusesLive = Layer.effect(
-  ListEventBuses,
-  Effect.gen(function* () {
-    const Policy = yield* ListEventBusesPolicy;
-    const listEventBuses = yield* eventbridge.listEventBuses;
-
-    return Effect.fn(function* () {
-      yield* Policy();
-      return Effect.fn(function* (request?: ListEventBusesRequest) {
-        return yield* listEventBuses(request ?? {});
-      });
-    });
-  }),
-);
-
-export class ListEventBusesPolicy extends Binding.Policy<
-  ListEventBusesPolicy,
-  () => Effect.Effect<void>
->()("AWS.EventBridge.ListEventBuses") {}
-
-export const ListEventBusesPolicyLive = ListEventBusesPolicy.layer.succeed(
-  Effect.fn(function* (host) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.EventBridge.ListEventBuses())`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["events:ListEventBuses"],
-            Resource: ["*"],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `ListEventBusesPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+> {}
+export const ListEventBuses = Binding.Service<ListEventBuses>(
+  "AWS.EventBridge.ListEventBuses",
 );

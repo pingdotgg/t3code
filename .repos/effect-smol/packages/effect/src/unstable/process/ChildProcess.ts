@@ -1,43 +1,11 @@
 /**
- * An Effect-native module for working with child processes.
+ * Describes child processes before they are started.
  *
- * This module uses an AST-based approach where commands are built first
- * using `make` and `pipeTo`, then executed using `spawn`.
- *
- * **Example** (Spawning and piping commands)
- *
- * ```ts
- * import { Effect, Stream } from "effect"
- * import { NodeServices } from "@effect/platform-node"
- * import { ChildProcess } from "effect/unstable/process"
- *
- * // Build a command
- * const command = ChildProcess.make`echo "hello world"`
- *
- * // Spawn and collect output
- * const program = Effect.gen(function*() {
- *   // You can `yield*` a command, which calls `ChildProcess.spawn`
- *   const handle = yield* command
- *   const chunks = yield* Stream.runCollect(handle.stdout)
- *   const exitCode = yield* handle.exitCode
- *   return { chunks, exitCode }
- * }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
- *
- * // With options
- * const withOptions = ChildProcess.make({ cwd: "/tmp" })`ls -la`
- *
- * // Piping commands
- * const pipeline = ChildProcess.make`cat package.json`.pipe(
- *   ChildProcess.pipeTo(ChildProcess.make`grep name`)
- * )
- *
- * // Spawn the pipeline
- * const pipelineProgram = Effect.gen(function*() {
- *   const handle = yield* pipeline
- *   const chunks = yield* Stream.runCollect(handle.stdout)
- *   return chunks
- * }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
- * ```
+ * A `Command` stores the executable, arguments, environment, standard streams,
+ * working directory, and other process options. Commands can also be piped
+ * together. A command is an `Effect`; running it asks the
+ * `ChildProcessSpawner` service to start the process and returns a
+ * `ChildProcessHandle`.
  *
  * @since 4.0.0
  */
@@ -146,7 +114,7 @@ export type PipeToOption = "stdin" | `fd${number}`
  * )
  * ```
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export interface PipeOptions {
@@ -267,7 +235,7 @@ export type Encoding =
 /**
  * Options that can be used to control how a child process is terminated.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export interface KillOptions {
@@ -399,7 +367,7 @@ export type AdditionalFdConfig =
 /**
  * Options for command execution.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export interface CommandOptions extends KillOptions {
@@ -864,7 +832,7 @@ const isTemplateString = (u: unknown): u is TemplateStringsArray =>
  * Parses an fd name like "fd3" to its numeric index.
  * Returns undefined if the name is invalid.
  *
- * @category utils
+ * @category converting
  * @since 4.0.0
  */
 export const parseFdName = (name: string): number | undefined => {
@@ -877,7 +845,7 @@ export const parseFdName = (name: string): number | undefined => {
 /**
  * Create an fd name from its numeric index.
  *
- * @category utils
+ * @category converting
  * @since 4.0.0
  */
 export const fdName = (fd: number): string => `fd${fd}`

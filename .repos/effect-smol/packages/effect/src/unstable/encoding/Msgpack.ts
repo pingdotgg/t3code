@@ -1,34 +1,11 @@
 /**
- * Encode and decode MessagePack frames in Effect channels.
+ * Encodes and decodes MessagePack frames in Effect channels.
  *
  * MessagePack is a compact binary serialization format for protocols and
- * storage layers that expect bytes rather than JSON text, such as RPC
- * transports, socket streams, caches, or database columns. This module provides
- * raw channel helpers for already-agreed value shapes and schema helpers for
- * validating, transforming, or decoding domain values at the boundary.
- *
- * **Mental model**
- *
- * - Each input value passed to {@link encode} becomes one MessagePack byte array
- * - {@link decode} can receive arbitrary byte chunks; incomplete frames are
- *   buffered until enough bytes arrive
- * - Schema helpers run Effect schema encoding before packing and schema decoding
- *   after unpacking
- *
- * **Common tasks**
- *
- * - Pack values into bytes: {@link encode}
- * - Unpack byte chunks into values: {@link decode}
- * - Encode or decode domain values with schemas: {@link encodeSchema}, {@link decodeSchema}
- *
- * **Gotchas**
- *
- * - MessagePack preserves binary data better than JSON, but it is not a schema;
- *   use schema helpers when runtime validation matters
- * - Packing failures surface as {@link MsgPackError}; schema failures surface as
- *   `SchemaError` before or after the binary boundary
- * - Decoding expects complete MessagePack documents over time, not arbitrary
- *   byte payloads with out-of-band framing
+ * storage layers that expect bytes instead of JSON text, such as RPC
+ * transports, socket streams, caches, or database columns. This module includes
+ * raw channel helpers for values whose shape is already agreed on, and
+ * schema-based helpers for validating and transforming values at the boundary.
  *
  * @since 4.0.0
  */
@@ -44,8 +21,8 @@ import * as Option from "../../Option.ts"
 import * as Predicate from "../../Predicate.ts"
 import type * as Pull from "../../Pull.ts"
 import * as Schema from "../../Schema.ts"
-import * as Issue from "../../SchemaIssue.ts"
-import * as Transformation from "../../SchemaTransformation.ts"
+import * as SchemaIssue from "../../SchemaIssue.ts"
+import * as SchemaTransformation from "../../SchemaTransformation.ts"
 
 const MsgPackErrorTypeId = "~effect/encoding/MsgPack/MsgPackError"
 
@@ -124,7 +101,7 @@ export const encode = <IE = never, Done = unknown>(): Channel.Channel<
  * @category constructors
  * @since 4.0.0
  */
-export const encodeSchema = <S extends Schema.Top>(
+export const encodeSchema = <S extends Schema.Constraint>(
   schema: S
 ) =>
 <IE = never, Done = unknown>(): Channel.Channel<
@@ -204,7 +181,7 @@ export const decode = <IE = never, Done = unknown>(): Channel.Channel<
  * @category constructors
  * @since 4.0.0
  */
-export const decodeSchema = <S extends Schema.Top>(
+export const decodeSchema = <S extends Schema.Constraint>(
   schema: S
 ) =>
 <IE = never, Done = unknown>(): Channel.Channel<
@@ -266,7 +243,7 @@ export const duplex = <R, IE, OE, OutDone, InDone>(
  * @since 4.0.0
  */
 export const duplexSchema: {
-  <In extends Schema.Top, Out extends Schema.Top>(
+  <In extends Schema.Constraint, Out extends Schema.Constraint>(
     options: {
       readonly inputSchema: In
       readonly outputSchema: Out
@@ -290,7 +267,7 @@ export const duplexSchema: {
     InDone,
     R | In["EncodingServices"] | Out["DecodingServices"]
   >
-  <Out extends Schema.Top, In extends Schema.Top, OutErr, OutDone, InErr, InDone, R>(
+  <Out extends Schema.Constraint, In extends Schema.Constraint, OutErr, OutDone, InErr, InDone, R>(
     self: Channel.Channel<
       Arr.NonEmptyReadonlyArray<Uint8Array<ArrayBuffer>>,
       OutErr,
@@ -313,7 +290,7 @@ export const duplexSchema: {
     InDone,
     R | In["EncodingServices"] | Out["DecodingServices"]
   >
-} = dual(2, <Out extends Schema.Top, In extends Schema.Top, OutErr, OutDone, InErr, InDone, R>(
+} = dual(2, <Out extends Schema.Constraint, In extends Schema.Constraint, OutErr, OutDone, InErr, InDone, R>(
   self: Channel.Channel<
     Arr.NonEmptyReadonlyArray<Uint8Array<ArrayBuffer>>,
     OutErr,
@@ -348,7 +325,9 @@ export const duplexSchema: {
  * @category schemas
  * @since 4.0.0
  */
-export interface schema<S extends Schema.Top> extends Schema.decodeTo<S, Schema.instanceOf<Uint8Array<ArrayBuffer>>> {}
+export interface schema<S extends Schema.Constraint>
+  extends Schema.decodeTo<S, Schema.instanceOf<Uint8Array<ArrayBuffer>>>
+{}
 
 /**
  * Schema for decoding MessagePack bytes into values and encoding values back to
@@ -361,16 +340,16 @@ export interface schema<S extends Schema.Top> extends Schema.decodeTo<S, Schema.
  * @category schemas
  * @since 4.0.0
  */
-export const transformation: Transformation.Transformation<
+export const transformation: SchemaTransformation.Transformation<
   unknown,
   Uint8Array<ArrayBuffer>
-> = Transformation.transformOrFail({
+> = SchemaTransformation.transformOrFail({
   decode(e, _options) {
     try {
       return Effect.succeed(Msgpackr.decode(e))
     } catch (cause) {
       return Effect.fail(
-        new Issue.InvalidValue(Option.some(e), {
+        new SchemaIssue.InvalidValue(Option.some(e), {
           message: Predicate.hasProperty(cause, "message") ? String(cause.message) : String(cause)
         })
       )
@@ -381,7 +360,7 @@ export const transformation: Transformation.Transformation<
       return Effect.succeed(Msgpackr.encode(t) as Uint8Array<ArrayBuffer>)
     } catch (cause) {
       return Effect.fail(
-        new Issue.InvalidValue(Option.some(t), {
+        new SchemaIssue.InvalidValue(Option.some(t), {
           message: Predicate.hasProperty(cause, "message") ? String(cause.message) : String(cause)
         })
       )
@@ -400,7 +379,7 @@ export const transformation: Transformation.Transformation<
  * @category schemas
  * @since 4.0.0
  */
-export const schema = <S extends Schema.Top>(schema: S): schema<S> =>
+export const schema = <S extends Schema.Constraint>(schema: S): schema<S> =>
   (Schema.Uint8Array as Schema.instanceOf<Uint8Array<ArrayBuffer>>).pipe(
     Schema.decodeTo(schema, transformation)
   )

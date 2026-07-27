@@ -1,5 +1,5 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@/Cloudflare";
+import * as Alchemy from "@/index";
 import * as Effect from "effect/Effect";
 import HttpApiTestWorker from "./worker.ts";
 

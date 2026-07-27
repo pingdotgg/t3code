@@ -1,6 +1,8 @@
 import * as cloudfront from "@distilled.cloud/aws/cloudfront";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { isResolved } from "../../Diff.ts";
+import { toWireSeconds } from "../../Util/Duration.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -19,18 +21,19 @@ export interface CachePolicyProps {
    */
   comment?: string;
   /**
-   * Minimum amount of time, in seconds, that objects stay in the cache.
+   * Minimum amount of time that objects stay in the cache (e.g.
+   * `"1 minute"` or `Duration.minutes(1)`; a bare number is milliseconds).
    */
-  minTTL: number;
+  minTTL: Duration.Input;
   /**
-   * Default amount of time, in seconds, that objects stay in the cache when
-   * the origin does not send `Cache-Control` or `Expires` headers.
+   * Default amount of time that objects stay in the cache when the origin
+   * does not send `Cache-Control` or `Expires` headers (e.g. `"1 hour"`).
    */
-  defaultTTL?: number;
+  defaultTTL?: Duration.Input;
   /**
-   * Maximum amount of time, in seconds, that objects stay in the cache.
+   * Maximum amount of time that objects stay in the cache (e.g. `"1 day"`).
    */
-  maxTTL?: number;
+  maxTTL?: Duration.Input;
   /**
    * Controls which request values become part of the cache key and which
    * additional headers/cookies/query strings CloudFront forwards to the origin.
@@ -92,15 +95,15 @@ export interface CachePolicy extends Resource<
  * For AWS-managed policies (CachingOptimized, CachingDisabled,
  * AllViewerExceptHostHeader) reference them by ID via the constants in
  * {@link ManagedPolicies} instead of creating a custom policy.
- *
+ * @resource
  * @section Creating Cache Policies
  * @example Cache by query string and Authorization header
  * ```typescript
  * const cachePolicy = yield* CachePolicy("ApiCachePolicy", {
  *   comment: "Cache GETs by query string + Authorization",
  *   minTTL: 0,
- *   defaultTTL: 60,
- *   maxTTL: 3600,
+ *   defaultTTL: "1 minute",
+ *   maxTTL: "1 hour",
  *   parametersInCacheKeyAndForwardedToOrigin: {
  *     EnableAcceptEncodingGzip: true,
  *     EnableAcceptEncodingBrotli: true,
@@ -151,9 +154,9 @@ export const CachePolicyProvider = () =>
       ): cloudfront.CachePolicyConfig => ({
         Name: name,
         Comment: props.comment,
-        MinTTL: props.minTTL,
-        DefaultTTL: props.defaultTTL,
-        MaxTTL: props.maxTTL,
+        MinTTL: toWireSeconds(props.minTTL)!,
+        DefaultTTL: toWireSeconds(props.defaultTTL),
+        MaxTTL: toWireSeconds(props.maxTTL),
         ParametersInCacheKeyAndForwardedToOrigin:
           props.parametersInCacheKeyAndForwardedToOrigin,
       });
@@ -196,6 +199,33 @@ export const CachePolicyProvider = () =>
           if (!found) return undefined;
           return toAttrs(found.id, found.config, found.etag);
         }),
+        // CloudFront is global (no region). `listCachePolicies` returns both
+        // AWS-managed and custom policies; we filter to `Type: "custom"` since
+        // those are the only ones we create/delete. The op is marker-paginated
+        // (no `.pages`), so we loop until `NextMarker` is exhausted and hydrate
+        // each summary's ETag via `getById` so every row matches read().
+        list: () =>
+          Effect.gen(function* () {
+            const items: ReturnType<typeof toAttrs>[] = [];
+            let marker: string | undefined = undefined;
+            do {
+              const listed: cloudfront.ListCachePoliciesResult =
+                yield* cloudfront.listCachePolicies({
+                  Type: "custom",
+                  Marker: marker,
+                });
+              for (const summary of listed.CachePolicyList?.Items ?? []) {
+                if (summary.Type !== "custom") continue;
+                const id = summary.CachePolicy?.Id;
+                const config = summary.CachePolicy?.CachePolicyConfig;
+                if (!id || !config) continue;
+                const found = yield* getById(id);
+                items.push(toAttrs(id, found?.config ?? config, found?.etag));
+              }
+              marker = listed.CachePolicyList?.NextMarker;
+            } while (marker);
+            return items;
+          }),
         reconcile: Effect.fn(function* ({ id, news, output, session }) {
           const name = yield* createName(id, news);
 

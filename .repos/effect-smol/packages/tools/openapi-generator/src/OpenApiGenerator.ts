@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect"
 import type * as JsonSchema from "effect/JsonSchema"
 import * as Layer from "effect/Layer"
 import * as Predicate from "effect/Predicate"
+import * as Rec from "effect/Record"
 import * as String from "effect/String"
 import type { OpenAPISecurityScheme, OpenAPISpec, OpenAPISpecMethodName } from "effect/unstable/httpapi/OpenApi"
 import SwaggerToOpenApi from "swagger2openapi"
@@ -79,7 +80,7 @@ export interface OpenApiGeneratorWarning {
 /**
  * Options that control one OpenAPI generation run.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export interface OpenApiGenerateOptions {
@@ -156,7 +157,7 @@ export const make = Effect.gen(function*() {
       const generation = options.format === "httpapi"
         ? generator.generateHttpApi(
           source,
-          withHttpApiMultipartSchemas(spec.components?.schemas ?? {}, multipartSchemaRefs),
+          withHttpApiMultipartSchemas(spec.components?.schemas ?? {}, multipartSchemaRefs, resolveRef),
           {
             onEnter: options.onEnter,
             multipartSchemaRefs
@@ -348,11 +349,11 @@ const parseOpenApi = (
         return Number(status) < 400
       })
 
-      if (isHttpApi && hasSuccessfulSseResponse(resolvedResponses, hasExplicitSuccessResponse)) {
+      if (isHttpApi && hasUnsupportedSuccessfulSseResponse(resolvedResponses, hasExplicitSuccessResponse)) {
         warnForOperation(emitWarning, op, {
           code: "sse-operation-skipped",
           message:
-            "Operation was skipped because successful text/event-stream responses are not supported in HttpApi generation."
+            "Operation was skipped because a successful SSE response is missing x-effect-stream metadata required for HttpApi generation."
         })
         continue
       }
@@ -511,7 +512,46 @@ const parseOpenApi = (
             if (contentType === "application/json") {
               continue
             }
-            if (!Predicate.isObject(mediaType) || Predicate.isUndefined(mediaType.schema)) {
+            if (!Predicate.isObject(mediaType)) {
+              continue
+            }
+
+            const statusMajorNumber = Number(parsedStatus[0])
+            const streamEncoding = !Number.isNaN(statusMajorNumber) && statusMajorNumber < 4
+              ? getEffectStreamEncoding(mediaType)
+              : undefined
+            if (streamEncoding === "uint8array") {
+              representable.push({
+                contentType,
+                encoding: "binary",
+                effectStream: "uint8array"
+              })
+              continue
+            }
+            if (streamEncoding === "sse") {
+              const errorSchema = getEffectStreamErrorSchema(mediaType)
+              if (Predicate.isUndefined(mediaType.schema) || Predicate.isUndefined(errorSchema)) {
+                continue
+              }
+              representable.push({
+                contentType,
+                encoding: "text",
+                effectStream: "sse",
+                schema: addSchema(
+                  `${schemaId}${status}Sse`,
+                  mediaType.schema as JsonSchema.JsonSchema,
+                  op
+                ),
+                errorSchema: addSchema(
+                  `${schemaId}${status}SseError`,
+                  errorSchema,
+                  op
+                )
+              })
+              continue
+            }
+
+            if (Predicate.isUndefined(mediaType.schema)) {
               continue
             }
             const encoding = getResponseMediaTypeEncoding(contentType)
@@ -566,7 +606,7 @@ const parseOpenApi = (
         }
 
         const sseResponseSchema = content?.["text/event-stream"]?.schema
-        if (Predicate.isUndefined(op.sseSchema) && Predicate.isNotUndefined(sseResponseSchema)) {
+        if (!isHttpApi && Predicate.isUndefined(op.sseSchema) && Predicate.isNotUndefined(sseResponseSchema)) {
           const statusMajorNumber = Number(parsedStatus[0])
           if (!Number.isNaN(statusMajorNumber) && statusMajorNumber < 4) {
             op.sseSchema = addSchema(`${schemaId}${status}Sse`, sseResponseSchema, op)
@@ -705,14 +745,14 @@ const buildParameterSchema = <
 
       for (const [name, propertySchema] of Object.entries(paramSchema.properties)) {
         const adjustedName = `${parameter.name}[${name}]`
-        schema.properties[adjustedName] = propertySchema as JsonSchema.JsonSchema
+        Rec.assignProperty(schema.properties, adjustedName, propertySchema as JsonSchema.JsonSchema)
         if (required.includes(name)) {
           schema.required.push(adjustedName)
         }
         added.push(adjustedName)
       }
     } else {
-      schema.properties[parameter.name] = parameter.schema as JsonSchema.JsonSchema
+      Rec.assignProperty(schema.properties, parameter.name, parameter.schema as JsonSchema.JsonSchema)
       if (parameter.required) {
         schema.required.push(parameter.name)
       }
@@ -768,13 +808,14 @@ const toDefinitionRef = (name: string): string => `#/$defs/${name.replaceAll("~"
 
 const withHttpApiMultipartSchemas = (
   definitions: JsonSchema.Definitions,
-  multipartSchemaRefs: HttpApiMultipartSchemaRefs | undefined
+  multipartSchemaRefs: HttpApiMultipartSchemaRefs | undefined,
+  resolveRef: (ref: string) => unknown
 ): JsonSchema.Definitions => {
   if (multipartSchemaRefs === undefined) {
     return definitions
   }
   return {
-    ...definitions,
+    ...Rec.map(definitions, (schema) => transformMultipartSchema(schema, multipartSchemaRefs, resolveRef)),
     [multipartSchemaRefs.singleFile]: {
       type: "string",
       format: "binary"
@@ -811,18 +852,21 @@ const transformMultipartSchema = (
     }
 
     if (typeof value.$ref === "string" && value.$ref.startsWith("#/components/schemas/")) {
-      const cached = cache.get(value.$ref)
+      const { $ref, ...siblings } = value
+      const withSiblings = (schema: unknown): unknown =>
+        Object.keys(siblings).length === 0 ? schema : { allOf: [schema, visit(siblings)] }
+      const cached = cache.get($ref)
       if (cached !== undefined) {
-        return cached
+        return withSiblings(cached)
       }
-      if (stack.has(value.$ref)) {
+      if (stack.has($ref)) {
         return value
       }
-      stack.add(value.$ref)
-      const transformed = visit(resolveSchemaReference(value.$ref, resolveRef))
-      stack.delete(value.$ref)
-      cache.set(value.$ref, transformed)
-      return transformed
+      stack.add($ref)
+      const transformed = visit(resolveRef($ref))
+      stack.delete($ref)
+      cache.set($ref, transformed)
+      return withSiblings(transformed)
     }
 
     if (isMultipartBinaryFile(value)) {
@@ -831,7 +875,7 @@ const transformMultipartSchema = (
 
     const out: Record<string, unknown> = {}
     for (const [key, current] of Object.entries(value)) {
-      out[key] = visit(current)
+      Rec.assignProperty(out, key, visit(current))
     }
 
     if (isMultipartBinaryFiles(out, singleFileRef)) {
@@ -842,19 +886,6 @@ const transformMultipartSchema = (
   }
 
   return visit(schema) as JsonSchema.JsonSchema
-}
-
-const resolveSchemaReference = (ref: string, resolveRef: (ref: string) => unknown): unknown => {
-  let current: unknown = { $ref: ref }
-  const seen = new Set<string>()
-  while (Predicate.isObject(current) && typeof current.$ref === "string") {
-    if (seen.has(current.$ref)) {
-      return current
-    }
-    seen.add(current.$ref)
-    current = resolveRef(current.$ref)
-  }
-  return current
 }
 
 const isMultipartBinaryFile = (value: unknown): value is JsonSchema.JsonSchema =>
@@ -922,6 +953,22 @@ const getResponseMediaTypeEncoding = (
     return "binary"
   }
   return
+}
+
+const getEffectStreamEncoding = (mediaType: object): "uint8array" | "sse" | undefined => {
+  const stream = (mediaType as Record<string, unknown>)["x-effect-stream"]
+  if (!Predicate.isObject(stream)) {
+    return
+  }
+  return stream.encoding === "uint8array" || stream.encoding === "sse" ? stream.encoding : undefined
+}
+
+const getEffectStreamErrorSchema = (mediaType: object): JsonSchema.JsonSchema | undefined => {
+  const stream = (mediaType as Record<string, unknown>)["x-effect-stream"]
+  if (!Predicate.isObject(stream) || !Predicate.isObject(stream.errorSchema)) {
+    return
+  }
+  return stream.errorSchema as JsonSchema.JsonSchema
 }
 
 const resolveReference = (input: unknown, resolveRef: (ref: string) => unknown): any => {
@@ -1031,7 +1078,7 @@ const warnForAndSecurityRequirements = (
   }
 }
 
-const hasSuccessfulSseResponse = (
+const hasUnsupportedSuccessfulSseResponse = (
   responses: ReadonlyArray<readonly [string, unknown]>,
   hasExplicitSuccessResponse: boolean
 ): boolean => {
@@ -1039,17 +1086,33 @@ const hasSuccessfulSseResponse = (
     if (!Predicate.isObject(response)) {
       continue
     }
-    const content = Predicate.isObject(response.content)
-      ? response.content as Record<string, any>
-      : undefined
-    if (Predicate.isUndefined(content?.["text/event-stream"]?.schema)) {
+    const remappedStatus = remapDefaultResponseStatusForHttpApi(status, hasExplicitSuccessResponse)
+    const statusCode = Number(remappedStatus)
+    if (Number.isNaN(statusCode) || statusCode >= 400) {
       continue
     }
 
-    const remappedStatus = remapDefaultResponseStatusForHttpApi(status, hasExplicitSuccessResponse)
-    const statusCode = Number(remappedStatus)
-    if (!Number.isNaN(statusCode) && statusCode < 400) {
-      return true
+    const content = Predicate.isObject(response.content)
+      ? response.content as Record<string, any>
+      : undefined
+    if (Predicate.isUndefined(content)) {
+      continue
+    }
+
+    for (const [contentType, mediaType] of Object.entries(content)) {
+      if (!Predicate.isObject(mediaType)) {
+        continue
+      }
+      const streamEncoding = getEffectStreamEncoding(mediaType)
+      if (streamEncoding === "sse") {
+        if (Predicate.isUndefined(mediaType.schema) || Predicate.isUndefined(getEffectStreamErrorSchema(mediaType))) {
+          return true
+        }
+        continue
+      }
+      if (contentType === "text/event-stream") {
+        return true
+      }
     }
   }
   return false

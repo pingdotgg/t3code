@@ -490,6 +490,20 @@ describe("PubSub", () => {
       })
     ))
 
+  it.effect("publish succeeds after interrupting a suspended subscriber", () =>
+    Effect.scoped(
+      Effect.gen(function*() {
+        const pubsub = yield* PubSub.dropping<number>(1)
+        const subscription = yield* PubSub.subscribe(pubsub)
+        const fiber = yield* Effect.forkChild(PubSub.take(subscription), { startImmediately: true })
+
+        yield* Fiber.interrupt(fiber)
+
+        assert.isTrue(yield* PubSub.publish(pubsub, 42))
+        assert.strictEqual(yield* PubSub.take(subscription), 42)
+      })
+    ))
+
   it.effect("shutdown interrupts suspended takeAll subscribers", () =>
     Effect.scoped(
       Effect.gen(function*() {

@@ -1,21 +1,21 @@
 import {
-  ZarazConfig,
+  Config,
   type InferZarazEcommerceEvents,
   type InferZarazEvents,
-  type ZarazHttpEventsPayload,
-  type ZarazTrack,
-  type ZarazWebApi,
+  type HttpEventsPayload,
+  type Track,
+  type WebApi,
 } from "@/Cloudflare/Zaraz";
-import { expect, test } from "vitest";
+import { expect, test } from "alchemy-test";
 
 const checkZarazEventTypes = () => {
-  const zaraz = ZarazConfig.events<{
+  const zaraz = Config.events<{
     Login: { method: "google" | "email" | "email-link" };
     "Button Clicked": { button_label: string; context?: string };
     __zarazSPA: undefined;
   }>();
 
-  const zarazWithEcommerce = ZarazConfig.events<{
+  const zarazWithEcommerce = Config.events<{
     Login: { method: "google" | "email" | "email-link" };
     "Button Clicked": { button_label: string; context?: string };
     __zarazSPA: undefined;
@@ -49,7 +49,7 @@ const checkZarazEventTypes = () => {
 
   void standardEcommerceEvents;
 
-  const track = undefined as unknown as ZarazTrack<Events>;
+  const track = undefined as unknown as Track<Events>;
 
   track("Login", { method: "google" });
   track("__zarazSPA");
@@ -69,8 +69,8 @@ const checkZarazEventTypes = () => {
   // @ts-expect-error required event properties must be present
   track("Button Clicked", {});
 
-  const browser = undefined as unknown as ZarazWebApi<Events, EcommerceEvents>;
-  const browserWithoutEcommerce = undefined as unknown as ZarazWebApi<
+  const browser = undefined as unknown as WebApi<Events, EcommerceEvents>;
+  const browserWithoutEcommerce = undefined as unknown as WebApi<
     Events,
     DisabledEcommerceEvents
   >;
@@ -115,7 +115,7 @@ const checkZarazEventTypes = () => {
         },
       },
     ],
-  } satisfies ZarazHttpEventsPayload<Events>;
+  } satisfies HttpEventsPayload<Events>;
 
   void payload;
 
@@ -127,7 +127,7 @@ const checkZarazEventTypes = () => {
         },
       },
     ],
-  } satisfies ZarazHttpEventsPayload<Events>;
+  } satisfies HttpEventsPayload<Events>;
 
   void emptyPayload;
 
@@ -141,7 +141,7 @@ const checkZarazEventTypes = () => {
         },
       },
     ],
-  } satisfies ZarazHttpEventsPayload<Events>;
+  } satisfies HttpEventsPayload<Events>;
 
   void invalidPayload;
 };
@@ -149,5 +149,5 @@ const checkZarazEventTypes = () => {
 void checkZarazEventTypes;
 
 test("Zaraz event contracts are type-only", () => {
-  expect(ZarazConfig.events<{}>()).toEqual({});
+  expect(Config.events<{}>()).toEqual({});
 });

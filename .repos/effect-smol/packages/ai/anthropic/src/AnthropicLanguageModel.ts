@@ -1,29 +1,9 @@
 /**
  * The `AnthropicLanguageModel` module provides the Anthropic implementation of
- * Effect AI's `LanguageModel` service. It turns Effect AI prompts, tools, files,
- * reasoning parts, and provider options into Anthropic Messages API requests,
- * and converts Anthropic responses and streams back into Effect AI response
- * parts with Anthropic-specific metadata.
- *
- * **When to use**
- *
- * Use when create an Anthropic-backed model with {@link model}
- * - Build or provide a `LanguageModel.LanguageModel` layer with {@link layer}
- *   or {@link make}
- * - Supply default request options through {@link Config}
- * - Override configuration for a scoped operation with {@link withConfigOverride}
- * - Attach Anthropic provider options for prompt caching, document citations,
- *   reasoning signatures, MCP metadata, and server-side tools
- *
- * **Gotchas**
- *
- * - Prompt files are translated to Anthropic image or document blocks; only the
- *   supported media types can be sent to the provider.
- * - Structured output support depends on the selected Claude model, so this
- *   module may use Anthropic's native structured output or fall back to a JSON
- *   response tool.
- * - Some features require Anthropic beta headers, which are added
- *   automatically from the selected tools, files, and model capabilities.
+ * Effect AI's `LanguageModel` service. It translates Effect AI prompts, tools,
+ * files, reasoning content, and Anthropic-specific options into Messages API
+ * requests, then converts normal and streaming Anthropic responses back into
+ * Effect AI response content with provider metadata.
  *
  * @since 4.0.0
  */
@@ -62,16 +42,10 @@ import * as InternalUtilities from "./internal/utilities.ts"
 /**
  * Known Anthropic Claude model identifiers exposed by the generated Anthropic schema.
  *
- * **Details**
- *
- * The Anthropic language model constructors accept `Model` values and custom
- * string model ids, so this type is best used for autocomplete and type checking
- * of known Claude ids.
- *
  * @category models
  * @since 4.0.0
  */
-export type Model = typeof Generated.Model.Type
+export type Model = (typeof Generated.Model)["members"][1]["Encoded"]
 
 // =============================================================================
 // Configuration
@@ -82,13 +56,14 @@ export type Model = typeof Generated.Model.Type
  *
  * **When to use**
  *
- * Use when you need to provide or override Anthropic model configuration on a
- * per-request basis via `Context.Service`.
+ * Use when you need scoped Anthropic model request defaults or per-operation
+ * overrides from Effect context.
  *
  * **Details**
  *
- * This service can be used to provide default configuration values or to
- * override configuration on a per-request basis.
+ * The service stores request fields that are merged into Anthropic Messages API
+ * requests. Scoped configuration overrides defaults supplied to `model`,
+ * `make`, or `layer`.
  *
  * @category configuration
  * @since 4.0.0
@@ -669,8 +644,8 @@ export const model = (
  *
  * **When to use**
  *
- * Use when an Effect needs to construct a `LanguageModel.Service` value backed
- * by `AnthropicClient`.
+ * Use when you need to construct a `LanguageModel.Service` value backed by
+ * `AnthropicClient` inside an Effect.
  *
  * **Details**
  *
@@ -1639,16 +1614,19 @@ const makeResponse = Effect.fnUntraced(
             const callerInfo = Predicate.isNotNullish(caller)
               ? {
                 type: caller.type,
-                toolId: "tool_id" in caller ? caller.tool_id : undefined
+                toolId: "tool_id" in caller ? caller.tool_id : null
               }
               : undefined
 
-            const params = yield* transformToolCallParams(options.tools, part.name, part.input)
+            // Map the provider wire name (e.g. "memory") back to the tool's
+            // custom name (e.g. "AnthropicMemory") that the toolkit is keyed by
+            const toolName = toolNameMapper.getCustomName(part.name)
+            const params = yield* transformToolCallParams(options.tools, toolName, part.input)
 
             parts.push({
               type: "tool-call",
               id: part.id,
-              name: part.name,
+              name: toolName,
               params,
               ...(Predicate.isNotUndefined(callerInfo)
                 ? { metadata: { anthropic: { caller: callerInfo } } }
@@ -2061,10 +2039,15 @@ const makeStreamResponse = Effect.fnUntraced(
                     }
                     : undefined
 
+                  // Map the provider wire name (e.g. "memory") back to the
+                  // tool's custom name (e.g. "AnthropicMemory") that the toolkit
+                  // is keyed by
+                  const toolName = toolNameMapper.getCustomName(part.name)
+
                   parts.push({
                     type: "tool-params-start",
                     id: part.id,
-                    name: part.name
+                    name: toolName
                   })
 
                   parts.push({
@@ -2078,12 +2061,12 @@ const makeStreamResponse = Effect.fnUntraced(
                     id: part.id
                   })
 
-                  const params = yield* transformToolCallParams(options.tools, part.name, part.input)
+                  const params = yield* transformToolCallParams(options.tools, toolName, part.input)
 
                   parts.push({
                     type: "tool-call",
                     id: part.id,
-                    name: part.name,
+                    name: toolName,
                     params,
                     ...(Predicate.isNotUndefined(callerInfo)
                       ? { metadata: { anthropic: { caller: callerInfo } } }
@@ -2231,10 +2214,15 @@ const makeStreamResponse = Effect.fnUntraced(
 
                 const hasParams = Object.keys(part.input).length > 0
                 const initialParams = hasParams ? JSON.stringify(part.input) : ""
+                // Map the provider wire name (e.g. "memory") back to the tool's
+                // custom name (e.g. "AnthropicMemory") that the toolkit is keyed
+                // by. The mapped name flows to the finalized tool-call via
+                // `contentBlock.name` on `content_block_stop`.
+                const toolName = toolNameMapper.getCustomName(part.name)
                 contentBlocks.set(event.index, {
                   type: "tool-call",
                   id: part.id,
-                  name: part.name,
+                  name: toolName,
                   params: initialParams,
                   firstDelta: initialParams.length > 0,
                   ...(Predicate.isNotUndefined(caller) ? { caller } : undefined)
@@ -2243,7 +2231,7 @@ const makeStreamResponse = Effect.fnUntraced(
                 parts.push({
                   type: "tool-params-start",
                   id: part.id,
-                  name: part.name
+                  name: toolName
                 })
 
                 break
@@ -2985,7 +2973,11 @@ const getModelCapabilities = (modelId: string): ModelCapabilities => {
   if (
     modelId.includes("claude-sonnet-4-5") ||
     modelId.includes("claude-opus-4-5") ||
-    modelId.includes("claude-haiku-4-5")
+    modelId.includes("claude-haiku-4-5") ||
+    modelId.includes("claude-opus-4-6") ||
+    modelId.includes("claude-sonnet-4-6") ||
+    modelId.includes("claude-opus-4-7") ||
+    modelId.includes("claude-opus-4-8")
   ) {
     return {
       maxOutputTokens: 64000,
@@ -3043,13 +3035,13 @@ const unsupportedSchemaError = (error: unknown, method: string): AiError.AiError
     })
   })
 
-const tryCodecTransform = <S extends Schema.Top>(schema: S, method: string) =>
+const tryCodecTransform = <S extends Schema.Constraint>(schema: S, method: string) =>
   Effect.try({
     try: () => toCodecAnthropic(schema),
     catch: (error) => unsupportedSchemaError(error, method)
   })
 
-const tryJsonSchema = <S extends Schema.Top>(schema: S, method: string) =>
+const tryJsonSchema = <S extends Schema.Constraint>(schema: S, method: string) =>
   Effect.try({
     try: () => Tool.getJsonSchemaFromSchema(schema, { transformer: toCodecAnthropic }),
     catch: (error) => unsupportedSchemaError(error, method)

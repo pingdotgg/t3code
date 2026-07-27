@@ -2,7 +2,10 @@ import {
   Credentials,
   formatHeaders,
 } from "@distilled.cloud/cloudflare/Credentials";
+import * as zones from "@distilled.cloud/cloudflare/zones";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import type * as HttpClient from "effect/unstable/http/HttpClient";
 
 /**
  * Reference to an existing Cloudflare Zone. Accepts:
@@ -11,9 +14,9 @@ import * as Effect from "effect/Effect";
  *   - a `{ zoneId, name? }` object (e.g. the output of a `Zone` resource or
  *     {@link importZone}).
  */
-export type ZoneReference = string | { zoneId: string; name?: string };
+export type Reference = string | { zoneId: string; name?: string };
 
-export const isZoneId = (zone: string): boolean => /^[a-f0-9]{32}$/i.test(zone);
+export const isId = (zone: string): boolean => /^[a-f0-9]{32}$/i.test(zone);
 
 export const matchesZoneHostname = (
   zoneName: string,
@@ -26,12 +29,12 @@ export const resolveZoneId = ({
   hostname,
 }: {
   accountId: string;
-  zone: ZoneReference | undefined;
+  zone: Reference | undefined;
   hostname: string;
 }) =>
   Effect.gen(function* () {
     if (typeof zone === "object") return zone.zoneId;
-    if (typeof zone === "string" && isZoneId(zone)) return zone;
+    if (typeof zone === "string" && isId(zone)) return zone;
 
     const lookup = zone ?? hostname;
     for (const candidate of zoneNameCandidates(lookup)) {
@@ -94,6 +97,27 @@ export const findZoneByName = ({
         candidate.name === name && candidate.account.id === accountId,
     );
   });
+
+/**
+ * Exhaustively enumerate every zone in an account. Used by `list()` lifecycle
+ * operations on zone-scoped resources to fan out across all zones. Returns only
+ * the stable `{ id, name }` pair each caller needs to drive a per-zone list.
+ */
+export const listAllZones = (
+  accountId: string,
+): Effect.Effect<
+  { id: string; name: string }[],
+  zones.ListZonesError,
+  Credentials | HttpClient.HttpClient
+> =>
+  zones.listZones.pages({ account: { id: accountId } }).pipe(
+    Stream.runCollect,
+    Effect.map((chunk) =>
+      Array.from(chunk).flatMap((page) =>
+        (page.result ?? []).map((zone) => ({ id: zone.id, name: zone.name })),
+      ),
+    ),
+  );
 
 const zoneNameCandidates = (hostname: string): string[] => {
   const parts = hostname.split(".");

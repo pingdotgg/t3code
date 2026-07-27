@@ -57,4 +57,8 @@ export const RandomProvider = () =>
       }),
     delete: () => Effect.void,
     read: ({ output }) => Effect.succeed(output),
+    // Non-listable: the value is generated client-side with
+    // `crypto.getRandomValues` and lives only in alchemy state. There is no
+    // remote service to enumerate, so listing yields nothing.
+    list: () => Effect.succeed([]),
   });

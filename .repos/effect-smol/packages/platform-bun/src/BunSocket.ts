@@ -1,22 +1,10 @@
 /**
- * Bun platform socket entry point for Effect sockets backed by Bun-compatible
- * Node streams and Bun's native WebSocket implementation.
+ * Bun platform socket entry point for Effect sockets.
  *
  * This module re-exports the shared Node socket constructors for TCP clients,
- * Unix domain socket clients, and adapters from existing Node `Duplex` streams,
- * then adds Bun-specific WebSocket layers using `globalThis.WebSocket`. Use it
- * in Bun applications that connect to raw socket protocols, Unix sockets,
- * realtime WebSocket services, or Effect RPC transports that need a
- * `Socket.Socket` layer.
- *
- * TCP lifecycle behavior comes from the shared Node layer: sockets are scoped,
- * finalizers close or destroy the underlying stream, open timeouts become
- * socket open errors, and read, write, and close events are mapped to
- * `SocketError` values. TLS concerns depend on the transport being used: `wss:`
- * URLs are handled by Bun's WebSocket implementation, while TLS-wrapped
- * `Duplex` streams can be adapted after they have been created elsewhere.
- * When closing intentionally, send `Socket.CloseEvent` values so the close code
- * and reason are preserved through the socket lifecycle.
+ * Unix domain socket clients, and adapters from existing Node `Duplex` streams.
+ * It also provides Bun WebSocket layers using `globalThis.WebSocket`, including
+ * a constructor layer and a `Socket.Socket` layer for a WebSocket URL.
  *
  * @since 4.0.0
  */

@@ -4,6 +4,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import type { PlatformError } from "effect/PlatformError";
 import type { ScopedPlanStatusSession } from "../../Cli/Cli.ts";
 import { sha256, sha256Object } from "../../Util/index.ts";
@@ -32,9 +33,8 @@ export interface AssetReadResult {
   hash: string;
 }
 
-export interface AssetsProps {
+export interface AssetsProps extends AssetsConfig {
   directory: string;
-  config?: AssetsConfig;
 }
 
 export type ValidationError =
@@ -68,6 +68,13 @@ export class FailedToReadAssetError extends Data.TaggedError(
   cause: PlatformError;
 }> {}
 
+export class AssetUploadSessionError extends Data.TaggedError(
+  "AssetUploadSessionError",
+)<{
+  message: string;
+  workerName: string;
+}> {}
+
 const getContentType = (name: string) => {
   if (name.endsWith(".html")) return "text/html";
   if (name.endsWith(".txt")) return "text/plain";
@@ -87,7 +94,7 @@ const getContentType = (name: string) => {
   return "application/octet-stream";
 };
 
-const maybeReadString = Effect.fnUntraced(function* (file: string) {
+const maybeReadString = Effect.fn(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
   return yield* fs.readFileString(file).pipe(
     Effect.catchIf(
@@ -103,10 +110,61 @@ const createIgnoreMatcher = (patterns: string[]) => {
   return (file: string) => matcher.ignores(file);
 };
 
-export const readAssets = Effect.fnUntraced(function* (props: AssetsProps) {
+/**
+ * Read the special `_headers` / `_redirects` files from an assets
+ * directory. They are excluded from the upload manifest, but their raw
+ * contents must be sent to Cloudflare in the script metadata's asset
+ * config (`config._headers` / `config._redirects`) for the rules to
+ * apply.
+ *
+ * The directory is optional: a config-only assets object (e.g. Vite's
+ * `assets: { runWorkerFirst: true }`, whose directory is supplied by the
+ * build) has no directory to read, and in `dev` there is no build output at
+ * all. That yields no rules rather than an error.
+ */
+export const readAssetsConfigFiles = Effect.fn(function* (
+  directory: string | undefined,
+) {
+  if (directory === undefined) {
+    return { _headers: undefined, _redirects: undefined };
+  }
+  const path = yield* Path.Path;
+  const resolvedDirectory = path.resolve(directory);
+  const [_headers, _redirects] = yield* Effect.all([
+    maybeReadString(path.join(resolvedDirectory, "_headers")),
+    maybeReadString(path.join(resolvedDirectory, "_redirects")),
+  ]);
+  return { _headers, _redirects };
+});
+
+/**
+ * Merge `_headers` / `_redirects` file contents into an asset config,
+ * producing the config to send in the script-upload metadata. Explicit
+ * `headers` / `redirects` props win over the files.
+ */
+export const mergeAssetsConfigFiles = (
+  config: AssetsConfig | undefined,
+  files: { _headers: string | undefined; _redirects: string | undefined },
+): AssetsConfig | undefined => {
+  const headers = config?.headers ?? files._headers;
+  const redirects = config?.redirects ?? files._redirects;
+  if (headers === undefined && redirects === undefined) {
+    return config;
+  }
+  return {
+    ...config,
+    ...(headers !== undefined ? { headers } : undefined),
+    ...(redirects !== undefined ? { redirects } : undefined),
+  };
+};
+
+export const readAssets = Effect.fn(function* ({
+  directory,
+  ...config
+}: AssetsProps) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const resolvedDirectory = path.resolve(props.directory);
+  const resolvedDirectory = path.resolve(directory);
   const [files, ignore, _headers, _redirects] = yield* Effect.all([
     fs.readDirectory(resolvedDirectory, { recursive: true }),
     maybeReadString(path.join(resolvedDirectory, ".assetsignore")),
@@ -126,7 +184,7 @@ export const readAssets = Effect.fnUntraced(function* (props: AssetsProps) {
   let count = 0;
   yield* Effect.forEach(
     files,
-    Effect.fnUntraced(function* (name) {
+    Effect.fn(function* (name) {
       if (ignores(name)) {
         return;
       }
@@ -151,7 +209,7 @@ export const readAssets = Effect.fnUntraced(function* (props: AssetsProps) {
       if (count > MAX_ASSET_COUNT) {
         return yield* new TooManyAssetsError({
           message: `Too many assets (the maximum count is ${MAX_ASSET_COUNT}; this directory has ${count} assets)`,
-          directory: props.directory,
+          directory,
           count,
         });
       }
@@ -176,14 +234,18 @@ export const readAssets = Effect.fnUntraced(function* (props: AssetsProps) {
   // causes both unnecessary re-uploads and `NotFound` failures when
   // the previously-recorded path is gone.
   const hash = yield* sha256Object({
-    config: props.config,
+    config,
     manifest: sortedManifest,
     _headers,
     _redirects,
   });
   return {
-    directory: props.directory,
-    config: props.config,
+    directory,
+    // Fold the `_headers` / `_redirects` file contents into the config
+    // that gets sent to Cloudflare (`metadata.assets.config`). Merged
+    // *after* hashing so the hash input shape stays stable for
+    // already-deployed workers.
+    config: mergeAssetsConfigFiles(config, { _headers, _redirects }),
     manifest: sortedManifest,
     _headers,
     _redirects,
@@ -191,7 +253,7 @@ export const readAssets = Effect.fnUntraced(function* (props: AssetsProps) {
   };
 });
 
-export const uploadAssets = Effect.fnUntraced(function* (
+export const uploadAssets = Effect.fn(function* (
   accountId: string,
   workerName: string,
   assets: AssetReadResult,
@@ -202,70 +264,112 @@ export const uploadAssets = Effect.fnUntraced(function* (
   const createScriptAssetUpload = yield* workers.createScriptAssetUpload;
   const createAssetUpload = yield* workers.createAssetUpload;
 
-  yield* note("Checking assets...");
-  const session = yield* createScriptAssetUpload({
-    accountId,
-    scriptName: workerName,
-    manifest: assets.manifest,
-  });
-  if (!session.buckets?.length) {
-    return { jwt: session.jwt ?? undefined };
-  }
-  if (!session.jwt) {
-    return { jwt: undefined };
-  }
-  const uploadJwt = session.jwt;
-  let uploaded = 0;
-  const total = session.buckets.flat().length;
-  yield* note(`Uploaded ${uploaded} of ${total} assets...`);
   const assetsByHash = new Map<string, string>();
   for (const [name, { hash }] of Object.entries(assets.manifest)) {
     assetsByHash.set(hash, name);
   }
-  let jwt: string | undefined | null;
   const directory = path.resolve(assets.directory);
-  yield* Effect.forEach(
-    session.buckets,
-    Effect.fnUntraced(function* (bucket) {
-      const body: Record<string, File> = {};
-      yield* Effect.forEach(
-        bucket,
-        Effect.fnUntraced(function* (hash) {
-          const name = assetsByHash.get(hash);
-          if (!name) {
-            return yield* new AssetNotFoundError({
-              message: `Asset ${hash} not found in manifest`,
-              hash,
-            });
-          }
-          const file = yield* fs.readFile(path.join(directory, name)).pipe(
-            Effect.mapError(
-              (error) =>
-                new FailedToReadAssetError({
-                  message: `Failed to read asset ${name}: ${error.message}`,
-                  name,
-                  cause: error,
-                }),
-            ),
-          );
-          body[hash] = new File([Buffer.from(file).toString("base64")], hash, {
-            type: getContentType(name),
-          });
-        }),
-      );
-      const result = yield* createAssetUpload({
-        accountId,
-        base64: true,
-        body,
-        jwtToken: uploadJwt,
-      });
 
-      uploaded += bucket.length;
-      yield* note(`Uploaded ${uploaded} of ${total} assets...`);
-      if (result.jwt) {
-        jwt = result.jwt;
+  // One full upload session: ask Cloudflare which assets are missing,
+  // upload each bucket, and return the completion JWT that putWorker
+  // must redeem. The session JWT can expire mid-upload on very large
+  // asset sets (Unauthorized), and the final bucket response has been
+  // observed in the wild to omit the completion JWT — both cases are
+  // retried below with a fresh session. Already-uploaded assets are
+  // not re-bucketed, so a retry resumes where the last session
+  // stopped, and a fresh session with nothing left to upload returns
+  // the completion JWT directly.
+  const runSession = Effect.fn(function* () {
+    yield* note("Checking assets...");
+    const session = yield* createScriptAssetUpload({
+      accountId,
+      scriptName: workerName,
+      manifest: assets.manifest,
+    });
+    if (!session.buckets?.length) {
+      if (!session.jwt) {
+        return yield* new AssetUploadSessionError({
+          message: `Asset upload session for worker ${workerName} returned no completion token`,
+          workerName,
+        });
       }
+      return session.jwt;
+    }
+    if (!session.jwt) {
+      return yield* new AssetUploadSessionError({
+        message: `Asset upload session for worker ${workerName} returned ${session.buckets.length} buckets to upload but no upload token`,
+        workerName,
+      });
+    }
+    const uploadJwt = session.jwt;
+    let uploaded = 0;
+    const total = session.buckets.flat().length;
+    yield* note(`Uploaded ${uploaded} of ${total} assets...`);
+    let jwt: string | undefined | null;
+    yield* Effect.forEach(
+      session.buckets,
+      Effect.fn(function* (bucket) {
+        const body: Record<string, File> = {};
+        yield* Effect.forEach(
+          bucket,
+          Effect.fn(function* (hash) {
+            const name = assetsByHash.get(hash);
+            if (!name) {
+              return yield* new AssetNotFoundError({
+                message: `Asset ${hash} not found in manifest`,
+                hash,
+              });
+            }
+            const file = yield* fs.readFile(path.join(directory, name)).pipe(
+              Effect.mapError(
+                (error) =>
+                  new FailedToReadAssetError({
+                    message: `Failed to read asset ${name}: ${error.message}`,
+                    name,
+                    cause: error,
+                  }),
+              ),
+            );
+            body[hash] = new File(
+              [Buffer.from(file).toString("base64")],
+              hash,
+              {
+                type: getContentType(name),
+              },
+            );
+          }),
+        );
+        const result = yield* createAssetUpload({
+          accountId,
+          base64: true,
+          body,
+          jwtToken: uploadJwt,
+        });
+
+        uploaded += bucket.length;
+        yield* note(`Uploaded ${uploaded} of ${total} assets...`);
+        if (result.jwt) {
+          jwt = result.jwt;
+        }
+      }),
+    );
+    if (!jwt) {
+      return yield* new AssetUploadSessionError({
+        message: `Uploaded ${total} assets for worker ${workerName} but Cloudflare did not return a completion token`,
+        workerName,
+      });
+    }
+    return jwt;
+  });
+
+  const jwt = yield* runSession().pipe(
+    Effect.retry({
+      while: (error): boolean =>
+        error._tag === "Unauthorized" ||
+        error._tag === "AssetUploadSessionError",
+      schedule: Schedule.exponential("1 second"),
+      times: 3,
     }),
   );
-  return { jwt: jwt ?? undefined };
+  return { jwt };
 });

@@ -1,51 +1,12 @@
 /**
- * Pluggable error reporting for Effect programs.
+ * Reports Effect failures to external code.
  *
- * Reporting is triggered by `Effect.withErrorReporting`,
- * `ErrorReporter.report`, or built-in reporting boundaries in the HTTP and
- * RPC server modules.
- *
- * Each reporter receives a structured callback with the failing `Cause`, a
- * pretty-printed `Error`, severity, and any extra attributes attached to the
- * original error — making it straightforward to forward failures to Sentry,
- * Datadog, or a custom logging backend.
- *
- * Use the annotation symbols (`ignore`, `severity`, `attributes`) on your
- * error classes to control reporting behavior per-error.
- *
- * **Example** (Reporting errors with annotations)
- *
- * ```ts
- * import { Data, Effect, ErrorReporter } from "effect"
- *
- * // A reporter that logs to the console
- * const consoleReporter = ErrorReporter.make(({ error, severity }) => {
- *   console.error(`[${severity}]`, error.message)
- * })
- *
- * // An error that should be ignored by reporters
- * class NotFoundError extends Data.TaggedError("NotFoundError")<{}> {
- *   readonly [ErrorReporter.ignore] = true
- * }
- *
- * // An error with custom severity and attributes
- * class RateLimitError extends Data.TaggedError("RateLimitError")<{
- *   readonly retryAfter: number
- * }> {
- *   readonly [ErrorReporter.severity] = "Warn" as const
- *   readonly [ErrorReporter.attributes] = {
- *     retryAfter: this.retryAfter
- *   }
- * }
- *
- * // Opt in to error reporting with Effect.withErrorReporting
- * const program = Effect.gen(function*() {
- *   return yield* new RateLimitError({ retryAfter: 60 })
- * }).pipe(
- *   Effect.withErrorReporting,
- *   Effect.provide(ErrorReporter.layer([consoleReporter]))
- * )
- * ```
+ * An `ErrorReporter` receives `Cause` values from `Effect.withErrorReporting`,
+ * manual `report` calls, or built-in reporting boundaries. It forwards each
+ * non-interruption error to a callback, so applications can send failures to
+ * logging, monitoring, or error-tracking systems. This module also includes
+ * layers for installing reporters and symbols for marking errors as ignored or
+ * attaching severity and attributes.
  *
  * @since 4.0.0
  */
@@ -199,7 +160,7 @@ export const make = (
  *
  * **When to use**
  *
- * Use when low-level code needs to read or replace the current set of reporters
+ * Use when you need to read or replace the current set of error reporters
  * directly.
  *
  * @category references

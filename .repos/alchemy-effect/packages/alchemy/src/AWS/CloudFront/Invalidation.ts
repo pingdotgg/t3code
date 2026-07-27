@@ -33,11 +33,29 @@ export interface Invalidation extends Resource<
   "AWS.CloudFront.Invalidation",
   InvalidationProps,
   {
+    /**
+     * The identifier of the invalidation batch.
+     */
     invalidationId: string;
+    /**
+     * The distribution the invalidation ran against.
+     */
     distributionId: string;
+    /**
+     * The version prop that triggered this invalidation batch.
+     */
     version: string;
+    /**
+     * Current status of the invalidation (`InProgress` or `Completed`).
+     */
     status: string;
+    /**
+     * The path patterns that were invalidated.
+     */
     paths: string[];
+    /**
+     * When the invalidation batch was created.
+     */
     createTime: Date | undefined;
   },
   never,
@@ -49,7 +67,7 @@ export interface Invalidation extends Resource<
  *
  * `Invalidation` is a helper resource for website deployments that need to
  * clear selected CloudFront cache paths after asset updates.
- *
+ * @resource
  * @section Creating Invalidations
  * @example Invalidate The Entire Distribution
  * ```typescript
@@ -110,9 +128,10 @@ export const InvalidationProvider = () =>
             ),
             Effect.retry({
               while: (error) => error._tag === "InvalidationInProgress",
-              schedule: Schedule.fixed("2 seconds").pipe(
-                Schedule.both(Schedule.recurs(120)),
-              ),
+              schedule: Schedule.max([
+                Schedule.fixed("2 seconds"),
+                Schedule.recurs(120),
+              ]),
             }),
           );
       });
@@ -155,6 +174,12 @@ export const InvalidationProvider = () =>
 
       return {
         stables: ["distributionId", "version"],
+        // Non-listable: an Invalidation is an ephemeral, immutable ledger entry
+        // keyed by {distributionId, invalidationId}. It completes on its own and
+        // cannot be deleted (`delete` is a no-op), so there is no persistent
+        // "current resource" to enumerate for nuke. `listInvalidations` only
+        // exposes historical, undeletable entries per distribution.
+        list: () => Effect.succeed([]),
         diff: Effect.fn(function* ({ olds, news: _news }) {
           if (!isResolved(_news)) return undefined;
           const news = _news as typeof olds;

@@ -1,8 +1,7 @@
 {
   "$schema": "../../node_modules/@effect/docgen/schema.json",
   "exclude": ["src/internal/**/*.ts", "src/unstable/**/internal/**/*.ts", "src/schema/StandardSchema.ts"],
-  "srcLink": "https://github.com/Effect-TS/effect-smol/tree/main/packages/effect/src/",
-  "tscExecutable": "tsgo",
+  "srcLink": "https://github.com/Effect-TS/effect/tree/main/packages/effect/src/",
   "examplesCompilerOptions": {
     "noEmit": true,
     "strict": true,

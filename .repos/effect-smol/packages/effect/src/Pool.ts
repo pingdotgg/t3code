@@ -1,47 +1,11 @@
 /**
- * Scoped resource pools for sharing expensive or limited resources across
- * fibers.
+ * Shares scoped resources across fibers.
  *
- * The `Pool` module acquires values with a scoped effect, lets fibers borrow
- * them with {@link get}, and releases all acquired values when the pool scope
- * closes. Pools are useful for database connections, clients, buffers, or other
- * resources where acquisition is expensive and total concurrency must be
- * bounded.
- *
- * **Mental model**
- *
- * - A pool owns resources between its configured minimum and maximum size.
- * - Each item is acquired in the pool scope and finalized when removed or when
- *   the pool shuts down.
- * - {@link get} checks out an item in the caller's scope; leaving that scope
- *   returns the item to the pool.
- * - `concurrency` is per item, so a pool with size 4 and concurrency 2 can
- *   serve up to 8 simultaneous checkouts.
- * - `targetUtilization` controls when the resize strategy grows or shrinks the pool.
- *
- * **Common tasks**
- *
- * - Create a fixed-size pool with {@link make}.
- * - Create an elastic pool that expires idle items with {@link makeWithTTL}.
- * - Use {@link makeWithStrategy} for custom resize or reclamation behavior.
- * - Borrow items safely in scoped effects with {@link get}.
- * - Replace a broken item lazily with {@link invalidate}.
- *
- * **Gotchas**
- *
- * - Pool construction requires `Scope`; closing that scope shuts down the pool.
- * - A checked-out item is returned only when the checkout scope closes, so do
- *   not leak scoped effects that hold pool items indefinitely.
- * - Acquisition failures fail the {@link get} effect for that checkout; later
- *   checkouts can try acquisition again.
- * - Invalidated items are finalized when they are no longer checked out, then
- *   replacement happens on demand.
- *
- * **See also**
- *
- * - {@link Pool} for the pool value.
- * - {@link get} for checked-out access.
- * - {@link invalidate} for removing a specific item.
+ * A `Pool<A, E>` acquires resource-backed values with a scoped effect, lets
+ * fibers borrow them with `get`, can invalidate broken values, and releases all
+ * acquired values when the pool scope closes. This module includes fixed-size
+ * pools, pools that resize with a time-to-live policy, custom strategy pools,
+ * per-item concurrency limits, and runtime state types used by pool strategies.
  *
  * @since 2.0.0
  */
@@ -230,8 +194,7 @@ export const isPool = (u: unknown): u is Pool<unknown, unknown> => hasProperty(u
  *
  * **When to use**
  *
- * Use to create a fixed-size pool when you know the exact number of resources
- * needed upfront, without growth or shrinkage.
+ * Use when you need a fixed-size pool with no growth or shrinkage.
  *
  * **Details**
  *
@@ -285,7 +248,7 @@ export const make = <A, E, R>(options: {
  * from item creation, while `"usage"` measures from pool usage. The default is
  * `"usage"`.
  *
- * **Example** (Create a connection pool)
+ * **Example** (Creating a connection pool)
  *
  * ```ts
  * import { Duration, Effect, Pool } from "effect"
@@ -530,9 +493,8 @@ const getPoolItemInner = Effect.fnUntraced(function*<A, E>(
  *
  * **When to use**
  *
- * Use to prevent a pooled item from being reused after you determine it is no
- * longer suitable, such as a stale connection or a resource that failed a
- * health check.
+ * Use to prevent a pooled item from being reused after it becomes unsuitable,
+ * such as a stale connection or a resource that failed a health check.
  *
  * **Gotchas**
  *

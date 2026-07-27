@@ -1,33 +1,10 @@
 /**
- * Combines scoped memory caching with durable persistence for `Persistable`
- * lookup keys.
+ * Combines in-memory caching with durable storage for `Persistable` requests.
  *
- * A `PersistedCache` first checks a process-local `Cache`, then a named
- * `Persistence` store, before running the supplied lookup. It is designed for
- * expensive or idempotent requests whose encoded `Exit` can be reused across
- * fibers, process restarts, or multiple workers sharing the same backing store.
- *
- * **Mental model**
- *
- * `make` creates a scoped cache backed by a scoped persistence store. The memory
- * cache controls repeated reads inside the current runtime with `inMemoryTTL`
- * and capacity, while the persistence store controls durable reuse with
- * `timeToLive`, `storeId`, and request primary keys. Both successes and failures
- * are stored as `Exit` values when the persistent TTL allows the write.
- *
- * **Common tasks**
- *
- * Use `get` for lookups that should reuse memory and persisted values, and use
- * `invalidate` when the underlying data changes so both layers forget the key.
- * Use `requireServicesAt` to choose whether lookup services are supplied when
- * constructing the cache or when reading from it.
- *
- * **Gotchas**
- *
- * Persisted entries are decoded with the key's success and error schemas.
- * Changing schemas, primary-key formats, or `storeId` values is a persistence
- * migration; old entries can stop being found or fail to decode. `invalidate`
- * removes the persisted value first and then the in-memory entry.
+ * A `PersistedCache` checks a process-local `Cache`, then a named `Persistence`
+ * store, before running the supplied lookup. It stores the lookup `Exit`, so
+ * expensive or idempotent results can be reused across fibers, process restarts,
+ * or workers that share the same backing store.
  *
  * @since 4.0.0
  */

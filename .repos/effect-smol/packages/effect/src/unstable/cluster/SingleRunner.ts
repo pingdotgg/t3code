@@ -1,30 +1,18 @@
 /**
- * The `SingleRunner` module provides a ready-to-use layer for running the
- * cluster sharding services in a single process. It wires together sharding,
- * message storage, runner registration, runner health, and sharding
- * configuration so durable entities and workflows can run without a fleet of
- * external runners.
+ * Single-process cluster layer for durable entities and workflows. It wires
+ * `Sharding` with no-op runner communication, no-op runner health checks,
+ * SQL-backed message storage, environment-based sharding configuration, and
+ * either SQL-backed or in-memory runner storage.
  *
- * **Common tasks**
- *
- * - Start a local or embedded cluster runner backed by SQL message storage
- * - Run durable entities and workflows in development, tests, or small
- *   single-node deployments
- * - Choose SQL runner storage for persistence or in-memory runner storage for
- *   short-lived scenarios
- * - Override sharding configuration while still using the standard
- *   environment-based defaults
- *
- * **Gotchas**
- *
- * - The layer still requires a `SqlClient` because message storage is SQL-backed
- * - Runner health and runner coordination are no-op implementations, so this is
- *   for single-node use rather than multi-runner cluster coordination
+ * This layer is meant for local, embedded, or small single-node setups where the
+ * process handles all cluster work itself. It still requires a SQL client
+ * because mailbox messages and replies are stored in SQL.
  *
  * @since 4.0.0
  */
 import * as Layer from "effect/Layer"
 import type { ConfigError } from "../../Config.ts"
+import type * as Crypto from "../../Crypto.ts"
 import type * as SqlClient from "../sql/SqlClient.ts"
 import type * as MessageStorage from "./MessageStorage.ts"
 import * as RunnerHealth from "./RunnerHealth.ts"
@@ -55,7 +43,8 @@ import * as SqlRunnerStorage from "./SqlRunnerStorage.ts"
  * **Gotchas**
  *
  * - Even when `runnerStorage` is `"memory"`, message storage remains
- *   SQL-backed, so callers must still provide `SqlClient`.
+ *   SQL-backed, so callers must still provide `SqlClient` and `Crypto.Crypto`
+ *   (used to hash over-length message deduplication keys).
  * - Runner communication and runner health are no-op services, so this layer is
  *   for single-process use rather than multi-runner coordination.
  *
@@ -75,7 +64,7 @@ export const layer = (options?: {
   | Runners.Runners
   | MessageStorage.MessageStorage,
   ConfigError,
-  SqlClient.SqlClient
+  SqlClient.SqlClient | Crypto.Crypto
 > =>
   Sharding.layer.pipe(
     Layer.provideMerge(Runners.layerNoop),

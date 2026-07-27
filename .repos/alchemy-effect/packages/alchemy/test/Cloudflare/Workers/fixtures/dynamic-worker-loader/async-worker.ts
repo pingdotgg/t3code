@@ -2,7 +2,7 @@ import type { AsyncWorkerEnv } from "./stack.ts";
 
 /**
  * Async (non-Effect) Worker fixture for the Worker Loader binding declared via
- * `env: { LOADER: Cloudflare.DynamicWorkerLoader() }`. `InferEnv` maps the
+ * `env: { LOADER: Cloudflare.WorkerLoader() }`. `InferEnv` maps the
  * marker to the native `worker_loader` binding, so the handler calls
  * `env.LOADER.load(...).getEntrypoint().fetch(...)` directly.
  */

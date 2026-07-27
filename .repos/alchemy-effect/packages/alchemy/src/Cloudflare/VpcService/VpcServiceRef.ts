@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
-import { formatVpcService, type VpcServiceAttributes } from "./VpcService.ts";
+import { formatVpcService, type Attributes } from "./VpcService.ts";
 
 export type VpcServiceRefProps =
   | {
@@ -23,28 +23,30 @@ export type VpcServiceRefProps =
 /**
  * Reference to an existing VPC service. Same shape as the resource's outputs.
  */
-export type VpcServiceRef = VpcServiceAttributes;
+export type VpcServiceRef = Attributes;
 
 /**
  * Reference an existing Cloudflare VPC service without managing its lifecycle.
- *
+ * @resource
+ * @product Workers VPC
+ * @category Network
  * @example Reference by ID
  * ```typescript
- * const service = yield* Cloudflare.VpcServiceRef({
+ * const service = yield* Cloudflare.VpcService.VpcServiceRef({
  *   serviceId: "123e4567-e89b-12d3-a456-426614174000",
  * });
  * ```
  *
  * @example Reference by name
  * ```typescript
- * const service = yield* Cloudflare.VpcServiceRef({
+ * const service = yield* Cloudflare.VpcService.VpcServiceRef({
  *   name: "my-vpc-service",
  * });
  * ```
  */
 export const VpcServiceRef = (props: VpcServiceRefProps) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
     if ("name" in props) {
       const match = yield* connectivity.listDirectoryServices
         .items({ accountId })

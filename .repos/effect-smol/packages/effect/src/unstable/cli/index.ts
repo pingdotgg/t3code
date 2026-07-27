@@ -12,6 +12,11 @@ export * as Argument from "./Argument.ts"
 /**
  * @since 4.0.0
  */
+export * as CliConfig from "./CliConfig.ts"
+
+/**
+ * @since 4.0.0
+ */
 export * as CliError from "./CliError.ts"
 
 /**

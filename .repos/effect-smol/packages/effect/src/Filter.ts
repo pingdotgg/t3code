@@ -1,37 +1,12 @@
 /**
- * The `Filter` module provides composable functions for accepting, rejecting,
- * narrowing, and transforming values. A `Filter<Input, Pass, Fail>` receives an
- * input and returns a `Result`: success means the value passed the filter, while
- * failure means the value was filtered out.
+ * Defines composable checks that can also transform values.
  *
- * **Mental model**
- *
- * - A filter is a typed predicate that can also transform the successful value
- * - Predicate-based filters pass the original input when the predicate returns `true`
- * - Refinement-based filters narrow the successful type, for example from `unknown` to `string`
- * - Custom filters return `Result.succeed(pass)` or `Result.fail(fail)` directly
- * - Filters compose with logical and sequential combinators instead of throwing exceptions
- * - `FilterEffect` is the effectful form for filters that need asynchronous work, errors, or services
- *
- * **Common tasks**
- *
- * - Build filters: {@link make}, {@link makeEffect}, {@link fromPredicate}, {@link fromPredicateOption}
- * - Narrow unknown values: {@link string}, {@link number}, {@link boolean}, {@link bigint}, {@link symbol}, {@link date}
- * - Match shapes and variants: {@link instanceOf}, {@link tagged}, {@link reason}, {@link has}
- * - Match exact values: {@link equals}, {@link equalsStrict}
- * - Combine alternatives: {@link or}
- * - Require multiple filters: {@link zip}, {@link zipWith}, {@link andLeft}, {@link andRight}
- * - Run filters in sequence: {@link compose}, {@link composePassthrough}
- * - Convert results: {@link toPredicate}, {@link toOption}, {@link toResult}
- * - Adjust failure values: {@link mapFail}
- *
- * **Gotchas**
- *
- * - A failed filter is data in the `Result` failure channel; it is not an exception
- * - `compose` preserves intermediate failure values, while {@link composePassthrough} fails with the original input
- * - `equalsStrict` uses JavaScript `===`; use {@link equals} for structural equality
- * - `fromPredicateOption` fails with the original input when the returned `Option` is `None`
- * - Prefer refinement predicates when you want TypeScript to narrow the successful value type
+ * A `Filter<Input, Pass, Fail>` receives an input and returns a `Result`.
+ * Success means the value passed the filter, and failure means the value was
+ * filtered out. Filters may also narrow or transform the passing value. This
+ * module includes constructors from predicates, options, and effects, built-in
+ * filters for common JavaScript values and tags, helpers for combining filters,
+ * and conversions to predicates, options, and results.
  *
  * @since 4.0.0
  */
@@ -447,8 +422,8 @@ export const symbol: Filter<unknown, symbol> = fromPredicate(Predicate.isSymbol)
  *
  * **When to use**
  *
- * Use when narrowing unknown input to JavaScript `Date` instances with a
- * reusable `Filter`.
+ * Use when you need to narrow unknown input to JavaScript `Date` instances with
+ * a reusable `Filter`.
  *
  * **Details**
  *
@@ -811,8 +786,8 @@ export const composePassthrough: {
  *
  * **When to use**
  *
- * Use when adapting a `Filter` to `Option`-based code and you only need the
- * passed value, with filtered-out inputs represented as `None`.
+ * Use when adapting a `Filter` to `Option`-based code where passed values
+ * become `Some` and filtered-out inputs become `None`.
  *
  * @see {@link toResult} for keeping the filter failure value
  * @see {@link toPredicate} for plain boolean pass/fail checks

@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import type { HttpClient } from "effect/unstable/http/HttpClient";
+import { ArtifactStore, createArtifactStore } from "../Artifacts.ts";
 import type { ProviderService } from "../Provider.ts";
 import type { ResourceLike } from "../Resource.ts";
 import {
@@ -78,12 +79,19 @@ export const launch = <ROut, E>(
     | RpcServerEnvironment.RpcEnvironmentServices
     | PlatformServices
     | HttpClient
+    | ArtifactStore
   >,
 ) =>
   serverPlatformLayer.pipe(
     Layer.provide(providers),
     Layer.provide(RpcServerEnvironment.fromEnv()),
-    Layer.provide(Layer.merge(PlatformServices, FetchHttpClient.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        PlatformServices,
+        FetchHttpClient.layer,
+        Layer.sync(ArtifactStore, createArtifactStore),
+      ),
+    ),
     Layer.launch,
     Effect.scoped,
     runMain,

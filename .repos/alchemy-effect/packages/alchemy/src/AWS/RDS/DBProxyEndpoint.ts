@@ -1,6 +1,7 @@
 import * as rds from "@distilled.cloud/aws/rds";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -43,15 +44,45 @@ export interface DBProxyEndpoint extends Resource<
   "AWS.RDS.DBProxyEndpoint",
   DBProxyEndpointProps,
   {
+    /**
+     * Name of the proxy endpoint.
+     */
     dbProxyEndpointName: string;
+    /**
+     * ARN of the proxy endpoint.
+     */
     dbProxyEndpointArn: string;
+    /**
+     * Proxy that owns the endpoint.
+     */
     dbProxyName: string | undefined;
+    /**
+     * DNS address applications connect to.
+     */
     endpoint: string | undefined;
+    /**
+     * Status of the endpoint (e.g. `available`).
+     */
     status: string | undefined;
+    /**
+     * VPC the endpoint is placed in.
+     */
     vpcId: string | undefined;
+    /**
+     * Subnets the endpoint is attached to.
+     */
     vpcSubnetIds: string[];
+    /**
+     * Security groups attached to the endpoint.
+     */
     vpcSecurityGroupIds: string[];
+    /**
+     * Role of the endpoint (`READ_WRITE` or `READ_ONLY`).
+     */
     targetRole: string | undefined;
+    /**
+     * Tags on the endpoint.
+     */
     tags: Record<string, string>;
   },
   never,
@@ -59,7 +90,23 @@ export interface DBProxyEndpoint extends Resource<
 > {}
 
 /**
- * An additional RDS Proxy endpoint.
+ * An additional RDS Proxy endpoint — a second DNS name on an existing
+ * `DBProxy`, typically read-only for reader traffic or placed in a
+ * different VPC.
+ *
+ * Changing the name, owning proxy, subnets, or target role replaces the
+ * endpoint; security groups and tags update in place.
+ * @resource
+ * @section Creating Proxy Endpoints
+ * @example Read-Only Endpoint
+ * ```typescript
+ * const readerEndpoint = yield* DBProxyEndpoint("ReaderEndpoint", {
+ *   dbProxyName: proxy.dbProxyName,
+ *   vpcSubnetIds: [privateSubnetA.subnetId, privateSubnetB.subnetId],
+ *   vpcSecurityGroupIds: [dbSecurityGroup.groupId],
+ *   targetRole: "READ_ONLY",
+ * });
+ * ```
  */
 export const DBProxyEndpoint = Resource<DBProxyEndpoint>(
   "AWS.RDS.DBProxyEndpoint",
@@ -117,9 +164,10 @@ export const DBProxyEndpointProvider = () =>
         dbProxyName: string;
         dbProxyEndpointName: string;
       }) {
-        const readinessPolicy = Schedule.fixed("2 seconds").pipe(
-          Schedule.both(Schedule.recurs(30)),
-        );
+        const readinessPolicy = Schedule.max([
+          Schedule.fixed("2 seconds"),
+          Schedule.recurs(30),
+        ]);
         return yield* readEndpoint(props).pipe(
           Effect.flatMap((endpoint) =>
             endpoint?.DBProxyEndpointArn
@@ -136,6 +184,48 @@ export const DBProxyEndpointProvider = () =>
 
       return {
         stables: ["dbProxyEndpointArn", "dbProxyEndpointName"],
+        list: () =>
+          Effect.gen(function* () {
+            // Endpoints are keyed under a parent proxy. Enumerate every proxy,
+            // then fan out `describeDBProxyEndpoints` per proxy (bounded
+            // concurrency) and flatten. `describe` does not surface tags
+            // inline, so each item hydrates with `tags: {}` — the same shape
+            // `read` returns when no prior tags are recorded.
+            const proxyNames = yield* rds.describeDBProxies.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) =>
+                  (page.DBProxies ?? [])
+                    .map((proxy) => proxy.DBProxyName)
+                    .filter((name): name is string => name != null),
+                ),
+              ),
+            );
+            const rows = yield* Effect.forEach(
+              proxyNames,
+              (dbProxyName) =>
+                rds.describeDBProxyEndpoints
+                  .pages({ DBProxyName: dbProxyName })
+                  .pipe(
+                    Stream.runCollect,
+                    Effect.map((chunk) =>
+                      Array.from(chunk).flatMap((page) =>
+                        (page.DBProxyEndpoints ?? []).map((endpoint) =>
+                          toAttrs({ endpoint, tags: {} }),
+                        ),
+                      ),
+                    ),
+                    // A proxy (or its endpoints) may be deleted mid-enumeration.
+                    Effect.catchTag(
+                      ["DBProxyNotFoundFault", "DBProxyEndpointNotFoundFault"],
+                      () =>
+                        Effect.succeed([] as DBProxyEndpoint["Attributes"][]),
+                    ),
+                  ),
+              { concurrency: 10 },
+            );
+            return rows.flat();
+          }),
         diff: Effect.fn(function* ({ id, olds, news }) {
           if (!isResolved(news)) return undefined;
           if (

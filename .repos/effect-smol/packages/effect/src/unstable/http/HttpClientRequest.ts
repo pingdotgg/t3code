@@ -1,42 +1,11 @@
 /**
- * Immutable outgoing HTTP client requests.
+ * Describes immutable outgoing HTTP client requests.
  *
  * `HttpClientRequest` is the request model shared by Effect HTTP clients and
  * platform adapters. A request stores its method, URL, query parameters, hash,
- * headers, and body as structured data, and this module provides constructors,
- * pipeable update helpers, body encoders, and Web `Request` conversions.
- *
- * **Mental model**
- *
- * Request builders start from {@link empty} and return a new request for every
- * change. The base URL, query parameters, and hash stay separate until
- * conversion, so code can update them independently before calling
- * {@link toUrl}, {@link toWebResult}, or {@link toWeb}. Body helpers delegate to
- * `HttpBody` and update `Content-Type` and `Content-Length` when the selected
- * body carries that metadata.
- *
- * **Common tasks**
- *
- * - Start a request with {@link get}, {@link post}, {@link put},
- *   {@link patch}, or another method constructor.
- * - Add authentication or accepted media types with {@link basicAuth},
- *   {@link bearerToken}, {@link accept}, or {@link acceptJson}.
- * - Change URL parts with {@link setUrl}, {@link prependUrl},
- *   {@link appendUrl}, {@link setUrlParam}, {@link appendUrlParam}, and
- *   {@link setHash}.
- * - Attach payloads with {@link bodyJson}, {@link bodyUrlParams},
- *   {@link bodyFormData}, {@link bodyStream}, or {@link bodyFile}.
- * - Bridge Web platform values with {@link fromWeb}, {@link toWebResult}, and
- *   {@link toWeb}.
- *
- * **Gotchas**
- *
- * Passing a `URL` extracts its search parameters and fragment into structured
- * fields, while a string URL is kept as provided. Use the `setUrlParam` helpers
- * to replace query values, and the `appendUrlParam` helpers when repeated keys
- * should be preserved. `FormData` bodies intentionally leave multipart boundary
- * headers to the runtime, so `setBody` removes explicit content headers for
- * them.
+ * headers, and body as structured data. This module includes constructors,
+ * helpers for updating requests, body encoders for common payloads, and
+ * conversions to and from Web `Request` values.
  *
  * @since 4.0.0
  */
@@ -59,6 +28,7 @@ import * as Stream from "../../Stream.ts"
 import * as Headers from "./Headers.ts"
 import * as HttpBody from "./HttpBody.ts"
 import { hasBody, type HttpMethod } from "./HttpMethod.ts"
+import * as Url from "./Url.ts"
 import * as UrlParams from "./UrlParams.ts"
 
 const TypeId = "~effect/http/HttpClientRequest"
@@ -90,7 +60,7 @@ export interface HttpClientRequest extends Inspectable.Inspectable, Pipeable {
 /**
  * Options for constructing or modifying an `HttpClientRequest`.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export interface Options {
@@ -113,7 +83,7 @@ export declare namespace Options {
   /**
    * Request options that omit the method and URL for helpers that already receive those values separately.
    *
-   * @category models
+   * @category options
    * @since 4.0.0
    */
   export interface NoUrl extends Omit<Options, "method" | "url"> {}
@@ -147,7 +117,7 @@ const Proto = {
 export function makeWith(
   method: HttpMethod,
   url: string,
-  urlParams: UrlParams.UrlParams,
+  urlParams: UrlParams.Input,
   hash: Option.Option<string>,
   headers: Headers.Headers,
   body: HttpBody.HttpBody
@@ -356,6 +326,39 @@ export const setHeaders: {
     Headers.setAll(self.headers, input),
     self.body
   ))
+
+/**
+ * Transforms the request headers with the provided function, returning a new request.
+ *
+ * @category combinators
+ * @since 4.0.0
+ */
+export const updateHeaders: {
+  (f: (headers: Headers.Headers) => Headers.Headers): (self: HttpClientRequest) => HttpClientRequest
+  (self: HttpClientRequest, f: (headers: Headers.Headers) => Headers.Headers): HttpClientRequest
+} = dual(2, (self: HttpClientRequest, f: (headers: Headers.Headers) => Headers.Headers): HttpClientRequest =>
+  makeWith(
+    self.method,
+    self.url,
+    self.urlParams,
+    self.hash,
+    f(self.headers),
+    self.body
+  ))
+
+/**
+ * Removes a single request header by name, returning a new request.
+ *
+ * @category combinators
+ * @since 4.0.0
+ */
+export const removeHeader: {
+  (key: string): (self: HttpClientRequest) => HttpClientRequest
+  (self: HttpClientRequest, key: string): HttpClientRequest
+} = dual(
+  2,
+  (self: HttpClientRequest, key: string): HttpClientRequest => updateHeaders(self, Headers.remove(key))
+)
 
 /**
  * Sets the `Authorization` header using HTTP Basic authentication credentials.
@@ -713,7 +716,16 @@ export const bodyJson: {
 )
 
 /**
- * Sets a JSON request body using unsafe JSON encoding, which may throw instead of failing in the Effect error channel.
+ * Sets a JSON request body using unsafe JSON encoding.
+ *
+ * **When to use**
+ *
+ * Use when the request body is known to be JSON-serializable and a synchronous
+ * `HttpClientRequest` result is needed.
+ *
+ * **Gotchas**
+ *
+ * JSON encoding may throw instead of failing in the Effect error channel.
  *
  * @category combinators
  * @since 4.0.0
@@ -729,7 +741,7 @@ export const bodyJsonUnsafe: {
  * @category combinators
  * @since 4.0.0
  */
-export const schemaBodyJson = <S extends Schema.Top>(
+export const schemaBodyJson = <S extends Schema.Constraint>(
   schema: S,
   options?: ParseOptions | undefined
 ): {
@@ -875,7 +887,7 @@ export const bodyFile: {
  * @since 4.0.0
  */
 export function toUrl(self: HttpClientRequest): Option.Option<URL> {
-  const r = UrlParams.makeUrl(self.url, self.urlParams, Option.getOrUndefined(self.hash))
+  const r = Url.make(self.url, self.urlParams, Option.getOrUndefined(self.hash))
   if (Result.isSuccess(r)) {
     return Option.some(r.success)
   }
@@ -925,8 +937,8 @@ const parseContentLength = (contentLength: string | null): number | undefined =>
 export const toWebResult = (self: HttpClientRequest, options?: {
   readonly signal?: AbortSignal | undefined
   readonly context?: Context.Context<never> | undefined
-}): Result.Result<Request, UrlParams.UrlParamsError> => {
-  const url = UrlParams.makeUrl(self.url, self.urlParams, Option.getOrUndefined(self.hash))
+}): Result.Result<Request, Url.UrlError> => {
+  const url = Url.make(self.url, self.urlParams, Option.getOrUndefined(self.hash))
   if (Result.isFailure(url)) {
     return Result.fail(url.failure)
   }
@@ -966,7 +978,7 @@ export const toWebResult = (self: HttpClientRequest, options?: {
   }
   return Result.try({
     try: () => new Request(url.success, requestInit),
-    catch: (cause) => new UrlParams.UrlParamsError({ cause })
+    catch: (cause) => new Url.UrlError({ cause })
   })
 }
 
@@ -974,14 +986,14 @@ const isReadableStream = (u: unknown): u is ReadableStream<Uint8Array> =>
   typeof ReadableStream !== "undefined" && u instanceof ReadableStream
 
 /**
- * Converts an `HttpClientRequest` to a Web `Request`, failing with `UrlParamsError` when the request URL is invalid.
+ * Converts an `HttpClientRequest` to a Web `Request`, failing with `UrlError` when the request URL is invalid.
  *
  * @category converting
  * @since 4.0.0
  */
 export const toWeb = (self: HttpClientRequest, options?: {
   readonly signal?: AbortSignal | undefined
-}): Effect.Effect<Request, UrlParams.UrlParamsError> =>
+}): Effect.Effect<Request, Url.UrlError> =>
   Effect.contextWith((context) =>
     Effect.fromResult(toWebResult(self, {
       context: context,

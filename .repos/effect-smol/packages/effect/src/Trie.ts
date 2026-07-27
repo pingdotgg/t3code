@@ -1,54 +1,11 @@
 /**
- * Immutable string-keyed maps optimized for prefix lookup.
+ * Stores string-keyed values in an immutable prefix tree.
  *
- * A `Trie<Value>` stores values under `string` keys, similar to a `HashMap`
- * whose key type is fixed to `string`. That restriction lets the data
- * structure organize keys by their shared prefixes, which is useful for
- * autocomplete, route tables, dictionaries, command lookup, and any workflow
- * that needs to ask "which entries start with this string?".
- *
- * **Mental model**
- *
- * - Exact-key lookup uses {@link get}, {@link has}, or {@link getUnsafe}.
- * - Prefix lookup uses {@link keysWithPrefix}, {@link valuesWithPrefix},
- *   {@link entriesWithPrefix}, {@link toEntriesWithPrefix}, or
- *   {@link longestPrefixOf}.
- * - Iteration yields entries in key order, not insertion order.
- * - Lookup work is proportional to the key or prefix length rather than the
- *   total number of entries.
- *
- * **Common tasks**
- *
- * - Create tries with {@link empty}, {@link make}, or {@link fromIterable}.
- * - Read all keys, values, or entries with {@link keys}, {@link values},
- *   {@link entries}, and {@link toEntries}.
- * - Transform values with {@link map}, {@link filter}, {@link filterMap},
- *   {@link compact}, {@link forEach}, and {@link reduce}.
- *
- * **Gotchas**
- *
- * - Keys must be strings. Use `HashMap` when keys need structural equality or
- *   are not naturally represented as strings.
- * - {@link get} returns an `Option`; {@link getUnsafe} throws when the key is
- *   absent.
- * - Sorted iteration is convenient for presentation, but it also means
- *   insertion order is not preserved.
- *
- * **Example** (Finding entries by prefix)
- *
- * ```ts
- * import { Trie } from "effect"
- * import * as assert from "node:assert"
- *
- * const commands = Trie.make(
- *   ["commit", "Record changes"],
- *   ["checkout", "Switch branches"],
- *   ["clone", "Copy a repository"]
- * )
- *
- * const matches = Trie.toEntriesWithPrefix(commands, "ch")
- * assert.deepStrictEqual(matches, [["checkout", "Switch branches"]])
- * ```
+ * A `Trie<Value>` is similar to a map whose keys are strings, but it is built
+ * for looking up keys by prefix. It is useful for autocomplete, route tables,
+ * dictionaries, and command lookup. Updates return new tries, and the module
+ * includes exact lookup, prefix lookup, longest-prefix lookup, iteration,
+ * mapping, filtering, reducing, and traversal helpers.
  *
  * @since 2.0.0
  */
@@ -597,6 +554,11 @@ export const isEmpty: <V>(self: Trie<V>) => boolean = TR.isEmpty
 
 /**
  * Looks up the value for the specified key in the `Trie` unsafely.
+ *
+ * **When to use**
+ *
+ * Use when the trie key is known to exist and a missing key should be treated
+ * as a programming error.
  *
  * **Gotchas**
  *

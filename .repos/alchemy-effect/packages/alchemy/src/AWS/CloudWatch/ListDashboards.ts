@@ -1,16 +1,30 @@
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 
 export interface ListDashboardsRequest extends cloudwatch.ListDashboardsInput {}
 
 /**
- * Runtime binding for `cloudwatch:ListDashboards`.
+ * Runtime binding for `cloudwatch:ListDashboards` — list the dashboards in
+ * the account, optionally filtered by name prefix.
+ *
+ * Provide `CloudWatch.ListDashboardsHttp` on the hosting Lambda Function
+ * to satisfy the requirement.
+ * @binding
+ * @section Reading Dashboards
+ * @example List Dashboards
+ * ```typescript
+ * // init — grants cloudwatch:ListDashboards
+ * const listDashboards = yield* AWS.CloudWatch.ListDashboards();
+ *
+ * // runtime
+ * const result = yield* listDashboards();
+ * const names = (result.DashboardEntries ?? []).map((e) => e.DashboardName);
+ * ```
  */
-export class ListDashboards extends Binding.Service<
+export interface ListDashboards extends Binding.Service<
   ListDashboards,
+  "AWS.CloudWatch.ListDashboards",
   () => Effect.Effect<
     (
       request?: ListDashboardsRequest,
@@ -19,44 +33,8 @@ export class ListDashboards extends Binding.Service<
       cloudwatch.ListDashboardsError
     >
   >
->()("AWS.CloudWatch.ListDashboards") {}
+> {}
 
-export const ListDashboardsLive = Layer.effect(
-  ListDashboards,
-  Effect.gen(function* () {
-    const Policy = yield* ListDashboardsPolicy;
-    const listDashboards = yield* cloudwatch.listDashboards;
-
-    return Effect.fn(function* () {
-      yield* Policy();
-      return Effect.fn(function* (request: ListDashboardsRequest = {}) {
-        return yield* listDashboards(request);
-      });
-    });
-  }),
-);
-
-export class ListDashboardsPolicy extends Binding.Policy<
-  ListDashboardsPolicy,
-  () => Effect.Effect<void>
->()("AWS.CloudWatch.ListDashboards") {}
-
-export const ListDashboardsPolicyLive = ListDashboardsPolicy.layer.succeed(
-  Effect.fn(function* (host) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.CloudWatch.ListDashboards())`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["cloudwatch:ListDashboards"],
-            Resource: ["*"],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `ListDashboardsPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const ListDashboards = Binding.Service<ListDashboards>(
+  "AWS.CloudWatch.ListDashboards",
 );

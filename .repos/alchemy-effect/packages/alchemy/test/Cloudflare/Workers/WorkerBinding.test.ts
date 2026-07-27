@@ -1,6 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
-import * as Test from "@/Test/Vitest";
-import { expect } from "@effect/vitest";
+import * as Test from "@/Test/Alchemy";
+import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
@@ -20,11 +20,16 @@ const stack = beforeAll(deploy(Stack));
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
 // Cold-start retry — fresh `workers.dev` URLs take a few seconds to start
-// answering 200, so the very first request rides this schedule.
+// answering 200, so the very first request rides this schedule. Cap the
+// exponential at 3s: uncapped, the doubling sleeps blow through the test
+// timeout in a single wait after ~7 misses, even though the edge would
+// have propagated moments later.
 const coldStartRetry = Effect.retry({
-  schedule: Schedule.exponential("500 millis").pipe(
-    Schedule.both(Schedule.recurs(20)),
-  ),
+  schedule: Schedule.min([
+    Schedule.exponential("500 millis"),
+    Schedule.spaced("3 seconds"),
+  ]),
+  times: 30,
 });
 
 test(
@@ -37,7 +42,7 @@ test(
     expect(res.status).toBe(200);
     expect(yield* res.text).toBe("hello from BindingTargetWorker");
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  { timeout: 180_000 },
 );
 
 test(
@@ -52,7 +57,7 @@ test(
     expect(res.status).toBe(200);
     expect(yield* res.text).toBe("hello alice");
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  { timeout: 180_000 },
 );
 
 test(
@@ -67,5 +72,5 @@ test(
     expect(res.status).toBe(200);
     expect(yield* res.text).toBe("hello bob");
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  { timeout: 180_000 },
 );

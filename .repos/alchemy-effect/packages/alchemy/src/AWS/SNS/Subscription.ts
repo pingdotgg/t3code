@@ -1,5 +1,7 @@
 import * as sns from "@distilled.cloud/aws/sns";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
 import * as Provider from "../../Provider.ts";
@@ -36,12 +38,19 @@ export interface Subscription extends Resource<
   "AWS.SNS.Subscription",
   SubscriptionProps,
   {
+    /** ARN of the subscription. */
     subscriptionArn: SubscriptionArn;
+    /** ARN of the topic the subscription is attached to. */
     topicArn: string;
+    /** Delivery protocol of the subscription (e.g. `lambda`, `sqs`, `https`). */
     protocol: string;
+    /** Endpoint receiving deliveries, such as a Lambda function or queue ARN. */
     endpoint: string | undefined;
+    /** AWS account ID that owns the subscription. */
     owner: string | undefined;
+    /** Whether the subscription is still awaiting endpoint confirmation. */
     pendingConfirmation: boolean;
+    /** Raw SNS subscription attributes keyed by AWS attribute name. */
     attributes: Record<string, string>;
   },
   never,
@@ -54,7 +63,7 @@ export interface Subscription extends Resource<
  * `Subscription` keeps the lifecycle of the subscription itself separate from the
  * topic, which lets Lambda event sources and manually managed subscriptions share
  * the same canonical resource model.
- *
+ * @resource
  * @section Creating Subscriptions
  * @example Lambda Subscription
  * ```typescript
@@ -62,6 +71,31 @@ export interface Subscription extends Resource<
  *   topicArn: topic.topicArn,
  *   protocol: "lambda",
  *   endpoint: fn.functionArn,
+ * });
+ * ```
+ *
+ * @example Fan Out a Topic to an SQS Queue
+ * ```typescript
+ * const topic = yield* SNS.Topic("Events");
+ * const queue = yield* SQS.Queue("Notifications");
+ *
+ * const subscription = yield* Subscription("QueueSubscription", {
+ *   topicArn: topic.topicArn,
+ *   protocol: "sqs",
+ *   endpoint: queue.queueArn,
+ *   returnSubscriptionArn: true,
+ * });
+ * ```
+ *
+ * @example Filtered Subscription
+ * ```typescript
+ * const subscription = yield* Subscription("OrderSubscription", {
+ *   topicArn: topic.topicArn,
+ *   protocol: "sqs",
+ *   endpoint: queue.queueArn,
+ *   attributes: {
+ *     FilterPolicy: JSON.stringify({ type: ["order"] }),
+ *   },
  * });
  * ```
  */
@@ -78,6 +112,45 @@ export const SubscriptionProvider = () =>
       });
     }),
     stables: ["subscriptionArn"],
+    // Account/region-scoped collection: paginate `listSubscriptions`
+    // exhaustively, then hydrate each concrete-ARN subscription via
+    // `getSubscriptionAttributes` (inside `readSubscription`) so each element
+    // matches the exact `read` Attributes shape. Pending-confirmation entries
+    // have no real ARN to hydrate or delete against, so they are skipped.
+    list: Effect.fn(function* () {
+      const subscriptions = yield* sns.listSubscriptions.pages({}).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) => page.Subscriptions ?? []),
+        ),
+      );
+
+      const concrete = subscriptions.filter(
+        (
+          subscription,
+        ): subscription is sns.Subscription & {
+          SubscriptionArn: string;
+        } =>
+          typeof subscription.SubscriptionArn === "string" &&
+          !isPendingConfirmation(subscription.SubscriptionArn),
+      );
+
+      const rows = yield* Effect.forEach(
+        concrete,
+        (subscription) =>
+          readSubscription({
+            subscriptionArn: subscription.SubscriptionArn,
+            topicArn: subscription.TopicArn,
+            protocol: subscription.Protocol,
+            endpoint: subscription.Endpoint,
+          }),
+        { concurrency: 10 },
+      );
+
+      return rows.filter(
+        (row): row is NonNullable<typeof row> => row !== undefined,
+      );
+    }),
     diff: Effect.fn(function* ({ news, olds }) {
       if (!isResolved(news)) return undefined;
       if (news.protocol !== olds.protocol) {
@@ -265,30 +338,20 @@ const findSubscription = Effect.fn(function* ({
     return undefined;
   }
 
-  let nextToken: string | undefined;
-
-  while (true) {
-    const response = yield* sns.listSubscriptionsByTopic({
-      TopicArn: topicArn,
-      NextToken: nextToken,
-    });
-
-    const match = response.Subscriptions?.find(
-      (subscription) =>
-        subscription.Protocol === protocol &&
-        subscription.Endpoint === endpoint,
+  const match = yield* sns.listSubscriptionsByTopic
+    .items({ TopicArn: topicArn })
+    .pipe(
+      Stream.filter(
+        (subscription) =>
+          subscription.Protocol === protocol &&
+          subscription.Endpoint === endpoint &&
+          !!subscription.SubscriptionArn,
+      ),
+      Stream.runHead,
+      Effect.map(Option.getOrUndefined),
     );
 
-    if (match?.SubscriptionArn) {
-      return match.SubscriptionArn;
-    }
-
-    if (!response.NextToken) {
-      return undefined;
-    }
-
-    nextToken = response.NextToken;
-  }
+  return match?.SubscriptionArn;
 });
 
 const readSubscription = Effect.fn(function* ({

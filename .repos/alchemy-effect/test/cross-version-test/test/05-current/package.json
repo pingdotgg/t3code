@@ -1,0 +1,10 @@
+{
+  "name": "xver-03-current",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "alc": "alchemy",
+    "test": "bun test"
+  },
+  "comment": "No dependencies on purpose: this folder resolves `alchemy` and `effect` from the monorepo workspace (repo-root node_modules) so it runs the CURRENT branch source. The orchestrator skips `bun install` here and invokes the workspace alchemy CLI directly."
+}

@@ -1,17 +1,34 @@
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 
 export interface DescribeAnomalyDetectorsRequest
   extends cloudwatch.DescribeAnomalyDetectorsInput {}
 
 /**
- * Runtime binding for `cloudwatch:DescribeAnomalyDetectors`.
+ * Runtime binding for `cloudwatch:DescribeAnomalyDetectors` — list the
+ * anomaly detection models in the account/region, optionally filtered by
+ * namespace, metric name, or dimensions.
+ *
+ * Provide `CloudWatch.DescribeAnomalyDetectorsHttp` on the hosting Lambda
+ * Function to satisfy the requirement.
+ * @binding
+ * @section Reading Anomaly Detectors
+ * @example List Detectors in a Namespace
+ * ```typescript
+ * // init — grants cloudwatch:DescribeAnomalyDetectors
+ * const describeAnomalyDetectors = yield* AWS.CloudWatch.DescribeAnomalyDetectors();
+ *
+ * // runtime
+ * const result = yield* describeAnomalyDetectors({
+ *   Namespace: "MyApp/Payments",
+ * });
+ * const detectors = result.AnomalyDetectors ?? [];
+ * ```
  */
-export class DescribeAnomalyDetectors extends Binding.Service<
+export interface DescribeAnomalyDetectors extends Binding.Service<
   DescribeAnomalyDetectors,
+  "AWS.CloudWatch.DescribeAnomalyDetectors",
   () => Effect.Effect<
     (
       request?: DescribeAnomalyDetectorsRequest,
@@ -20,49 +37,9 @@ export class DescribeAnomalyDetectors extends Binding.Service<
       cloudwatch.DescribeAnomalyDetectorsError
     >
   >
->()("AWS.CloudWatch.DescribeAnomalyDetectors") {}
+> {}
 
-export const DescribeAnomalyDetectorsLive = Layer.effect(
-  DescribeAnomalyDetectors,
-  Effect.gen(function* () {
-    const Policy = yield* DescribeAnomalyDetectorsPolicy;
-    const describeAnomalyDetectors = yield* cloudwatch.describeAnomalyDetectors;
-
-    return Effect.fn(function* () {
-      yield* Policy();
-      return Effect.fn(function* (
-        request: DescribeAnomalyDetectorsRequest = {},
-      ) {
-        return yield* describeAnomalyDetectors(request);
-      });
-    });
-  }),
-);
-
-export class DescribeAnomalyDetectorsPolicy extends Binding.Policy<
-  DescribeAnomalyDetectorsPolicy,
-  () => Effect.Effect<void>
->()("AWS.CloudWatch.DescribeAnomalyDetectors") {}
-
-export const DescribeAnomalyDetectorsPolicyLive =
-  DescribeAnomalyDetectorsPolicy.layer.succeed(
-    Effect.fn(function* (host) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.CloudWatch.DescribeAnomalyDetectors())`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["cloudwatch:DescribeAnomalyDetectors"],
-                Resource: ["*"],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `DescribeAnomalyDetectorsPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
+export const DescribeAnomalyDetectors =
+  Binding.Service<DescribeAnomalyDetectors>(
+    "AWS.CloudWatch.DescribeAnomalyDetectors",
   );

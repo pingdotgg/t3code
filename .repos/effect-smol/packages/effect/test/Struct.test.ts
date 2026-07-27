@@ -46,6 +46,15 @@ describe("Struct", () => {
       deepStrictEqual(pipe(s, Struct.omit(["c"])), { b: 1 })
       deepStrictEqual(Struct.omit(s, ["c"]), { b: 1 })
     })
+
+    it("ignores non-enumerable properties", () => {
+      const hidden = Symbol.for("hidden")
+      const s = { a: "a" }
+      Object.defineProperty(s, "b", { value: 1, enumerable: false })
+      Object.defineProperty(s, hidden, { value: true, enumerable: false })
+
+      deepStrictEqual(Struct.omit(s, []), { a: "a" })
+    })
   })
 
   describe("evolve", () => {
@@ -70,6 +79,11 @@ describe("Struct", () => {
   it("renameKeys", () => {
     deepStrictEqual(pipe({ a: "a", b: 1, c: true }, Struct.renameKeys({ a: "A", b: "B" })), { A: "a", B: 1, c: true })
     deepStrictEqual(Struct.renameKeys({ a: "a", b: 1, c: true }, { a: "A", b: "B" }), { A: "a", B: 1, c: true })
+
+    const from = Symbol.for("from")
+    const to = Symbol.for("to")
+    deepStrictEqual(pipe({ [from]: "a", b: 1 }, Struct.renameKeys({ [from]: to })), { [to]: "a", b: 1 })
+    deepStrictEqual(Struct.renameKeys({ a: "a", b: 1 }, { a: to }), { [to]: "a", b: 1 })
   })
 
   it("evolveEntries transforms a selected key and value together", () => {

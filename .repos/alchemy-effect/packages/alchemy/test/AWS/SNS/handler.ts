@@ -1,5 +1,6 @@
 import * as AWS from "@/AWS";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -8,21 +9,6 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
-
-export class SNSEventFunction extends AWS.Lambda.Function<AWS.Lambda.Function>()(
-  "SNSEventFunction",
-  {
-    main,
-    handler: "SNSEventFunctionLive",
-    url: true,
-  },
-) {}
-
-export const SNSEventFunctionLive = SNSEventFunction.make(
-  Effect.gen(function* () {
-    // no-op, we're just gonna be targeted manualy by the Subscription
-  }),
-);
 
 const formatError = (error: unknown) =>
   typeof error === "object" && error !== null && "_tag" in error
@@ -52,13 +38,6 @@ export const TopicAndQueueLive = Layer.effect(
     const subscriptionAttrsQueue = yield* AWS.SQS.Queue(
       "SubscriptionAttrsQueue",
     );
-    const eventFunction = yield* SNSEventFunction;
-    const subscription = yield* AWS.SNS.Subscription("FixtureSubscription", {
-      topicArn: topic.topicArn,
-      protocol: "lambda",
-      endpoint: eventFunction.functionArn,
-      returnSubscriptionArn: true,
-    });
     const queueSubscription = yield* AWS.SNS.Subscription(
       "QueueFixtureSubscription",
       {
@@ -71,71 +50,94 @@ export const TopicAndQueueLive = Layer.effect(
     return {
       topic,
       queue,
-      subscription,
+      // ConfirmSubscription only injects the parent TopicArn, so the existing
+      // queue subscription exercises that binding without a second Lambda.
+      subscription: queueSubscription,
       subscriptionAttrsQueue,
       queueSubscription,
     };
   }),
-).pipe(Layer.provide(SNSEventFunctionLive));
+);
 
 export class SNSApiFunction extends AWS.Lambda.Function<AWS.Lambda.Function>()(
   "SNSApiFunction",
+) {}
+
+export const SNSApiFunctionLive = SNSApiFunction.make(
   {
     main,
     url: true,
+    // The sink's bounded partial-failure retry can sleep up to ~6s, which
+    // exceeds Lambda's 3s default timeout (see PATTERNS §7).
+    timeout: Duration.seconds(30),
     env: {
       DEBUG: "true",
     },
   },
-) {}
-
-export const SNSApiFunctionLive = SNSApiFunction.make(
   Effect.gen(function* () {
     const { topic, queue, subscription, queueSubscription } =
       yield* TopicAndQueue;
 
-    const publish = yield* AWS.SNS.Publish.bind(topic);
-    const publishBatch = yield* AWS.SNS.PublishBatch.bind(topic);
-    const getTopicAttributes = yield* AWS.SNS.GetTopicAttributes.bind(topic);
-    const setTopicAttributes = yield* AWS.SNS.SetTopicAttributes.bind(topic);
-    const addPermission = yield* AWS.SNS.AddPermission.bind(topic);
-    const removePermission = yield* AWS.SNS.RemovePermission.bind(topic);
+    const publish = yield* AWS.SNS.Publish(topic);
+    const publishBatch = yield* AWS.SNS.PublishBatch(topic);
+    const getTopicAttributes = yield* AWS.SNS.GetTopicAttributes(topic);
+    const setTopicAttributes = yield* AWS.SNS.SetTopicAttributes(topic);
+    const addPermission = yield* AWS.SNS.AddPermission(topic);
+    const removePermission = yield* AWS.SNS.RemovePermission(topic);
     const getDataProtectionPolicy =
-      yield* AWS.SNS.GetDataProtectionPolicy.bind(topic);
+      yield* AWS.SNS.GetDataProtectionPolicy(topic);
     const putDataProtectionPolicy =
-      yield* AWS.SNS.PutDataProtectionPolicy.bind(topic);
-    const listTopics = yield* AWS.SNS.ListTopics.bind();
-    const listSubscriptions = yield* AWS.SNS.ListSubscriptions.bind();
+      yield* AWS.SNS.PutDataProtectionPolicy(topic);
+    const listTopics = yield* AWS.SNS.ListTopics();
+    const listSubscriptions = yield* AWS.SNS.ListSubscriptions();
     const listSubscriptionsByTopic =
-      yield* AWS.SNS.ListSubscriptionsByTopic.bind(topic);
-    const listTagsForResource = yield* AWS.SNS.ListTagsForResource.bind(topic);
-    const tagResource = yield* AWS.SNS.TagResource.bind(topic);
-    const untagResource = yield* AWS.SNS.UntagResource.bind(topic);
+      yield* AWS.SNS.ListSubscriptionsByTopic(topic);
+    const listTagsForResource = yield* AWS.SNS.ListTagsForResource(topic);
+    const tagResource = yield* AWS.SNS.TagResource(topic);
+    const untagResource = yield* AWS.SNS.UntagResource(topic);
     const getSubscriptionAttributes =
-      yield* AWS.SNS.GetSubscriptionAttributes.bind(queueSubscription);
+      yield* AWS.SNS.GetSubscriptionAttributes(queueSubscription);
     const setSubscriptionAttributes =
-      yield* AWS.SNS.SetSubscriptionAttributes.bind(queueSubscription);
+      yield* AWS.SNS.SetSubscriptionAttributes(queueSubscription);
     const confirmSubscription =
-      yield* AWS.SNS.ConfirmSubscription.bind(subscription);
-    const sink = yield* AWS.SNS.TopicSink.bind(topic);
+      yield* AWS.SNS.ConfirmSubscription(subscription);
+    const subscribeToTopic = yield* AWS.SNS.Subscribe(topic);
+    const unsubscribe = yield* AWS.SNS.Unsubscribe();
+    const publishSms = yield* AWS.SNS.PublishSms();
+    const checkIfPhoneNumberIsOptedOut =
+      yield* AWS.SNS.CheckIfPhoneNumberIsOptedOut();
+    const optInPhoneNumber = yield* AWS.SNS.OptInPhoneNumber();
+    const listPhoneNumbersOptedOut = yield* AWS.SNS.ListPhoneNumbersOptedOut();
+    const getSmsAttributes = yield* AWS.SNS.GetSMSAttributes();
+    const setSmsAttributes = yield* AWS.SNS.SetSMSAttributes();
+    const listOriginationNumbers = yield* AWS.SNS.ListOriginationNumbers();
+    const getSandboxStatus = yield* AWS.SNS.GetSMSSandboxAccountStatus();
+    const listSandboxNumbers = yield* AWS.SNS.ListSMSSandboxPhoneNumbers();
+    const createSandboxNumber = yield* AWS.SNS.CreateSMSSandboxPhoneNumber();
+    const verifySandboxNumber = yield* AWS.SNS.VerifySMSSandboxPhoneNumber();
+    const deleteSandboxNumber = yield* AWS.SNS.DeleteSMSSandboxPhoneNumber();
+    const listPlatformApplications = yield* AWS.SNS.ListPlatformApplications();
+    const sink = yield* AWS.SNS.TopicSink(topic);
+    const QueueArn = yield* queue.queueArn;
     const TopicArn = yield* topic.topicArn;
     const accountId = TopicArn.pipe(
       Effect.map((topicArn) => topicArn.split(":")[4] ?? ""),
     );
 
-    const queueSink = yield* AWS.SQS.QueueSink.bind(queue);
+    const queueSink = yield* AWS.SQS.QueueSink(queue);
 
-    yield* AWS.SNS.notifications(topic).subscribe((stream) =>
+    yield* AWS.SNS.consumeTopicNotifications(topic, (stream) =>
       stream.pipe(
-        Stream.map((notification) =>
-          JSON.stringify({
+        Stream.map((notification) => ({
+          MessageBody: JSON.stringify({
             topicArn: notification.TopicArn,
             message: notification.Message,
             subject: notification.Subject,
             messageId: notification.MessageId,
           }),
-        ),
+        })),
         Stream.run(queueSink),
+        Effect.orDie,
       ),
     );
 
@@ -174,7 +176,10 @@ export const SNSApiFunctionLive = SNSApiFunction.make(
 
         if (request.method === "POST" && pathname === "/sink") {
           const body = (yield* request.json) as { messages: string[] };
-          yield* Stream.fromIterable(body.messages).pipe(Stream.run(sink));
+          yield* Stream.fromIterable(body.messages).pipe(
+            Stream.map((message) => ({ Message: message })),
+            Stream.run(sink),
+          );
           return yield* HttpServerResponse.json({ ok: true });
         }
 
@@ -301,6 +306,151 @@ export const SNSApiFunctionLive = SNSApiFunction.make(
           );
         }
 
+        if (request.method === "POST" && pathname === "/subscribe-cycle") {
+          // Subscribe the (otherwise unsubscribed) notifications queue to the
+          // topic at runtime and immediately unsubscribe it — proves both the
+          // `Subscribe` and `Unsubscribe` bindings against the live API
+          // without leaving a subscription behind that would double-deliver
+          // later publishes.
+          const subscribed = yield* subscribeToTopic({
+            Protocol: "sqs",
+            Endpoint: yield* QueueArn,
+            ReturnSubscriptionArn: true,
+          });
+          if (!subscribed.SubscriptionArn) {
+            return yield* HttpServerResponse.json(
+              { ok: false, error: "no SubscriptionArn" },
+              { status: 500 },
+            );
+          }
+          yield* unsubscribe({ SubscriptionArn: subscribed.SubscriptionArn });
+          return yield* HttpServerResponse.json({
+            ok: true,
+            subscriptionArn: subscribed.SubscriptionArn,
+          });
+        }
+
+        if (request.method === "GET" && pathname === "/sms/attributes") {
+          return yield* HttpServerResponse.json(
+            yield* getSmsAttributes().pipe(
+              Effect.catch((error) => Effect.succeed(formatError(error))),
+            ),
+          );
+        }
+
+        if (request.method === "POST" && pathname === "/sms/attributes") {
+          const body = (yield* request.json) as { type: string };
+          return yield* HttpServerResponse.json(
+            yield* setSmsAttributes({
+              attributes: { DefaultSMSType: body.type },
+            }).pipe(
+              Effect.catch((error) => Effect.succeed(formatError(error))),
+            ),
+          );
+        }
+
+        if (request.method === "GET" && pathname === "/sms/opted-out") {
+          return yield* HttpServerResponse.json(
+            yield* listPhoneNumbersOptedOut().pipe(
+              Effect.catch((error) => Effect.succeed(formatError(error))),
+            ),
+          );
+        }
+
+        if (request.method === "POST" && pathname === "/sms/check-opt-out") {
+          const body = (yield* request.json) as { phoneNumber: string };
+          return yield* HttpServerResponse.json(
+            yield* checkIfPhoneNumberIsOptedOut({
+              phoneNumber: body.phoneNumber,
+            }).pipe(
+              Effect.catch((error) => Effect.succeed(formatError(error))),
+            ),
+          );
+        }
+
+        if (request.method === "POST" && pathname === "/sms/opt-in") {
+          const body = (yield* request.json) as { phoneNumber: string };
+          const response = yield* optInPhoneNumber({
+            phoneNumber: body.phoneNumber,
+          }).pipe(Effect.catch((error) => Effect.succeed(formatError(error))));
+          return yield* HttpServerResponse.json(response);
+        }
+
+        if (
+          request.method === "GET" &&
+          pathname === "/sms/origination-numbers"
+        ) {
+          return yield* HttpServerResponse.json(
+            yield* listOriginationNumbers().pipe(
+              Effect.catch((error) => Effect.succeed(formatError(error))),
+            ),
+          );
+        }
+
+        if (request.method === "GET" && pathname === "/sms/sandbox-status") {
+          return yield* HttpServerResponse.json(
+            yield* getSandboxStatus().pipe(
+              Effect.catch((error) => Effect.succeed(formatError(error))),
+            ),
+          );
+        }
+
+        if (request.method === "GET" && pathname === "/sms/sandbox-numbers") {
+          return yield* HttpServerResponse.json(
+            yield* listSandboxNumbers().pipe(
+              Effect.catch((error) => Effect.succeed(formatError(error))),
+            ),
+          );
+        }
+
+        if (request.method === "POST" && pathname === "/sms/sandbox-create") {
+          const body = (yield* request.json) as { phoneNumber: string };
+          const response = yield* createSandboxNumber({
+            PhoneNumber: body.phoneNumber,
+          }).pipe(Effect.catch((error) => Effect.succeed(formatError(error))));
+          return yield* HttpServerResponse.json(response);
+        }
+
+        if (request.method === "POST" && pathname === "/sms/sandbox-verify") {
+          const body = (yield* request.json) as {
+            phoneNumber: string;
+            otp: string;
+          };
+          const response = yield* verifySandboxNumber({
+            PhoneNumber: body.phoneNumber,
+            OneTimePassword: body.otp,
+          }).pipe(Effect.catch((error) => Effect.succeed(formatError(error))));
+          return yield* HttpServerResponse.json(response);
+        }
+
+        if (request.method === "POST" && pathname === "/sms/sandbox-delete") {
+          const body = (yield* request.json) as { phoneNumber: string };
+          const response = yield* deleteSandboxNumber({
+            PhoneNumber: body.phoneNumber,
+          }).pipe(Effect.catch((error) => Effect.succeed(formatError(error))));
+          return yield* HttpServerResponse.json(response);
+        }
+
+        if (request.method === "POST" && pathname === "/sms/publish") {
+          const body = (yield* request.json) as {
+            phoneNumber: string;
+            message: string;
+          };
+          const response = yield* publishSms({
+            PhoneNumber: body.phoneNumber,
+            Message: body.message,
+          }).pipe(Effect.catch((error) => Effect.succeed(formatError(error))));
+          return yield* HttpServerResponse.json(response);
+        }
+
+        if (request.method === "GET" && pathname === "/platform/applications") {
+          return yield* HttpServerResponse.json(
+            yield* listPlatformApplications().pipe(
+              Effect.catch((error) => Effect.succeed(formatError(error))),
+            ),
+          );
+        }
+
         if (request.method === "POST" && pathname === "/confirm-subscription") {
           const body = (yield* request.json) as { token: string };
           const response = yield* confirmSubscription({
@@ -321,28 +471,43 @@ export const SNSApiFunctionLive = SNSApiFunction.make(
         Layer.mergeAll(
           TopicAndQueueLive,
           AWS.Lambda.TopicEventSource,
-          AWS.SNS.TopicSinkLive,
-          AWS.SQS.QueueSinkLive,
+          AWS.SNS.TopicSinkHttp,
+          AWS.SQS.QueueSinkHttp,
         ),
         Layer.mergeAll(
-          AWS.SNS.AddPermissionLive,
-          AWS.SNS.ConfirmSubscriptionLive,
-          AWS.SNS.GetDataProtectionPolicyLive,
-          AWS.SNS.GetSubscriptionAttributesLive,
-          AWS.SNS.GetTopicAttributesLive,
-          AWS.SNS.ListSubscriptionsByTopicLive,
-          AWS.SNS.ListSubscriptionsLive,
-          AWS.SNS.ListTagsForResourceLive,
-          AWS.SNS.ListTopicsLive,
-          AWS.SNS.PublishBatchLive,
-          AWS.SNS.PublishLive,
-          AWS.SNS.PutDataProtectionPolicyLive,
-          AWS.SNS.RemovePermissionLive,
-          AWS.SNS.SetSubscriptionAttributesLive,
-          AWS.SNS.SetTopicAttributesLive,
-          AWS.SNS.TagResourceLive,
-          AWS.SNS.UntagResourceLive,
-          AWS.SQS.SendMessageBatchLive,
+          AWS.SNS.AddPermissionHttp,
+          AWS.SNS.CheckIfPhoneNumberIsOptedOutHttp,
+          AWS.SNS.ConfirmSubscriptionHttp,
+          AWS.SNS.CreateSMSSandboxPhoneNumberHttp,
+          AWS.SNS.DeleteSMSSandboxPhoneNumberHttp,
+          AWS.SNS.GetSMSAttributesHttp,
+          AWS.SNS.GetSMSSandboxAccountStatusHttp,
+          AWS.SNS.ListOriginationNumbersHttp,
+          AWS.SNS.ListPhoneNumbersOptedOutHttp,
+          AWS.SNS.ListPlatformApplicationsHttp,
+          AWS.SNS.ListSMSSandboxPhoneNumbersHttp,
+          AWS.SNS.OptInPhoneNumberHttp,
+          AWS.SNS.PublishSmsHttp,
+          AWS.SNS.SetSMSAttributesHttp,
+          AWS.SNS.SubscribeHttp,
+          AWS.SNS.UnsubscribeHttp,
+          AWS.SNS.VerifySMSSandboxPhoneNumberHttp,
+          AWS.SNS.GetDataProtectionPolicyHttp,
+          AWS.SNS.GetSubscriptionAttributesHttp,
+          AWS.SNS.GetTopicAttributesHttp,
+          AWS.SNS.ListSubscriptionsByTopicHttp,
+          AWS.SNS.ListSubscriptionsHttp,
+          AWS.SNS.ListTagsForResourceHttp,
+          AWS.SNS.ListTopicsHttp,
+          AWS.SNS.PublishBatchHttp,
+          AWS.SNS.PublishHttp,
+          AWS.SNS.PutDataProtectionPolicyHttp,
+          AWS.SNS.RemovePermissionHttp,
+          AWS.SNS.SetSubscriptionAttributesHttp,
+          AWS.SNS.SetTopicAttributesHttp,
+          AWS.SNS.TagResourceHttp,
+          AWS.SNS.UntagResourceHttp,
+          AWS.SQS.SendMessageBatchHttp,
         ),
       ),
     ),

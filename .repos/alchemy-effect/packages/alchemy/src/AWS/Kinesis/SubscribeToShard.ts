@@ -1,8 +1,6 @@
 import * as Kinesis from "@distilled.cloud/aws/kinesis";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { StreamConsumer } from "./StreamConsumer.ts";
 
 export interface SubscribeToShardRequest extends Omit<
@@ -10,8 +8,34 @@ export interface SubscribeToShardRequest extends Omit<
   "ConsumerARN"
 > {}
 
-export class SubscribeToShard extends Binding.Service<
+/**
+ * Runtime binding for `kinesis:SubscribeToShard` (enhanced fan-out).
+ *
+ * Bind this operation to a `StreamConsumer` (a registered enhanced fan-out
+ * consumer) to open a push-based subscription to a shard — the consumer ARN
+ * is injected automatically. Provide the implementation with
+ * `Effect.provide(AWS.Kinesis.SubscribeToShardHttp)`.
+ * @binding
+ * @section Enhanced Fan-Out
+ * @example Subscribe to a Shard
+ * ```typescript
+ * const consumer = yield* AWS.Kinesis.StreamConsumer("Analytics", {
+ *   streamArn: stream.streamArn,
+ * });
+ * // init — bind the operation to the registered consumer
+ * const subscribeToShard = yield* AWS.Kinesis.SubscribeToShard(consumer);
+ *
+ * // runtime — open the subscription
+ * const result = yield* subscribeToShard({
+ *   ShardId: shardId,
+ *   StartingPosition: { Type: "LATEST" },
+ * });
+ * // result.EventStream delivers records for up to 5 minutes
+ * ```
+ */
+export interface SubscribeToShard extends Binding.Service<
   SubscribeToShard,
+  "AWS.Kinesis.SubscribeToShard",
   (
     consumer: StreamConsumer,
   ) => Effect.Effect<
@@ -22,50 +46,8 @@ export class SubscribeToShard extends Binding.Service<
       Kinesis.SubscribeToShardError
     >
   >
->()("AWS.Kinesis.SubscribeToShard") {}
+> {}
 
-export const SubscribeToShardLive = Layer.effect(
-  SubscribeToShard,
-  Effect.gen(function* () {
-    const Policy = yield* SubscribeToShardPolicy;
-    const subscribeToShard = yield* Kinesis.subscribeToShard;
-
-    return Effect.fn(function* (consumer: StreamConsumer) {
-      const ConsumerARN = yield* consumer.consumerArn;
-      yield* Policy(consumer);
-      return Effect.fn(function* (request: SubscribeToShardRequest) {
-        return yield* subscribeToShard({
-          ...request,
-          ConsumerARN: yield* ConsumerARN,
-        });
-      });
-    });
-  }),
-);
-
-export class SubscribeToShardPolicy extends Binding.Policy<
-  SubscribeToShardPolicy,
-  (consumer: StreamConsumer) => Effect.Effect<void>
->()("AWS.Kinesis.SubscribeToShard") {}
-
-export const SubscribeToShardPolicyLive = SubscribeToShardPolicy.layer.succeed(
-  Effect.fn(function* (host, consumer) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.Kinesis.SubscribeToShard(${consumer}))`(
-        {
-          policyStatements: [
-            {
-              Effect: "Allow",
-              Action: ["kinesis:SubscribeToShard"],
-              Resource: [consumer.consumerArn],
-            },
-          ],
-        },
-      );
-    } else {
-      return yield* Effect.die(
-        `SubscribeToShardPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const SubscribeToShard = Binding.Service<SubscribeToShard>(
+  "AWS.Kinesis.SubscribeToShard",
 );

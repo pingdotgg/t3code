@@ -6,6 +6,17 @@ import * as Semaphore from "effect/Semaphore";
 import { withLock } from "./Lock.ts";
 
 /**
+ * Canonical web host for OAuth provider-agnostic landing pages
+ * (`/auth/success`, `/auth/error`). The CLI's loopback server 302s the
+ * browser to one of these after handling the OAuth callback. Centralized
+ * here so the redirect target lives in exactly one place across all
+ * provider OAuth clients.
+ */
+export const AUTH_LANDING_HOST = "https://alchemy.run";
+export const AUTH_SUCCESS_URL = `${AUTH_LANDING_HOST}/auth/success`;
+export const AUTH_ERROR_URL = `${AUTH_LANDING_HOST}/auth/error`;
+
+/**
  * Methods on an {@link AuthProviderImpl} that mutate (or could trigger
  * mutation of) on-disk credentials. The factory wraps these in a
  * cross-process file lock keyed by `(profileName, providerName)` so that
@@ -33,7 +44,7 @@ export class AuthError extends Schema.TaggedErrorClass<AuthError>()(
   "AuthError",
   {
     message: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {}
 

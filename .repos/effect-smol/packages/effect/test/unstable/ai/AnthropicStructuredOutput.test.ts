@@ -4,29 +4,39 @@ import { TestSchema } from "effect/testing"
 import { toCodecAnthropic } from "effect/unstable/ai/AnthropicStructuredOutput"
 import * as Tool from "effect/unstable/ai/Tool"
 
-function assertJsonSchema(schema: Schema.Top, expected: JsonSchema.JsonSchema) {
+function assertJsonSchema(schema: Schema.Constraint, expected: JsonSchema.JsonSchema) {
   assert.deepStrictEqual(toCodecAnthropic(schema).jsonSchema, expected)
 }
 
-function assertError(schema: Schema.Top, message: string) {
+function assertError(schema: Schema.Constraint, message: string) {
   assert.throws(() => toCodecAnthropic(schema), message)
 }
 
 describe("toCodecAnthropic", () => {
-  describe("Unsupported", () => {
-    it("Undefined", () => {
-      assertError(Schema.Undefined, "Unsupported AST Undefined")
+  describe("Canonical JSON and mechanical invariants", () => {
+    it("encodes Undefined as null", () => {
+      assertJsonSchema(Schema.Undefined, { type: "null" })
     })
 
-    it("Literal with unsupported type", () => {
-      assertError(Schema.Literal(1n), "Unsupported literal type bigint")
+    it("encodes a bigint Literal as a string", () => {
+      assertJsonSchema(Schema.Literal(1n), { type: "string", enum: ["1"] })
     })
 
     describe("Arrays", () => {
-      it("post-rest elements", () => {
-        assertError(
+      it("encodes post-rest elements as object properties", () => {
+        assertJsonSchema(
           Schema.TupleWithRest(Schema.Tuple([]), [Schema.String, Schema.String]),
-          "Post-rest elements are not supported for arrays"
+          {
+            type: "object",
+            properties: {
+              __rest__: { type: "array", items: { type: "string" } },
+              __tail_0__: { type: "string" }
+            },
+            required: ["__rest__", "__tail_0__"],
+            additionalProperties: false,
+            description:
+              "Tuple encoded as an object with numeric string keys ('0', '1', ...). If present, '__rest__' contains remaining elements. Post-rest elements use '__tail_0__', '__tail_1__', and so on"
+          }
         )
       })
     })
@@ -35,22 +45,25 @@ describe("toCodecAnthropic", () => {
       it("non-string property signature name", () => {
         assertError(
           Schema.Struct({ [Symbol.for("effect/Schema/test/a")]: Schema.String }),
-          "Property names must be strings"
+          "Objects property names must be strings"
         )
       })
     })
 
-    it("Suspend", () => {
+    it("non-recursive Suspend", () => {
+      assertJsonSchema(Schema.suspend(() => Schema.String), { type: "string" })
+    })
+
+    it("rejects recursive Suspend", () => {
       interface A {
         readonly a: string
         readonly as: ReadonlyArray<A>
       }
       const schema = Schema.Struct({
-        a: Schema.String,
+        a: Schema.String.check(Schema.isStartsWith("a")),
         as: Schema.Array(Schema.suspend((): Schema.Codec<A> => schema))
       })
-      assertError(Schema.suspend(() => Schema.String), "Unsupported AST Suspend")
-      assertError(schema, "Unsupported AST Suspend")
+      assertError(schema, "AnthropicStructuredOutput: Recursive schemas are not supported")
     })
   })
 
@@ -146,9 +159,7 @@ describe("toCodecAnthropic", () => {
       assertJsonSchema(Schema.Number, {
         "anyOf": [
           { "type": "number" },
-          { "type": "string", "enum": ["NaN"] },
-          { "type": "string", "enum": ["Infinity"] },
-          { "type": "string", "enum": ["-Infinity"] }
+          { "type": "string", "enum": ["Infinity", "-Infinity", "NaN"] }
         ]
       })
     })
@@ -164,10 +175,10 @@ describe("toCodecAnthropic", () => {
         })
       })
 
-      it("Finite + supported format", () => {
+      it("Finite + string format", () => {
         assertJsonSchema(Schema.Finite.annotate({ format: "duration" }), {
           "type": "number",
-          "format": "duration"
+          "description": "a value with a format of duration"
         })
       })
 
@@ -204,10 +215,10 @@ describe("toCodecAnthropic", () => {
         })
       })
 
-      it("Int + supported format", () => {
+      it("Int + string format", () => {
         assertJsonSchema(Schema.Int.annotate({ format: "duration" }), {
           "type": "integer",
-          "format": "duration"
+          "description": "a value with a format of duration"
         })
       })
 
@@ -378,9 +389,11 @@ describe("toCodecAnthropic", () => {
 
       const encoding = asserts.encoding()
       await encoding.succeed(["a", 1], { "0": "a", "1": 1 })
+      await encoding.succeed(["a"], { "0": "a", "1": null })
 
       const decoding = asserts.decoding()
       await decoding.succeed({ "0": "a", "1": 1 }, ["a", 1])
+      await decoding.succeed({ "0": "a", "1": null }, ["a"])
     })
   })
 
@@ -477,7 +490,7 @@ describe("toCodecAnthropic", () => {
       "required": ["name"],
       "additionalProperties": false,
       "$defs": {
-        "Person": {
+        "PersonJsonEncoding": {
           "type": "object",
           "properties": {
             "name": { "type": "string" }
@@ -528,6 +541,48 @@ describe("toCodecAnthropic", () => {
       await decoding.succeed([{ 0: "a", 1: 1 }, { 0: "b", 1: 2 }], { "a": 1, "b": 2 })
     })
 
+    it("Record with properties and an index signature", async () => {
+      const schema = Schema.Record(
+        Schema.Union([Schema.Literal("fixed"), Schema.String]),
+        Schema.String
+      )
+      const result = toCodecAnthropic(schema)
+      assert.deepStrictEqual(result.jsonSchema, {
+        type: "array",
+        description: "Object encoded as array of [key, value] pairs. Apply object constraints to the decoded object",
+        items: {
+          type: "object",
+          description:
+            "Tuple encoded as an object with numeric string keys ('0', '1', ...). If present, '__rest__' contains remaining elements",
+          properties: {
+            "0": {
+              anyOf: [
+                { type: "string", enum: ["fixed"] },
+                { type: "string" }
+              ]
+            },
+            "1": { type: "string" }
+          },
+          required: ["0", "1"],
+          additionalProperties: false
+        }
+      })
+
+      const asserts = new TestSchema.Asserts(result.codec)
+      await asserts.encoding().succeed(
+        { fixed: "required", dynamic: "value" },
+        [{ 0: "fixed", 1: "required" }, { 0: "dynamic", 1: "value" }]
+      )
+      await asserts.decoding().succeed(
+        [{ 0: "fixed", 1: "required" }, { 0: "dynamic", 1: "value" }],
+        { fixed: "required", dynamic: "value" }
+      )
+      assert.strictEqual(
+        Schema.decodeUnknownExit(result.codec)([{ 0: "dynamic", 1: "value" }])._tag,
+        "Failure"
+      )
+    })
+
     it("Record(String, Finite) + description", () => {
       const schema = Schema.Record(Schema.String, Schema.Finite).annotate({ description: "description" })
       assertJsonSchema(schema, {
@@ -548,9 +603,10 @@ describe("toCodecAnthropic", () => {
       })
     })
 
-    it("Record(String, Finite) + isMinProperties", () => {
+    it("Record(String, Finite) + isMinProperties", async () => {
       const schema = Schema.Record(Schema.String, Schema.Finite).check(Schema.isMinProperties(2))
-      assertJsonSchema(schema, {
+      const result = toCodecAnthropic(schema)
+      assert.deepStrictEqual(result.jsonSchema, {
         "type": "array",
         "description":
           "Object encoded as array of [key, value] pairs. Apply object constraints to the decoded object; a value with at least 2 entries",
@@ -566,6 +622,10 @@ describe("toCodecAnthropic", () => {
           "additionalProperties": false
         }
       })
+      await new TestSchema.Asserts(result.codec).decoding().fail(
+        [{ 0: "a", 1: 1 }, { 0: "a", 1: 2 }],
+        `Expected a value with at least 2 entries, got {"a":2}`
+      )
     })
 
     it("Record(String, Finite) + isMinProperties + description", () => {

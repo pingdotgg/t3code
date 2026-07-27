@@ -1,42 +1,11 @@
 /**
- * The `Reactivity` module provides process-local invalidation for connecting
- * writes to dependent reads. It does not cache values itself; it tracks keys,
- * registers query handlers, and reruns effects when matching keys are
- * invalidated so queues, streams, UI subscriptions, and read models can stay
- * fresh after successful writes.
+ * Process-local invalidation for connecting writes to dependent reads.
  *
- * **Mental model**
- *
- * A query registers one or more keys, runs once immediately, and publishes each
- * result to a queue or stream. Invalidating any registered key schedules the
- * query to rerun. Mutations wrap an effect and invalidate keys only after it
- * succeeds. Keys can be a flat array, or a record whose property names act as
- * broad namespaces and whose ids address individual records.
- *
- * **Common tasks**
- *
- * - Provide the default in-memory service with {@link layer}.
- * - Use {@link query} when callers need a queue of rerun results.
- * - Use {@link stream} when downstream code should consume reruns as a stream.
- * - Wrap writes with {@link mutation}, or call {@link invalidate} directly when
- *   invalidation is already part of the workflow.
- * - Use the {@link Reactivity} service directly when many invalidations should
- *   be coalesced until a batch exits.
- *
- * **Gotchas**
- *
- * - The default layer is process-local; it does not coordinate invalidations
- *   across processes or cluster runners.
- * - Non-primitive keys are matched by their `Hash.hash` value, so prefer stable
- *   key values over mutable objects.
- * - If a query fails, its queue or stream fails with the same cause.
- * - Invalidations that arrive while a query is already running coalesce into one
- *   follow-up run.
- *
- * **See also**
- *
- * - {@link query}, {@link stream}, {@link mutation}, and {@link invalidate}
- * - {@link layer} and {@link Reactivity}
+ * This module does not cache values itself. It lets callers register handlers
+ * for keys, invalidate those keys, wrap successful mutations so they invalidate
+ * keys, and expose effects as queues or streams that rerun when matching keys
+ * change. The service can also batch invalidations so handlers run after the
+ * batch completes.
  *
  * @since 4.0.0
  */
@@ -66,7 +35,7 @@ import * as Stream from "../../Stream.ts"
  * mutations so successful effects invalidate keys, and turn query effects into
  * queues or streams that rerun when keys are invalidated.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export class Reactivity extends Context.Service<

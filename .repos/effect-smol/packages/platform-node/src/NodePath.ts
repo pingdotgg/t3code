@@ -1,30 +1,10 @@
 /**
  * Node.js layers for Effect's `Path` service.
  *
- * This module adapts Node's path and file URL behavior to the
- * platform-independent `Path` service. Provide one of its layers when a Node
- * program needs to build, normalize, parse, resolve, or convert paths without
- * depending directly on `node:path`.
- *
- * **Mental model**
- *
- * `Path` is a syntactic service: it manipulates strings and `file:` URLs. It
- * does not read the filesystem, check permissions, or validate that paths
- * exist. The selected layer decides which separator, drive-letter, UNC, and URL
- * conversion rules are used.
- *
- * **Common tasks**
- *
- * Use `layer` for host-platform Node semantics, `layerPosix` for stable POSIX
- * behavior, and `layerWin32` for stable Windows behavior. `NodeServices.layer`
- * already includes `layer`, so import this module directly when a program wants
- * only path support or a platform-specific variant.
- *
- * **Gotchas**
- *
- * Results that are correct on one platform may not be portable to another.
- * `fromFileUrl` and `toFileUrl` use Node's `node:url` conversion rules and
- * report invalid conversions as `BadArgument` failures.
+ * This module provides the default, POSIX, and Windows variants of the
+ * platform-independent `Path` service by reusing the shared Node path
+ * implementation. The provided path services include Node file URL conversion
+ * behavior.
  *
  * @since 4.0.0
  */

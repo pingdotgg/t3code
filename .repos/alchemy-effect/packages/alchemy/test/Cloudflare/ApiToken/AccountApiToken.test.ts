@@ -1,15 +1,14 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
-import * as Test from "@/Test/Vitest";
+import * as Provider from "@/Provider";
+import * as Test from "@/Test/Alchemy";
 import * as accounts from "@distilled.cloud/cloudflare/accounts";
-import { expect } from "@effect/vitest";
+import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import { describe } from "node:test";
-
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
 const logLevel = Effect.provideService(
@@ -20,13 +19,13 @@ const logLevel = Effect.provideService(
 describe.skip("AccountApiToken", () => {
   test.provider("create and delete account token with default props", (stack) =>
     Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
       yield* stack.destroy();
 
       const token = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.AccountApiToken("DefaultToken", {
+          return yield* Cloudflare.ApiToken.AccountApiToken("DefaultToken", {
             policies: [
               {
                 effect: "allow",
@@ -60,13 +59,13 @@ describe.skip("AccountApiToken", () => {
 
   test.provider("create, update, delete account token", (stack) =>
     Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
       yield* stack.destroy();
 
       const token = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.AccountApiToken("UpdateToken", {
+          return yield* Cloudflare.ApiToken.AccountApiToken("UpdateToken", {
             name: "alchemy-test-acct-update-initial",
             policies: [
               {
@@ -86,7 +85,7 @@ describe.skip("AccountApiToken", () => {
 
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.AccountApiToken("UpdateToken", {
+          return yield* Cloudflare.ApiToken.AccountApiToken("UpdateToken", {
             name: "alchemy-test-acct-update-renamed",
             policies: [
               {
@@ -123,7 +122,7 @@ describe.skip("AccountApiToken", () => {
 
   test.provider("noop when account token props unchanged", (stack) =>
     Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
       yield* stack.destroy();
 
@@ -142,13 +141,13 @@ describe.skip("AccountApiToken", () => {
 
       const first = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.AccountApiToken("NoopToken", props);
+          return yield* Cloudflare.ApiToken.AccountApiToken("NoopToken", props);
         }),
       );
 
       const second = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.AccountApiToken("NoopToken", props);
+          return yield* Cloudflare.ApiToken.AccountApiToken("NoopToken", props);
         }),
       );
 
@@ -167,9 +166,7 @@ describe.skip("AccountApiToken", () => {
       Effect.flatMap(() => Effect.fail(new TokenStillExists())),
       Effect.retry({
         while: (e): e is TokenStillExists => e instanceof TokenStillExists,
-        schedule: Schedule.exponential(200).pipe(
-          Schedule.both(Schedule.recurs(8)),
-        ),
+        schedule: Schedule.max([Schedule.exponential(200), Schedule.recurs(8)]),
       }),
       Effect.catchTag("TokenStillExists", () =>
         Effect.die(
@@ -182,3 +179,42 @@ describe.skip("AccountApiToken", () => {
   });
 });
 class TokenStillExists extends Data.TaggedError("TokenStillExists") {}
+
+describe("AccountApiToken list", () => {
+  test.provider("list enumerates the deployed account token", (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      yield* stack.destroy();
+
+      const token = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.ApiToken.AccountApiToken("ListToken", {
+            name: "alchemy-test-acct-list",
+            policies: [
+              {
+                effect: "allow",
+                permissionGroups: ["Workers Scripts Read"],
+                resources: {
+                  [`com.cloudflare.api.account.${accountId}`]: "*",
+                },
+              },
+            ],
+          });
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.ApiToken.AccountApiToken,
+      );
+      const all = yield* provider.list();
+
+      expect(all.some((t) => t.tokenId === token.tokenId)).toBe(true);
+      const found = all.find((t) => t.tokenId === token.tokenId)!;
+      expect(found.name).toEqual(token.name);
+      expect(found.accountId).toEqual(accountId);
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  );
+});

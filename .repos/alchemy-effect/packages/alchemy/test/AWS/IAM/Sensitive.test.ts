@@ -1,8 +1,8 @@
 import * as AWS from "@/AWS";
 import { AccessKey, LoginProfile, User } from "@/AWS/IAM";
-import * as Test from "@/Test/Vitest";
+import * as Test from "@/Test/Alchemy";
 import * as IAM from "@distilled.cloud/aws/iam";
-import { describe, expect } from "@effect/vitest";
+import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 
 const { test } = Test.make({ providers: AWS.providers() });
@@ -58,6 +58,12 @@ describe("AWS.IAM sensitive resources", () => {
         expect(loginProfile.LoginProfile.PasswordResetRequired).toBe(false);
 
         yield* stack.destroy();
+
+        // The user (and with it the access key + login profile) is gone.
+        const deletedUser = yield* IAM.getUser({
+          UserName: resources.user.userName,
+        }).pipe(Effect.option);
+        expect(deletedUser._tag).toBe("None");
       }),
   );
 });

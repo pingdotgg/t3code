@@ -1,68 +1,9 @@
 /**
- * A module for reducing collections of values into a single result.
- *
- * A `Reducer<A>` extends {@link Combiner.Combiner} by adding an
- * `initialValue` (identity element) and a `combineAll` method that folds an
- * entire collection. Think `Array.prototype.reduce`, but packaged as a
- * reusable, composable value.
- *
- * ## Mental model
- *
- * - **Reducer** – a {@link Combiner.Combiner} plus an `initialValue` and a
- *   `combineAll` method.
- * - **initialValue** – the neutral/identity element. Combining any value with
- *   `initialValue` should return the original value unchanged (e.g. `0` for
- *   addition, `""` for string concatenation).
- * - **combineAll** – folds an `Iterable<A>` starting from `initialValue`.
- *   When omitted from {@link make}, a default left-to-right fold is used.
- * - **Purity** – all reducers produced by this module are pure; they never
- *   mutate their arguments.
- * - **Composability** – reducers can be lifted into `Option`, `Struct`,
- *   `Tuple`, `Record`, and other container types via helpers in those modules.
- * - **Subtype of Combiner** – every `Reducer` is also a valid
- *   `Combiner`, so you can pass a `Reducer` anywhere a `Combiner` is
- *   expected.
- *
- * ## Common tasks
- *
- * - Create a reducer from a combine function and initial value → {@link make}
- * - Swap argument order → {@link flip}
- * - Combine two values without an initial value → use {@link Combiner.Combiner}
- *   instead
- *
- * ## Gotchas
- *
- * - `combineAll` on an empty iterable returns `initialValue`, not an error.
- * - The default `combineAll` folds left-to-right. If your `combine` is not
- *   associative, order matters. Pass a custom `combineAll` to {@link make} if
- *   you need different traversal or short-circuiting.
- * - A `Reducer` is also a valid `Combiner` — but a `Combiner` is *not* a
- *   `Reducer` (it lacks `initialValue`).
- *
- * ## Quickstart
- *
- * **Example** (summing a list of numbers)
- *
- * ```ts
- * import { Reducer } from "effect"
- *
- * const Sum = Reducer.make<number>((a, b) => a + b, 0)
- *
- * console.log(Sum.combine(3, 4))
- * // Output: 7
- *
- * console.log(Sum.combineAll([1, 2, 3, 4]))
- * // Output: 10
- *
- * console.log(Sum.combineAll([]))
- * // Output: 0
- * ```
- *
- * ## See also
- *
- * - {@link make} – the primary constructor
- * - {@link Reducer} – the core interface
- * - {@link Combiner.Combiner} – the parent interface (no `initialValue`)
+ * Reusable strategies for reducing many values into one value. A `Reducer<A>`
+ * extends `Combiner.Combiner` with an `initialValue` for empty collections and
+ * a `combineAll` method for folding an entire iterable. This module provides a
+ * constructor for reducers and a helper for reversing the order in which values
+ * are combined.
  *
  * @since 4.0.0
  */
@@ -146,7 +87,7 @@ export interface Reducer<A> extends Combiner.Combiner<A> {
  *   `initialValue` is used.
  * - If `combineAll` is provided, it completely replaces the default fold.
  *
- * **Example** (Multiplication with short-circuit)
+ * **Example** (Multiplying with short-circuit)
  *
  * ```ts
  * import { Reducer } from "effect"
@@ -201,9 +142,8 @@ export function make<A>(
  *
  * **When to use**
  *
- * Use when you need the "right" value to act as the accumulator side.
- * - You want to reverse the natural direction of a non-commutative reducer
- *   (e.g. string concatenation becomes prepend).
+ * Use when you want the right-hand value to act as the accumulator, or need to
+ * reverse a non-commutative reducer such as string concatenation.
  *
  * **Details**
  *

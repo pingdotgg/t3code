@@ -1,86 +1,13 @@
 /**
- * Bidirectional transformations for the Effect Schema system.
+ * Builds two-way conversions used by schemas.
  *
- * A `Transformation` pairs a decode `Getter` and an encode `Getter` into a
- * single bidirectional value, used by `Schema.decodeTo`, `Schema.encodeTo`,
- * `Schema.decode`, `Schema.encode`, and `Schema.link` to define how values
- * are converted between encoded and decoded representations. A `Middleware`
- * is the effect-level equivalent — it wraps the entire parsing `Effect`
- * pipeline rather than individual values.
- *
- * ## Mental model
- *
- * - **Transformation**: A pair of `Getter`s (decode + encode) that convert
- *   individual values bidirectionally. `T` is the decoded (Type) side, `E` is
- *   the encoded side. `RD`/`RE` are required Effect services.
- * - **Middleware**: Like `Transformation`, but each direction receives the full
- *   parsing `Effect` and can intercept, retry, or modify the pipeline.
- * - **Getter**: A single-direction transform `Option<E> → Effect<Option<T>, Issue, R>`
- *   (see `SchemaGetter`).
- * - **flip()**: Swaps decode and encode, turning a `Transformation<T, E>` into
- *   `Transformation<E, T>`.
- * - **compose()**: Chains two transformations left-to-right on the decode side
- *   and right-to-left on the encode side.
- * - **passthrough**: The identity transformation — no conversion in either
- *   direction.
- *
- * ## Common tasks
- *
- * - Convert values purely (sync, infallible) → {@link transform}
- * - Convert values with possible failure → {@link transformOrFail}
- * - Handle optional/missing keys → {@link transformOptional}
- * - Build from existing Getters → {@link make}
- * - No-op identity transformation → {@link passthrough}
- * - Subtype/supertype coercion → {@link passthroughSupertype}, {@link passthroughSubtype}
- * - Trim/case strings → {@link trim}, {@link toLowerCase}, {@link toUpperCase}, {@link capitalize}, {@link uncapitalize}, {@link snakeToCamel}
- * - Parse key-value strings → {@link splitKeyValue}
- * - Coerce string ↔ number/bigint → {@link numberFromString}, {@link bigintFromString}
- * - Coerce string ↔ Date/Duration → {@link dateFromString}, {@link durationFromString}
- * - Decode durations → {@link durationFromNanos}, {@link durationFromMillis}
- * - Wrap nullable/optional as Option → {@link optionFromNullOr}, {@link optionFromOptionalKey}, {@link optionFromOptional}
- * - Parse URLs → {@link urlFromString}
- * - Base64 ↔ Uint8Array → {@link uint8ArrayFromBase64String}
- * - Base64 ↔ string → {@link stringFromBase64String}
- * - URI component ↔ string → {@link stringFromUriComponent}
- * - JSON string ↔ unknown → {@link fromJsonString}
- * - FormData/URLSearchParams ↔ unknown → {@link fromFormData}, {@link fromURLSearchParams}
- * - Check if a value is a Transformation → {@link isTransformation}
- *
- * ## Gotchas
- *
- * - `Transformation` operates on individual values; `Middleware` wraps the
- *   entire parsing Effect. Choose accordingly.
- * - `passthrough` requires `T === E` by default. Use `{ strict: false }` to
- *   bypass, or use {@link passthroughSupertype} / {@link passthroughSubtype}.
- * - String transformations like `trim`, `toLowerCase`, and `toUpperCase` use
- *   `passthrough` on the encode side — they are lossy and do not round-trip.
- * - `durationFromNanos` encode can fail if the Duration cannot be represented
- *   as a `bigint`.
- *
- * ## Quickstart
- *
- * **Example** (Defining a custom transformation with Schema.decodeTo)
- *
- * ```ts
- * import { Schema, SchemaTransformation } from "effect"
- *
- * const CentsFromDollars = Schema.Number.pipe(
- *   Schema.decodeTo(
- *     Schema.Number,
- *     SchemaTransformation.transform({
- *       decode: (dollars) => dollars * 100,
- *       encode: (cents) => cents / 100
- *     })
- *   )
- * )
- * ```
- *
- * ## See also
- *
- * - {@link Transformation} — the core bidirectional transformation class
- * - {@link Middleware} — effect-pipeline-level transformation
- * - {@link transform} — most common constructor
- * - {@link passthrough} — identity transformation
+ * A `Transformation<T, E>` describes how to decode an encoded value into a
+ * decoded value and how to encode it back again. Schema APIs use
+ * transformations to connect two representations, such as a string and a
+ * number, a JSON value and a richer TypeScript value, or a form field and an
+ * application value. This module includes transformation and middleware types,
+ * constructors for pure or effectful conversions, and common conversions used
+ * by the Schema module.
  *
  * @since 4.0.0
  */
@@ -89,12 +16,13 @@ import * as BigDecimal from "./BigDecimal.ts"
 import * as DateTime from "./DateTime.ts"
 import * as Duration from "./Duration.ts"
 import * as Effect from "./Effect.ts"
-import { formatDate } from "./Formatter.ts"
+import { format, formatDate, formatJson } from "./Formatter.ts"
 import * as Option from "./Option.ts"
 import * as Predicate from "./Predicate.ts"
-import type * as AST from "./SchemaAST.ts"
-import * as Getter from "./SchemaGetter.ts"
-import * as Issue from "./SchemaIssue.ts"
+import type { ErrorOptions, Json } from "./Schema.ts"
+import type * as SchemaAST from "./SchemaAST.ts"
+import * as SchemaGetter from "./SchemaGetter.ts"
+import * as SchemaIssue from "./SchemaIssue.ts"
 
 /**
  * Middleware that wraps the entire parsing `Effect` pipeline for both
@@ -102,9 +30,9 @@ import * as Issue from "./SchemaIssue.ts"
  *
  * **When to use**
  *
- * Use when you need to catch or recover from parsing errors (e.g. `Schema.catchDecoding`).
- * - You need to run side effects around the parsing pipeline.
- * - You need access to the full `Effect` rather than a single decoded value.
+ * Use when you need a schema middleware to catch or recover from parsing
+ * errors (e.g. `Schema.catchDecoding`), run side effects around the parsing
+ * pipeline, or access the full `Effect` rather than a single decoded value.
  *
  * **Details**
  *
@@ -141,23 +69,23 @@ import * as Issue from "./SchemaIssue.ts"
 export class Middleware<in out T, in out E, RDE, RDT, RET, REE> {
   readonly _tag = "Middleware"
   readonly decode: (
-    effect: Effect.Effect<Option.Option<E>, Issue.Issue, RDE>,
-    options: AST.ParseOptions
-  ) => Effect.Effect<Option.Option<T>, Issue.Issue, RDT>
+    effect: Effect.Effect<Option.Option<E>, SchemaIssue.Issue, RDE>,
+    options: SchemaAST.ParseOptions
+  ) => Effect.Effect<Option.Option<T>, SchemaIssue.Issue, RDT>
   readonly encode: (
-    effect: Effect.Effect<Option.Option<T>, Issue.Issue, RET>,
-    options: AST.ParseOptions
-  ) => Effect.Effect<Option.Option<E>, Issue.Issue, REE>
+    effect: Effect.Effect<Option.Option<T>, SchemaIssue.Issue, RET>,
+    options: SchemaAST.ParseOptions
+  ) => Effect.Effect<Option.Option<E>, SchemaIssue.Issue, REE>
 
   constructor(
     decode: (
-      effect: Effect.Effect<Option.Option<E>, Issue.Issue, RDE>,
-      options: AST.ParseOptions
-    ) => Effect.Effect<Option.Option<T>, Issue.Issue, RDT>,
+      effect: Effect.Effect<Option.Option<E>, SchemaIssue.Issue, RDE>,
+      options: SchemaAST.ParseOptions
+    ) => Effect.Effect<Option.Option<T>, SchemaIssue.Issue, RDT>,
     encode: (
-      effect: Effect.Effect<Option.Option<T>, Issue.Issue, RET>,
-      options: AST.ParseOptions
-    ) => Effect.Effect<Option.Option<E>, Issue.Issue, REE>
+      effect: Effect.Effect<Option.Option<T>, SchemaIssue.Issue, RET>,
+      options: SchemaAST.ParseOptions
+    ) => Effect.Effect<Option.Option<E>, SchemaIssue.Issue, REE>
   ) {
     this.decode = decode
     this.encode = encode
@@ -175,7 +103,8 @@ const TypeId = "~effect/SchemaTransformation/Transformation"
  *
  * **When to use**
  *
- * Use when you need to define how a schema converts between two representations.
+ * Use when you need a schema transformation that defines how a schema converts
+ * between two representations.
  * - You want to compose multiple transformations into a pipeline.
  * - You want to flip a transformation to swap decode/encode.
  *
@@ -213,12 +142,12 @@ const TypeId = "~effect/SchemaTransformation/Transformation"
 export class Transformation<in out T, in out E, RD = never, RE = never> {
   readonly [TypeId] = TypeId
   readonly _tag = "Transformation"
-  readonly decode: Getter.Getter<T, E, RD>
-  readonly encode: Getter.Getter<E, T, RE>
+  readonly decode: SchemaGetter.Getter<T, E, RD>
+  readonly encode: SchemaGetter.Getter<E, T, RE>
 
   constructor(
-    decode: Getter.Getter<T, E, RD>,
-    encode: Getter.Getter<E, T, RE>
+    decode: SchemaGetter.Getter<T, E, RD>,
+    encode: SchemaGetter.Getter<E, T, RE>
   ) {
     this.decode = decode
     this.encode = encode
@@ -239,7 +168,8 @@ export class Transformation<in out T, in out E, RD = never, RE = never> {
  *
  * **When to use**
  *
- * Use to check whether a value is already a Transformation before wrapping it.
+ * Use to check whether a value is already a schema transformation before
+ * wrapping it.
  *
  * **Details**
  *
@@ -265,7 +195,7 @@ export class Transformation<in out T, in out E, RD = never, RE = never> {
  * @since 4.0.0
  */
 export function isTransformation(u: unknown): u is Transformation<any, any, unknown, unknown> {
-  return Predicate.hasProperty(u, TypeId)
+  return Predicate.hasProperty(u, TypeId) && u[TypeId] === TypeId
 }
 
 /**
@@ -274,7 +204,8 @@ export function isTransformation(u: unknown): u is Transformation<any, any, unkn
  *
  * **When to use**
  *
- * Use when you already have `Getter` instances and want to pair them.
+ * Use when you already have schema getter instances and want to pair them into
+ * a schema transformation.
  * - You want idempotent wrapping (won't double-wrap).
  *
  * **Details**
@@ -300,8 +231,8 @@ export function isTransformation(u: unknown): u is Transformation<any, any, unkn
  * @since 3.10.0
  */
 export const make = <T, E, RD = never, RE = never>(options: {
-  readonly decode: Getter.Getter<T, E, RD>
-  readonly encode: Getter.Getter<E, T, RE>
+  readonly decode: SchemaGetter.Getter<T, E, RD>
+  readonly encode: SchemaGetter.Getter<E, T, RE>
 }): Transformation<T, E, RD, RE> => {
   if (isTransformation(options)) {
     return options as any
@@ -315,8 +246,8 @@ export const make = <T, E, RD = never, RE = never>(options: {
  *
  * **When to use**
  *
- * Use when the transformation can fail (e.g. parsing, validation).
- * - The transformation requires Effect services.
+ * Use when you need a schema transformation that may fail or require Effect
+ * services.
  *
  * **Details**
  *
@@ -353,12 +284,12 @@ export const make = <T, E, RD = never, RE = never>(options: {
  * @since 3.10.0
  */
 export function transformOrFail<T, E, RD = never, RE = never>(options: {
-  readonly decode: (e: E, options: AST.ParseOptions) => Effect.Effect<T, Issue.Issue, RD>
-  readonly encode: (t: T, options: AST.ParseOptions) => Effect.Effect<E, Issue.Issue, RE>
+  readonly decode: (e: E, options: SchemaAST.ParseOptions) => Effect.Effect<T, SchemaIssue.Issue, RD>
+  readonly encode: (t: T, options: SchemaAST.ParseOptions) => Effect.Effect<E, SchemaIssue.Issue, RE>
 }): Transformation<T, E, RD, RE> {
   return new Transformation(
-    Getter.transformOrFail(options.decode),
-    Getter.transformOrFail(options.encode)
+    SchemaGetter.transformOrFail(options.decode),
+    SchemaGetter.transformOrFail(options.encode)
   )
 }
 
@@ -368,8 +299,8 @@ export function transformOrFail<T, E, RD = never, RE = never>(options: {
  *
  * **When to use**
  *
- * Use when the conversion cannot fail.
- * - No Effect services are needed.
+ * Use when you need an infallible schema transformation that does not require
+ * Effect services.
  *
  * **Details**
  *
@@ -405,8 +336,8 @@ export function transform<T, E>(options: {
   readonly encode: (input: T) => E
 }): Transformation<T, E> {
   return new Transformation(
-    Getter.transform(options.decode),
-    Getter.transform(options.encode)
+    SchemaGetter.transform(options.decode),
+    SchemaGetter.transform(options.encode)
   )
 }
 
@@ -416,7 +347,8 @@ export function transform<T, E>(options: {
  *
  * **When to use**
  *
- * Use when you need to produce or consume `Option.None` to represent absent keys.
+ * Use when you need a schema transformation to produce or consume `Option.None`
+ * for absent keys.
  * - You are working with optional struct fields.
  *
  * **Details**
@@ -456,8 +388,8 @@ export function transformOptional<T, E>(options: {
   readonly encode: (input: Option.Option<T>) => Option.Option<E>
 }): Transformation<T, E> {
   return new Transformation(
-    Getter.transformOptional(options.decode),
-    Getter.transformOptional(options.encode)
+    SchemaGetter.transformOptional(options.decode),
+    SchemaGetter.transformOptional(options.encode)
   )
 }
 
@@ -467,13 +399,14 @@ export function transformOptional<T, E>(options: {
  *
  * **When to use**
  *
- * Use to normalize user input by stripping leading/trailing whitespace.
+ * Use when you need a schema transformation to normalize user input by
+ * stripping leading/trailing whitespace.
  *
  * **Details**
  *
- * - Decode: applies `String.prototype.trim()`.
- * - Encode: passthrough (returns the string unchanged).
- * - Not round-trippable if the original had whitespace.
+ * Decoding applies `String.prototype.trim()`. Encoding is passthrough and
+ * returns the string unchanged. This is not round-trippable if the original had
+ * whitespace.
  *
  * **Example** (Trimming on decode)
  *
@@ -494,8 +427,8 @@ export function transformOptional<T, E>(options: {
  */
 export function trim(): Transformation<string, string> {
   return new Transformation(
-    Getter.trim(),
-    Getter.passthrough()
+    SchemaGetter.trim(),
+    SchemaGetter.passthrough()
   )
 }
 
@@ -505,15 +438,16 @@ export function trim(): Transformation<string, string> {
  *
  * **When to use**
  *
- * Use to convert API field names between snake_case and camelCase conventions.
+ * Use when you need a schema transformation to convert API field names between
+ * snake_case and camelCase conventions.
  *
  * **Details**
  *
- * - Decode: `"my_field_name"` → `"myFieldName"`.
- * - Encode: `"myFieldName"` → `"my_field_name"`.
- * - Round-trippable for standard snake_case/camelCase.
+ * Decoding converts values such as `"my_field_name"` to `"myFieldName"`.
+ * Encoding converts values such as `"myFieldName"` back to `"my_field_name"`.
+ * The transformation is round-trippable for standard snake_case and camelCase.
  *
- * **Example** (Snake to camel conversion)
+ * **Example** (Converting snake case to camel case)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -531,8 +465,8 @@ export function trim(): Transformation<string, string> {
  */
 export function snakeToCamel(): Transformation<string, string> {
   return new Transformation(
-    Getter.snakeToCamel(),
-    Getter.camelToSnake()
+    SchemaGetter.snakeToCamel(),
+    SchemaGetter.camelToSnake()
   )
 }
 
@@ -542,13 +476,13 @@ export function snakeToCamel(): Transformation<string, string> {
  *
  * **When to use**
  *
- * Use to normalize strings to lowercase (e.g. email addresses).
+ * Use when you need a schema transformation to normalize strings to lowercase
+ * (e.g. email addresses).
  *
  * **Details**
  *
- * - Decode: applies `String.prototype.toLowerCase()`.
- * - Encode: passthrough.
- * - Not round-trippable if the original had uppercase characters.
+ * Decoding applies `String.prototype.toLowerCase()`. Encoding is passthrough.
+ * This is not round-trippable if the original had uppercase characters.
  *
  * **Example** (Lowercasing on decode)
  *
@@ -568,8 +502,8 @@ export function snakeToCamel(): Transformation<string, string> {
  */
 export function toLowerCase(): Transformation<string, string> {
   return new Transformation(
-    Getter.toLowerCase(),
-    Getter.passthrough()
+    SchemaGetter.toLowerCase(),
+    SchemaGetter.passthrough()
   )
 }
 
@@ -579,13 +513,13 @@ export function toLowerCase(): Transformation<string, string> {
  *
  * **When to use**
  *
- * Use to normalize strings to uppercase (e.g. country codes).
+ * Use when you need a schema transformation to normalize strings to uppercase
+ * (e.g. country codes).
  *
  * **Details**
  *
- * - Decode: applies `String.prototype.toUpperCase()`.
- * - Encode: passthrough.
- * - Not round-trippable if the original had lowercase characters.
+ * Decoding applies `String.prototype.toUpperCase()`. Encoding is passthrough.
+ * This is not round-trippable if the original had lowercase characters.
  *
  * **Example** (Uppercasing on decode)
  *
@@ -605,8 +539,8 @@ export function toLowerCase(): Transformation<string, string> {
  */
 export function toUpperCase(): Transformation<string, string> {
   return new Transformation(
-    Getter.toUpperCase(),
-    Getter.passthrough()
+    SchemaGetter.toUpperCase(),
+    SchemaGetter.passthrough()
   )
 }
 
@@ -616,12 +550,13 @@ export function toUpperCase(): Transformation<string, string> {
  *
  * **When to use**
  *
- * Use to normalize display names or titles.
+ * Use when you need a schema transformation to normalize display names or
+ * titles.
  *
  * **Details**
  *
- * - Decode: uppercases the first character, leaves the rest unchanged.
- * - Encode: passthrough.
+ * Decoding uppercases the first character and leaves the rest unchanged.
+ * Encoding is passthrough.
  *
  * **Example** (Capitalizing on decode)
  *
@@ -641,8 +576,8 @@ export function toUpperCase(): Transformation<string, string> {
  */
 export function capitalize(): Transformation<string, string> {
   return new Transformation(
-    Getter.capitalize(),
-    Getter.passthrough()
+    SchemaGetter.capitalize(),
+    SchemaGetter.passthrough()
   )
 }
 
@@ -652,12 +587,13 @@ export function capitalize(): Transformation<string, string> {
  *
  * **When to use**
  *
- * Use to normalize identifiers or field names.
+ * Use when you need a schema transformation to normalize identifiers or field
+ * names.
  *
  * **Details**
  *
- * - Decode: lowercases the first character, leaves the rest unchanged.
- * - Encode: passthrough.
+ * Decoding lowercases the first character and leaves the rest unchanged.
+ * Encoding is passthrough.
  *
  * **Example** (Uncapitalizing on decode)
  *
@@ -677,8 +613,8 @@ export function capitalize(): Transformation<string, string> {
  */
 export function uncapitalize(): Transformation<string, string> {
   return new Transformation(
-    Getter.uncapitalize(),
-    Getter.passthrough()
+    SchemaGetter.uncapitalize(),
+    SchemaGetter.passthrough()
   )
 }
 
@@ -688,14 +624,15 @@ export function uncapitalize(): Transformation<string, string> {
  *
  * **When to use**
  *
- * Use to parse query-string-like or config-file-like strings into records.
+ * Use when you need a schema transformation to parse query-string-like or
+ * config-file-like strings into records.
  *
  * **Details**
  *
- * - Decode: splits the string by `separator` (default `","`) into pairs,
- *   then splits each pair by `keyValueSeparator` (default `"="`).
- * - Encode: joins the record back into a string using the same separators.
- * - Round-trippable when keys and values don't contain the separators.
+ * Decoding splits the string by `separator` (default `","`) into pairs, then
+ * splits each pair by `keyValueSeparator` (default `"="`). Encoding joins the
+ * record back into a string using the same separators. The transformation is
+ * round-trippable when keys and values do not contain the separators.
  *
  * **Example** (Parsing key-value pairs)
  *
@@ -722,14 +659,14 @@ export function splitKeyValue(options?: {
   readonly keyValueSeparator?: string | undefined
 }): Transformation<Record<string, string>, string> {
   return new Transformation(
-    Getter.splitKeyValue(options),
-    Getter.joinKeyValue(options)
+    SchemaGetter.splitKeyValue(options),
+    SchemaGetter.joinKeyValue(options)
   )
 }
 
 const passthrough_ = new Transformation(
-  Getter.passthrough<any>(),
-  Getter.passthrough<any>()
+  SchemaGetter.passthrough<any>(),
+  SchemaGetter.passthrough<any>()
 )
 
 /**
@@ -738,9 +675,8 @@ const passthrough_ = new Transformation(
  *
  * **When to use**
  *
- * Use when connecting two schemas that share the same type with no conversion.
- * - As a placeholder when `Schema.decodeTo` requires a transformation but
- *   no actual conversion is needed.
+ * Use when you need a schema transformation to connect two schemas that share
+ * the same type with no actual conversion.
  *
  * **Details**
  *
@@ -778,7 +714,7 @@ export function passthrough<T>(): Transformation<T, T> {
  *
  * **When to use**
  *
- * Use when the runtime value is unchanged but the decoded side should be
+ * Use when you need a no-op schema transformation whose decoded side is
  * narrower than the encoded side.
  *
  * **Details**
@@ -786,7 +722,7 @@ export function passthrough<T>(): Transformation<T, T> {
  * Both decode and encode are no-ops and return a shared singleton
  * transformation.
  *
- * **Example** (Supertype passthrough)
+ * **Example** (Passing through supertypes)
  *
  * ```ts
  * import { SchemaTransformation } from "effect"
@@ -811,14 +747,15 @@ export function passthroughSupertype<T>(): Transformation<T, T> {
  *
  * **When to use**
  *
- * Use when narrowing: the encoded side is more specific than the decoded side.
+ * Use when you need a no-op schema transformation whose encoded side is more
+ * specific than its decoded side.
  *
  * **Details**
  *
  * - Both decode and encode are no-ops (same as {@link passthrough}).
  * - Returns a shared singleton instance.
  *
- * **Example** (Subtype passthrough)
+ * **Example** (Passing through subtypes)
  *
  * ```ts
  * import { SchemaTransformation } from "effect"
@@ -843,16 +780,17 @@ export function passthroughSubtype<T>(): Transformation<T, T> {
  *
  * **When to use**
  *
- * Use to parse numeric strings from APIs, form data, or URL parameters.
+ * Use when you need a schema transformation to parse numeric strings from APIs,
+ * form data, or URL parameters.
  *
  * **Details**
  *
- * - Decode: coerces the string to a number (like `Number(s)`).
- * - Encode: coerces the number to a string (like `String(n)`).
- * - Does not validate that the result is finite — combine with
- *   `Schema.Finite` or `Schema.Int` for stricter checks.
+ * Decoding coerces the string to a number like `Number(s)`. Encoding coerces
+ * the number to a string like `String(n)`. This does not validate that the
+ * result is finite; combine with `Schema.Finite` or `Schema.Int` for stricter
+ * checks.
  *
- * **Example** (Number from string)
+ * **Example** (Converting a string to a number)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -869,8 +807,8 @@ export function passthroughSubtype<T>(): Transformation<T, T> {
  * @since 4.0.0
  */
 export const numberFromString = new Transformation(
-  Getter.Number(),
-  Getter.String()
+  SchemaGetter.Number(),
+  SchemaGetter.String()
 )
 
 /**
@@ -879,15 +817,16 @@ export const numberFromString = new Transformation(
  *
  * **When to use**
  *
- * Use to parse large integer strings (e.g. database IDs, blockchain values).
+ * Use when you need a schema transformation to parse large integer strings
+ * (e.g. database IDs, blockchain values).
  *
  * **Details**
  *
- * - Decode: coerces the string to a bigint (like `BigInt(s)`).
- * - Encode: coerces the bigint to a string (like `String(n)`).
- * - Fails on decode if the string is not a valid bigint representation.
+ * Decoding coerces the string to a bigint like `BigInt(s)`. Encoding coerces
+ * the bigint to a string like `String(n)`. Decoding fails if the string is not
+ * a valid bigint representation.
  *
- * **Example** (BigInt from string)
+ * **Example** (Converting a string to a BigInt)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -904,8 +843,8 @@ export const numberFromString = new Transformation(
  * @since 4.0.0
  */
 export const bigintFromString = new Transformation(
-  Getter.BigInt(),
-  Getter.String()
+  SchemaGetter.BigInt(),
+  SchemaGetter.String()
 )
 
 /**
@@ -913,15 +852,16 @@ export const bigintFromString = new Transformation(
  *
  * **When to use**
  *
- * Use to parse ISO 8601 date strings from APIs or user input.
+ * Use when you need a schema transformation to parse date strings from APIs or
+ * user input.
  *
  * **Details**
  *
- * - Decode: creates a `Date` from the string (like `new Date(s)`).
- * - Encode: converts the `Date` to an ISO string (like `date.toISOString()`),
- *   returning `"Invalid Date"` for invalid dates.
+ * Decoding creates a `Date` from the string like `new Date(s)`. Encoding
+ * converts the `Date` to an ISO string like `date.toISOString()`, returning
+ * `"Invalid Date"` for invalid dates.
  *
- * **Example** (Date from string)
+ * **Example** (Converting a string to a Date)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -931,15 +871,55 @@ export const bigintFromString = new Transformation(
  * )
  * ```
  *
- * @see {@link numberFromString}
+ * @see {@link dateFromMillis}
  * @see {@link dateTimeUtcFromString}
  *
  * @category Coercions
  * @since 4.0.0
  */
 export const dateFromString: Transformation<globalThis.Date, string> = new Transformation(
-  Getter.Date(),
-  Getter.transform(formatDate)
+  SchemaGetter.Date(),
+  SchemaGetter.transform(formatDate)
+)
+
+/**
+ * Decodes epoch milliseconds into a `Date` and encodes a `Date` back to epoch
+ * milliseconds.
+ *
+ * **When to use**
+ *
+ * Use when you need a schema transformation for numeric timestamps represented
+ * as milliseconds since the Unix epoch.
+ *
+ * **Details**
+ *
+ * Decoding creates a `Date` from the number like `new Date(ms)`. Encoding
+ * returns the `Date` timestamp like `date.getTime()`.
+ *
+ * **Gotchas**
+ *
+ * This transformation does not validate date validity. `NaN`, `Infinity`, and
+ * `-Infinity` decode to invalid `Date` instances.
+ *
+ * **Example** (Converting milliseconds to a Date)
+ *
+ * ```ts
+ * import { Schema, SchemaTransformation } from "effect"
+ *
+ * const schema = Schema.Number.pipe(
+ *   Schema.decodeTo(Schema.Date, SchemaTransformation.dateFromMillis)
+ * )
+ * ```
+ *
+ * @see {@link dateFromString}
+ * @see {@link SchemaGetter.dateTimeUtcFromInput}
+ *
+ * @category Coercions
+ * @since 4.0.0
+ */
+export const dateFromMillis: Transformation<globalThis.Date, number> = new Transformation(
+  SchemaGetter.Date(),
+  SchemaGetter.transform((date) => date.getTime())
 )
 
 /**
@@ -948,16 +928,17 @@ export const dateFromString: Transformation<globalThis.Date, string> = new Trans
  *
  * **When to use**
  *
- * Use to parse human-readable duration strings from APIs, config, or user input.
+ * Use when you need a schema transformation to parse human-readable duration
+ * strings from APIs, config, or user input.
  *
  * **Details**
  *
- * - Decode: accepts any string that `Duration.fromInput` can parse, including
- *   `"Infinity"` and `"-Infinity"`.
- * - Encode: returns `String(duration)`, producing strings like `"2000 millis"`
- *   or `"10 nanos"` that round-trip through the parser.
+ * Decoding accepts any string that `Duration.fromInput` can parse, including
+ * `"Infinity"` and `"-Infinity"`. Encoding returns `String(duration)`,
+ * producing strings such as `"2000 millis"` or `"10 nanos"` that round-trip
+ * through the parser.
  *
- * **Example** (Duration from string)
+ * **Example** (Converting a string to a Duration)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -979,7 +960,8 @@ export const durationFromString: Transformation<Duration.Duration, string> = tra
 >({
   decode: (s) =>
     Option.match(Duration.fromInput(s as Duration.Input), {
-      onNone: () => Effect.fail(new Issue.InvalidValue(Option.some(s), { message: `Invalid Duration string: ${s}` })),
+      onNone: () =>
+        Effect.fail(new SchemaIssue.InvalidValue(Option.some(s), { message: `Invalid Duration string: ${s}` })),
       onSome: Effect.succeed
     }),
   encode: (duration) => Effect.succeed(globalThis.String(duration))
@@ -991,15 +973,16 @@ export const durationFromString: Transformation<Duration.Duration, string> = tra
  *
  * **When to use**
  *
- * Use when working with nanosecond-precision timestamps or intervals.
+ * Use when you need a schema transformation for nanosecond-precision timestamps
+ * or intervals.
  *
  * **Details**
  *
- * - Decode: always succeeds, creating a Duration from nanoseconds.
- * - Encode: fails with `InvalidValue` if the Duration cannot be represented
- *   as a `bigint` (e.g. `Duration.infinity`).
+ * Decoding always succeeds and creates a `Duration` from nanoseconds. Encoding
+ * fails with `InvalidValue` if the `Duration` cannot be represented as a
+ * `bigint`, such as `Duration.infinity`.
  *
- * **Example** (Duration from nanoseconds)
+ * **Example** (Converting nanoseconds to a Duration)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1020,7 +1003,7 @@ export const durationFromNanos: Transformation<Duration.Duration, bigint> = tran
     Option.match(Duration.toNanos(a), {
       onNone: () =>
         Effect.fail(
-          new Issue.InvalidValue(Option.some(a), { message: `Unable to encode ${a} into a bigint` })
+          new SchemaIssue.InvalidValue(Option.some(a), { message: `Unable to encode ${a} into a bigint` })
         ),
       onSome: (nanos) => Effect.succeed(nanos)
     })
@@ -1032,15 +1015,15 @@ export const durationFromNanos: Transformation<Duration.Duration, bigint> = tran
  *
  * **When to use**
  *
- * Use when you use this for timeouts, delays, elapsed intervals, or other duration values
- * stored as millisecond counts.
+ * Use when you need a schema transformation to decode timeouts, delays, elapsed
+ * intervals, or other duration values stored as millisecond counts.
  *
  * **Details**
  *
  * Decode creates a duration from the number, and encode returns the duration
  * length in milliseconds.
  *
- * **Example** (Duration from milliseconds)
+ * **Example** (Converting milliseconds to a Duration)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1060,35 +1043,84 @@ export const durationFromMillis: Transformation<Duration.Duration, number> = tra
   encode: (a) => Duration.toMillis(a)
 })
 
-/** @internal */
-export const errorFromErrorJsonEncoded = (options?: {
-  readonly includeStack?: boolean | undefined
-}): Transformation<Error, {
+type JsonError = {
   message: string
   name?: string
   stack?: string
-}> =>
-  transform({
-    decode: (i) => {
-      const err = new Error(i.message)
-      if (typeof i.name === "string" && i.name !== "Error") err.name = i.name
-      if (typeof i.stack === "string") err.stack = i.stack
-      return err
-    },
-    encode: (a) => {
-      const e: {
-        message: string
-        name?: string
-        stack?: string
-      } = {
-        name: a.name,
-        message: a.message
+  cause?: Json
+}
+
+const isJsonError = (input: unknown): input is JsonError =>
+  Predicate.isObject(input) && typeof input["message"] === "string"
+
+const decodeJsonError = (input: JsonError): Error => {
+  const hasCause = Object.hasOwn(input, "cause")
+  const err = hasCause
+    ? new Error(input.message, { cause: decodeDefect(input.cause as Json) })
+    : new Error(input.message)
+  if (typeof input.name === "string" && input.name !== "Error") err.name = input.name
+  if (typeof input.stack === "string") err.stack = input.stack
+  return err
+}
+
+const encodeUnknownAsJson = (input: unknown): Json => {
+  try {
+    const json = formatJson(input)
+    return json === undefined ? format(input) : JSON.parse(json)
+  } catch {
+    return format(input)
+  }
+}
+
+const encodeJsonError = (
+  input: Error,
+  options: ErrorOptions | undefined,
+  encodeDefect: (input: unknown) => Json
+): JsonError => {
+  const encoded: JsonError = {
+    name: input.name,
+    message: typeof input.message === "string" ? input.message : ""
+  }
+  if (options?.includeStack && typeof input.stack === "string") {
+    encoded.stack = input.stack
+  }
+  if (!options?.excludeCause && input.cause !== undefined) {
+    encoded.cause = encodeDefect(input.cause)
+  }
+  return encoded
+}
+
+const makeEncodeDefect = (options?: ErrorOptions): (input: unknown) => Json => {
+  const seen = new WeakSet<object>()
+  const encode = (input: unknown): Json => {
+    if (Predicate.isError(input)) {
+      if (seen.has(input)) {
+        return "[Circular]"
       }
-      if (options?.includeStack && typeof a.stack === "string") {
-        e.stack = a.stack
-      }
-      return e
+      seen.add(input)
+      const encoded = encodeJsonError(input, options, encode)
+      seen.delete(input)
+      return encoded
     }
+    return encodeUnknownAsJson(input)
+  }
+  return encode
+}
+
+const decodeDefect = (input: Json): unknown => isJsonError(input) ? decodeJsonError(input) : input
+
+/** @internal */
+export const errorFromJsonError = (options?: ErrorOptions): Transformation<Error, JsonError> =>
+  transform({
+    decode: decodeJsonError,
+    encode: (input) => makeEncodeDefect(options)(input) as JsonError
+  })
+
+/** @internal */
+export const defectFromJson = (options?: ErrorOptions) =>
+  transform({
+    decode: decodeDefect,
+    encode: makeEncodeDefect(options)
   })
 
 /**
@@ -1097,15 +1129,16 @@ export const errorFromErrorJsonEncoded = (options?: {
  *
  * **When to use**
  *
- * Use to convert nullable API fields to `Option`.
+ * Use when you need a schema transformation to convert nullable API fields to
+ * `Option`.
  *
  * **Details**
  *
- * - Decode: `null` → `Option.none()`, non-null → `Option.some(value)`.
- * - Encode: `Option.none()` → `null`, `Option.some(value)` → `value`.
- * - Pure and synchronous.
+ * Decoding maps `null` to `Option.none()` and non-null values to
+ * `Option.some(value)`. Encoding maps `Option.none()` to `null` and
+ * `Option.some(value)` to `value`. The transformation is pure and synchronous.
  *
- * **Example** (Option from nullable)
+ * **Example** (Converting nullable values to an Option)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1136,15 +1169,16 @@ export function optionFromNullOr<T>(): Transformation<Option.Option<T>, T | null
  *
  * **When to use**
  *
- * Use to convert undefined-or API fields to `Option`.
+ * Use when you need a schema transformation to convert API fields that use
+ * `undefined` for absence to `Option`.
  *
  * **Details**
  *
- * - Decode: `undefined` → `Option.none()`, non-undefined → `Option.some(value)`.
- * - Encode: `Option.none()` → `undefined`, `Option.some(value)` → `value`.
- * - Pure and synchronous.
+ * Decoding maps `undefined` to `Option.none()` and non-undefined values to
+ * `Option.some(value)`. Encoding maps `Option.none()` to `undefined` and
+ * `Option.some(value)` to `value`. The transformation is pure and synchronous.
  *
- * **Example** (Option from undefined-or)
+ * **Example** (Converting undefined-or values to an Option)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1177,17 +1211,17 @@ export function optionFromUndefinedOr<T>(): Transformation<Option.Option<T>, T |
  *
  * **When to use**
  *
- * Use to convert nullish API fields to `Option` when both `null` and
- *   `undefined` represent absence.
+ * Use when you need a schema transformation to convert nullish API fields to
+ * `Option` when both `null` and `undefined` represent absence.
  *
  * **Details**
  *
- * - Decode: `null` or `undefined` → `Option.none()`, otherwise → `Option.some(value)`.
- * - Encode: `Option.none()` → `null` or `undefined` (per `options.onNoneEncoding`),
- *   `Option.some(value)` → `value`.
- * - Pure and synchronous.
+ * Decoding maps `null` and `undefined` to `Option.none()` and all other values
+ * to `Option.some(value)`. Encoding maps `Option.none()` to `null` or
+ * `undefined` according to `options.onNoneEncoding`, and maps
+ * `Option.some(value)` to `value`. The transformation is pure and synchronous.
  *
- * **Example** (Option from nullish, encoding None as null)
+ * **Example** (Converting nullish values to an Option and encoding None as null)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1223,16 +1257,17 @@ export function optionFromNullishOr<T>(
  *
  * **When to use**
  *
- * Use to convert optional struct keys (declared with `Schema.optionalKey`) to
- *   `Option` values.
+ * Use when you need a schema transformation to convert optional struct keys
+ * (declared with `Schema.optionalKey`) to `Option` values.
  *
  * **Details**
  *
- * - Decode: absent key (`None`) → `Some(None)`, present key (`Some(v)`) → `Some(Some(v))`.
- * - Encode: `Some(None)` → `None` (omit key), `Some(Some(v))` → `Some(v)`.
- * - Uses `transformOptional` under the hood.
+ * Decoding maps an absent key (`None`) to `Some(None)` and a present key
+ * (`Some(v)`) to `Some(Some(v))`. Encoding maps `Some(None)` to `None` to omit
+ * the key, and maps `Some(Some(v))` to `Some(v)`. This uses
+ * `transformOptional` under the hood.
  *
- * **Example** (Optional key to Option)
+ * **Example** (Converting an optional key to an Option)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1267,15 +1302,17 @@ export function optionFromOptionalKey<T>(): Transformation<Option.Option<T>, T> 
  *
  * **When to use**
  *
- * Use to convert optional (possibly `undefined`) values to `Option`.
+ * Use when you need a schema transformation to convert optional (possibly
+ * `undefined`) values to `Option`.
  *
  * **Details**
  *
- * - Decode: absent or `undefined` → `Some(None)`, present → `Some(Some(v))`.
- * - Encode: `Some(None)` → `None` (omit), `Some(Some(v))` → `Some(v)`.
- * - Uses `transformOptional` under the hood; filters out `undefined` on decode.
+ * Decoding maps an absent or `undefined` value to `Some(None)` and a present
+ * value to `Some(Some(v))`. Encoding maps `Some(None)` to `None` to omit the
+ * value, and maps `Some(Some(v))` to `Some(v)`. This uses
+ * `transformOptional` under the hood and filters out `undefined` on decode.
  *
- * **Example** (Optional value to Option)
+ * **Example** (Converting an optional value to an Option)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1310,15 +1347,15 @@ export function optionFromOptional<T>(): Transformation<Option.Option<T>, T | un
  *
  * **When to use**
  *
- * Use to parse URL strings from user input or API responses.
+ * Use when you need a schema transformation to parse URL strings from user
+ * input or API responses.
  *
  * **Details**
  *
- * - Decode: calls `new URL(s)`. Fails with `InvalidValue` if the string
- *   is not a valid URL.
- * - Encode: returns `url.href`.
+ * Decoding checks `URL.canParse(s)` and fails with `InvalidValue` if the string
+ * is not a valid URL. Encoding returns `url.href`.
  *
- * **Example** (URL from string)
+ * **Example** (Converting a string to a URL)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1336,10 +1373,9 @@ export function optionFromOptional<T>(): Transformation<Option.Option<T>, T | un
  */
 export const urlFromString: Transformation<URL, string> = transformOrFail<URL, string>({
   decode: (s) =>
-    Effect.try({
-      try: () => new URL(s),
-      catch: () => new Issue.InvalidValue(Option.some(s), { message: `Invalid URL string: ${s}` })
-    }),
+    URL.canParse(s)
+      ? Effect.succeed(new URL(s))
+      : Effect.fail(new SchemaIssue.InvalidValue(Option.some(s), { message: `Invalid URL string: ${s}` })),
   encode: (url) => Effect.succeed(url.href)
 })
 
@@ -1349,13 +1385,14 @@ export const urlFromString: Transformation<URL, string> = transformOrFail<URL, s
  *
  * **When to use**
  *
- * Use to parse decimal number strings from APIs or user input.
+ * Use when you need a schema transformation to parse decimal number strings
+ * from APIs or user input.
  *
  * **Details**
  *
- * - Decode: calls `BigDecimal.fromString(s)`. Fails with `InvalidValue` if the
- *   string is not a valid BigDecimal representation.
- * - Encode: returns `BigDecimal.format(bd)`.
+ * Decoding calls `BigDecimal.fromString(s)` and fails with `InvalidValue` if
+ * the string is not a valid `BigDecimal` representation. Encoding returns
+ * `BigDecimal.format(bd)`.
  *
  * @category transforming
  * @since 4.0.0
@@ -1367,7 +1404,7 @@ export const bigDecimalFromString: Transformation<BigDecimal.BigDecimal, string>
   decode: (s) => {
     const result = BigDecimal.fromString(s)
     return Option.isNone(result)
-      ? Effect.fail(new Issue.InvalidValue(Option.some(s), { message: `Invalid BigDecimal string: ${s}` }))
+      ? Effect.fail(new SchemaIssue.InvalidValue(Option.some(s), { message: `Invalid BigDecimal string: ${s}` }))
       : Effect.succeed(result.value)
   },
   encode: (bd) => Effect.succeed(BigDecimal.format(bd))
@@ -1379,15 +1416,15 @@ export const bigDecimalFromString: Transformation<BigDecimal.BigDecimal, string>
  *
  * **When to use**
  *
- * Use when handling binary data transmitted as Base64 strings (e.g. file uploads,
- *   API payloads).
+ * Use when you need a schema transformation for binary data transmitted as
+ * Base64 strings (e.g. file uploads, API payloads).
  *
  * **Details**
  *
- * - Decode: parses the Base64 string into bytes.
- * - Encode: encodes the byte array as a Base64 string.
+ * Decoding parses the Base64 string into bytes. Encoding writes the byte array
+ * as a Base64 string.
  *
- * **Example** (Uint8Array from Base64)
+ * **Example** (Converting Base64 to a Uint8Array)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1404,8 +1441,8 @@ export const bigDecimalFromString: Transformation<BigDecimal.BigDecimal, string>
  * @since 4.0.0
  */
 export const uint8ArrayFromBase64String: Transformation<Uint8Array<ArrayBufferLike>, string> = new Transformation(
-  Getter.decodeBase64(),
-  Getter.encodeBase64()
+  SchemaGetter.decodeBase64(),
+  SchemaGetter.encodeBase64()
 )
 
 /**
@@ -1414,14 +1451,15 @@ export const uint8ArrayFromBase64String: Transformation<Uint8Array<ArrayBufferLi
  *
  * **When to use**
  *
- * Use when handling text data transmitted as Base64 strings.
+ * Use when you need a schema transformation for text data transmitted as Base64
+ * strings.
  *
  * **Details**
  *
- * - Decode: parses the Base64 string into a UTF-8 string.
- * - Encode: encodes the string as a Base64 string.
+ * Decoding parses the Base64 string into a UTF-8 string. Encoding writes the
+ * string as a Base64 string.
  *
- * **Example** (String from Base64)
+ * **Example** (Converting Base64 to a string)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1438,8 +1476,8 @@ export const uint8ArrayFromBase64String: Transformation<Uint8Array<ArrayBufferLi
  * @since 4.0.0
  */
 export const stringFromBase64String: Transformation<string, string> = new Transformation(
-  Getter.decodeBase64String(),
-  Getter.encodeBase64()
+  SchemaGetter.decodeBase64String(),
+  SchemaGetter.encodeBase64()
 )
 
 /**
@@ -1447,14 +1485,15 @@ export const stringFromBase64String: Transformation<string, string> = new Transf
  *
  * **When to use**
  *
- * Use when handling text data transmitted as Base64 URL-safe strings.
+ * Use when you need a schema transformation for text data transmitted as Base64
+ * URL-safe strings.
  *
  * **Details**
  *
- * - Decode: parses the Base64 URL string into a UTF-8 string.
- * - Encode: encodes the string as a Base64 URL string.
+ * Decoding parses the Base64 URL string into a UTF-8 string. Encoding writes
+ * the string as a Base64 URL string.
  *
- * **Example** (String from Base64Url)
+ * **Example** (Converting Base64Url to a string)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1471,8 +1510,8 @@ export const stringFromBase64String: Transformation<string, string> = new Transf
  * @since 4.0.0
  */
 export const stringFromBase64UrlString: Transformation<string, string> = new Transformation(
-  Getter.decodeBase64UrlString(),
-  Getter.encodeBase64Url()
+  SchemaGetter.decodeBase64UrlString(),
+  SchemaGetter.encodeBase64Url()
 )
 
 /**
@@ -1480,14 +1519,15 @@ export const stringFromBase64UrlString: Transformation<string, string> = new Tra
  *
  * **When to use**
  *
- * Use when handling text data transmitted as hexadecimal strings.
+ * Use when you need a schema transformation for text data transmitted as
+ * hexadecimal strings.
  *
  * **Details**
  *
- * - Decode: parses the hex string into a UTF-8 string.
- * - Encode: encodes the string as a hex string.
+ * Decoding parses the hex string into a UTF-8 string. Encoding writes the
+ * string as a hex string.
  *
- * **Example** (String from Hex)
+ * **Example** (Converting hex to a string)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1504,8 +1544,8 @@ export const stringFromBase64UrlString: Transformation<string, string> = new Tra
  * @since 4.0.0
  */
 export const stringFromHexString: Transformation<string, string> = new Transformation(
-  Getter.decodeHexString(),
-  Getter.encodeHex()
+  SchemaGetter.decodeHexString(),
+  SchemaGetter.encodeHex()
 )
 
 /**
@@ -1514,16 +1554,16 @@ export const stringFromHexString: Transformation<string, string> = new Transform
  *
  * **When to use**
  *
- * Use when storing structured data in URL query parameters or fragments.
- * - Composing with `Schema.parseJson` to round-trip JSON through a URL.
+ * Use when you need a schema transformation to store structured data in URL
+ * query parameters or fragments, such as composing with `Schema.parseJson` to
+ * round-trip JSON through a URL.
  *
  * **Details**
  *
- * - Decode: calls `decodeURIComponent`. Fails if the input contains malformed
- *   percent-encoding sequences.
- * - Encode: calls `encodeURIComponent`.
+ * Decoding calls `decodeURIComponent` and fails if the input contains malformed
+ * percent-encoding sequences. Encoding calls `encodeURIComponent`.
  *
- * **Example** (URI component schema)
+ * **Example** (Defining a URI component schema)
  *
  * ```ts
  * import { Schema, SchemaTransformation } from "effect"
@@ -1540,8 +1580,8 @@ export const stringFromHexString: Transformation<string, string> = new Transform
  * @since 4.0.0
  */
 export const stringFromUriComponent: Transformation<string, string> = new Transformation(
-  Getter.decodeUriComponent(),
-  Getter.encodeUriComponent()
+  SchemaGetter.decodeUriComponent(),
+  SchemaGetter.encodeUriComponent()
 )
 
 /**
@@ -1550,8 +1590,9 @@ export const stringFromUriComponent: Transformation<string, string> = new Transf
  *
  * **When to use**
  *
- * Use when you use this for JSON stored or transmitted as a string, usually before composing
- * with another schema that validates the parsed structure.
+ * Use when you need a schema transformation to decode JSON stored or
+ * transmitted as a string, usually before composing with another schema that
+ * validates the parsed structure.
  *
  * **Details**
  *
@@ -1575,8 +1616,8 @@ export const stringFromUriComponent: Transformation<string, string> = new Transf
  * @since 4.0.0
  */
 export const fromJsonString = new Transformation<unknown, string>(
-  Getter.parseJson(),
-  Getter.stringifyJson()
+  SchemaGetter.parseJson(),
+  SchemaGetter.stringifyJson()
 )
 
 /**
@@ -1585,8 +1626,8 @@ export const fromJsonString = new Transformation<unknown, string>(
  *
  * **When to use**
  *
- * Use when you use this for form or multipart payloads where keys such as `user[name]` or
- * `items[0]` should become nested data.
+ * Use when you need a schema transformation for form or multipart payloads
+ * whose keys, such as `user[name]` or `items[0]`, should become nested data.
  *
  * **Details**
  *
@@ -1611,8 +1652,8 @@ export const fromJsonString = new Transformation<unknown, string>(
  * @since 4.0.0
  */
 export const fromFormData = new Transformation<unknown, FormData>(
-  Getter.decodeFormData(),
-  Getter.encodeFormData()
+  SchemaGetter.decodeFormData(),
+  SchemaGetter.encodeFormData()
 )
 
 /**
@@ -1621,8 +1662,8 @@ export const fromFormData = new Transformation<unknown, FormData>(
  *
  * **When to use**
  *
- * Use when you use this for query strings where keys such as `filter[name]` or `items[0]`
- * should become nested data.
+ * Use when you need a schema transformation for query strings whose keys, such
+ * as `filter[name]` or `items[0]`, should become nested data.
  *
  * **Details**
  *
@@ -1647,8 +1688,8 @@ export const fromFormData = new Transformation<unknown, FormData>(
  * @since 4.0.0
  */
 export const fromURLSearchParams = new Transformation<unknown, URLSearchParams>(
-  Getter.decodeURLSearchParams(),
-  Getter.encodeURLSearchParams()
+  SchemaGetter.decodeURLSearchParams(),
+  SchemaGetter.encodeURLSearchParams()
 )
 
 /**
@@ -1657,8 +1698,8 @@ export const fromURLSearchParams = new Transformation<unknown, URLSearchParams>(
  *
  * **When to use**
  *
- * Use to represent fixed-offset time zones with numeric millisecond offsets in
- * schema transformations or JSON codecs.
+ * Use when you need a schema transformation to represent fixed-offset time
+ * zones with numeric millisecond offsets.
  *
  * **Details**
  *
@@ -1685,8 +1726,8 @@ export const timeZoneOffsetFromNumber: Transformation<DateTime.TimeZone.Offset, 
  *
  * **When to use**
  *
- * Use when a schema transformation should accept only IANA time-zone identifier
- * strings and produce `DateTime.TimeZone.Named` values.
+ * Use when you need a schema transformation to accept only IANA time-zone
+ * identifier strings and produce `DateTime.TimeZone.Named` values.
  *
  * **Details**
  *
@@ -1704,7 +1745,8 @@ export const timeZoneNamedFromString: Transformation<DateTime.TimeZone.Named, st
 >({
   decode: (s) => {
     return Option.match(DateTime.zoneMakeNamed(s), {
-      onNone: () => Effect.fail(new Issue.InvalidValue(Option.some(s), { message: `Invalid IANA time zone: ${s}` })),
+      onNone: () =>
+        Effect.fail(new SchemaIssue.InvalidValue(Option.some(s), { message: `Invalid IANA time zone: ${s}` })),
       onSome: Effect.succeed
     })
   },
@@ -1717,8 +1759,8 @@ export const timeZoneNamedFromString: Transformation<DateTime.TimeZone.Named, st
  *
  * **When to use**
  *
- * Use when schema decoding should accept either an IANA time-zone identifier or
- * an offset string and produce a general `DateTime.TimeZone`.
+ * Use when you need a schema transformation to accept either an IANA time-zone
+ * identifier or an offset string and produce a general `DateTime.TimeZone`.
  *
  * **Details**
  *
@@ -1738,7 +1780,7 @@ export const timeZoneFromString: Transformation<DateTime.TimeZone, string> = tra
 >({
   decode: (s) => {
     return Option.match(DateTime.zoneFromString(s), {
-      onNone: () => Effect.fail(new Issue.InvalidValue(Option.some(s), { message: `Invalid time zone: ${s}` })),
+      onNone: () => Effect.fail(new SchemaIssue.InvalidValue(Option.some(s), { message: `Invalid time zone: ${s}` })),
       onSome: Effect.succeed
     })
   },
@@ -1751,8 +1793,8 @@ export const timeZoneFromString: Transformation<DateTime.TimeZone, string> = tra
  *
  * **When to use**
  *
- * Use to decode date-time strings when the schema value should be a normalized
- * `DateTime.Utc` and encode back as a UTC ISO string.
+ * Use when you need a schema transformation to decode date-time strings to a
+ * normalized `DateTime.Utc` and encode back as a UTC ISO string.
  *
  * **Details**
  *
@@ -1760,8 +1802,8 @@ export const timeZoneFromString: Transformation<DateTime.TimeZone, string> = tra
  * UTC, and fails with `InvalidValue` when parsing fails. Encode uses
  * `DateTime.formatIso`.
  *
- * @see {@link dateTimeZonedFromString} for ISO strings that should preserve zoned date-time information
  * @see {@link dateFromString} for decoding into JavaScript `Date`
+ * @see {@link dateTimeZonedFromString} for ISO strings that should preserve zoned date-time information
  *
  * @category transforming
  * @since 4.0.0
@@ -1773,7 +1815,7 @@ export const dateTimeUtcFromString: Transformation<DateTime.Utc, string> = trans
   decode: (s) => {
     return Option.match(DateTime.make(s), {
       onNone: () =>
-        Effect.fail(new Issue.InvalidValue(Option.some(s), { message: `Invalid UTC DateTime string: ${s}` })),
+        Effect.fail(new SchemaIssue.InvalidValue(Option.some(s), { message: `Invalid UTC DateTime string: ${s}` })),
       onSome: (result) => Effect.succeed(DateTime.toUtc(result))
     })
   },
@@ -1786,8 +1828,8 @@ export const dateTimeUtcFromString: Transformation<DateTime.Utc, string> = trans
  *
  * **When to use**
  *
- * Use to define a schema transformation for ISO zoned date-time strings that
- * decode to `DateTime.Zoned` and encode with `DateTime.formatIsoZoned`.
+ * Use when you need a schema transformation for ISO zoned date-time strings
+ * that decode to `DateTime.Zoned` and encode with `DateTime.formatIsoZoned`.
  *
  * **Details**
  *
@@ -1807,7 +1849,7 @@ export const dateTimeZonedFromString: Transformation<DateTime.Zoned, string> = t
   decode: (s) => {
     return Option.match(DateTime.makeZonedFromString(s), {
       onNone: () =>
-        Effect.fail(new Issue.InvalidValue(Option.some(s), { message: `Invalid Zoned DateTime string: ${s}` })),
+        Effect.fail(new SchemaIssue.InvalidValue(Option.some(s), { message: `Invalid Zoned DateTime string: ${s}` })),
       onSome: Effect.succeed
     })
   },

@@ -1,0 +1,135 @@
+---
+title: Drizzle ORM with Neon
+description: Manage your Drizzle schema as a resource — alchemy regenerates migration SQL on deploy and Neon applies it transactionally on the project or branch.
+---
+
+Drizzle gives you a typed Postgres schema in plain TypeScript;
+alchemy's `Drizzle.Schema` resource turns it into a deploy-driven
+migration pipeline. On every deploy the schema is diffed against
+the last snapshot, pending SQL is regenerated, and `Neon.Project` /
+`Neon.Branch` apply it transactionally — no separate
+`drizzle-kit generate` step to forget.
+
+## Register the Drizzle provider
+
+`Drizzle.Schema` ships in its own `providers()` layer — merge it
+next to Neon's in your stack config:
+
+```typescript
+// alchemy.run.ts
+import * as Drizzle from "alchemy/Drizzle";
+import * as Neon from "alchemy/Neon";
+import * as Layer from "effect/Layer";
+
+providers: Layer.mergeAll(Drizzle.providers(), Neon.providers()),
+```
+
+It's a build-time provider — it owns the migrations directory on
+disk, not anything in a cloud account.
+
+## Declare the schema resource
+
+Point `Drizzle.Schema` at your schema module and the directory
+where migrations should land:
+
+```typescript
+import * as Drizzle from "alchemy/Drizzle";
+
+const schema = yield* Drizzle.Schema("app-schema", {
+  schema: "./src/schema.ts",
+  out: "./migrations",
+});
+```
+
+`./src/schema.ts` is an ordinary Drizzle module — `pgTable(...)`
+definitions and exports. On deploy the provider loads it through
+drizzle-kit's programmatic API, diffs it against the latest
+snapshot under `out`, and — only when the diff would emit SQL —
+writes a new `{timestamp}_migration/` directory containing
+`migration.sql` and `snapshot.json`. Migration files are meant to
+be checked in, and removing the resource from the stack never
+deletes them.
+
+## Feed `migrationsDir` from the schema
+
+Wire the schema's `out` output into the Neon resource's
+`migrationsDir`:
+
+```typescript
+import * as Neon from "alchemy/Neon";
+
+const project = yield* Neon.Project("app-db", {
+  region: "aws-us-east-1",
+});
+
+const branch = yield* Neon.Branch("app-branch", {
+  project,
+  migrationsDir: schema.out,
+});
+```
+
+Because `Neon.Branch` depends on `schema.out`, the engine orders
+them for you: `Drizzle.Schema` regenerates pending migration SQL
+first, then `Neon.Branch` scans the directory and applies any new
+files transactionally, recording each in the `neon_migrations`
+tracking table so it runs exactly once. The same prop works on
+`Neon.Project` if you migrate the default branch directly — see
+[Migrations](/neon/data/migrations) for the tracking and hashing
+details.
+
+## Iterate
+
+Change `src/schema.ts` — add a column, a table — and redeploy:
+
+```sh
+bun alchemy deploy
+```
+
+The provider diffs the schema against the last snapshot, writes a
+new migration directory with just the delta SQL, and the branch
+applies it. When nothing changed, no migration is written and the
+Neon resource isn't touched.
+
+## Connect at runtime
+
+The branch's outputs carry everything a client needs:
+`connectionUri` / `pooledConnectionUri` plus the parsed `origin` /
+`pooledOrigin` shapes (see [Connections](/neon/data/connections)). On
+Cloudflare, front the **direct** origin with Hyperdrive and keep
+the pooled one for local dev:
+
+```typescript
+const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
+  origin: branch.origin, //    direct — Hyperdrive does the pooling
+  dev: branch.pooledOrigin, // local dev bypasses Hyperdrive
+});
+```
+
+Inside the Worker, `Drizzle.Postgres(conn.connectionString)`
+returns a typed `EffectPgDatabase` whose queries you `yield*`
+directly — the [Add Drizzle ORM](/cloudflare/data/drizzle) guide
+walks through the whole Worker side: binding the connection,
+relations for typed `db.query`, and the `nodejs_compat` flag.
+
+## Where next
+
+Guides:
+
+- [Add Drizzle ORM](/cloudflare/data/drizzle) — the full
+  Cloudflare Worker walkthrough on top of this pipeline.
+- [Preview branches per PR](/neon/guides/preview-branches) — fork a
+  migrated branch per PR stage off a shared project.
+
+Related:
+
+- [Drizzle migrations](/sql/drizzle/migrations) — the canonical
+  explanation of `Drizzle.Schema`'s generation, diffing, and
+  never-delete semantics.
+- [Migrations](/neon/data/migrations) — how Neon orders, hashes, and
+  tracks the generated files.
+- [Connections](/neon/data/connections) — direct vs pooled origins.
+
+Reference:
+
+- [Project API reference](/providers/neon/project)
+- [Branch API reference](/providers/neon/branch)

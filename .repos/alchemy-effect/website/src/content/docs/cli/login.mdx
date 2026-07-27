@@ -1,0 +1,53 @@
+---
+title: login
+description: Configure and log in to each cloud provider used by your stack.
+---
+
+```sh
+alchemy login [file] [options]
+```
+
+Configure and log in to each cloud provider used by your stack. The
+command imports your stack file to discover which `AuthProvider`s are
+registered, then walks through each one — prompting for the auth method
+the first time, and refreshing tokens (e.g. Cloudflare OAuth) on
+subsequent runs.
+
+Credentials are written to `~/.alchemy/profiles.json`, keyed by
+**profile name** (defaults to `default`, overridable with
+`$ALCHEMY_PROFILE` or `--profile`).
+
+When done, the resulting profile is printed with the same renderer as
+[`alchemy profile show`](/cli/profile). If the stack registers no
+`AuthProvider`s, the command prints a hint to add `AuthProviderLayer`
+entries to the stack's `providers()` layer.
+
+## Flags
+
+| Option              | Description                                                        |
+| ------------------- | ------------------------------------------------------------------ |
+| `[file]`            | Stack file to import (defaults to `alchemy.run.ts`)                |
+| `--profile <name>`  | Profile to write to (defaults to `default` or `$ALCHEMY_PROFILE`)  |
+| `--configure`       | Re-run the provider's interactive configure step before logging in |
+| `--env-file <path>` | Load environment variables from a file                             |
+
+`--configure` treats every provider as missing, so the configure step
+re-runs and overwrites the stored entry.
+
+## Examples
+
+```sh
+# Log in with the default profile
+alchemy login
+
+# Log in to a separate profile
+alchemy login --profile prod
+
+# Re-configure (e.g. switch from OAuth to API token) and log in
+alchemy login --configure
+```
+
+## Where next
+
+- [profile](/cli/profile) — inspect or clear stored credentials.
+- [Profiles](/environments/profiles) — how profiles isolate credentials across accounts and environments.

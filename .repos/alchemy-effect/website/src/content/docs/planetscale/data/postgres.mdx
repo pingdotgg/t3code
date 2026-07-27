@@ -1,0 +1,156 @@
+---
+title: Postgres
+description: PlanetScale Postgres as Stack resources — databases, branches, roles with least-privilege inherited roles, and direct vs pooled connection origins.
+---
+
+PlanetScale Postgres is managed PostgreSQL with database branching. In
+alchemy the database, its branches, and the roles that connect to them
+are resources in the same Stack as your compute — a branch forks per
+preview stage and tears down with it, and a role's credentials flow
+into whatever consumes them (Cloudflare Hyperdrive, a Worker, a
+Lambda) as typed outputs.
+
+New here? [Set up credentials](/planetscale/setup) first. For the
+MySQL (Vitess) family, see [MySQL](/planetscale/data/mysql).
+
+## Create a database
+
+`PostgresDatabase` owns the long-lived cluster. `clusterSize` is
+required; short sizes like `"PS_10"` are expanded to the full SKU
+using the target region and architecture:
+
+```typescript
+import * as Planetscale from "alchemy/Planetscale";
+
+const database = yield* Planetscale.PostgresDatabase("app-db", {
+  region: { slug: "us-east" },
+  clusterSize: "PS_10",
+});
+```
+
+No name required — alchemy generates a unique one from the app,
+stage, and logical ID. Pass `name` to control it.
+
+Changing `clusterSize` resizes the cluster in place through
+PlanetScale's change-request API (alchemy queues the change and waits
+for it to complete). Changing `region`, `replicas`, or `arch`
+replaces the database.
+
+## Branch the database
+
+`PostgresBranch` is a cheap fork. Pass the database resource (or a
+plain string name) and, optionally, a parent branch:
+
+```typescript
+const branch = yield* Planetscale.PostgresBranch("app-branch", {
+  database,
+  parentBranch: "main",
+});
+```
+
+`parentBranch` defaults to `"main"` and also accepts another
+`PostgresBranch`, so branches can chain. Branches take the same
+`migrationsDir` / `importFiles` props as the database — see
+[Migrations](/planetscale/data/migrations) for how SQL files are hashed
+and applied, and the
+[branch from a shared database](/cloudflare/data/branch-from-shared-database)
+guide for the branch-per-PR pattern.
+
+## Roles
+
+`PostgresRole` materializes a Postgres user + password on a branch.
+Permissions come from `inheritedRoles` — built-in roles like
+`postgres` or the `pg_*` family:
+
+```typescript
+const role = yield* Planetscale.PostgresRole("app-role", {
+  database,
+  branch,
+  inheritedRoles: ["postgres"],
+});
+```
+
+Scope roles down to what each consumer needs:
+
+```typescript
+const reader = yield* Planetscale.PostgresRole("reader", {
+  database,
+  branch,
+  inheritedRoles: ["pg_read_all_data", "pg_read_all_settings"],
+});
+```
+
+Pass `ttl` (seconds) for short-lived credentials. PlanetScale returns
+the password exactly once at create time, so almost every prop change
+— `ttl`, `database`, `branch`, `inheritedRoles` — replaces the role
+with a fresh one whose new credentials propagate to downstream
+resources automatically. Only the role's `name` and its `successor`
+(the role that inherits ownership when this one is dropped) update in
+place.
+
+## The default role
+
+Every branch comes with a built-in default role. `PostgresDefaultRole`
+captures it as a resource:
+
+```typescript
+const defaultRole = yield* Planetscale.PostgresDefaultRole("main-role", {
+  database,
+  forceReset: true,
+});
+```
+
+Two caveats, both consequences of the password being returned only at
+create time:
+
+- **No adoption.** If the branch's default role already exists and
+  your Stack has no record of it, the deploy fails rather than
+  silently taking over. Opt in with `forceReset: true`, which resets
+  the role — same role, **new password** — invalidating any existing
+  credentials.
+- **Destroy resets, not deletes.** There is no delete endpoint for
+  the default role, so destroying the resource resets it to
+  invalidate the credentials your Stack was holding.
+
+Prefer `PostgresRole` for application access; reach for the default
+role when a tool specifically needs it.
+
+## `origin` vs `pooledOrigin`
+
+Both role resources expose parsed connection components ready to feed
+into consumers like [Cloudflare Hyperdrive](/cloudflare/data/hyperdrive):
+
+- `role.origin` — the **direct** connection (port 5432). Use it where
+  the consumer does its own pooling, e.g. as a Hyperdrive origin.
+- `role.pooledOrigin` — the **pooled** connection via PSBouncer
+  (port 6432). Use it where each request would otherwise open a fresh
+  direct connection, e.g. Hyperdrive's local-dev origin.
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+
+const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
+  origin: role.origin, // direct — Hyperdrive pools at the edge
+  dev: role.pooledOrigin, // local dev bypasses Hyperdrive, so pool at PlanetScale
+});
+```
+
+If you need a URL instead of components, `connectionUrl` and
+`connectionUrlPooled` carry the same direct/pooled endpoints as
+`Redacted` connection strings (`sslmode=verify-full`).
+
+## Where next
+
+- [Migrations](/planetscale/data/migrations) — `migrationsDir` and
+  `importFiles` on databases and branches.
+- [Hyperdrive](/cloudflare/data/hyperdrive) — edge-pooled connections from
+  Workers to your PlanetScale database.
+- [Drizzle guide](/cloudflare/data/drizzle) — generate migration SQL
+  from a Drizzle schema and apply it on deploy.
+
+Reference:
+
+- [PostgresDatabase](/providers/planetscale/postgres/postgresdatabase) ·
+  [PostgresBranch](/providers/planetscale/postgres/postgresbranch) ·
+  [PostgresRole](/providers/planetscale/postgres/postgresrole) ·
+  [PostgresDefaultRole](/providers/planetscale/postgres/postgresdefaultrole)

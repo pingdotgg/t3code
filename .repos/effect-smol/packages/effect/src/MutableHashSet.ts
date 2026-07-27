@@ -1,69 +1,11 @@
 /**
- * `MutableHashSet` is an in-place hash set for storing unique values with fast
- * membership checks, insertion, removal, clearing, and iteration. It is built on
- * {@link MutableHashMap}: each set value is stored as a map key, so uniqueness
+ * Stores unique values in a mutable hash set.
+ *
+ * `MutableHashSet` updates the same collection in place and supports fast
+ * membership checks, insertion, removal, clearing, and iteration. It is built
+ * on `MutableHashMap`: each set value is stored as a map key, so uniqueness
  * follows the same hashing and equality rules as the underlying mutable hash
  * map.
- *
- * **Mental model**
- *
- * - `MutableHashSet<V>` is a mutable collection of unique values of type `V`
- * - {@link add}, {@link remove}, and {@link clear} mutate the same set instance
- * - Duplicate values are ignored according to Effect equality and hashing
- *   semantics
- * - Values that implement `Equal` / `Hash` can be compared structurally;
- *   primitive values and ordinary object references use the underlying hash map
- *   behavior
- * - The set is iterable, so `for...of` and `Array.from(set)` can inspect the
- *   current values
- *
- * **Common tasks**
- *
- * - Create an empty set: {@link empty}
- * - Create from values or an iterable: {@link make}, {@link fromIterable}
- * - Add, remove, and clear values: {@link add}, {@link remove}, {@link clear}
- * - Check membership and size: {@link has}, {@link size}
- * - Narrow unknown values: {@link isMutableHashSet}
- *
- * **Gotchas**
- *
- * - This data structure is intentionally mutable; keep ownership clear if the
- *   same set is shared by multiple callers
- * - Mutating operations return the same set instance for convenient piping
- * - Do not use iteration order as a sorting or presentation guarantee
- * - Use immutable collection modules when callers need persistent snapshots
- *
- * **Performance**
- *
- * - Add, membership checks, and removal are O(1) on average
- * - Hash collisions can make those operations O(n)
- * - Clearing and reading size are O(1)
- * - Iteration is O(n)
- *
- * **Quickstart**
- *
- * **Example** (Tracking unique values)
- *
- * ```ts
- * import { MutableHashSet } from "effect"
- *
- * const set = MutableHashSet.make("alice", "bob", "alice")
- *
- * MutableHashSet.add(set, "carol")
- * MutableHashSet.remove(set, "bob")
- *
- * console.log(MutableHashSet.has(set, "alice"))
- * // Output: true
- *
- * console.log(MutableHashSet.size(set))
- * // Output: 2
- * ```
- *
- * **See also**
- *
- * - {@link MutableHashMap} for the mutable key-value structure underneath
- * - {@link empty}, {@link make}, and {@link fromIterable} for construction
- * - {@link add}, {@link remove}, and {@link has} for core set operations
  *
  * @since 2.0.0
  */

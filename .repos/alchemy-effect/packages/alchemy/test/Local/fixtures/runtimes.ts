@@ -8,7 +8,9 @@ export interface Runtime {
 
 const hasBin = (bin: string): boolean => {
   try {
-    const r = spawnSync("which", [bin], { encoding: "utf-8" });
+    // `which` doesn't exist on Windows; `where` is the equivalent.
+    const probe = process.platform === "win32" ? "where" : "which";
+    const r = spawnSync(probe, [bin], { encoding: "utf-8" });
     return r.status === 0 && Boolean(r.stdout?.trim());
   } catch {
     return false;

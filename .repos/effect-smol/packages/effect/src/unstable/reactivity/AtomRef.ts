@@ -2,35 +2,10 @@
  * Mutable reactive references for local, in-memory state.
  *
  * `AtomRef` provides small observable state cells that can be read, updated,
- * focused, and subscribed to without going through an `AtomRegistry`. It is
- * suited to form state, local view models, and collections of item references
- * where callers need direct mutation methods together with change notifications.
- *
- * **Mental model**
- *
- * An `AtomRef` is a value cell with a stable key and a subscriber list.
- * {@link make} creates a mutable cell, `map` derives read-only views, and `prop`
- * focuses on nested object or array properties while preserving mutation
- * helpers. {@link collection} stores ordered item refs and emits collection
- * updates when items are inserted, removed, or changed through their refs.
- *
- * **Common tasks**
- *
- * - Use {@link make} for standalone local state.
- * - Use `ref.set` or `ref.update` to replace the current value.
- * - Use `ref.map` for derived read-only values.
- * - Use `ref.prop` to update nested object fields or array entries.
- * - Use {@link collection} for ordered lists whose items should remain
- *   individually mutable.
- *
- * **Gotchas**
- *
- * Notifications are equality-aware: values that are `Equal.equals` to the
- * current value do not notify subscribers, and mapped or property subscriptions
- * only emit when their derived value changes. Directly mutating an object or
- * array stored in a ref does not notify listeners; use `set`, `update`, or a
- * property ref instead. `toArray` returns the current raw item values, not the
- * item refs.
+ * mapped, and subscribed to without going through an `AtomRegistry`. Mutable
+ * refs can also create refs for nested properties. The module also provides a
+ * collection helper that stores item refs and notifies subscribers when items are
+ * inserted, removed, or changed.
  *
  * @since 4.0.0
  */

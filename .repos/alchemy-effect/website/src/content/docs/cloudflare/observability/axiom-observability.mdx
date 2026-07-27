@@ -1,0 +1,224 @@
+---
+title: Ship Worker telemetry to Axiom
+description: Declare Axiom datasets, a least-privilege ingest token, and monitors in the same Stack as the Worker that emits the telemetry — or let Cloudflare push Workers Logs to Axiom natively.
+sidebar:
+  order: 16
+---
+
+Effect already emits OpenTelemetry — every span, `Metric`, and
+`logInfo` in your Worker is OTel data waiting for somewhere to go
+(see [Observability](/testing/observability)). With alchemy the
+receiving end is resources too: the Axiom datasets, the ingest
+token, and the alert that pages you all live in the same Stack as
+the Worker they observe. A retention or threshold change is a
+reviewable diff, not a dashboard click.
+
+This guide wires a Worker's telemetry into Axiom two ways:
+
+1. **From the Worker** — OTLP endpoints and an ingest token as env
+   vars, your exporter ships directly.
+2. **From Cloudflare** — an `ObservabilityDestination` that pushes
+   Workers Logs telemetry to Axiom with zero exporter code.
+
+## Register the Axiom provider
+
+Axiom resources deploy alongside your Cloudflare ones — merge the
+provider layers in your Stack:
+
+```typescript
+// alchemy.run.ts
+import * as Axiom from "alchemy/Axiom";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Layer from "effect/Layer";
+
+providers: Layer.mergeAll(Cloudflare.providers(), Axiom.providers()),
+```
+
+If you haven't connected an Axiom account yet, run through
+[Axiom setup](/axiom/setup) first — `alchemy login` picks up
+`AXIOM_TOKEN` or a stored credential.
+
+## Create a dataset per signal
+
+A `Dataset` is Axiom's top-level container. Pick a `kind` per OTEL
+signal — it determines the schema and how the data renders in the
+Axiom UI:
+
+```typescript
+const traces  = yield* Axiom.Dataset("traces",  { name: "app-traces",  kind: "otel:traces:v1"  });
+const logs    = yield* Axiom.Dataset("logs",    { name: "app-logs",    kind: "otel:logs:v1"    });
+const metrics = yield* Axiom.Dataset("metrics", { name: "app-metrics", kind: "otel:metrics:v1" });
+```
+
+`kind` cannot be changed after creation — updating it triggers a
+replacement, which deletes the data — so pick it up front. Each
+dataset exposes Axiom's OTLP/HTTP endpoints as output attributes
+(`otelTracesEndpoint`, `otelLogsEndpoint`, `otelMetricsEndpoint`),
+which is what makes the next step a pure wiring exercise.
+
+## Set retention
+
+Retention is a prop, so a retention change is a diff in the PR:
+
+```typescript
+const logs = yield* Axiom.Dataset("logs", {
+  name: "app-logs",
+  kind: "otel:logs:v1",
+  description: "Application logs from prod workers",
+  retentionDays: 30,
+  useRetentionPeriod: true,
+});
+```
+
+`description`, `retentionDays`, and `useRetentionPeriod` all update
+in place; only `name` and `kind` force a replacement.
+
+## Mint a least-privilege ingest token
+
+An `ApiToken` scoped with `datasetCapabilities` can ingest into
+exactly the datasets you list and nothing else:
+
+```typescript
+const ingest = yield* Axiom.ApiToken("ingest", {
+  name: "prod-ingest",
+  description: "Worker OTEL ingest",
+  datasetCapabilities: {
+    "app-traces":  { ingest: ["create"] },
+    "app-logs":    { ingest: ["create"] },
+    "app-metrics": { ingest: ["create"] },
+  },
+});
+```
+
+Axiom returns the bearer value exactly once, at create time. It's
+captured into `ingest.token` as a `Redacted<string>` and persisted
+in resource state — treat state as sensitive. Tokens have no update
+API: changing any prop replaces the token and mints a new bearer;
+identical props never rotate it.
+
+## Wire the OTEL env vars into the Worker
+
+Pass the dataset endpoints and the token through the Worker's `env`
+prop:
+
+```typescript
+const worker = yield* Cloudflare.Worker("Api", {
+  main: "./src/worker.ts",
+  env: {
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: traces.otelTracesEndpoint,
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: logs.otelLogsEndpoint,
+    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: metrics.otelMetricsEndpoint,
+    AXIOM_TOKEN: ingest.token,
+  },
+});
+```
+
+Values are routed by shape: the endpoint strings become `plain_text`
+vars, and `ingest.token` — a `Redacted<string>` — becomes a
+`secret_text` binding, so the bearer never appears in plaintext
+Worker config. At runtime your exporter attaches
+`Authorization: Bearer ${env.AXIOM_TOKEN}` plus the dataset header
+Axiom expects — each dataset's `otelHeaders` output carries the
+required `X-Axiom-Dataset: <name>` entry.
+
+## Alternative: let Cloudflare push it
+
+If you'd rather ship no exporter code at all, a Workers
+`ObservabilityDestination` is an account-level OTLP export: Cloudflare
+pushes Workers Logs telemetry (traces, logs, or metrics) to an
+external HTTPS collector via Logpush. Point one at the Axiom dataset's
+OTLP endpoint:
+
+```typescript
+import * as Output from "alchemy/Output";
+import * as Redacted from "effect/Redacted";
+
+yield* Cloudflare.Workers.ObservabilityDestination("Traces", {
+  url: traces.otelTracesEndpoint,
+  headers: {
+    authorization: Output.map(ingest.token, (t) => `Bearer ${Redacted.value(t)}`),
+    "x-axiom-dataset": traces.name,
+  },
+  logpushDataset: "opentelemetry-traces",
+});
+```
+
+One destination exports one dataset — `opentelemetry-traces`,
+`opentelemetry-logs`, or `opentelemetry-metrics` — and the dataset
+(like the name) is fixed at creation; changing either replaces the
+destination. `url`, `headers`, and `enabled` update in place. Note
+the headers are stored in the destination's Cloudflare-side config,
+so the token lives at Cloudflare too.
+
+Cloudflare verifies the endpoint with a preflight `POST` on create
+and on **every** in-place update, so the collector must answer `2xx`
+for updates to converge. If the collector rejects empty probe
+payloads, set `skipPreflightCheck: true` to skip the create-time
+probe (updates always preflight).
+
+Workers Logs is on by default, but Workers **Traces** are opt-in per
+Worker:
+
+```typescript
+const worker = yield* Cloudflare.Worker("Api", {
+  main: "./src/worker.ts",
+  observability: { traces: { enabled: true } },
+});
+```
+
+## Alert on what you ship
+
+Telemetry nobody watches is a storage bill. A `Notifier` is the
+destination (Slack, email, PagerDuty, webhook); a `Monitor` is a
+scheduled APL query that fires it:
+
+```typescript
+const slack = yield* Axiom.Notifier("ops-slack", {
+  name: "ops-channel",
+  properties: {
+    slack: { slackUrl: process.env.SLACK_WEBHOOK_URL! },
+  },
+});
+
+yield* Axiom.Monitor("panics", {
+  name: "Service panic",
+  type: "MatchEvent",
+  aplQuery: `['app-logs'] | where message contains "panic:"`,
+  intervalMinutes: 1,
+  rangeMinutes: 1,
+  notifierIds: [slack.id],
+});
+```
+
+`MatchEvent` fires for every matching event; `Threshold` and
+`AnomalyDetection` monitors cover rate-based and baseline-deviation
+alerting — see the [Axiom overview](/axiom) for those shapes.
+Changing a monitor's `type` replaces it; everything else updates in
+place.
+
+## Sibling paths
+
+Two adjacent Cloudflare-native options, in brief:
+
+- **[Logpush Job](/providers/cloudflare/logpush/job)** — push raw
+  `workers_trace_events` (and other Cloudflare datasets) as batched
+  log files to R2, S3, GCS, or an HTTP endpoint. Bulk archival
+  rather than OTLP.
+- **[Alerting NotificationPolicy](/providers/cloudflare/alerting/notificationpolicy)** —
+  alerts on Cloudflare platform events (certificate renewals, health
+  checks, …) delivered to email or a
+  [NotificationWebhook](/providers/cloudflare/alerting/notificationwebhook).
+  Complements Axiom monitors, which alert on your telemetry.
+
+## Where next
+
+- [Axiom overview](/axiom) — dashboards, annotations, views, and the
+  full resource list.
+- [Axiom setup](/axiom/setup) — credentials and profiles.
+- [Observability](/testing/observability) — the exporter-as-a-Layer
+  pattern and OTel across clouds.
+- Reference: [Dataset](/providers/axiom/dataset) ·
+  [ApiToken](/providers/axiom/apitoken) ·
+  [Monitor](/providers/axiom/monitor) ·
+  [Notifier](/providers/axiom/notifier) ·
+  [ObservabilityDestination](/providers/cloudflare/workers/observabilitydestination)

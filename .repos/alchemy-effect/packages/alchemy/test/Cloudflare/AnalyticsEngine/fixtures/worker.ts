@@ -7,12 +7,10 @@ import { Dataset } from "./dataset.ts";
 export default class AnalyticsEngineTestWorker extends Cloudflare.Worker<AnalyticsEngineTestWorker>()(
   "AnalyticsEngineTestWorker",
   {
-    main: import.meta.filename,
-    subdomain: { enabled: true, previewsEnabled: false },
-    compatibility: { date: "2024-09-23", flags: ["nodejs_compat"] },
+    main: import.meta.url,
   },
   Effect.gen(function* () {
-    const analytics = yield* Cloudflare.AnalyticsEngineDataset.bind(Dataset);
+    const analytics = yield* Cloudflare.AnalyticsEngine.WriteDataset(Dataset);
 
     return {
       fetch: Effect.gen(function* () {
@@ -33,5 +31,5 @@ export default class AnalyticsEngineTestWorker extends Cloudflare.Worker<Analyti
         return HttpServerResponse.text("ok");
       }),
     };
-  }).pipe(Effect.provide(Cloudflare.AnalyticsEngineDatasetBindingLive)),
+  }).pipe(Effect.provide(Cloudflare.AnalyticsEngine.WriteDatasetBinding)),
 ) {}

@@ -5,23 +5,6 @@
  * schema support, and conversion to and from the `group:id` string form used by
  * routing and storage boundaries.
  *
- * **Common tasks**
- *
- * - Create or reuse a cached shard identifier with {@link make}
- * - Check runtime values with {@link isShardId}
- * - Encode or decode shard identifiers with {@link ShardId}
- * - Format for logs, persistence, or transport with {@link toString}
- * - Parse encoded shard keys with {@link fromString} or {@link fromStringEncoded}
- *
- * **Gotchas**
- *
- * - Equality and hashing are based on the `group:id` representation, so both
- *   fields must match for two shard ids to be equal
- * - Encoded strings are split at the last `:`; groups may contain colons, but
- *   ids must parse as numbers
- * - This module identifies shards after a routing or hashing decision; it does
- *   not choose a shard for an arbitrary entity key
- *
  * @since 4.0.0
  */
 import * as Equal from "../../Equal.ts"
@@ -29,7 +12,7 @@ import * as Hash from "../../Hash.ts"
 import { hasProperty } from "../../Predicate.ts"
 import * as PrimaryKey from "../../PrimaryKey.ts"
 import * as S from "../../Schema.ts"
-import * as Getter from "../../SchemaGetter.ts"
+import * as SchemaGetter from "../../SchemaGetter.ts"
 
 const TypeId = "~effect/cluster/ShardId"
 
@@ -66,11 +49,11 @@ export const ShardId = S.declare(isShardId, {
     S.link<ShardId>()(
       S.Struct({
         group: S.String,
-        id: S.Number
+        id: S.Int
       }),
       {
-        decode: Getter.transform(({ group, id }) => make(group, id)),
-        encode: Getter.passthrough()
+        decode: SchemaGetter.transform(({ group, id }) => make(group, id)),
+        encode: SchemaGetter.passthrough()
       }
     )
 })

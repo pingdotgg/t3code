@@ -1,6 +1,8 @@
 import * as ag from "@distilled.cloud/aws/api-gateway";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import { deepEqual, isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -10,24 +12,48 @@ import { createInternalTags, tagRecord } from "../../Tags.ts";
 import { syncTags } from "./common.ts";
 
 export interface DomainNameProps {
+  /** The custom domain name (e.g. `api.example.com`). */
   domainName: string;
+  /** Display name of a self-managed edge certificate. */
   certificateName?: string;
+  /** PEM body of a self-managed edge certificate. */
   certificateBody?: string;
-  certificatePrivateKey?: string;
+  /**
+   * The private key of the server certificate (self-managed certificates).
+   * Secret key material — wrap with `Redacted.make` so state encoding
+   * preserves redaction.
+   */
+  certificatePrivateKey?: Redacted.Redacted<string>;
+  /** PEM chain of a self-managed edge certificate. */
   certificateChain?: string;
+  /** ARN of an ACM certificate for EDGE endpoints (must live in us-east-1). */
   certificateArn?: string;
+  /** Display name of the regional certificate. */
   regionalCertificateName?: string;
+  /** ARN of an ACM certificate for REGIONAL endpoints (same region as the API). */
   regionalCertificateArn?: string;
+  /** Endpoint type for the domain (EDGE, REGIONAL, or PRIVATE). */
   endpointConfiguration?: ag.EndpointConfiguration;
+  /**
+   * Minimum TLS version served (e.g. `TLS_1_2`).
+   * @default "TLS_1_2"
+   */
   securityPolicy?: ag.SecurityPolicy;
+  /** Access mode of the domain name endpoint. */
   endpointAccessMode?: ag.EndpointAccessMode;
+  /** Mutual TLS (client certificate) authentication configuration. */
   mutualTlsAuthentication?: ag.MutualTlsAuthenticationInput;
+  /** ARN of the certificate proving domain ownership when mutual TLS is enabled. */
   ownershipVerificationCertificateArn?: string;
+  /** Resource policy (JSON) for private custom domain names. */
   policy?: string;
+  /** Routing mode of the domain name (base-path vs routing-rule based). */
   routingMode?: ag.RoutingMode;
+  /** User-defined tags for the domain name. */
   tags?: Record<string, string>;
 }
 
+/** @resource */
 export interface DomainName extends Resource<
   "AWS.ApiGateway.DomainName",
   DomainNameProps,
@@ -62,6 +88,10 @@ const DomainNameResource = Resource<DomainName>("AWS.ApiGateway.DomainName");
 
 export { DomainNameResource as DomainName };
 
+/** Unwrap an optional redacted secret for the wire / diff comparison. */
+const redactedValue = (value: Redacted.Redacted<string> | undefined) =>
+  value === undefined ? undefined : Redacted.value(value);
+
 const retryDomainNameMutation = Effect.retry({
   while: (e: any) =>
     e._tag === "ConflictException" || e._tag === "TooManyRequestsException",
@@ -92,7 +122,10 @@ export const DomainNameProvider = () =>
           if (news.certificateBody !== olds.certificateBody) {
             return { action: "replace" } as const;
           }
-          if (news.certificatePrivateKey !== olds.certificatePrivateKey) {
+          if (
+            redactedValue(news.certificatePrivateKey) !==
+            redactedValue(olds.certificatePrivateKey)
+          ) {
             return { action: "replace" } as const;
           }
           if (news.certificateChain !== olds.certificateChain) {
@@ -125,6 +158,28 @@ export const DomainNameProvider = () =>
             return { action: "replace" } as const;
           }
         }),
+        list: () =>
+          ag.getDomainNames.pages({}).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.items ?? [])
+                  .filter(
+                    (d): d is ag.DomainName & { domainName: string } =>
+                      d.domainName != null,
+                  )
+                  .map((d) => ({
+                    domainName: d.domainName,
+                    regionalDomainName: d.regionalDomainName,
+                    regionalHostedZoneId: d.regionalHostedZoneId,
+                    distributionDomainName: d.distributionDomainName,
+                    distributionHostedZoneId: d.distributionHostedZoneId,
+                    domainNameArn: d.domainNameArn,
+                    tags: tagRecord(d.tags),
+                  })),
+              ),
+            ),
+          ),
         read: Effect.fn(function* ({ output }) {
           if (!output?.domainName) return undefined;
           const d = yield* ag
@@ -172,7 +227,7 @@ export const DomainNameProvider = () =>
               domainName: news.domainName,
               certificateName: news.certificateName,
               certificateBody: news.certificateBody,
-              certificatePrivateKey: news.certificatePrivateKey,
+              certificatePrivateKey: redactedValue(news.certificatePrivateKey),
               certificateChain: news.certificateChain,
               certificateArn: news.certificateArn,
               regionalCertificateName: news.regionalCertificateName,

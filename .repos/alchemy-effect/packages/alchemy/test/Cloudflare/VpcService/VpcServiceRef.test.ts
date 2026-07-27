@@ -1,6 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
-import * as Test from "@/Test/Vitest";
-import { expect } from "@effect/vitest";
+import * as Test from "@/Test/Alchemy";
+import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 
@@ -17,11 +17,11 @@ test.provider("reference vpc service by name and by id", (stack) =>
 
     const service = yield* stack.deploy(
       Effect.gen(function* () {
-        const tunnel = yield* Cloudflare.Tunnel("RefTunnel", {
+        const tunnel = yield* Cloudflare.Tunnel.Tunnel("RefTunnel", {
           ingress: [{ service: "http://localhost:8080" }],
           adopt: true,
         });
-        return yield* Cloudflare.VpcService("RefSvc", {
+        return yield* Cloudflare.VpcService.VpcService("RefSvc", {
           httpPort: 8080,
           host: {
             hostname: "localhost",
@@ -32,14 +32,14 @@ test.provider("reference vpc service by name and by id", (stack) =>
       }),
     );
 
-    const refByName = yield* Cloudflare.VpcServiceRef({
+    const refByName = yield* Cloudflare.VpcService.VpcServiceRef({
       name: service.serviceName,
     });
     expect(refByName.serviceId).toEqual(service.serviceId);
     expect(refByName.serviceName).toEqual(service.serviceName);
     expect(refByName.httpPort).toEqual(service.httpPort);
 
-    const refById = yield* Cloudflare.VpcServiceRef({
+    const refById = yield* Cloudflare.VpcService.VpcServiceRef({
       serviceId: service.serviceId,
     });
     expect(refById.serviceId).toEqual(service.serviceId);

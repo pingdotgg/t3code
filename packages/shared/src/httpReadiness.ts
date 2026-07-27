@@ -67,7 +67,7 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
   const intervalMs = input.intervalMs ?? 100;
   const probeTimeoutMs = input.probeTimeoutMs ?? DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS;
   const retryPolicy = Schedule.spaced(Duration.millis(intervalMs)).pipe(
-    Schedule.take(Math.max(0, Math.ceil(timeoutMs / intervalMs))),
+    Schedule.upTo({ times: Math.max(0, Math.ceil(timeoutMs / intervalMs)) }),
   );
   const requestUrl = new URL(input.path ?? "/", input.baseUrl).toString();
   const client = yield* HttpClient.HttpClient;

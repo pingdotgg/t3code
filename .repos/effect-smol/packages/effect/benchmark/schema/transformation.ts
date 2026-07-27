@@ -18,13 +18,13 @@ const bench = new Bench()
 const schema = Schema.Struct({
   a: Schema.String,
   id: Schema.String,
-  c: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+  c: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
   d: Schema.String
 }).pipe(Schema.decodeTo(
   Schema.Struct({
     a: Schema.String,
     b: Schema.Struct({ id: Schema.String }),
-    c: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+    c: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
     d: Schema.String
   }),
   SchemaTransformation.transform({

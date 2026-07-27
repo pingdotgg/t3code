@@ -1,0 +1,138 @@
+---
+title: Schemaless RPC
+description: Typed RPC from a Lambda Function into a MicroVM with no schema — declare the image's Shape, connect, get the client.
+sidebar:
+  order: 2
+---
+
+The pattern — what a Shape member may be, how the typed client arises, what
+crosses the wire — lives at [Schemaless RPC](/apis/schemaless). This page
+covers the AWS pairings. There is one today: **Lambda → Firecracker MicroVM**,
+riding the generic fetch transport — each call is a
+`POST https://<endpoint>/__rpc__/{name}`.
+
+## The image declares its Shape
+
+```typescript
+// sandbox.ts — the MicroVM image
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export class Sandbox extends AWS.Lambda.MicrovmImage<
+  Sandbox,
+  {
+    hello: (message: string) => Effect.Effect<string>;
+  }
+>()("MicrovmSandbox") {}
+
+export default Sandbox.make(
+  { main: import.meta.filename /* buildRole, resources, cpuConfigurations */ },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("hello from effectful microvm");
+      }),
+      hello: (message: string) => Effect.succeed(`hello, ${message}!`),
+    };
+  }),
+);
+```
+
+Like Containers on Cloudflare, the MicroVM image declares its Shape as an
+explicit type parameter — the caller reaches it over the network, so nothing
+can be inferred from a binding. The init Effect returns `{ fetch, ...rpcs }`;
+the in-VM runtime serves the RPC methods over `/__rpc__/*` and falls through
+to `fetch` for everything else, so the same image answers both call surfaces.
+
+## Provision a VM and mint a token
+
+```typescript
+// orchestrator.ts — the Lambda binds the instance operations to the image
+const runMicrovm = yield* AWS.Lambda.RunMicrovm(Sandbox);
+const getMicrovm = yield* AWS.Lambda.GetMicrovm(Sandbox);
+const createAuthToken = yield* AWS.Lambda.CreateAuthToken(Sandbox);
+const terminateMicrovm = yield* AWS.Lambda.TerminateMicrovm(Sandbox);
+
+// ...inside a handler: run, wait for RUNNING, mint a token
+const vm = yield* runMicrovm({
+  idlePolicy: {
+    maxIdleDurationSeconds: 900,
+    suspendedDurationSeconds: 300,
+    autoResumeEnabled: true,
+  },
+});
+
+yield* getMicrovm({ microvmIdentifier: vm.microvmId }).pipe(
+  Effect.flatMap((m) =>
+    m.state === "RUNNING"
+      ? Effect.void
+      : Effect.fail(new Error(`microvm ${m.state}`)),
+  ),
+  Effect.retry({ schedule: Schedule.spaced("2 seconds"), times: 30 }),
+);
+
+const { authToken } = yield* createAuthToken({
+  microvmIdentifier: vm.microvmId,
+  expirationInMinutes: 5,
+  allowedPorts: [{ port: 8080 }],
+});
+```
+
+Unlike a service binding, a MicroVM has a lifecycle: the Lambda binds the
+instance operations (`RunMicrovm`, `GetMicrovm`, `CreateAuthToken`,
+`TerminateMicrovm`), launches an instance, polls with a bounded retry until it
+reaches `RUNNING`, and mints a short-lived auth token scoped to the RPC port.
+Wrap the launched instance in `Effect.ensuring(terminateMicrovm(...))` so a
+failing step never leaks a running VM. The full lifecycle — suspend, resume,
+list, the raw `fetch` route via `microvmAuthHeaders` — is in
+[MicroVMs](/aws/compute/microvms#launch-and-drive-microvms-from-a-lambda).
+
+## Connect and call
+
+```typescript
+const sandbox = yield* AWS.Lambda.connectMicrovm(Sandbox, {
+  endpoint: vm.endpoint,
+  authToken,
+});
+const reply = yield* sandbox.hello(message).pipe(
+  Effect.retry({
+    schedule: Schedule.exponential("500 millis"),
+    times: 8,
+  }),
+);
+// reply === `hello, ${message}!`
+```
+
+`connectMicrovm` returns the typed stub inferred from `Sandbox` — each method
+call is a `POST https://<endpoint>/__rpc__/<method>` with the auth-token
+entries set as request headers, the mirror of the server running inside the
+VM. Retry the first call: the endpoint takes a few seconds to start serving
+after the VM reports `RUNNING`.
+
+## What AWS doesn't have yet
+
+There is no schemaless stub between Lambda Functions — Lambda-to-Lambda calls
+go through the `AWS.Lambda.InvokeFunction` binding (see
+[Lambda](/aws/compute/lambda)) or a Function URL, and typed cross-Lambda APIs
+should use [Effect RPC](/apis/effect-rpc). There is also no typed connector
+for [ECS Tasks](/aws/compute/ecs) yet — a Task returns the same
+`{ fetch, ...rpcs }` Shape, but with no `connectMicrovm` equivalent you reach
+it over plain HTTP through its load balancer or serve Effect RPC from its
+`fetch` handler.
+
+## When you need schemas
+
+Schemaless calls do no runtime validation — nothing decodes or sanitizes what
+arrives. At a trust boundary, or when class identity must survive the hop, use
+[Effect RPC](/apis/effect-rpc).
+
+## Where next
+
+- [Schemaless RPC](/apis/schemaless) — the pattern: allowed members, the wire
+  codec, streams, errors
+- [MicroVMs](/aws/compute/microvms) — build images, drive instances, both call
+  surfaces
+- [Effect RPC](/apis/effect-rpc) — schema-first RPC for trust boundaries
+- [Cloudflare Schemaless RPC](/cloudflare/apis/schemaless-rpc) — the Cloudflare
+  pairings: Workers, Durable Objects, Containers

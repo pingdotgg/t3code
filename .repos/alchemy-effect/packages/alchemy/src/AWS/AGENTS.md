@@ -50,8 +50,8 @@ Examples:
 Bindings are:
 
 - one file per operation
-- `Binding.Service` + `Binding.Policy`
-- usually named `alchemy/src/AWS/<Service>/<Operation>.ts`
+- the combined `Binding.Service` form (`interface X extends Binding.Service<X, "id", Shape>` + `const X = Binding.Service<X>("id")`); the deploy-time IAM registration is inlined into the impl layer under `if (!globalThis.__ALCHEMY_RUNTIME__)`, resolving the host via `yield* Binding.host`
+- usually named `alchemy/src/AWS/<Service>/<Operation>.ts` (callable + types) with the impl layer in `<Operation>Http.ts` (AWS runtime impls call the distilled HTTP API authenticated by the Lambda's IAM role; `Http`, not `Binding` — `Binding` is a Cloudflare native-worker concept)
 
 ### 2. Resource
 
@@ -80,9 +80,9 @@ This always has two layers:
 
 Examples:
 
-- `notifications(bucket)`
-- `messages(queue)`
-- `changes(table)` for DynamoDB-style change streams
+- `consumeBucketEvents(bucket, handler)`
+- `consumeQueueMessages(queue, handler)`
+- `consumeTableChanges(table, handler)` for DynamoDB-style change streams
 
 ### 4. Helper
 
@@ -90,8 +90,8 @@ Use a helper when multiple raw operations should collapse into a more ergonomic 
 
 Examples:
 
-- `notifications(bucket)`
-- `messages(queue)`
+- `consumeBucketEvents(bucket, handler)`
+- `consumeQueueMessages(queue, handler)`
 - batch or transaction wrappers
 
 Helpers should not hide missing low-level primitives. Implement the primitives first.
@@ -128,13 +128,13 @@ Use `ExecuteTransaction` as the reference pattern for bindings that touch `1..*`
 
 The ambiguity we want to avoid is:
 
-- bad: `ExecuteTransaction.bind()` with IAM `Resource: ["*"]`
-- bad: `ExecuteTransaction.bind(tableNames: string[])`
+- bad: `ExecuteTransaction()` with IAM `Resource: ["*"]`
+- bad: `ExecuteTransaction(tableNames: string[])`
 - bad: a SID like `AWS.DynamoDB.ExecuteTransaction(2 table(s))` that hides which resources were bound
 
 The required pattern is:
 
-- good: `ExecuteTransaction.bind(tableA, tableB, ...)`
+- good: `ExecuteTransaction(tableA, tableB, ...)`
 - good: the binding type requires at least one table
 - good: the policy enumerates exactly those table ARNs
 - good: the SID is deterministic and names the participating resources
@@ -213,7 +213,7 @@ For DynamoDB, for example:
 - folded table-owned surface: local/global secondary indexes live on `Table`, not a standalone `SecondaryIndex` resource
 - bindings: item/table/admin operations
 - event source: Kinesis streaming destination / change stream surface
-- helper: `streams(table)`
+- helper: `consumeTableChanges(table, props?, handler)`
 
 ### Step 3: Implement Missing Bindings
 
@@ -237,7 +237,7 @@ Binding conventions:
 - never use `Resource: ["*"]` for a resource-bound binding if it can be avoided by passing canonical resources to `.bind(...)`
 - if an operation touches `1..*` canonical resources, model the binding to accept those resources explicitly so the policy can enumerate only those ARNs
 - `Resource: ["*"]` is only acceptable when the operation is truly service-scoped or AWS does not support narrower resource-level IAM for that API
-- do not add IAM `Sid` fields in `Binding.Policy` statements unless there is a demonstrated AWS requirement for one
+- do not add IAM `Sid` fields in binding policy statements unless there is a demonstrated AWS requirement for one
 
 Example:
 
@@ -378,7 +378,7 @@ When the event source needs an intermediate canonical resource, the binding shou
 create that resource automatically instead of forcing user code to instantiate it.
 SNS is the reference case:
 
-- the public binding is `notifications(topic).subscribe(...)`
+- the public binding is `notifications(topic, handler)`
 - the Lambda runtime policy creates the `Subscription` resource automatically
 - any service-to-Lambda invoke permission stays in the runtime policy layer that
   wires the event source, not in user code
@@ -389,7 +389,7 @@ For DynamoDB-style changes this likely means:
 
 1. table-side stream/destination surface
 2. Lambda runtime integration
-3. `streams(table)` helper
+3. `consumeTableChanges(table, props?, handler)` helper
 4. E2E coverage
 
 ### Step 11: Implement Helpers
@@ -411,7 +411,7 @@ Required shape:
 - the canonical resource remains `Table`
 - `Table` keeps stream state in its attributes, but does not accept `streamSpecification` as a plain input prop
 - stream enablement is requested through the table binding contract
-- the public helper is `streams(table).process(...)`
+- the public helper is `consumeTableChanges(table, props?, handler)`
 - the service-level abstraction lives in `alchemy/src/AWS/DynamoDB/Stream.ts`
 - the Lambda runtime implementation lives in `alchemy/src/AWS/Lambda/TableEventSource.ts`
 
@@ -433,7 +433,7 @@ Implementation rules:
 
 Lambda-first slice:
 
-- implement `streams(table).process(...)` first for Lambda
+- implement `consumeTableChanges(table, props?, handler)` first for Lambda
 - the Lambda layer binds the table stream requirement, grants stream-read IAM, and creates `AWS.Lambda.EventSourceMapping`
 - Process or other runtimes can be added later without changing `Table` back to a prop-driven stream model
 

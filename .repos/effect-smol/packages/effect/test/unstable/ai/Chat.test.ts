@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Layer, Option, Predicate, Ref, Schema } from "effect"
+import { Effect, Layer, Predicate, Ref, Schema } from "effect"
 import { TestClock } from "effect/testing"
 import { Chat, IdGenerator, Prompt } from "effect/unstable/ai"
 import { Persistence } from "effect/unstable/persistence"
@@ -12,11 +12,11 @@ const withConstantIdGenerator = (id: string) =>
 
 const PersistenceLayer = Layer.provideMerge(
   Chat.layerPersisted({ storeId: "chat" }),
-  Persistence.layerMemory
+  Persistence.layerBackingMemory
 )
 
 describe("Chat", () => {
-  it("should persist chat history to the backing persistence store", () =>
+  it.effect("should persist chat history to the backing persistence store", () =>
     Effect.gen(function*() {
       const storeId = "chat"
       const chatId = "1"
@@ -52,7 +52,7 @@ describe("Chat", () => {
       assert.deepStrictEqual(chatHistory, storedHistory)
     }).pipe(withConstantIdGenerator("msg_abc123"), Effect.provide(PersistenceLayer)))
 
-  it("should respect the specified time to live", () =>
+  it.effect("should respect the specified time to live", () =>
     Effect.gen(function*() {
       const storeId = "chat"
       const chatId = "1"
@@ -92,10 +92,10 @@ describe("Chat", () => {
 
       const afterExpiration = yield* store.get(chatId)
 
-      assert.deepStrictEqual(afterExpiration, Option.none())
+      assert.isUndefined(afterExpiration)
     }).pipe(withConstantIdGenerator("msg_abc123"), Effect.provide(PersistenceLayer)))
 
-  it("should prefer the message identifier of the most recent assistant message", () =>
+  it.effect("should prefer the message identifier of the most recent assistant message", () =>
     Effect.gen(function*() {
       const storeId = "chat"
       const chatId = "2"
@@ -135,7 +135,7 @@ describe("Chat", () => {
       assert.deepStrictEqual(storedHistory, expectedHistory)
     }).pipe(withConstantIdGenerator("msg_abc123"), Effect.provide(PersistenceLayer)))
 
-  it("should raise an error when retrieving a chat that does not exist", () =>
+  it.effect("should raise an error when retrieving a chat that does not exist", () =>
     Effect.gen(function*() {
       const persistence = yield* Chat.Persistence
 

@@ -2,31 +2,11 @@
  * Browser implementations of the Effect `HttpClient`.
  *
  * This module exposes HTTP client layers for code that runs in a browser. It
- * re-exports the fetch-based client for the common case, where requests should
- * use the platform `fetch` implementation and optional `RequestInit` defaults,
- * and it provides an `XMLHttpRequest`-backed layer for integrations that need
- * XHR semantics such as response type control or environments where XHR is the
- * required transport.
- *
- * Use these layers for single-page applications, browser tests, generated
- * `HttpApiClient`s, and other client-side Effect programs that need HTTP
- * requests to participate in interruption, typed transport / decode errors, and
- * Effect's response body readers.
- *
- * Browser networking rules still apply. Cross-origin requests are subject to
- * CORS preflights and server allowlists, especially when using custom headers,
- * non-simple methods, or non-simple content types. Only CORS-exposed response
- * headers are readable, and cookies / authentication are controlled by the
- * browser and the configured fetch `RequestInit.credentials` policy. The XHR
- * layer uses the browser's `XMLHttpRequest` defaults for credentials.
- *
- * Body handling differs between the transports. Fetch delegates body framing to
- * the Web Fetch implementation. The XHR client sends empty, raw, `Uint8Array`,
- * and `FormData` bodies directly, buffers `Stream` request bodies before
- * sending, defaults responses to text, and can be switched to `ArrayBuffer`
- * responses with `withXHRArrayBuffer`. When sending `FormData`, avoid setting
- * an incompatible `Content-Type` header so the browser can generate the
- * multipart boundary.
+ * re-exports the fetch-based `Fetch`, `RequestInit`, and `layerFetch` APIs for
+ * the common case where requests use the platform `fetch` implementation. It
+ * also provides an `XMLHttpRequest`-backed client, including controls for the
+ * XHR response type, an overridable `XMLHttpRequest` constructor service, and
+ * the `layerXMLHttpRequest` layer.
  *
  * @since 4.0.0
  */
@@ -59,14 +39,14 @@ export {
   /**
    * Context reference for the `fetch` implementation used by the fetch-based HTTP client.
    *
-   * @category Fetch
+   * @category fetch
    * @since 4.0.0
    */
   Fetch,
   /**
    * Layer that provides an `HttpClient` implementation backed by the configured `Fetch` function.
    *
-   * @category Fetch
+   * @category fetch
    * @since 4.0.0
    */
   layer as layerFetch,
@@ -101,8 +81,8 @@ export type XHRResponseType = "arraybuffer" | "text"
  *
  * **When to use**
  *
- * Use when XHR-backed HTTP requests need to receive response bodies as text or
- * as raw `ArrayBuffer` values.
+ * Use when you need XHR-backed HTTP requests to receive response bodies as text
+ * or raw `ArrayBuffer` values.
  *
  * @see {@link XHRResponseType} for the allowed response body modes
  * @see {@link withXHRArrayBuffer} for scoping XHR response handling to `ArrayBuffer`

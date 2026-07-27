@@ -37,15 +37,15 @@ export interface CachedFunctionOptions<A> {
  * });
  * ```
  */
-export const cachedFunction = <A, B, E, R>(
-  fn: (args: A) => Effect.Effect<B, E, R>,
+export const cachedFunction = <A extends Array<any>, B, E, R>(
+  fn: (...args: A) => Effect.Effect<B, E, R>,
   options?: CachedFunctionOptions<A>,
-): Effect.Effect<(args: A) => Effect.Effect<B, E, R>> =>
+): Effect.Effect<(...args: A) => Effect.Effect<B, E, R>> =>
   Effect.sync(() => {
     const keyFn = options?.key ?? JSON.stringify;
     const cache = new Map<string, Deferred.Deferred<B, E>>();
 
-    return (args: A): Effect.Effect<B, E, R> =>
+    return (...args: A): Effect.Effect<B, E, R> =>
       Effect.suspend(() => {
         const cacheKey = keyFn(args);
         const existing = cache.get(cacheKey);
@@ -61,7 +61,7 @@ export const cachedFunction = <A, B, E, R>(
           cache.set(cacheKey, deferred);
 
           // Execute the effect and complete the deferred
-          const exit = yield* Effect.exit(fn(args));
+          const exit = yield* Effect.exit(fn(...args));
           yield* Deferred.done(deferred, exit);
 
           if (exit._tag === "Failure") {

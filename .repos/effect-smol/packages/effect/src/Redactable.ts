@@ -6,64 +6,6 @@
  * Typical use cases include masking secrets, tokens, or personal data in logs, traces,
  * and serialized output.
  *
- * ## Mental model
- *
- * - **Redactable** - an object that implements `[symbolRedactable]`, a method
- *   that receives the current `Context` and returns a replacement value.
- * - **symbolRedactable** - the well-known `Symbol` key that marks an object as
- *   redactable.
- * - **redact** - the primary entry point: pass any value and get back either its
- *   redacted form (if it is `Redactable`) or the original value unchanged.
- * - **getRedacted** - lower-level helper that calls `[symbolRedactable]` directly
- *   on a value already known to be `Redactable`.
- * - The `Context` passed to `[symbolRedactable]` comes from the current fiber.
- *   If no fiber is active, an empty `Context` is used.
- *
- * ## Common tasks
- *
- * - **Make a value redactable**: implement the {@link Redactable} interface by
- *   adding a `[symbolRedactable]` method.
- * - **Redact an unknown value**: call {@link redact} - it returns the original
- *   value when it is not redactable.
- * - **Check if a value is redactable**: use {@link isRedactable}.
- * - **Get the redacted form of a known `Redactable`**: use {@link getRedacted}.
- *
- * ## Gotchas
- *
- * - `[symbolRedactable]` receives the fiber's `Context` as its argument.
- * - Outside of an Effect runtime (no current fiber), `getRedacted` still works
- *   but passes an empty `Context`, so service lookups will not find anything.
- * - `redact` is not recursive: if a redactable object contains nested
- *   redactable values, only the outermost redaction is applied.
- *
- * ## Quickstart
- *
- * **Example** (Masking an API key)
- *
- * ```ts
- * import { Context, Redactable } from "effect"
- *
- * class ApiKey {
- *   constructor(readonly raw: string) {}
- *
- *   [Redactable.symbolRedactable](_ctx: Context.Context<never>) {
- *     return this.raw.slice(0, 4) + "..."
- *   }
- * }
- *
- * const key = new ApiKey("sk-1234567890abcdef")
- *
- * console.log(Redactable.isRedactable(key))  // true
- * console.log(Redactable.redact(key))         // "sk-1..."
- * console.log(Redactable.redact("plain"))     // "plain"
- * ```
- *
- * ## See also
- *
- * - {@link Redactable} - the interface to implement
- * - {@link symbolRedactable} - the symbol key
- * - {@link redact} - the main redaction entry point
- *
  * @since 4.0.0
  */
 import type * as Context from "./Context.ts"
@@ -193,8 +135,8 @@ export function redact(u: unknown): unknown {
  *
  * **When to use**
  *
- * Use when you have already verified the value is `Redactable`, for
- * example with {@link isRedactable}, and want to avoid a second check.
+ * Use when you need to read the redacted representation from a value already
+ * verified as `Redactable`.
  *
  * **Details**
  *

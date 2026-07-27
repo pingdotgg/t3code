@@ -8,18 +8,22 @@
  * generate visualizations when a size change needs inspection.
  *
  * Reports compare files by basename and display gzipped Rollup output sizes in
- * decimal kilobytes. If a current fixture has no matching basename in the base
- * directory it is reported as unchanged, and visualization artifacts are named
- * from entry file stems in the requested output directory, so duplicate names can
- * make the output misleading.
+ * decimal kilobytes. Base fixtures are bundled only when the matching file
+ * exists; if a current fixture has no matching basename in the base directory it
+ * is reported as unchanged. Visualization artifacts are named from entry file
+ * stems in the requested output directory, so duplicate names can make the
+ * output misleading.
  *
  * @since 4.0.0
  */
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
+import * as FileSystem from "effect/FileSystem"
+import { constFalse } from "effect/Function"
 import * as Layer from "effect/Layer"
 import * as Path from "effect/Path"
+import { fileURLToPath } from "node:url"
 import { Fixtures } from "./Fixtures.ts"
 import type { BundleStats } from "./Rollup.ts"
 import { Rollup } from "./Rollup.ts"
@@ -37,7 +41,7 @@ export class ReporterError extends Data.TaggedError("ReporterError")<{
 /**
  * Options for generating a bundle size comparison report against fixture files from a base directory.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export interface ReportOptions {
@@ -47,7 +51,7 @@ export interface ReportOptions {
 /**
  * Options for generating bundle visualizations for selected entry files into an output directory.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export interface VisualizeOptions {
@@ -58,10 +62,21 @@ export interface VisualizeOptions {
 /**
  * Options for generating a bundle size report for an explicit list of entry files.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export interface ReportSelectedOptions {
+  readonly paths: ReadonlyArray<string>
+}
+
+/**
+ * Options for generating a bundle size comparison report for explicit entry files against a base checkout.
+ *
+ * @category options
+ * @since 4.0.0
+ */
+export interface ReportSelectedComparisonOptions {
+  readonly baseDirectory: string
   readonly paths: ReadonlyArray<string>
 }
 
@@ -75,9 +90,11 @@ export class Reporter extends Context.Service<Reporter>()(
   "@effect/bundle/Reporter",
   {
     make: Effect.gen(function*() {
+      const fs = yield* FileSystem.FileSystem
       const path = yield* Path.Path
       const { fixtures, fixturesDir } = yield* Fixtures
       const rollup = yield* Rollup
+      const currentDirectory = path.resolve(fileURLToPath(new URL("../../../../", import.meta.url)))
 
       const calculateDifference = (current: BundleStats, previous: BundleStats) => {
         const currSize = current.sizeInBytes
@@ -98,26 +115,47 @@ export class Reporter extends Context.Service<Reporter>()(
         }
       }
 
-      const createReport = (curr: ReadonlyArray<BundleStats>, prev: ReadonlyArray<BundleStats>): string => {
+      const createComparisonReport = (
+        entries: ReadonlyArray<{
+          readonly current: BundleStats
+          readonly previous: BundleStats
+          readonly filename: string
+        }>
+      ): string => {
         const lines: Array<string> = [
           "| File Name | Current Size | Previous Size | Difference |",
           "|:----------|:------------:|:-------------:|:----------:|"
         ]
-        for (const current of curr) {
-          const previous = prev.find((previous) => {
-            return path.basename(previous.path) === path.basename(current.path)
-          }) ?? current
+        for (const { current, previous, filename } of entries) {
           const comparison = calculateDifference(current, previous)
-          const filename = `\`${comparison.filename}\``
           const currKb = `${comparison.currKb} KB`
           const prevKb = `${comparison.prevKb} KB`
           const diffKb = `${comparison.diffKb} KB`
           const diffPct = `${comparison.diffPct.toFixed(2)}%`
           const sign = comparison.diff === 0 ? "" : comparison.diff > 0 ? "+" : "-"
-          const line = `| ${filename} | ${currKb} | ${prevKb} | ${sign}${diffKb} (${sign}${diffPct}) |`
+          const line = `| \`${filename}\` | ${currKb} | ${prevKb} | ${sign}${diffKb} (${sign}${diffPct}) |`
           lines.push(line)
         }
         return lines.join("\n") + "\n"
+      }
+
+      const createReport = (curr: ReadonlyArray<BundleStats>, prev: ReadonlyArray<BundleStats>): string => {
+        const entries: Array<{
+          readonly current: BundleStats
+          readonly previous: BundleStats
+          readonly filename: string
+        }> = []
+        for (const current of curr) {
+          const previous = prev.find((previous) => {
+            return path.basename(previous.path) === path.basename(current.path)
+          }) ?? current
+          entries.push({
+            current,
+            previous,
+            filename: path.basename(current.path)
+          })
+        }
+        return createComparisonReport(entries)
       }
 
       const createSelectedReport = (stats: ReadonlyArray<BundleStats>): string => {
@@ -136,16 +174,39 @@ export class Reporter extends Context.Service<Reporter>()(
         return lines.join("\n") + "\n"
       }
 
+      const createVisualizationReport = (paths: ReadonlyArray<string>, outputDirectory: string): string => {
+        const lines: Array<string> = [
+          "| File Name | Generated Bundle | Treemap | Raw Data |",
+          "|:----------|:----------------|:--------|:---------|"
+        ]
+        for (const entryPath of paths) {
+          const name = path.parse(entryPath).name
+          const filename = path.relative(currentDirectory, path.resolve(entryPath))
+          const minified = path.join(outputDirectory, `${name}.min.js`)
+          const treemap = path.join(outputDirectory, `${name}.treemap.html`)
+          const rawData = path.join(outputDirectory, `${name}.raw-data.json`)
+          lines.push(`| \`${filename}\` | \`${minified}\` | \`${treemap}\` | \`${rawData}\` |`)
+        }
+        return lines.join("\n") + "\n"
+      }
+
       const report = Effect.fn("Reporter.report")(
         function*(options: ReportOptions) {
           yield* Effect.logInfo(`Found ${fixtures.length} files to bundle`)
 
+          const currentPaths = fixtures.map((fixture) => path.join(fixturesDir, fixture))
+          const previousPaths = yield* Effect.filter(
+            fixtures.map((fixture) => path.join(options.baseDirectory, fixture)),
+            (previousPath) => fs.exists(previousPath).pipe(Effect.orElseSucceed(constFalse)),
+            { concurrency: fixtures.length }
+          )
+
           const [currentStats, previousStats] = yield* Effect.all([
             rollup.bundleAll({
-              paths: fixtures.map((fixture) => path.join(fixturesDir, fixture))
+              paths: currentPaths
             }),
             rollup.bundleAll({
-              paths: fixtures.map((fixture) => path.join(options.baseDirectory, fixture))
+              paths: previousPaths
             })
           ], { concurrency: 2 })
 
@@ -157,11 +218,13 @@ export class Reporter extends Context.Service<Reporter>()(
 
       const visualize = Effect.fn("Reporter.visualize")(
         function*(options: VisualizeOptions) {
+          yield* fs.makeDirectory(options.outputDirectory, { recursive: true })
           yield* rollup.bundleAll({
             paths: options.paths,
             outputDirectory: options.outputDirectory,
             visualize: true
           })
+          return createVisualizationReport(options.paths, options.outputDirectory)
         }
       )
 
@@ -174,8 +237,55 @@ export class Reporter extends Context.Service<Reporter>()(
         }
       )
 
+      const reportSelectedComparison = Effect.fn("Reporter.reportSelectedComparison")(
+        function*(options: ReportSelectedComparisonOptions) {
+          yield* Effect.logInfo(`Found ${options.paths.length} files to compare`)
+          const baseDirectory = path.resolve(options.baseDirectory)
+          const currentPaths = options.paths.map((currentPath) => path.resolve(currentPath))
+          const previousPaths = yield* Effect.forEach(
+            currentPaths,
+            Effect.fnUntraced(function*(currentPath) {
+              const relativePath = path.relative(currentDirectory, currentPath)
+              if (relativePath === "" || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+                return yield* Effect.fail(
+                  new ReporterError({
+                    cause: `Selected bundle entry must be inside ${currentDirectory}: ${currentPath}`
+                  })
+                )
+              }
+              const previousPath = path.join(baseDirectory, relativePath)
+              yield* fs.makeDirectory(path.dirname(previousPath), { recursive: true })
+              yield* fs.copy(currentPath, previousPath, { overwrite: true })
+              return previousPath
+            }),
+            { concurrency: currentPaths.length }
+          )
+
+          const [currentStats, previousStats] = yield* Effect.all([
+            rollup.bundleAll({ paths: currentPaths }),
+            rollup.bundleAll({ paths: previousPaths })
+          ], { concurrency: 2 })
+
+          const entries: Array<{
+            readonly current: BundleStats
+            readonly previous: BundleStats
+            readonly filename: string
+          }> = []
+          for (let i = 0; i < currentStats.length; i++) {
+            entries.push({
+              current: currentStats[i]!,
+              previous: previousStats[i]!,
+              filename: path.relative(currentDirectory, currentStats[i]!.path)
+            })
+          }
+          yield* Effect.logInfo("Bundling complete! Generating bundle size report...")
+          return createComparisonReport(entries)
+        }
+      )
+
       return {
         report,
+        reportSelectedComparison,
         reportSelected,
         visualize
       } as const

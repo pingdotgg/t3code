@@ -1,0 +1,94 @@
+---
+title: Command
+description: Alchemy's cloud-agnostic primitives for local processes in the deploy graph — memoized builds, one-off commands, and dev servers.
+---
+
+The Command provider puts local child processes into the Stack's
+dependency graph: `Build` for a command that produces an output
+asset, `Exec` for a command run purely for its side effects, and
+`Dev` for a long-lived dev server. There is no setup — no
+credentials, nothing to configure. `Command.providers()` is already
+merged into both `AWS.providers()` and `Cloudflare.providers()`, so
+big-hub users have it for free; a standalone Stack registers it with
+`{ providers: Command.providers(), state: Alchemy.localState() }`.
+Import from `alchemy/Command`.
+
+## Resources
+
+`Build` runs a command that must produce an output asset (`outdir`)
+and tracks it in state:
+
+```typescript
+const build = yield* Command.Build("vite-build", {
+  command: "npm run build",
+  cwd: "./frontend",
+  outdir: "dist",
+});
+yield* Console.log(build.outdir); // path to the dist directory, relative to process.cwd()
+yield* Console.log(build.hash.output); // hash of the output files (when memo is enabled)
+```
+
+Inputs are content-hashed by default, so an unchanged project skips
+the rebuild entirely — see [Memoization](/command/memoization) for
+how the hash is computed and how to scope it.
+
+`Exec` runs a command purely for its side effects:
+
+```typescript
+yield* Command.Exec("codegen", {
+  command: "npm run codegen",
+  cwd: "./packages/api",
+});
+
+yield* Command.Exec("migrate", {
+  command: "npm run db:migrate",
+  env: {
+    DATABASE_URL: Redacted.make("postgres://..."),
+  },
+});
+```
+
+There is no output contract: the resource succeeds iff the command
+exits with code `0`, is skipped when its inputs are unchanged, and
+re-runs when the `command`, `env`, or memoized files change — e.g. a
+recreated database's connection URL with identical files. Deleting
+an `Exec` never reverses its side effects.
+
+`Dev` runs a long-lived process scoped to the stack instance:
+
+```typescript
+const dev = yield* Command.Dev("Frontend", {
+  command: "npm run dev",
+});
+yield* Console.log(dev.url); // e.g. "http://localhost:5173"
+```
+
+`Dev` only runs during `alchemy dev` — during `alchemy deploy` it is
+a no-op. See [Dev servers](/command/dev-servers) for the process
+lifecycle, restarts, and URL extraction.
+
+:::caution
+Command strings are whitespace-split into a binary and arguments —
+there is no quoting support unless you set `shell`. `Build`'s delete
+removes the output directory (`Exec`'s delete does nothing).
+`Redacted` env values are unwrapped at spawn time and kept out of
+logs and state.
+:::
+
+Pre-beta.58 `Build.Command` / `Build.DevServer` state converges
+automatically to `Command.Build` / `Command.Dev` on the next deploy
+([beta.58](/blog/2026-06-24-beta-58)).
+
+## Compose with your cloud
+
+The static-site guides for
+[Cloudflare](/cloudflare/frontend/static-site) and
+[AWS](/aws/frontend/static-site) create a `Command.Build` (and, in
+dev mode, a `Command.Dev`) under the hood, and
+[`alchemy dev`](/cli/dev) is the loop that hosts `Dev` processes.
+
+## Reference
+
+[Build](/providers/command/build) ·
+[Dev](/providers/command/dev) ·
+[Exec](/providers/command/exec)

@@ -1,5 +1,6 @@
 import * as rds from "@distilled.cloud/aws/rds";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -38,15 +39,45 @@ export interface DBClusterEndpoint extends Resource<
   "AWS.RDS.DBClusterEndpoint",
   DBClusterEndpointProps,
   {
+    /**
+     * Identifier of the custom endpoint.
+     */
     dbClusterEndpointIdentifier: string;
+    /**
+     * ARN of the custom endpoint.
+     */
     dbClusterEndpointArn: string | undefined;
+    /**
+     * Cluster that owns the endpoint.
+     */
     dbClusterIdentifier: string | undefined;
+    /**
+     * DNS address applications connect to.
+     */
     endpoint: string | undefined;
+    /**
+     * Status of the endpoint (e.g. `available`).
+     */
     status: string | undefined;
+    /**
+     * Endpoint type (`CUSTOM` for managed endpoints).
+     */
     endpointType: string | undefined;
+    /**
+     * Traffic routing type of the custom endpoint (`READER`, `ANY`).
+     */
     customEndpointType: string | undefined;
+    /**
+     * Instances explicitly attached to the endpoint.
+     */
     staticMembers: string[];
+    /**
+     * Instances excluded from the endpoint.
+     */
     excludedMembers: string[];
+    /**
+     * Tags on the endpoint.
+     */
     tags: Record<string, string>;
   },
   never,
@@ -54,7 +85,31 @@ export interface DBClusterEndpoint extends Resource<
 > {}
 
 /**
- * A custom Aurora cluster endpoint.
+ * A custom Aurora cluster endpoint — a DNS name that routes to a chosen
+ * subset of a cluster's instances, on top of the built-in writer and reader
+ * endpoints of a `DBCluster`.
+ *
+ * Use it to pin analytics traffic to specific readers or to keep a stable
+ * address across instance replacements. Changing the identifier or owning
+ * cluster replaces the endpoint; type and membership update in place.
+ * @resource
+ * @section Creating Custom Endpoints
+ * @example Reader Endpoint for a Cluster
+ * ```typescript
+ * const readers = yield* DBClusterEndpoint("Readers", {
+ *   dbClusterIdentifier: cluster.dbClusterIdentifier,
+ *   endpointType: "READER",
+ * });
+ * ```
+ *
+ * @example Pin Specific Instances
+ * ```typescript
+ * const analytics = yield* DBClusterEndpoint("Analytics", {
+ *   dbClusterIdentifier: cluster.dbClusterIdentifier,
+ *   endpointType: "ANY",
+ *   staticMembers: [reporting.dbInstanceIdentifier],
+ * });
+ * ```
  */
 export const DBClusterEndpoint = Resource<DBClusterEndpoint>(
   "AWS.RDS.DBClusterEndpoint",
@@ -103,6 +158,23 @@ export const DBClusterEndpointProvider = () =>
 
       return {
         stables: ["dbClusterEndpointArn", "dbClusterEndpointIdentifier"],
+        // Enumerate every custom cluster endpoint in the account/region.
+        // `describeDBClusterEndpoints` with no filter returns custom endpoints
+        // across all clusters; system endpoints (EndpointType WRITER/READER)
+        // aren't managed via createDBClusterEndpoint, so we keep only CUSTOM
+        // ones. Tags aren't returned by describe, so each item carries `{}`
+        // (matching `read`'s default when there is no recorded tag set).
+        list: () =>
+          rds.describeDBClusterEndpoints.pages({}).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.DBClusterEndpoints ?? [])
+                  .filter((endpoint) => endpoint.EndpointType === "CUSTOM")
+                  .map((endpoint) => toAttrs({ endpoint, tags: {} })),
+              ),
+            ),
+          ),
         diff: Effect.fn(function* ({ id, olds, news }) {
           if (!isResolved(news)) return;
           if (

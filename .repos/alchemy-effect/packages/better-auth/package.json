@@ -1,11 +1,11 @@
 {
   "name": "@alchemy.run/better-auth",
-  "version": "2.0.0-beta.49",
+  "version": "2.0.0-beta.65",
   "license": "Apache-2.0",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
     "directory": "packages/better-auth"
   },
   "files": [
@@ -13,7 +13,7 @@
     "src"
   ],
   "scripts": {
-    "build": "bun pm pack"
+    "build": "tsc -b"
   },
   "exports": {
     ".": {

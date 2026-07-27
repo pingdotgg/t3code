@@ -1,0 +1,238 @@
+---
+title: Send & receive email
+description: Enable Email Routing on a zone, verify destination addresses, forward inbound mail with rules and a catch-all, and send email from a Worker with the send_email binding.
+sidebar:
+  order: 19
+---
+
+Cloudflare Email Routing turns a zone you own into a mail endpoint:
+inbound mail to any address on the domain is matched by rules and
+forwarded, dropped, or handed to a Worker — and once routing is
+enabled, Workers can also *send* mail from that domain through a
+`send_email` binding. This guide wires up both directions. For the
+full Email surface — sending subdomains, Email Security — see
+[Email](/cloudflare/email).
+
+You need a zone on Cloudflare first — see
+[Custom domains & routes](/cloudflare/networking/custom-domains) for
+creating or adopting one. The resource snippets below run inside a
+Stack's `Effect.gen` body:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    // resources go here
+    return {};
+  }),
+);
+```
+
+## Enable Email Routing on the zone
+
+`Email.Routing` flips Email Routing on for a zone. It's the
+prerequisite for everything else on this page — receiving mail
+through rules *and* sending mail from a Worker:
+
+```typescript
+const routing = yield* Cloudflare.Email.Routing("Routing", {
+  zone: "example.com",
+});
+// routing.zoneId, routing.enabled, routing.status
+```
+
+`zone` accepts a zone id, a zone name, or a `{ zoneId }` object.
+Moving the resource to a different zone is a replacement; destroying
+it disables Email Routing on the zone.
+
+## Verify a destination address
+
+Rules can only forward to addresses Cloudflare has verified.
+`Email.Address` registers a destination address on the account:
+
+```typescript
+const inbox = yield* Cloudflare.Email.Address("Inbox", {
+  email: "you@personal.example",
+});
+// inbox.verified, inbox.verifiedAt
+```
+
+Cloudflare emails a verification link when the address is first
+created — until the recipient clicks it, rules forwarding there will
+not deliver. The `verified` attribute reflects the current status.
+Destination addresses are account-scoped (not per-zone), and changing
+`email` triggers a replacement.
+
+## Forward an address
+
+`Email.Rule` matches inbound mail on the zone and applies actions —
+`forward` to verified destinations, `drop`, or `worker`:
+
+```typescript
+const rule = yield* Cloudflare.Email.Rule("InboxRule", {
+  zone: "example.com",
+  name: "Forward inbox to destination",
+  matchers: [{ type: "literal", field: "to", value: "inbox@example.com" }],
+  actions: [{ type: "forward", value: ["you@personal.example"] }],
+});
+```
+
+The `literal` matcher is an exact match on the `to:` address. Mail
+that matches no rule falls through to the zone's catch-all rule.
+Lower `priority` numbers run first (default `0`).
+
+## Catch everything else
+
+The catch-all rule is a per-zone singleton — once Email Routing is
+enabled it always exists (disabled and dropping mail by default), so
+`Email.CatchAll` never creates or deletes anything physical. It puts
+the desired configuration, and on destroy restores whatever the rule
+looked like before alchemy managed it:
+
+```typescript
+yield* Cloudflare.Email.CatchAll("CatchAll", {
+  zone: routing.zoneId,
+  actions: [{ type: "forward", value: ["you@personal.example"] }],
+});
+```
+
+To silently discard unmatched mail instead, use a `drop` action:
+
+```typescript
+yield* Cloudflare.Email.CatchAll("DropTheRest", {
+  zone: routing.zoneId,
+  name: "drop unmatched",
+  actions: [{ type: "drop" }],
+});
+```
+
+## Hand mail to a Worker
+
+Both `Rule` and `CatchAll` accept a `worker` action whose value is
+the deployed Worker script name (the `workerName` attribute of a
+deployed Worker). Matched messages are delivered to that Worker's
+`email` handler instead of a mailbox:
+
+```typescript
+yield* Cloudflare.Email.CatchAll("CatchAllWorker", {
+  zone: routing.zoneId,
+  actions: [{ type: "worker", value: ["my-email-worker"] }],
+});
+```
+
+## Declare a send_email binding
+
+Sending is the other direction. `Email.SendEmail` is a binding
+descriptor, not a cloud resource — it names the binding and records
+optional sender/destination restrictions that Cloudflare enforces at
+send time:
+
+```typescript
+// src/email.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Email = Cloudflare.Email.SendEmail("Email", {
+  allowedSenderAddresses: ["bot@example.com"],
+  destinationAddress: "you@personal.example",
+});
+```
+
+`destinationAddress` pins the binding to a single verified
+destination; `allowedDestinationAddresses` allows a list instead (the
+two are mutually exclusive). `allowedSenderAddresses` restricts the
+`from:` side. Omit all three to let the Worker send to any verified
+destination on the account.
+
+## Send from the Worker
+
+Bind the descriptor with `Email.Send` in the Worker's init phase and
+provide `Email.SendBinding` as the implementation layer. The client's
+`send` method takes the familiar `{ from, to, subject, text }` shape
+(plus `html`, `cc`, `bcc`, `replyTo`, `headers`, and `attachments`):
+
+```typescript
+// src/notifier.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Email } from "./email.ts";
+
+export default Cloudflare.Worker(
+  "Notifier",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const email = yield* Cloudflare.Email.Send(Email);
+
+    return {
+      fetch: Effect.gen(function* () {
+        yield* email.send({
+          from: "bot@example.com",
+          to: "you@personal.example",
+          subject: "Hello from a Worker",
+          text: "Sent via the send_email binding.",
+        });
+        return yield* HttpServerResponse.json({ ok: true });
+      }).pipe(
+        Effect.catchTag("SendEmailError", (error) =>
+          Effect.succeed(
+            HttpServerResponse.text(error.message, { status: 502 }),
+          ),
+        ),
+      ),
+    };
+  }).pipe(Effect.provide(Cloudflare.Email.SendBinding)),
+);
+```
+
+Cloudflare-side rejections (an unverified destination, a sender
+outside the allowed list) surface as a typed `SendEmailError`, kept
+in the error channel until you handle it — here with
+`Effect.catchTag`. The client also exposes `sendRaw` for a pre-built
+`EmailMessage` from `cloudflare:email`, and `raw` for direct access
+to the underlying runtime binding.
+
+## Add the Worker to the Stack
+
+```typescript
+// alchemy.run.ts
+import Notifier from "./src/notifier.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    // ...routing, address, and rules from above...
+    const notifier = yield* Notifier;
+    return { url: notifier.url };
+  }),
+);
+```
+
+Two constraints to keep in mind: the `from:` address must live on a
+domain with Email Routing enabled (the `Routing` resource above), and
+the `to:` address must be a verified destination on the account (the
+`Address` resource above). Until the destination's verification link
+is clicked, sends fail with a `SendEmailError`.
+
+## Where next
+
+- [Email](/cloudflare/email) — the concept map for the category.
+- [Custom domains & routes](/cloudflare/networking/custom-domains) — get
+  the zone the mail routes through.
+- [Domains](/cloudflare/networking/domains) — zones and DNS records.
+- [Workers](/cloudflare/compute/workers) — the runtime that sends and
+  receives.
+
+Reference:
+
+- [Routing API reference](/providers/cloudflare/email/routing)
+- [Address API reference](/providers/cloudflare/email/address)
+- [Rule API reference](/providers/cloudflare/email/rule)
+- [CatchAll API reference](/providers/cloudflare/email/catchall)
+- [Send API reference](/providers/cloudflare/email/send)

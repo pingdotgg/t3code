@@ -1,0 +1,99 @@
+---
+title: Frontend frameworks
+description: Deploy any pure-Vite app (TanStack Start, React Router, Vue, SolidStart) with Cloudflare.Website.Vite, or any build command's static output (Zola, Astro) with Cloudflare.Website.StaticSite.
+sidebar:
+  label: Overview
+  order: 1
+---
+
+Alchemy deploys frontends to Cloudflare with two resources:
+`Cloudflare.Website.Vite` for anything built by Vite, and
+`Cloudflare.Website.StaticSite` for anything built by any other
+command.
+
+## Cloudflare.Website.Vite
+
+```typescript
+const site = yield* Cloudflare.Website.Vite("Website");
+```
+
+`Cloudflare.Website.Vite` deploys **any pure-Vite app** — it runs a
+programmatic `vite build` of your project with the Cloudflare plugin
+appended to the plugins your own `vite.config.ts` declares, then
+uploads the client assets (and server bundle, if the build produces
+one) as a Worker. No `main` entrypoint, no build command, no output
+directory, no Wrangler config. Whatever framework plugin drives your
+Vite build — TanStack Start, React Router, Vue, SolidStart — rides
+along unchanged.
+
+## Cloudflare.Website.StaticSite
+
+```typescript
+const site = yield* Cloudflare.Website.StaticSite("Website", {
+  command: "zola build",
+  outdir: "public",
+});
+```
+
+`Cloudflare.Website.StaticSite` deploys **any directory produced by
+any build command** — it runs the command as a shell process,
+content-hashes the output directory, and serves it as Worker static
+assets. The framework (or lack of one) doesn't matter: if a command
+produces a directory of files, StaticSite deploys it.
+
+Both resources are thin wrappers over a
+[Worker](/providers/cloudflare/workers/worker), so everything a Worker
+supports applies to both: `domain`, `env` bindings, `compatibility`
+flags, and a custom `main` entrypoint in front of the assets.
+
+## What's supported
+
+| Framework | Resource | Status | Guide |
+| --- | --- | --- | --- |
+| React / Vite SPA | `Vite` | Supported | [Vite SPA](/cloudflare/frontend/vite-spa) |
+| TanStack Start (React & Solid) | `Vite` | Supported | [TanStack Start](/cloudflare/frontend/tanstack-start) |
+| React Router (incl. RSC) | `Vite` | Supported | [React Router](/cloudflare/frontend/react-router) |
+| Vue | `Vite` | Supported | [Vue](/cloudflare/frontend/vue) |
+| SolidStart / SolidJS SSR | `Vite` | Supported | [SolidStart](/cloudflare/frontend/solidstart) |
+| Astro | `StaticSite` (static output) | Vite support is a TODO | [Astro](/cloudflare/frontend/astro) |
+| Nuxt | — | Not yet supported | [Nuxt](/cloudflare/frontend/nuxt) |
+| Zola, Hugo, or any static generator | `StaticSite` | Supported | [Static sites](/cloudflare/frontend/static-site) |
+
+Every "Supported" row is backed by a checked-in example or a live
+deploy test in the Alchemy repository — plain Vite SPA deploys are
+live-tested with a vanilla fixture, and React itself is exercised
+via the TanStack Start example. The last row is deliberately
+open-ended: StaticSite runs any build command that produces a
+directory, so any static generator works the same way — Zola is the
+one exercised as an example.
+
+## How to choose
+
+The criterion is literal: `Cloudflare.Website.Vite` calls
+`vite.createBuilder({ root: rootDir, plugins: [cloudflare(...), ...] })`
+on your project root and runs `buildApp()` — nothing else.
+
+If your **entire app is built by `vite build`** — the framework is a
+plugin declared in `vite.config.ts` (`tanstackStart()`, `viteReact()`,
+`@vitejs/plugin-vue`, `solidStart()`) — use `Vite`. If the framework
+drives its own CLI build (`astro build`, `nuxi build`) or isn't
+JavaScript at all (Zola, Hugo), that build never enters Vite's
+builder, so use `StaticSite` on the build output instead. See
+[what "pure Vite" means](/cloudflare/frontend/vite#what-pure-vite-means)
+for the full picture.
+
+## Where next
+
+- [The Vite resource](/cloudflare/frontend/vite) — build model, env
+  inlining, runtime bindings, dev mode.
+- [The StaticSite resource](/cloudflare/frontend/static-site) — build
+  commands, custom Workers in front of assets, framework-native dev
+  servers.
+- Framework guides:
+  [Vite SPA](/cloudflare/frontend/vite-spa),
+  [TanStack Start](/cloudflare/frontend/tanstack-start),
+  [React Router](/cloudflare/frontend/react-router),
+  [Vue](/cloudflare/frontend/vue),
+  [SolidStart](/cloudflare/frontend/solidstart),
+  [Astro](/cloudflare/frontend/astro),
+  [Nuxt](/cloudflare/frontend/nuxt).

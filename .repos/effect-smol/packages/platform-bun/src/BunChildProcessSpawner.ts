@@ -1,5 +1,5 @@
 /**
- * Node.js implementation of `ChildProcessSpawner`.
+ * Bun implementation of `ChildProcessSpawner`.
  *
  * @since 4.0.0
  */

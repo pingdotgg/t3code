@@ -1,24 +1,8 @@
 /**
- * The `Hooks` module provides SolidJS hooks for reading, writing, mounting, and
- * subscribing to Effect atoms through the current Solid atom registry.
- *
- * **Common tasks**
- *
- * - Read an atom as a Solid accessor with {@link useAtomValue}
- * - Read and write a writable atom with {@link useAtom}
- * - Write without subscribing to the value with {@link useAtomSet}
- * - Refresh or mount atoms from components with {@link useAtomRefresh} and {@link useAtomMount}
- * - Convert `AsyncResult` atoms into Solid resources with {@link useAtomResource}
- * - Work with atom refs and nested ref properties with {@link useAtomRef}, {@link useAtomRefProp},
- *   and {@link useAtomRefPropValue}
- *
- * **Solid integration notes**
- *
- * Hooks in this module read the registry from {@link RegistryContext}, so they
- * should be used under the matching provider for the atom graph you want to
- * observe. Atom arguments are thunks so Solid can track dynamic atom selection;
- * subscriptions are registered in Solid computations and disposed with
- * `onCleanup` when the computation changes or the component unmounts.
+ * Solid hooks for using Effect Atoms from components and computations. The
+ * hooks read and write atoms through the current `RegistryContext`, mount atoms
+ * for cleanup, subscribe callbacks, seed initial values, expose `AsyncResult`
+ * atoms as Solid resources, and read values from `AtomRef` references.
  *
  * @since 4.0.0
  */

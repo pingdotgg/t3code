@@ -1,0 +1,31 @@
+{
+  "name": "@alchemy.run/benchmark-container",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "benchmark/container"
+  },
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "logs": "alchemy logs",
+    "tail": "alchemy tail",
+    "bench": "bun test test/bench.test.ts"
+  },
+  "dependencies": {
+    "@distilled.cloud/aws": "workspace:*",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/containers": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@types/bun": "catalog:"
+  }
+}

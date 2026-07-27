@@ -1,27 +1,12 @@
 /**
- * The `RunnerServer` module provides the transport-agnostic server side of the
- * cluster runner protocol. It turns the runner RPC group into handlers that
- * receive ping, notification, request, stream, and envelope messages from other
- * runners, then forwards them into `Sharding` and coordinates persisted replies
- * through `MessageStorage`.
+ * Provides server-side layers for the cluster runner protocol.
  *
- * **Common tasks**
- *
- * - Build a runner server once an `RpcServer.Protocol` has been supplied by a
- *   transport such as HTTP, WebSocket, or sockets
- * - Provide the complete runner runtime with `Sharding` and `Runners` clients
- *   using {@link layerWithClients}
- * - Embed a cluster client without serving runner RPCs or accepting shard
- *   assignments using {@link layerClientOnly}
- *
- * **Gotchas**
- *
- * - This module does not choose a wire transport; transport-specific modules
- *   provide the `RpcServer.Protocol`
- * - Persisted requests register reply handlers in `MessageStorage` before the
- *   message is delivered to `Sharding`
- * - Client-only layers clear the configured runner address, so they can send
- *   cluster messages but do not register as shard-owning runners
+ * Runner protocol handlers receive ping, notification, request, stream, and
+ * envelope messages from other runners. They forward those messages into
+ * `Sharding` and coordinate persisted replies through `MessageStorage`. This
+ * module includes the handler layer, a transport-independent RPC server layer, a
+ * full server layer that also provides runner clients, and a client-only layer
+ * for applications that do not serve runner RPCs.
  *
  * @since 4.0.0
  */
@@ -212,8 +197,8 @@ export const layerWithClients: Layer.Layer<
  *
  * **When to use**
  *
- * Use when you use this layer to embed a cluster client inside another Effect application
- * without registering with the ShardManager or receiving shard assignments.
+ * Use to embed a cluster client inside another Effect application without registering with
+ * the ShardManager or receiving shard assignments.
  *
  * @category layers
  * @since 4.0.0

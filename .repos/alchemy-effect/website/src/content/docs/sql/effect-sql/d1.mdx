@@ -1,0 +1,143 @@
+---
+title: D1
+description: SQL.D1 wraps a bound D1 database in an @effect/sql-d1 client — tagged-template queries with typed errors over the native binding.
+---
+
+`SQL.D1` opens an `@effect/sql-d1` client over a Cloudflare D1
+binding. Queries are Effects: they carry `SqlError` in the error
+channel, participate in interruption, and trace like everything else
+in your program.
+
+Install the driver — an optional peer of alchemy:
+
+```sh
+bun add @effect/sql-d1
+```
+
+## Connect
+
+Declare the database, bind it with
+`Cloudflare.D1.QueryDatabase`, and hand the client to `SQL.D1`:
+
+```typescript
+// src/db.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Database = Cloudflare.D1.Database("Database");
+```
+
+```typescript
+// src/api.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as SQL from "alchemy/SQL/D1";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Database } from "./db.ts";
+
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const d1 = yield* Cloudflare.D1.QueryDatabase(Database);
+    const sql = yield* SQL.D1(d1);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const users = yield* sql`SELECT * FROM users`;
+        return yield* HttpServerResponse.json({ users });
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.D1.QueryDatabaseBinding)),
+) {}
+```
+
+The client (and its prepared-statement cache) is built lazily on the
+first query of an execution and torn down when the event settles —
+see [Connection lifecycle](/sql/effect-sql/lifecycle).
+
+## Queries
+
+Interpolated values are parameters, never string concatenation:
+
+```typescript
+const user = yield* sql`SELECT * FROM users WHERE id = ${id}`;
+
+yield* sql`INSERT INTO users ${sql.insert({ name, email })}`;
+
+const rows = yield* sql`
+  SELECT * FROM users WHERE id IN ${sql.in(ids)}
+`;
+```
+
+Rows come back as plain objects typed by your annotation:
+`sql<{ id: number; name: string }>\`...\``.
+
+## Errors
+
+Failures surface as `SqlError` in the typed error channel:
+
+```typescript
+const users = yield* sql`SELECT * FROM users`.pipe(
+  Effect.catchTag("SqlError", (e) =>
+    Effect.succeed([]).pipe(Effect.tap(() => Effect.logWarning(e))),
+  ),
+);
+```
+
+## Batches instead of transactions
+
+D1 has no session transactions, so `sql.withTransaction` and
+streaming queries are unavailable on this driver. For atomic
+multi-statement writes, use the native binding's `batch` through the
+same `QueryDatabase` client — statements execute sequentially in one
+round trip and roll back together on failure:
+
+```typescript
+yield* d1.batch([
+  d1.prepare("UPDATE accounts SET balance = balance - ?1 WHERE id = ?2").bind(amount, from),
+  d1.prepare("UPDATE accounts SET balance = balance + ?1 WHERE id = ?2").bind(amount, to),
+]);
+```
+
+## Provide as a service
+
+For services that shouldn't know which database they run on, depend
+on the generic `SqlClient` tag and provide the database with
+`SQL.D1Layer`:
+
+```typescript
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+const makeUsers = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return {
+    find: (id: number) => sql<User>`SELECT * FROM users WHERE id = ${id}`,
+  };
+});
+
+const users = yield* makeUsers.pipe(Effect.provide(SQL.D1Layer(d1)));
+```
+
+The layer provides two tags from one per-execution client: the
+generic `SqlClient.SqlClient`, and `@effect/sql-d1`'s `D1Client` for
+code that needs it — including drizzle's `effect-d1` driver.
+Swapping `SQL.D1Layer` for
+[`SQL.PostgresLayer`](/sql/effect-sql/postgres#provide-as-a-service)
+moves the same service graph to Postgres unchanged.
+
+## Local dev
+
+`alchemy dev` runs the same Worker against a local D1 database via
+miniflare — `SQL.D1` works unchanged because it resolves whatever
+`D1Database` binding the runtime provides.
+
+## Where next
+
+- [Migrations](/sql/effect-sql/migrations) — apply `.sql` files as
+  part of deploy.
+- [Connection lifecycle](/sql/effect-sql/lifecycle) — when the
+  client is built and torn down.
+- [Drizzle on D1](/sql/drizzle/d1) — the same driver behind a typed
+  schema.
+- [D1](/cloudflare/data/d1) — the database resource: replication,
+  jurisdictions, imports, cloning.

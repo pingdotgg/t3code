@@ -7,10 +7,9 @@ const schema = Schema.toCodecJson(Schema.Struct({
   c: Schema.Array(Schema.String)
 }))
 
-const json = Schema.encodeSync(SchemaRepresentation.DocumentFromJson)(
-  SchemaRepresentation.fromAST(schema.ast)
-)
+const json = SchemaRepresentation.toJson(SchemaRepresentation.toRepresentation(schema.ast))
 
-SchemaRepresentation.toSchema(
-  Schema.decodeSync(SchemaRepresentation.DocumentFromJson)(JSON.parse(JSON.stringify(json)))
+SchemaRepresentation.fromRepresentation(
+  SchemaRepresentation.fromJson(JSON.parse(JSON.stringify(json))),
+  { revivers: [Schema.isFiniteReviver] }
 )

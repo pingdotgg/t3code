@@ -61,7 +61,7 @@ const wrap = <A, E, R>(effect: Effect.Effect<A, E, R>, message: string) =>
  * to the original if the exchange fails.
  */
 const createUploadToken = Effect.gen(function* () {
-  const env = yield* CloudflareEnvironment;
+  const env = yield* yield* CloudflareEnvironment;
   const http = yield* HttpClient.HttpClient;
   const createSubdomainEdgePreviewSession =
     yield* workers.createSubdomainEdgePreviewSession;
@@ -87,7 +87,7 @@ const createUploadToken = Effect.gen(function* () {
 
 const uploadScript = (options: EdgeSessionOptions, uploadToken: string) =>
   Effect.gen(function* () {
-    const env = yield* CloudflareEnvironment;
+    const env = yield* yield* CloudflareEnvironment;
     const createScriptEdgePreview = yield* workers.createScriptEdgePreview;
     return yield* createScriptEdgePreview({
       accountId: env.accountId,
@@ -109,9 +109,10 @@ const uploadScript = (options: EdgeSessionOptions, uploadToken: string) =>
 
 const workerHost = (scriptName: string) =>
   Effect.gen(function* () {
-    const env = yield* CloudflareEnvironment;
-    const getSubdomain = yield* workers.getSubdomain;
-    const { subdomain } = yield* getSubdomain({ accountId: env.accountId });
+    const env = yield* yield* CloudflareEnvironment;
+    const { subdomain } = yield* workers.getSubdomain({
+      accountId: env.accountId,
+    });
     return `${scriptName}.${subdomain}.workers.dev`;
   });
 

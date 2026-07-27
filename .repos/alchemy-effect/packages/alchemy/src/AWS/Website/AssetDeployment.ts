@@ -64,9 +64,23 @@ export interface AssetDeployment extends Resource<
   "AWS.Website.AssetDeployment",
   AssetDeploymentProps,
   {
+    /**
+     * Name of the destination bucket.
+     */
     bucketName: string;
+    /**
+     * Normalized key prefix the files were uploaded under (empty string when
+     * no prefix was configured).
+     */
     prefix: string;
+    /**
+     * Content hash of the uploaded file set — changes whenever any file body,
+     * content type, or cache-control changes. Useful as an invalidation token.
+     */
     version: string;
+    /**
+     * Number of files uploaded in this deployment.
+     */
     fileCount: number;
   },
   never,
@@ -77,16 +91,53 @@ export interface AssetDeployment extends Resource<
  * Upload a local directory into S3 with website-friendly defaults.
  *
  * `AssetDeployment` is a helper resource for website hosting. It uploads all
- * files in a directory, infers content types, applies cache-control defaults,
- * and can optionally purge stale files under a prefix.
- *
+ * files in a directory, infers content types, applies cache-control defaults
+ * (HTML is never cached; everything else is immutable), and can optionally
+ * purge stale files under a prefix. `StaticSite` and `SsrSite` use it
+ * internally — reach for it directly when you manage the bucket and CDN
+ * yourself.
+ * @resource
  * @section Deploying Files
  * @example Upload A Build Directory
  * ```typescript
+ * const bucket = yield* AWS.S3.Bucket("SiteBucket", {});
+ *
  * const files = yield* AssetDeployment("WebsiteFiles", {
  *   bucket,
  *   sourcePath: "./dist",
  *   prefix: "_assets",
+ * });
+ * ```
+ *
+ * @example Purge Stale Files And Override Caching
+ * ```typescript
+ * const files = yield* AssetDeployment("WebsiteFiles", {
+ *   bucket,
+ *   sourcePath: "./dist",
+ *   purge: true,
+ *   fileOptions: [
+ *     {
+ *       files: "**\/*.json",
+ *       cacheControl: "max-age=300,public",
+ *     },
+ *   ],
+ * });
+ * ```
+ *
+ * @section Invalidation
+ * @example Invalidate CloudFront On Content Change
+ * ```typescript
+ * const files = yield* AssetDeployment("WebsiteFiles", {
+ *   bucket,
+ *   sourcePath: "./dist",
+ * });
+ *
+ * // `version` only changes when file contents change, so the
+ * // invalidation re-runs exactly when a new deploy ships new bytes.
+ * yield* AWS.CloudFront.Invalidation("Invalidation", {
+ *   distributionId: distribution.distributionId,
+ *   version: files.version,
+ *   paths: ["/*"],
  * });
  * ```
  */
@@ -174,6 +225,12 @@ export const AssetDeploymentProvider = () =>
       });
 
       return {
+        // Non-listable: an AssetDeployment is an action (uploading a local
+        // directory into a bucket under a prefix), keyed by {bucketName,
+        // prefix}, not a standalone cloud resource. There is no AWS API that
+        // enumerates "asset deployments" — the uploaded objects are plain S3
+        // objects owned by their bucket — so there is nothing to enumerate.
+        list: () => Effect.succeed([]),
         read: Effect.fn(function* ({ output }) {
           return output;
         }),
@@ -374,12 +431,16 @@ const retryForBucketReadiness = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.retry({
       while: isMissingBucket,
-      schedule: Schedule.exponential("100 millis").pipe(
-        Schedule.both(Schedule.recurs(30)),
-        Schedule.map(([duration]) =>
-          Duration.isGreaterThan(duration, Duration.seconds(2))
-            ? Duration.seconds(2)
-            : duration,
+      schedule: Schedule.max([
+        Schedule.exponential("100 millis"),
+        Schedule.recurs(30),
+      ]).pipe(
+        Schedule.modifyDelay(({ duration }) =>
+          Effect.succeed(
+            Duration.isGreaterThan(duration, Duration.seconds(2))
+              ? Duration.seconds(2)
+              : duration,
+          ),
         ),
       ),
     }),

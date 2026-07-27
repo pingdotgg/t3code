@@ -21,11 +21,29 @@ export interface DelegatedAdministrator extends Resource<
   "AWS.Organizations.DelegatedAdministrator",
   DelegatedAdministratorProps,
   {
+    /**
+     * 12-digit ID of the delegated administrator account.
+     */
     accountId: string;
+    /**
+     * ARN of the delegated administrator account.
+     */
     accountArn: string | undefined;
+    /**
+     * Friendly name of the delegated administrator account.
+     */
     accountName: organizations.DelegatedAdministrator["Name"] | undefined;
+    /**
+     * Email address of the delegated administrator account.
+     */
     accountEmail: organizations.DelegatedAdministrator["Email"] | undefined;
+    /**
+     * Service principal delegated to the account.
+     */
     servicePrincipal: string;
+    /**
+     * When the delegation was enabled.
+     */
     delegationEnabledDate: Date | undefined;
   },
   never,
@@ -33,7 +51,32 @@ export interface DelegatedAdministrator extends Resource<
 > {}
 
 /**
- * Registers a delegated administrator account for a trusted AWS service.
+ * Registers a member {@link Account} as the delegated administrator for a
+ * trusted AWS service, letting that account manage the service org-wide
+ * instead of the management account.
+ *
+ * Requires trusted access for the same service principal (see
+ * {@link TrustedServiceAccess}). Existence-only resource: changing
+ * `accountId` or `servicePrincipal` replaces the registration.
+ * @resource
+ * @section Delegating Administration
+ * @example Delegate GuardDuty to a Security Account
+ * ```typescript
+ * const security = yield* Account("Security", {
+ *   name: "security",
+ *   email: "aws-security@example.com",
+ *   parentId: root.rootId,
+ * });
+ *
+ * const guardDutyAccess = yield* TrustedServiceAccess("GuardDutyAccess", {
+ *   servicePrincipal: "guardduty.amazonaws.com",
+ * });
+ *
+ * yield* DelegatedAdministrator("GuardDutyAdmin", {
+ *   accountId: security.accountId,
+ *   servicePrincipal: guardDutyAccess.servicePrincipal,
+ * });
+ * ```
  */
 export const DelegatedAdministrator = Resource<DelegatedAdministrator>(
   "AWS.Organizations.DelegatedAdministrator",
@@ -55,12 +98,101 @@ export const DelegatedAdministratorProvider = () =>
           }
         }),
         read: Effect.fn(function* ({ olds, output }) {
+          const accountId = output?.accountId ?? olds?.accountId;
+          const servicePrincipal =
+            output?.servicePrincipal ?? olds?.servicePrincipal;
+          if (accountId === undefined || servicePrincipal === undefined) {
+            // Output-valued props don't survive a `creating`-state round-trip
+            // (they deserialize as `undefined`) — report "not found" so the
+            // engine re-drives the create.
+            return undefined;
+          }
           return yield* readDelegatedAdministrator({
-            accountId: output?.accountId ?? olds!.accountId,
-            servicePrincipal:
-              output?.servicePrincipal ?? olds!.servicePrincipal,
+            accountId,
+            servicePrincipal,
           });
         }),
+        list: () =>
+          Effect.gen(function* () {
+            // Enumerate every delegated administrator account in the org. If
+            // this account isn't an org management account (or lacks access),
+            // Organizations enumeration isn't available here — return [].
+            const admins = yield* retryOrganizations(
+              collectPages(
+                (NextToken) =>
+                  organizations.listDelegatedAdministrators({ NextToken }),
+                (page) => page.DelegatedAdministrators,
+              ),
+            ).pipe(
+              Effect.catchTags({
+                AWSOrganizationsNotInUseException: () =>
+                  Effect.succeed<organizations.DelegatedAdministrator[]>([]),
+                AccessDeniedException: () =>
+                  Effect.succeed<organizations.DelegatedAdministrator[]>([]),
+                UnsupportedAPIEndpointException: () =>
+                  Effect.succeed<organizations.DelegatedAdministrator[]>([]),
+              }),
+            );
+
+            // Fan out: each admin account may be delegated for multiple
+            // services. The canonical `read` shape is one item per
+            // (account, servicePrincipal), so expand each account into one
+            // Attributes per delegated service.
+            const rows = yield* Effect.forEach(
+              admins.filter(
+                (
+                  admin,
+                ): admin is organizations.DelegatedAdministrator & {
+                  Id: string;
+                } => admin.Id != null,
+              ),
+              (admin) =>
+                retryOrganizations(
+                  collectPages(
+                    (NextToken) =>
+                      organizations.listDelegatedServicesForAccount({
+                        AccountId: admin.Id,
+                        NextToken,
+                      }),
+                    (page) => page.DelegatedServices,
+                  ),
+                ).pipe(
+                  // The account may be deregistered between the two calls — skip.
+                  Effect.catchTags({
+                    AccountNotFoundException: () =>
+                      Effect.succeed<organizations.DelegatedService[]>([]),
+                    AccountNotRegisteredException: () =>
+                      Effect.succeed<organizations.DelegatedService[]>([]),
+                  }),
+                  Effect.map((services) =>
+                    services
+                      .filter(
+                        (
+                          service,
+                        ): service is organizations.DelegatedService & {
+                          ServicePrincipal: string;
+                        } => service.ServicePrincipal != null,
+                      )
+                      .map(
+                        (service) =>
+                          ({
+                            accountId: admin.Id,
+                            accountArn: admin.Arn,
+                            accountName: admin.Name,
+                            accountEmail: admin.Email,
+                            servicePrincipal: service.ServicePrincipal,
+                            delegationEnabledDate:
+                              service.DelegationEnabledDate ??
+                              admin.DelegationEnabledDate,
+                          }) satisfies DelegatedAdministrator["Attributes"],
+                      ),
+                  ),
+                ),
+              { concurrency: 10 },
+            );
+
+            return rows.flat();
+          }),
         reconcile: Effect.fn(function* ({ news, session }) {
           // Observe — look up the live delegation. Replacement-only props
           // (`accountId`, `servicePrincipal`) mean the diff handles identity

@@ -396,7 +396,7 @@ export const discriminators = <D extends string>(field: D) =>
   fields: P
 ) => {
   const predicate = makeWhen(
-    (arg: any) => arg != null && arg[field] in fields,
+    (arg: any) => arg != null && Object.hasOwn(fields, arg[field]),
     (data: any) => (fields as any)[data[field]](data)
   )
 
@@ -519,11 +519,6 @@ export const defined = <A>(u: A): u is A & {} => (u !== undefined && u !== null)
 export const instanceOf = <A extends abstract new(...args: any) => any>(
   constructor: A
 ): SafeRefinement<InstanceType<A>, never> => ((u: unknown) => u instanceof constructor) as any
-
-/** @internal */
-export const instanceOfUnsafe: <A extends abstract new(...args: any) => any>(
-  constructor: A
-) => SafeRefinement<InstanceType<A>, InstanceType<A>> = instanceOf
 
 /** @internal */
 export const orElse =

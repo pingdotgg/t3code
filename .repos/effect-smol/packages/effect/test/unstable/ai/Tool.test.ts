@@ -1,6 +1,6 @@
 import { describe, it } from "@effect/vitest"
 import { assertFalse, assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
-import { DateTime, Effect, Fiber, identity, Latch, Schema, Stream } from "effect"
+import { Context, DateTime, Effect, Fiber, identity, Latch, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { AiError, LanguageModel, Response, Tool, Toolkit } from "effect/unstable/ai"
 import * as TestUtils from "./utils.ts"
@@ -919,8 +919,37 @@ describe("Tool", () => {
           })
         )
       }))
+
+    describe("addDependency", () => {
+      it("preserves the provider-defined tool identity", () => {
+        const tool = HandlerRequired({ testArg: "test-arg" })
+        const withDep = tool.addDependency(TestDependency)
+        assertTrue(Tool.isProviderDefined(withDep))
+        assertFalse(Tool.isUserDefined(withDep))
+        assertFalse(Tool.isDynamic(withDep))
+      })
+
+      it("preserves the provider-defined tool id", () => {
+        const tool = HandlerRequired({ testArg: "test-arg" })
+        const withDep = tool.addDependency(TestDependency)
+        strictEqual(withDep.id, "test.handler_required")
+      })
+    })
+
+    it("getStrictMode returns undefined without throwing", () => {
+      const tool = NoHandlerRequired({ testArg: "test-arg" })
+      strictEqual(Tool.getStrictMode(tool), undefined)
+    })
+
+    it("annotate preserves the provider-defined tool identity", () => {
+      const tool = NoHandlerRequired({ testArg: "test-arg" }).annotate(Tool.Strict, false)
+      assertTrue(Tool.isProviderDefined(tool))
+      strictEqual(Tool.getStrictMode(tool), false)
+    })
   })
 })
+
+class TestDependency extends Context.Service<TestDependency, { readonly value: number }>()("TestDependency") {}
 
 const FailureModeError = Tool.make("FailureModeError", {
   description: "A test tool",
@@ -1016,6 +1045,34 @@ const HandlerRequired = Tool.providerDefined({
   }),
   failure: Schema.Struct({
     testFailure: Schema.String
+  })
+})
+
+describe("setNeedsApproval", () => {
+  it("sets a static approval requirement without mutating the original tool", () => {
+    const tool = Tool.make("TestTool", { needsApproval: true })
+    const updated = tool.setNeedsApproval(false)
+
+    strictEqual(tool.needsApproval, true)
+    strictEqual(updated.needsApproval, false)
+  })
+
+  it("sets a dynamic approval requirement", () => {
+    const needsApproval = (params: { readonly dangerous: boolean }) => params.dangerous
+    const tool = Tool.make("TestTool", {
+      parameters: Schema.Struct({ dangerous: Schema.Boolean })
+    }).setNeedsApproval(needsApproval)
+
+    strictEqual(tool.needsApproval, needsApproval)
+  })
+
+  it("preserves dynamic tool identity", () => {
+    const tool = Tool.dynamic("TestTool", {
+      parameters: { type: "object", properties: {} }
+    }).setNeedsApproval(true)
+
+    assertTrue(Tool.isDynamic(tool))
+    strictEqual(tool.needsApproval, true)
   })
 })
 
@@ -1258,6 +1315,15 @@ describe("Dynamic", () => {
       const tool = Tool.dynamic("TestTool", {
         parameters: { type: "object", properties: {} }
       }).annotate(Tool.Strict, false)
+      strictEqual(Tool.getStrictMode(tool), false)
+    })
+
+    it("works with provider-defined tools", () => {
+      const tool = Tool.providerDefined({
+        id: "test.provider_tool",
+        customName: "ProviderTool",
+        providerName: "provider_tool"
+      })().annotate(Tool.Strict, false)
       strictEqual(Tool.getStrictMode(tool), false)
     })
   })

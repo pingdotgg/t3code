@@ -2,33 +2,11 @@
  * MySQL adapter for Effect SQL, backed by the `mysql2` driver.
  *
  * This module provides constructors and layers for a {@link MysqlClient} and
- * the generic Effect SQL client service. Use it in server applications,
- * background workers, migrations, and tests that need MySQL query compilation,
- * scoped pool management, streaming queries, and consistent `SqlError`
- * classification for mysql2 driver failures.
- *
- * **Mental model**
- *
- * {@link make} allocates a mysql2 pool inside the current scope, verifies it
- * with `SELECT 1`, and closes it when the scope is released. Regular queries
- * use the shared pool, transactions acquire a dedicated pooled connection for
- * their lifetime, and streams stay tied to mysql2 stream resources until they
- * are consumed or closed.
- *
- * **Common tasks**
- *
- * Use {@link layer} when configuration is already available, or
- * {@link layerConfig} when it should be read through `Config`. Pass `url` for a
- * connection URI, or pass `host`, `port`, `database`, `username`, and
- * `password` for discrete connection settings. Use `poolConfig` for additional
- * mysql2 pool options when configuring discrete fields.
- *
- * **Gotchas**
- *
- * When `url` is supplied it takes precedence over the discrete connection
- * fields and does not merge in `poolConfig`. Long-running transactions and
- * streams occupy pool capacity, so tune `maxConnections` and `connectionTTL`
- * for those workloads.
+ * the generic Effect SQL client service. `make` creates a managed mysql2 pool,
+ * checks the connection with `SELECT 1`, maps mysql2 failures to `SqlError`,
+ * supports transaction connections, and exposes streaming queries through
+ * mysql2 query streams. It also provides direct and config-backed layers plus a
+ * MySQL statement compiler.
  *
  * @since 4.0.0
  */
@@ -190,7 +168,7 @@ export interface MysqlClient extends Client.SqlClient {
  *
  * Use to access or provide a mysql2 client through the Effect context.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const MysqlClient = Context.Service<MysqlClient>("@effect/sql-mysql2/MysqlClient")
@@ -218,6 +196,12 @@ export interface MysqlClientConfig {
 
   readonly poolConfig?: Mysql.PoolOptions | undefined
 
+  /**
+   * Use the text protocol instead of prepared statements, for proxies like
+   * Cloudflare Hyperdrive that do not support `COM_STMT_PREPARE`.
+   */
+  readonly disablePreparedStatements?: boolean | undefined
+
   readonly spanAttributes?: Record<string, unknown> | undefined
 
   readonly transformResultNames?: ((str: string) => string) | undefined
@@ -240,6 +224,7 @@ export const make = (
         options.transformResultNames
       ).array :
       undefined
+    const defaultMethod: "execute" | "query" = options.disablePreparedStatements === true ? "query" : "execute"
 
     class ConnectionImpl implements Connection {
       readonly conn: Mysql.PoolConnection | Mysql.Pool
@@ -251,7 +236,7 @@ export const make = (
         sql: string,
         values?: ReadonlyArray<any>,
         rowsAsArray = false,
-        method: "execute" | "query" = "execute"
+        method: "execute" | "query" = defaultMethod
       ) {
         return Effect.callback<unknown, SqlError>((resume) => {
           const operation = method === "query" ? "executeUnprepared" : "execute"
@@ -275,7 +260,7 @@ export const make = (
         sql: string,
         values?: ReadonlyArray<any>,
         rowsAsArray = false,
-        method: "execute" | "query" = "execute"
+        method: "execute" | "query" = defaultMethod
       ) {
         return this.runRaw(sql, values, rowsAsArray, method).pipe(
           Effect.map((results) => Array.isArray(results) ? results : [])
@@ -296,6 +281,9 @@ export const make = (
       }
       executeValues(sql: string, params: ReadonlyArray<unknown>) {
         return this.run(sql, params, true)
+      }
+      executeValuesUnprepared(sql: string, params: ReadonlyArray<unknown>) {
+        return this.run(sql, params, true, "query")
       }
       executeUnprepared(
         sql: string,
@@ -339,10 +327,10 @@ export const make = (
           : undefined,
         multipleStatements: true,
         supportBigNumbers: true,
-        connectionLimit: options.maxConnections,
+        connectionLimit: options.maxConnections ?? options.poolConfig?.connectionLimit,
         idleTimeout: options.connectionTTL
           ? Duration.toMillis(Duration.fromInputUnsafe(options.connectionTTL))
-          : undefined
+          : options.poolConfig?.idleTimeout
       } as Mysql.PoolOptions)
 
     yield* Effect.acquireRelease(

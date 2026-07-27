@@ -6,7 +6,7 @@ In this guide, we'll walk you through setting up the necessary dependencies and 
 
 # Requirements
 
-First, ensure you have [`vitest`](https://vitest.dev/guide/) installed (version `1.6.0` or later).
+First, ensure you have a supported [`vitest`](https://vitest.dev/guide/) version installed (`^3.0.0` or `^4.0.0`).
 
 ```sh
 pnpm add -D vitest

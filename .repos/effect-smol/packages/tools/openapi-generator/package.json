@@ -1,17 +1,17 @@
 {
   "name": "@effect/openapi-generator",
   "type": "module",
-  "version": "4.0.0-beta.73",
+  "version": "4.0.0-beta.102",
   "license": "MIT",
   "description": "Generate Effect Schema types, HTTP clients, and HttpApi modules from OpenAPI specifications",
   "homepage": "https://effect.website",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Effect-TS/effect-smol.git",
+    "url": "https://github.com/Effect-TS/effect.git",
     "directory": "packages/tools/openapi-generator"
   },
   "bugs": {
-    "url": "https://github.com/Effect-TS/effect-smol/issues"
+    "url": "https://github.com/Effect-TS/effect/issues"
   },
   "tags": [
     "typescript",
@@ -55,7 +55,6 @@
   },
   "scripts": {
     "build": "tsc -b tsconfig.json && pnpm babel",
-    "build:tsgo": "tsgo -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
     "check": "tsc -b tsconfig.json",
     "test": "vitest",
@@ -65,12 +64,14 @@
     "@effect/platform-node": "workspace:^",
     "effect": "workspace:^"
   },
+  "dependencies": {
+    "swagger2openapi": "^7.0.8"
+  },
   "devDependencies": {
     "@types/swagger2openapi": "^7.0.4",
     "effect": "workspace:^",
     "json-schema-typed": "^8.0.2",
     "openapi-typescript": "^7.13.0",
-    "swagger2openapi": "^7.0.8",
     "yaml": "^2.9.0"
   }
 }

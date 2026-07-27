@@ -1,36 +1,13 @@
 /**
- * Persistence boundary for unstable event-log entries and replication state.
+ * Stores event-log entries and replication state.
  *
- * `EventJournal` stores committed entries, exposes them for replay, publishes
- * local changes, and records the remote metadata needed to exchange entries
- * with other journals. Higher-level event-log schemas and handlers build on
- * this service when rebuilding projections, syncing offline clients, importing
- * remote changes, or coordinating writes per store.
- *
- * **Mental model**
- *
- * A local write creates a UUID v7 entry id, runs the caller-provided effect,
- * and commits the entry only when that effect succeeds. Remote writes first
- * split duplicate entries from new entries, optionally compact the new remote
- * history, run replay effects with conflict entries, and then persist the
- * imported entries. Remote metadata tracks the last known sequence number and
- * which local entries each remote still needs.
- *
- * **Common tasks**
- *
- * Use `entries` to replay the full journal, `changes` to subscribe to local
- * writes, `writeFromRemote` to import replicated entries, and
- * `withRemoteUncommited` to send entries a remote has not yet acknowledged. Use
- * `withLock` when multiple event-log operations must serialize work for the
- * same store id.
- *
- * **Gotchas**
- *
- * Entry ordering comes from UUID v7 timestamps, so conflict detection is tied
- * to clock-derived ids. Payloads are opaque encoded bytes and must remain
- * compatible with the schemas that decode historical entries. Remote imports
- * can include duplicates, and replay handlers should expect entries that arrive
- * after local changes for the same event and primary key.
+ * `EventJournal` records committed entries, exposes them for replay, publishes
+ * local changes, and tracks the remote metadata needed to exchange entries with
+ * other journals. Higher-level event-log schemas and handlers use this service
+ * to rebuild projections, sync offline clients, import remote changes, and
+ * coordinate writes per store. This module also defines journal errors, entry
+ * and remote identifiers, schemas, and in-memory or IndexedDB-backed journal
+ * layers.
  *
  * @since 4.0.0
  */
@@ -188,6 +165,11 @@ export const RemoteId = Schema.Uint8Array.pipe(Schema.brand(RemoteIdTypeId))
 /**
  * Generates a new random `RemoteId`.
  *
+ * **When to use**
+ *
+ * Use when generating a fresh event-log remote id internally and the UUID bytes
+ * are trusted to satisfy the brand.
+ *
  * **Gotchas**
  *
  * This is unsafe because the generated UUID bytes are cast to the brand without
@@ -250,6 +232,11 @@ export const EntryIdOrder = Order.make<EntryId>((a, b) => {
 /**
  * Generates a UUID v7 `EntryId`, optionally using the supplied millisecond
  * timestamp.
+ *
+ * **When to use**
+ *
+ * Use when generating an event-log entry id internally and the UUID v7 bytes
+ * are trusted to satisfy the brand.
  *
  * **Gotchas**
  *
@@ -358,7 +345,7 @@ export class Entry extends Schema.Class<Entry>("effect/eventlog/EventJournal/Ent
  * @since 4.0.0
  */
 export class RemoteEntry extends Schema.Class<RemoteEntry>("effect/eventlog/EventJournal/RemoteEntry")({
-  remoteSequence: Schema.Number,
+  remoteSequence: Schema.Natural,
   entry: Entry
 }) {}
 

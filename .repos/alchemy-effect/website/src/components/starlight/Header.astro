@@ -1,0 +1,28 @@
+---
+/**
+ * Docs header override: the marketing nav (row 1) plus the horizontal docs
+ * tab bar (row 2). `--sl-nav-height` is raised in custom.css to make room
+ * for the second row; the mobile hamburger stays pinned to row 1.
+ */
+import Nav from "../marketing/Nav.astro";
+import DocsTabs from "./DocsTabs.astro";
+---
+
+<div class="alc-docs-header">
+  <div class="alc-docs-header__nav">
+    <Nav />
+  </div>
+  <DocsTabs />
+</div>
+
+<style>
+  .alc-docs-header {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+  .alc-docs-header__nav {
+    height: var(--alc-nav-row-height, 4rem);
+    flex-shrink: 0;
+  }
+</style>

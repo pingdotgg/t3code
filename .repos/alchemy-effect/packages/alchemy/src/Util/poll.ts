@@ -27,7 +27,6 @@ export const poll = Effect.fn("poll")(
     effect: Effect.Effect<A, E, R>;
     predicate: (value: A) => boolean;
     schedule?: Schedule.Schedule<unknown, unknown, never>;
-    times?: number;
   }) =>
     input.effect.pipe(
       Effect.filterOrFail(
@@ -40,8 +39,9 @@ export const poll = Effect.fn("poll")(
       ),
       Effect.retry({
         while: isPredicateFailed,
-        schedule: input.schedule ?? Schedule.spaced("3 seconds"),
-        times: input.times ?? 50,
+        schedule:
+          input.schedule ??
+          Schedule.max([Schedule.spaced("5 seconds"), Schedule.recurs(50)]),
       }),
     ),
 );

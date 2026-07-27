@@ -30,6 +30,8 @@
     { "path": "packages/sql/sqlite-react-native" },
     { "path": "packages/sql/sqlite-wasm" },
     { "path": "packages/tools/ai-codegen" },
+    { "path": "packages/tools/bundle" },
+    { "path": "packages/tools/docgen" },
     { "path": "packages/tools/openapi-generator" },
     { "path": "packages/tools/jsdocs" },
     { "path": "packages/tools/oxc" },

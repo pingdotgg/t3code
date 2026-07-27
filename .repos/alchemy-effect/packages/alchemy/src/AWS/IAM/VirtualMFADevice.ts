@@ -1,6 +1,8 @@
 import * as iam from "@distilled.cloud/aws/iam";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -41,13 +43,19 @@ export interface VirtualMFADevice extends Resource<
   "AWS.IAM.VirtualMFADevice",
   VirtualMFADeviceProps,
   {
+    /** The serial number (ARN) of the virtual MFA device. */
     serialNumber: string;
+    /** The user the device is enabled for, if activated. */
     userName: string | undefined;
+    /** When the device was activated, if activated. */
     enableDate: Date | undefined;
+    /** The base32 seed for configuring an authenticator app. AWS only returns it at creation. */
     base32StringSeed:
       | Redacted.Redacted<Uint8Array<ArrayBufferLike>>
       | undefined;
+    /** A QR-code PNG encoding the seed. AWS only returns it at creation. */
     qrCodePNG: Redacted.Redacted<Uint8Array<ArrayBufferLike>> | undefined;
+    /** The tags applied to the device. */
     tags: Record<string, string>;
   },
   never,
@@ -60,7 +68,7 @@ export interface VirtualMFADevice extends Resource<
  * `VirtualMFADevice` creates a software MFA device and can optionally activate
  * it for a user during creation when the initial authentication codes are
  * provided.
- *
+ * @resource
  * @section Managing MFA Devices
  * @example Create and Activate a Virtual MFA Device
  * ```typescript
@@ -96,12 +104,13 @@ export const VirtualMFADeviceProvider = () =>
         userName: string | undefined;
       }) {
         if (!userName) {
-          const listed = yield* iam.listVirtualMFADevices({
-            AssignmentStatus: "Unassigned",
-          });
-          const device = listed.VirtualMFADevices.find(
-            (entry) => entry.SerialNumber === serialNumber,
-          );
+          const device = yield* iam.listVirtualMFADevices
+            .items({ AssignmentStatus: "Unassigned" })
+            .pipe(
+              Stream.filter((entry) => entry.SerialNumber === serialNumber),
+              Stream.runHead,
+              Effect.map(Option.getOrUndefined),
+            );
           return device
             ? {
                 SerialNumber: device.SerialNumber,
@@ -124,6 +133,48 @@ export const VirtualMFADeviceProvider = () =>
 
       return {
         stables: ["serialNumber"],
+        list: () =>
+          Effect.gen(function* () {
+            // Enumerate every virtual MFA device in the account. The list op
+            // does not return tags, so hydrate them per-device via
+            // listMFADeviceTags (matching the exact shape `read` returns).
+            const devices = yield* iam.listVirtualMFADevices.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap(
+                  (page) => page.VirtualMFADevices ?? [],
+                ),
+              ),
+            );
+            return yield* Effect.forEach(
+              devices,
+              (device) =>
+                Effect.gen(function* () {
+                  const tags = yield* iam
+                    .listMFADeviceTags({
+                      SerialNumber: device.SerialNumber,
+                    })
+                    .pipe(
+                      Effect.map((resp) => resp.Tags),
+                      // The device may vanish between listing and tag lookup.
+                      Effect.catchTag("NoSuchEntityException", () =>
+                        Effect.succeed<iam.Tag[]>([]),
+                      ),
+                    );
+                  return {
+                    serialNumber: device.SerialNumber,
+                    userName: device.User?.UserName,
+                    enableDate: device.EnableDate,
+                    // The seed and QR code are only returned at creation time
+                    // and are never available from enumeration.
+                    base32StringSeed: undefined,
+                    qrCodePNG: undefined,
+                    tags: toTagRecord(tags),
+                  };
+                }),
+              { concurrency: 10 },
+            );
+          }),
         diff: Effect.fn(function* ({ id, olds, news }) {
           if (!isResolved(news)) return;
           if (

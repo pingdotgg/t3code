@@ -1,25 +1,11 @@
 /**
- * The `EntityProxy` module derives external RPC and HTTP API surfaces from a
- * clustered {@link Entity.Entity}. It is used when callers should communicate
- * with entities through ordinary RPC clients or HTTP routes while the cluster
- * runtime keeps responsibility for locating, routing, and delivering messages
- * to the entity instance identified by `entityId`.
+ * Derives RPC and HTTP API surfaces from clustered entities.
  *
- * **Common tasks**
- *
- * - Derive an `RpcGroup` from an entity with {@link toRpcGroup}
- * - Derive an `HttpApiGroup` from an entity with {@link toHttpApiGroup}
- * - Expose both request/response calls and discard variants for fire-and-forget
- *   delivery
- *
- * **Gotchas**
- *
- * - Proxy RPC payloads wrap the original RPC payload with an `entityId`; HTTP
- *   endpoints place the same identifier in the route path.
- * - Generated RPC names are prefixed with the entity type, while HTTP endpoint
- *   paths are based on lower-cased RPC tags.
- * - Proxy errors include cluster delivery errors such as mailbox saturation,
- *   duplicate in-flight messages, and persistence failures.
+ * The generated APIs let callers use ordinary RPC clients or HTTP routes while
+ * the cluster runtime still locates and delivers messages to the entity
+ * instance identified by `entityId`. Each generated operation keeps the
+ * original payload and success schema, adds cluster client errors, and creates
+ * a discard variant for fire-and-forget delivery.
  *
  * @since 4.0.0
  */

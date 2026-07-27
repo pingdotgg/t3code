@@ -13,6 +13,7 @@ import type { StackFrame } from "../References.ts"
 import type * as Types from "../Types.ts"
 import { SingleShotGen } from "../Utils.ts"
 import type { FiberImpl } from "./effect.ts"
+import * as InternalRecord from "./record.ts"
 
 /** @internal */
 export const EffectTypeId = `~effect/Effect` as const
@@ -87,7 +88,7 @@ export const StructuralProto = {
     const thatKeys = Object.keys(that)
     if (selfKeys.length !== thatKeys.length) return false
     for (let i = 0; i < selfKeys.length; i++) {
-      if (selfKeys[i] !== thatKeys[i] && !Equal.equals(this[selfKeys[i]], that[selfKeys[i]])) {
+      if (selfKeys[i] !== thatKeys[i] || !Equal.equals(this[selfKeys[i]], that[selfKeys[i]])) {
         return false
       }
     }
@@ -541,7 +542,7 @@ export const exitFailCause: <E>(cause: Cause.Cause<E>) => Exit.Exit<never, E> = 
     }
     return cont
       ? cont[contE](cause, fiber, annotated ? undefined : this)
-      : fiber.yieldWith(annotated ? this : exitFailCause(cause))
+      : fiber.yieldWith(annotated ? exitFailCause(cause) : this)
   }
 })
 
@@ -587,10 +588,10 @@ export const Error: new<A extends Record<string, any> = {}>(
 ) => Cause.YieldableError & Readonly<A> = (function() {
   const plainArgsSymbol = Symbol.for("effect/Data/Error/plainArgs")
   return class Base extends YieldableError {
-    constructor(args: any) {
+    constructor(args: Record<string, any> | undefined) {
       super(args?.message, args?.cause ? { cause: args.cause } : undefined)
       if (args) {
-        Object.assign(this, args)
+        InternalRecord.assignProperties(this, args)
         // @effect-diagnostics-next-line floatingEffect:off
         Object.defineProperty(this, plainArgsSymbol, {
           value: args,

@@ -3,32 +3,58 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import type { Json } from "effect/Schema";
-import * as Binding from "../../Binding.ts";
 import type { Rpc } from "../../Rpc.ts";
 import { isYieldableEffectLike } from "../../Util/effect.ts";
-import type { AiGateway } from "../AiGateway/AiGateway.ts";
-import { AnalyticsEngineDataset } from "../AnalyticsEngine/AnalyticsEngineDataset.ts";
-import { Artifacts } from "../Artifacts/Artifacts.ts";
-import { Browser } from "../Browser/Browser.ts";
-import type { D1Database } from "../D1/D1Database.ts";
+import type { Gateway as AiGateway } from "../AI/Gateway.ts";
+import type { SearchInstance } from "../AI/SearchInstance.ts";
+import type { SearchNamespace } from "../AI/SearchNamespace.ts";
+import { Dataset } from "../AnalyticsEngine/Dataset.ts";
+import type { Namespace as ArtifactsNamespace } from "../Artifacts/Namespace.ts";
+import type { Database as D1Database } from "../D1/Database.ts";
 import { SendEmail } from "../Email/SendEmail.ts";
-import { Hyperdrive } from "../Hyperdrive/Hyperdrive.ts";
-import { Images } from "../Images/Images.ts";
-import type { KVNamespace } from "../KV/KVNamespace.ts";
-import type { Queue } from "../Queue/Queue.ts";
-import type { R2Bucket } from "../R2/R2Bucket.ts";
-import type { RateLimit } from "../RateLimit/RateLimit.ts";
-import type { VectorizeIndex } from "../Vectorize/VectorizeIndex.ts";
+import type { App as FlagshipApp } from "../Flagship/App.ts";
+import type { Connection as Hyperdrive } from "../Hyperdrive/Connection.ts";
+import type { ImagesBinding } from "../Images/ImagesBinding.ts";
+import type { Namespace } from "../KV/Namespace.ts";
+import type { Queue } from "../Queues/Queue.ts";
+import type { Bucket } from "../R2/Bucket.ts";
+import type { Secret } from "../SecretsStore/Secret.ts";
+import type { Index as VectorizeIndex } from "../Vectorize/VectorizeIndex.ts";
+import type { DispatchNamespace } from "../WorkersForPlatforms/DispatchNamespace.ts";
+import type { WorkflowLike } from "../Workflows/Workflow.ts";
+import type { AIBinding } from "./AIBinding.ts";
 import type { Assets } from "./Assets.ts";
-import type { DurableObjectNamespaceLike } from "./DurableObjectNamespace.ts";
-import type { DynamicWorkerLoader } from "./DynamicWorkerLoader.ts";
+import type { BrowserBinding } from "./BrowserBinding.ts";
+import type { DurableObjectLike } from "./DurableObject.ts";
+import type { RateLimitBinding } from "./RateLimitBinding.ts";
 import { makeRpcStub } from "./Rpc.ts";
-import { isWorker, Worker, WorkerEnvironment } from "./Worker.ts";
+import type { VersionMetadataBinding } from "./VersionMetadataBinding.ts";
+import { Worker, WorkerEnvironment } from "./Worker.ts";
+import type { WorkerLoader } from "./WorkerLoader.ts";
 
-export type WorkerBinding = Exclude<
+type DistilledWorkerBinding = Exclude<
   workers.PutScriptRequest["metadata"]["bindings"],
   undefined
 >[number];
+
+/**
+ * The `durable_object_namespace` metadata binding extended with alchemy-only
+ * transfer metadata. `transferredFrom` names the Worker(s) — by logical id in
+ * this stack + stage, or by physical script name — that previously hosted the
+ * class, so the provider can drive Cloudflare's data-preserving
+ * `transferred_classes` migration. It is stripped from the binding before the
+ * script upload — Cloudflare never sees it.
+ */
+export type DurableObjectNamespaceWorkerBinding = Extract<
+  DistilledWorkerBinding,
+  { type: "durable_object_namespace" }
+> & {
+  transferredFrom?: string | string[];
+};
+
+export type WorkerBinding =
+  | Exclude<DistilledWorkerBinding, { type: "durable_object_namespace" }>
+  | DurableObjectNamespaceWorkerBinding;
 
 export type WorkerSettingsBinding = Exclude<
   workers.GetScriptScriptAndVersionSettingResponse["bindings"],
@@ -42,28 +68,36 @@ export type WorkerBindingResource =
   | Config.Config<Json>
   // CF resources
   | Assets
-  | R2Bucket
+  | Bucket
   | D1Database
-  | KVNamespace
+  | Namespace
   | Queue
   | AiGateway
-  | AnalyticsEngineDataset
+  | AIBinding
+  | SearchInstance
+  | SearchNamespace
+  | Dataset
   | SendEmail
-  | Artifacts
-  | RateLimit
-  | Browser
-  | Images
+  | ArtifactsNamespace
+  | RateLimitBinding
+  | BrowserBinding
+  | FlagshipApp
+  | ImagesBinding
   | Hyperdrive
   | VectorizeIndex
+  | Secret
   | Worker
-  | DynamicWorkerLoader
-  | DurableObjectNamespaceLike<any>;
+  | WorkerLoader
+  | VersionMetadataBinding
+  | DispatchNamespace
+  | DurableObjectLike<any>
+  | WorkflowLike<any>;
 
 export type WorkerBindings = {
   [bindingName in string]: WorkerBindingResource;
 };
 
-export const bindWorker = Effect.fnUntraced(function* <Shape, Req = never>(
+export const bindWorker = Effect.fn(function* <Shape, Req = never>(
   workerEff:
     | (Worker & Rpc<Shape>)
     | Effect.Effect<Worker & Rpc<Shape>, never, Req>,
@@ -92,28 +126,3 @@ export const bindWorker = Effect.fnUntraced(function* <Shape, Req = never>(
   );
   return makeRpcStub<Shape>(stubEff);
 });
-
-export class BindWorkerPolicy extends Binding.Policy<
-  BindWorkerPolicy,
-  (worker: Worker) => Effect.Effect<void>
->()("Cloudflare.Worker.Bind") {}
-
-export const BindWorkerPolicyLive = BindWorkerPolicy.layer.succeed(
-  Effect.fn(function* (host, worker: Worker) {
-    if (isWorker(host)) {
-      yield* host.bind`${worker}`({
-        bindings: [
-          {
-            type: "service",
-            name: worker.LogicalId,
-            service: worker.workerName,
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        new Error(`BindWorkerPolicy does not support runtime '${host.Type}'`),
-      );
-    }
-  }),
-);

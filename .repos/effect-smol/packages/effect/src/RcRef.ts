@@ -1,40 +1,10 @@
 /**
- * The `RcRef` module provides a reference-counted handle for sharing one
- * scoped resource across many scoped users. An `RcRef<A, E>` is lazy: it
- * acquires the resource the first time {@link get} needs it, reuses that value
- * while it is borrowed or kept idle, and finalizes it when the final borrowing
- * scope closes unless an idle timeout keeps it available.
- *
- * **Mental model**
- *
- * - {@link make} stores the acquisition effect and captures the surrounding
- *   `Scope`
- * - {@link get} borrows the current resource for the caller's scope,
- *   acquiring it on demand
- * - Each borrowing scope increments the reference count and installs a release
- *   finalizer
- * - When the count reaches zero, the resource is finalized immediately or kept
- *   for `idleTimeToLive`
- * - {@link invalidate} stops reusing the current value; active borrowers keep
- *   it until their scopes close
- *
- * **Common tasks**
- *
- * - Lazily share a connection, client, cache, worker, or other scoped resource
- *   with {@link make}
- * - Borrow the shared resource inside a scoped operation with {@link get}
- * - Force the next borrow to reacquire after a stale or broken resource with
- *   {@link invalidate}
- *
- * **Gotchas**
- *
- * - {@link get} requires `Scope`; use `Effect.scoped` or run it inside an
- *   existing scoped workflow
- * - Invalidation does not revoke values already returned to active scopes
- * - With a finite `idleTimeToLive`, a zero-reference resource remains
- *   available until the timeout expires
- * - With an infinite `idleTimeToLive`, an idle resource remains until
- *   invalidated or the owning scope closes
+ * Reference-counted handles for sharing one scoped resource across many scoped
+ * users. An `RcRef<A, E>` acquires the resource lazily the first time `get`
+ * needs it, reuses that value while it is borrowed or kept idle, and finalizes
+ * it when the final borrowing scope closes unless an idle timeout keeps it
+ * available. The module also provides `invalidate` for forcing the next `get`
+ * to acquire a fresh resource.
  *
  * @since 3.5.0
  */
@@ -96,10 +66,6 @@ export interface RcRef<out A, out E = never> extends Pipeable {
 
 /**
  * Namespace containing type-level members associated with `RcRef`.
- *
- * **When to use**
- *
- * Use to reference type-level members associated with `RcRef`.
  *
  * **Example** (Referencing namespace types)
  *

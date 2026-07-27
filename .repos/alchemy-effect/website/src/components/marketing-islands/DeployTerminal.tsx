@@ -32,8 +32,8 @@ interface Resource {
   bindings: string[];
 }
 const RESOURCES: Resource[] = [
-  { id: "Photos", type: "Cloudflare.R2Bucket", bindings: [] },
-  { id: "Sessions", type: "Cloudflare.KVNamespace", bindings: [] },
+  { id: "Photos", type: "Cloudflare.R2.Bucket", bindings: [] },
+  { id: "Sessions", type: "Cloudflare.KV.Namespace", bindings: [] },
   { id: "Api", type: "Cloudflare.Worker", bindings: ["Photos", "Sessions"] },
 ];
 

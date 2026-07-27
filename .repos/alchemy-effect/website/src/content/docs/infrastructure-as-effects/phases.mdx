@@ -1,0 +1,163 @@
+---
+title: Phases
+description: Alchemy programs run in two phases — plantime/init drives the deploy, runtime handles requests. Knowing which is which is the key to writing Workers and Lambda Functions.
+---
+
+import DAG from "../../../components/DAG.astro";
+
+Every alchemy program runs in two phases — plantime builds the plan,
+runtime serves requests. Function resources — Workers, Lambdas,
+Containers — express both in a single program by **returning an
+Effect from inside an Effect**.
+
+## Init vs runtime
+
+```typescript
+Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    // ─── Init phase ───
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
+
+    return {
+      // ─── Runtime phase ───
+      fetch: Effect.gen(function* () {
+        const obj = yield* bucket.get("key");
+        return HttpServerResponse.text(yield* obj.text());
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
+);
+```
+
+| Phase   | Code   | When it runs                          |
+| ------- | ------ | ------------------------------------- |
+| Init    | outer  | At plantime **and** at cold start     |
+| Runtime | inner  | Only inside a deployed handler        |
+
+The `bucket` value is established once during init and captured by
+the runtime closure. Init runs at most once per cold start; the
+runtime body runs per request with everything already wired up.
+Each phase has its own `Scope` with very different lifetimes —
+[Instance scope vs request scope](/infrastructure-as-effects/functions-and-servers#instance-scope-vs-request-scope)
+covers where cleanup can (and cannot) happen.
+
+The runtime phase is the *only* place where `Alchemy.RuntimeContext`
+is available. Any Effect whose requirements include `RuntimeContext`
+can only execute inside the runtime closure — the type system
+rejects it everywhere else. The next page builds the
+[colored-function model](/infrastructure-as-effects/layers#runtime-as-a-colored-function)
+on top of this split.
+
+## What runs when
+
+<DAG
+  caption="Plantime (top) records bindings and builds the plan. Runtime (bottom) starts on cold start and runs the handler per request."
+  nodes={[
+    { id: "Plan", label: "alchemy deploy", type: "plantime", tone: "accent" },
+    { id: "InitP", label: "init()", type: "records bindings" },
+    { id: "Apply", label: "apply", type: "create / update" },
+    { id: "Deploy", label: "deployed", type: "Worker / Lambda" },
+    { id: "Cold", label: "cold start", type: "runtime", tone: "accent", layer: 0 },
+    { id: "InitR", label: "init()", type: "builds SDK clients", layer: 1 },
+    { id: "Runtime", label: "fetch()", type: "per request", layer: 2 },
+  ]}
+  edges={[
+    { from: "Plan", to: "InitP" },
+    { from: "InitP", to: "Apply" },
+    { from: "Apply", to: "Deploy" },
+    { from: "Cold", to: "InitR" },
+    { from: "InitR", to: "Runtime" },
+  ]}
+/>
+
+- At **plantime**, init runs to discover bindings — alchemy needs
+  to know which resources the handler will use so it can wire
+  permissions, env vars, and references.
+- At **runtime cold start**, init runs again — this time inside the
+  deployed Worker, where the same `bind()` calls return live SDK
+  clients backed by the deployed resource.
+- The **runtime body** only runs in the deployed handler. It never
+  executes at plantime, so you can put real per-request work there
+  without affecting deploy speed.
+
+## `ALCHEMY_PHASE`
+
+The current phase is exposed as the `ALCHEMY_PHASE` environment
+variable / config key:
+
+| Value     | Context                                                              |
+| --------- | ------------------------------------------------------------------- |
+| `plan`    | Default. Running `alchemy deploy`, `alchemy plan`, or `alchemy dev`. |
+| `runtime` | Running inside a deployed Worker or Lambda Function.                 |
+
+Most user code never reads this directly — but providers and
+[Bindings](/infrastructure-as-effects/binding) use it internally to behave
+differently across phases.
+
+## `ALCHEMY_DEV`
+
+`alchemy dev` is a plantime phase, so `ALCHEMY_PHASE` is `plan`
+during local development just like a regular deploy. To tell whether
+you're running under `alchemy dev` specifically, read the
+`ALCHEMY_DEV` config key. The CLI sets `ALCHEMY_DEV=true` on the dev
+process; every other entrypoint leaves it unset, so it defaults to
+`false`.
+
+```typescript
+import { ALCHEMY_DEV } from "alchemy";
+
+Effect.gen(function* () {
+  if (yield* ALCHEMY_DEV) {
+    // local-dev-only behavior
+  }
+});
+```
+
+## The `__ALCHEMY_RUNTIME__` guard
+
+A binding's contract is a `Binding.Service`; the guarded setup
+Effect lives in the implementation Layer you provide, not the
+contract. That setup Effect does two things — and the phase decides
+how much of it runs:
+
+| Work                    | Phase | Job                                                      |
+| ----------------------- | ----- | -------------------------------------------------------- |
+| typed client            | both  | The lightweight typed SDK that ships with the bundle.    |
+| `host.bind(...)` wiring  | plan | Deploy-time registration of IAM / env / native bindings. |
+
+The deploy-time wiring is fenced behind `if (!globalThis.__ALCHEMY_RUNTIME__)`.
+At plantime the guard is open, so calling `bind()` records what the
+function will need. At runtime the global flag is set, so the guard is
+skipped and `bind()` returns just the typed client. The runtime bundle
+stays small because the planning branch never executes.
+
+Which wiring the guard protects is decided by the implementation
+Layer you provided
+([Bindings](/infrastructure-as-effects/binding#a-contract-and-a-layer)).
+
+This is also how alchemy can let you write `bucket.get(...)` inside a
+Worker without bundling AWS / Cloudflare provisioning code: the
+provisioning lives behind the guard, never on the runtime path.
+
+## Why this matters
+
+The init/runtime split lets you write code that:
+
+1. **Resolves infrastructure references at deploy time** — bindings
+   know which bucket ARN, queue URL, etc. to inject.
+2. **Initializes SDK clients once at cold start** — not on every
+   request.
+3. **Handles requests with a pre-configured context** — the `bucket`
+   variable in the runtime body already knows which resource to
+   talk to.
+
+Next: [Layers](/infrastructure-as-effects/layers) turns this phase
+split into a type-level model — `RuntimeContext` as a colored
+function.
+
+## Where next
+
+- [Layers](/infrastructure-as-effects/layers) — `RuntimeContext` as a colored function; infrastructure behind service interfaces.
+- [State Store](/state-store) — where deploy results persist between runs.

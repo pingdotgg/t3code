@@ -98,6 +98,7 @@ export type MySQLBranch = Resource<
   Providers
 >;
 
+/** @resource */
 export const MySQLBranch = Resource<MySQLBranch>("Planetscale.MySQLBranch");
 
 export const MySQLBranchProvider = () =>

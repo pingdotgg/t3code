@@ -1,17 +1,33 @@
 import * as scheduler from "@distilled.cloud/aws/scheduler";
 import * as Effect from "effect/Effect";
+import * as Schedule_ from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import type { Providers } from "../Providers.ts";
-import {
-  createInternalTags,
-  createTagsList,
-  diffTags,
-  hasTags,
-} from "../../Tags.ts";
+
+/**
+ * EventBridge Scheduler validates that the target's execution role is
+ * assumable by `scheduler.amazonaws.com`. A freshly-created IAM role can take
+ * well over a minute to propagate, surfacing as a `ValidationException` with
+ * the message "The execution role you provide must allow AWS EventBridge
+ * Scheduler to assume the role." Retry (bounded) until propagation completes.
+ */
+const retryUntilRoleAssumable = <A, E extends { _tag: string }, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.retry(effect, {
+    while: (e) => {
+      if (e._tag !== "ValidationException") return false;
+      const message = (e as { Message?: unknown }).Message;
+      return typeof message === "string" && message.includes("assume the role");
+    },
+    schedule: Schedule_.spaced("5 seconds"),
+    times: 24,
+  });
 
 export interface ScheduleProps {
   /**
@@ -62,10 +78,6 @@ export interface ScheduleProps {
    * Action after a one-time schedule completes.
    */
   actionAfterCompletion?: string;
-  /**
-   * User-defined tags.
-   */
-  tags?: Record<string, string>;
 }
 
 /**
@@ -74,7 +86,7 @@ export interface ScheduleProps {
  * `Schedule` is the canonical time-based delivery primitive. High-level helpers
  * like `every`, `cron`, and `at` can synthesize the target role and scheduler
  * target configuration on top of this resource.
- *
+ * @resource
  * @section Creating Schedules
  * @example Hourly Schedule
  * ```typescript
@@ -94,9 +106,21 @@ export interface Schedule extends Resource<
   "AWS.Scheduler.Schedule",
   ScheduleProps,
   {
+    /**
+     * ARN of the schedule.
+     */
     scheduleArn: string;
+    /**
+     * Name of the schedule.
+     */
     scheduleName: string;
+    /**
+     * Name of the schedule group containing the schedule.
+     */
     groupName: string;
+    /**
+     * Current state of the schedule (`ENABLED` or `DISABLED`).
+     */
     state: string | undefined;
   },
   never,
@@ -164,8 +188,6 @@ export const ScheduleProvider = () =>
             "default";
           const groupNameParam =
             groupName !== "default" ? groupName : undefined;
-          const internalTags = yield* createInternalTags(id);
-          const desiredTags = { ...internalTags, ...news.tags };
 
           const desiredConfig = {
             ScheduleExpression: news.scheduleExpression,
@@ -193,9 +215,11 @@ export const ScheduleProvider = () =>
               ),
             );
 
-          // Ensure — create if missing. On `ConflictException` (race or
-          // adoption), verify ownership via internal tags then fall through
-          // to the sync path.
+          // Ensure — create if missing. EventBridge Scheduler does not support
+          // tagging individual schedules (only schedule groups), so ownership
+          // can't be branded/verified via tags. A `ConflictException` means a
+          // schedule with this deterministic name already exists; fall through
+          // to the sync (`updateSchedule`) path to converge it.
           if (!observed?.Arn) {
             yield* scheduler
               .createSchedule({
@@ -204,37 +228,8 @@ export const ScheduleProvider = () =>
                 ...desiredConfig,
               })
               .pipe(
-                Effect.catchTag("ConflictException", () =>
-                  scheduler
-                    .getSchedule({
-                      Name: scheduleName,
-                      GroupName: groupNameParam,
-                    })
-                    .pipe(
-                      Effect.flatMap((existing) =>
-                        existing.Arn
-                          ? scheduler
-                              .listTagsForResource({
-                                ResourceArn: existing.Arn,
-                              })
-                              .pipe(
-                                Effect.filterOrFail(
-                                  ({ Tags }) => hasTags(internalTags, Tags),
-                                  () =>
-                                    new Error(
-                                      `Schedule '${scheduleName}' already exists and is not managed by alchemy`,
-                                    ),
-                                ),
-                                Effect.asVoid,
-                              )
-                          : Effect.fail(
-                              new Error(
-                                `Schedule '${scheduleName}' already exists but could not be described`,
-                              ),
-                            ),
-                      ),
-                    ),
-                ),
+                retryUntilRoleAssumable,
+                Effect.catchTag("ConflictException", () => Effect.void),
               );
             observed = yield* scheduler
               .getSchedule({ Name: scheduleName, GroupName: groupNameParam })
@@ -257,38 +252,13 @@ export const ScheduleProvider = () =>
           // update — `updateSchedule` is a full PUT — so we always send the
           // full desired config. Fields like `state` are reflected in
           // `observed.State`; sending a no-op update is cheap.
-          yield* scheduler.updateSchedule({
-            Name: scheduleName,
-            GroupName: groupNameParam,
-            ...desiredConfig,
-          });
-
-          // Sync tags — diff observed cloud tags against desired so that
-          // adoption rewrites ownership tags correctly.
-          const observedTagsResp = yield* scheduler
-            .listTagsForResource({ ResourceArn: scheduleArn })
-            .pipe(
-              Effect.catchTag("ResourceNotFoundException", () =>
-                Effect.succeed({ Tags: [] as scheduler.Tag[] }),
-              ),
-            );
-          const observedTags = Object.fromEntries(
-            (observedTagsResp.Tags ?? []).map((t) => [t.Key, t.Value]),
-          );
-          const { removed, upsert } = diffTags(observedTags, desiredTags);
-
-          if (removed.length > 0) {
-            yield* scheduler.untagResource({
-              ResourceArn: scheduleArn,
-              TagKeys: removed,
-            });
-          }
-          if (upsert.length > 0) {
-            yield* scheduler.tagResource({
-              ResourceArn: scheduleArn,
-              Tags: upsert,
-            });
-          }
+          yield* scheduler
+            .updateSchedule({
+              Name: scheduleName,
+              GroupName: groupNameParam,
+              ...desiredConfig,
+            })
+            .pipe(retryUntilRoleAssumable);
 
           yield* session.note(scheduleArn);
 
@@ -299,6 +269,57 @@ export const ScheduleProvider = () =>
             state: news.state ?? observed.State,
           };
         }),
+        list: () =>
+          Effect.gen(function* () {
+            // Enumerate every schedule in the account/region. Omitting
+            // GroupName makes ListSchedules return summaries across all
+            // schedule groups, paginated.
+            const summaries = yield* scheduler.listSchedules.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) =>
+                  (page.Schedules ?? []).filter(
+                    (s): s is scheduler.ScheduleSummary & { Name: string } =>
+                      s.Name != null,
+                  ),
+                ),
+              ),
+            );
+
+            // Hydrate each summary via GetSchedule into the exact `read`
+            // shape. Skip schedules deleted between list and get.
+            const rows = yield* Effect.forEach(
+              summaries,
+              (summary) => {
+                const groupName = summary.GroupName ?? "default";
+                return scheduler
+                  .getSchedule({
+                    Name: summary.Name,
+                    GroupName: groupName !== "default" ? groupName : undefined,
+                  })
+                  .pipe(
+                    Effect.map((described) =>
+                      described.Arn && described.Name
+                        ? {
+                            scheduleArn: described.Arn,
+                            scheduleName: described.Name,
+                            groupName: described.GroupName ?? groupName,
+                            state: described.State,
+                          }
+                        : undefined,
+                    ),
+                    Effect.catchTag("ResourceNotFoundException", () =>
+                      Effect.succeed(undefined),
+                    ),
+                  );
+              },
+              { concurrency: 10 },
+            );
+
+            return rows.filter(
+              (row): row is Schedule["Attributes"] => row !== undefined,
+            );
+          }),
         delete: Effect.fn(function* ({ output }) {
           yield* scheduler
             .deleteSchedule({

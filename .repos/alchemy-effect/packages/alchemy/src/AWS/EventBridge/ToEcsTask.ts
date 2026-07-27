@@ -31,6 +31,27 @@ export interface EcsRouteTargetProps extends Pick<
   taskCount?: number;
 }
 
+/**
+ * Routes matching events from an EventBridge bus to an ECS task run.
+ *
+ * Creates a {@link Rule} targeting the ECS cluster plus an IAM role that lets
+ * EventBridge call `ecs:RunTask` with the given task definition (Fargate
+ * launch type). Usually reached through the `events(...)` builder rather than
+ * called directly.
+ * @binding
+ * @example Run a Fargate Task for Matching Events
+ * ```typescript
+ * yield* AWS.EventBridge.events(bus, { source: ["my.app"] }).toEcsTask(cluster, {
+ *   task: {
+ *     taskDefinitionArn: yield* taskDefinition.taskDefinitionArn,
+ *     taskRoleArn: yield* taskRole.roleArn,
+ *     executionRoleArn: yield* executionRole.roleArn,
+ *   },
+ *   subnets: subnetIds,
+ *   assignPublicIp: true,
+ * });
+ * ```
+ */
 export const toEcsTask = (
   descriptor: EventDescriptor,
   cluster: Cluster,

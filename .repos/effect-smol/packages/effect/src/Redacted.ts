@@ -1,45 +1,12 @@
 /**
- * The `Redacted` module wraps sensitive values so normal rendering paths show
- * a placeholder instead of the underlying value. It is designed to reduce
- * accidental disclosure in logs, error messages, JSON output, and inspection
- * output while still allowing trusted code to recover the original value.
+ * Wraps sensitive values so normal output does not reveal them.
  *
- * **Mental model**
- *
- * - A `Redacted<A>` carries an underlying value of type `A` behind a wrapper
- * - String, JSON, and inspection output render as `<redacted>` or
- *   `<redacted:label>` when a label is provided
- * - {@link value} retrieves the underlying value and should be used only at
- *   trusted boundaries
- * - Equality and hashing are based on the underlying value, not the redacted
- *   placeholder
- *
- * **Common tasks**
- *
- * - Wrap a secret with {@link make}
- * - Check unknown input with {@link isRedacted}
- * - Recover the secret at a trusted boundary with {@link value}
- * - Remove the stored association with {@link wipeUnsafe}
- * - Compare redacted values with an underlying equivalence via
- *   {@link makeEquivalence}
- *
- * **Gotchas**
- *
- * - `Redacted` is not encryption and does not zero memory; it reduces
- *   accidental display of sensitive values
- * - Labels are visible in rendered output, so labels must not contain secrets
- * - After {@link wipeUnsafe}, calling {@link value} on the same wrapper fails
- *
- * **Example** (Rendering a redacted value)
- *
- * ```ts
- * import { Redacted } from "effect"
- *
- * const token = Redacted.make("secret-token", { label: "api-token" })
- *
- * String(token) // "<redacted:api-token>"
- * Redacted.value(token) // "secret-token"
- * ```
+ * A `Redacted<A>` shows a redacted placeholder in string, JSON, and inspection
+ * output, while still storing the original value for trusted code that needs to
+ * recover it. This helps reduce accidental leaks in logs and diagnostics. This
+ * module includes constructors, runtime checks, value recovery, wiping of stored
+ * values, and comparison helpers that avoid exposing the wrapped value at the
+ * call site.
  *
  * @since 3.3.0
  */
@@ -155,7 +122,7 @@ export declare namespace Redacted {
    * console.log(rotate({ token: "secret" })) // { token: "secret:rotated" }
    * ```
    *
-   * @category type-level
+   * @category utility types
    * @since 3.3.0
    */
   export type Value<T extends Redacted<any>> = [T] extends [Redacted<infer _A>] ? _A : never
@@ -258,7 +225,7 @@ const Proto = {
  *
  * **When to use**
  *
- * Use when the underlying sensitive value is required at a trusted boundary.
+ * Use when you need the underlying sensitive value at a trusted boundary.
  *
  * **Example** (Retrieving a redacted value)
  *
@@ -321,8 +288,8 @@ export const wipeUnsafe = <T>(self: Redacted<T>): boolean => redacted.redactedRe
  *
  * **When to use**
  *
- * Use when an API needs an `Equivalence` for `Redacted` values based on their
- * underlying values.
+ * Use when you need to compare wrapped secrets through an approved equality
+ * rule without exposing the underlying values at each comparison site.
  *
  * **Example** (Comparing redacted values)
  *
@@ -340,7 +307,7 @@ export const wipeUnsafe = <T>(self: Redacted<T>): boolean => redacted.redactedRe
  * assert.equal(equivalence(API_KEY1, API_KEY3), true)
  * ```
  *
- * @category equivalence
+ * @category instances
  * @since 4.0.0
  */
 export const makeEquivalence = <A>(isEquivalent: Equivalence.Equivalence<A>): Equivalence.Equivalence<Redacted<A>> =>

@@ -1,8 +1,6 @@
 import * as DynamoDB from "@distilled.cloud/aws/dynamodb";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Table } from "./Table.ts";
 
 export interface PutItemRequest extends Omit<
@@ -10,8 +8,32 @@ export interface PutItemRequest extends Omit<
   "TableName"
 > {}
 
-export class PutItem extends Binding.Service<
+/**
+ * Runtime binding for `dynamodb:PutItem`.
+ *
+ * Bind this operation to a `Table` inside a function runtime to get a callable
+ * that writes a single item, automatically injecting the table name and
+ * granting the host `dynamodb:PutItem` on the table. Provide the `PutItemHttp`
+ * layer on the Function to satisfy the binding.
+ * @binding
+ * @section Writing Data
+ * @example Write a Single Item
+ * ```typescript
+ * // inside the Function's Effect.gen, with Effect.provide(DynamoDB.PutItemHttp)
+ * const putItem = yield* AWS.DynamoDB.PutItem(table);
+ *
+ * yield* putItem({
+ *   Item: {
+ *     pk: { S: "user#123" },
+ *     sk: { S: "profile" },
+ *     name: { S: "Alice" },
+ *   },
+ * });
+ * ```
+ */
+export interface PutItem extends Binding.Service<
   PutItem,
+  "AWS.DynamoDB.PutItem",
   <T extends Table>(
     table: T,
   ) => Effect.Effect<
@@ -19,49 +41,6 @@ export class PutItem extends Binding.Service<
       request: PutItemRequest,
     ) => Effect.Effect<DynamoDB.PutItemOutput, DynamoDB.PutItemError>
   >
->()("AWS.DynamoDB.PutItem") {}
+> {}
 
-export const PutItemLive = Layer.effect(
-  PutItem,
-  Effect.gen(function* () {
-    const bind = yield* PutItemPolicy;
-    const putItem = yield* DynamoDB.putItem;
-
-    return Effect.fn(function* <T extends Table>(table: T) {
-      const TableName = yield* table.tableName;
-      yield* bind(table);
-      return Effect.fn(function* (request: PutItemRequest) {
-        const tableName = yield* TableName;
-        return yield* putItem({
-          ...request,
-          TableName: tableName,
-        });
-      });
-    });
-  }),
-);
-
-export class PutItemPolicy extends Binding.Policy<
-  PutItemPolicy,
-  <T extends Table>(table: T) => Effect.Effect<void>
->()("AWS.DynamoDB.PutItem") {}
-
-export const PutItemPolicyLive = PutItemPolicy.layer.succeed(
-  Effect.fn(function* (host, table) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.DynamoDB.PutItem(${table}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["dynamodb:PutItem"],
-            Resource: [table.tableArn],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `PutItemPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
-);
+export const PutItem = Binding.Service<PutItem>("AWS.DynamoDB.PutItem");

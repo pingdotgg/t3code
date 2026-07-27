@@ -1,6 +1,6 @@
 # `@effect/sql-libsql`
 
-An `@effect/sql` implementation using the `@libsql/client` library.
+An Effect SQL implementation using the `@libsql/client` library.
 
 ## Documentation
 

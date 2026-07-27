@@ -1,54 +1,14 @@
 /**
- * The `Cache` module provides an effectful, mutable key-value cache for values
- * computed by lookup effects. A `Cache<Key, A, E, R>` stores lookup exits for
- * keys, shares concurrent misses for the same key, and manages entry lifetime
- * with capacity limits and optional time-to-live policies.
+ * Caches values loaded by an Effect lookup function.
  *
- * **Mental model**
- *
- * - {@link make} and {@link makeWith} create a cache from a lookup function and
- *   a maximum capacity
- * - {@link get} returns a cached value when present, or runs the lookup for a
- *   missing or expired key
- * - Concurrent misses for the same key share one pending lookup and all await
- *   the same result
- * - Successes and failures are both cached as `Exit` values until their entry
- *   expires or is replaced
- * - Entries can live forever, use a fixed TTL, or use a dynamic TTL based on
- *   the lookup `Exit`
- * - Capacity uses access order: reads move entries to the back and overflow
- *   removes the oldest entries
- *
- * **Common tasks**
- *
- * - Create a cache: {@link make}, {@link makeWith}
- * - Read values: {@link get}, {@link getOption}, {@link getSuccess}
- * - Seed or overwrite values: {@link set}
- * - Refresh values: {@link refresh}
- * - Remove entries: {@link invalidate}, {@link invalidateWhen}, {@link invalidateAll}
- * - Inspect contents: {@link has}, {@link size}, {@link keys}, {@link values}, {@link entries}
- *
- * **Gotchas**
- *
- * - {@link getOption} does not run the lookup, but it awaits pending entries
- *   and fails when the existing entry is a failure
- * - {@link getSuccess} returns `Option.none` for missing, expired, pending, or
- *   failed entries
- * - {@link size} may include expired entries until they are observed and removed
- * - {@link values} and {@link entries} include only successfully resolved,
- *   non-expired entries
- * - Use `Data` or another `Equal`-compatible key type when keys should compare
- *   structurally
- *
- * **See also**
- *
- * - {@link Duration} for configuring fixed or dynamic time-to-live values
- * - {@link Effect} for the lookup effects used to compute cached values
+ * A cache stores successful and failed lookup results, shares an in-progress
+ * lookup when multiple callers request the same missing key, and limits entries
+ * by capacity and optional time-to-live rules. This module includes helpers for
+ * reading, setting, refreshing, invalidating, and inspecting cache contents.
  *
  * @since 4.0.0
  */
 import * as Context from "./Context.ts"
-import * as Deferred from "./Deferred.ts"
 import * as Duration from "./Duration.ts"
 import type * as Effect from "./Effect.ts"
 import type * as Exit from "./Exit.ts"
@@ -168,7 +128,9 @@ export interface Cache<in out Key, in out A, in out E = never, out R = never> ex
  */
 export interface Entry<A, E> {
   expiresAt: number | undefined
-  readonly deferred: Deferred.Deferred<A, E>
+  awaiters: number
+  readonly fiber: Fiber.Fiber<A, E>
+  await(this: Entry<A, E>): Effect.Effect<A, E>
 }
 
 /**
@@ -184,7 +146,7 @@ export interface Entry<A, E> {
  * The timeToLive function receives both the exit result and the key, allowing
  * for flexible TTL policies based on success/failure state and key characteristics.
  *
- * **Example** (Using dynamic time to live)
+ * **Example** (Configuring dynamic time to live)
  *
  * ```ts
  * import { Cache, Effect, Exit } from "effect"
@@ -446,29 +408,54 @@ export const get: {
         // Move the entry to the end of the map to keep it fresh
         MutableHashMap.remove(self.map, key)
         MutableHashMap.set(self.map, key, oentry.value)
-        return Deferred.await(oentry.value.deferred)
+        return oentry.value.await()
       }
-      const deferred = Deferred.makeUnsafe<A, E>()
-      const entry: Entry<A, E> = {
-        expiresAt: undefined,
-        deferred
-      }
-      MutableHashMap.set(self.map, key, entry)
-      if (Number.isFinite(self.capacity)) {
-        checkCapacity(self)
-      }
-      return effect.onExit(self.lookup(key), (exit) => {
-        Deferred.doneUnsafe(deferred, exit)
+      const entry = new EntryImpl(fiber, self.lookup(key))
+      entry.fiber.addObserver((exit) => {
+        if (effect.exitHasInterrupts(exit)) {
+          MutableHashMap.remove(self.map, key)
+          return
+        }
         const ttl = self.timeToLive(exit, key)
         if (Duration.isFinite(ttl)) {
           entry.expiresAt = fiber.getRef(effect.ClockRef).currentTimeMillisUnsafe() + Duration.toMillis(ttl)
         } else if (Duration.isZero(ttl)) {
           MutableHashMap.remove(self.map, key)
         }
-        return effect.void
       })
+      MutableHashMap.set(self.map, key, entry)
+      if (Number.isFinite(self.capacity)) {
+        checkCapacity(self)
+      }
+      return entry.await()
     })
 )
+
+class EntryImpl<A, E> implements Entry<A, E> {
+  expiresAt: number | undefined
+  awaiters: number
+  fiber: Fiber.Fiber<A, E>
+
+  constructor(
+    parent: Fiber.Fiber<unknown, unknown>,
+    valueEffect: Effect.Effect<A, E, any>
+  ) {
+    this.fiber = effect.forkUnsafe(parent, valueEffect, true, true)
+    this.awaiters = 0
+    this.expiresAt = undefined
+  }
+
+  await(): Effect.Effect<A, E> {
+    const exit = this.fiber.pollUnsafe()
+    if (exit) return exit
+    this.awaiters++
+    return effect.onExit(effect.fiberJoin(this.fiber), () => {
+      this.awaiters--
+      if (this.awaiters > 0 || this.fiber.pollUnsafe()) return effect.void
+      return effect.fiberInterrupt(this.fiber)
+    })
+  }
+}
 
 const hasExpired = <A, E>(entry: Entry<A, E>, fiber: Fiber.Fiber<unknown, unknown>): boolean => {
   if (entry.expiresAt === undefined) {
@@ -595,7 +582,7 @@ export const getOption: {
   <Key, A, E, R>(self: Cache<Key, A, E, R>, key: Key): Effect.Effect<Option.Option<A>, E> =>
     core.withFiber((fiber) => {
       const entry = getImpl(self, key, fiber)
-      return entry ? effect.asSome(Deferred.await(entry.deferred)) : effect.succeedNone
+      return entry ? effect.asSome(entry.await()) : effect.succeedNone
     })
 )
 
@@ -641,7 +628,7 @@ export const getSuccess: {
   2,
   <Key, A, E, R>(self: Cache<Key, A, E, R>, key: Key): Effect.Effect<Option.Option<A>> =>
     core.withFiber((fiber) => {
-      const exit = getImpl(self, key, fiber)?.deferred.effect as Exit.Exit<A, E> | undefined
+      const exit = getImpl(self, key, fiber)?.fiber.pollUnsafe()
       if (exit && effect.exitIsSuccess(exit)) {
         return effect.succeedSome(exit.value)
       }
@@ -754,19 +741,16 @@ export const set: {
   <Key, A, E, R>(self: Cache<Key, A, E, R>, key: Key, value: A): Effect.Effect<void> =>
     core.withFiber((fiber) => {
       const exit = core.exitSucceed(value)
-      const deferred = Deferred.makeUnsafe<A, E>()
-      Deferred.doneUnsafe(deferred, exit)
+      const entry = new EntryImpl(fiber, exit)
       const ttl = self.timeToLive(exit, key)
       if (Duration.isZero(ttl)) {
         MutableHashMap.remove(self.map, key)
         return effect.void
       }
-      MutableHashMap.set(self.map, key, {
-        deferred,
-        expiresAt: Duration.isFinite(ttl)
-          ? fiber.getRef(effect.ClockRef).currentTimeMillisUnsafe() + Duration.toMillis(ttl)
-          : undefined
-      })
+      entry.expiresAt = Duration.isFinite(ttl)
+        ? fiber.getRef(effect.ClockRef).currentTimeMillisUnsafe() + Duration.toMillis(ttl)
+        : undefined
+      MutableHashMap.set(self.map, key, entry)
       checkCapacity(self)
       return effect.void
     })
@@ -1002,7 +986,7 @@ export const invalidateWhen: {
       if (oentry === undefined) {
         return effect.succeed(false)
       }
-      return Deferred.await(oentry.deferred).pipe(
+      return oentry.await().pipe(
         effect.map((value) => {
           if (f(value)) {
             MutableHashMap.remove(self.map, key)
@@ -1114,18 +1098,17 @@ export const refresh: {
   2,
   <Key, A, E, R>(self: Cache<Key, A, E, R>, key: Key): Effect.Effect<A, E, R> =>
     core.withFiber((fiber) => {
-      const deferred = Deferred.makeUnsafe<A, E>()
-      const entry: Entry<A, E> = {
-        expiresAt: undefined,
-        deferred
-      }
+      const entry = new EntryImpl(fiber, self.lookup(key))
       const existing = getImpl(self, key, fiber, false) !== undefined
       if (!existing) {
         MutableHashMap.set(self.map, key, entry)
         checkCapacity(self)
       }
-      return effect.onExit(self.lookup(key), (exit) => {
-        Deferred.doneUnsafe(deferred, exit)
+      entry.fiber.addObserver((exit) => {
+        if (effect.exitHasInterrupts(exit)) {
+          if (!existing) MutableHashMap.remove(self.map, key)
+          return
+        }
         const ttl = self.timeToLive(exit, key)
         if (Duration.isZero(ttl)) {
           MutableHashMap.remove(self.map, key)
@@ -1137,8 +1120,8 @@ export const refresh: {
         if (existing) {
           MutableHashMap.set(self.map, key, entry)
         }
-        return effect.void
       })
+      return entry.await()
     })
 )
 
@@ -1323,10 +1306,10 @@ export const entries = <Key, A, E, R>(self: Cache<Key, A, E, R>): Effect.Effect<
     const now = fiber.getRef(effect.ClockRef).currentTimeMillisUnsafe()
     return effect.succeed(Iterable.filterMap(self.map, ([key, entry]) => {
       if (entry.expiresAt === undefined || entry.expiresAt > now) {
-        const exit = entry.deferred.effect
-        return !core.isExit(exit) || effect.exitIsFailure(exit)
-          ? Result.failVoid
-          : Result.succeed([key, exit.value as A])
+        const exit = entry.fiber.pollUnsafe()
+        return exit && exit._tag === "Success"
+          ? Result.succeed([key, exit.value])
+          : Result.failVoid
       }
       MutableHashMap.remove(self.map, key)
       return Result.failVoid

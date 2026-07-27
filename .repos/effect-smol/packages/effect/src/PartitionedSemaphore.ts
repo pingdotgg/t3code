@@ -5,34 +5,6 @@
  * groups of work compete for the same bounded resource and each group should
  * make progress without one busy group monopolizing released permits.
  *
- * **Mental model**
- *
- * - The semaphore has a fixed shared capacity measured in permits
- * - Work acquires permits with a partition key of type `K`
- * - Waiting acquisitions are tracked per partition
- * - Released permits are assigned to waiting partitions in round-robin order
- * - `withPermit` and `withPermits` acquire permits around an effect and
- *   release them when the effect exits, fails, or is interrupted
- *
- * **Common tasks**
- *
- * - Create a semaphore: {@link make}, {@link makeUnsafe}
- * - Inspect capacity and availability: {@link capacity}, {@link available}
- * - Acquire and release manually: {@link take}, {@link release}
- * - Limit a single operation per partition: {@link withPermit}
- * - Limit weighted work per partition: {@link withPermits}
- * - Run only when permits are immediately available:
- *   {@link withPermitsIfAvailable}
- *
- * **Gotchas**
- *
- * - `withPermitsIfAvailable` does not use a partition key; it only succeeds
- *   when the shared pool has enough permits immediately
- * - Acquiring more permits than the semaphore capacity never completes
- * - Requests for zero or negative permits complete without acquiring anything
- * - Non-finite capacities create an unbounded semaphore whose acquire and
- *   release operations complete immediately
- *
  * @since 4.0.0
  */
 import * as Effect from "./Effect.ts"
@@ -126,8 +98,8 @@ export interface Partitioned<in K> extends PartitionedSemaphore<K> {}
  *
  * **When to use**
  *
- * Use when a partitioned semaphore must be constructed synchronously outside an
- * `Effect` workflow.
+ * Use when you need to construct a partitioned semaphore synchronously outside
+ * an `Effect` workflow.
  *
  * **Details**
  *
@@ -221,7 +193,6 @@ export const makeUnsafe = <K = unknown>(options: {
       }
 
       const needed = permits - totalPermits
-      const taken = permits - needed
       if (totalPermits > 0) {
         totalPermits = 0
       }
@@ -256,9 +227,7 @@ export const makeUnsafe = <K = unknown>(options: {
       return Effect.sync(() => {
         cleanup()
         waitingPermits -= entry.permits
-        if (taken > 0) {
-          releaseUnsafe(taken)
-        }
+        releaseUnsafe(permits - entry.permits)
       })
     })
   }
@@ -405,8 +374,8 @@ export const capacity = <K>(self: PartitionedSemaphore<K>): number => self.capac
  *
  * **When to use**
  *
- * Use to manually acquire permits for a partition when acquisition and release
- * must be controlled as separate effects.
+ * Use when you need manual permit acquisition for a partition and want to
+ * control acquisition and release as separate effects.
  *
  * **Details**
  *
@@ -437,8 +406,8 @@ export const take: {
  *
  * **When to use**
  *
- * Use to manually return permits acquired with `take` when a lower-level
- * partitioned permit protocol needs explicit release control.
+ * Use when you need to return permits acquired with `take` in a lower-level
+ * partitioned permit protocol with explicit release control.
  *
  * **Details**
  *

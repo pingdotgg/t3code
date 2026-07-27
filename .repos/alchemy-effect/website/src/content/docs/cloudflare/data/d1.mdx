@@ -1,0 +1,190 @@
+---
+title: D1
+description: Cloudflare D1 is serverless SQLite — create a database, apply migrations on deploy, and query it from a Worker through a typed binding.
+---
+
+D1 is Cloudflare's serverless SQLite database. There's nothing to
+provision or scale — you get a SQL database addressed by name, with
+reads served close to your users when read replication is enabled.
+
+Reach for D1 when your app needs relational data without operating a
+database: user tables, content, app state queried with plain SQL. If
+you need Postgres or MySQL (or already have one), front it with
+[Hyperdrive](/cloudflare/data/hyperdrive) instead.
+
+## Create a database
+
+A database is one resource declaration:
+
+```typescript
+// src/database.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Database = Cloudflare.D1.Database("Database");
+```
+
+Yield it inside your Stack like any other resource:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { Database } from "./src/database.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const db = yield* Database;
+
+    return { databaseName: db.databaseName };
+  }),
+);
+```
+
+## Migrations
+
+Point `migrationsDir` at a folder of `.sql` files. Files are sorted
+by numeric prefix (`0001_`, `0002_`, …) and applied in order as part
+of every deploy; already-applied migrations are skipped:
+
+```typescript
+const db = yield* Cloudflare.D1.Database("my-db", {
+  migrationsDir: "./migrations",
+});
+```
+
+The tracking table is wrangler-compatible, and you can point at a
+custom one (e.g. for Drizzle-generated migrations):
+
+```typescript
+const db = yield* Cloudflare.D1.Database("my-db", {
+  migrationsDir: "./migrations",
+  migrationsTable: "drizzle_migrations",
+});
+```
+
+The migration files themselves don't have to be hand-written —
+[Drizzle.Schema](/sql/drizzle/migrations) can generate them from a
+Drizzle schema on deploy. [Drizzle on D1](/cloudflare/data/d1-drizzle)
+walks through the whole flow: schema → generated migrations → typed
+queries from the Worker.
+
+## Query from a Worker
+
+Bind the database into a Worker with `Cloudflare.D1.QueryDatabase`
+and provide the `QueryDatabaseBinding` layer. The client exposes
+`prepare`, `exec`, `batch`, and `raw`; prepared statements execute
+with `all`, `first`, or `run`:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Database } from "./database.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    // init: register the binding, get a typed client
+    const db = yield* Cloudflare.D1.QueryDatabase(Database);
+
+    return {
+      fetch: Effect.gen(function* () {
+        // runtime: run queries
+        const results = yield* db
+          .prepare("SELECT * FROM users WHERE id = ?")
+          .bind(1)
+          .all();
+        return yield* HttpServerResponse.json(results);
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.D1.QueryDatabaseBinding)),
+);
+```
+
+`prepare` and `bind` are synchronous plan builders — only the
+executors (`all`, `first`, `run`, `raw`) round-trip to the database,
+and those return Effects. For libraries that want the native
+`D1Database` object (e.g. Better Auth), use the client's `raw`
+escape hatch.
+
+## SQL with `@effect/sql-d1`
+
+Prefer tagged-template SQL over hand-written prepared statements?
+`SQL.D1` (from `alchemy/SQL/D1` — each low-level effect-sql client
+lives on its own subpath) wraps the same binding in an
+`@effect/sql-d1` `D1Client` —
+interpolated values are parameterized, every query is an Effect, and
+failures surface as typed `SqlError`s:
+
+```typescript
+import * as SQL from "alchemy/SQL/D1";
+
+Effect.gen(function* () {
+  const d1 = yield* Cloudflare.D1.QueryDatabase(Database);
+  const sql = yield* SQL.D1(d1);
+
+  return {
+    fetch: Effect.gen(function* () {
+      const users = yield* sql`SELECT * FROM users WHERE id = ${id}`;
+      return yield* HttpServerResponse.json({ users });
+    }),
+  };
+}).pipe(Effect.provide(Cloudflare.D1.QueryDatabaseBinding));
+```
+
+The client is built lazily on the first query and memoized per
+execution — a `fetch`/`queue`/`scheduled` event, a Durable Object
+call, or a Workflow run — then torn down when the event settles.
+
+`D1Client` implements Effect's generic `SqlClient` interface, so
+services written against `SqlClient.SqlClient` run on D1 unchanged.
+Provide both tags with the layer form:
+
+```typescript
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+const makeApp = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  // ... services that only know about SqlClient
+});
+
+const app = yield* makeApp.pipe(
+  Effect.provide(SQL.D1Layer(d1)),
+);
+```
+
+The complete runnable project is
+[`cloudflare-effect-sql-d1`](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-effect-sql-d1).
+The full client API, the Layer pattern, and the lifecycle contract
+live in the SQL hub — [Effect SQL: D1](/sql/effect-sql/d1) and
+[Connection lifecycle](/sql/effect-sql/lifecycle). For typed schemas
+and an ORM on top of the same binding, see
+[Drizzle on D1](/cloudflare/data/d1-drizzle).
+
+## Where next
+
+Guides:
+
+- [Drizzle on D1](/cloudflare/data/d1-drizzle) — typed schemas,
+  generated migrations, and the `effect-d1` driver on this database.
+- [`cloudflare-effect-sql-d1`](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-effect-sql-d1)
+  — the runnable `@effect/sql-d1` example.
+
+Related:
+
+- [Workers](/cloudflare/compute/workers) — where your queries run.
+- [Hyperdrive](/cloudflare/data/hyperdrive) — for external Postgres/MySQL
+  instead of SQLite.
+
+Reference:
+
+- [Database API reference](/providers/cloudflare/d1/database)
+- [QueryDatabase API reference](/providers/cloudflare/d1/querydatabase)

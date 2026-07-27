@@ -8,6 +8,7 @@ import {
   listGroups,
   resolveIdentityStoreId,
   retryIdentityCenter,
+  unredact,
 } from "./common.ts";
 
 export interface GroupProps {
@@ -34,11 +35,17 @@ export interface Group extends Resource<
   "AWS.IdentityCenter.Group",
   GroupProps,
   {
+    /** The identity store containing the group. */
     identityStoreId: string;
+    /** The unique ID of the group. */
     groupId: string;
+    /** The display name of the group. */
     displayName: string | undefined;
+    /** The description of the group. */
     description: string | undefined;
+    /** When the group was created. */
     createdAt: Date | undefined;
+    /** When the group was last updated. */
     updatedAt: Date | undefined;
   },
   never,
@@ -47,7 +54,7 @@ export interface Group extends Resource<
 
 /**
  * A group in the IAM Identity Center identity store.
- *
+ * @resource
  * @section Creating Groups
  * @example Platform Engineers
  * ```typescript
@@ -65,6 +72,27 @@ export const GroupProvider = () =>
     Effect.gen(function* () {
       return {
         stables: ["identityStoreId", "groupId"],
+        list: () =>
+          Effect.gen(function* () {
+            // Identity Center groups live in the instance's identity store.
+            // Resolve it from the (single) enabled SSO instance, then
+            // enumerate every group and hydrate each into the exact `read`
+            // shape via `describeGroup` (bounded concurrency, typed
+            // per-item not-found handled inside `readGroupById`).
+            const identityStoreId = yield* resolveIdentityStoreId({});
+            const groups = yield* listGroups(identityStoreId);
+            const rows = yield* Effect.forEach(
+              groups,
+              (group) =>
+                group.GroupId
+                  ? readGroupById(identityStoreId, group.GroupId)
+                  : Effect.succeed(undefined),
+              { concurrency: 10 },
+            );
+            return rows.filter(
+              (row): row is Group["Attributes"] => row !== undefined,
+            );
+          }),
         diff: Effect.fn(function* ({ olds, news }) {
           if (!isResolved(news)) return;
           if (olds?.identityStoreId !== news.identityStoreId) {
@@ -134,16 +162,18 @@ export const GroupProvider = () =>
             AttributePath: string;
             AttributeValue: string;
           }[] = [];
+          // Attribute paths are SCIM-style camelCase (`displayName`,
+          // `description`) per the UpdateGroup API.
           if (existing.displayName !== news.displayName) {
             operations.push({
-              AttributePath: "DisplayName",
+              AttributePath: "displayName",
               AttributeValue: news.displayName,
             });
           }
           const desiredDescription = news.description ?? "";
           if ((existing.description ?? "") !== desiredDescription) {
             operations.push({
-              AttributePath: "Description",
+              AttributePath: "description",
               AttributeValue: desiredDescription,
             });
           }
@@ -213,8 +243,10 @@ const readGroupById = Effect.fn(function* (
   return {
     identityStoreId: response.IdentityStoreId,
     groupId: response.GroupId,
-    displayName: response.DisplayName as string | undefined,
-    description: response.Description as string | undefined,
+    // Sensitive-trait fields decode to Redacted at runtime — unwrap before
+    // persisting into Attributes / diffing against desired props.
+    displayName: unredact(response.DisplayName),
+    description: unredact(response.Description),
     createdAt: response.CreatedAt,
     updatedAt: response.UpdatedAt,
   } satisfies Group["Attributes"];
@@ -230,7 +262,9 @@ const readGroupByDisplayName = Effect.fn(function* ({
     instanceArn,
   });
   const groups = yield* listGroups(resolvedIdentityStoreId);
-  const match = groups.find((group) => group.DisplayName === displayName);
+  const match = groups.find(
+    (group) => unredact(group.DisplayName) === displayName,
+  );
   return match?.GroupId
     ? yield* readGroupById(resolvedIdentityStoreId, match.GroupId)
     : undefined;

@@ -1,46 +1,11 @@
 /**
- * The `Request` module defines typed request values for data loading with
- * `Effect.request`. A request is a description of work, not the execution of
- * that work: it records the success type, typed error, service requirements,
- * and the fields needed by a resolver to perform one logical operation.
+ * Typed request values for data loading with `Effect.request`.
  *
- * Requests are designed to be paired with a `RequestResolver`, which receives
- * pending request entries, batches or caches them when possible, and completes
- * each entry with a result. This lets calling code ask for data declaratively
- * while resolver code owns the backend-specific loading logic.
- *
- * **Mental model**
- *
- * - `Request<A, E, R>` describes one operation that succeeds with `A`, fails
- *   with `E`, and may require services `R`
- * - Constructors such as {@link of}, {@link tagged}, {@link Class}, and
- *   {@link TaggedClass} attach the request marker and structural behavior
- *   expected by the request runtime
- * - A resolver receives {@link Entry} values; each entry contains the original
- *   request, the captured context, and a completion callback
- * - Completion helpers such as {@link succeed}, {@link fail},
- *   {@link failCause}, {@link complete}, and {@link completeEffect} turn
- *   resolver results into the `Exit` expected by the waiting fiber
- *
- * **Common tasks**
- *
- * - Define request shapes with {@link Request}, {@link Class}, or
- *   {@link TaggedClass}
- * - Build lightweight request constructors with {@link of} or {@link tagged}
- * - Check unknown values with {@link isRequest}
- * - Complete pending resolver entries with {@link succeed}, {@link fail},
- *   {@link failCause}, {@link complete}, or {@link completeEffect}
- * - Extract request type members with {@link Success}, {@link Error},
- *   {@link Services}, and {@link Result}
- *
- * **Gotchas**
- *
- * - Creating a request value does not run anything; it must be submitted with
- *   `Effect.request` and handled by a resolver
- * - Resolver implementations must complete every {@link Entry} they receive,
- *   otherwise the fiber waiting for that request will not receive a value
- * - Cached and deduplicated requests depend on request identity and structural
- *   equality, so include only stable fields that describe the logical operation
+ * A request describes one logical piece of work without performing it. It
+ * records the success type, typed error, service requirements, and fields a
+ * resolver needs to complete the request. Requests are paired with
+ * `RequestResolver`, which performs backend-specific loading and completes each
+ * pending request entry with a success, failure, cause, exit, or effect.
  *
  * @since 2.0.0
  */
@@ -52,6 +17,7 @@ import type * as Exit from "./Exit.ts"
 import { dual } from "./Function.ts"
 import * as core from "./internal/core.ts"
 import * as internalEffect from "./internal/effect.ts"
+import * as InternalRecord from "./internal/record.ts"
 import { hasProperty } from "./Predicate.ts"
 import type * as Types from "./Types.ts"
 
@@ -169,7 +135,7 @@ export interface Constructor<R extends Request<any, any, any>, T extends keyof R
  * type UserError = Request.Error<GetUser> // Error
  * ```
  *
- * @category type-level
+ * @category utility types
  * @since 2.0.0
  */
 export type Error<T extends Request<any, any, any>> = [T] extends [Request<infer _A, infer _E, infer _R>] ? _E : never
@@ -191,7 +157,7 @@ export type Error<T extends Request<any, any, any>> = [T] extends [Request<infer
  * type UserSuccess = Request.Success<GetUser> // string
  * ```
  *
- * @category type-level
+ * @category utility types
  * @since 2.0.0
  */
 export type Success<T extends Request<any, any, any>> = [T] extends [Request<infer _A, infer _E, infer _R>] ? _A
@@ -200,7 +166,7 @@ export type Success<T extends Request<any, any, any>> = [T] extends [Request<inf
 /**
  * A utility type to extract the requirements type from a `Request`.
  *
- * @category type-level
+ * @category utility types
  * @since 4.0.0
  */
 export type Services<T extends Request<any, any, any>> = [T] extends [Request<infer _A, infer _E, infer _R>] ? _R
@@ -223,7 +189,7 @@ export type Services<T extends Request<any, any, any>> = [T] extends [Request<in
  * type UserResult = Request.Result<GetUser> // Exit.Exit<string, Error>
  * ```
  *
- * @category type-level
+ * @category utility types
  * @since 2.0.0
  */
 export type Result<T extends Request<any, any, any>> = T extends Request<infer A, infer E, infer _R> ? Exit.Exit<A, E>
@@ -315,7 +281,7 @@ export const isRequest = (u: unknown): u is Request<unknown, unknown, unknown> =
  * @since 2.0.0
  */
 export const of = <R extends Request<any, any, any>>(): Constructor<R> => (args) =>
-  Object.assign(Object.create(RequestPrototype), args)
+  Object.setPrototypeOf({ ...(args as R) }, RequestPrototype)
 
 /**
  * Creates a constructor function for a tagged Request type. The tag is automatically
@@ -363,10 +329,7 @@ export const tagged = <R extends Request<any, any, any> & { _tag: string }>(
   tag: R["_tag"]
 ): Constructor<R, "_tag"> =>
 (args) => {
-  const request = Object.create(RequestPrototype)
-  if (args) Object.assign(request, args)
-  request._tag = tag
-  return request
+  return Object.setPrototypeOf({ ...(args as R), _tag: tag }, RequestPrototype)
 }
 
 /**
@@ -399,9 +362,9 @@ export const Class: new<A extends Record<string, any>, Success, Error = never, C
   args: Types.Equals<Omit<A, keyof Request<unknown, unknown>>, {}> extends true ? void
     : { readonly [P in keyof A as P extends keyof Request<any, any, any> ? never : P]: A[P] }
 ) => Request<Success, Error, Context> & Readonly<A> = (function() {
-  function Class(this: any, args: any) {
+  function Class(this: object, args: object | undefined) {
     if (args) {
-      Object.assign(this, args)
+      InternalRecord.assignProperties(this, args)
     }
   }
   Class.prototype = RequestPrototype
@@ -449,8 +412,8 @@ export const TaggedClass = <Tag extends string>(
  *
  * **When to use**
  *
- * Use to finish a `Request.Entry` when you already have the request's final
- * `Exit` result.
+ * Use when you need to finish a `Request.Entry` with a prebuilt final `Exit`
+ * result.
  *
  * @see {@link completeEffect} for completing an entry from an effect that may succeed or fail
  * @see {@link succeed} for completing an entry with a successful value
@@ -535,8 +498,8 @@ export const fail: {
  *
  * **When to use**
  *
- * Use when a `RequestResolver` needs to complete an entry with structured cause
- * information rather than only the request's typed error value.
+ * Use when you need a `RequestResolver` to complete an entry with structured
+ * cause information rather than only the request's typed error value.
  *
  * @see {@link fail} for completing an entry with a typed error value
  * @see {@link complete} for completing an entry with an existing `Exit`
@@ -560,8 +523,8 @@ export const failCause: {
  *
  * **When to use**
  *
- * Use to finish a `Request.Entry` when you have a successful value for the
- * request.
+ * Use when you need to finish a `Request.Entry` with a successful request
+ * value.
  *
  * @see {@link complete} for completing an entry with a prebuilt `Exit`
  * @see {@link completeEffect} for completing an entry from an effect result

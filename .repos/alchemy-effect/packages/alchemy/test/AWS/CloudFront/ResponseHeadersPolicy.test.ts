@@ -1,17 +1,16 @@
 import * as AWS from "@/AWS";
 import { ResponseHeadersPolicy } from "@/AWS/CloudFront";
-import * as Test from "@/Test/Vitest";
+import * as Provider from "@/Provider";
+import * as Test from "@/Test/Alchemy";
 import * as cloudfront from "@distilled.cloud/aws/cloudfront";
-import { describe, expect } from "@effect/vitest";
+import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
-const runLive = process.env.ALCHEMY_RUN_LIVE_AWS_WEBSITE_TESTS === "true";
-
 describe("AWS.CloudFront.ResponseHeadersPolicy", () => {
-  test.provider.skipIf(!runLive)(
+  test.provider(
     "create, update, and delete a response headers policy",
     (stack) =>
       Effect.gen(function* () {
@@ -84,9 +83,19 @@ describe("AWS.CloudFront.ResponseHeadersPolicy", () => {
           created.responseHeadersPolicyId,
         );
 
-        const after = yield* cloudfront.getResponseHeadersPolicy({
-          Id: updated.responseHeadersPolicyId,
-        });
+        // Control-plane reads are eventually consistent — poll until the
+        // update is visible, then assert.
+        const after = yield* cloudfront
+          .getResponseHeadersPolicy({ Id: updated.responseHeadersPolicyId })
+          .pipe(
+            Effect.repeat({
+              schedule: Schedule.fixed("2 seconds"),
+              until: (r) =>
+                r.ResponseHeadersPolicy?.ResponseHeadersPolicyConfig
+                  ?.Comment === "updated",
+              times: 15,
+            }),
+          );
         expect(
           after.ResponseHeadersPolicy?.ResponseHeadersPolicyConfig?.Comment,
         ).toEqual("updated");
@@ -106,6 +115,41 @@ describe("AWS.CloudFront.ResponseHeadersPolicy", () => {
       }),
     { timeout: 300_000 },
   );
+
+  test.provider(
+    "list enumerates the deployed response headers policy",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* stack.destroy();
+
+        const deployed = yield* stack.deploy(
+          Effect.gen(function* () {
+            return yield* ResponseHeadersPolicy("ListResponseHeaders", {
+              comment: "list",
+              securityHeadersConfig: {
+                ContentTypeOptions: { Override: true },
+              },
+            });
+          }),
+        );
+
+        const provider = yield* Provider.findProvider(ResponseHeadersPolicy);
+        const all = yield* provider.list();
+
+        expect(
+          all.some(
+            (p) =>
+              p.responseHeadersPolicyId === deployed.responseHeadersPolicyId,
+          ),
+        ).toBe(true);
+
+        yield* stack.destroy();
+        yield* assertResponseHeadersPolicyDeleted(
+          deployed.responseHeadersPolicyId,
+        );
+      }),
+    { timeout: 300_000 },
+  );
 });
 
 const assertResponseHeadersPolicyDeleted = (id: string) =>
@@ -118,8 +162,9 @@ const assertResponseHeadersPolicyDeleted = (id: string) =>
       while: (error) =>
         error instanceof Error &&
         error.message === "ResponseHeadersPolicyStillExists",
-      schedule: Schedule.fixed("5 seconds").pipe(
-        Schedule.both(Schedule.recurs(24)),
-      ),
+      schedule: Schedule.max([
+        Schedule.fixed("5 seconds"),
+        Schedule.recurs(24),
+      ]),
     }),
   );

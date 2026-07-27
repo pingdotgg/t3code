@@ -1,38 +1,11 @@
 /**
- * HTTP and WebSocket transport layers for cluster runner RPCs.
+ * Connects cluster runner RPCs to HTTP and WebSocket transports.
  *
  * Runner nodes communicate through the `Runners.Rpcs` protocol. This module
- * connects that protocol to HTTP transports by providing client protocols for
- * dialing runner addresses, HTTP effects for serving runner RPC handlers, and
- * complete layers that install runner routes into an `HttpRouter`.
- *
- * **Mental model**
- *
- * Runner communication has two sides: a client protocol that knows how to turn a
- * runner address into an RPC connection, and a server route that exposes the
- * runner RPC handlers. The complete layers provide both sides with matching
- * defaults, while the `Options` and `ClientOnly` variants let applications wire
- * only the pieces they need.
- *
- * **Common tasks**
- *
- * - Serve runners over HTTP with {@link layerHttp} or {@link layerHttpOptions}
- * - Serve runners over WebSocket with {@link layerWebsocket} or
- *   {@link layerWebsocketOptions}
- * - Configure clients without serving routes with {@link layerHttpClientOnly}
- *   or {@link layerWebsocketClientOnly}
- * - Build custom client protocols with {@link layerClientProtocolHttp} or
- *   {@link layerClientProtocolWebsocket}
- *
- * **Gotchas**
- *
- * - Server route paths and client protocol paths must match
- * - `https: true` switches HTTP clients from `http` to `https` and WebSocket
- *   clients from `ws` to `wss`
- * - The complete layers serve and connect at `/`; use the `Options` variants
- *   when runner routes live under another path
- * - {@link toHttpEffect} and {@link toHttpEffectWebsocket} expose raw HTTP
- *   effects for adapters that do not use `HttpRouter.serve`
+ * provides client protocol layers for dialing runner addresses over HTTP or
+ * WebSocket, HTTP effects that serve runner RPC handlers, route layers for
+ * installing runner endpoints into an `HttpRouter`, and ready-made layers for
+ * HTTP or WebSocket runner communication.
  *
  * @since 4.0.0
  */
@@ -166,7 +139,7 @@ export const layerClientProtocolWebsocketDefault: Layer.Layer<
  * The returned effect is produced from `RunnerServer.layerHandlers` and the
  * cluster runner RPC group.
  *
- * @category Http App
+ * @category http app
  * @since 4.0.0
  */
 export const toHttpEffect: Effect.Effect<
@@ -189,7 +162,7 @@ export const toHttpEffect: Effect.Effect<
  * The returned effect is produced from `RunnerServer.layerHandlers` and the
  * cluster runner RPC group.
  *
- * @category Http App
+ * @category http app
  * @since 4.0.0
  */
 export const toHttpEffectWebsocket: Effect.Effect<

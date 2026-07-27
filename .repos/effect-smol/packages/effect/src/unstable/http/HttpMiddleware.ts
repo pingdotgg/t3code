@@ -1,31 +1,19 @@
 /**
- * Server-side HTTP middleware for wrapping `HttpServerResponse` effects with
- * cross-cutting request and response behavior.
+ * Wraps HTTP server apps with request and response behavior.
  *
  * A middleware is a function from one HTTP server app effect to another. The app
- * is evaluated with the current `HttpServerRequest` service in its context, so
- * middleware in this module can inspect or rewrite the request, provide
- * request-scoped services, attach pre-response hooks, or observe the app exit
- * while preserving normal Effect error and interruption semantics.
- *
- * Use this module for common server concerns such as access logging, trace span
- * creation, trusting forwarded proxy headers, parsing search parameters, and
- * adding CORS handling. Middleware can be applied directly when serving an
- * `HttpServer` / `HttpEffect` app or registered through `HttpRouter.middleware`
- * for route-scoped or global behavior.
- *
- * Middleware composition is order-sensitive, and each middleware may change the
- * wrapped effect's requirements or error channel. These functions expect a
- * per-request `HttpServerRequest` to be present; context-providing middleware
- * should wrap handlers before they access the provided service, and
- * error-handling middleware should be installed where its transformed error type
- * matches the surrounding app or router registration.
+ * runs with the current `HttpServerRequest` in its context, so middleware can
+ * inspect or rewrite the request, provide request-scoped services, attach hooks
+ * before the response is sent, or observe the app exit. This module includes
+ * middleware for response logging, server tracing, forwarded proxy headers,
+ * parsed search parameters, and CORS response headers.
  *
  * @since 4.0.0
  */
 import { Clock } from "../../Clock.ts"
 import * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
+import * as Exit from "../../Exit.ts"
 import { constant, constFalse } from "../../Function.ts"
 import * as internalEffect from "../../internal/effect.ts"
 import * as Layer from "../../Layer.ts"
@@ -35,7 +23,7 @@ import type { ReadonlyRecord } from "../../Record.ts"
 import { TracerEnabled } from "../../References.ts"
 import { ParentSpan } from "../../Tracer.ts"
 import * as Headers from "./Headers.ts"
-import { causeResponseStripped, exitResponse } from "./HttpServerError.ts"
+import { causeResponseStripped } from "./HttpServerError.ts"
 import { HttpServerRequest } from "./HttpServerRequest.ts"
 import * as Request from "./HttpServerRequest.ts"
 import * as Response from "./HttpServerResponse.ts"
@@ -231,13 +219,21 @@ export const tracer: <E, R>(
         if (Option.isSome(request.remoteAddress)) {
           span.attribute("client.address", request.remoteAddress.value)
         }
-        const response = exitResponse(exit)
+        let response: HttpServerResponse
+        let spanExit = exit
+        if (Exit.isFailure(exit)) {
+          const [failureResponse, cause] = causeResponseStripped(exit.cause)
+          response = failureResponse
+          spanExit = Option.isSome(cause) ? Exit.failCause(cause.value) : Exit.succeed(response)
+        } else {
+          response = exit.value
+        }
         span.attribute("http.response.status_code", response.status)
         const responseHeaders = Headers.redact(response.headers, redactedHeaderNames)
         for (const name in responseHeaders) {
           span.attribute(`http.response.header.${name}`, String(responseHeaders[name]))
         }
-        span.end(endTime, exit)
+        span.end(endTime, spanExit)
       }, 0)
       return undefined
     }, true)
@@ -267,7 +263,7 @@ export const xForwardedHeaders = make((httpApp) =>
 /**
  * Middleware that parses the current request URL's search parameters and provides them as `ParsedSearchParams`.
  *
- * @category Search params
+ * @category search params
  * @since 4.0.0
  */
 export const searchParamsParser = <E, R>(

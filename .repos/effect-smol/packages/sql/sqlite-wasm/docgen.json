@@ -1,8 +1,7 @@
 {
   "$schema": "../../node_modules/@effect/docgen/schema.json",
-  "srcLink": "https://github.com/Effect-TS/effect/tree/main/packages/sql/do/src/",
+  "srcLink": "https://github.com/Effect-TS/effect/tree/main/packages/sql/sqlite-wasm/src/",
   "exclude": ["src/internal/**/*.ts"],
-  "tscExecutable": "tsgo",
   "examplesCompilerOptions": {
     "noEmit": true,
     "strict": true,

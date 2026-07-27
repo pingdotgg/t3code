@@ -1,27 +1,11 @@
 /**
- * The cluster `Message` module defines the in-memory shapes used while moving
- * requests and control envelopes between callers, durable storage, transports,
- * and entity runners.
+ * Defines the message shapes moved through Effect Cluster.
  *
- * **Common use cases**
- *
- * - Representing outgoing entity requests before they are stored or sent
- * - Reconstructing incoming requests that runners read from storage or transport
- * - Converting outgoing messages into local, in-process deliveries
- * - Serializing request payloads with the associated RPC schema and context
- * - Passing control envelopes such as acknowledgements and interrupts through
- *   without payload decoding
- *
- * **Gotchas**
- *
- * - Requests can exist in decoded local form or encoded persisted form; choose
- *   `IncomingLocal` / `OutgoingRequest` for local delivery and `IncomingRequest`
- *   / `Envelope.PartialRequest` for storage or transport boundaries.
- * - Request payloads must be encoded and decoded with the matching RPC payload
- *   schema and service context, otherwise failures are surfaced as
- *   `MalformedMessage`.
- * - Delivery state such as the last sent or received reply is carried alongside
- *   messages so retries and persisted replies can preserve cluster semantics.
+ * Messages carry entity requests and control envelopes between callers, durable
+ * storage, transports, and runner handlers. This module includes incoming and
+ * outgoing variants for encoded stored requests, decoded local requests,
+ * acknowledgements, and interrupts. It also provides helpers for local delivery
+ * and for encoding or decoding request payloads with matching RPC schemas.
  *
  * @since 4.0.0
  */

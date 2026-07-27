@@ -132,7 +132,7 @@ export interface BarrelGenerator {
 /**
  * Service tag for barrel file generation.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const BarrelGenerator: Context.Service<BarrelGenerator, BarrelGenerator> = Context.Service(

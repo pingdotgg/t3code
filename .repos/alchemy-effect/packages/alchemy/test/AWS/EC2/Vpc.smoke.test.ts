@@ -15,10 +15,10 @@ import {
   Vpc,
   VpcEndpoint,
 } from "@/AWS/EC2";
-import * as Test from "@/Test/Vitest";
+import * as Test from "./VpcTest.ts";
 import * as EC2 from "@distilled.cloud/aws/ec2";
 import * as ec2 from "@distilled.cloud/aws/ec2";
-import { expect } from "@effect/vitest";
+import { expect } from "alchemy-test";
 import { Data, Schedule } from "effect";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
@@ -2266,7 +2266,7 @@ const assertVpcTags = Effect.fn(function* (
     Effect.tapError(Effect.log),
     Effect.retry({
       while: (e) => e._tag === "TagsNotPropagated",
-      schedule: Schedule.fixed(1000).pipe(Schedule.both(Schedule.recurs(10))),
+      schedule: Schedule.max([Schedule.fixed(1000), Schedule.recurs(10)]),
     }),
   );
 });

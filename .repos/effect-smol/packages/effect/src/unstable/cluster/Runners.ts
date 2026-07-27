@@ -1,33 +1,12 @@
 /**
- * The `Runners` module defines the service used by the unstable cluster runtime
- * to communicate with processes that host entity shards. It is the transport
- * boundary between sharding decisions and runner execution: callers can ping a
- * runner, send requests or envelopes, notify a runner that persisted work is
- * available, and report an address as unavailable.
+ * Handles communication between Effect Cluster runners.
  *
- * The default implementation wraps lower-level runner callbacks with cluster
- * message semantics. Persisted messages are written to `MessageStorage` before
- * delivery, duplicate requests can resume from stored replies, and local sends
- * can optionally serialize and deserialize messages to exercise the same path as
- * remote delivery.
- *
- * **Common tasks**
- *
- * - Provide runner communication with {@link layerRpc}
- * - Build a custom implementation with {@link make}
- * - Use {@link makeNoop} or {@link layerNoop} when no remote runners are
- *   available
- * - Define runner-to-runner protocol support with {@link Rpcs} and
- *   {@link RpcClientProtocol}
- *
- * **Gotchas**
- *
- * - `notify` is only for RPCs annotated as persisted; non-persisted messages
- *   should be sent directly.
- * - Failed remote sends can fall back to reading replies from storage, so reply
- *   polling and `entityReplyPollInterval` affect recovery latency.
- * - Unavailable runners invalidate cached RPC clients, but shard ownership and
- *   rebalancing are coordinated by the sharding layer rather than this module.
+ * `Runners` sits between sharding decisions and runner execution. It can ping a
+ * runner, send requests or control envelopes, notify a runner that persisted
+ * work is available, and record that a runner address is unavailable. This
+ * module defines the runner communication service, its RPC protocol, no-op and
+ * RPC-backed implementations, local persistence support, reply recovery, and
+ * the protocol service used by transport-specific runner layers.
  *
  * @since 4.0.0
  */
@@ -152,9 +131,9 @@ export class Runners extends Context.Service<Runners, {
  *
  * **When to use**
  *
- * Use to build a custom `Runners` service when you already have remote `ping`,
- * `send`, `notify`, and `onRunnerUnavailable` callbacks and want the standard
- * local persistence and reply recovery behavior added around them.
+ * Use when you need a custom `Runners` service around remote `ping`, `send`,
+ * `notify`, and `onRunnerUnavailable` callbacks, with standard local
+ * persistence and reply recovery behavior.
  *
  * **Details**
  *
@@ -702,7 +681,7 @@ export const layerRpc: Layer.Layer<
  * Service that creates an RPC client protocol for communicating with a runner at a
  * given address.
  *
- * @category Client
+ * @category client
  * @since 4.0.0
  */
 export class RpcClientProtocol extends Context.Service<

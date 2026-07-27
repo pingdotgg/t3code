@@ -1,0 +1,283 @@
+---
+title: Workflows
+description: Cloudflare Workflows run durable multi-step jobs — define a typed workflow class, checkpoint steps with task and sleep, trigger instances from a Worker, and poll status until completion.
+---
+
+A Cloudflare Workflow is a multi-step job where each named step's
+result is checkpointed — if the process crashes mid-run, Cloudflare
+replays from the last completed step instead of restarting. In
+alchemy a workflow is a class with a typed input → output body, the
+same two-phase shape as Workers and Durable Objects.
+
+Reach for a Workflow when a job must outlive any single request and
+survive crashes — a checkout flow, a multi-stage pipeline, a "send a
+reminder in 24 hours" job. If you only need request/response
+compute, a [Worker](/cloudflare/compute/workers) is enough; per-entity
+state, a [Durable Object](/cloudflare/compute/durable-objects); buffered
+fan-out of messages, [Queues](/cloudflare/messaging/queues); a fixed schedule,
+[cron](/cloudflare/messaging/cron).
+
+## Define a workflow
+
+The outer `Effect.gen` resolves dependencies; the returned
+`Effect.fn` is the workflow body — a typed function from input to
+Effect:
+
+```typescript
+// src/workflow.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default class MyWorkflow extends Cloudflare.Workflow<MyWorkflow>()(
+  "MyWorkflow",
+  Effect.gen(function* () {
+    return Effect.fn(function* (input: { value: string }) {
+      return { received: input.value };
+    });
+  }),
+) {}
+```
+
+## Run steps with task
+
+`task(name, effect)` runs the effect as a named durable step and
+persists its result:
+
+```typescript
+const greeted = yield* Cloudflare.Workflows.task(
+  "greet",
+  Effect.succeed(`Hello, ${input.value}!`),
+);
+```
+
+An optional third argument configures the step's retry policy, a
+timeout, and a rollback handler that runs if the workflow later
+fails:
+
+```typescript
+const charged = yield* Cloudflare.Workflows.task("charge-card", chargeCard, {
+  retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
+  timeout: "1 minute",
+  rollback: ({ output }) => (output ? refund(output.chargeId) : Effect.void),
+});
+```
+
+Inside a step, `yield* Cloudflare.Workflows.WorkflowStepContext`
+exposes the current attempt number and resolved config.
+
+## Sleep between steps
+
+`sleep` parks the instance for a duration; `sleepUntil` parks it
+until a timestamp. Names are replay keys — every step and sleep
+needs a stable one:
+
+```typescript
+yield* Cloudflare.Workflows.sleep("cooldown", "30 seconds");
+yield* Cloudflare.Workflows.sleepUntil("deadline", new Date("2026-08-01"));
+```
+
+## Wait for external events
+
+`waitForEvent` parks the instance until a caller delivers a matching
+event with `instance.sendEvent` — the human-approval shape. It
+resolves with the same `{ payload, timestamp, type }` event object as
+the native `step.waitForEvent`:
+
+```typescript
+const approval = yield* Cloudflare.Workflows.waitForEvent<{
+  approved: boolean;
+}>("approval", { type: "approval", timeout: "1 day" });
+
+if (approval.payload.approved) {
+  // ...
+}
+```
+
+```typescript
+// from a Worker route
+const instance = yield* workflow.get(instanceId);
+yield* instance.sendEvent({ type: "approval", payload: { approved: true } });
+```
+
+An instance parked in `waitForEvent` still reports `running` from
+`status()` — Cloudflare reserves `waiting` for sleeps.
+
+## Replay semantics
+
+The body Effect can re-execute many times over an instance's life.
+On each replay, a completed task returns its persisted result — the
+effect inside is not re-run — while everything outside a task runs
+again from the top.
+
+:::caution[Always wrap I/O in `task`]
+Anything that touches the outside world — an HTTP call, a binding
+call like `kv.put` — goes inside a `task` so the side effect runs
+exactly once. Outside a task it runs on every replay.
+:::
+
+## Use bindings inside tasks
+
+Bind a resource in the outer init phase to get a typed client, then
+use it inside a step — here a [KV](/cloudflare/data/kv) namespace:
+
+```typescript
+Effect.gen(function* () {
+  const kv = yield* Cloudflare.KV.ReadWriteNamespace(KV);
+
+  return Effect.fn(function* (input: { roomId: string; message: string }) {
+    return yield* Cloudflare.Workflows.task(
+      "kv-roundtrip",
+      Effect.gen(function* () {
+        const key = `workflow:${input.roomId}`;
+        yield* kv.put(key, input.message);
+        return yield* kv.get(key);
+      }).pipe(Effect.orDie),
+    );
+  });
+});
+```
+
+`task` threads the binding's service requirement through
+automatically — no extra plumbing inside the step.
+
+## Run scope
+
+Each run-invocation of the body gets a **fresh `Scope`**, threaded
+into every `task` step and closed when the invocation settles (the
+workflow runtime has no `waitUntil`, so it settles inline). Because
+a workflow can hibernate between steps — a `sleep`, a
+`waitForEvent` — an instance may span several run-invocations, each
+with its own scope; completed tasks replay from the journal, so
+scoped resources are only re-acquired by steps that actually
+execute.
+
+Per-run resources like `Drizzle.Postgres` pools follow this: the
+pool opens on the first query inside a step, is reused by every
+later step in the same invocation, and closes when the invocation
+settles (the [SQL connection lifecycle](/sql/effect-sql/lifecycle)
+in workflow terms). The workflow's init closure shares the isolate-lifetime
+layer build with the hosting Worker — pure assembly, no cleanup; see
+[Instance scope vs request scope](/infrastructure-as-effects/functions-and-servers#instance-scope-vs-request-scope).
+
+## Trigger from a Worker
+
+Yield the workflow class in a Worker's init phase to get a typed
+handle:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import MyWorkflow from "./workflow.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const workflow = yield* MyWorkflow;
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+
+        if (request.url.startsWith("/workflow/start/")) {
+          const value = request.url.split("/workflow/start/")[1] ?? "world";
+          const instance = yield* workflow.create({ params: { value } });
+          return yield* HttpServerResponse.json({ instanceId: instance.id });
+        }
+
+        return HttpServerResponse.text("ok");
+      }),
+    };
+  }),
+);
+```
+
+`create` mirrors the native Workflow API: the input payload goes in
+`params`, an optional `id` pins a deterministic instance ID, and
+`retention` controls how long finished instances are kept. It
+returns the instance immediately — the workflow runs asynchronously
+on Cloudflare's side. `createBatch([...])` starts several instances
+in one call.
+
+## Observe an instance
+
+`workflow.get(instanceId)` returns the instance; `status()` yields
+its current state:
+
+```typescript
+if (request.url.startsWith("/workflow/status/")) {
+  const instanceId = request.url.split("/workflow/status/")[1] ?? "";
+  const instance = yield* workflow.get(instanceId);
+  const status = yield* instance.status();
+  return yield* HttpServerResponse.json(status);
+}
+```
+
+`status()` yields `{ status, output, error, rollback }` — `status`
+is one of `queued`, `running`, `paused`, `waiting`, `complete`,
+`errored`, or `terminated`, and `output` is what the body returned.
+Instances also expose `pause()`, `resume()`, `restart()`,
+`terminate()`, and `sendEvent()` — see the
+[Workflow API reference](/providers/cloudflare/workflows/workflow).
+
+## Poll to completion
+
+Workflows finish asynchronously, so callers (and tests) poll the
+status route with a bounded `Effect.repeat` until a terminal state:
+
+```typescript
+const status = yield* client.get(`${url}/workflow/status/${instanceId}`).pipe(
+  Effect.flatMap((res) => res.json),
+  Effect.map((json) => json as { status: string }),
+  Effect.repeat({
+    schedule: Schedule.spaced("2 seconds"),
+    until: (s) => s.status === "complete" || s.status === "errored",
+    times: 12,
+  }),
+);
+```
+
+## Async Workers
+
+A plain async Worker (no Effect runtime) binds a Workflow by
+reference in its `env` — `className` names the exported
+`WorkflowEntrypoint` subclass in the worker source:
+
+```typescript
+// alchemy.run.ts
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: {
+    MY_WORKFLOW: Cloudflare.Workflow<{ value: string }>("MyWorkflow", {
+      className: "MyWorkflow",
+    }),
+  },
+});
+```
+
+Add `scriptName` to bind a workflow hosted by another Worker script
+— bindings only, so deploy the host first. The full async-handler
+example lives in the API reference.
+
+## Where next
+
+The full walkthrough:
+
+- [Add a Workflow](/cloudflare/compute/add-a-workflow) — KV-backed steps,
+  secrets in steps, DO broadcast, and a full integration test.
+
+Related:
+
+- [Durable Objects](/cloudflare/compute/durable-objects) — per-entity state
+  workflows call into.
+- [Queues](/cloudflare/messaging/queues) — when buffered messages are enough
+  (no checkpointed steps).
+- [Cron triggers](/cloudflare/messaging/cron) — trigger workflows on a
+  schedule.
+
+Reference:
+
+- [Workflow API reference](/providers/cloudflare/workflows/workflow)

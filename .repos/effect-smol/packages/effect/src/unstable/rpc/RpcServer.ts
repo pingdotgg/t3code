@@ -1,45 +1,12 @@
 /**
- * Server-side runtime for RPC groups.
+ * Runs server-side handlers for RPC groups.
  *
- * This module connects typed handlers for an RPC group to a transport. It
- * receives client messages, decodes request payloads, runs the matching
- * handler, and writes exits, stream chunks, defects, interrupts, and client-end
- * notifications back through the active server protocol. It supports encoded
- * protocols such as HTTP, websocket, socket, stdio, and worker transports, plus
- * already-decoded channels through {@link makeNoSerialization}.
- *
- * **Mental model**
- *
- * {@link Protocol} is the transport boundary. It owns how encoded client
- * messages arrive, how encoded server responses are written, and whether the
- * channel supports acknowledgements, transferable objects, or span
- * propagation. {@link make} and {@link layer} combine that protocol with an RPC
- * group and the handler context required by `Rpc.ToHandler` and
- * `Rpc.Middleware`.
- *
- * **Common tasks**
- *
- * Use {@link layerHttp} for route-mounted HTTP or websocket serving,
- * {@link toHttpEffect} and {@link toHttpEffectWebsocket} for standalone HTTP
- * effects, the `layerProtocol*` constructors for socket, stdio, or worker
- * transports, and {@link makeNoSerialization} when another component already
- * owns message serialization.
- *
- * **Gotchas**
- *
- * - Server handlers are looked up from `Rpc.ToHandler`, while RPC middleware
- *   is looked up from `Rpc.Middleware` and wraps handlers with metadata that
- *   includes `Rpc.ServerClient`, request id, headers, and decoded payload
- * - Payloads are decoded on the server; exits, stream chunks, and request
- *   defects are encoded on the server using the RPC schemas and the handler's
- *   schema services
- * - Encode failures are reported as request defects and interrupt the
- *   in-flight request
- * - Streaming RPCs send chunks before the final exit, and protocols with
- *   acknowledgement support wait for client acknowledgements between chunks to
- *   provide back pressure
- * - Fatal handler defects are sent as protocol defects by default; set
- *   `disableFatalDefects` when defects should remain ordinary request exits
+ * This module connects typed handlers for an `RpcGroup` to a server `Protocol`.
+ * It receives client messages, decodes request payloads, runs matching handlers
+ * and middleware, tracks in-flight requests, handles acknowledgements and
+ * interrupts, and sends responses back to clients. It also provides constructors
+ * and layers for decoded messages, HTTP, WebSocket, sockets, stdio, and worker
+ * runner protocols.
  *
  * @since 4.0.0
  */
@@ -100,7 +67,9 @@ import { withRun } from "./Utils.ts"
  * @since 4.0.0
  */
 export interface RpcServer<A extends Rpc.Any> {
-  readonly write: (clientId: number, message: FromClient<A>) => Effect.Effect<void>
+  readonly write: (clientId: number, message: FromClient<A>, options?: {
+    readonly onRequest?: (<A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>) | undefined
+  }) => Effect.Effect<void>
   readonly disconnect: (clientId: number) => Effect.Effect<void>
 }
 
@@ -197,7 +166,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any>(
       return Effect.void
     })
 
-  const write = (clientId: number, message: FromClient<Rpcs>): Effect.Effect<void> =>
+  const write: RpcServer<Rpcs>["write"] = (clientId, message, opts) =>
     Effect.catchDefect(
       Effect.withFiber((requestFiber) => {
         if (isShutdown) return Effect.interrupt
@@ -217,7 +186,7 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any>(
 
         switch (message._tag) {
           case "Request": {
-            return handleRequest(requestFiber, client, message)
+            return handleRequest(requestFiber, client, message, opts)
           }
           case "Ack": {
             const latch = client.latches.get(message.requestId)
@@ -264,7 +233,8 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any>(
   const handleRequest = (
     requestFiber: Fiber.Fiber<any, any>,
     client: Client,
-    request: Request<Rpcs>
+    request: Request<Rpcs>,
+    opts: Parameters<RpcServer<Rpcs>["write"]>[2]
   ): Effect.Effect<void> => {
     if (client.fibers.has(request.id)) {
       return Effect.interrupt
@@ -345,6 +315,9 @@ export const makeNoSerialization: <Rpcs extends Rpc.Any>(
       }
       return close ? Effect.ensuring(write, close) : write
     })
+    if (opts?.onRequest) {
+      effect = opts.onRequest(effect)
+    }
     if (enableTracing) {
       const parentSpan = requestFiber.context.mapUnsafe.get(
         Tracer.ParentSpan.key
@@ -570,7 +543,7 @@ export const make: <Rpcs extends Rpc.Any>(
             schemas.encodeDefect,
             schemas.collector,
             Effect.provideContext(schemas.encodeChunk(response.values), schemas.context),
-            (values) => ({ _tag: "Chunk", requestId: String(response.requestId), values })
+            (values) => ({ _tag: "Chunk", requestId: response.requestId, values })
           )
         }
         case "Exit": {
@@ -583,7 +556,7 @@ export const make: <Rpcs extends Rpc.Any>(
             schemas.encodeDefect,
             schemas.collector,
             Effect.provideContext(schemas.encodeExit(response.exit), schemas.context),
-            (exit) => ({ _tag: "Exit", requestId: String(response.requestId), exit })
+            (exit) => ({ _tag: "Exit", requestId: response.requestId, exit })
           )
         }
         case "Defect": {
@@ -680,7 +653,7 @@ export const make: <Rpcs extends Rpc.Any>(
       Effect.flatMap(encodeDefect(defect), (encodedDefect) =>
         send(client.id, {
           _tag: "Exit",
-          requestId: String(requestId),
+          requestId,
           exit: {
             _tag: "Failure",
             cause: [{
@@ -716,13 +689,9 @@ export const make: <Rpcs extends Rpc.Any>(
     switch (request._tag) {
       case "Request": {
         const tag = Predicate.hasProperty(request, "tag") ? (request.tag as string) : ""
-        const rpc = group.requests.get(tag)
-        if (!rpc) {
-          return sendDefect(client, `Unknown request tag: ${tag}`)
-        }
         let requestId: RequestId
         switch (typeof request.id) {
-          case "bigint":
+          case "number":
           case "string": {
             requestId = RequestId(request.id)
             break
@@ -730,6 +699,10 @@ export const make: <Rpcs extends Rpc.Any>(
           default: {
             return sendDefect(client, `Invalid request id: ${request.id}`)
           }
+        }
+        const rpc = group.requests.get(tag)
+        if (!rpc) {
+          return sendRequestDefect(client, requestId, (defect) => Effect.succeed(defect), `Unknown request tag: ${tag}`)
         }
         const schemas = getSchemas(rpc as any)
         return Effect.matchEffect(
@@ -1069,7 +1042,7 @@ export const makeProtocolWithHttpEffect: Effect.Effect<
       if (queue.state._tag === "Done") return Effect.void
       return Effect.forEach(
         requestIds,
-        (requestId) => writeRequest(id, { _tag: "Interrupt", requestId: String(requestId) }),
+        (requestId) => writeRequest(id, { _tag: "Interrupt", requestId }),
         { discard: true }
       )
     })

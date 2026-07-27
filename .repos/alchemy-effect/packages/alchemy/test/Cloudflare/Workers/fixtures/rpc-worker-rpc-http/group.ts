@@ -21,7 +21,7 @@ export class InnerRpcs extends RpcGroup.make(
 ) {}
 
 /**
- * RPCs served by the {@link RpcDurableObjectNamespace} backing the
+ * RPCs served by the {@link RpcDurableObject} backing the
  * `*DO` variants below — same shapes as `InnerRpcs`, sharing the wire
  * codec end-to-end.
  */

@@ -1,33 +1,8 @@
 /**
- * The `OpenAiConfig` module carries request-time configuration for the
- * `@effect/ai-openai` package through Effect's context. It currently exposes a
- * scoped HTTP client transform used by OpenAI request helpers when they execute
+ * The `OpenAiConfig` module lets a workflow temporarily customize the HTTP
+ * client used by `@effect/ai-openai` request helpers. OpenAI client, language
+ * model, and embedding code read this scoped transform when they execute
  * provider calls.
- *
- * **Mental model**
- *
- * Client constructors set the baseline HTTP client for an OpenAI service.
- * `OpenAiConfig` is for narrower dynamic scopes: wrap an effect with
- * {@link withClientTransform} and OpenAI requests evaluated inside that effect
- * see the transformed `HttpClient`. Leaving the scope restores the previous
- * configuration.
- *
- * **Common tasks**
- *
- * - Add request middleware, tracing, retry policy, proxy routing, or test
- *   interception around a group of OpenAI calls.
- * - Apply a temporary HTTP client transform without rebuilding the OpenAI
- *   service layer.
- * - Share one transform across all OpenAI helpers executed inside the same
- *   Effect scope.
- *
- * **Gotchas**
- *
- * - Only one `transformClient` value is stored in the scoped config. Compose
- *   transforms into a single `HttpClient => HttpClient` function when multiple
- *   behaviors should apply.
- * - The transform affects OpenAI requests that read this contextual config; it
- *   does not mutate an already constructed HTTP client globally.
  *
  * @since 4.0.0
  */
@@ -88,8 +63,8 @@ export declare namespace OpenAiConfig {
  *
  * **When to use**
  *
- * Use when a single effect or workflow needs temporary OpenAI HTTP client
- * customization without rebuilding the client layer.
+ * Use when you need temporary OpenAI HTTP client customization for a single
+ * effect or workflow without rebuilding the client layer.
  *
  * **Details**
  *

@@ -1,10 +1,6 @@
 import * as sqs from "@distilled.cloud/aws/sqs";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import * as Output from "../../Output.ts";
-import { isInstance } from "../EC2/Instance.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Queue } from "./Queue.ts";
 
 export interface SendMessageRequest extends Omit<
@@ -12,8 +8,50 @@ export interface SendMessageRequest extends Omit<
   "QueueUrl"
 > {}
 
-export class SendMessage extends Binding.Service<
+/**
+ * Runtime binding for `sqs:SendMessage`.
+ *
+ * Bind this operation to a {@link Queue} inside a function runtime to get a
+ * callable that automatically injects the `QueueUrl`. The binding grants the
+ * host function `sqs:SendMessage` on the queue. Provide the `SendMessageHttp`
+ * layer on the Function to implement the binding.
+ * @binding
+ * @section Sending Messages
+ * @example Send a Message from a Lambda Function
+ * ```typescript
+ * export class ApiFunction extends Lambda.Function<Lambda.Function>()(
+ *   "ApiFunction",
+ * ) {}
+ *
+ * export default ApiFunction.make(
+ *   { main: import.meta.url, url: true },
+ *   Effect.gen(function* () {
+ *     const queue = yield* SQS.Queue("Jobs");
+ *
+ *     // init: bind the operation to the queue (grants sqs:SendMessage)
+ *     const sendMessage = yield* SQS.SendMessage(queue);
+ *
+ *     return {
+ *       fetch: Effect.gen(function* () {
+ *         // runtime: QueueUrl is injected automatically
+ *         const result = yield* sendMessage({ MessageBody: "hello" });
+ *         return yield* HttpServerResponse.json({
+ *           messageId: result.MessageId,
+ *         });
+ *       }).pipe(Effect.orDie),
+ *     };
+ *   }).pipe(Effect.provide(SQS.SendMessageHttp)),
+ * );
+ * ```
+ *
+ * @example Delay Delivery
+ * ```typescript
+ * yield* sendMessage({ MessageBody: "process later", DelaySeconds: 60 });
+ * ```
+ */
+export interface SendMessage extends Binding.Service<
   SendMessage,
+  "AWS.SQS.SendMessage",
   (
     queue: Queue,
   ) => Effect.Effect<
@@ -21,49 +59,6 @@ export class SendMessage extends Binding.Service<
       request: SendMessageRequest,
     ) => Effect.Effect<sqs.SendMessageResult, sqs.SendMessageError>
   >
->()("AWS.SQS.SendMessage") {}
+> {}
 
-export const SendMessageLive = Layer.effect(
-  SendMessage,
-  Effect.gen(function* () {
-    const Policy = yield* SendMessagePolicy;
-    const sendMessage = yield* sqs.sendMessage;
-
-    return Effect.fn(function* (queue: Queue) {
-      const QueueUrl = yield* queue.queueUrl;
-      yield* Policy(queue);
-      return Effect.fn(function* (request: SendMessageRequest) {
-        return yield* sendMessage({
-          ...request,
-          QueueUrl: yield* QueueUrl,
-          MessageBody: request.MessageBody,
-        });
-      });
-    });
-  }),
-);
-
-export class SendMessagePolicy extends Binding.Policy<
-  SendMessagePolicy,
-  (queue: Queue) => Effect.Effect<void>
->()("AWS.SQS.SendMessage") {}
-
-export const SendMessagePolicyLive = SendMessagePolicy.layer.succeed(
-  Effect.fn(function* (host, queue) {
-    if (isFunction(host) || isInstance(host)) {
-      yield* host.bind`Allow(${host}, AWS.SQS.SendMessage(${queue}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["sqs:SendMessage"],
-            Resource: [Output.interpolate`${queue.queueArn}`],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `SendMessagePolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
-);
+export const SendMessage = Binding.Service<SendMessage>("AWS.SQS.SendMessage");

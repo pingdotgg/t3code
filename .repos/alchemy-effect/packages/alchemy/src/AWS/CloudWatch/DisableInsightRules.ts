@@ -1,74 +1,40 @@
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
-import {
-  sortInsightRuleResources,
-  type InsightRuleResource,
-} from "./binding-common.ts";
+import type { InsightRuleResource } from "./binding-common.ts";
 
 type InsightRules = [InsightRuleResource, ...InsightRuleResource[]];
 
 /**
- * Runtime binding for `cloudwatch:DisableInsightRules`.
+ * Runtime binding for `cloudwatch:DisableInsightRules` — pause data
+ * collection for the bound Contributor Insights rules. Bind it to one or
+ * more {@link InsightRule} resources; the rule names are injected
+ * automatically.
+ *
+ * Provide `CloudWatch.DisableInsightRulesHttp` on the hosting Lambda
+ * Function to satisfy the requirement.
+ * @binding
+ * @section Managing Insight Rules
+ * @example Pause a Contributor Insights Rule
+ * ```typescript
+ * // init — grants cloudwatch:DisableInsightRules on the rule
+ * const disableInsightRules = yield* AWS.CloudWatch.DisableInsightRules(rule);
+ *
+ * // runtime
+ * const result = yield* disableInsightRules();
+ * const failures = result.Failures ?? []; // empty on success
+ * ```
  */
-export class DisableInsightRules extends Binding.Service<
+export interface DisableInsightRules extends Binding.Service<
   DisableInsightRules,
+  "AWS.CloudWatch.DisableInsightRules",
   (
     ...rules: InsightRules
   ) => Effect.Effect<
     () => Effect.Effect<cloudwatch.DisableInsightRulesOutput, any>
   >
->()("AWS.CloudWatch.DisableInsightRules") {}
+> {}
 
-export const DisableInsightRulesLive = Layer.effect(
-  DisableInsightRules,
-  Effect.gen(function* () {
-    const Policy = yield* DisableInsightRulesPolicy;
-    const disableInsightRules = yield* cloudwatch.disableInsightRules;
-
-    return Effect.fn(function* (...rules: InsightRules) {
-      const sorted = sortInsightRuleResources(rules);
-      const RuleNames = yield* Effect.forEach(sorted, (rule) =>
-        rule.ruleName.asEffect(),
-      );
-      yield* Policy(...sorted);
-
-      return Effect.fn(function* () {
-        return yield* disableInsightRules({
-          RuleNames: yield* Effect.forEach(RuleNames, (ruleName) => ruleName),
-        });
-      });
-    });
-  }),
+export const DisableInsightRules = Binding.Service<DisableInsightRules>(
+  "AWS.CloudWatch.DisableInsightRules",
 );
-
-export class DisableInsightRulesPolicy extends Binding.Policy<
-  DisableInsightRulesPolicy,
-  (...rules: InsightRules) => Effect.Effect<void>
->()("AWS.CloudWatch.DisableInsightRules") {}
-
-export const DisableInsightRulesPolicyLive =
-  DisableInsightRulesPolicy.layer.succeed(
-    Effect.fn(function* (host, ...rules: InsightRules) {
-      const sorted = sortInsightRuleResources(rules);
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.CloudWatch.DisableInsightRules(${sorted}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["cloudwatch:DisableInsightRules"],
-                Resource: sorted.map((rule) => rule.ruleArn),
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `DisableInsightRulesPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

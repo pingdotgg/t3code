@@ -1,0 +1,317 @@
+---
+title: EKS
+description: Stand up an EKS Auto Mode cluster on a Network and run containers on it — Deployments for servers, Jobs for run-to-completion work, Manifests for everything else. No YAML, no kubectl.
+---
+
+**EKS** (Elastic Kubernetes Service) is AWS's managed Kubernetes:
+AWS runs the Kubernetes control plane, and your containers run on
+it as Kubernetes objects. Alchemy targets **Auto Mode**, where AWS
+also manages the nodes, storage, and load-balancer integration —
+no machines to operate.
+
+The Kubernetes primitives you'll meet here:
+
+- A **Cluster** is one Kubernetes installation: the API server
+  plus the Nodes that run your containers.
+- A **Pod** is one or more containers running together — the unit
+  Kubernetes schedules onto Nodes.
+- A **Deployment** keeps a set number of identical Pods running,
+  replacing ones that fail. A **Service** gives them one stable
+  address — and, as type `LoadBalancer`, a public one.
+- A **Job** runs a Pod to completion; a **CronJob** does that on a
+  schedule.
+- Everything in Kubernetes is an object described by a
+  **manifest** you apply to the Cluster.
+
+Alchemy models these directly:
+[`Cluster`](/providers/aws/eks/cluster) with `compute: "auto"`
+stands up the control plane from a VPC;
+[`Deployment`](/providers/aws/eks/deployment) synthesizes a
+Kubernetes `Deployment` + `Service`;
+[`Job`](/providers/aws/eks/job) a `Job` or `CronJob`; and
+[`Manifest`](/providers/aws/eks/manifest) applies any raw
+Kubernetes object. The workloads live in the same TypeScript
+program as the cluster, with no YAML and no `kubectl apply` step.
+
+## Create an Auto Mode cluster
+
+`compute: "auto"` turns on EKS Auto Mode with sensible defaults —
+managed compute (`system` and `general-purpose` node pools), block
+storage, elastic load balancing, and `API` authentication — and,
+when you don't pass `roleArn`, provisions and owns the cluster and
+node IAM roles with the standard Auto Mode managed policies:
+
+```typescript
+// alchemy.run.ts
+import * as AWS from "alchemy/AWS";
+
+const network = yield* AWS.EC2.Network("Network", {
+  cidrBlock: "10.42.0.0/16",
+  availabilityZones: 2,
+  nat: "single",
+});
+
+const cluster = yield* AWS.EKS.Cluster("Cluster", {
+  compute: "auto",
+  resourcesVpcConfig: {
+    subnetIds: network.privateSubnetIds,
+    endpointPublicAccess: true,
+    endpointPrivateAccess: true,
+  },
+});
+```
+
+The cluster lands in the network's private subnets, built on a
+[`Network`](/providers/aws/ec2/network). Budget for the create: an
+EKS control plane takes ~10 minutes to provision.
+
+## Grant access and install add-ons
+
+Auto Mode provisions with `authenticationMode: "API"`, so cluster
+access is granted through
+[`AccessEntry`](/providers/aws/eks/accessentry) resources rather than
+the `aws-auth` ConfigMap, and
+[`Addon`](/providers/aws/eks/addon) installs EKS add-ons (EKS picks
+the default compatible version when you don't pin one):
+
+```typescript
+const admin = yield* AWS.EKS.AccessEntry("ClusterAdmin", {
+  clusterName: cluster.clusterName,
+  principalArn: "arn:aws:iam::123456789012:role/YourAdminRole",
+  accessPolicies: [
+    {
+      policyArn:
+        "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy",
+      accessScope: { type: "cluster" },
+    },
+  ],
+});
+
+const metricsServer = yield* AWS.EKS.Addon("MetricsServer", {
+  clusterName: cluster.clusterName,
+  addonName: "metrics-server",
+});
+```
+
+The deploying principal is bootstrapped as cluster admin
+(`bootstrapClusterCreatorAdminPermissions: true` is part of the Auto
+Mode defaults), so these are for everyone (and everything) else that
+needs in.
+
+## Deploy a server
+
+[`Deployment`](/providers/aws/eks/deployment) is a replicated
+Kubernetes server — the Kubernetes analog of `AWS.ECS.Service`. It
+synthesizes a Kubernetes `Deployment` + `Service` (+
+`ServiceAccount`) and applies them via server-side apply, with the
+container image coming from exactly one of three sources flat on
+props: `image` (a registry reference, mirrored into ECR), `context`
+(build your own Dockerfile), or `main` (bundle an inline Effect
+program). The simplest form runs a remote image with no Effect
+runtime in the container:
+
+```typescript
+const echo = yield* AWS.EKS.Deployment("EchoServer", {
+  cluster,
+  image: "registry.k8s.io/echoserver:1.10",
+  namespace: "default",
+  replicas: 2,
+  port: 8080,
+  serviceType: "LoadBalancer",
+});
+
+echo.url;            // LoadBalancer hostname (an NLB on Auto Mode)
+echo.deploymentName; // K8s-native attrs: deploymentName, serviceName, ...
+```
+
+`serviceType: "LoadBalancer"` provisions a cloud load balancer and
+exposes its hostname as `url`. Swap `image` for
+`context: "./legacy"` to build your own Dockerfile (`dockerfile` is
+a path, defaulting to `${context}/Dockerfile`).
+
+## Effect servers with bindings
+
+Pass `main: import.meta.url` and an init Effect and the program is
+bundled into a generated image instead — the same authoring model as
+[Lambda](/aws/compute/lambda). Bindings work identically too:
+`Deployment` accepts the same `{ env, policyStatements }` binding
+contract as a Lambda `Function`, so every AWS `Binding.Service`
+attaches environment variables to the Pod spec and IAM policy
+statements to a generated **Pod Identity role**:
+
+```typescript
+const api = yield* AWS.EKS.Deployment(
+  "Api",
+  { cluster, main: import.meta.url, port: 3000, replicas: 2 },
+  Effect.gen(function* () {
+    const putItem = yield* AWS.DynamoDB.PutItem(table);
+    return {
+      fetch: Effect.gen(function* () {
+        yield* putItem({ Item: { id: { S: "1" } } });
+        return HttpServerResponse.text("ok");
+      }),
+    };
+  }).pipe(Effect.provide(AWS.DynamoDB.PutItemHttp)),
+);
+```
+
+Every EKS platform gets Pod Identity as standard: Alchemy creates
+the IAM role, wires it to the workload's ServiceAccount with a
+[`PodIdentityAssociation`](/providers/aws/eks/podidentityassociation),
+and Pods resolve credentials through the EKS Pod Identity
+container-credentials chain — no OIDC provider or IRSA annotation
+ceremony. The tagged form
+(`class Api extends AWS.EKS.Deployment<Api, Shape>()("Api") {}` +
+`Api.make(props, impl)`) works exactly as it does on Lambda and
+Cloudflare Workers.
+
+## Run-to-completion work with Job
+
+[`Job`](/providers/aws/eks/job) runs a container to completion —
+the Kubernetes analog of `AWS.ECS.Task`. Same three image sources,
+same bindings and Pod Identity; an Effect impl returns `{ run }`
+instead of `{ fetch }`, executing to completion inside the Pod:
+
+```typescript
+const migrate = yield* AWS.EKS.Job("DbMigrate", {
+  cluster,
+  image: "ghcr.io/acme/migrator:v3",
+  backoffLimit: 2,
+});
+```
+
+Set `schedule` (standard 5-field cron) and a Kubernetes `CronJob` is
+synthesized instead of a plain `Job`:
+
+```typescript
+const nightly = yield* AWS.EKS.Job("NightlyBackfill", {
+  cluster,
+  main: import.meta.url,
+  schedule: "0 3 * * *",
+});
+```
+
+## Everything else is a Manifest
+
+[`Manifest`](/providers/aws/eks/manifest) applies any raw Kubernetes
+object — StatefulSets, Namespaces, CRDs — via server-side apply.
+The manifest is a literal object, exactly as you would write it in
+YAML:
+
+```typescript
+const namespace = yield* AWS.EKS.Manifest("DemoNamespace", {
+  cluster,
+  manifest: {
+    apiVersion: "v1",
+    kind: "Namespace",
+    metadata: { name: "demo" },
+  },
+});
+```
+
+There is no kubeconfig step: Alchemy authenticates to the cluster's
+API with your AWS credentials (a presigned STS token) and applies
+objects via **server-side apply** under the `alchemy` field manager,
+so deploys converge the live objects the same way the rest of your
+Stack converges cloud resources. Unknown kinds resolve through the
+Kubernetes API discovery endpoint, so CRDs work without any
+registration.
+
+## Install a Helm chart
+
+[`HelmChart`](/providers/aws/eks/helmchart) renders a chart with the
+local `helm` CLI (`helm template` — install helm on your machine,
+like Docker for image builds) and applies the rendered objects
+through the same server-side-apply path as `Manifest`:
+
+```typescript
+const ingress = yield* AWS.EKS.HelmChart("IngressNginx", {
+  cluster,
+  chart: "ingress-nginx",
+  repo: "https://kubernetes.github.io/ingress-nginx",
+  version: "4.11.2",
+  namespace: "ingress-nginx",
+  createNamespace: true,
+  values: {
+    controller: { replicaCount: 2 },
+  },
+});
+```
+
+`chart` also accepts `oci://` references and local chart directories,
+and `values` is a literal object — the same shape as a `values.yaml`
+file. Because the objects are applied (not `helm install`ed), Alchemy
+owns their lifecycle: drift is corrected on every deploy, objects
+that drop out of the render are pruned, and destroy deletes them —
+there is no in-cluster Helm release record. Charts that rely on
+install/upgrade hooks for correctness should be installed with Helm
+directly.
+
+## Run on SageMaker HyperPod
+
+An EKS cluster can also orchestrate a
+[SageMaker HyperPod](/aws/compute/hyperpod) fleet — persistent,
+health-checked ML compute whose nodes join the cluster as
+ordinary Kubernetes nodes.
+[`AWS.SageMaker.Cluster`](/providers/aws/sagemaker/cluster)
+attaches the fleet to the EKS control plane:
+
+```typescript
+const hyperpod = yield* AWS.SageMaker.Cluster("HyperPod", {
+  orchestrator: { Eks: { ClusterArn: cluster.clusterArn } },
+  vpcConfig: {
+    SecurityGroupIds: [clusterSecurityGroupId],
+    Subnets: network.privateSubnetIds,
+  },
+  instanceGroups: {
+    workers: {
+      InstanceType: "ml.g5.xlarge",
+      InstanceCount: 4,
+      ExecutionRole: role.roleArn,
+      LifeCycleConfig: {
+        SourceS3Uri: script.sourceS3Uri,
+        OnCreate: script.onCreate,
+      },
+    },
+  },
+});
+```
+
+`Deployment` and `Job` then opt onto those nodes with the
+`hyperpod` prop. The instance-group keys carry through to the
+cluster's attributes as types — `hyperpod.instanceGroups.workers`
+is typed per key and a typo'd name is a compile error — so the
+workload is connected to the fleet through the resource graph,
+and a team's `ComputeQuota` submits it through HyperPod task
+governance:
+
+```typescript
+const train = yield* AWS.EKS.Job("Train", {
+  cluster,
+  main: import.meta.url,
+  hyperpod: {
+    instanceGroup: hyperpod.instanceGroups.workers,
+    quota: researchQuota, // → hyperpod-ns-research + Kueue queue label
+    priorityClass: "training",
+  },
+});
+```
+
+See [HyperPod](/aws/compute/hyperpod) for the fleet's
+prerequisites (lifecycle scripts, the dependencies Helm chart,
+EKS auth-mode and version constraints) and the full governance
+surface.
+
+## Where next
+
+- [VPC & networking](/aws/networking) — what the `Network` helper
+  builds under the cluster.
+- [HyperPod](/aws/compute/hyperpod) — run training fleets on this
+  cluster's nodes.
+- [Choosing a runtime](/aws/compute/choosing-a-runtime) — when Lambda or ECS
+  is the better fit than running your own Kubernetes workloads.
+- [`Cluster` reference](/providers/aws/eks/cluster),
+  [`Deployment` reference](/providers/aws/eks/deployment),
+  [`Job` reference](/providers/aws/eks/job),
+  [`Manifest` reference](/providers/aws/eks/manifest) — every prop
+  and attribute.

@@ -1,0 +1,131 @@
+---
+title: Expose private origins with Tunnel
+description: Connect a private origin to Cloudflare's edge with a Tunnel, declare its ingress rules as a Configuration resource, and point DNS at it with a proxied CNAME.
+sidebar:
+  order: 25
+---
+
+A Cloudflare Tunnel establishes an outbound connection from your
+origin — a home lab, a Kubernetes cluster, a VM with no public IP —
+to Cloudflare's edge. No open inbound ports, no public address. In
+alchemy the tunnel, its routing rules, and the DNS record that
+publishes it are all ordinary resources in one stack.
+
+## Create a tunnel
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+
+const tunnel = yield* Cloudflare.Tunnel.Tunnel("MyTunnel");
+// Run the connector on your origin:
+//   cloudflared tunnel run --token <Redacted.value(tunnel.token)>
+```
+
+The resource creates a remotely-managed `cfd_tunnel` and exposes
+`tunnelId` plus a redacted connector `token` — hand the token to
+`cloudflared` on the origin and it dials out to the edge. If you
+omit `name`, a unique one is generated from the app, stage, and
+logical ID; tunnel names are immutable, so changing the name (or
+the `tunnelSecret`) triggers a replacement.
+
+## Route hostnames with a Configuration
+
+A remotely-managed tunnel has a single routing document: an ordered
+list of ingress rules that `cloudflared` matches top-down, first
+match wins. The `Configuration` resource owns that document:
+
+```typescript
+yield* Cloudflare.Tunnel.Configuration("Ingress", {
+  tunnelId: tunnel.tunnelId,
+  ingress: [
+    { hostname: "ui.internal", service: "http://ui.app.svc.cluster.local:80" },
+    { hostname: "api.internal", service: "http://api.app.svc.cluster.local:8080" },
+  ],
+});
+```
+
+`service` is the upstream each hostname forwards to — a private IP,
+a Kubernetes Service DNS name, or a pseudo-service like
+`http_status:404`. The required catch-all rule (a final entry with
+no hostname) is appended automatically, since Cloudflare rejects a
+config whose last rule has a hostname; override what it returns
+with `catchAllService: "http_status:503"`.
+
+:::note
+For simple cases you can skip the separate resource and pass
+`ingress` directly to the `Tunnel` itself — there, you author the
+catch-all rule yourself (end with `{ service: "http_status:404" }`).
+Both apply only to remotely-managed tunnels (`configSrc:
+"cloudflare"`, the default); a `"local"` tunnel is configured by a
+YAML file on the origin instead.
+:::
+
+## Point DNS at the tunnel
+
+Publishing a hostname through the tunnel is a proxied CNAME to
+`<tunnelId>.cfargotunnel.com`:
+
+```typescript
+yield* Cloudflare.DNS.Record("AppCname", {
+  zoneId: zone.zoneId,
+  name: "app.example.com",
+  type: "CNAME",
+  content: `${tunnel.tunnelId}.cfargotunnel.com`,
+  proxied: true,
+});
+```
+
+`proxied: true` is what makes it work — traffic must enter
+Cloudflare's edge to be forwarded down the tunnel. See
+[Domains & DNS](/cloudflare/networking/domains) for creating or adopting the
+`zone` this record lives in.
+
+## Private hostnames and networks
+
+For origins that should only be reachable by WARP clients — no
+public DNS at all — route the hostname through the tunnel with a
+`HostnameRoute`:
+
+```typescript
+yield* Cloudflare.Tunnel.HostnameRoute("AppRoute", {
+  hostname: "app.internal.example.com",
+  tunnelId: tunnel.tunnelId,
+  comment: "internal wiki behind the datacenter tunnel",
+});
+```
+
+Hostname, tunnel, and comment are all mutable in place — updates
+converge on the same route rather than replacing it. Hostnames are
+unique per account.
+
+To route entire private CIDR ranges — including overlapping ones —
+create a `VirtualNetwork` and target it from a `Route`:
+
+```typescript
+const vnet = yield* Cloudflare.Tunnel.VirtualNetwork("Staging", {
+  comment: "staging private network",
+});
+
+yield* Cloudflare.Tunnel.Route("StagingNet", {
+  tunnelId: tunnel.tunnelId,
+  network: "10.4.0.0/16",
+  virtualNetworkId: vnet.virtualNetworkId,
+});
+```
+
+Each virtual network is an isolated routing namespace, so two
+environments can both claim `10.4.0.0/16` and WARP clients pick
+which copy they see. Passing `vnet.virtualNetworkId` into the
+`Route` also gets destroy ordering right — a virtual network can't
+be deleted while routes still reference it.
+
+## Where next
+
+- [Domains & DNS](/cloudflare/networking/domains) — the zone and records the
+  tunnel CNAME lives in.
+- [Tunnel API reference](/providers/cloudflare/tunnel/tunnel) —
+  including the `ReadTunnel` / `WriteTunnel` / `ReadWriteTunnel`
+  bindings for managing tunnels from inside a deployed Worker.
+- [Configuration API reference](/providers/cloudflare/tunnel/configuration)
+- [HostnameRoute API reference](/providers/cloudflare/tunnel/hostnameroute)
+- [VirtualNetwork API reference](/providers/cloudflare/tunnel/virtualnetwork)

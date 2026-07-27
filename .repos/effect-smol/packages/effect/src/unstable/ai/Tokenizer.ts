@@ -1,50 +1,12 @@
 /**
- * Token counting and prompt truncation for AI integrations. A tokenizer is a
- * service because tokenization depends on the target model, provider, and
- * encoding rules rather than on Effect itself.
+ * Service for model-specific token counting and prompt truncation. Tokenization
+ * depends on the target provider, model, and encoding rules, so this module
+ * leaves the actual tokenization function to the service implementation.
  *
- * **Mental model**
- *
- * {@link Tokenizer} provides two operations over prompt input: `tokenize`
- * converts a prompt into provider-specific token ids, and `truncate` keeps a
- * prompt within a token budget before it is sent to a model. Implementations
- * are usually provided by an AI provider package or by wrapping the tokenizer
- * used by the model.
- *
- * **Common tasks**
- *
- * - Count prompt tokens before choosing a model or request size
- * - Drop older conversation messages before a chat completion call
- * - Provide a custom tokenizer with {@link make} for tests or unsupported
- *   providers
- *
- * **Gotchas**
- *
- * - Token ids are model-specific. Counts from one tokenizer may not match
- *   another model's tokenizer.
- * - The `truncate` implementation produced by {@link make} keeps complete
- *   messages from the end of the prompt; it does not split a message to fit the
- *   remaining budget.
- * - Programs that access {@link Tokenizer} require a tokenizer service to be
- *   provided.
- *
- * **Example** (Providing a test tokenizer)
- *
- * ```ts
- * import { Effect } from "effect"
- * import { Tokenizer } from "effect/unstable/ai"
- *
- * const tokenizer = Tokenizer.make({
- *   tokenize: (prompt) =>
- *     Effect.succeed(prompt.content.map((_, index) => index))
- * })
- *
- * const program = Effect.gen(function*() {
- *   const service = yield* Tokenizer.Tokenizer
- *   const tokens = yield* service.tokenize("Count this prompt")
- *   return tokens.length
- * }).pipe(Effect.provideService(Tokenizer.Tokenizer, tokenizer))
- * ```
+ * The `Tokenizer` service can count tokens for raw prompt input and shorten a
+ * prompt to a token limit by keeping the newest messages that fit. This module
+ * defines the service tag, the service interface, and a `make` constructor that
+ * builds a full tokenizer service from a token-counting function.
  *
  * @since 4.0.0
  */
@@ -80,7 +42,7 @@ import * as Prompt from "./Prompt.ts"
  * })
  * ```
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export class Tokenizer extends Context.Service<Tokenizer, Service>()(

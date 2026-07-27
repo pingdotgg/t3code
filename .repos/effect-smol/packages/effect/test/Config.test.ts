@@ -70,7 +70,7 @@ describe("Config", () => {
     })
 
     it("nonEmptyString", async () => {
-      const provider = ConfigProvider.fromUnknown({ a: "value", b: "" })
+      const provider = ConfigProvider.fromUnknown({ a: "value", b: "" }, { preserveEmptyStrings: true })
       await assertSuccess(Config.nonEmptyString("a"), provider, "value")
       await assertFailure(
         Config.nonEmptyString("b"),
@@ -159,7 +159,7 @@ describe("Config", () => {
       await assertFailure(
         Config.date("b"),
         provider,
-        `Expected a valid date, got Invalid Date
+        `Expected a valid Date, got Invalid Date
   at ["b"]`
       )
     })
@@ -227,7 +227,7 @@ describe("Config", () => {
       )
       await assertFailure(
         Config.mapOrFail(config, f),
-        ConfigProvider.fromUnknown(""),
+        ConfigProvider.fromUnknown("", { preserveEmptyStrings: true }),
         `empty`
       )
     })
@@ -254,7 +254,7 @@ describe("Config", () => {
         await assertSuccess(config, ConfigProvider.fromUnknown({ a: "a", b: "1" }), ["a", 1])
         await assertFailure(
           config,
-          ConfigProvider.fromUnknown({ a: "", b: "1" }),
+          ConfigProvider.fromUnknown({ a: "", b: "1" }, { preserveEmptyStrings: true }),
           `Expected a value with a length of at least 1, got ""
   at ["a"]`
         )
@@ -272,7 +272,7 @@ describe("Config", () => {
         await assertSuccess(config, ConfigProvider.fromUnknown({ a: "a", b: "1" }), ["a", 1])
         await assertFailure(
           config,
-          ConfigProvider.fromUnknown({ a: "", b: "1" }),
+          ConfigProvider.fromUnknown({ a: "", b: "1" }, { preserveEmptyStrings: true }),
           `Expected a value with a length of at least 1, got ""
   at ["a"]`
         )
@@ -290,7 +290,7 @@ describe("Config", () => {
         await assertSuccess(config, ConfigProvider.fromUnknown({ b: "b", d: "1" }), { a: "b", c: 1 })
         await assertFailure(
           config,
-          ConfigProvider.fromUnknown({ b: "", d: "1" }),
+          ConfigProvider.fromUnknown({ b: "", d: "1" }, { preserveEmptyStrings: true }),
           `Expected a value with a length of at least 1, got ""
   at ["b"]`
         )
@@ -326,6 +326,31 @@ describe("Config", () => {
         await assertSuccess(config, ConfigProvider.fromUnknown({}), defaultValue)
       })
 
+      it("uses default for empty env strings", async () => {
+        const config = Config.string("a").pipe(Config.withDefault("default"))
+
+        await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "" } }), "default")
+        await assertSuccess(
+          config,
+          ConfigProvider.fromEnv({ env: { a: "" }, preserveEmptyStrings: true }),
+          ""
+        )
+      })
+
+      it("uses default for empty env numbers", async () => {
+        const config = Config.number("a").pipe(Config.withDefault(0))
+
+        await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "" } }), 0)
+        await assertFailure(
+          config,
+          ConfigProvider.fromEnv({ env: { a: "" }, preserveEmptyStrings: true }),
+          `Expected a string representing a finite number, got ""
+  at ["a"]
+Expected "Infinity" | "-Infinity" | "NaN", got ""
+  at ["a"]`
+        )
+      })
+
       it("struct", async () => {
         const defaultValue = { a: "a", c: 0 }
         const config = Config.all({ a: Config.nonEmptyString("b"), c: Config.finite("d") }).pipe(
@@ -338,9 +363,97 @@ describe("Config", () => {
 
         await assertFailure(
           config,
-          ConfigProvider.fromUnknown({ b: "", d: "1" }),
+          ConfigProvider.fromUnknown({ b: "", d: "1" }, { preserveEmptyStrings: true }),
           `Expected a value with a length of at least 1, got ""
   at ["b"]`
+        )
+      })
+
+      it("does not recover from invalid union values", async () => {
+        const config = Config.logLevel("LOG_LEVEL").pipe(Config.withDefault("Info"))
+
+        await assertSuccess(config, ConfigProvider.fromUnknown({}), "Info")
+        await assertFailure(
+          config,
+          ConfigProvider.fromUnknown({ LOG_LEVEL: "debug" }),
+          `Expected "All" | "Fatal" | "Error" | "Warn" | "Info" | "Debug" | "Trace" | "None", got "debug"
+  at ["LOG_LEVEL"]`
+        )
+      })
+
+      it("does not recover from filter failures", async () => {
+        const schema = Schema.String.check(
+          Schema.makeFilter((s) =>
+            s === "a" ? undefined : new SchemaIssue.InvalidValue(Option.none(), { message: `must be "a"` })
+          )
+        )
+        const config = Config.schema(schema, "a").pipe(Config.withDefault("fallback"))
+
+        // missing key -> default
+        await assertSuccess(config, ConfigProvider.fromUnknown({}), "fallback")
+        // valid present value -> parsed
+        await assertSuccess(config, ConfigProvider.fromUnknown({ a: "a" }), "a")
+        // present value that fails the refinement must fail, not use the default
+        await assertFailure(
+          config,
+          ConfigProvider.fromUnknown({ a: "b" }),
+          `must be "a"
+  at ["a"]`
+        )
+      })
+
+      it("array", async () => {
+        const config = Config.schema(Schema.Array(Schema.String), "a").pipe(Config.withDefault(["default"]))
+
+        await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "value" } }), ["value"])
+        await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "" } }), ["default"])
+        await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "" }, preserveEmptyStrings: true }), [])
+        await assertSuccess(config, ConfigProvider.fromEnv({ env: {} }), ["default"])
+      })
+
+      it("schema containers", async () => {
+        const provider = ConfigProvider.fromEnv({ env: {} })
+
+        await assertSuccess(
+          Config.schema(Schema.Struct({ value: Schema.String }), "a").pipe(Config.withDefault({ value: "default" })),
+          provider,
+          { value: "default" }
+        )
+        await assertSuccess(
+          Config.schema(Schema.Struct({ value: Schema.optionalKey(Schema.String) }), "a").pipe(
+            Config.withDefault({ value: "default" })
+          ),
+          provider,
+          { value: "default" }
+        )
+        await assertSuccess(
+          Config.schema(Schema.Struct({}), "a").pipe(Config.withDefault({ value: "default" })),
+          provider,
+          { value: "default" }
+        )
+        await assertSuccess(
+          Config.schema(Schema.Record(Schema.String, Schema.String), "a").pipe(
+            Config.withDefault({ value: "default" })
+          ),
+          provider,
+          { value: "default" }
+        )
+        await assertSuccess(
+          Config.schema(Schema.Tuple([Schema.String]), "a").pipe(Config.withDefault(["default"])),
+          provider,
+          ["default"]
+        )
+        await assertSuccess(
+          Config.schema(Schema.ReadonlySet(Schema.String), "a").pipe(Config.withDefault(new Set(["default"]))),
+          provider,
+          new Set(["default"])
+        )
+        await assertSuccess(
+          Config.schema(Schema.ReadonlyMap(Schema.String, Schema.String), "a").pipe(
+            Config.withDefault(new Map([["default", "value"]]))
+          ),
+          provider,
+          new Map([["default", "value"]])
         )
       })
     })
@@ -348,9 +461,16 @@ describe("Config", () => {
     describe("option", () => {
       it("value", async () => {
         const config = Config.finite("a").pipe(Config.option)
+        const stringConfig = Config.string("a").pipe(Config.option)
 
         await assertSuccess(config, ConfigProvider.fromUnknown({ a: "1" }), Option.some(1))
         await assertSuccess(config, ConfigProvider.fromUnknown({}), Option.none())
+        await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "" } }), Option.none())
+        await assertSuccess(
+          stringConfig,
+          ConfigProvider.fromEnv({ env: { a: "" }, preserveEmptyStrings: true }),
+          Option.some("")
+        )
         await assertFailure(
           config,
           ConfigProvider.fromUnknown({ a: "value" }),
@@ -367,10 +487,11 @@ describe("Config", () => {
         await assertSuccess(config, ConfigProvider.fromUnknown({ b: "b", d: "1" }), Option.some({ a: "b", c: 1 }))
         await assertSuccess(config, ConfigProvider.fromUnknown({ b: "b" }), Option.none())
         await assertSuccess(config, ConfigProvider.fromUnknown({ d: "1" }), Option.none())
+        await assertSuccess(config, ConfigProvider.fromUnknown({ b: "", d: "1" }), Option.none())
 
         await assertFailure(
           config,
-          ConfigProvider.fromUnknown({ b: "", d: "1" }),
+          ConfigProvider.fromUnknown({ b: "", d: "1" }, { preserveEmptyStrings: true }),
           `Expected a value with a length of at least 1, got ""
   at ["b"]`
         )
@@ -512,6 +633,37 @@ describe("Config", () => {
             ConfigProvider.fromEnv({ env: {} }),
             `Expected string, got undefined
   at ["database"]["host"]`
+          )
+        })
+
+        it("config nested and provider nested compose lookup but not error paths", async () => {
+          const config = Config.string("host").pipe(Config.nested("database"))
+          const provider = ConfigProvider.fromEnv({
+            env: { app_database_host: "localhost" }
+          }).pipe(ConfigProvider.nested("app"))
+
+          await assertSuccess(config, provider, "localhost")
+          await assertFailure(
+            config,
+            ConfigProvider.fromEnv({ env: {} }).pipe(ConfigProvider.nested("app")),
+            `Expected string, got undefined
+  at ["database"]["host"]`
+          )
+        })
+
+        it("provider nested over orElse keeps the logical error path", async () => {
+          const provider = ConfigProvider.fromEnv({ env: { app_port: "abc" } }).pipe(
+            ConfigProvider.orElse(ConfigProvider.fromEnv({ env: {} })),
+            ConfigProvider.nested("app")
+          )
+
+          await assertFailure(
+            Config.number("port"),
+            provider,
+            `Expected a string representing a finite number, got "abc"
+  at ["port"]
+Expected "Infinity" | "-Infinity" | "NaN", got "abc"
+  at ["port"]`
           )
         })
       })
@@ -861,11 +1013,17 @@ describe("Config", () => {
         const schema = Schema.Struct({ a: Schema.Array(Schema.Number) })
         const config = Config.schema(schema)
 
-        await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "" } }), { a: [] })
+        await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "" }, preserveEmptyStrings: true }), { a: [] })
         await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "1" } }), { a: [1] })
         await assertSuccess(config, ConfigProvider.fromEnv({ env: { a_0: "1" } }), { a: [1] })
         await assertSuccess(config, ConfigProvider.fromEnv({ env: { a_0: "1", a_1: "2" } }), { a: [1, 2] })
         await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "1", a_0: "2" } }), { a: [1] })
+        await assertFailure(
+          config,
+          ConfigProvider.fromEnv({ env: {} }),
+          `Missing key
+  at ["a"]`
+        )
       })
     })
 
@@ -888,7 +1046,7 @@ describe("Config", () => {
         const schema = Schema.Struct({ a: Schema.Tuple([]) })
         const config = Config.schema(schema)
 
-        await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "" } }), { a: [] })
+        await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "" }, preserveEmptyStrings: true }), { a: [] })
       })
 
       it("ensure array", async () => {
@@ -923,7 +1081,7 @@ describe("Config", () => {
       const config = Config.schema(schema)
 
       // ensure array
-      await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "1" } }), { a: [1] })
+      await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "1,2,3" } }), { a: [1, 2, 3] })
       await assertSuccess(config, ConfigProvider.fromEnv({ env: { a_0: "1", a_1: "2" } }), { a: [1, 2] })
       await assertFailure(
         config,
@@ -1012,10 +1170,14 @@ describe("Config", () => {
       })
       const config = Config.schema(schema)
 
-      await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "1", as: "" } }), { a: "1", as: [] })
       await assertSuccess(
         config,
-        ConfigProvider.fromEnv({ env: { a: "1", as_0_a: "2", as_0_as: "" } }),
+        ConfigProvider.fromEnv({ env: { a: "1", as: "" }, preserveEmptyStrings: true }),
+        { a: "1", as: [] }
+      )
+      await assertSuccess(
+        config,
+        ConfigProvider.fromEnv({ env: { a: "1", as_0_a: "2", as_0_as: "" }, preserveEmptyStrings: true }),
         {
           a: "1",
           as: [{ a: "2", as: [] }]
@@ -1181,7 +1343,17 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
         const schema = Schema.Struct({ a: Schema.Array(Schema.Number) })
         const config = Config.schema(schema)
 
-        await assertSuccess(config, ConfigProvider.fromUnknown({ a: "" }), { a: [] })
+        await assertFailure(
+          config,
+          ConfigProvider.fromUnknown({ a: "" }),
+          `Missing key
+  at ["a"]`
+        )
+        await assertSuccess(
+          config,
+          ConfigProvider.fromUnknown({ a: "" }, { preserveEmptyStrings: true }),
+          { a: [] }
+        )
         await assertSuccess(config, ConfigProvider.fromUnknown({ a: "1" }), { a: [1] })
       })
     })

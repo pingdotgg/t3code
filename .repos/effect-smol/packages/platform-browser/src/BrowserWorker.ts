@@ -1,38 +1,10 @@
 /**
- * Parent-side browser platform for running Effect workers.
+ * Parent-side browser platform for Effect workers.
  *
- * This module provides the `WorkerPlatform` used by browser code that spawns or
- * connects to `Worker`, `SharedWorker`, and `MessagePort` endpoints through
- * Effect's worker protocol. Pair it with `BrowserWorkerRunner` in the worker
- * entrypoint when building worker-backed RPC clients, moving CPU-bound work off
- * the main thread, isolating browser-only services, or adapting an existing
- * `MessageChannel` in tests.
- *
- * **Mental model**
- *
- * Browser worker communication is normalized to a message port. Dedicated
- * workers post messages on the worker object itself, shared workers post
- * through `worker.port`, and raw `MessagePort` values can be supplied directly.
- * `layerPlatform` provides only the browser platform, while `layer` combines
- * the platform with a `Spawner` that creates a worker endpoint for each worker
- * id.
- *
- * **Common tasks**
- *
- * Use `layer` when parent code should both provide browser worker messaging and
- * define how workers are spawned. Use `layerPlatform` when a spawner is already
- * provided elsewhere. Return a `MessagePort` from the spawner for tests or
- * custom channels, a `Worker` for dedicated workers, or a `SharedWorker` when
- * multiple browser contexts should share one worker runtime.
- *
- * **Gotchas**
- *
- * Messages use the browser structured-clone algorithm, so payloads and transfer
- * lists must be accepted by the target runtime. Transferring an `ArrayBuffer` or
- * `MessagePort` moves ownership away from the sender. Scope finalization sends
- * the worker close signal over the port, but code that created a dedicated
- * `Worker` remains responsible for broader lifecycle concerns such as
- * terminating it.
+ * `layerPlatform` provides the `WorkerPlatform` used to communicate with a
+ * browser `Worker`, `SharedWorker`, or `MessagePort` through Effect's worker
+ * protocol. `layer` combines that platform with a `Spawner` built from a
+ * callback that creates or returns the worker endpoint for each worker id.
  *
  * @since 4.0.0
  */
@@ -48,8 +20,8 @@ import { WorkerError, WorkerReceiveError } from "effect/unstable/workers/WorkerE
  *
  * **When to use**
  *
- * Use when browser parent or client code needs both the browser
- * `WorkerPlatform` and a `Spawner` from one layer.
+ * Use when you need both the browser `WorkerPlatform` and a `Spawner` from one
+ * layer.
  *
  * **Details**
  *

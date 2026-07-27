@@ -1,6 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
-import * as Test from "@/Test/Vitest";
-import { expect } from "@effect/vitest";
+import * as Test from "@/Test/Alchemy";
+import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
@@ -8,9 +8,15 @@ import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import D1Worker from "./d1-worker.ts";
+import Stack from "./fixtures/stack.ts";
 
-const { test } = Test.make({ providers: Cloudflare.providers() });
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: Cloudflare.providers(),
+  state: Cloudflare.state(),
+});
+
+const HOOK_TIMEOUT = 300_000;
+const TEST_TIMEOUT = 120_000;
 
 const logLevel = Effect.provideService(
   MinimumLogLevel,
@@ -22,13 +28,13 @@ class WorkerNotReady extends Data.TaggedError("WorkerNotReady")<{
   body: string;
 }> {}
 
-/**
- * Wrap an HTTP call so a non-2xx response (workers.dev cold-start
- * "There is nothing here yet" / "Script not found" pages) becomes a
- * retryable Effect failure rather than a successful response with a
- * 404/500 status.
- */
-const retryUntilOk = <E, R>(
+// Bounded spaced schedule — caps total wait so a genuine failure surfaces
+// fast instead of an uncapped exponential blowing past the test timeout
+// while riding out fresh-workers.dev cold-start propagation.
+const ready = Schedule.max([Schedule.spaced("2 seconds"), Schedule.recurs(45)]);
+
+/** Retry an HTTP call until it returns 200 (rides out cold-start 404s). */
+const untilOk = <E, R>(
   eff: Effect.Effect<HttpClientResponse.HttpClientResponse, E, R>,
 ) =>
   eff.pipe(
@@ -42,151 +48,142 @@ const retryUntilOk = <E, R>(
           ),
     ),
     Effect.retry({
-      while: (e): e is WorkerNotReady =>
-        e instanceof WorkerNotReady && e.status >= 400 && e.status < 600,
-      schedule: Schedule.exponential("500 millis").pipe(
-        Schedule.both(Schedule.recurs(15)),
-      ),
+      while: (e): e is WorkerNotReady => e instanceof WorkerNotReady,
+      schedule: ready,
+    }),
+  );
+
+class RowsMismatch extends Data.TaggedError("RowsMismatch")<{
+  actual: string;
+}> {}
+
+const retryRows = <A, E, R>(eff: Effect.Effect<A, E, R>) =>
+  eff.pipe(
+    Effect.retry({
+      while: (e: E) => e instanceof RowsMismatch,
+      schedule: ready,
     }),
   );
 
 /**
- * End-to-end test of `Cloudflare.D1Connection.bind(...)` against a real
- * Cloudflare Worker + D1 database.
- *
- * Stack:
- *
- * - `D1WorkerDatabase` (Cloudflare.D1Database).
- * - `D1EffectWorker` — uses `Cloudflare.D1Connection.bind(database)` in
- *   the init phase, with `Cloudflare.D1ConnectionLive` provided to the
- *   worker effect.
- *
- * The worker exposes routes that exercise every method on the
- * `D1ConnectionClient`: `exec`, `prepare` + `.run/.all/.first`,
- * `batch`, and the `raw` Effect that resolves to the underlying
- * Cloudflare D1Database. The test hits those routes over HTTP and
- * asserts the round-trip succeeds — proving the binding name agreed
- * upon by the deploy-time policy and the runtime lookup match, and
- * the Cloudflare runtime actually injected the binding into `env`.
+ * Drive the full D1 client surface against ONE deployed worker over `fetch`:
+ * `exec` (/init) → `batch` (/seed) → `prepare.bind.run` (/users POST) →
+ * `prepare.bind.all` (/users GET) → `prepare.bind.first` (/users/:id) →
+ * `raw` (/raw). Both workers share one physical database; each stamps its
+ * rows with a distinct `style`, so the row-count assertions stay independent.
  */
-test.provider(
-  "D1Connection.bind exercises the full client surface",
-  (stack) =>
-    Effect.gen(function* () {
-      yield* stack.destroy();
+const exercise = (base: string) =>
+  Effect.gen(function* () {
+    // exec — CREATE TABLE. Don't assert exact count (0 on a re-run), only shape.
+    const initRes = yield* untilOk(
+      HttpClient.execute(HttpClientRequest.post(`${base}/init`)),
+    );
+    const initBody = (yield* initRes.json) as {
+      count: number;
+      duration: number;
+    };
+    expect(typeof initBody.count).toBe("number");
+    expect(typeof initBody.duration).toBe("number");
 
-      const worker = yield* stack.deploy(
-        Effect.gen(function* () {
-          return yield* D1Worker;
-        }),
-      );
+    // batch — three inserts in one transactional call.
+    const seedRes = yield* untilOk(
+      HttpClient.execute(HttpClientRequest.post(`${base}/seed`)),
+    );
+    expect(yield* seedRes.json).toMatchObject({ batches: 3, success: true });
 
-      expect(worker.url).toBeTypeOf("string");
-      const baseUrl = worker.url as string;
-
-      // Cloudflare's edge takes a few seconds to start serving a fresh
-      // workers.dev URL — initial requests can return Cloudflare's
-      // "There is nothing here yet" 404 page. Retry until /init returns
-      // 200, then use the same retry once for the warm-up before
-      // running the rest of the surface area assertions in a
-      // straight line.
-      const initRes = yield* HttpClient.execute(
-        HttpClientRequest.post(`${baseUrl}/init`),
-      ).pipe(
-        Effect.flatMap((res) =>
-          res.status === 200
-            ? res.text.pipe(Effect.as(res))
-            : res.text.pipe(
-                Effect.flatMap((body) =>
-                  Effect.fail(new WorkerNotReady({ status: res.status, body })),
-                ),
-              ),
+    // prepare.bind.run — single insert.
+    const insertRes = yield* untilOk(
+      HttpClient.execute(
+        HttpClientRequest.post(`${base}/users`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({ id: 4, name: "dave" }),
         ),
-        Effect.retry({
-          while: (e): e is WorkerNotReady =>
-            e instanceof WorkerNotReady && e.status >= 400 && e.status < 600,
-          schedule: Schedule.exponential("500 millis").pipe(
-            Schedule.both(Schedule.recurs(20)),
-          ),
-        }),
-      );
-      expect(initRes.status).toBe(200);
-      // db.exec returns a count + duration. We don't assert exact
-      // values (CREATE TABLE IF NOT EXISTS may report 0 statements
-      // executed on a re-run), only that the response shape parses.
-      const initBody = (yield* initRes.json) as {
-        count: number;
-        duration: number;
-      };
-      expect(typeof initBody.count).toBe("number");
-      expect(typeof initBody.duration).toBe("number");
+      ),
+    );
+    expect(yield* insertRes.json).toMatchObject({
+      success: true,
+      meta: { changes: 1 },
+    });
 
-      // batch-insert via prepare.bind. Edge propagation can still serve a
-      // transient 404 between routes on a fresh URL, so retry until the
-      // route handler responds 200.
-      const seedRes = yield* HttpClient.execute(
-        HttpClientRequest.post(`${baseUrl}/seed`),
-      ).pipe(
-        Effect.flatMap((res) =>
-          res.status === 200
-            ? Effect.succeed(res)
-            : res.text.pipe(
-                Effect.flatMap((body) =>
-                  Effect.fail(new WorkerNotReady({ status: res.status, body })),
-                ),
-              ),
-        ),
-        Effect.retry({
-          while: (e): e is WorkerNotReady =>
-            e instanceof WorkerNotReady && e.status >= 400 && e.status < 600,
-          schedule: Schedule.exponential("500 millis").pipe(
-            Schedule.both(Schedule.recurs(15)),
-          ),
-        }),
-      );
-      expect(seedRes.status).toBe(200);
-      expect(yield* seedRes.json).toMatchObject({ batches: 3, success: true });
+    // prepare.all — SELECT all rows for this style. D1 read-after-write is
+    // eventually consistent across edge locations, so retry until all four
+    // seeded/inserted rows are visible.
+    const expected = [
+      { id: 1, name: "alice" },
+      { id: 2, name: "bob" },
+      { id: 3, name: "carol" },
+      { id: 4, name: "dave" },
+    ];
+    const allBody = yield* untilOk(HttpClient.get(`${base}/users`)).pipe(
+      Effect.flatMap((res) => res.json),
+      Effect.flatMap((body) => {
+        const b = body as {
+          success: boolean;
+          results: Array<{ id: number; name: string }>;
+        };
+        return b.results.length === expected.length
+          ? Effect.succeed(b)
+          : Effect.fail(
+              new RowsMismatch({ actual: JSON.stringify(b.results) }),
+            );
+      }),
+      retryRows,
+    );
+    expect(allBody.success).toBe(true);
+    expect(allBody.results).toEqual(expected);
 
-      // single insert via prepare.bind.run
-      const insertRes = yield* retryUntilOk(
-        HttpClient.execute(
-          HttpClientRequest.post(`${baseUrl}/users`).pipe(
-            HttpClientRequest.bodyJsonUnsafe({ id: 4, name: "dave" }),
-          ),
-        ),
-      );
-      expect(insertRes.status).toBe(200);
-      expect(yield* insertRes.json).toMatchObject({
-        success: true,
-        meta: { changes: 1 },
-      });
+    // prepare.bind.first — SELECT one row.
+    const oneRes = yield* untilOk(HttpClient.get(`${base}/users/2`));
+    expect(yield* oneRes.json).toEqual({ row: { id: 2, name: "bob" } });
 
-      // SELECT all via prepare.all
-      const allRes = yield* retryUntilOk(HttpClient.get(`${baseUrl}/users`));
-      expect(allRes.status).toBe(200);
-      const allBody = (yield* allRes.json) as {
-        success: boolean;
-        results: Array<{ id: number; name: string }>;
-      };
-      expect(allBody.success).toBe(true);
-      expect(allBody.results).toEqual([
-        { id: 1, name: "alice" },
-        { id: 2, name: "bob" },
-        { id: 3, name: "carol" },
-        { id: 4, name: "dave" },
-      ]);
+    // raw — direct runtime D1Database access (the Better Auth / Drizzle hatch).
+    // Retry until the count reflects all four rows (eventual consistency).
+    const rawBody = yield* untilOk(HttpClient.get(`${base}/raw`)).pipe(
+      Effect.flatMap((res) => res.json),
+      Effect.flatMap((body) => {
+        const b = body as { count: number };
+        return b.count === expected.length
+          ? Effect.succeed(b)
+          : Effect.fail(new RowsMismatch({ actual: JSON.stringify(b) }));
+      }),
+      retryRows,
+    );
+    expect(rawBody.count).toBe(4);
+  });
 
-      // SELECT one via prepare.bind.first
-      const oneRes = yield* retryUntilOk(HttpClient.get(`${baseUrl}/users/2`));
-      expect(oneRes.status).toBe(200);
-      expect(yield* oneRes.json).toEqual({ row: { id: 2, name: "bob" } });
+/**
+ * End-to-end test of `Cloudflare.D1.QueryDatabase(...)` against a real
+ * Cloudflare Worker + D1 database, covering BOTH invocation styles against
+ * one shared database:
+ *
+ * - effect-worker: `yield* Cloudflare.D1.QueryDatabase(db)` in Init with
+ *   `Cloudflare.D1.QueryDatabaseBinding` provided to the worker effect;
+ * - async-worker: the database declared on the Worker `env` (resolved to the
+ *   native `cf.D1Database` via `InferEnv`) and used from a plain async fetch.
+ *
+ * The stack lives in `fixtures/stack.ts` so it can also be inspected directly,
+ * e.g. `alchemy tail --stage test ./test/Cloudflare/D1/fixtures/stack.ts`.
+ */
+const stack = beforeAll(deploy(Stack), { timeout: HOOK_TIMEOUT });
+afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
+  timeout: HOOK_TIMEOUT,
+});
 
-      // raw escape hatch (used by Better Auth / Drizzle integrations)
-      const rawRes = yield* retryUntilOk(HttpClient.get(`${baseUrl}/raw`));
-      expect(rawRes.status).toBe(200);
-      expect(yield* rawRes.json).toEqual({ count: 4 });
+// ── effect-worker ── `yield* Cloudflare.D1.QueryDatabase(db)` + ConnectionBinding.
+test(
+  "effect-worker: QueryDatabase exercises the full client surface",
+  Effect.gen(function* () {
+    const out = yield* stack;
+    yield* exercise(out.effectWorkerUrl);
+  }).pipe(logLevel),
+  { timeout: TEST_TIMEOUT },
+);
 
-      yield* stack.destroy();
-    }).pipe(logLevel),
-  { timeout: 240_000 },
+// ── async-worker ── D1 declared on `env`, native `env.DB` used from async fetch.
+test(
+  "async-worker: env-declared D1 binding exercises the full surface",
+  Effect.gen(function* () {
+    const out = yield* stack;
+    yield* exercise(out.asyncWorkerUrl);
+  }).pipe(logLevel),
+  { timeout: TEST_TIMEOUT },
 );

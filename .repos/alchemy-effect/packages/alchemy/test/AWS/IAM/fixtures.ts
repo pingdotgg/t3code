@@ -82,6 +82,18 @@ export const testSamlMetadataDocumentUpdated = `<?xml version="1.0" encoding="UT
 </EntityDescriptor>`;
 
 export const testOidcUrl = "https://example.com/alchemy-oidc";
+// A distinct issuer URL for the `list` test. The OIDC provider ARN is derived
+// deterministically from the URL, so reusing `testOidcUrl` would make the list
+// test and the federation lifecycle test provision (and tear down) the same
+// physical provider concurrently — give the list test its own resource.
+export const testOidcListUrl = "https://example.com/alchemy-oidc-list";
+// Issuer for the GitHub-Actions-style federation e2e. The testing account
+// already carries the real `token.actions.githubusercontent.com` provider
+// (used by this repo's CI) and IAM allows exactly one provider per issuer
+// URL per account — so the e2e federates against a stand-in issuer with
+// identical trust mechanics instead of touching the CI provider.
+export const testOidcGithubUrl = "https://example.com/alchemy-oidc-github";
+export const testOidcGithubHost = testOidcGithubUrl.replace(/^https?:\/\//, "");
 export const testOidcThumbprintA = "1111111111111111111111111111111111111111";
 export const testOidcThumbprintB = "2222222222222222222222222222222222222222";
 export const testSamlProviderName = "alchemy-saml-provider";

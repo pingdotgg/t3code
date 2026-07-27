@@ -1,0 +1,81 @@
+---
+title: profile
+description: Inspect or clear credentials stored in ~/.alchemy/profiles.json.
+---
+
+import Terminal from "../../../components/Terminal.astro";
+
+```sh
+alchemy profile <subcommand> [options]
+```
+
+Inspect and manage credentials stored in `~/.alchemy/profiles.json`.
+See [Profiles](/environments/profiles).
+
+## profile show
+
+```sh
+alchemy profile show [options]
+```
+
+Print every auth method configured under a profile, along with its
+resolved credentials (redacted). Unlike `login`, this does **not**
+import your stack file — it reads the profile store directly and uses
+the bundled providers (AWS, Axiom, Cloudflare, GitHub, Neon,
+Planetscale) to pretty-print each entry.
+
+<Terminal content={`Profile: default
+
+── AWS ──
+  accessKeyId:     ASIA****
+  secretAccessKey: Pj5T****
+  sessionToken:    IQoJ****
+  region:          us-west-2
+  source: sso - default
+
+── Cloudflare ──
+  accessToken: Xl06****
+  expires: in 59m 58s 999ms (2026-04-27T20:45:47.937Z)
+  accountId: 123456789...
+  source: oauth`} />
+
+If the profile doesn't exist, the command lists the available profile
+names — or suggests running [`alchemy login`](/cli/login) when none are
+configured.
+
+| Option              | Description                                                   |
+| ------------------- | ------------------------------------------------------------- |
+| `--profile <name>`  | Profile to show (defaults to `default` or `$ALCHEMY_PROFILE`) |
+| `--env-file <path>` | Load environment variables from a file                        |
+
+```sh
+# Show the default profile
+alchemy profile show
+
+# Show a named profile
+alchemy profile show --profile prod
+```
+
+## profile clear
+
+```sh
+alchemy profile clear [options]
+```
+
+Delete a profile from `~/.alchemy/profiles.json` **and** remove its
+credentials directory. If the profile isn't in `profiles.json`, the
+command still removes any stray credentials directory.
+
+| Option             | Description                                                    |
+| ------------------ | -------------------------------------------------------------- |
+| `--profile <name>` | Profile to clear (defaults to `default` or `$ALCHEMY_PROFILE`) |
+
+```sh
+# Remove the prod profile and its credentials
+alchemy profile clear --profile prod
+```
+
+## Where next
+
+- [login](/cli/login) — configure and log in to each provider in your stack.
+- [Profiles](/environments/profiles) — how profiles isolate credentials across accounts and environments.

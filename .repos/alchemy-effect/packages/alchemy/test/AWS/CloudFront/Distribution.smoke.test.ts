@@ -11,9 +11,9 @@ import {
 import type { PolicyStatement } from "@/AWS/IAM/Policy";
 import { Bucket } from "@/AWS/S3";
 import * as Output from "@/Output";
-import * as Test from "@/Test/Vitest";
+import * as Test from "@/Test/Alchemy";
 import * as cloudfront from "@distilled.cloud/aws/cloudfront";
-import { describe, expect } from "@effect/vitest";
+import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 
@@ -49,8 +49,8 @@ describe("AWS.CloudFront smoke", () => {
             const cachePolicy = yield* CachePolicy("SmokeCachePolicy", {
               comment: "smoke",
               minTTL: 0,
-              defaultTTL: 60,
-              maxTTL: 86400,
+              defaultTTL: "60 seconds",
+              maxTTL: "1 day",
               parametersInCacheKeyAndForwardedToOrigin: {
                 EnableAcceptEncodingGzip: true,
                 EnableAcceptEncodingBrotli: true,
@@ -216,9 +216,7 @@ const retrying = (label: string) =>
   Effect.retry({
     while: (error: unknown) =>
       error instanceof Error && error.message === label,
-    schedule: Schedule.fixed("10 seconds").pipe(
-      Schedule.both(Schedule.recurs(60)),
-    ),
+    schedule: Schedule.max([Schedule.fixed("10 seconds"), Schedule.recurs(60)]),
   });
 
 const assertDistributionDeleted = (id: string) =>

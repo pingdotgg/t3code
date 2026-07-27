@@ -1,28 +1,29 @@
 import type * as DynamoDB from "@distilled.cloud/aws/dynamodb";
-import type {
-  PointInTimeRecoverySpecification,
-  TimeToLiveSpecification,
-} from "@distilled.cloud/aws/dynamodb";
+import type { TimeToLiveSpecification } from "@distilled.cloud/aws/dynamodb";
+import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as dynamodb from "@distilled.cloud/aws/dynamodb";
 import type * as lambda from "aws-lambda";
 import * as Data from "effect/Data";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 
+import { Unowned } from "../../AdoptPolicy.ts";
 import { havePropsChanged, isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
-import type { Providers } from "../Providers.ts";
-import { Unowned } from "../../AdoptPolicy.ts";
 import {
   createInternalTags,
   createTagsList,
   diffTags,
   hasAlchemyTags,
 } from "../../Tags.ts";
+import { toWireDays } from "../../Util/Duration.ts";
 import type { AccountID } from "../Environment.ts";
+import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
 
 export type TableName = string;
@@ -43,10 +44,47 @@ export type TableEvent<Data> = Omit<lambda.DynamoDBStreamEvent, "Records"> & {
 
 export type ScalarAttributeType = "S" | "N" | "B";
 
+export interface PointInTimeRecoverySpecification {
+  /**
+   * Whether point-in-time recovery (continuous backups) is enabled for the
+   * table.
+   */
+  pointInTimeRecoveryEnabled: boolean;
+  /**
+   * How far back the table can be restored, e.g. `"7 days"` or
+   * `Duration.days(7)`. Rounded to whole days on the wire (1–35 days).
+   * @default 35 days
+   */
+  recoveryPeriod?: Duration.Input;
+}
+
+export interface KinesisStreamingDestination {
+  /**
+   * ARN of the destination Kinesis Data Stream. The stream must be ACTIVE
+   * when the destination is enabled (deploy the `AWS.Kinesis.Stream`
+   * resource in the same stack and pass `stream.streamArn`).
+   */
+  streamArn: string;
+  /**
+   * Precision of the approximate creation timestamp stamped on records
+   * delivered to the Kinesis stream. Changing this on an ACTIVE destination
+   * updates it in place, but the UPDATING→ACTIVE transition can take several
+   * minutes.
+   * @default "MILLISECOND"
+   */
+  approximateCreationDateTimePrecision?: DynamoDB.ApproximateCreationDateTimePrecision;
+}
+
 export type TableProps = {
   /**
    * Name of the table. If omitted, Alchemy generates a deterministic physical
-   * name from the stack, stage, and logical ID.
+   * name from the stack, stage, and logical ID, suffixed with the instance ID
+   * so replacements can create the successor table before deleting the old one.
+   *
+   * Changing this property replaces the table. If the name is hard-coded,
+   * replacement-triggering changes (key schema, attribute types, LSIs, GSI
+   * key changes) delete the old table first and then recreate it under the
+   * same name, since DynamoDB table names are unique per account/region.
    */
   tableName?: string;
   /**
@@ -66,13 +104,36 @@ export type TableProps = {
   billingMode?: DynamoDB.BillingMode;
   deletionProtectionEnabled?: boolean;
   onDemandThroughput?: DynamoDB.OnDemandThroughput;
-  pointInTimeRecoverySpecification?: DynamoDB.PointInTimeRecoverySpecification;
+  /**
+   * Enables point-in-time recovery (continuous backups) and optionally sets
+   * the recovery window via `recoveryPeriod` (a `Duration.Input`, rounded to
+   * whole days on the wire).
+   */
+  pointInTimeRecoverySpecification?: PointInTimeRecoverySpecification;
   provisionedThroughput?: DynamoDB.ProvisionedThroughput;
   sseSpecification?: DynamoDB.SSESpecification;
   tags?: Record<string, string>;
   timeToLiveSpecification?: DynamoDB.TimeToLiveSpecification;
   warmThroughput?: DynamoDB.WarmThroughput;
   tableClass?: DynamoDB.TableClass;
+  /**
+   * Resource-based IAM policy document (JSON string) attached to the table.
+   * Grants cross-account or scoped-principal access to the table and its
+   * indexes. Removing the property deletes the policy.
+   */
+  resourcePolicy?: string;
+  /**
+   * Streams change data capture records to the given Kinesis Data Stream.
+   * Changing the stream disables the old destination before enabling the
+   * new one; removing the property disables streaming.
+   */
+  kinesisStreamingDestination?: KinesisStreamingDestination;
+  /**
+   * Enables CloudWatch Contributor Insights (table-level rule) for the
+   * table, surfacing the most-accessed and most-throttled keys.
+   * @default false
+   */
+  contributorInsightsEnabled?: boolean;
 };
 
 export type TableBinding = {
@@ -83,22 +144,33 @@ export interface Table extends Resource<
   "AWS.DynamoDB.Table",
   TableProps,
   {
+    /** The unique ID AWS assigns to the table. */
     tableId: string;
+    /** The physical name of the table. */
     tableName: TableName;
+    /** The ARN of the table. */
     tableArn: TableArn;
+    /** The partition (hash) key attribute name. */
     partitionKey: string;
+    /** The sort (range) key attribute name, if defined. */
     sortKey: string | undefined;
+    /** ARN of the most recent DynamoDB stream (when streams are enabled). */
     latestStreamArn: string | undefined;
+    /** The current stream configuration (when streams are enabled). */
     streamSpecification: DynamoDB.StreamSpecification | undefined;
+    /** Descriptions of the table's local secondary indexes. */
     localSecondaryIndexes:
       | DynamoDB.LocalSecondaryIndexDescription[]
       | undefined;
+    /** Descriptions of the table's global secondary indexes. */
     globalSecondaryIndexes:
       | DynamoDB.GlobalSecondaryIndexDescription[]
       | undefined;
+    /** The point-in-time recovery status of the table. */
     pointInTimeRecoveryDescription:
       | DynamoDB.PointInTimeRecoveryDescription
       | undefined;
+    /** The tags attached to the table. */
     tags: Record<string, string> | undefined;
   },
   TableBinding,
@@ -112,7 +184,7 @@ export interface Table extends Resource<
  * `Table` owns the lifecycle of the physical table while the binding contract
  * allows runtime-specific integrations such as Lambda table event sources to
  * request stream configuration without forcing a circular input prop.
- *
+ * @resource
  * @section Creating Tables
  * @example Basic Table
  * ```typescript
@@ -173,8 +245,8 @@ export interface Table extends Resource<
  * @example Read and write items
  * ```typescript
  * // init
- * const getItem = yield* DynamoDB.GetItem.bind(table);
- * const putItem = yield* DynamoDB.PutItem.bind(table);
+ * const getItem = yield* AWS.DynamoDB.GetItem(table);
+ * const putItem = yield* AWS.DynamoDB.PutItem(table);
  *
  * return {
  *   fetch: Effect.gen(function* () {
@@ -190,6 +262,48 @@ export interface Table extends Resource<
  * };
  * ```
  *
+ * @section Table Features
+ * @example Resource Policy
+ * ```typescript
+ * const table = yield* DynamoDB.Table("SharedTable", {
+ *   partitionKey: "pk",
+ *   attributes: { pk: "S" },
+ *   resourcePolicy: JSON.stringify({
+ *     Version: "2012-10-17",
+ *     Statement: [{
+ *       Effect: "Allow",
+ *       Principal: { AWS: "arn:aws:iam::111122223333:root" },
+ *       Action: ["dynamodb:GetItem", "dynamodb:Query"],
+ *       Resource: "*",
+ *     }],
+ *   }),
+ * });
+ * ```
+ *
+ * @example Kinesis Streaming Destination
+ * ```typescript
+ * import * as Kinesis from "alchemy/AWS/Kinesis";
+ *
+ * const stream = yield* Kinesis.Stream("CdcStream", {});
+ * const table = yield* DynamoDB.Table("CdcTable", {
+ *   partitionKey: "pk",
+ *   attributes: { pk: "S" },
+ *   kinesisStreamingDestination: {
+ *     streamArn: stream.streamArn,
+ *     approximateCreationDateTimePrecision: "MICROSECOND",
+ *   },
+ * });
+ * ```
+ *
+ * @example Contributor Insights
+ * ```typescript
+ * const table = yield* DynamoDB.Table("HotKeyTable", {
+ *   partitionKey: "pk",
+ *   attributes: { pk: "S" },
+ *   contributorInsightsEnabled: true,
+ * });
+ * ```
+ *
  * @section DynamoDB Streams
  * Process change data capture events from a DynamoDB table using a
  * Lambda event source mapping. The stream is enabled automatically
@@ -198,9 +312,9 @@ export interface Table extends Resource<
  * @example Process table changes
  * ```typescript
  * // init
- * yield* DynamoDB.streams(table, {
- *   StreamViewType: "NEW_AND_OLD_IMAGES",
- * }).process(
+ * yield* DynamoDB.consumeTableChanges(
+ *   table,
+ *   { streamViewType: "NEW_AND_OLD_IMAGES" },
  *   Effect.fn(function* (record) {
  *     yield* Effect.log(`${record.eventName}: ${JSON.stringify(record.dynamodb)}`);
  *   }),
@@ -332,23 +446,34 @@ export const TableProvider = () =>
         error._tag === "InternalServerError" ||
         error._tag === "LimitExceededException" ||
         error._tag === "ResourceInUseException" ||
-        error._tag === "ResourceNotFoundException";
+        error._tag === "ResourceNotFoundException" ||
+        // Throttling: DynamoDB's control-plane API limits are low and the
+        // blanket SDK retry (10 attempts) is easily exhausted when the whole
+        // suite hammers create/update/describe concurrently. Give it the
+        // provider's much larger budget too.
+        error._tag === "ThrottlingException" ||
+        error._tag === "ProvisionedThroughputExceededException" ||
+        error._tag === "RequestLimitExceeded";
 
-      const waitForControlPlaneConvergence = Schedule.fixed("1 second").pipe(
-        Schedule.both(Schedule.recurs(120)),
-      );
+      const waitForControlPlaneConvergence = Schedule.max([
+        Schedule.fixed("1 second"),
+        Schedule.recurs(120),
+      ]);
 
-      const waitForTableActivationConvergence = Schedule.fixed(
-        "10 seconds",
-      ).pipe(Schedule.both(Schedule.recurs(180)));
+      const waitForTableActivationConvergence = Schedule.max([
+        Schedule.fixed("10 seconds"),
+        Schedule.recurs(180),
+      ]);
 
-      const waitForGlobalSecondaryIndexesConvergence = Schedule.fixed(
-        "10 seconds",
-      ).pipe(Schedule.both(Schedule.recurs(180)));
+      const waitForGlobalSecondaryIndexesConvergence = Schedule.max([
+        Schedule.fixed("10 seconds"),
+        Schedule.recurs(180),
+      ]);
 
-      const waitForDeletionConvergence = Schedule.fixed("1 second").pipe(
-        Schedule.both(Schedule.recurs(90)),
-      );
+      const waitForDeletionConvergence = Schedule.max([
+        Schedule.fixed("1 second"),
+        Schedule.recurs(90),
+      ]);
 
       const formatPollingElapsed = (elapsedSeconds: number) =>
         `${elapsedSeconds}s elapsed`;
@@ -378,15 +503,16 @@ export const TableProvider = () =>
           .pipe(
             Effect.retry({
               while: isRetryableControlPlaneError,
-              schedule: Schedule.exponential(100).pipe(
-                Schedule.both(Schedule.recurs(30)),
-              ),
+              schedule: Schedule.max([
+                Schedule.exponential(100),
+                Schedule.recurs(30),
+              ]),
             }),
           );
 
       const updateContinuousBackups = (
         tableName: string,
-        pointInTimeRecoverySpecification: PointInTimeRecoverySpecification,
+        pointInTimeRecoverySpecification: DynamoDB.PointInTimeRecoverySpecification,
       ) =>
         dynamodb
           .updateContinuousBackups({
@@ -398,9 +524,300 @@ export const TableProvider = () =>
               while: (e) =>
                 e._tag === "ContinuousBackupsUnavailableException" ||
                 isRetryableControlPlaneError(e),
-              schedule: Schedule.exponential(250).pipe(
-                Schedule.both(Schedule.recurs(30)),
+              schedule: Schedule.max([
+                Schedule.exponential(250),
+                Schedule.recurs(30),
+              ]),
+            }),
+          );
+
+      // Resource policies are compared as canonicalized JSON so formatting
+      // differences between what the user wrote and what AWS stores don't
+      // cause phantom putResourcePolicy calls on every reconcile.
+      const canonicalPolicyDocument = (policy: string | undefined) => {
+        if (policy === undefined) return undefined;
+        try {
+          return JSON.stringify(JSON.parse(policy));
+        } catch {
+          return policy;
+        }
+      };
+
+      const readTableResourcePolicy = (tableArn: string) =>
+        dynamodb.getResourcePolicy({ ResourceArn: tableArn }).pipe(
+          Effect.map((response) => response.Policy),
+          Effect.catchTag("PolicyNotFoundException", () =>
+            Effect.succeed(undefined),
+          ),
+          Effect.retry({
+            while: isRetryableControlPlaneError,
+            schedule: Schedule.max([
+              Schedule.exponential(250),
+              Schedule.recurs(15),
+            ]),
+          }),
+        );
+
+      const putTableResourcePolicy = (tableArn: string, policy: string) =>
+        dynamodb
+          .putResourcePolicy({ ResourceArn: tableArn, Policy: policy })
+          .pipe(
+            Effect.retry({
+              while: isRetryableControlPlaneError,
+              schedule: Schedule.max([
+                Schedule.exponential(250),
+                Schedule.recurs(15),
+              ]),
+            }),
+          );
+
+      const deleteTableResourcePolicy = (tableArn: string) =>
+        dynamodb.deleteResourcePolicy({ ResourceArn: tableArn }).pipe(
+          Effect.catchTag("PolicyNotFoundException", () => Effect.void),
+          Effect.retry({
+            while: isRetryableControlPlaneError,
+            schedule: Schedule.max([
+              Schedule.exponential(250),
+              Schedule.recurs(15),
+            ]),
+          }),
+        );
+
+      const isKinesisDestinationTransitioning = (
+        destination: DynamoDB.KinesisDataStreamDestination,
+      ) =>
+        destination.DestinationStatus === "ENABLING" ||
+        destination.DestinationStatus === "DISABLING" ||
+        destination.DestinationStatus === "UPDATING";
+
+      // Kinesis streaming destinations transition ENABLING→ACTIVE and
+      // DISABLING→DISABLED within seconds, but a precision change
+      // (UPDATING→ACTIVE) takes multiple minutes; poll bounded to 8 minutes.
+      const waitForKinesisDestinationsConvergence = Schedule.max([
+        Schedule.fixed("5 seconds"),
+        Schedule.recurs(96),
+      ]);
+
+      const waitForKinesisDestinationsSettled = (
+        session: {
+          note: (message: string) => Effect.Effect<void, never, never>;
+        },
+        tableName: string,
+      ) => {
+        let elapsedSeconds = 0;
+        return Effect.gen(function* () {
+          const response = yield* dynamodb.describeKinesisStreamingDestination({
+            TableName: tableName,
+          });
+          const destinations = response.KinesisDataStreamDestinations ?? [];
+          if (destinations.some(isKinesisDestinationTransitioning)) {
+            return yield* Effect.fail(new KinesisDestinationNotSettled());
+          }
+          return destinations;
+        }).pipe(
+          Effect.retry({
+            while: (error) =>
+              error._tag === "KinesisDestinationNotSettled" ||
+              isRetryableControlPlaneError(error),
+            schedule: waitForKinesisDestinationsConvergence.pipe(
+              Schedule.tap(({ attempt }) => {
+                elapsedSeconds = (attempt + 1) * 5;
+                return session.note(
+                  `DynamoDB Table provider: waiting for Kinesis streaming destinations on ${tableName} to settle (${formatPollingElapsed(elapsedSeconds)})`,
+                );
+              }),
+            ),
+          }),
+        );
+      };
+
+      const disableKinesisDestination = (
+        tableName: string,
+        streamArn: string,
+      ) =>
+        dynamodb
+          .disableKinesisStreamingDestination({
+            TableName: tableName,
+            StreamArn: streamArn,
+          })
+          .pipe(
+            Effect.retry({
+              while: isRetryableControlPlaneError,
+              schedule: Schedule.max([
+                Schedule.exponential(250),
+                Schedule.recurs(15),
+              ]),
+            }),
+          );
+
+      const enableKinesisDestination = (
+        tableName: string,
+        destination: KinesisStreamingDestination,
+      ) =>
+        dynamodb
+          .enableKinesisStreamingDestination({
+            TableName: tableName,
+            StreamArn: destination.streamArn,
+            EnableKinesisStreamingConfiguration:
+              destination.approximateCreationDateTimePrecision !== undefined
+                ? {
+                    ApproximateCreationDateTimePrecision:
+                      destination.approximateCreationDateTimePrecision,
+                  }
+                : undefined,
+          })
+          .pipe(
+            Effect.retry({
+              while: isRetryableControlPlaneError,
+              schedule: Schedule.max([
+                Schedule.exponential(250),
+                Schedule.recurs(15),
+              ]),
+            }),
+          );
+
+      const updateKinesisDestinationPrecision = (
+        tableName: string,
+        destination: KinesisStreamingDestination,
+      ) =>
+        dynamodb
+          .updateKinesisStreamingDestination({
+            TableName: tableName,
+            StreamArn: destination.streamArn,
+            UpdateKinesisStreamingConfiguration: {
+              ApproximateCreationDateTimePrecision:
+                destination.approximateCreationDateTimePrecision,
+            },
+          })
+          .pipe(
+            Effect.retry({
+              while: isRetryableControlPlaneError,
+              schedule: Schedule.max([
+                Schedule.exponential(250),
+                Schedule.recurs(15),
+              ]),
+            }),
+          );
+
+      // Contributor Insights transitions ENABLING→ENABLED / DISABLING→DISABLED
+      // within seconds, but UpdateContributorInsights rejects a DISABLE while
+      // the status is still ENABLING — wait for a settled status before
+      // diffing observed against desired.
+      const waitForContributorInsightsSettled = (
+        session: {
+          note: (message: string) => Effect.Effect<void, never, never>;
+        },
+        tableName: string,
+      ) =>
+        Effect.gen(function* () {
+          const response = yield* dynamodb.describeContributorInsights({
+            TableName: tableName,
+          });
+          const status = response.ContributorInsightsStatus ?? "DISABLED";
+          if (status === "ENABLING" || status === "DISABLING") {
+            return yield* Effect.fail(new ContributorInsightsNotSettled());
+          }
+          return status;
+        }).pipe(
+          Effect.retry({
+            while: (error) =>
+              error._tag === "ContributorInsightsNotSettled" ||
+              isRetryableControlPlaneError(error),
+            schedule: Schedule.max([
+              Schedule.fixed("2 seconds"),
+              Schedule.recurs(45),
+            ]).pipe(
+              Schedule.tap(({ attempt }) =>
+                session.note(
+                  `DynamoDB Table provider: waiting for Contributor Insights on ${tableName} to settle (${formatPollingElapsed((attempt + 1) * 2)})`,
+                ),
               ),
+            ),
+          }),
+        );
+
+      // Enabling Contributor Insights makes DynamoDB create CloudWatch rules
+      // named `DynamoDBContributorInsights-{PKC|PKT}-<tableName>-<timestamp>`
+      // in the customer's account. Those rules can ONLY be removed by
+      // DynamoDB's own asynchronous cleanup, which runs when an
+      // UpdateContributorInsights DISABLE completes — CloudWatch's
+      // DeleteInsightRules/PutInsightRule reject them with AccessDenied even
+      // for account admins, and deleting the table aborts the cleanup and
+      // strands the rules forever (recoverable only via AWS support). The
+      // delete lifecycle therefore observes the rules and holds off
+      // deleteTable until DynamoDB's cleanup has actually removed them.
+      const listContributorInsightsRules = (tableName: string) =>
+        cloudwatch.describeInsightRules.pages({}).pipe(
+          Stream.runFold(
+            () => [] as string[],
+            (acc, page) => [
+              ...acc,
+              ...(page.InsightRules ?? [])
+                .map((rule) => rule.Name)
+                .filter(
+                  (name): name is string =>
+                    name !== undefined &&
+                    name.startsWith("DynamoDBContributorInsights-") &&
+                    name.includes(`-${tableName}-`),
+                ),
+            ],
+          ),
+        );
+
+      const waitForContributorInsightsRulesDeleted = (
+        session: {
+          note: (message: string) => Effect.Effect<void, never, never>;
+        },
+        tableName: string,
+      ) =>
+        Effect.gen(function* () {
+          const remaining = yield* listContributorInsightsRules(tableName);
+          if (remaining.length > 0) {
+            return yield* Effect.fail(new ContributorInsightsNotSettled());
+          }
+        }).pipe(
+          Effect.retry({
+            while: (error) =>
+              error._tag === "ContributorInsightsNotSettled" ||
+              isRetryableControlPlaneError(error),
+            schedule: Schedule.max([
+              Schedule.fixed("2 seconds"),
+              Schedule.recurs(20),
+            ]).pipe(
+              Schedule.tap(({ attempt }) =>
+                session.note(
+                  `DynamoDB Table provider: waiting for Contributor Insights rules of ${tableName} to be cleaned up (${formatPollingElapsed((attempt + 1) * 2)})`,
+                ),
+              ),
+            ),
+          }),
+          // Rules from a PREVIOUS enable session whose cleanup was already
+          // aborted (e.g. by an out-of-band table deletion) can never be
+          // removed by anyone but AWS support — don't wedge the delete on
+          // them; surface a note and move on.
+          Effect.catchTag("ContributorInsightsNotSettled", () =>
+            session.note(
+              `DynamoDB Table provider: Contributor Insights rules for ${tableName} were not cleaned up by DynamoDB; they may be stranded from an earlier enable session (deletable only via AWS support)`,
+            ),
+          ),
+        );
+
+      const updateTableContributorInsights = (
+        tableName: string,
+        enabled: boolean,
+      ) =>
+        dynamodb
+          .updateContributorInsights({
+            TableName: tableName,
+            ContributorInsightsAction: enabled ? "ENABLE" : "DISABLE",
+          })
+          .pipe(
+            Effect.retry({
+              while: isRetryableControlPlaneError,
+              schedule: Schedule.max([
+                Schedule.exponential(250),
+                Schedule.recurs(15),
+              ]),
             }),
           );
 
@@ -431,8 +848,8 @@ export const TableProvider = () =>
               error._tag === "TableNotActive" ||
               isRetryableControlPlaneError(error),
             schedule: waitForTableActivationConvergence.pipe(
-              Schedule.tapOutput(([, attempt]) => {
-                elapsedSeconds = (attempt + 1) * 10;
+              Schedule.tap(({ attempt }) => {
+                elapsedSeconds = attempt * 10;
                 return session.note(
                   `${progressMessage} (${formatPollingElapsed(elapsedSeconds)})`,
                 );
@@ -483,8 +900,8 @@ export const TableProvider = () =>
               error._tag === "TableIndexesNotStable" ||
               isRetryableControlPlaneError(error),
             schedule: waitForGlobalSecondaryIndexesConvergence.pipe(
-              Schedule.tapOutput(([, attempt]) => {
-                elapsedSeconds = (attempt + 1) * 10;
+              Schedule.tap(({ attempt }) => {
+                elapsedSeconds = attempt * 10;
                 return session.note(
                   `${progressMessage} (${formatPollingElapsed(elapsedSeconds)})`,
                 );
@@ -520,8 +937,8 @@ export const TableProvider = () =>
               error._tag === "TableStillDeleting" ||
               isRetryableControlPlaneError(error),
             schedule: waitForDeletionConvergence.pipe(
-              Schedule.tapOutput(([, attempt]) => {
-                elapsedSeconds = attempt + 1;
+              Schedule.tap(({ attempt }) => {
+                elapsedSeconds = attempt;
                 return session.note(
                   `${progressMessage} (${formatPollingElapsed(elapsedSeconds)})`,
                 );
@@ -620,8 +1037,8 @@ export const TableProvider = () =>
                     return false;
                   },
                   schedule: waitForGlobalSecondaryIndexesConvergence.pipe(
-                    Schedule.tapOutput(([, attempt]) => {
-                      elapsedSeconds = (attempt + 1) * 10;
+                    Schedule.tap(({ attempt }) => {
+                      elapsedSeconds = attempt * 10;
                       return session.note(
                         `${progressMessage} (${formatPollingElapsed(elapsedSeconds)})`,
                       );
@@ -648,7 +1065,12 @@ export const TableProvider = () =>
       // resource" signal). Only retry on transient control-plane errors.
       const isRetryableReadError = (error: { _tag?: string }) =>
         error._tag === "InternalServerError" ||
-        error._tag === "LimitExceededException";
+        error._tag === "LimitExceededException" ||
+        // See `isRetryableControlPlaneError`: read-path describes throttle too
+        // under full-suite concurrency, so ride them out generously.
+        error._tag === "ThrottlingException" ||
+        error._tag === "ProvisionedThroughputExceededException" ||
+        error._tag === "RequestLimitExceeded";
 
       const readTableState = (tableName: string) =>
         Effect.gen(function* () {
@@ -659,9 +1081,10 @@ export const TableProvider = () =>
             .pipe(
               Effect.retry({
                 while: isRetryableReadError,
-                schedule: Schedule.exponential(250).pipe(
-                  Schedule.both(Schedule.recurs(30)),
-                ),
+                schedule: Schedule.max([
+                  Schedule.exponential(250),
+                  Schedule.recurs(30),
+                ]),
               }),
             );
           const table = response.Table;
@@ -680,9 +1103,10 @@ export const TableProvider = () =>
                 .pipe(
                   Effect.retry({
                     while: isRetryableReadError,
-                    schedule: Schedule.exponential(250).pipe(
-                      Schedule.both(Schedule.recurs(30)),
-                    ),
+                    schedule: Schedule.max([
+                      Schedule.exponential(250),
+                      Schedule.recurs(30),
+                    ]),
                   }),
                 ),
               dynamodb
@@ -692,9 +1116,10 @@ export const TableProvider = () =>
                 .pipe(
                   Effect.retry({
                     while: (e) => e._tag === "InternalServerError",
-                    schedule: Schedule.exponential(250).pipe(
-                      Schedule.both(Schedule.recurs(30)),
-                    ),
+                    schedule: Schedule.max([
+                      Schedule.exponential(250),
+                      Schedule.recurs(30),
+                    ]),
                   }),
                   Effect.catchTag("TableNotFoundException", () =>
                     Effect.succeed({ ContinuousBackupsDescription: undefined }),
@@ -707,9 +1132,10 @@ export const TableProvider = () =>
                 .pipe(
                   Effect.retry({
                     while: isRetryableReadError,
-                    schedule: Schedule.exponential(250).pipe(
-                      Schedule.both(Schedule.recurs(30)),
-                    ),
+                    schedule: Schedule.max([
+                      Schedule.exponential(250),
+                      Schedule.recurs(30),
+                    ]),
                   }),
                   Effect.catchTag("ResourceNotFoundException", () =>
                     Effect.succeed({ TimeToLiveDescription: undefined }),
@@ -933,6 +1359,49 @@ export const TableProvider = () =>
 
       return Table.Provider.of({
         stables: ["tableName", "tableId", "tableArn"],
+        // Enumerate every table in the ambient account/region. `listTables`
+        // returns only names, so each is hydrated to the full Attributes shape
+        // via the same multi-API read helper (`readTableState`) `read` uses.
+        list: () =>
+          Effect.gen(function* () {
+            const names = yield* dynamodb.listTables.items({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) => Array.from(chunk)),
+            );
+            const states = yield* Effect.forEach(
+              names,
+              (tableName) =>
+                readTableState(tableName).pipe(
+                  // Hydrating every table fires four describe calls each.
+                  // Across a busy account this trips DynamoDB's read throttle,
+                  // and a table that isn't ACTIVE yet (a peer mid-create)
+                  // transiently rejects the continuous-backups/TTL describes
+                  // with ValidationException. Both are transient — retry to
+                  // converge so a table that *is* ours still hydrates fully.
+                  Effect.retry({
+                    while: (e) =>
+                      e._tag === "ThrottlingException" ||
+                      e._tag === "ValidationException",
+                    schedule: Schedule.max([
+                      Schedule.exponential(250).pipe(Schedule.jittered),
+                      Schedule.recurs(12),
+                    ]),
+                  }),
+                  // Last resort: if a foreign table never settles within the
+                  // retry budget (e.g. a peer is still mid-create/delete when
+                  // we give up), skip it rather than failing the whole
+                  // enumeration. Our own table is ACTIVE by the time list()
+                  // runs, so it always hydrates via the retry above.
+                  Effect.catchTag("ValidationException", () =>
+                    Effect.succeed(undefined),
+                  ),
+                ),
+              { concurrency: 8 },
+            );
+            return states
+              .filter((state) => state !== undefined)
+              .map((state) => toAttrs(state));
+          }),
         read: Effect.fn(function* ({ id, olds, output }) {
           const tableName =
             output?.tableName ??
@@ -951,17 +1420,33 @@ export const TableProvider = () =>
         }),
         diff: Effect.fn(function* ({ news, olds }) {
           if (!isResolved(news)) return undefined;
+          // Renaming the table always replaces. The successor's name cannot
+          // collide with the predecessor's, so the default
+          // create-before-delete replacement flow applies.
+          if (news.tableName !== olds.tableName) {
+            return { action: "replace" } as const;
+          }
+          // For every other replacement trigger the physical name stays the
+          // same. Engine-generated names embed the instance id, which is
+          // re-minted on replacement, so the successor gets a fresh name and
+          // create-before-delete works. A hard-coded `tableName` cannot
+          // change — DynamoDB table names are unique per account/region, so
+          // the successor's createTable would collide with the still-live
+          // predecessor and mis-adopt it. Delete the old generation first in
+          // that case; `delete` waits until the name is fully released.
+          const replace =
+            news.tableName !== undefined
+              ? ({ action: "replace", deleteFirst: true } as const)
+              : ({ action: "replace" } as const);
           if (
-            // TODO(sam): if the name is hard-coded, REPLACE is impossible - we need a suffix
-            news.tableName !== olds.tableName ||
             olds.partitionKey !== news.partitionKey ||
             olds.sortKey !== news.sortKey
           ) {
-            return { action: "replace" } as const;
+            return replace;
           }
-          for (const [name, type] of Object.entries(olds.attributes)) {
+          for (const [name, type] of Object.entries(olds.attributes ?? {})) {
             if (news.attributes[name] !== type) {
-              return { action: "replace" } as const;
+              return replace;
             }
           }
           if (
@@ -970,18 +1455,18 @@ export const TableProvider = () =>
               { localSecondaryIndexes: news.localSecondaryIndexes ?? [] },
             )
           ) {
-            return { action: "replace" } as const;
+            return replace;
           }
           const { requiresReplacement } = diffGlobalSecondaryIndexes(
             olds.globalSecondaryIndexes,
             news.globalSecondaryIndexes,
           );
           if (requiresReplacement) {
-            return { action: "replace" } as const;
+            return replace;
           }
-          // TODO(sam):
-          // Replacements:
-          // 1. if you change ImportSourceSpecification
+          // ImportSourceSpecification (importTable) is out of scope — see
+          // processes/AWS/catalog/serverless-data.md (import/export are
+          // long-running jobs, deferred as effectful functions).
         }),
 
         reconcile: Effect.fn(function* ({
@@ -1143,8 +1628,16 @@ export const TableProvider = () =>
 
           // Sync base attributes — observed ↔ desired.
           const desiredBillingMode = news.billingMode ?? "PAY_PER_REQUEST";
+          // DynamoDB omits `BillingModeSummary` for tables that have always
+          // been PROVISIONED — fall back to the observed throughput (on-demand
+          // tables report 0 read capacity) so an unchanged PROVISIONED table
+          // does not trigger a spurious `updateTable` (which DynamoDB rejects
+          // with "provisioned throughput will not change").
           const observedBillingMode =
-            state.table.BillingModeSummary?.BillingMode ?? "PAY_PER_REQUEST";
+            state.table.BillingModeSummary?.BillingMode ??
+            ((state.table.ProvisionedThroughput?.ReadCapacityUnits ?? 0) > 0
+              ? "PROVISIONED"
+              : "PAY_PER_REQUEST");
           const observedProvisionedThroughput = state.table
             .ProvisionedThroughput
             ? {
@@ -1239,12 +1732,13 @@ export const TableProvider = () =>
             state.pointInTimeRecoveryDescription?.PointInTimeRecoveryStatus ===
             "ENABLED";
           const desiredPitrEnabled =
-            news.pointInTimeRecoverySpecification?.PointInTimeRecoveryEnabled ??
+            news.pointInTimeRecoverySpecification?.pointInTimeRecoveryEnabled ??
             false;
           const currentPitrPeriod =
             state.pointInTimeRecoveryDescription?.RecoveryPeriodInDays;
-          const desiredPitrPeriod =
-            news.pointInTimeRecoverySpecification?.RecoveryPeriodInDays;
+          const desiredPitrPeriod = toWireDays(
+            news.pointInTimeRecoverySpecification?.recoveryPeriod,
+          );
           if (
             currentPitrEnabled !== desiredPitrEnabled ||
             (desiredPitrEnabled && currentPitrPeriod !== desiredPitrPeriod)
@@ -1253,6 +1747,134 @@ export const TableProvider = () =>
               PointInTimeRecoveryEnabled: desiredPitrEnabled,
               RecoveryPeriodInDays: desiredPitrPeriod,
             });
+          }
+
+          // Sync resource policy — observed ↔ desired. The observed policy is
+          // read fresh from the cloud (never olds/output) so adoption and
+          // out-of-band drift converge.
+          const observedPolicy = yield* readTableResourcePolicy(
+            state.table.TableArn!,
+          );
+          if (
+            canonicalPolicyDocument(observedPolicy) !==
+            canonicalPolicyDocument(news.resourcePolicy)
+          ) {
+            if (news.resourcePolicy !== undefined) {
+              yield* session.note(
+                `Table ${tableName}: putting resource policy`,
+              );
+              yield* putTableResourcePolicy(
+                state.table.TableArn!,
+                news.resourcePolicy,
+              );
+            } else {
+              yield* session.note(
+                `Table ${tableName}: deleting resource policy`,
+              );
+              yield* deleteTableResourcePolicy(state.table.TableArn!);
+            }
+          }
+
+          // Sync Kinesis streaming destination — observe the table's actual
+          // destinations, wait out any in-flight transition (enable/disable
+          // reject while another change is in progress), disable whatever is
+          // ACTIVE but not desired, then enable/update the desired
+          // destination and wait for it to reach ACTIVE.
+          const desiredKinesisDestination = news.kinesisStreamingDestination;
+          let kinesisDestinations = yield* waitForKinesisDestinationsSettled(
+            session,
+            tableName,
+          );
+          for (const destination of kinesisDestinations) {
+            if (destination.DestinationStatus !== "ACTIVE") continue;
+            if (
+              destination.StreamArn === desiredKinesisDestination?.streamArn
+            ) {
+              continue;
+            }
+            yield* session.note(
+              `Table ${tableName}: disabling Kinesis streaming destination ${destination.StreamArn}`,
+            );
+            yield* disableKinesisDestination(tableName, destination.StreamArn!);
+            kinesisDestinations = yield* waitForKinesisDestinationsSettled(
+              session,
+              tableName,
+            );
+          }
+          if (desiredKinesisDestination !== undefined) {
+            const activeDestination = kinesisDestinations.find(
+              (destination) =>
+                destination.StreamArn === desiredKinesisDestination.streamArn &&
+                destination.DestinationStatus === "ACTIVE",
+            );
+            if (activeDestination === undefined) {
+              yield* session.note(
+                `Table ${tableName}: enabling Kinesis streaming destination ${desiredKinesisDestination.streamArn}`,
+              );
+              yield* enableKinesisDestination(
+                tableName,
+                desiredKinesisDestination,
+              );
+              kinesisDestinations = yield* waitForKinesisDestinationsSettled(
+                session,
+                tableName,
+              );
+            } else if (
+              desiredKinesisDestination.approximateCreationDateTimePrecision !==
+                undefined &&
+              (activeDestination.ApproximateCreationDateTimePrecision ??
+                "MILLISECOND") !==
+                desiredKinesisDestination.approximateCreationDateTimePrecision
+            ) {
+              yield* session.note(
+                `Table ${tableName}: updating Kinesis streaming destination precision to ${desiredKinesisDestination.approximateCreationDateTimePrecision}`,
+              );
+              yield* updateKinesisDestinationPrecision(
+                tableName,
+                desiredKinesisDestination,
+              );
+              kinesisDestinations = yield* waitForKinesisDestinationsSettled(
+                session,
+                tableName,
+              );
+            }
+            const settledDestination = kinesisDestinations.find(
+              (destination) =>
+                destination.StreamArn === desiredKinesisDestination.streamArn,
+            );
+            if (settledDestination?.DestinationStatus !== "ACTIVE") {
+              return yield* Effect.fail(
+                new KinesisStreamingDestinationFailed({
+                  tableName,
+                  streamArn: desiredKinesisDestination.streamArn,
+                  status: settledDestination?.DestinationStatus,
+                  description: settledDestination?.DestinationStatusDescription,
+                }),
+              );
+            }
+          }
+
+          // Sync Contributor Insights — observed ↔ desired.
+          const desiredInsightsEnabled =
+            news.contributorInsightsEnabled ?? false;
+          const observedInsightsStatus =
+            yield* waitForContributorInsightsSettled(session, tableName);
+          const observedInsightsEnabled = observedInsightsStatus === "ENABLED";
+          if (observedInsightsEnabled !== desiredInsightsEnabled) {
+            yield* session.note(
+              `Table ${tableName}: ${desiredInsightsEnabled ? "enabling" : "disabling"} Contributor Insights`,
+            );
+            yield* updateTableContributorInsights(
+              tableName,
+              desiredInsightsEnabled,
+            );
+            if (!desiredInsightsEnabled) {
+              // Wait for the DISABLE to settle so DynamoDB's rule cleanup
+              // (which fires on the DISABLING→DISABLED transition) runs
+              // while the table still exists — a deleteTable racing this
+              // window strands the CloudWatch rules forever.
+              yield* waitForContributorInsightsSettled(session, tableName);
+            }
           }
 
           // Sync tags — diff observed cloud tags against desired.
@@ -1292,6 +1914,37 @@ export const TableProvider = () =>
         }),
 
         delete: Effect.fn(function* ({ output, session }) {
+          // Contributor Insights must be fully torn down BEFORE the table is
+          // deleted: DynamoDB removes its CloudWatch insight rules only when
+          // a DISABLE completes while the table exists. Deleting the table
+          // while insights are ENABLED (or mid-transition) aborts that
+          // cleanup and strands the rules — CloudWatch rejects direct
+          // deletion of DynamoDB-managed rules with AccessDenied, so only
+          // AWS support can remove them afterwards.
+          yield* Effect.gen(function* () {
+            const insightsStatus = yield* waitForContributorInsightsSettled(
+              session,
+              output.tableName,
+            );
+            if (insightsStatus !== "DISABLED") {
+              yield* session.note(
+                `Table ${output.tableName}: disabling Contributor Insights before delete`,
+              );
+              yield* updateTableContributorInsights(output.tableName, false);
+              yield* waitForContributorInsightsSettled(
+                session,
+                output.tableName,
+              );
+            }
+            yield* waitForContributorInsightsRulesDeleted(
+              session,
+              output.tableName,
+            );
+          }).pipe(
+            // Table already gone — nothing to tear down.
+            Effect.catchTag("ResourceNotFoundException", () => Effect.void),
+          );
+
           let deleteAttempt = 0;
 
           while (true) {
@@ -1318,9 +1971,9 @@ export const TableProvider = () =>
                     error._tag === "InternalServerError" ||
                     error._tag === "TimeoutError",
                   schedule: waitForDeletionConvergence.pipe(
-                    Schedule.tapOutput(([, attempt]) =>
+                    Schedule.tap(({ attempt }) =>
                       session.note(
-                        `DynamoDB Table provider: deleteTable transient failure for ${output.tableName} on attempt ${deleteAttempt} (${formatPollingElapsed(attempt + 1)})`,
+                        `DynamoDB Table provider: deleteTable transient failure for ${output.tableName} on attempt ${deleteAttempt} (${formatPollingElapsed(attempt)})`,
                       ),
                     ),
                   ),
@@ -1369,6 +2022,23 @@ class TableIndexesNotStable extends Data.TaggedError("TableIndexesNotStable") {}
 class TableStillDeleting extends Data.TaggedError("TableStillDeleting") {}
 
 class MissingStreamViewType extends Data.TaggedError("MissingStreamViewType") {}
+
+class KinesisDestinationNotSettled extends Data.TaggedError(
+  "KinesisDestinationNotSettled",
+) {}
+
+class ContributorInsightsNotSettled extends Data.TaggedError(
+  "ContributorInsightsNotSettled",
+) {}
+
+class KinesisStreamingDestinationFailed extends Data.TaggedError(
+  "KinesisStreamingDestinationFailed",
+)<{
+  tableName: string;
+  streamArn: string;
+  status: string | undefined;
+  description: string | undefined;
+}> {}
 
 class ConflictingStreamViewTypes extends Data.TaggedError(
   "ConflictingStreamViewTypes",

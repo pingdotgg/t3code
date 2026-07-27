@@ -1,0 +1,245 @@
+---
+title: Lambda MicroVMs
+description: Build a Firecracker MicroVM image from TypeScript or a Dockerfile, then launch and drive isolated stateful instances from a Lambda Function with typed lifecycle bindings and RPC.
+sidebar:
+  order: 8
+---
+
+A Lambda **MicroVM image** is a Firecracker snapshot that boots a fully
+initialized application in milliseconds. The model is *image-then-launch*:
+`AWS.Lambda.MicrovmImage` builds the image once at deploy time, then a Lambda
+Function launches isolated, stateful MicroVM instances from it at runtime —
+one per end-user or session. That makes MicroVMs a natural fit for per-user
+sandboxes: code interpreters, agent workspaces, preview environments.
+
+The build runs **server-side on AWS** — no local Docker. Alchemy produces the
+code artifact in one of three modes, selected by which prop you set:
+
+- **Effectful** (`main`) — write the in-VM HTTP server in TypeScript; Alchemy
+  bundles it, generates a Dockerfile, and uploads the zip.
+- **External** (`context`/`dockerfile`) — bring your own Dockerfile and build
+  context in any language; Alchemy zips and uploads the directory.
+- **Prebuilt** (`codeArtifact`) — point at an existing S3 zip or ECR image URI.
+
+:::caution
+Lambda MicroVMs are a **preview feature**: your account must be onboarded to
+the preview, and effectful/external builds need a bootstrapped Assets bucket
+(`alchemy aws bootstrap`). Builds are asynchronous and can take several
+minutes — the provider polls until the image reaches `CREATED` and streams
+build logs to CloudWatch.
+:::
+
+## Define an effectful image
+
+Write the in-VM server as an Effect. The class is a typed handle the
+orchestrator imports; the default-exported `.make()` is what gets bundled into
+the image. The shape can expose both a typed **RPC method** (`hello`) and a
+raw **`fetch`** route — the in-VM runtime serves RPC over an internal
+`/__rpc__/*` protocol and falls through to `fetch` for everything else. The
+`{ fetch, ...rpcs }` shape is [Schemaless RPC](/apis/schemaless) — the same
+contract every Function and Server returns:
+
+```typescript
+// sandbox.ts
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export const BuildRole = AWS.IAM.Role("MicrovmBuildRole");
+
+export class Sandbox extends AWS.Lambda.MicrovmImage<
+  Sandbox,
+  { hello: (message: string) => Effect.Effect<string> }
+>()("Sandbox") {}
+
+export default Sandbox.make(
+  BuildRole.pipe(
+    Effect.map((buildRole) => ({ main: import.meta.filename, buildRole })),
+  ),
+  Effect.gen(function* () {
+    return {
+      // typed RPC method — reached with `connectMicrovm`
+      hello: (message: string) => Effect.succeed(`hello, ${message}!`),
+      // raw HTTP route — reached with a plain HTTPS request to the endpoint
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const url = new URL(request.url, "http://microvm");
+        return yield* HttpServerResponse.json({
+          message: url.searchParams.get("message") ?? "",
+        });
+      }),
+    };
+  }),
+);
+```
+
+The bare `Role` passed as `buildRole` needs no policy of its own — the image
+grants it the Lambda trust statement plus the S3 and CloudWatch-logs
+permissions the build needs via a binding.
+
+## Launch and drive MicroVMs from a Lambda
+
+The image is just the template. A Lambda Function binds the per-instance
+lifecycle operations — `RunMicrovm`, `GetMicrovm`, `CreateAuthToken`,
+`TerminateMicrovm` — each scoped to the image by IAM automatically. Launch a
+VM, wait for `RUNNING`, mint an auth token, then call the typed RPC stub with
+`connectMicrovm`:
+
+```typescript
+// api.ts
+import * as AWS from "alchemy/AWS";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Sandbox } from "./sandbox.ts";
+
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+  // generous timeout: the handler waits for the MicroVM to reach RUNNING
+  { main: import.meta.filename, url: true, timeout: Duration.seconds(120) },
+  Effect.gen(function* () {
+    const runMicrovm = yield* AWS.Lambda.RunMicrovm(Sandbox);
+    const getMicrovm = yield* AWS.Lambda.GetMicrovm(Sandbox);
+    const createAuthToken = yield* AWS.Lambda.CreateAuthToken(Sandbox);
+    const terminateMicrovm = yield* AWS.Lambda.TerminateMicrovm(Sandbox);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const vm = yield* runMicrovm({});
+        return yield* Effect.gen(function* () {
+          // wait until the MicroVM is RUNNING before connecting
+          yield* getMicrovm({ microvmIdentifier: vm.microvmId }).pipe(
+            Effect.flatMap((m) =>
+              m.state === "RUNNING"
+                ? Effect.void
+                : Effect.fail(new Error(`microvm ${m.state}`)),
+            ),
+            Effect.retry({ schedule: Schedule.spaced("2 seconds"), times: 30 }),
+          );
+          const { authToken } = yield* createAuthToken({
+            microvmIdentifier: vm.microvmId,
+            expirationInMinutes: 5,
+            allowedPorts: [{ port: 8080 }], // the in-VM server's port
+          });
+          const sandbox = yield* AWS.Lambda.connectMicrovm(Sandbox, {
+            endpoint: vm.endpoint,
+            authToken,
+          });
+          const reply = yield* sandbox.hello("world"); // "hello, world!"
+          return yield* HttpServerResponse.json({ reply });
+        }).pipe(
+          // terminate on success OR failure — never leak a running MicroVM
+          Effect.ensuring(
+            terminateMicrovm({ microvmIdentifier: vm.microvmId }).pipe(
+              Effect.ignore,
+            ),
+          ),
+          // the in-VM endpoint calls need an HttpClient for this scope
+          Effect.provide(FetchHttpClient.layer),
+        );
+      }),
+    };
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        AWS.Lambda.RunMicrovmHttp,
+        AWS.Lambda.GetMicrovmHttp,
+        AWS.Lambda.CreateAuthTokenHttp,
+        AWS.Lambda.TerminateMicrovmHttp,
+      ),
+    ),
+  ),
+) {}
+```
+
+The stub is [Schemaless RPC](/apis/schemaless) — the same typed client you get
+binding a Durable Object or Container into a Worker, here a MicroVM into a
+Lambda Function.
+
+Always wrap the work in `Effect.ensuring(terminateMicrovm(...))` — a failure
+(or a client retry) must never leak a running MicroVM against your account's
+memory quota. `SuspendMicrovm`, `ResumeMicrovm`, and `ListMicrovms` follow the
+same bind-then-call pattern for longer-lived sessions.
+
+## Call the fetch route directly
+
+The `fetch` handler is plain HTTPS against the MicroVM's endpoint (a bare
+hostname like `<id>.lambda-microvm.<region>.on.aws`). Authenticate with the
+same token via `microvmAuthHeaders`:
+
+```typescript
+const client = yield* HttpClient.HttpClient;
+const res = yield* client.get(`https://${vm.endpoint}/echo?message=hi`, {
+  headers: AWS.Lambda.microvmAuthHeaders(authToken),
+});
+const body = yield* res.json; // { message: "hi" }
+```
+
+Both surfaces coexist on one image: the RPC stub for typed calls from your own
+code, the fetch route for anything that speaks HTTP.
+
+## Wire the stack
+
+The Lambda pulls in the `Sandbox` class handle; the image's `.make()` runtime
+is provided on the Stack so it gets built and deployed alongside:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+import Api from "./api.ts";
+import SandboxLive from "./sandbox.ts";
+
+export default Alchemy.Stack(
+  "MicrovmApp",
+  { providers: AWS.providers(), state: AWS.state() },
+  Effect.gen(function* () {
+    const api = yield* Api;
+    return { url: api.functionUrl.as<string>() };
+  }).pipe(Effect.provide(SandboxLive)),
+);
+```
+
+## Bring your own Dockerfile
+
+For non-TypeScript workloads, point `context` at a directory containing a
+Dockerfile (built `FROM public.ecr.aws/lambda/microvms:al2023-minimal`) and
+the files it copies. Alchemy zips and uploads the directory; AWS runs the
+Dockerfile server-side. There is no in-VM Effect runtime to bind, so both
+the bare build Role and the image live directly in the Stack's `Effect.gen`:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "FlaskMicrovm",
+  { providers: AWS.providers(), state: AWS.state() },
+  Effect.gen(function* () {
+    const buildRole = yield* AWS.IAM.Role("ExternalBuildRole", {});
+    const image = yield* AWS.Lambda.MicrovmImage("Flask", {
+      context: `${import.meta.dirname}/app`, // dir with Dockerfile + app.py
+      buildRole,
+    });
+    return { imageArn: image.imageArn.as<string>() };
+  }),
+);
+```
+
+Re-deploys only trigger a new build when the artifact's content hash or a
+build-affecting prop changes; otherwise the image is left untouched.
+
+## Where next
+
+- [Lambda](/aws/compute/lambda) — the Function model the orchestrator is built on.
+- [MicrovmImage API reference](/providers/aws/lambda/microvmimage) — all props,
+  build modes, sizing, logging, and VPC egress via `NetworkConnector`.
+- [RunMicrovm](/providers/aws/lambda/runmicrovm) and the other per-instance
+  lifecycle bindings.

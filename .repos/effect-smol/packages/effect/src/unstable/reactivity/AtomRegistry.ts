@@ -1,78 +1,11 @@
 /**
- * The `AtomRegistry` module provides the runtime cache for unstable reactivity
- * atoms. A registry owns the node graph for a group of atoms, stores current
- * values, records parent and child dependencies while atoms are read, and
- * coordinates writes, refreshes, subscriptions, stream conversions, and node
- * disposal.
+ * Stores and runs atoms for one reactive runtime.
  *
- * Use a separate registry for each UI root, request, test, route boundary, or
- * other lifetime that needs isolated atom state. The same atom object can have
- * different cached values in different registries, while serializable atoms use
- * their stable serialization key so preloaded values can hydrate a node before
- * the first read.
- *
- * **Mental model**
- *
- * - Reading an atom creates or reuses a registry node, evaluates the atom when
- *   its value is missing or stale, and records any nested atom reads as
- *   dependencies.
- * - Writing a writable atom updates its node through the atom's write function,
- *   invalidates dependent nodes, and notifies listeners after batching settles.
- * - Subscriptions and scoped {@link mount} calls keep nodes alive. When the last
- *   listener and dependent child disappear, non-`keepAlive` atoms can be
- *   removed immediately or after their idle TTL.
- * - Effects and streams started by atoms run with the registry scheduler and
- *   are finalized when the node is rebuilt, removed, reset, or disposed.
- * - Disposing a registry clears its nodes and makes later atom access an error.
- *
- * **Common tasks**
- *
- * - Create a registry directly with {@link make}, or provide one to Effect
- *   programs with {@link layer} or {@link layerOptions}.
- * - Read and write atom state with the registry instance methods `get`, `set`,
- *   `modify`, `update`, and `refresh`.
- * - Keep an atom alive for an Effect scope with {@link mount}; subscribe with
- *   `subscribe` when integrating with callback-based UI code.
- * - Convert observed atom values with {@link toStream} and
- *   {@link toStreamResult}, or wait for an `AsyncResult` atom with
- *   {@link getResult}.
- * - Preload encoded serializable state with `setSerializable` before the
- *   matching atom is read.
- *
- * **Quickstart**
- *
- * **Example** (Isolated atom state)
- *
- * ```ts
- * import { Atom, AtomRegistry } from "effect/unstable/reactivity"
- *
- * const count = Atom.make(0)
- * const doubled = Atom.make((get) => get(count) * 2)
- *
- * const registry = AtomRegistry.make()
- *
- * registry.set(count, 21)
- * registry.get(doubled)
- * // 42
- * ```
- *
- * **Gotchas**
- *
- * - Atom identity matters. Creating a new atom object creates a different node
- *   unless the atom is serializable and uses the same serialization key.
- * - Unobserved atoms without `keepAlive` can be removed, so later reads may
- *   rebuild derived values, restart effects or streams, and rerun finalizers.
- * - `subscribe` and the instance `mount` method return release callbacks; call
- *   them when the external consumer is done. The exported {@link mount} helper
- *   ties that release to an Effect scope.
- * - `reset` and `dispose` remove every node in the registry. Use a new registry
- *   when a whole lifetime should start from empty state.
- *
- * **See also**
- *
- * - {@link Atom.Atom} for defining reactive values read by a registry.
- * - {@link Result.AsyncResult} for asynchronous atom results.
- * - {@link Stream.Stream} for streams produced from observed atom values.
+ * An `AtomRegistry` evaluates atoms, caches their current values, tracks
+ * dependencies, applies writes and refreshes, manages subscriptions, and
+ * disposes unused nodes. Each registry is independent, so the same atom can hold
+ * different values in different registries. Serializable atom values can also be
+ * preloaded before the first read.
  *
  * @since 4.0.0
  */
@@ -163,8 +96,8 @@ export interface AtomRegistry {
 export interface Node<A> {
   readonly atom: Atom.Atom<A>
   readonly value: () => A
-  parents: Array<Node<any>>
-  children: Array<Node<any>>
+  parents: Set<Node<any>>
+  children: Set<Node<any>>
   listeners: Set<() => void>
   currentState(): "uninitialized" | "stale" | "valid" | "removed"
 }
@@ -204,7 +137,7 @@ export const make = (
  * Use to access or provide the registry that stores atom values,
  * dependencies, subscriptions, and disposal state for a reactive lifetime.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const AtomRegistry = Context.Service<AtomRegistry>(TypeId)
@@ -660,10 +593,10 @@ class NodeImpl<A> {
   writeContext: WriteContextImpl<A>
   preserveInitialValueOnBuild = false
 
-  parents: Array<NodeImpl<any>> = []
-  previousParents: Array<NodeImpl<any>> | undefined
-  children: Array<NodeImpl<any>> = []
-  listeners: Set<() => void> = new Set()
+  parents = new Set<NodeImpl<any>>()
+  previousParents: Set<NodeImpl<any>> | undefined
+  children = new Set<NodeImpl<any>>()
+  listeners = new Set<() => void>()
   skipInvalidation = false
 
   currentState() {
@@ -680,7 +613,7 @@ class NodeImpl<A> {
   }
 
   get canBeRemoved(): boolean {
-    return !this.atom.keepAlive && this.listeners.size === 0 && this.children.length === 0 && this.state !== 0
+    return !this.atom.keepAlive && this.listeners.size === 0 && this.children.size === 0 && this.state !== 0
   }
 
   _value: A = undefined as any
@@ -700,10 +633,10 @@ class NodeImpl<A> {
       if (this.previousParents) {
         const parents = this.previousParents
         this.previousParents = undefined
-        for (let i = 0; i < parents.length; i++) {
-          parents[i].removeChild(this)
-          if (parents[i].canBeRemoved) {
-            this.registry.scheduleNodeRemoval(parents[i])
+        for (const parent of parents) {
+          parent.removeChild(this)
+          if (parent.canBeRemoved) {
+            this.registry.scheduleNodeRemoval(parent)
           }
         }
       }
@@ -752,7 +685,7 @@ class NodeImpl<A> {
     }
 
     this.state = NodeState.valid
-    if (Object.is(this._value, value)) {
+    if (this.atom.equals(this._value, value)) {
       return
     }
 
@@ -773,19 +706,16 @@ class NodeImpl<A> {
   }
 
   addParent(parent: NodeImpl<any>): void {
-    this.parents.push(parent)
+    this.parents.add(parent)
     if (this.previousParents !== undefined) {
-      const index = this.previousParents.indexOf(parent)
-      if (index !== -1) {
-        this.previousParents[index] = this.previousParents[this.previousParents.length - 1]
-        if (this.previousParents.pop() === undefined) {
-          this.previousParents = undefined
-        }
+      this.previousParents.delete(parent)
+      if (this.previousParents.size === 0) {
+        this.previousParents = undefined
       }
     }
 
-    if (parent.children.indexOf(this) === -1) {
-      parent.children.push(this)
+    if (!parent.children.has(this)) {
+      parent.children.add(this)
       if (parent.skipInvalidation) {
         parent.skipInvalidation = false
       }
@@ -793,11 +723,7 @@ class NodeImpl<A> {
   }
 
   removeChild(child: NodeImpl<any>): void {
-    const index = this.children.indexOf(child)
-    if (index !== -1) {
-      this.children[index] = this.children[this.children.length - 1]
-      this.children.pop()
-    }
+    this.children.delete(child)
   }
 
   invalidate(): void {
@@ -817,14 +743,14 @@ class NodeImpl<A> {
   }
 
   invalidateChildren(): void {
-    if (this.children.length === 0) {
+    if (this.children.size === 0) {
       return
     }
 
     const children = this.children
-    this.children = []
-    for (let i = 0; i < children.length; i++) {
-      children[i].invalidate()
+    this.children = new Set()
+    for (const child of children) {
+      child.invalidate()
     }
   }
 
@@ -842,9 +768,9 @@ class NodeImpl<A> {
       this.lifetime = undefined
     }
 
-    if (this.parents.length !== 0) {
+    if (this.parents.size !== 0) {
       this.previousParents = this.parents
-      this.parents = []
+      this.parents = new Set()
     }
   }
 
@@ -864,10 +790,10 @@ class NodeImpl<A> {
 
     const parents = this.previousParents
     this.previousParents = undefined
-    for (let i = 0; i < parents.length; i++) {
-      parents[i].removeChild(this)
-      if (parents[i].canBeRemoved) {
-        this.registry.removeNode(parents[i])
+    for (const parent of parents) {
+      parent.removeChild(this)
+      if (parent.canBeRemoved) {
+        this.registry.removeNode(parent)
       }
     }
   }
@@ -878,19 +804,18 @@ class NodeImpl<A> {
   }
 }
 
-function childrenAreActive(children: Array<NodeImpl<any>>): boolean {
-  if (children.length === 0) {
+function childrenAreActive(children: Set<NodeImpl<any>>): boolean {
+  if (children.size === 0) {
     return false
   }
-  let current: Array<NodeImpl<any>> | undefined = children
-  let stack: Array<Array<NodeImpl<any>>> | undefined
+  let current: Set<NodeImpl<any>> | undefined = children
+  let stack: Array<Set<NodeImpl<any>>> | undefined
   let stackIndex = 0
   while (current !== undefined) {
-    for (let i = 0, len = current.length; i < len; i++) {
-      const child = current[i]
+    for (const child of current) {
       if (!child.atom.lazy || child.listeners.size > 0) {
         return true
-      } else if (child.children.length > 0) {
+      } else if (child.children.size > 0) {
         if (stack === undefined) {
           stack = [child.children]
         } else {
@@ -1180,8 +1105,7 @@ function batchRebuildNode(node: NodeImpl<any>) {
     return
   }
 
-  for (let i = 0; i < node.parents.length; i++) {
-    const parent = node.parents[i]
+  for (const parent of node.parents) {
     if (parent.state !== NodeState.valid) {
       batchRebuildNode(parent)
     }

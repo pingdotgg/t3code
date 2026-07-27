@@ -62,7 +62,7 @@ export type Dashboard = Resource<
  * - The chart payload is strict: only `id`, `name`, `type`, `query`. Extra
  *   keys (e.g. `dataset`, `description`) trigger
  *   `Unrecognized keys: "<name>"`.
- *
+ * @resource
  * @see https://axiom.co/docs/query-data/dashboards
  *
  * @section Creating a Dashboard
@@ -139,6 +139,7 @@ export const DashboardProvider = () =>
       const update = yield* Axiom.updateDashboard;
       const get = yield* Axiom.getDashboard;
       const del = yield* Axiom.deleteDashboard;
+      const listAll = yield* Axiom.listDashboards;
 
       const toAttrsFromCreate = (envelope: Axiom.CreateDashboardOutput) => ({
         uid: envelope.dashboard.uid,
@@ -196,6 +197,15 @@ export const DashboardProvider = () =>
             Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
           );
         }),
+        // Enumerate every dashboard visible to the caller. `GET /v2/dashboards`
+        // returns the full collection in one response (no pagination wrapper);
+        // each item carries the same shape as `getDashboard`, so we map through
+        // the shared `toAttrsFromGet` hydrator to produce the exact `read`
+        // Attributes shape.
+        list: () =>
+          listAll({}).pipe(
+            Effect.map((dashboards) => dashboards.map(toAttrsFromGet)),
+          ),
       };
     }),
   );

@@ -3,27 +3,11 @@
  *
  * An `IndexedDbQueryBuilder` is created from an open database and a version's
  * table descriptors, then exposes `from(tableName)` as the entry point for
- * table operations. The resulting query objects can select, count, delete,
- * insert, upsert, clear tables, stream paged reads, react to invalidations, and
- * run multiple effects in a shared `IDBTransaction` with `withTransaction`.
- *
- * Use this module for local browser persistence such as caches, offline-first
- * state, background queues, drafts, and other client-side data where writes
- * should be encoded through `Schema` and reads should be decoded before they
- * reach application code.
- *
- * Index and range helpers are thinly typed wrappers around IndexedDB object
- * stores, indexes, `IDBKeyRange`, and cursors. Index names must be declared on
- * the table and created during migrations; without an index, queries use the
- * object store key path. Range values are encoded IndexedDB key values, and
- * compound key paths must follow the declared key order. Filters, offsets,
- * reverse reads, out-of-line keys, and limited deletes require cursor-based
- * scans, while simpler selects can use `getAll`.
- *
- * Table schema details affect runtime behavior: auto-increment writes may omit
- * the generated numeric key, stores without a key path require an out-of-line
- * `key` for writes and add that `key` back to selected rows, and schema
- * mismatches surface as `EncodeError` or `DecodeError` query failures.
+ * table operations. Query objects can select, count, delete, insert, upsert,
+ * clear tables, stream paged reads, react to invalidations, and run multiple
+ * effects in a shared `IDBTransaction` with `withTransaction`. Reads decode
+ * stored rows with the table schema, and writes encode input values before
+ * sending them to IndexedDB.
  *
  * @since 4.0.0
  */

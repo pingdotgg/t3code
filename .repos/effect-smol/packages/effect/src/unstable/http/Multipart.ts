@@ -1,41 +1,12 @@
 /**
  * Parses and persists HTTP `multipart/form-data` request bodies.
  *
- * `Multipart` turns incoming byte streams into typed {@link Part} values. Text
- * parts become decoded {@link Field} values, while upload parts remain streamed
- * {@link File} values until they are collected or written to scoped temporary
- * files. The persisted representation can then be decoded with schemas for
- * request handlers that receive fields and uploaded files together.
- *
- * **Mental model**
- *
- * Multipart parsing is incremental. {@link makeChannel} consumes request body
- * chunks and emits fields or files as soon as the parser reaches each part. A
- * `File` owns a one-shot byte stream for that upload; {@link toPersisted}
- * drains those file streams into scoped paths and collects text fields into a
- * {@link Persisted} record.
- *
- * **Common tasks**
- *
- * - Parse a request body stream into {@link Part} values with {@link makeChannel}.
- * - Persist parsed parts with {@link toPersisted} before schema decoding.
- * - Decode persisted forms with {@link schemaPersisted}, {@link schemaJson},
- *   {@link PersistedFileSchema}, or {@link SingleFileSchema}.
- * - Configure parser limits with {@link limitsServices} or the `Max*` context
- *   references.
- *
- * **Gotchas**
- *
- * Multipart request bodies are usually one-shot streams. Read each file stream
- * once, and use `contentEffect` only when the file is small enough to hold in
- * memory. Paths produced by {@link toPersisted} are scoped resources and stop
- * being valid when the scope closes. Client-provided file names are metadata,
- * not trusted filesystem paths.
- *
- * **See also**
- *
- * {@link Part}, {@link Field}, {@link File}, {@link Persisted},
- * {@link makeChannel}, {@link toPersisted}.
+ * `Multipart` turns incoming byte streams into typed form parts. Text parts
+ * become decoded fields, while upload parts stay as streamed files until they
+ * are collected or written to scoped temporary files. The persisted
+ * representation can then be decoded with schemas for handlers that receive
+ * fields and uploaded files together. This module also includes multipart error
+ * types, schema helpers for persisted files, and parser limit settings.
  *
  * @since 4.0.0
  */
@@ -45,6 +16,7 @@ import * as Channel from "../../Channel.ts"
 import * as Context from "../../Context.ts"
 import * as Data from "../../Data.ts"
 import * as Effect from "../../Effect.ts"
+import * as ErrorReporter from "../../ErrorReporter.ts"
 import * as Exit from "../../Exit.ts"
 import * as FileSystem from "../../FileSystem.ts"
 import { constant, dual } from "../../Function.ts"
@@ -55,11 +27,13 @@ import * as Predicate from "../../Predicate.ts"
 import * as Pull from "../../Pull.ts"
 import * as Schema from "../../Schema.ts"
 import type { ParseOptions } from "../../SchemaAST.ts"
-import * as Transformation from "../../SchemaTransformation.ts"
+import * as SchemaTransformation from "../../SchemaTransformation.ts"
 import type * as Scope from "../../Scope.ts"
 import * as Stream from "../../Stream.ts"
 import * as UndefinedOr from "../../UndefinedOr.ts"
 import * as IncomingMessage from "./HttpIncomingMessage.ts"
+import * as HttpServerRespondable from "./HttpServerRespondable.ts"
+import * as HttpServerResponse from "./HttpServerResponse.ts"
 import * as MP from "./Multipasta.ts"
 
 /**
@@ -228,19 +202,30 @@ export class MultipartErrorReason extends Data.Error<{
   readonly cause?: unknown
 }> {}
 
+const responseStatusByReason = {
+  FileTooLarge: 413,
+  FieldTooLarge: 413,
+  BodyTooLarge: 413,
+  TooManyParts: 413,
+  InternalError: 500,
+  Parse: 400
+} as const satisfies Record<MultipartErrorReason["_tag"], number>
+
 /**
  * Error raised while parsing, streaming, or persisting multipart form data.
  *
  * **Details**
  *
- * The `reason` field contains the concrete `MultipartErrorReason`.
+ * The `reason` field contains the concrete `MultipartErrorReason`. When used as
+ * a server response, parse errors render as `400`, limit errors as `413`, and
+ * internal errors as `500`. Multipart errors are ignored by the error reporter.
  *
  * @category errors
  * @since 4.0.0
  */
 export class MultipartError extends Data.TaggedError("MultipartError")<{
   readonly reason: MultipartErrorReason
-}> {
+}> implements HttpServerRespondable.Respondable {
   /**
    * Creates a multipart error from a reason tag and optional cause.
    *
@@ -256,6 +241,22 @@ export class MultipartError extends Data.TaggedError("MultipartError")<{
    * @since 4.0.0
    */
   readonly [MultipartErrorTypeId] = MultipartErrorTypeId
+
+  override readonly [ErrorReporter.ignore] = true;
+
+  /**
+   * Converts the multipart error into an HTTP response based on its reason.
+   *
+   * **Details**
+   *
+   * Parse errors produce `400`, size and part-count limits produce `413`, and
+   * internal errors produce `500`.
+   *
+   * @since 4.0.0
+   */
+  [HttpServerRespondable.symbol]() {
+    return Effect.succeed(HttpServerResponse.empty({ status: responseStatusByReason[this.reason._tag] }))
+  }
 
   /**
    * Uses the concrete multipart error reason as the public message.
@@ -275,6 +276,13 @@ export class MultipartError extends Data.TaggedError("MultipartError")<{
  */
 export interface PersistedFileSchema extends Schema.declare<PersistedFile> {}
 
+const PersistedFileEncoded = Schema.Struct({
+  key: Schema.String,
+  name: Schema.String,
+  contentType: Schema.String.annotate({ contentEncoding: "binary" }),
+  path: Schema.String
+})
+
 /**
  * Schema for persisted multipart files.
  *
@@ -289,24 +297,20 @@ export interface PersistedFileSchema extends Schema.declare<PersistedFile> {}
 export const PersistedFileSchema: PersistedFileSchema = Schema.declare(
   isPersistedFile,
   {
-    typeConstructor: {
-      _tag: "effect/http/PersistedFile"
+    representation: {
+      id: "effect/http/PersistedFile",
+      payload: null
     },
-    generation: {
-      runtime: `Multipart.PersistedFileSchema`,
-      Type: `Multipart.PersistedFile`,
-      importDeclaration: `import * as Multipart from "effect/unstable/http/Multipart"`
-    },
+    toCode: () => ({
+      runtime: "Multipart.PersistedFileSchema",
+      Type: "Multipart.PersistedFile",
+      importDeclarations: [`import * as Multipart from "effect/unstable/http/Multipart"`]
+    }),
     expected: "PersistedFile",
     toCodecJson: () =>
       Schema.link<PersistedFile>()(
-        Schema.Struct({
-          key: Schema.String,
-          name: Schema.String,
-          contentType: Schema.String.annotate({ contentEncoding: "binary" }),
-          path: Schema.String
-        }),
-        Transformation.transform({
+        PersistedFileEncoded,
+        SchemaTransformation.transform({
           decode: ({ contentType, key, name, path }) => new PersistedFileImpl(key, name, contentType, path),
           encode: (file) => ({
             key: file.key,
@@ -344,7 +348,7 @@ export const SingleFileSchema: Schema.decodeTo<PersistedFileSchema, Schema.$Arra
   ).pipe(
     Schema.decodeTo(
       PersistedFileSchema,
-      Transformation.transform({
+      SchemaTransformation.transform({
         decode: ([file]) => file,
         encode: (file) => [file]
       })
@@ -362,8 +366,8 @@ export const SingleFileSchema: Schema.decodeTo<PersistedFileSchema, Schema.$Arra
  * @category schemas
  * @since 4.0.0
  */
-export const schemaPersisted = <A, I extends Partial<Persisted>, RD, RE>(
-  schema: Schema.Codec<A, I, RD, RE>
+export const schemaPersisted = <A, I extends Partial<Persisted>, RD>(
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>
 ): (input: unknown, options?: ParseOptions) => Effect.Effect<A, Schema.SchemaError, RD> =>
   Schema.decodeUnknownEffect(schema)
 
@@ -378,7 +382,7 @@ export const schemaPersisted = <A, I extends Partial<Persisted>, RD, RE>(
  * @category schemas
  * @since 4.0.0
  */
-export const schemaJson = <A, I, RD, RE>(schema: Schema.Codec<A, I, RD, RE>, options?: ParseOptions | undefined): {
+export const schemaJson = <A, RD>(schema: Schema.ConstraintDecoder<A, RD>, options?: ParseOptions | undefined): {
   (
     field: string
   ): (persisted: Persisted) => Effect.Effect<A, Schema.SchemaError, RD>
@@ -481,7 +485,9 @@ export const makeChannel = <IE>(headers: Record<string, string>): Channel.Channe
           exit = Option.some(Exit.fail(convertError(error_)))
         },
         onDone() {
-          exit = Option.some(Exit.fail(Cause.Done()))
+          if (Option.isNone(exit)) {
+            exit = Option.some(Exit.fail(Cause.Done()))
+          }
         }
       })
 

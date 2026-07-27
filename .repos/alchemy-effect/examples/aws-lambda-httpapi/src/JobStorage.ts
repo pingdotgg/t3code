@@ -46,25 +46,26 @@ export const JobStorageDynamoDB = Layer.provideMerge(
         RemovalPolicy.retain(stack.stage === "prod"),
       );
 
-      const getItem = yield* DynamoDB.GetItem.bind(table);
-      const putItem = yield* DynamoDB.PutItem.bind(table);
-      const sink = yield* SQS.QueueSink.bind(queue);
+      const getItem = yield* DynamoDB.GetItem(table);
+      const putItem = yield* DynamoDB.PutItem(table);
+      const sink = yield* SQS.QueueSink(queue);
 
-      yield* DynamoDB.stream(table, {
+      yield* DynamoDB.consumeTableChanges(table, {
         streamViewType: "NEW_AND_OLD_IMAGES",
         startingPosition: "LATEST",
         batchSize: 10,
-      }).process((stream) =>
+      }, (stream) =>
         stream.pipe(
-          Stream.map((record) =>
-            JSON.stringify({
+          Stream.map((record) => ({
+            MessageBody: JSON.stringify({
               eventName: record.eventName,
               keys: record.dynamodb.Keys,
               newImage: record.dynamodb.NewImage,
               oldImage: record.dynamodb.OldImage,
             }),
-          ),
+          })),
           Stream.run(sink),
+          Effect.orDie,
         ),
       );
 
@@ -126,12 +127,12 @@ export const JobStorageDynamoDB = Layer.provideMerge(
       });
     }),
   ),
-  Layer.mergeAll(Lambda.TableEventSource, SQS.QueueSinkLive).pipe(
+  Layer.mergeAll(Lambda.TableEventSource, SQS.QueueSinkHttp).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        DynamoDB.GetItemLive,
-        DynamoDB.PutItemLive,
-        SQS.SendMessageBatchLive,
+        DynamoDB.GetItemHttp,
+        DynamoDB.PutItemHttp,
+        SQS.SendMessageBatchHttp,
       ),
     ),
   ),
@@ -147,9 +148,9 @@ export const JobStorageS3 = Layer.provideMerge(
         RemovalPolicy.retain(stack.stage === "prod"),
       );
 
-      const getObject = yield* S3.GetObject.bind(bucket);
-      const putObject = yield* S3.PutObject.bind(bucket);
-      const sink = yield* SQS.QueueSink.bind(queue);
+      const getObject = yield* S3.GetObject(bucket);
+      const putObject = yield* S3.PutObject(bucket);
+      const sink = yield* SQS.QueueSink(queue);
 
       const putJob = (job: Job) =>
         putObject({
@@ -201,14 +202,15 @@ export const JobStorageS3 = Layer.provideMerge(
           ),
         );
 
-      yield* S3.notifications(bucket).subscribe((stream) =>
+      yield* S3.consumeBucketEvents(bucket, (stream) =>
         stream.pipe(
           Stream.flatMap((item) =>
             Stream.fromEffect(getJob(item.key).pipe(Effect.orDie)),
           ),
           Stream.filter((job): job is Job => job !== undefined),
-          Stream.map((job) => JSON.stringify(job)),
+          Stream.map((job) => ({ MessageBody: JSON.stringify(job) })),
           Stream.run(sink),
+          Effect.orDie,
         ),
       );
 
@@ -218,12 +220,12 @@ export const JobStorageS3 = Layer.provideMerge(
       });
     }),
   ),
-  Layer.mergeAll(Lambda.BucketEventSource, SQS.QueueSinkLive).pipe(
+  Layer.mergeAll(Lambda.BucketEventSource, SQS.QueueSinkHttp).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        S3.GetObjectLive,
-        S3.PutObjectLive,
-        SQS.SendMessageBatchLive,
+        S3.GetObjectHttp,
+        S3.PutObjectHttp,
+        SQS.SendMessageBatchHttp,
       ),
     ),
   ),

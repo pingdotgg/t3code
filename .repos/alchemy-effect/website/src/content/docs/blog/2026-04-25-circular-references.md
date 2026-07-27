@@ -54,10 +54,10 @@ needing the other side?* If the provider implements
 `precreate`, the answer is yes.
 
 Here's the Cloudflare `Worker` provider's `precreate`
-(abbreviated from [`Worker.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/Cloudflare/Workers/Worker.ts)):
+(abbreviated from [`Worker.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Cloudflare/Workers/Worker.ts)):
 
 ```typescript
-precreate: Effect.fnUntraced(function* ({ id, news, session }) {
+precreate: Effect.fn(function* ({ id, news, session }) {
   const name = yield* createWorkerName(id, news.name);
 
   // Upload a placeholder script. Just enough to reserve the
@@ -92,7 +92,7 @@ planner detects the cycle, calls `precreate` on the
 participating resources first, and then runs `reconcile` on
 all of them with the cross-references resolved.
 
-For [`AWS/S3/Bucket.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/AWS/S3/Bucket.ts)
+For [`AWS/S3/Bucket.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/AWS/S3/Bucket.ts)
 the `precreate` is even shorter — it just calls
 `ensureBucketExists`, since for the BucketPolicy → Lambda
 cycle all the other side needs is the bucket ARN, which is
@@ -115,7 +115,7 @@ The naive thing to write looks like this:
 // src/A.ts
 import { B } from "./B.ts";
 
-export const A = Cloudflare.Worker("A", { main: import.meta.path },
+export const A = Cloudflare.Worker("A", { main: import.meta.filename },
   Effect.gen(function* () {
     const b = yield* Cloudflare.Worker.bind(B);
     return { fetch: ... };
@@ -125,7 +125,7 @@ export const A = Cloudflare.Worker("A", { main: import.meta.path },
 // src/B.ts
 import { A } from "./A.ts";
 
-export const B = Cloudflare.Worker("B", { main: import.meta.path },
+export const B = Cloudflare.Worker("B", { main: import.meta.filename },
   Effect.gen(function* () {
     const a = yield* Cloudflare.Worker.bind(A);
     return { fetch: ... };
@@ -166,7 +166,7 @@ that runs only when the Stack provides it.
 import * as Cloudflare from "alchemy/Cloudflare";
 
 export class A extends Cloudflare.Worker<A>()("A", {
-  main: import.meta.path,
+  main: import.meta.filename,
 }) {}
 ```
 
@@ -184,7 +184,7 @@ The runtime piece is a second file-level export:
 + import { B } from "./B.ts";
 
   export class A extends Cloudflare.Worker<A>()("A", {
-    main: import.meta.path,
+    main: import.meta.filename,
   }) {}
 
 + export default A.make(
@@ -219,7 +219,7 @@ For the non-cyclic case Alchemy lets you write the resource
 and its implementation in a single expression:
 
 ```typescript
-export default Cloudflare.Worker("MyWorker", { main: import.meta.path },
+export default Cloudflare.Worker("MyWorker", { main: import.meta.filename },
   Effect.gen(function* () { /* ... */ }),
 );
 ```
@@ -273,7 +273,7 @@ mutually-recursive services, queue-mediated callbacks. For
 everything else, the simple form is still simple:
 
 ```typescript
-export default Cloudflare.Worker("Web", { main: import.meta.path },
+export default Cloudflare.Worker("Web", { main: import.meta.filename },
   Effect.gen(function* () {
     const db = yield* Database;
     return { fetch: /* ... */ };
@@ -291,10 +291,10 @@ only invokes it when a cycle is actually present.
 
 ## Where to go next
 
-- [Guides › Circular Bindings](/guides/circular-bindings) —
+- [Guides › Circular Bindings](/infrastructure-as-effects/circular-bindings) —
   the step-by-step Worker A ↔ Worker B walkthrough.
-- [`Cloudflare/Workers/Worker.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/Cloudflare/Workers/Worker.ts)
+- [`Cloudflare/Workers/Worker.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Cloudflare/Workers/Worker.ts)
   — the canonical `precreate` reference, including Durable
   Object namespace reservation.
-- [`AWS/S3/Bucket.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/AWS/S3/Bucket.ts)
+- [`AWS/S3/Bucket.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/AWS/S3/Bucket.ts)
   — `precreate` for the BucketPolicy ↔ Lambda Role cycle.

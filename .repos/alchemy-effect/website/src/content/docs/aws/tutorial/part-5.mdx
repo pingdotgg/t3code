@@ -1,0 +1,441 @@
+---
+title: "Part 5: CI/CD"
+description: Set up GitHub Actions for automated AWS deployments and PR previews — with OIDC credentials provisioned as code.
+sidebar:
+  order: 5
+---
+
+In [Part 4](/aws/tutorial/part-4) you deployed isolated stages by
+hand. Now you'll hand it off to GitHub Actions: pushes to `main`
+deploy to production, pull requests get isolated preview
+environments, and merged PRs clean up after themselves.
+
+The trick to doing this safely is **letting Alchemy provision its own
+CI credentials**. Instead of pasting long-lived AWS access keys into
+GitHub, you'll write a small `stacks/github.ts` that creates a GitHub
+**OIDC provider** and an IAM **role** scoped to your repo — CI
+assumes the role at runtime and no secret ever exists to leak.
+
+## Confirm your state store is remote
+
+CI needs to share state across runs, so a local `.alchemy/` directory
+won't cut it. You already configured `AWS.state()` back in
+[Part 1](/aws/tutorial/part-1#where-state-lives), which stores state
+in an account-regional S3 bucket. Every deploy — local or from CI —
+reads and writes state through that bucket.
+
+Double-check it's still wired up in `alchemy.run.ts`:
+
+```typescript
+// alchemy.run.ts
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  // ...
+);
+```
+
+:::caution
+If you switched to `Alchemy.localState()` at some point, switch back
+to `AWS.state()` (or another shared store) before continuing — GitHub
+Actions runners can't see your local filesystem.
+:::
+
+## Set up an `admin` profile
+
+Your `alchemy.run.ts` only needs enough permission to deploy your
+app. The `stacks/github.ts` you're about to write needs more: it
+creates an IAM `OpenIDConnectProvider` and an IAM `Role`, which
+requires IAM admin rights.
+
+Rather than hand those elevated rights to your day-to-day profile,
+create a dedicated `admin` profile:
+
+```sh
+alchemy login --profile admin
+```
+
+Choose an AWS credential (SSO, access keys, etc.) that's authorized
+for IAM administration.
+
+:::danger[Heads up]
+The credential stored under `--profile admin` can create IAM roles
+with arbitrary permissions. Treat it like root. Do **not** use it for
+everyday `alchemy deploy` runs against your application — keep your
+default profile on a narrowly scoped identity and only reach for
+`admin` when you're touching `stacks/github.ts`.
+:::
+
+You'll also be prompted for a GitHub credential. Pick `gh-cli` if you
+have the GitHub CLI installed, otherwise paste a Personal Access
+Token with the `repo` scope.
+
+## Scaffold the GitHub stack
+
+Create `stacks/github.ts` with an empty stack that loads both
+provider layers and reuses your remote state store. This is a
+one-shot stack you'll deploy from your laptop (under the `admin`
+profile) to provision the IAM role CI will use.
+
+```typescript
+// stacks/github.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as GitHub from "alchemy/GitHub";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "github",
+  {
+    providers: Layer.mergeAll(
+      AWS.providers(),
+      GitHub.providers(),
+    ),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    // OIDC provider + role go here next
+  }),
+);
+```
+
+Reusing the same `AWS.state()` you set up in Part 1 means the role's
+ARN is tracked alongside the rest of your infrastructure, so any
+future edit (rename, policy change) produces a clean diff.
+
+## Create the OIDC provider
+
+Add an `OpenIDConnectProvider` that tells AWS to trust tokens issued
+by GitHub Actions:
+
+```diff lang="typescript"
+  Effect.gen(function* () {
++   const oidc = yield* AWS.IAM.OpenIDConnectProvider("GitHubOidc", {
++     url: "https://token.actions.githubusercontent.com",
++     clientIDList: ["sts.amazonaws.com"],
++     // GitHub's well-known OIDC thumbprint. AWS auto-discovers
++     // thumbprints for github.com these days, but the provider's
++     // thumbprint sync still requires a non-empty list.
++     thumbprintList: ["6938fd4d98bab03faadb97b34396831e3780aea1"],
++   });
+  }),
+```
+
+With this in place, GitHub's token issuer becomes a federated
+identity provider in your AWS account — the raw material for
+short-lived, secretless CI credentials.
+
+## Create the deploy role
+
+Add the IAM role CI will assume. The trust policy restricts who can
+assume it to workflows from **your specific repo**:
+
+```diff lang="typescript"
+    });
++
++   const role = yield* AWS.IAM.Role("GitHubActionsRole", {
++     roleName: "github-actions",
++     assumeRolePolicyDocument: {
++       Version: "2012-10-17",
++       Statement: [
++         {
++           Effect: "Allow",
++           Principal: {
++             Federated: oidc.openIDConnectProviderArn,
++           },
++           Action: ["sts:AssumeRoleWithWebIdentity"],
++           Condition: {
++             StringEquals: {
++               "token.actions.githubusercontent.com:aud":
++                 "sts.amazonaws.com",
++             },
++             StringLike: {
++               "token.actions.githubusercontent.com:sub":
++                 "repo:your-org/your-repo:*",
++             },
++           },
++         },
++       ],
++     },
++     managedPolicyArns: [
++       "arn:aws:iam::aws:policy/AdministratorAccess",
++     ],
++   });
+  }),
+```
+
+Replace `your-org/your-repo` with your GitHub org and repo slug.
+
+:::tip[Tighten the role]
+`AdministratorAccess` is the path of least resistance for getting CI
+working, but for production you should swap it for a custom-managed
+policy that grants only the actions your app needs (for example,
+`lambda:*`, `s3:*` on your buckets, and `iam:` actions for the
+execution roles Alchemy manages). The `assumeRolePolicyDocument`
+already restricts who can assume the role to your specific repo via
+the `sub` condition.
+:::
+
+## Publish the role ARN and region
+
+The workflow needs to know which role to assume and in which region
+to operate. Neither is sensitive, so write them as GitHub Actions
+**variables** (not secrets):
+
+```diff lang="typescript"
+    });
++
++   const region = yield* AWS.Region;
++
++   yield* GitHub.Variable("aws-role-arn", {
++     owner: "your-org",
++     repository: "your-repo",
++     name: "AWS_ROLE_ARN",
++     value: role.roleArn,
++   });
++
++   yield* GitHub.Variable("aws-region", {
++     owner: "your-org",
++     repository: "your-repo",
++     name: "AWS_REGION",
++     value: region,
++   });
+  }),
+```
+
+`role.roleArn` is an Output — Alchemy resolves it during deploy and
+pipes it straight into the repo variable, so the ARN never needs to
+round-trip through your shell.
+
+## Deploy the GitHub stack
+
+Run it once from your laptop, under the `admin` profile:
+
+```sh
+alchemy deploy stacks/github.ts --profile admin
+```
+
+You'll see Alchemy plan the OIDC provider, the role, and the two repo
+variables, then apply them. When it's done, head to your repo's
+**Settings → Secrets and variables → Actions** page; you should see
+`AWS_ROLE_ARN` and `AWS_REGION` under **Variables**.
+
+You only need to re-run this stack when you want to change the role's
+permissions or trust policy.
+
+## Create the workflow
+
+Create `.github/workflows/deploy.yml`:
+
+```yaml
+name: Deploy
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  STAGE: >-
+    ${{ github.event_name == 'pull_request'
+      && format('pr-{0}', github.event.number)
+      || (github.ref == 'refs/heads/main' && 'prod' || github.ref_name) }}
+
+jobs:
+  deploy:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Deploy
+        run: bun alchemy deploy --stage ${{ env.STAGE }} --yes
+        env:
+          PULL_REQUEST: ${{ github.event.number }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  cleanup:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - name: Safety Check
+        run: |
+          if [ "${{ env.STAGE }}" = "prod" ]; then
+            echo "ERROR: Cannot destroy prod environment in cleanup job"
+            exit 1
+          fi
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Destroy Preview
+        run: bun alchemy destroy --stage ${{ env.STAGE }} --yes
+        env:
+          PULL_REQUEST: ${{ github.event.number }}
+```
+
+The `configure-aws-credentials` step exchanges the workflow's OIDC
+token for short-lived AWS credentials by assuming the role — the
+`id-token: write` permission is what allows the exchange. Alchemy
+picks the credentials up from the environment automatically (when
+`CI=true`, it skips the interactive prompt and uses environment
+variables). No secrets required.
+
+:::note[How STAGE is computed]
+
+- Pull requests → `pr-{number}` (e.g. `pr-42`)
+- Push to `main` → `prod`
+- Other branches → the branch name
+
+The cleanup job includes a safety check so `prod` can never be
+accidentally destroyed — exactly the [stage isolation](/aws/tutorial/part-4)
+from Part 4, driven by CI events.
+:::
+
+## Add PR preview comments
+
+Post the live URL as a comment on every PR. Update `alchemy.run.ts`:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
++import * as GitHub from "alchemy/GitHub";
++import * as Output from "alchemy/Output";
+import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
+import Api from "./src/api.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+-    providers: AWS.providers(),
++    providers: Layer.mergeAll(
++      AWS.providers(),
++      GitHub.providers(),
++    ),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const api = yield* Api;
+
++    if (process.env.PULL_REQUEST) {
++      yield* GitHub.Comment("preview-comment", {
++        owner: "your-org",
++        repository: "your-repo",
++        issueNumber: Number(process.env.PULL_REQUEST),
++        body: Output.interpolate`
++          ## Preview Deployed
++
++          **URL:** ${api.functionUrl}
++
++          Built from commit ${process.env.GITHUB_SHA?.slice(0, 7)}
++
++          ---
++          _This comment updates automatically with each push._
++        `,
++      });
++    }
+
+    return {
+      url: api.functionUrl,
+    };
+  }),
+);
+```
+
+The logical ID `"preview-comment"` stays the same across pushes, so
+Alchemy updates the existing comment instead of creating a new one.
+`GITHUB_TOKEN` is provided automatically by Actions and authorizes
+the comment.
+
+## The full picture
+
+Here's how everything fits together:
+
+1. You ran `stacks/github.ts` once under `--profile admin`. That
+   created a GitHub OIDC provider and a repo-scoped IAM role, and
+   published the role ARN and region as repo variables.
+2. A developer pushes a branch and opens a PR.
+3. GitHub Actions checks out the code, exchanges its OIDC token for
+   short-lived AWS credentials, and runs
+   `alchemy deploy --stage pr-42`.
+4. Alchemy creates an isolated copy of every resource (bucket,
+   function, etc.) under the `pr-42` stage and posts the preview URL
+   as a PR comment.
+5. The reviewer clicks the URL and tests the preview.
+6. The PR is merged — the cleanup job runs
+   `alchemy destroy --stage pr-42` and the preview infrastructure
+   disappears.
+7. The push to `main` deploys `--stage prod`.
+
+Each environment is fully isolated with its own bucket, function,
+and state.
+
+## Alternative: static access keys
+
+If OIDC isn't an option (some sandbox accounts disallow creating
+identity providers), fall back to IAM access keys stored as repo
+secrets and exposed to the deploy step as `AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY` / `AWS_REGION` environment variables. The
+[CI guide](/environments/ci#aws-with-access-keys) has the complete recipe,
+including a `stacks/github.ts` that pushes the keys into the repo as
+`GitHub.Secret`s.
+
+## Recap
+
+You've completed the tutorial. You now know how to:
+
+- **Part 1** — Create a Stack and deploy a resource
+- **Part 2** — Add a Lambda Function with bindings to other
+  resources
+- **Part 3** — Write integration tests against deployed stacks
+- **Part 4** — Deploy isolated stages with `--stage`
+- **Part 5** — Provision secretless CI credentials with
+  `AWS.IAM.OpenIDConnectProvider` + `AWS.IAM.Role`, publish them
+  with `GitHub.Variable`, and deploy from Actions
+
+## What's next
+
+- Go deeper on AWS — grow this app with
+  [DynamoDB](/aws/data/dynamodb), [SQS](/aws/messaging/sqs),
+  [Kinesis](/aws/messaging/kinesis), and event-driven wiring like
+  [S3 events](/aws/messaging/s3-events) and
+  [DynamoDB Streams](/aws/messaging/dynamodb-streams)
+- Put an [API Gateway REST API](/aws/apis/api-gateway) with
+  stages and custom domains in front of your function
+- Read [Choosing a runtime](/aws/compute/choosing-a-runtime) for when ECS,
+  EKS, or EC2 fits better than Lambda
+- Explore the [CI guide](/environments/ci) for more workflow patterns,
+  including the Cloudflare equivalents
+- Check out the [Testing a Stack](/testing/testing-a-stack) guide for
+  more advanced testing patterns
+- Browse the [Providers](/providers) reference for all available
+  resources

@@ -1,35 +1,9 @@
 /**
- * The `Latch` module provides a reusable synchronization primitive for
- * coordinating fibers. A `Latch` is either open or closed: when it is closed,
- * fibers that use {@link _await await} or {@link whenOpen} suspend until the latch is
- * opened or the current waiters are released.
- *
- * **Mental model**
- *
- * - An open latch lets current and future waiters continue immediately
- * - A closed latch causes `await` and `whenOpen` to suspend
- * - {@link open} permanently opens the latch until it is closed again
- * - {@link release} wakes only the fibers currently waiting and leaves the
- *   latch closed for future waiters
- * - {@link close} resets the latch so later waiters suspend again
- *
- * **Common tasks**
- *
- * - Create a latch inside `Effect`: {@link make}
- * - Create a latch synchronously: {@link makeUnsafe}
- * - Wait for a signal before continuing: {@link _await await}
- * - Guard an effect so it runs only after the latch is open: {@link whenOpen}
- * - Let all current and future waiters proceed: {@link open}
- * - Let only the current waiters proceed: {@link release}
- * - Re-enable waiting after opening: {@link close}
- *
- * **Gotchas**
- *
- * - `release` is not the same as `open`; new waiters still suspend after the
- *   current waiters are released
- * - `open` and `close` report whether they changed the latch state
- * - Prefer the effectful APIs unless synchronous allocation or mutation is
- *   required
+ * Reusable synchronization primitives for coordinating fibers. A `Latch` is
+ * either open or closed: when it is closed, `await` and `whenOpen` suspend
+ * until the latch opens or the current waiters are released. The module
+ * includes effectful and synchronous constructors plus helpers to open, release,
+ * close, wait, and gate effects behind the latch.
  *
  * @since 4.0.0
  */
@@ -139,6 +113,15 @@ export interface Latch {
    * Use to gate an effect behind the latch signal.
    */
   whenOpen<A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E, R>
+
+  /**
+   * Checks whether the latch is currently open or closed.
+   *
+   * **When to use**
+   *
+   * Use to check the state of the latch without suspending or changing its state.
+   */
+  isOpen(this: Latch): boolean
 }
 
 /**
@@ -146,7 +129,8 @@ export interface Latch {
  *
  * **When to use**
  *
- * Use when synchronous allocation is required outside an Effect workflow.
+ * Use when you need to allocate a `Latch` synchronously outside an Effect
+ * workflow.
  *
  * **Details**
  *
@@ -248,8 +232,8 @@ export const open = (self: Latch): Effect.Effect<boolean> => self.open
  *
  * **When to use**
  *
- * Use when synchronous code needs to open a latch immediately and release the
- * fibers waiting on it.
+ * Use when you need synchronous code to open a latch immediately and release
+ * the fibers waiting on it.
  *
  * **Details**
  *
@@ -396,3 +380,15 @@ export const whenOpen: {
   const [self, effect] = args
   return self.whenOpen(effect)
 }) as any
+
+/**
+ * Checks whether the latch is currently open or closed.
+ *
+ * **When to use**
+ *
+ * Use to check the state of the latch without suspending or changing its state.
+ *
+ * @category getters
+ * @since 4.0.0
+ */
+export const isOpen = (self: Latch): boolean => self.isOpen()

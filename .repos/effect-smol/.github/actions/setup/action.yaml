@@ -17,7 +17,7 @@ runs:
       uses: actions/setup-node@v6
       with:
         cache: pnpm
-        node-version: 25.9.0
+        node-version: 26.4.0
     - name: Install deno
       uses: denoland/setup-deno@v2
       if: ${{ inputs.deno-version != '' }}

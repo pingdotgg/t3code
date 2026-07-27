@@ -1,8 +1,7 @@
 {
   "$schema": "../../node_modules/@effect/docgen/schema.json",
-  "srcLink": "https://github.com/Effect-TS/effect-smol/tree/main/packages/sql/pglite/src/",
+  "srcLink": "https://github.com/Effect-TS/effect/tree/main/packages/sql/pglite/src/",
   "exclude": ["src/internal/**/*.ts"],
-  "tscExecutable": "tsgo",
   "examplesCompilerOptions": {
     "noEmit": true,
     "strict": true,

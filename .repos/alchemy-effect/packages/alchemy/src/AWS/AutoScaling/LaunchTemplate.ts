@@ -3,7 +3,7 @@ import { Region } from "@distilled.cloud/aws/Region";
 import * as ec2 from "@distilled.cloud/aws/ec2";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import type * as rolldown from "rolldown";
 import * as Bundle from "../../Bundle/Bundle.ts";
 import { deepEqual, isResolved } from "../../Diff.ts";
@@ -15,7 +15,6 @@ import { Resource } from "../../Resource.ts";
 import { Stack } from "../../Stack.ts";
 import { Stage } from "../../Stage.ts";
 import { createInternalTags, diffTags, hasTags } from "../../Tags.ts";
-import { Assets } from "../Assets.ts";
 import type { SecurityGroupId } from "../EC2/SecurityGroup.ts";
 import {
   createEc2HostRuntimeContext,
@@ -23,10 +22,10 @@ import {
   type Ec2HostRuntimeContext,
 } from "../EC2/hosted.ts";
 import type { AccountID } from "../Environment.ts";
-import { AWSEnvironment } from "../Environment.ts";
 import type { PolicyStatement } from "../IAM/Policy.ts";
 import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
+import { AWSEnvironment } from "../index.ts";
 
 export type LaunchTemplateId = `lt-${string}`;
 export type LaunchTemplateName = string;
@@ -107,24 +106,73 @@ export interface LaunchTemplate extends Resource<
   "AWS.AutoScaling.LaunchTemplate",
   LaunchTemplateProps,
   {
+    /**
+     * ID of the launch template (`lt-...`).
+     */
     launchTemplateId: LaunchTemplateId;
+    /**
+     * ARN of the launch template.
+     */
     launchTemplateArn: LaunchTemplateArn;
+    /**
+     * Name of the launch template.
+     */
     launchTemplateName: LaunchTemplateName;
+    /**
+     * Version number launched by default.
+     */
     defaultVersionNumber: number;
+    /**
+     * Most recently created version number.
+     */
     latestVersionNumber: number;
+    /**
+     * Tags on the launch template.
+     */
     tags: Record<string, string>;
+    /**
+     * ARN of the managed instance role, when Alchemy manages IAM.
+     */
     roleArn?: string;
+    /**
+     * Name of the managed instance role, when Alchemy manages IAM.
+     */
     roleName?: string;
+    /**
+     * Name of the inline policy on the managed instance role.
+     */
     policyName?: string;
+    /**
+     * Whether Alchemy manages the instance profile/role for the hosted
+     * program.
+     */
     managedIam?: boolean;
+    /**
+     * systemd unit name running the hosted program on instances.
+     */
     runtimeUnitName?: string;
+    /**
+     * S3 key prefix where the bundled program assets are staged.
+     */
     assetPrefix?: string;
+    /**
+     * Bundled program code metadata.
+     */
     code?: {
+      /**
+       * Content hash of the bundled entrypoint.
+       */
       hash: string;
     };
   },
   {
+    /**
+     * Environment variables contributed by bindings to the hosted process.
+     */
     env?: Record<string, any>;
+    /**
+     * IAM policy statements contributed by bindings to the instance role.
+     */
     policyStatements?: PolicyStatement[];
   },
   Providers
@@ -140,6 +188,29 @@ export type LaunchTemplateRuntimeContext = Ec2HostRuntimeContext;
  * A launch template that preserves the `Host` authoring model used by
  * `AWS.EC2.Instance`, but packages that host configuration for use with an
  * Auto Scaling Group.
+ * @resource
+ * @section Creating a Launch Template
+ * @example Basic Launch Template
+ * ```typescript
+ * import { LaunchTemplate } from "alchemy/AWS/AutoScaling";
+ *
+ * const template = yield* LaunchTemplate("Template", {
+ *   imageId: "ami-0abcdef1234567890",
+ *   instanceType: "t3.micro",
+ * });
+ * ```
+ *
+ * @example Launch a fleet from the template
+ * ```typescript
+ * import { AutoScalingGroup } from "alchemy/AWS/AutoScaling";
+ *
+ * const group = yield* AutoScalingGroup("Fleet", {
+ *   launchTemplate: template,
+ *   subnetIds: [subnet.subnetId],
+ *   minSize: 1,
+ *   maxSize: 3,
+ * });
+ * ```
  *
  * @section Hosting Processes
  * @example Hosted HTTP Launch Template
@@ -148,7 +219,7 @@ export type LaunchTemplateRuntimeContext = Ec2HostRuntimeContext;
  *   yield* Http.serve(HttpServerResponse.json({ ok: true }));
  *
  *   return {
- *     main: import.meta.filename,
+ *     main: import.meta.url,
  *     imageId,
  *     instanceType: "t3.small",
  *     securityGroupIds: [securityGroup.groupId],
@@ -175,24 +246,16 @@ export const LaunchTemplateProvider = () =>
   Provider.effect(
     LaunchTemplate,
     Effect.gen(function* () {
-      const { accountId } = yield* AWSEnvironment;
-      const region = yield* Region;
       const stack = yield* Stack;
       const stage = yield* Stage;
       const fs = yield* FileSystem.FileSystem;
       const virtualEntryPlugin = yield* Bundle.virtualEntryPlugin;
-      const assets = (yield* Effect.serviceOption(Assets)).pipe(
-        Option.getOrUndefined,
-      );
 
       const hosted = createEc2HostedSupport({
-        accountId,
-        region,
         stackName: stack.name,
         stage,
         fs,
         virtualEntryPlugin,
-        assets,
         resourceType: "AWS.AutoScaling.LaunchTemplate",
       });
 
@@ -205,7 +268,12 @@ export const LaunchTemplateProvider = () =>
           : createPhysicalName({ id, maxLength: 128, lowercase: true });
 
       const toArn = (launchTemplateId: LaunchTemplateId) =>
-        `arn:aws:ec2:${region}:${accountId}:launch-template/${launchTemplateId}` as LaunchTemplateArn;
+        AWSEnvironment.current.pipe(
+          Effect.map(
+            (env) =>
+              `arn:aws:ec2:${env.region}:${env.accountId}:launch-template/${launchTemplateId}` as LaunchTemplateArn,
+          ),
+        );
 
       const describeById = (launchTemplateId: string) =>
         ec2
@@ -307,25 +375,29 @@ export const LaunchTemplateProvider = () =>
         return Number(versionNumber);
       });
 
-      const toAttributes = (
+      const toAttributes = Effect.fn(function* (
         template: ec2.LaunchTemplate,
         runtime: Partial<LaunchTemplate["Attributes"]> = {},
-      ): LaunchTemplate["Attributes"] => ({
-        launchTemplateId: template.LaunchTemplateId as LaunchTemplateId,
-        launchTemplateArn: toArn(template.LaunchTemplateId as LaunchTemplateId),
-        launchTemplateName: template.LaunchTemplateName!,
-        defaultVersionNumber: Number(template.DefaultVersionNumber ?? 1),
-        latestVersionNumber: Number(
-          template.LatestVersionNumber ?? template.DefaultVersionNumber ?? 1,
-        ),
-        tags: toTagRecord(template.Tags),
-        roleArn: runtime.roleArn,
-        roleName: runtime.roleName,
-        policyName: runtime.policyName,
-        managedIam: runtime.managedIam,
-        runtimeUnitName: runtime.runtimeUnitName,
-        assetPrefix: runtime.assetPrefix,
-        code: runtime.code,
+      ) {
+        return {
+          launchTemplateId: template.LaunchTemplateId as LaunchTemplateId,
+          launchTemplateArn: yield* toArn(
+            template.LaunchTemplateId as LaunchTemplateId,
+          ),
+          launchTemplateName: template.LaunchTemplateName!,
+          defaultVersionNumber: Number(template.DefaultVersionNumber ?? 1),
+          latestVersionNumber: Number(
+            template.LatestVersionNumber ?? template.DefaultVersionNumber ?? 1,
+          ),
+          tags: toTagRecord(template.Tags),
+          roleArn: runtime.roleArn,
+          roleName: runtime.roleName,
+          policyName: runtime.policyName,
+          managedIam: runtime.managedIam,
+          runtimeUnitName: runtime.runtimeUnitName,
+          assetPrefix: runtime.assetPrefix,
+          code: runtime.code,
+        } satisfies LaunchTemplate["Attributes"];
       });
 
       return {
@@ -361,7 +433,7 @@ export const LaunchTemplateProvider = () =>
             (yield* describeByName(yield* toName(id, olds ?? {})));
 
           return template
-            ? toAttributes(template, {
+            ? yield* toAttributes(template, {
                 roleArn: output?.roleArn,
                 roleName: output?.roleName,
                 policyName: output?.policyName,
@@ -372,6 +444,16 @@ export const LaunchTemplateProvider = () =>
               })
             : undefined;
         }),
+        list: () =>
+          ec2.describeLaunchTemplates.pages({}).pipe(
+            Stream.runCollect,
+            Effect.flatMap((chunk) =>
+              Effect.forEach(
+                Array.from(chunk).flatMap((page) => page.LaunchTemplates ?? []),
+                (template) => toAttributes(template),
+              ),
+            ),
+          ),
         reconcile: Effect.fn(function* ({
           id,
           news,
@@ -439,7 +521,7 @@ export const LaunchTemplateProvider = () =>
               );
             }
             yield* session.note(template.LaunchTemplateId);
-            return toAttributes(template as ec2.LaunchTemplate, runtime);
+            return yield* toAttributes(template as ec2.LaunchTemplate, runtime);
           }
 
           if (!hasTags(desiredTags, toTagRecord(existing.Tags))) {
@@ -475,7 +557,7 @@ export const LaunchTemplateProvider = () =>
             );
           }
           yield* session.note(refreshed.LaunchTemplateId!);
-          return toAttributes(refreshed, runtime);
+          return yield* toAttributes(refreshed, runtime);
         }),
         delete: Effect.fn(function* ({ output, session }) {
           yield* ec2
@@ -502,7 +584,12 @@ const isLaunchTemplateNotFound = (error: unknown) => {
     tag === "InvalidLaunchTemplateNameNotFoundException" ||
     tag === "InvalidLaunchTemplateIdNotFoundException" ||
     tag === "InvalidLaunchTemplateId.Malformed" ||
-    tag === "InvalidLaunchTemplateId.NotFound"
+    tag === "InvalidLaunchTemplateId.NotFound" ||
+    // Live `describeLaunchTemplates` surfaces the dot-form codes, which the
+    // ec2 SDK leaves untyped — a missing template on the read-before-create
+    // probe otherwise fails the whole plan.
+    tag === "InvalidLaunchTemplateName.NotFoundException" ||
+    tag === "InvalidLaunchTemplateId.NotFoundException"
   );
 };
 

@@ -3,8 +3,6 @@ import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -14,32 +12,22 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
 });
 
 const stack = beforeAll(deploy(Stack).pipe(Effect.tap(Console.log)));
-afterAll(
-  Effect.gen(function* () {
-    if (!process.env.NO_DESTROY) {
-      yield* destroy(Stack);
-    }
-  }),
-);
-
-const coldStartRetry = Effect.retry({
-  schedule: Schedule.exponential("500 millis").pipe(
-    Schedule.both(Schedule.recurs(20)),
-  ),
-});
+afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
 test(
   "serves the TanStack Start Solid app shell",
   Effect.gen(function* () {
     const { websiteUrl } = yield* stack;
-    const client = yield* HttpClient.HttpClient;
 
-    const res = yield* client.get(websiteUrl).pipe(coldStartRetry);
+    // `HttpClient.get` resolves successfully even on the fresh-deploy 404, so a
+    // plain `Effect.retry` never fires — `Test.getWhenReady` fails on the
+    // cold-start window and retries until the route serves the real app.
+    const res = yield* Test.getWhenReady(websiteUrl);
     expect(res.status).toBe(200);
     const html = yield* res.text;
     expect(html).toContain("TanStack Start Solid");
     expect(html).toContain(
-      "Hello from TanStack Start Solid on Cloudflare.Vite",
+      "Hello from TanStack Start Solid on Cloudflare.Website.Vite",
     );
   }),
   { timeout: 180_000 },

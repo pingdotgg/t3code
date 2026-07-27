@@ -1,46 +1,12 @@
 /**
- * Pattern matching for TypeScript values, predicates, and tagged unions.
+ * Builds pattern matchers for TypeScript values.
  *
- * `Match` turns branching logic into a matcher that is built from ordered
- * cases and finished with an explicit finalizer. Use `Match.type` to define a
- * reusable matcher for a type, or `Match.value` to classify one value
- * immediately. Cases can match literal values, predicates, object patterns,
- * discriminators, tags, or negated patterns.
- *
- * **Mental model**
- *
- * A matcher checks cases in the order they are added and evaluates the handler
- * for the first match. Type matchers produce a function that can be reused with
- * different inputs, while value matchers already contain the input value. As
- * cases are added, the type system tracks which inputs remain unmatched, so
- * `Match.exhaustive` is only available when every remaining case has been
- * handled.
- *
- * **Common tasks**
- *
- * - Use `Match.type<Union>()` when a branch table should be reusable and
- *   exhaustiveness-checked.
- * - Use `Match.value(value)` when a single value should be matched immediately.
- * - Use `Match.tag`, `Match.tags`, or `Match.discriminator` for discriminated
- *   unions and domain objects with tag fields.
- * - Use `Match.orElse`, `Match.option`, or `Match.result` when unmatched input
- *   should be handled explicitly instead of requiring full exhaustiveness.
- *
- * **Example** (Matching a tagged union)
- *
- * ```ts
- * import { Match } from "effect"
- *
- * type Event =
- *   | { readonly _tag: "UserCreated"; readonly id: string }
- *   | { readonly _tag: "UserDeleted"; readonly id: string }
- *
- * const describe = Match.type<Event>().pipe(
- *   Match.tag("UserCreated", (event) => `created ${event.id}`),
- *   Match.tag("UserDeleted", (event) => `deleted ${event.id}`),
- *   Match.exhaustive
- * )
- * ```
+ * `Match` lets you add ordered cases and then finish them with a result,
+ * fallback, `Option`, or exhaustive check. Use `Match.type` to define a
+ * reusable matcher for a type, or `Match.value` to match one value immediately.
+ * Cases can match literal values, predicates, object shapes, tags, negated
+ * patterns, and common checks such as strings, numbers, records, and class
+ * instances.
  *
  * @since 4.0.0
  */
@@ -309,7 +275,7 @@ export interface Not {
  *
  * @see {@link value} for creating a matcher from a specific value.
  *
- * @category Creating a matcher
+ * @category constructors
  * @since 4.0.0
  */
 export const type: <I>() => Matcher<I, Types.Without<never>, I, never, never> = internal.type
@@ -355,7 +321,7 @@ export const type: <I>() => Matcher<I, Types.Without<never>, I, never, never> = 
  *
  * @see {@link type} for creating a matcher from a specific type.
  *
- * @category Creating a matcher
+ * @category constructors
  * @since 4.0.0
  */
 export const value: <const I>(
@@ -388,7 +354,7 @@ export const value: <const I>(
  * console.log(message) // "Success: Hello"
  * ```
  *
- * @category Creating a matcher
+ * @category constructors
  * @since 4.0.0
  */
 export const valueTags: {
@@ -449,7 +415,7 @@ export const valueTags: {
  * // Output: { type: "pending" }
  * ```
  *
- * @category Creating a matcher
+ * @category constructors
  * @since 4.0.0
  */
 export const typeTags: {
@@ -485,7 +451,7 @@ export const typeTags: {
  * **Important:** This function must be the first step in the matcher pipeline.
  * If used later, TypeScript will not enforce type consistency correctly.
  *
- * **Example** (Validating Return Type Consistency)
+ * **Example** (Validating return type consistency)
  *
  * ```ts
  * import { Match } from "effect"
@@ -502,7 +468,7 @@ export const typeTags: {
  * )
  * ```
  *
- * @category utils
+ * @category utility types
  * @since 4.0.0
  */
 export const withReturnType: <Ret>() => <I, F, R, A, Pr, _>(
@@ -525,7 +491,7 @@ export const withReturnType: <Ret>() => <I, F, R, A, Pr, _>(
  * pattern matches, the associated function is executed and the matched input is
  * removed from the remaining cases tracked by the matcher.
  *
- * **Example** (Matching with Values and Predicates)
+ * **Example** (Matching with values and predicates)
  *
  * ```ts
  * import { Match } from "effect"
@@ -939,7 +905,7 @@ export const discriminatorsExhaustive: <D extends string>(
  * `"_tag"` as their discriminator field. Use {@link discriminator} for a
  * different discriminator field.
  *
- * **Example** (Matching a Discriminated Union by Tag)
+ * **Example** (Matching a discriminated union by tag)
  *
  * ```ts
  * import { Match } from "effect"
@@ -1152,7 +1118,7 @@ export const tagsExhaustive: <
  * Any excluded value bypasses the provided function and continues matching
  * through later cases.
  *
- * **Example** (Ignoring a Specific Value)
+ * **Example** (Ignoring a specific value)
  *
  * ```ts
  * import { Match } from "effect"
@@ -1231,7 +1197,7 @@ export const not: <
  *
  * @see {@link string} for matching any string
  *
- * @category Predicates
+ * @category predicates
  * @since 4.0.0
  */
 export const nonEmptyString: SafeRefinement<string, never> = internal.nonEmptyString
@@ -1277,7 +1243,7 @@ export const nonEmptyString: SafeRefinement<string, never> = internal.nonEmptySt
  * // Output: "Unknown status: pending"
  * ```
  *
- * @category Predicates
+ * @category predicates
  * @since 4.0.0
  */
 export const is: <
@@ -1403,7 +1369,7 @@ export const number: Predicate.Refinement<unknown, number> = Predicate.isNumber
  * @see {@link defined} for matching only non-nullish values
  * @see {@link orElse} for providing a fallback after earlier cases
  *
- * @category Predicates
+ * @category predicates
  * @since 4.0.0
  */
 export const any: SafeRefinement<unknown, any> = internal.any
@@ -1452,7 +1418,7 @@ export const any: SafeRefinement<unknown, any> = internal.any
  *
  * @see {@link any} for matching every value without excluding nullish inputs
  *
- * @category Predicates
+ * @category predicates
  * @since 4.0.0
  */
 export const defined: <A>(u: A) => u is A & {} = internal.defined
@@ -1515,7 +1481,7 @@ export {
    * @see {@link defined} for matching non-nullish values
    * @see {@link is} for matching literal values
    *
-   * @category Predicates
+   * @category predicates
    * @since 4.0.0
    */
   _undefined as undefined
@@ -1528,7 +1494,7 @@ export {
    *
    * **When to use**
    *
-   * Use when a match branch should handle only the literal `null` value.
+   * Use to handle only the `null` literal in a match branch.
    *
    * **Details**
    *
@@ -1538,7 +1504,7 @@ export {
    * @see {@link defined} for matching non-nullish values
    * @see {@link is} for matching literal values
    *
-   * @category Predicates
+   * @category predicates
    * @since 4.0.0
    */
   _null as null
@@ -1764,7 +1730,7 @@ export const record: Predicate.Refinement<unknown, { [x: PropertyKey]: unknown }
  * @see {@link instanceOfUnsafe} for constructor matching without the same type-safety guarantee
  * @see {@link record} for matching broad non-null, non-array objects
  *
- * @category Predicates
+ * @category predicates
  * @since 4.0.0
  */
 export const instanceOf: <A extends abstract new(...args: any) => any>(
@@ -1776,7 +1742,7 @@ export const instanceOf: <A extends abstract new(...args: any) => any>(
  *
  * **When to use**
  *
- * Use when constructor matching needs the unsafe refinement type.
+ * Use when you need constructor matching to use the unsafe refinement type.
  *
  * **Details**
  *
@@ -1829,7 +1795,7 @@ export const instanceOfUnsafe: <A extends abstract new(...args: any) => any>(
  * `default` clause in a `switch` statement or the final `else` in an `if-else`
  * chain.
  *
- * **Example** (Providing a Default Value When No Patterns Match)
+ * **Example** (Providing a default value when no patterns match)
  *
  * ```ts
  * import { Match } from "effect"
@@ -1853,7 +1819,7 @@ export const instanceOfUnsafe: <A extends abstract new(...args: any) => any>(
  * @see {@link result} for returning unmatched input as a `Result` failure
  * @see {@link orElseAbsurd} for finalizing when unmatched input should be impossible
  *
- * @category Completion
+ * @category completion
  * @since 4.0.0
  */
 export const orElse: <RA, Ret, F extends (_: RA) => Ret>(
@@ -1925,7 +1891,7 @@ export const orElseAbsurd: <I, R, RA, A, Pr, Ret>(
  * unmatched case should be explicitly handled rather than returning a default
  * value or throwing an error.
  *
- * **Example** (Extracting a User Role with `Match.result`)
+ * **Example** (Extracting a user role with `Match.result`)
  *
  * ```ts
  * import { Match } from "effect"
@@ -1946,7 +1912,7 @@ export const orElseAbsurd: <I, R, RA, A, Pr, Ret>(
  * // Output: { _id: 'Result', _tag: 'Err', err: { role: 'viewer' } }
  * ```
  *
- * @category Completion
+ * @category completion
  * @since 4.0.0
  */
 export const result: <I, F, R, A, Pr, Ret>(
@@ -1971,7 +1937,7 @@ export const result: <I, F, R, A, Pr, Ret>(
  * handled explicitly rather than throwing an error or returning a default
  * value.
  *
- * **Example** (Extracting a User Role with `Match.option`)
+ * **Example** (Extracting a user role with `Match.option`)
  *
  * ```ts
  * import { Match } from "effect"
@@ -1995,7 +1961,7 @@ export const result: <I, F, R, A, Pr, Ret>(
  * @see {@link result} for preserving unmatched input as a `Result` failure
  * @see {@link orElse} for replacing unmatched input with a fallback value
  *
- * @category Completion
+ * @category completion
  * @since 4.0.0
  */
 export const option: <I, F, R, A, Pr, Ret>(
@@ -2015,7 +1981,7 @@ export const option: <I, F, R, A, Pr, Ret>(
  * If any case is still unmatched, the matcher does not type-check as
  * exhaustive.
  *
- * **Example** (Ensuring All Cases Are Covered)
+ * **Example** (Ensuring all cases are covered)
  *
  * ```ts
  * import { Match } from "effect"
@@ -2031,7 +1997,7 @@ export const option: <I, F, R, A, Pr, Ret>(
  * )
  * ```
  *
- * @category Completion
+ * @category completion
  * @since 4.0.0
  */
 export const exhaustive: <I, F, A, Pr, Ret>(

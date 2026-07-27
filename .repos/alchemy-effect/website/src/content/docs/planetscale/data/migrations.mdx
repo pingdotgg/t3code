@@ -1,0 +1,160 @@
+---
+title: Migrations
+description: Apply SQL migrations and seed data to PlanetScale databases and branches as part of every deploy — ordered, hashed, tracked, and run over short-lived credentials.
+---
+
+Every PlanetScale database and branch resource — `PostgresDatabase`,
+`PostgresBranch`, `MySQLDatabase`, `MySQLBranch` — accepts a
+`migrationsDir`: a folder of `.sql` files applied in order as part of
+every deploy. No separate migration step, no long-lived migration
+user — alchemy mints a short-lived credential for the run and deletes
+it afterwards.
+
+## Database vs branch
+
+On a database, migrations run against the default branch:
+
+```typescript
+const db = yield* Planetscale.PostgresDatabase("MyDb", {
+  clusterSize: "PS_10",
+  migrationsDir: "./migrations/postgres",
+});
+```
+
+On a branch, they run against that branch itself — the shape used in
+branch-per-PR workflows, where each preview stage forks a branch and
+migrates it independently:
+
+```typescript
+const branch = yield* Planetscale.PostgresBranch("app-branch", {
+  database: db,
+  migrationsDir: "./migrations",
+});
+```
+
+Pairing this with a `Drizzle.Schema` resource closes the loop: the
+schema resource regenerates pending migration SQL from your
+TypeScript schema, and the branch — wired to its `out` output —
+applies whatever is new, in one deploy:
+
+```typescript
+const schema = yield* Drizzle.Schema("app-schema", {
+  schema: "./src/schema.ts",
+  out: "./migrations",
+});
+
+const branch = yield* Planetscale.PostgresBranch("app-branch", {
+  database,
+  migrationsDir: schema.out,
+});
+```
+
+## Ordering and hashing
+
+Files are discovered recursively under `migrationsDir` and sorted by
+their numeric prefix (`0001_init.sql`, `0002_users.sql`, … — Drizzle's
+timestamp prefixes work too), falling back to name order for files
+without one. Each file's contents are SHA-256 hashed and the hashes
+are persisted in the resource's state (`migrationsHashes`), so adding
+a migration file — or editing an existing one — is what marks the
+resource for an update on the next deploy. When nothing changed, the
+migration step is skipped.
+
+## The tracking table
+
+Applied migrations are recorded in an `__alchemy_migrations` table
+(created automatically), one row per file:
+
+```sql
+CREATE TABLE IF NOT EXISTS "__alchemy_migrations" (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+(The MySQL flavor is the same shape with `varchar` columns.) On each
+deploy, files whose names already appear in the table are skipped.
+Use `migrationsTable` to point at a different table:
+
+```typescript
+const db = yield* Planetscale.PostgresDatabase("MyDb", {
+  clusterSize: "PS_10",
+  migrationsDir: "./migrations/postgres",
+  migrationsTable: "my_migrations",
+});
+```
+
+## Engine differences
+
+Both engines follow the same flow — mint a temporary credential,
+apply pending files, record them, delete the credential — but the
+details differ:
+
+**Postgres** connects with a temporary role inheriting `postgres`
+(10-minute TTL, deleted after the run — the TTL bounds the orphan
+window if deletion hiccups). Each migration file runs inside a
+transaction together with its bookkeeping `INSERT`, so a failing
+statement rolls the whole file back and fails the deploy; migrations
+that already committed stay applied. Fix the file and re-deploy — the
+run resumes from the failed migration.
+
+**MySQL (Vitess)** connects with a temporary `admin` password (same
+10-minute TTL). Files are split on Drizzle's `--> statement-breakpoint`
+marker — Vitess's parser rejects the `-->` token, so alchemy strips
+the breakpoints and runs each statement individually. MySQL DDL
+commits implicitly, so a failing multi-statement migration can leave
+earlier statements applied; prefer one schema change per migration
+file.
+
+## Seed data
+
+`importFiles` lists additional `.sql` files to apply after
+migrations. Paths are resolved relative to the working directory:
+
+```typescript
+const db = yield* Planetscale.PostgresDatabase("MyDb", {
+  clusterSize: "PS_10",
+  migrationsDir: "./migrations/postgres",
+  importFiles: ["./seed/postgres.sql"],
+});
+```
+
+Unlike migrations, import files are not recorded in the tracking
+table. Each file is content-hashed and re-applied whenever its
+contents change, so write them to be safe to run more than once
+(`INSERT ... ON CONFLICT DO NOTHING` and the like). Files whose
+hashes match the previous deploy are skipped.
+
+Branches also support PlanetScale-native seeding at creation time:
+`seedData: "last_successful_backup"` restores the last successful
+backup's schema and data into the new branch, and `backupId` restores
+a specific backup. Both are ignored if the branch already exists.
+
+```typescript
+const branch = yield* Planetscale.PostgresBranch("app-branch", {
+  database: db,
+  seedData: "last_successful_backup",
+});
+```
+
+## Where next
+
+Guides:
+
+- [Add Drizzle ORM](/cloudflare/data/drizzle) — typed schemas and
+  generated migrations.
+- [Branch from a shared database](/cloudflare/data/branch-from-shared-database)
+  — branch-per-PR preview environments.
+
+Related:
+
+- [Postgres](/planetscale/data/postgres) — databases, branches, and roles.
+- [MySQL](/planetscale/data/mysql) — the Vitess-backed family.
+
+Reference:
+
+- [PostgresDatabase](/providers/planetscale/postgres/postgresdatabase) ·
+  [PostgresBranch](/providers/planetscale/postgres/postgresbranch)
+- [MySQLDatabase](/providers/planetscale/mysql/mysqldatabase) ·
+  [MySQLBranch](/providers/planetscale/mysql/mysqlbranch)

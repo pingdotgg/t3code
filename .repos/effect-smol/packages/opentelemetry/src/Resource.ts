@@ -1,33 +1,12 @@
 /**
- * OpenTelemetry resource service for Effect telemetry layers.
+ * OpenTelemetry resource service and layers.
  *
  * An OpenTelemetry resource identifies the process or service that emits spans,
- * metrics, and logs. This module stores that resource in Effect context so
- * tracer, metric, logger, Node SDK, and Web SDK layers can create providers with
- * consistent service metadata.
- *
- * **Mental model**
- *
- * Resource attributes describe stable producer metadata such as `service.name`,
- * `service.version`, deployment, process, or environment attributes. They are
- * attached to telemetry providers, not to individual spans or log records.
- *
- * **Common tasks**
- *
- * Use `layer` when service metadata is configured in code, `layerFromEnv` when
- * deployment supplies `OTEL_SERVICE_NAME` or `OTEL_RESOURCE_ATTRIBUTES`, and
- * `layerEmpty` for tests or integrations that intentionally provide no resource
- * attributes. `configToAttributes` converts the explicit configuration shape
- * into OpenTelemetry semantic-convention attributes for composition with other
- * resource sources.
- *
- * **Gotchas**
- *
- * `layer` merges custom attributes first and then writes `service.name` and
- * `telemetry.sdk.*`, so those keys are controlled by this package. In
- * `layerFromEnv`, `OTEL_SERVICE_NAME` overrides `service.name` from
- * `OTEL_RESOURCE_ATTRIBUTES`, and any additional attributes passed to the layer
- * are merged last.
+ * metrics, and logs. This module stores that resource in Effect context and
+ * provides layers for creating it from explicit service metadata, from
+ * `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`, or as an empty resource.
+ * It also includes `configToAttributes` for turning service metadata into raw
+ * OpenTelemetry attributes.
  *
  * @since 4.0.0
  */
@@ -39,6 +18,7 @@ import * as Config from "effect/Config"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Rec from "effect/Record"
 
 /**
  * Service tag for OpenTelemetry metadata attached to emitted telemetry.
@@ -48,7 +28,7 @@ import * as Layer from "effect/Layer"
  * Use to provide process, service, and deployment metadata that should be
  * attached to spans, metrics, and logs.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export class Resource extends Context.Service<
@@ -78,7 +58,7 @@ export const layer = (config: {
  * **When to use**
  *
  * Use to turn explicit service metadata into a raw OpenTelemetry attribute map
- * for lower-level resource construction or for merging with environment-derived
+ * for lower-level resource construction or merging with environment-derived
  * attributes via `layerFromEnv`.
  *
  * **Details**
@@ -141,7 +121,7 @@ export const layerFromEnv = (
             if (parts.length !== 2) {
               return acc
             }
-            acc[parts[0].trim()] = parts[1].trim()
+            Rec.assignProperty(acc, parts[0].trim(), parts[1].trim())
             return acc
           })
         })
@@ -149,10 +129,10 @@ export const layerFromEnv = (
       if (serviceName._tag === "Some") {
         attributes[OtelSemConv.ATTR_SERVICE_NAME] = serviceName.value
       }
-      if (additionalAttributes) {
-        Object.assign(attributes, additionalAttributes)
-      }
-      return Resources.resourceFromAttributes(attributes)
+      return Resources.resourceFromAttributes({
+        ...attributes,
+        ...additionalAttributes
+      })
     }).pipe(Effect.orDie)
   )
 

@@ -24,7 +24,7 @@ interface QueueMessageBody {
 export default class Api extends Cloudflare.Worker<Api>()(
   "Api",
   {
-    main: import.meta.filename,
+    main: import.meta.url,
     observability: {
       enabled: true,
     },
@@ -38,19 +38,20 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const agents = yield* Agent;
     const rooms = yield* Room;
     const notifier = yield* NotifyWorkflow;
-    const loader = yield* Cloudflare.DynamicWorkerLoader("Loader");
-    const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
-    const kv = yield* Cloudflare.KVNamespace.bind(KV);
+    const loader = yield* Cloudflare.WorkerLoader("Loader");
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
+    const kv = yield* Cloudflare.KV.ReadWriteNamespace(KV);
     const queueResource = yield* Queue;
-    const queue = yield* Cloudflare.QueueBinding.bind(queueResource);
-    const repos = yield* Cloudflare.Artifacts.bind(Repos);
-    const aiGateway = yield* Cloudflare.AiGateway.bind(Gateway);
+    const queue = yield* Cloudflare.Queues.WriteQueue(queueResource);
+    const repos = yield* Cloudflare.Artifacts.ReadWriteNamespace(Repos);
+    const aiGateway = yield* Cloudflare.AI.QueryGateway(Gateway);
 
     // Effect-style queue consumer. Each batch is piped through the
     // handler; success ack()s every message in the batch, failure
     // retry()s. The persisted JSON at /queue/<id> on R2 lets the
     // integ test verify the producer→consumer round-trip.
-    yield* Cloudflare.messages<QueueMessageBody>(queueResource).subscribe(
+    yield* Cloudflare.Queues.consumeQueueMessages<QueueMessageBody>(
+      queueResource,
       (stream) =>
         Stream.runForEach(stream, (msg) =>
           bucket
@@ -118,7 +119,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
               ),
             );
           } else if (request.method === "POST" || request.method === "PUT") {
-            // const request = yield* Cloudflare.Request
+            // const request = yield* Cloudflare.Workers.Request
             const key = request.url.split("/").pop()!;
             return yield* bucket
               .put(key, request.stream, {
@@ -162,8 +163,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
             );
           }
           const instance = yield* notifier.create({
-            roomId,
-            message: "hello from workflow",
+            params: {
+              roomId,
+              message: "hello from workflow",
+            },
           });
           return yield* HttpServerResponse.json({ instanceId: instance.id });
         } else if (request.url.startsWith("/workflow/status/")) {
@@ -180,7 +183,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         } else if (request.url.startsWith("/eval")) {
           if (request.method === "POST") {
             const code = yield* request.text;
-            const worker = loader.load({
+            const worker = yield* loader.load({
               compatibilityDate: "2026-01-28",
               mainModule: "worker.js",
               modules: {
@@ -353,14 +356,14 @@ export default class Api extends Cloudflare.Worker<Api>()(
         // GET  /queue/result/:id reads the bucket entry the consumer
         //                        wrote when it processed that message.
         //
-        // Producer side: `Cloudflare.QueueBinding`. Consumer side:
-        // `Cloudflare.messages(Queue).subscribe(...)` registered in
-        // the init phase (above), with `QueueEventSourceLive` on the
+        // Producer side: `Cloudflare.Queues.WriteQueue`. Consumer side:
+        // `Cloudflare.Queues.consumeQueueMessages(Queue, handler)` registered in
+        // the init phase (above), with `EventSourceLive` on the
         // worker layer.
         // AI Gateway smoke test — POST /ai with { prompt }.
         //
         // Routes a Workers AI inference call through the gateway resource so
-        // every request is observable in the Cloudflare AI Gateway UI and
+        // every request is observable in the Cloudflare.AI. Gateway UI and
         // benefits from caching/rate limiting configured on the resource.
         if (request.url.startsWith("/ai") && request.method === "POST") {
           const text = yield* request.text;
@@ -419,7 +422,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             );
           }
           // DELETE — used by the integ test to clear consumed
-          // entries before stack.destroy(), so R2Bucket delete
+          // entries before stack.destroy(), so Bucket delete
           // doesn't fail with "bucket not empty".
           if (request.method === "DELETE") {
             return yield* bucket.delete(`/queue/${id}`).pipe(
@@ -446,12 +449,12 @@ export default class Api extends Cloudflare.Worker<Api>()(
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        Cloudflare.R2BucketBindingLive,
-        Cloudflare.KVNamespaceBindingLive,
-        Cloudflare.QueueBindingLive,
-        Cloudflare.QueueEventSourceLive,
-        Cloudflare.ArtifactsBindingLive,
-        Cloudflare.AiGatewayBindingLive,
+        Cloudflare.R2.ReadWriteBucketBinding,
+        Cloudflare.KV.ReadWriteNamespaceBinding,
+        Cloudflare.Queues.WriteQueueBinding,
+        Cloudflare.Queues.EventSourceLive,
+        Cloudflare.Artifacts.ReadWriteNamespaceBinding,
+        Cloudflare.AI.QueryGatewayBinding,
       ),
     ),
   ),

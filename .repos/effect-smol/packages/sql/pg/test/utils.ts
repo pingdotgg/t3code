@@ -26,6 +26,15 @@ export class PgContainer extends Context.Service<PgContainer>()("test/PgContaine
     })
   ).pipe(Layer.provide(this.layer))
 
+  static layerMakeClient = Layer.unwrap(
+    Effect.gen(function*() {
+      const container = yield* PgContainer
+      return PgClient.layerFrom(PgClient.makeClient({
+        url: Redacted.make(container.getConnectionUri())
+      }))
+    })
+  ).pipe(Layer.provide(this.layer))
+
   static layerClientWithTransforms = Layer.unwrap(
     Effect.gen(function*() {
       const container = yield* PgContainer

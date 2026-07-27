@@ -6,7 +6,7 @@ import type { PathLike } from "node:fs"
 export const handleErrnoException = (module: SystemError["module"], method: string) =>
 (
   err: NodeJS.ErrnoException,
-  [path]: [path: PathLike | number, ...args: Array<any>]
+  [path]: [path: PathLike | number | string | readonly string[], ...args: Array<any>]
 ): PlatformError.PlatformError => {
   let reason: SystemErrorTag = "Unknown"
 

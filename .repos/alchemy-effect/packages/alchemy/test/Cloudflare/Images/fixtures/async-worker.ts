@@ -2,7 +2,7 @@ import type { AsyncWorkerEnv } from "./stack.ts";
 
 /**
  * Async (non-Effect) Worker fixture for the Cloudflare Images binding declared
- * via `env: { MEDIA: Cloudflare.Images(...) }`. `InferEnv` maps the marker to
+ * via `env: { MEDIA: Cloudflare.Images.Images(...) }`. `InferEnv` maps the marker to
  * the native `cf.ImagesBinding`, so the handler calls `env.MEDIA.info(...)`
  * directly with the request body's `ReadableStream`.
  */

@@ -1,7 +1,7 @@
 import * as ag from "@distilled.cloud/aws/api-gateway";
-import * as Duration from "effect/Duration";
+import * as Retry from "@distilled.cloud/aws/Retry";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import { pipe } from "effect/Function";
 import * as Schedule from "effect/Schedule";
 import { diffTags, normalizeTags } from "../../Tags.ts";
 
@@ -31,38 +31,16 @@ const isApiStatusUpdatingError = (error: unknown): boolean => {
 };
 
 /**
- * `Create/Update/DeleteRestApi` (and a few sibling operations) are governed
- * by a hard account-wide quota of one request every 30 seconds. The
- * blanket SDK retry policy caps at 5 attempts with sub-second backoff, so
- * tests and parallel deploys see `TooManyRequestsException` bubble out as
- * the SDK gives up well inside the throttle window.
+ * Schedule for API Gateway's transient API-status conflicts. Throttling is
+ * deliberately not retried here: the shared AWS client policy already has a
+ * bounded, capped retry window long enough to cross API Gateway's ~30-second
+ * mutation quota. Retrying throttling again at this layer would nest the two
+ * policies and turn one operation into a many-minute wait.
  */
-const isThrottlingError = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  (error as { _tag?: string })._tag === "TooManyRequestsException";
-
-/**
- * Schedule covering both fast (`apiStatus is UPDATING`) and slow
- * (throttle) recoverable conditions. Exponential 2s base capped at 35s,
- * with up to 12 attempts (~5 minutes total). The fast cases settle in the
- * first few iterations; throttle waits ride the cap until a token is
- * available.
- */
-const apiGatewayMutationSchedule = pipe(
-  Schedule.exponential(Duration.seconds(2), 2),
-  Schedule.modifyDelay((d: Duration.Duration) =>
-    Effect.succeed(
-      Duration.isGreaterThan(d, Duration.seconds(35))
-        ? Duration.seconds(35)
-        : d,
-    ),
-  ),
-  Schedule.both(Schedule.recurs(12)),
-  Schedule.addDelay(() =>
-    Effect.succeed(Duration.millis(Math.random() * 1000)),
-  ),
-);
+const apiGatewayMutationSchedule = Schedule.max([
+  Schedule.spaced("5 seconds"),
+  Schedule.recurs(10),
+]);
 
 /**
  * Wraps an API Gateway mutation so that recoverable 4xx responses are
@@ -70,7 +48,6 @@ const apiGatewayMutationSchedule = pipe(
  *
  * - `BadRequestException` with `apiStatus is UPDATING` or
  *   `already an update in progress` (transient, clears in seconds)
- * - `TooManyRequestsException` (account-wide throttle, ~30s window)
  *
  * Drop-in usage:
  *
@@ -85,9 +62,70 @@ export const retryOnApiStatusUpdating = <A, E, R>(
 ): Effect.Effect<A, E, R> =>
   Effect.retry(effect, {
     schedule: apiGatewayMutationSchedule,
-    while: (error: unknown) =>
-      isApiStatusUpdatingError(error) || isThrottlingError(error),
+    while: isApiStatusUpdatingError,
   }) as Effect.Effect<A, E, R>;
+
+const isRestApiDeleteRetryable = (error: unknown): boolean => {
+  if (!error || typeof error !== "object") return false;
+  const tagged = error as { _tag?: string; message?: string };
+  return (
+    tagged._tag === "TooManyRequestsException" ||
+    tagged._tag === "ConflictException" ||
+    (tagged._tag === "BadRequestException" &&
+      (tagged.message?.includes("apiStatus is UPDATING") === true ||
+        tagged.message?.includes("already an update in progress") === true))
+  );
+};
+
+// DeleteRestApi has its own unusually low regional quota (roughly one request
+// every 30 seconds). Override the blanket AWS retry layer for this operation:
+// otherwise its 5-second-capped budget expires after about a minute, and then
+// wrapping that exhausted call in another retry schedule creates an opaque,
+// nested multi-minute wait. This is one explicit 90-second wall instead.
+const restApiDeleteSchedule = Schedule.max([
+  Schedule.spaced("5 seconds"),
+  Schedule.recurs(18),
+]);
+
+class RestApiStillExists extends Data.TaggedError("RestApiStillExists")<{
+  readonly restApiId: string;
+}> {}
+
+const restApiGoneSchedule = Schedule.max([
+  Schedule.spaced("1 second"),
+  Schedule.recurs(8),
+]);
+
+/**
+ * Idempotently delete a REST API and observe it disappear.
+ *
+ * Every provider/test cleanup path uses this helper so nuke, normal destroy,
+ * and interrupted-run reapers all share the same bounded throttle handling.
+ */
+export const deleteRestApiAndWait = Effect.fn(function* (restApiId: string) {
+  yield* ag.deleteRestApi({ restApiId }).pipe(
+    Retry.policy({
+      while: isRestApiDeleteRetryable,
+      schedule: restApiDeleteSchedule,
+    }),
+    Effect.catchTag("NotFoundException", () => Effect.void),
+  );
+
+  // Avoid nesting the account-wide AWS retry policy inside the observable
+  // poll. Each getRestApi is single-shot; this one bounded schedule owns both
+  // throttled reads and the short eventual-consistency window.
+  const observe = Retry.none(ag.getRestApi({ restApiId }));
+  yield* observe.pipe(
+    Effect.flatMap(() => Effect.fail(new RestApiStillExists({ restApiId }))),
+    Effect.retry({
+      while: (error) =>
+        error._tag === "TooManyRequestsException" ||
+        error._tag === "RestApiStillExists",
+      schedule: restApiGoneSchedule,
+    }),
+    Effect.catchTag("NotFoundException", () => Effect.void),
+  );
+});
 
 export const restApiArn = (region: string, restApiId: string) =>
   `arn:aws:apigateway:${region}::/restapis/${restApiId}`;

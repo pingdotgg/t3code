@@ -2,35 +2,10 @@
  * Bun Redis integration backed by Bun's built-in `RedisClient`.
  *
  * This module creates scoped Bun `RedisClient` connections and exposes them as
- * both the portable `Redis` service used by Effect persistence modules and the
- * Bun-specific `BunRedis` service for direct access to the raw client. Use it in
- * Bun applications that need Redis-backed persistence, persisted queues,
- * distributed rate limiting, custom Redis commands, or Bun Redis features such
- * as pub/sub.
- *
- * **Mental model**
- *
- * `layer` and `layerConfig` acquire one `RedisClient` for the layer scope. The
- * same client backs the portable `Redis.Redis` command interface and the
- * `BunRedis` service, and it is closed with `close` when the scope finalizes.
- * Install the layer at the lifetime you want for that connection.
- *
- * **Common tasks**
- *
- * Pass a Redis URL or Bun `RedisOptions` to `layer` for direct configuration,
- * or use `layerConfig` when connection settings should come from Effect
- * configuration. Depend on `Redis.Redis` for persistence and rate limiter
- * stores. Depend on `BunRedis` when you need `RedisClient` features that are
- * not exposed by the portable service, including custom commands and pub/sub.
- *
- * **Gotchas**
- *
- * Pub/sub should normally use a separately scoped client so a subscription does
- * not interfere with ordinary command traffic. Persistence and rate limiter
- * stores build keys and Lua scripts on top of this service, so choose stable
- * prefixes and store ids, account for persisted values that may fail to decode
- * after schema changes, and avoid unbounded high-cardinality rate-limit keys
- * without a cleanup or bounding strategy.
+ * both the portable `Redis` service and the Bun-specific `BunRedis` service for
+ * direct access to the raw client. The `layer` helper accepts Redis options
+ * directly, while `layerConfig` reads them from Effect config. Both close the
+ * underlying client when the layer scope finalizes.
  *
  * @since 4.0.0
  */

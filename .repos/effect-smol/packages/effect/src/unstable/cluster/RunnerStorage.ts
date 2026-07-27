@@ -1,26 +1,11 @@
 /**
- * The `RunnerStorage` module defines the persistence boundary used by clustered
- * runners to register themselves and coordinate shard ownership.
+ * Stores runner registration and shard-lock state for cluster sharding.
  *
- * Implementations keep track of runner metadata, health, machine ids, and shard
- * locks so a cluster can rebalance work as runners join, leave, or lose their
- * leases. Production adapters usually implement the string-encoded interface and
- * adapt it with {@link makeEncoded}; tests and local setups can use
- * {@link makeMemory}.
- *
- * **Common tasks**
- *
- * - Register and unregister runners in a shared store
- * - Read runner health for scheduling and rebalancing decisions
- * - Acquire, refresh, and release shard locks for distributed processing
- * - Bridge typed cluster values to string or numeric database representations
- *
- * **Gotchas**
- *
- * - Shard acquisition may be partial; callers must use the returned shard list
- * - Refreshing leases is part of keeping shard ownership during rebalancing
- * - The in-memory implementation is process-local and does not persist runner
- *   registrations or locks across restarts
+ * `RunnerStorage` records which runners are registered, whether they are
+ * healthy, which machine id a runner receives, and which shard locks are held
+ * by each runner. This module includes the typed storage service, a
+ * string-encoded backend interface, an adapter from encoded storage to the typed
+ * service, and an in-memory implementation for tests and local use.
  *
  * @since 4.0.0
  */
@@ -235,7 +220,7 @@ export const makeMemory = Effect.gen(function*() {
     setRunnerHealth: () => Effect.void,
     acquire: (_address, shardIds) => {
       acquired = Array.from(shardIds)
-      return Effect.succeed(Array.from(shardIds))
+      return Effect.succeed(acquired)
     },
     refresh: () => Effect.sync(() => acquired),
     release: () => Effect.void,

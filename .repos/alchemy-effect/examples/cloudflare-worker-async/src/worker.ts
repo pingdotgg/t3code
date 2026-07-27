@@ -6,7 +6,7 @@ import type { WorkerEnv } from "../alchemy.run.ts";
  * self-contained. Both producer (`env.Queue.send(...)`) and consumer (the
  * `queue()` handler below) use this shape.
  */
-interface QueueMessage {
+interface Message {
   id: string;
   text: string;
   sentAt: number;
@@ -26,12 +26,12 @@ export default {
 
     // Queue producer — POST /queue/send?text=...
     //
-    // Exercises Cloudflare.QueueBinding by calling `env.Queue.send(...)`.
+    // Exercises Cloudflare.Queues.WriteQueue by calling `env.Queue.send(...)`.
     // The message is persisted by the consumer handler into R2 at /queue/<id>
     // so the integ test can read it back and assert the full round-trip.
     if (request.method === "POST" && path === "/queue/send") {
       const text = url.searchParams.get("text") ?? "hello queue";
-      const msg: QueueMessage = {
+      const msg: Message = {
         id: crypto.randomUUID(),
         text,
         sentAt: Date.now(),
@@ -63,13 +63,13 @@ export default {
 
   /**
    * Queue consumer handler — invoked by Cloudflare when messages accumulate
-   * on the Queue registered as a QueueConsumer for this worker.
+   * on the Queue registered as a Consumer for this worker.
    *
    * Persists each message body into R2 under `/queue/<id>` so the integ test
    * (or a manual `GET /queue/<id>`) can verify the round-trip succeeded.
    * `msg.ack()` marks the message as consumed so it isn't redelivered.
    */
-  async queue(batch: MessageBatch<QueueMessage>, env: WorkerEnv) {
+  async queue(batch: MessageBatch<Message>, env: WorkerEnv) {
     for (const msg of batch.messages) {
       await env.Bucket.put(`/queue/${msg.body.id}`, JSON.stringify(msg.body), {
         httpMetadata: { contentType: "application/json" },

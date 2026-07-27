@@ -62,7 +62,7 @@ export interface KeyGroup extends Resource<
  * `TrustedKeyGroups` on a Distribution's cache behavior. CloudFront uses
  * the keys in the group to verify the signatures on signed URLs and
  * signed cookies for that behavior.
- *
+ * @resource
  * @section Creating Key Groups
  * @example Group two public keys for signed URL verification
  * ```typescript
@@ -132,6 +132,26 @@ export const KeyGroupProvider = () =>
 
       return {
         stables: ["keyGroupId"],
+        list: () =>
+          Effect.gen(function* () {
+            const items: ReturnType<typeof toAttrs>[] = [];
+            let marker: string | undefined = undefined;
+            do {
+              const listed: cloudfront.ListKeyGroupsResult =
+                yield* cloudfront.listKeyGroups({ Marker: marker });
+              for (const summary of listed.KeyGroupList?.Items ?? []) {
+                const id = summary.KeyGroup?.Id;
+                const config = summary.KeyGroup?.KeyGroupConfig;
+                if (!id || !config) continue;
+                // The list summary omits the ETag; re-read each group to
+                // produce the exact Attributes shape `read` returns.
+                const found = yield* getById(id);
+                items.push(toAttrs(id, found?.config ?? config, found?.etag));
+              }
+              marker = listed.KeyGroupList?.NextMarker;
+            } while (marker);
+            return items;
+          }),
         diff: Effect.fn(function* ({ id, news, olds }) {
           if (!isResolved(news)) return undefined;
           if (

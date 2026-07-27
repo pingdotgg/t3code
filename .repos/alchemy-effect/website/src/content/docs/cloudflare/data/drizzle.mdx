@@ -1,0 +1,573 @@
+---
+title: Add Drizzle ORM
+description: Replace raw pg with Drizzle's effect-postgres integration, manage your schema as a resource, and have alchemy generate and apply migrations on every deploy — on Neon or PlanetScale.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const drizzleDeps = `drizzle-orm@^1.0.0-rc.4 @effect/sql-pg pg`;
+export const drizzleDevDeps = `drizzle-kit@^1.0.0-rc.4 @types/pg`;
+
+The previous tutorial wired your Worker to Neon Postgres through
+Hyperdrive. Now we'll layer **Drizzle ORM** on top: typed schemas,
+typed queries, and — most usefully — a `Drizzle.Schema` resource
+that regenerates migration SQL programmatically on every deploy
+and lets `Neon.Branch` apply them transactionally.
+
+Targeting D1 instead of Postgres? The same flow on Cloudflare's
+serverless SQLite — `dialect: "sqlite"`, the native binding as
+transport, and the `effect-d1` driver — is covered in
+[Drizzle on D1](/cloudflare/data/d1-drizzle).
+
+## Define the schema
+
+Drizzle schemas are plain TypeScript modules. Create
+`src/schema.ts`:
+
+```typescript
+// src/schema.ts
+import {
+  integer,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
+
+export const Users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const Posts = pgTable("posts", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => Users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+```
+
+## Add the Drizzle provider
+
+`Drizzle.Schema` is registered through its own `providers()` layer
+— a build-time provider that owns your migrations directory:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Cloudflare from "alchemy/Cloudflare";
++import * as Drizzle from "alchemy/Drizzle";
+import * as Neon from "alchemy/Neon";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "MyStack",
+  {
+-    providers: Layer.mergeAll(Cloudflare.providers(), Neon.providers()),
++    providers: Layer.mergeAll(
++      Cloudflare.providers(),
++      Drizzle.providers(),
++      Neon.providers(),
++    ),
+    state: Alchemy.localState(),
+  },
+  // ...
+);
+```
+
+The provider has no required credentials — it just needs
+`drizzle-kit` installed (declared as an optional peer of `alchemy`).
+Add `drizzle-orm`, `@effect/sql-pg`, and `pg` as runtime deps and
+`drizzle-kit` + `@types/pg` as dev deps:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${drizzleDeps}\nbun add -d ${drizzleDevDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${drizzleDeps}\nnpm install -D ${drizzleDevDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${drizzleDeps}\npnpm add -D ${drizzleDevDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${drizzleDeps}\nyarn add -D ${drizzleDevDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Add `Drizzle.Schema` to your Db effect
+
+Inline the schema resource directly into `NeonDb` — its `out`
+output becomes the input to `Neon.Branch`'s `migrationsDir`, so
+alchemy automatically schedules `Drizzle.Schema` *before* the
+branch resource each deploy:
+
+```diff lang="typescript"
+// src/Db.ts
+import * as Cloudflare from "alchemy/Cloudflare";
++import * as Drizzle from "alchemy/Drizzle";
+import * as Neon from "alchemy/Neon";
+import * as Effect from "effect/Effect";
+
+export const NeonDb = Effect.gen(function* () {
++  const schema = yield* Drizzle.Schema("app-schema", {
++    schema: "./src/schema.ts",
++    out: "./migrations",
++  });
++
+  const project = yield* Neon.Project("app-db", { region: "aws-us-east-1" });
+-  const branch = yield* Neon.Branch("app-branch", { project });
++  const branch = yield* Neon.Branch("app-branch", {
++    project,
++    migrationsDir: schema.out,
++  });
+-  return { project, branch };
++  return { project, branch, schema };
+});
+```
+
+On every `bun alchemy deploy`, the provider:
+
+1. Loads `./src/schema.ts` via dynamic `import()`.
+2. Calls `drizzle-kit/api-postgres`'s `generateDrizzleJson` against
+   the schema and `generateMigration` against the previous
+   snapshot under `./migrations`.
+3. If anything changed, writes a new
+   `migrations/<timestamp>_migration/{migration.sql, snapshot.json}`
+   directory.
+4. `Neon.Branch` then runs every pending `.sql` file
+   transactionally against the branch's primary database.
+
+No `drizzle-kit generate` step in your CI — the deploy owns it.
+
+## Open the connection with `Drizzle.Postgres`
+
+`Drizzle.Postgres` takes Hyperdrive's connection string and returns a
+typed `EffectPgDatabase`. Bind it once at init and use it directly
+inside `fetch` — no manual `Client` setup, no `Effect.promise(...)`
+wrappers around queries:
+
+```typescript
+// src/Api.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Hyperdrive } from "./Db.ts";
+import { Users } from "./schema.ts";
+
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  {
+    main: import.meta.url,
+    compatibility: {
+      // node-postgres needs Node.js APIs to run inside a Worker.
+      flags: ["nodejs_compat"],
+    },
+  },
+  Effect.gen(function* () {
+    const hd = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive);
+    const db = yield* Drizzle.Postgres(hd.connectionString);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const users = yield* db.select().from(Users);
+        return yield* HttpServerResponse.json(users);
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Hyperdrive.ConnectBinding)),
+) {}
+```
+
+A few things to call out:
+
+- `db.select().from(Users)` is an `Effect`. You `yield*` it directly.
+  The full drizzle/effect-postgres builder is supported (`select`,
+  `insert`, `update`, `delete`, `with`, transactions).
+- The pool is built lazily on the first query and memoized on the
+  `ExecutionContext`, so it's created at most once per execution — a
+  `fetch`/`queue`/`scheduled` event or a Workflow run — and reused by
+  every query in that execution. It's torn down when the execution's
+  scope closes.
+- `nodejs_compat` is required because `pg` (node-postgres) powers the
+  underlying transport.
+
+## Deploy
+
+```sh
+bun alchemy deploy
+```
+
+The first deploy regenerates `./migrations` from your schema (since
+no snapshot exists yet) and applies the resulting `CREATE TABLE`
+statements to your branch. Hit your Worker URL and you should see:
+
+```json
+[]
+```
+
+## Define relations for typed `db.query`
+
+The basic client supports the SQL builder (`select`, `insert`, etc.)
+but not the relational query API. To unlock `db.query.*` with typed
+`with` clauses, declare your relations using `defineRelations` and
+export them from `src/schema.ts`:
+
+```diff lang="typescript"
+// src/schema.ts
++import { defineRelations } from "drizzle-orm";
+import {
+  integer,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
+
+export const Users = pgTable("users", { /* ... */ });
+export const Posts = pgTable("posts", { /* ... */ });
+
++export const relations = defineRelations({ Users, Posts }, (t) => ({
++  Users: {
++    posts: t.many.Posts(),
++  },
++  Posts: {
++    user: t.one.Users({
++      from: t.Posts.userId,
++      to: t.Users.id,
++    }),
++  },
++}));
+```
+
+`defineRelations` is purely a type-level + metadata wiring step — it
+doesn't touch the generated migration SQL. The foreign key was
+already declared on `Posts.userId.references(...)`.
+
+## Pass `relations` to `Drizzle.Postgres`
+
+Hand the relations object to `Drizzle.Postgres` as its second
+argument. The returned `db` now exposes a typed `db.query` namespace
+keyed by your table names:
+
+```diff lang="typescript"
+// src/Api.ts
+import { Hyperdrive } from "./Db.ts";
+-import { Users } from "./schema.ts";
++import { relations, Users } from "./schema.ts";
+
+Effect.gen(function* () {
+  const hd = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive);
+-  const db = yield* Drizzle.Postgres(hd.connectionString);
++  const db = yield* Drizzle.Postgres(hd.connectionString, {
++    relations,
++  });
+
+  return {
+    fetch: Effect.gen(function* () {
+-      const users = yield* db.select().from(Users);
+-      return yield* HttpServerResponse.json(users);
++      const user = yield* db.query.Users.findFirst({
++        where: { id: 1 },
++        with: { posts: true },
++      });
++      return yield* HttpServerResponse.json({ user });
+    }),
+  };
+})
+```
+
+`db.query.Users.findFirst` is fully typed: `where` accepts a typed
+predicate object keyed by `Users` columns, and `with: { posts: true }`
+is only valid because `relations` declared `Users.posts`. The result
+type includes `posts: Post[]` automatically — no manual joins.
+
+## Iterate on the schema
+
+Add a column or a table to `src/schema.ts` and run
+`bun alchemy deploy` again. The provider:
+
+1. Diffs the new schema against the latest snapshot.
+2. Writes a *new* migration directory with just the delta SQL.
+3. `Neon.Branch` notices the new file, runs it inside a
+   transaction, and records it in the `neon_migrations` tracking
+   table so it's not re-applied.
+
+Roll back simply by reverting your schema change and redeploying —
+or by spinning up a `Neon.Branch` that forks from a point-in-time
+LSN before the migration.
+
+## Use PlanetScale instead
+
+Everything above works the same with [PlanetScale](/planetscale) —
+swap the Neon resources in `src/Db.ts` for their PlanetScale
+counterparts and point Hyperdrive at the branch's credentials.
+PlanetScale offers both Postgres and MySQL databases (see
+[setup](/planetscale/setup) for credentials).
+
+<Tabs syncKey="psDialect">
+<TabItem label="Postgres">
+
+Register `Planetscale.providers()` alongside the Drizzle provider:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle";
+-import * as Neon from "alchemy/Neon";
++import * as Planetscale from "alchemy/Planetscale";
+import * as Layer from "effect/Layer";
+
+    providers: Layer.mergeAll(
+      Cloudflare.providers(),
+      Drizzle.providers(),
+-      Neon.providers(),
++      Planetscale.providers(),
+    ),
+```
+
+Then rebuild `src/Db.ts` around a PlanetScale Postgres database,
+branch, and role. `Drizzle.Schema` is unchanged, and
+`Planetscale.PostgresBranch` accepts the same `migrationsDir`
+contract `Neon.Branch` did — it scans the directory and applies
+pending migrations transactionally on every deploy:
+
+```typescript
+// src/Db.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle";
+import * as Planetscale from "alchemy/Planetscale";
+import * as Effect from "effect/Effect";
+
+export const PlanetscaleDb = Effect.gen(function* () {
+  const schema = yield* Drizzle.Schema("app-schema", {
+    schema: "./src/schema.ts",
+    out: "./migrations",
+  });
+
+  const database = yield* Planetscale.PostgresDatabase("app-db", {
+    region: { slug: "us-east" },
+    clusterSize: "PS_10",
+  });
+
+  const branch = yield* Planetscale.PostgresBranch("app-branch", {
+    database,
+    migrationsDir: schema.out,
+  });
+
+  const role = yield* Planetscale.PostgresRole("app-role", {
+    database,
+    branch,
+    inheritedRoles: ["postgres"],
+  });
+
+  return { database, branch, role, schema };
+});
+
+export const Hyperdrive: Effect.Effect<
+  Cloudflare.Hyperdrive.Connection,
+  never,
+  any
+> = Effect.gen(function* () {
+  const { role } = yield* PlanetscaleDb;
+  return yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
+    origin: role.origin,
+    caching: { disabled: true },
+  });
+});
+```
+
+`Planetscale.PostgresRole` mints the credentials — its `origin`
+output feeds Hyperdrive the host, port, user, and password in one
+object. The Worker code needs no changes at all:
+`Drizzle.Postgres(conn.connectionString, { relations })` speaks the
+Postgres wire protocol through Hyperdrive regardless of who hosts
+the database, so the schema, relations, and every query from the
+walkthrough above carry over verbatim.
+
+</TabItem>
+<TabItem label="MySQL">
+
+The MySQL flavor changes three things: the schema dialect, how
+migrations are generated, and the runtime client. Start with the
+schema — same tables, `mysql-core` column builders:
+
+```typescript
+// src/schema.ts
+import { defineRelations } from "drizzle-orm";
+import { int, mysqlTable, timestamp, varchar } from "drizzle-orm/mysql-core";
+
+export const Users = mysqlTable("users", {
+  id: int("id").primaryKey().autoincrement(),
+  email: varchar("email", { length: 255 }).notNull().unique(),
+  name: varchar("name", { length: 255 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+```
+
+(`Posts` and the `defineRelations` block follow the same shape as
+the Postgres version.)
+
+Migrations are generated with `drizzle-kit generate` and checked in,
+rather than regenerated by a `Drizzle.Schema` resource on deploy.
+Add a `drizzle.config.ts`:
+
+```typescript
+// drizzle.config.ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  schema: "./src/schema.ts",
+  out: "./migrations",
+  dialect: "mysql",
+});
+```
+
+Run `bun drizzle-kit generate` whenever the schema changes — the
+branch resource picks up whatever `.sql` files it finds under
+`./migrations`, so there's no `Drizzle.providers()` layer to
+register in `alchemy.run.ts` (just `Cloudflare.providers()` and
+`Planetscale.providers()`).
+
+`src/Db.ts` uses the MySQL resource trio — database, branch, and a
+`Planetscale.MySQLPassword` in place of the Postgres role:
+
+```typescript
+// src/Db.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Planetscale from "alchemy/Planetscale";
+import * as Effect from "effect/Effect";
+
+export const PlanetscaleDb = Effect.gen(function* () {
+  const database = yield* Planetscale.MySQLDatabase("app-db", {
+    region: { slug: "us-east" },
+    clusterSize: "PS_10",
+  });
+
+  const branch = yield* Planetscale.MySQLBranch("app-branch", {
+    database,
+    isProduction: false,
+    migrationsDir: "./migrations",
+  });
+
+  const password = yield* Planetscale.MySQLPassword("app-password", {
+    database,
+    branch,
+    role: "readwriter",
+  });
+
+  return { database, branch, password };
+});
+
+export const Hyperdrive: Effect.Effect<
+  Cloudflare.Hyperdrive.Connection,
+  never,
+  any
+> = Effect.gen(function* () {
+  const { password } = yield* PlanetscaleDb;
+  return yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
+    origin: password.origin,
+    caching: { disabled: true },
+  });
+});
+```
+
+At runtime alchemy doesn't ship a MySQL Drizzle helper yet — use
+`drizzle-orm/mysql2` directly (swap the `pg` dependency for
+`mysql2`). The client is created per request and closed when the
+response is done:
+
+```typescript
+// src/Api.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import { drizzle } from "drizzle-orm/mysql2";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Hyperdrive } from "./Db.ts";
+import * as schema from "./schema.ts";
+import { relations, Users } from "./schema.ts";
+
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  {
+    main: import.meta.url,
+    compatibility: {
+      flags: ["nodejs_compat"],
+    },
+  },
+  Effect.gen(function* () {
+    const conn = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const connectionString = yield* conn.connectionString;
+        const db = drizzle({
+          connection: {
+            uri: Redacted.value(connectionString),
+            // mysql2's text/binary parsers JIT via `new Function(...)`,
+            // which Cloudflare Workers' isolate disallows.
+            disableEval: true,
+          },
+          schema,
+          relations,
+          mode: "default",
+        });
+
+        const close = Effect.tryPromise({
+          try: () => db.$client.end(),
+          catch: (cause) => cause,
+        }).pipe(Effect.catch(() => Effect.void));
+
+        return yield* Effect.gen(function* () {
+          const users = yield* Effect.tryPromise({
+            try: () => db.select().from(Users),
+            catch: (cause) => cause,
+          });
+          return yield* HttpServerResponse.json({ users });
+        }).pipe(Effect.ensuring(close));
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Hyperdrive.ConnectBinding)),
+) {}
+```
+
+Two MySQL-specific details: `disableEval: true` is required because
+mysql2's parsers compile via `new Function(...)`, which the Workers
+isolate blocks; and queries go through `Effect.tryPromise` because
+the plain mysql2 driver returns Promises — there's no effect-native
+integration like `@effect/sql-pg` on this path.
+
+</TabItem>
+</Tabs>
+
+For long-lived shared databases with per-PR branches on top, the
+same tiering pattern from the
+[branch-from-shared-database guide](/cloudflare/data/branch-from-shared-database)
+applies to PlanetScale — use `Planetscale.PostgresDatabase.ref` /
+`Planetscale.MySQLDatabase.ref` to reference a database owned by
+another stage.
+
+## Where to from here
+
+Your Worker now has typed Postgres queries through Drizzle, an
+edge-pooled connection through Hyperdrive, automatically-generated
+migrations, and per-deploy state validated against your TypeScript
+schema. That's the full database story for the Cloudflare track —
+combine it freely with the Durable Objects, Workflows, AI Gateway,
+and Container primitives from earlier tutorials.
+
+- [PlanetScale provider](/planetscale) — databases, branches, roles,
+  and passwords as resources
+- [Neon provider](/neon) — projects, branches, and
+  [migrations](/neon/data/migrations)
+- [SQL hub](/sql) — where `Drizzle.Schema`'s generation and
+  diff semantics live, including [Drizzle migrations](/sql/drizzle/migrations)

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import * as Effect from "effect/Effect";
-import * as Binding from "../../Binding.ts";
 import type { PolicyStatement } from "../IAM/Policy.ts";
 import type { Queue } from "../SQS/Queue.ts";
 import type { EventBus } from "./EventBus.ts";
@@ -24,33 +23,18 @@ export interface QueueRouteTargetProps extends Pick<
   sqsParameters?: RuleTarget["SqsParameters"];
 }
 
-export class ToQueuePolicy extends Binding.Policy<
-  ToQueuePolicy,
-  (rule: { ruleArn: unknown }, queue: Queue) => Effect.Effect<void>
->()("AWS.EventBridge.ToQueue") {}
-
-export const ToQueuePolicyLive = ToQueuePolicy.layer.succeed(
-  Effect.fn(function* (_host, rule, queue) {
-    yield* queue.bind`Allow(${rule}, AWS.EventBridge.toQueue(${queue}))`({
-      policyStatements: [
-        {
-          Effect: "Allow",
-          Principal: {
-            Service: "events.amazonaws.com",
-          },
-          Action: ["sqs:SendMessage"],
-          Resource: [queue.queueArn as any],
-          Condition: {
-            ArnEquals: {
-              "aws:SourceArn": [rule.ruleArn as any],
-            },
-          },
-        } satisfies PolicyStatement,
-      ],
-    });
-  }),
-);
-
+/**
+ * Routes matching events from an EventBridge bus to an SQS queue.
+ *
+ * Creates a {@link Rule} targeting the queue and binds a queue policy that
+ * allows `events.amazonaws.com` to send messages from that rule. Usually
+ * reached through the `events(...)` builder rather than called directly.
+ * @binding
+ * @example Route Matching Events to an SQS Queue
+ * ```typescript
+ * yield* AWS.EventBridge.events(bus, { source: ["my.app"] }).toQueue(queue);
+ * ```
+ */
 export const toQueue = (
   descriptor: EventDescriptor,
   queue: Queue,
@@ -79,7 +63,25 @@ export const toQueue = (
       ],
     });
 
-    yield* ToQueuePolicy.bind(rule, queue);
+    if (!globalThis.__ALCHEMY_RUNTIME__) {
+      yield* queue.bind`Allow(${rule}, AWS.EventBridge.toQueue(${queue}))`({
+        policyStatements: [
+          {
+            Effect: "Allow",
+            Principal: {
+              Service: "events.amazonaws.com",
+            },
+            Action: ["sqs:SendMessage"],
+            Resource: [queue.queueArn as any],
+            Condition: {
+              ArnEquals: {
+                "aws:SourceArn": [rule.ruleArn as any],
+              },
+            },
+          } satisfies PolicyStatement,
+        ],
+      });
+    }
 
     return rule;
   });

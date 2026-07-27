@@ -1,8 +1,7 @@
 import * as rdsdata from "@distilled.cloud/aws/rds-data";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
+import type { RuntimeContext } from "../../RuntimeContext.ts";
 import type { DBCluster } from "../RDS/DBCluster.ts";
 import type { Secret } from "../SecretsManager/Secret.ts";
 
@@ -18,10 +17,36 @@ export interface BatchExecuteStatementRequest extends Omit<
 > {}
 
 /**
- * Runtime binding for `rds-data:BatchExecuteStatement`.
+ * Runtime binding for `rds-data:BatchExecuteStatement` — run one SQL
+ * statement over many parameter sets in a single Data API call (bulk
+ * insert/update/delete).
+ *
+ * Bind it to a Data-API-enabled `DBCluster` and its credentials secret,
+ * exactly like `AWS.RDSData.ExecuteStatement`; provide the implementation
+ * with `Effect.provide(AWS.RDSData.BatchExecuteStatementHttp)`.
+ * @binding
+ * @section Batch Writes
+ * @example Bulk Insert Rows
+ * ```typescript
+ * // init — bind alongside your other Data API operations
+ * const batchExecuteStatement = yield* AWS.RDSData.BatchExecuteStatement(
+ *   db.cluster,
+ *   { secret: db.secret, database: "app" },
+ * );
+ *
+ * // runtime — one statement, one parameter set per row
+ * const result = yield* batchExecuteStatement({
+ *   sql: "INSERT INTO todos (id, title) VALUES (:id, :title)",
+ *   parameterSets: rows.map((row) => [
+ *     { name: "id", value: { longValue: row.id } },
+ *     { name: "title", value: { stringValue: row.title } },
+ *   ]),
+ * });
+ * ```
  */
-export class BatchExecuteStatement extends Binding.Service<
+export interface BatchExecuteStatement extends Binding.Service<
   BatchExecuteStatement,
+  "AWS.RDSData.BatchExecuteStatement",
   (
     cluster: DBCluster,
     options: BatchExecuteStatementOptions,
@@ -30,74 +55,12 @@ export class BatchExecuteStatement extends Binding.Service<
       request: BatchExecuteStatementRequest,
     ) => Effect.Effect<
       rdsdata.BatchExecuteStatementResponse,
-      rdsdata.BatchExecuteStatementError
+      rdsdata.BatchExecuteStatementError,
+      RuntimeContext
     >
   >
->()("AWS.RDSData.BatchExecuteStatement") {}
+> {}
 
-export const BatchExecuteStatementLive = Layer.effect(
-  BatchExecuteStatement,
-  Effect.gen(function* () {
-    const Policy = yield* BatchExecuteStatementPolicy;
-    const batchExecuteStatement = yield* rdsdata.batchExecuteStatement;
-
-    return Effect.fn(function* (
-      cluster: DBCluster,
-      options: BatchExecuteStatementOptions,
-    ) {
-      const resourceArn = yield* cluster.dbClusterArn;
-      const secretArn = yield* options.secret.secretArn;
-      yield* Policy(cluster, options);
-      return Effect.fn(function* (request: BatchExecuteStatementRequest) {
-        const clusterArn = yield* resourceArn;
-        const resolvedSecretArn = yield* secretArn;
-        return yield* batchExecuteStatement({
-          ...request,
-          resourceArn: clusterArn,
-          secretArn: resolvedSecretArn,
-          database: options.database,
-          schema: options.schema,
-        });
-      });
-    });
-  }),
+export const BatchExecuteStatement = Binding.Service<BatchExecuteStatement>(
+  "AWS.RDSData.BatchExecuteStatement",
 );
-
-export class BatchExecuteStatementPolicy extends Binding.Policy<
-  BatchExecuteStatementPolicy,
-  (
-    cluster: DBCluster,
-    options: BatchExecuteStatementOptions,
-  ) => Effect.Effect<void>
->()("AWS.RDSData.BatchExecuteStatement") {}
-
-export const BatchExecuteStatementPolicyLive =
-  BatchExecuteStatementPolicy.layer.succeed(
-    Effect.fn(function* (host, cluster, options) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.RDSData.BatchExecuteStatement(${cluster}, ${options.secret}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["rds-data:BatchExecuteStatement"],
-                Resource: [cluster.dbClusterArn, options.secret.secretArn],
-              },
-              {
-                Effect: "Allow",
-                Action: [
-                  "secretsmanager:GetSecretValue",
-                  "secretsmanager:DescribeSecret",
-                ],
-                Resource: [options.secret.secretArn],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `BatchExecuteStatementPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

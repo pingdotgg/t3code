@@ -9,21 +9,6 @@
  * typed headers, remote address lookup, stream access, and text, JSON,
  * URL-encoded, and array-buffer body readers.
  *
- * **Mental model**
- *
- * The Node message remains the source of truth. The adapter translates headers
- * and remote address on demand, delegates raw streaming to `NodeStream`, and
- * lets subclasses choose how unknown Node errors are mapped into their HTTP
- * error type.
- *
- * **Gotchas**
- *
- * Node request and response bodies are one-shot streams. The `text` and
- * `arrayBuffer` readers are cached and share decoded values with each other,
- * but direct `stream` access is not cached and can consume the underlying Node
- * stream before a decoder reads it. Body readers honor
- * `HttpIncomingMessage.MaxBodySize`.
- *
  * @since 4.0.0
  */
 import * as Effect from "effect/Effect"

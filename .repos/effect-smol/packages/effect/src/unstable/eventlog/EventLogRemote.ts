@@ -1,22 +1,12 @@
 /**
- * Client-side remote replica support for writing event-log entries and
- * receiving change streams over the event-log RPC protocol.
+ * Connects a local event log to a remote replica.
  *
- * This module builds `EventLogRemote` services backed by `EventLogRemoteRpcs`.
- * It is used by local event logs that need to replicate entries to another
- * journal, subscribe to remote changes from a sequence number, or run effects
- * only after the current event-log identity has completed the remote
- * authentication handshake. The encrypted constructor is the default choice for
- * synchronizing browser, edge, or service replicas across an untrusted network,
- * while the unencrypted constructor is intended for trusted transports or tests.
- *
- * Remote sessions begin with `Hello` and `Authenticate`, cache authentication by
- * identity public key, and retry forbidden responses by refreshing the handshake.
- * The RPC transport must preserve a stable client session across hello,
- * authentication, writes, and change streams. Entries and change batches may be
- * split into protocol chunks, so callers should treat `changes` as a scoped
- * streaming queue and rely on the remote `Registry` registration instead of
- * manually sharing partially assembled payloads between sessions.
+ * `EventLogRemote` writes local entries to another journal, receives remote
+ * change streams from a sequence number, and can wait until the current
+ * event-log identity has completed remote authentication. The encrypted
+ * constructor is the default for browser, edge, or service replicas crossing an
+ * untrusted network. The unencrypted constructor is intended for trusted
+ * transports or tests.
  *
  * @since 4.0.0
  */
@@ -63,7 +53,7 @@ import { makeGetIdentityRootSecretMaterial } from "./internal/identityRootSecret
  * It can write local entries to the remote, stream remote changes from a sequence
  * number, and run effects only after the supplied identity has authenticated.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export class EventLogRemote extends Context.Service<EventLogRemote, {

@@ -4,31 +4,8 @@
  * `NodeStdio` provides {@link Stdio.Stdio} from the current Node process. The
  * exported {@link layer} reads command-line arguments from `process.argv`,
  * consumes input from `process.stdin`, and writes normal and error output to
- * `process.stdout` and `process.stderr`. It is the shared implementation used
- * by Node platform packages for CLIs, scripts, command runners, test harnesses,
- * and other process-oriented programs.
- *
- * **Mental model**
- *
- * Application code should depend on `Stdio`; this module decides that the
- * backing resources are the global Node process handles. The layer does not
- * create new streams and does not claim exclusive ownership of the existing
- * ones.
- *
- * **Common tasks**
- *
- * Use {@link layer} when an Effect program needs process arguments, stdin,
- * stdout, or stderr through the service environment. Pair it with terminal
- * services when the same program also needs line editing, raw key input, or
- * terminal dimensions.
- *
- * **Gotchas**
- *
- * Process stdio streams are shared with the rest of the Node process. This
- * layer leaves stdin open and does not end stdout or stderr by default, avoiding
- * accidental closure of handles that other code may still use. The streams may
- * be pipes, files, or TTYs; terminal-specific behavior such as raw mode, echo,
- * color detection, and cursor movement belongs with terminal APIs.
+ * `process.stdout` and `process.stderr`. Standard input remains open, and
+ * standard output and error output are not ended unless requested.
  *
  * @since 4.0.0
  */

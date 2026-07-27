@@ -36,7 +36,7 @@ export interface Glob {
 /**
  * Service tag for glob pattern matching used by AI codegen tooling.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const Glob: Context.Service<Glob, Glob> = Context.Service("@effect/ai-codegen/Glob")

@@ -64,6 +64,33 @@ export const makeLocalState = () =>
     const outputFile = ({ stack, stage }: { stack: string; stage: string }) =>
       path.join(stateDir, stack, stage, `__stack_output__.json`);
 
+    // Write state files atomically: write to a unique sibling temp file, then
+    // rename it over the target. Rename within a directory is atomic on POSIX
+    // filesystems, so a concurrent `get` (e.g. a parallel test reading shared
+    // `.alchemy/state`) never observes a truncated, mid-write file — which
+    // would otherwise surface as `JSON.parse("")` → "Unexpected end of JSON
+    // input". The temp suffix is unique per process+call so concurrent writers
+    // of the same file don't clobber each other's temp.
+    const writeAtomic = (file: string, contents: string) =>
+      Effect.suspend(() => {
+        const tmp = `${file}.${process.pid}.${Math.random()
+          .toString(36)
+          .slice(2)}.tmp`;
+        return fs.writeFileString(tmp, contents).pipe(
+          Effect.flatMap(() => fs.rename(tmp, file)),
+          Effect.tapError(() => fs.remove(tmp).pipe(Effect.ignore)),
+        );
+      });
+
+    // Parse a state file, tolerating an empty read. A zero-length file can
+    // linger from a write that was interrupted before this atomic-write change
+    // (or any non-atomic external writer); treat it as "absent" rather than
+    // throwing a JSON parse error that would abort the whole operation.
+    const parseState = (contents: string) =>
+      contents.trim().length === 0
+        ? undefined
+        : JSON.parse(contents, reviveState);
+
     const created = new Set<string>();
 
     const ensure = (dir: string) =>
@@ -88,10 +115,10 @@ export const makeLocalState = () =>
         ),
       get: (request) =>
         fs.readFile(resource(request)).pipe(
-          Effect.map((file) => JSON.parse(file.toString(), reviveState)),
+          Effect.map((file) => parseState(file.toString())),
           recover,
         ),
-      getReplacedResources: Effect.fnUntraced(function* (request) {
+      getReplacedResources: Effect.fn(function* (request) {
         return (yield* Effect.all(
           (yield* state.list(request)).map((fqn) =>
             state.get({
@@ -105,7 +132,7 @@ export const makeLocalState = () =>
       set: (request) =>
         ensure(stageDir(request)).pipe(
           Effect.flatMap(() =>
-            fs.writeFileString(
+            writeAtomic(
               resource(request),
               JSON.stringify(encodeState(request.value), null, 2),
             ),
@@ -128,24 +155,29 @@ export const makeLocalState = () =>
           recover,
           Effect.map((files) =>
             (files ?? [])
-              // Filter the bookkeeping file before decoding — `decodeFqn`
-              // replaces `__` with `/`, which would turn the literal name
-              // `__stack_output__` into `/stack_output/` and slip past the
-              // filter, leaving the engine to look up a non-existent
-              // resource.
-              .filter((file) => file !== "__stack_output__.json")
+              // Only decode committed state files. Exclude:
+              //  - the `__stack_output__.json` bookkeeping file — `decodeFqn`
+              //    turns `__` into `/`, which would slip the literal name past
+              //    a bare-name filter and make the engine look up a
+              //    non-existent resource;
+              //  - in-flight `*.tmp` files written by `writeAtomic` (and any
+              //    other non-`.json` entry), which are not resources.
+              .filter(
+                (file) =>
+                  file.endsWith(".json") && file !== "__stack_output__.json",
+              )
               .map((file) => decodeFqn(file.replace(/\.json$/, ""))),
           ),
         ),
       getOutput: (request) =>
         fs.readFile(outputFile(request)).pipe(
-          Effect.map((file) => JSON.parse(file.toString(), reviveState)),
+          Effect.map((file) => parseState(file.toString())),
           recover,
         ),
       setOutput: (request) =>
         ensure(stageDir(request)).pipe(
           Effect.flatMap(() =>
-            fs.writeFileString(
+            writeAtomic(
               outputFile(request),
               JSON.stringify(encodeState(request.value as any), null, 2),
             ),

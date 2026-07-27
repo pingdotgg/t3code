@@ -1,0 +1,54 @@
+---
+title: destroy
+description: Delete every resource in a stack — plan all existing resources for deletion, ask for approval, and remove them in dependency order.
+---
+
+import Terminal from "../../../components/Terminal.astro";
+
+```sh
+alchemy destroy [file] [options]
+```
+
+`destroy` deletes every resource in a stack. It computes a plan where all existing resources are marked for deletion, asks for approval, and removes them in dependency order.
+
+Under the hood, `destroy` is `deploy` with the desired state zeroed out — every resource in state plans as a deletion.
+
+<Terminal content={`[u]Plan[/u]: [r]2 to delete[/r]
+
+[r]-[/r] [b]Worker[/b] [d](Cloudflare.Worker)[/d]
+[r]-[/r] [b]Bucket[/b] [d](Cloudflare.R2.Bucket)[/d]
+
+Proceed?
+◉ Yes ○ No
+[r]✗[/r] [b]Worker[/b] [d](Cloudflare.Worker)[/d] [r]deleted[/r]
+[r]✗[/r] [b]Bucket[/b] [d](Cloudflare.R2.Bucket)[/d] [r]deleted[/r]`} />
+
+## Flags
+
+| Option              | Description                                                       |
+| ------------------- | ----------------------------------------------------------------- |
+| `[file]`            | Stack file to destroy (defaults to `alchemy.run.ts`)              |
+| `--stage <name>`    | Stage to destroy (defaults to `dev_$USER`)                        |
+| `--yes`             | Skip the approval prompt                                          |
+| `--dry-run`         | Show what would be deleted without actually deleting              |
+| `--profile <name>`  | Auth profile to use (defaults to `default` or `$ALCHEMY_PROFILE`) |
+| `--env-file <path>` | Load environment variables from a file                            |
+
+## Examples
+
+```sh
+# Destroy a PR preview environment
+alchemy destroy --stage pr-42 --yes
+
+# Destroy your personal dev stage
+alchemy destroy --stage dev_sam
+```
+
+`destroy` is scoped to one stack + stage and driven by the state store; to enumerate and delete everything a set of providers can see in the live account, see [nuke](/cli/nuke).
+
+## Where next
+
+- [deploy](/cli/deploy) — bring the stack back
+- [nuke](/cli/nuke) — account-wide teardown, not scoped to a stack
+- [state](/cli/state) — inspect and clear the state the plan is driven by
+- [Stages](/environments/stages) — how environments are isolated

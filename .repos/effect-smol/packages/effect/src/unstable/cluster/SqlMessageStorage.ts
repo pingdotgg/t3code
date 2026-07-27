@@ -1,49 +1,28 @@
 /**
- * SQL-backed `MessageStorage` implementation for the unstable cluster runtime.
+ * Persists cluster mailbox messages and replies in SQL.
  *
- * This module persists encoded cluster envelopes and replies in SQL so runners
- * can recover mailbox state after restarts, redeliver unprocessed messages,
- * deduplicate requests by primary key, and replay reply chunks until they are
- * acknowledged. It is the durable alternative to an in-memory mailbox when
- * cluster request/reply state must survive process restarts.
+ * The SQL-backed `MessageStorage` stores encoded cluster envelopes and reply
+ * chunks so runners can recover mailbox state after restarts. It supports
+ * redelivering unprocessed messages, deduplicating requests by primary key, and
+ * replaying reply chunks until they are acknowledged. This module includes the
+ * storage constructor, layers, migrations, optional table prefixes, and the row
+ * mapping needed by encoded message storage.
  *
- * **Mental model**
- *
- * The storage owns two durable streams: a messages table for requests and
- * control envelopes, and a replies table for chunk and final replies. Saving a
- * request or envelope writes encoded data into the messages table; reading
- * unprocessed messages claims due rows for assigned shards; reading replies
- * replays unacknowledged chunks or final exits until the runtime acknowledges
- * or clears them. Primary keys are stored as `message_id` so repeated requests
- * can resume from the original request and last persisted reply.
- *
- * **Common tasks**
- *
- * - Use `layer` for the default `cluster` table prefix and default snowflake
- *   generator.
- * - Use `layerWith` before deployment when the application needs a stable
- *   custom table prefix.
- * - Use `make` when composing the storage service with an existing
- *   `Snowflake.Generator`.
- * - Provide `SqlClient` and `ShardingConfig` to the layer that installs the
- *   storage.
- *
- * **Gotchas**
- *
- * `make` runs migrations and creates `<prefix>_messages`, `<prefix>_replies`,
- * and `<prefix>_migrations`. Changing `prefix` after deployment points the
- * runtime at a different mailbox and migration history, so keep the generated
- * migration table with the message tables. Unprocessed-message reads use
- * `last_read` as a lease marker, so messages can be redelivered after the lease
- * window if a runner stops before processing them.
+ * Request deduplication keys that exceed the 255-character `message_id`
+ * column are hashed with the `Crypto` service before they are written, so
+ * composed keys of any length are supported; shorter keys are stored as
+ * plaintext, byte-compatible with rows written by previous versions.
  *
  * @since 4.0.0
  */
 // eslint-disable effect/no-bigint-literals
 import * as Arr from "../../Array.ts"
+import * as Crypto from "../../Crypto.ts"
 import * as Effect from "../../Effect.ts"
+import * as Encoding from "../../Encoding.ts"
 import * as Layer from "../../Layer.ts"
 import * as Option from "../../Option.ts"
+import type * as PlatformError from "../../PlatformError.ts"
 import * as Schedule from "../../Schedule.ts"
 import * as Migrator from "../sql/Migrator.ts"
 import * as SqlClient from "../sql/SqlClient.ts"
@@ -90,9 +69,10 @@ export const make: (options?: {
 }) => Effect.Effect<
   MessageStorage.MessageStorage["Service"],
   never,
-  SqlClient.SqlClient | Snowflake.Generator
+  SqlClient.SqlClient | Snowflake.Generator | Crypto.Crypto
 > = Effect.fnUntraced(function*(options) {
   const sql = (yield* SqlClient.SqlClient).withoutTransforms()
+  const crypto = yield* Crypto.Crypto
   const prefix = options?.prefix ?? "cluster"
   const table = (name: string) => `${prefix}_${name}`
 
@@ -112,6 +92,30 @@ export const make: (options?: {
 
   const repliesTable = table("replies")
   const repliesTableSql = sql(repliesTable)
+
+  // The composed primary key (`entityType/entityId/tag/id`) can legally exceed
+  // the 255-character `message_id` column: entity_type(150) + entity_id(255) +
+  // tag(50) alone total 458 characters before the RPC primary key is appended.
+  // Keys that fit are stored as-is, keeping `message_id` byte-compatible with
+  // rows written by previous versions; longer keys are stored as a SHA-256
+  // digest (64 hex characters, collision probability negligible at a 2^128
+  // birthday bound). Digests never contain "/" while composed keys always do,
+  // so the two encodings cannot collide.
+  const encoder = new TextEncoder()
+  const messageIdForPrimaryKey = (primaryKey: string): Effect.Effect<string, PlatformError.PlatformError> =>
+    primaryKey.length <= 255
+      ? Effect.succeed(primaryKey)
+      : Effect.map(crypto.digest("SHA-256", encoder.encode(primaryKey)), Encoding.encodeHex)
+
+  const messageIdEnforcesWidth = sql.onDialectOrElse({
+    mssql: () => true,
+    mysql: () => true,
+    pg: () => true,
+    orElse: () => false
+  })
+  // sqlite's TEXT message_id column stored over-length plaintext keys before
+  // digests were introduced; those legacy rows need a plaintext fallback read
+  const mayHaveLegacyRow = (primaryKey: string): boolean => !messageIdEnforcesWidth && primaryKey.length > 255
 
   const envelopeToRow = (
     envelope: Envelope.Encoded,
@@ -267,6 +271,14 @@ export const make: (options?: {
   const sqlFalse = sql.literal(supportsBooleans ? "FALSE" : "0")
   const sqlTrue = sql.literal(supportsBooleans ? "TRUE" : "1")
 
+  const selectByMessageId = (message_id: string): Effect.Effect<ReadonlyArray<Row>, SqlError> =>
+    sql`
+      SELECT m.id, r.id as reply_id, r.kind as reply_kind, r.payload as reply_payload, r.sequence as reply_sequence
+      FROM ${messagesTableSql} m
+      LEFT JOIN ${repliesTableSql} r ON r.id = m.last_reply_id
+      WHERE m.message_id = ${message_id}
+    `
+
   const insertEnvelope: (
     row: MessageRow,
     message_id: string
@@ -279,12 +291,7 @@ export const make: (options?: {
       `.pipe(Effect.flatMap((rows) => {
         // inserted a new row
         if (rows.length > 0) return Effect.succeed([])
-        return sql`
-          SELECT m.id, r.id as reply_id, r.kind as reply_kind, r.payload as reply_payload, r.sequence as reply_sequence
-          FROM ${messagesTableSql} m
-          LEFT JOIN ${repliesTableSql} r ON r.id = m.last_reply_id
-          WHERE m.message_id = ${message_id}
-        `
+        return selectByMessageId(message_id)
       })),
     mysql: () => (row, message_id) =>
       Effect.flatMap(
@@ -293,12 +300,7 @@ export const make: (options?: {
           if (row.affectedRows > 0) {
             return Effect.succeed([])
           }
-          return sql`
-            SELECT m.id, r.id as reply_id, r.kind as reply_kind, r.payload as reply_payload, r.sequence as reply_sequence
-            FROM ${messagesTableSql} m
-            LEFT JOIN ${repliesTableSql} r ON r.id = m.last_reply_id
-            WHERE m.message_id = ${message_id}
-          `
+          return selectByMessageId(message_id)
         }
       ),
     mssql: () => (row, message_id) =>
@@ -340,12 +342,7 @@ export const make: (options?: {
           END as reply_sequence;
       `,
     orElse: () => (row, message_id) =>
-      sql`
-        SELECT m.id, r.id as reply_id, r.kind as reply_kind, r.payload as reply_payload, r.sequence as reply_sequence
-        FROM ${messagesTableSql} m
-        LEFT JOIN ${repliesTableSql} r ON r.id = m.last_reply_id
-        WHERE m.message_id = ${message_id}
-      `.pipe(
+      selectByMessageId(message_id).pipe(
         Effect.tap(sql`INSERT OR IGNORE INTO ${messagesTableSql} ${sql.insert(row)}`),
         sql.withTransaction,
         Effect.retry({ times: 3 })
@@ -435,18 +432,30 @@ export const make: (options?: {
   return yield* MessageStorage.makeEncoded({
     saveEnvelope: ({ deliverAt, envelope, primaryKey }) =>
       Effect.suspend(() => {
-        const row = envelopeToRow(envelope, primaryKey, deliverAt)
-        let insert = primaryKey
-          ? insertEnvelope(row, primaryKey)
-          : Effect.as(sql`INSERT INTO ${messagesTableSql} ${sql.insert(row)}`.unprepared, [])
-        if (envelope._tag === "AckChunk") {
-          insert = sql`UPDATE ${repliesTableSql} SET acked = ${sqlTrue} WHERE id = ${envelope.replyId}`.pipe(
-            Effect.andThen(
-              sql`UPDATE ${messagesTableSql} SET processed = ${sqlTrue} WHERE processed = ${sqlFalse} AND request_id = ${envelope.requestId} AND kind = ${messageKindAckChunk}`
-            ),
-            Effect.andThen(insert),
-            sql.withTransaction
-          )
+        let insert: Effect.Effect<ReadonlyArray<Row>, SqlError | PlatformError.PlatformError>
+        if (primaryKey !== null) {
+          insert = Effect.flatMap(messageIdForPrimaryKey(primaryKey), (messageId) => {
+            const row = envelopeToRow(envelope, messageId, deliverAt)
+            if (!mayHaveLegacyRow(primaryKey)) {
+              return insertEnvelope(row, messageId)
+            }
+            return Effect.flatMap(
+              selectByMessageId(primaryKey),
+              (rows) => rows.length > 0 ? Effect.succeed(rows) : insertEnvelope(row, messageId)
+            )
+          })
+        } else {
+          const row = envelopeToRow(envelope, null, deliverAt)
+          insert = Effect.as(sql`INSERT INTO ${messagesTableSql} ${sql.insert(row)}`.unprepared, [])
+          if (envelope._tag === "AckChunk") {
+            insert = sql`UPDATE ${repliesTableSql} SET acked = ${sqlTrue} WHERE id = ${envelope.replyId}`.pipe(
+              Effect.andThen(
+                sql`UPDATE ${messagesTableSql} SET processed = ${sqlTrue} WHERE processed = ${sqlFalse} AND request_id = ${envelope.requestId} AND kind = ${messageKindAckChunk}`
+              ),
+              Effect.andThen(insert),
+              sql.withTransaction
+            )
+          }
         }
         return insert.pipe(
           Effect.map((rows) => {
@@ -517,7 +526,15 @@ export const make: (options?: {
     ),
 
     requestIdForPrimaryKey: (primaryKey) =>
-      sql<{ id: string | bigint }>`SELECT id FROM ${messagesTableSql} WHERE message_id = ${primaryKey}`.pipe(
+      messageIdForPrimaryKey(primaryKey).pipe(
+        Effect.flatMap((messageId) =>
+          sql<{ id: string | bigint }>`SELECT id FROM ${messagesTableSql} WHERE message_id = ${messageId}`
+        ),
+        Effect.flatMap((rows) =>
+          rows.length === 0 && mayHaveLegacyRow(primaryKey)
+            ? sql<{ id: string | bigint }>`SELECT id FROM ${messagesTableSql} WHERE message_id = ${primaryKey}`
+            : Effect.succeed(rows)
+        ),
         Effect.map((rows) => Option.map(Option.fromNullishOr(rows[0]?.id), Snowflake.Snowflake)),
         Effect.provideService(SqlClient.SafeIntegers, true),
         PersistenceError.refail,
@@ -674,7 +691,9 @@ export const make: (options?: {
  *
  * The layer runs the SQL migrations through `make`, provides `MessageStorage`,
  * and supplies `Snowflake.layerGenerator` internally. Callers still provide
- * `SqlClient` and `ShardingConfig`.
+ * `SqlClient`, `ShardingConfig`, and `Crypto.Crypto`, which is used to hash
+ * message deduplication keys that would overflow the fixed-width
+ * `message_id` column.
  *
  * **Gotchas**
  *
@@ -691,7 +710,7 @@ export const make: (options?: {
 export const layer: Layer.Layer<
   MessageStorage.MessageStorage,
   never,
-  SqlClient.SqlClient | ShardingConfig
+  SqlClient.SqlClient | ShardingConfig | Crypto.Crypto
 > = Layer.effect(MessageStorage.MessageStorage, make()).pipe(
   Layer.provide(Snowflake.layerGenerator)
 )
@@ -704,7 +723,7 @@ export const layer: Layer.Layer<
  */
 export const layerWith = (options: {
   readonly prefix?: string | undefined
-}): Layer.Layer<MessageStorage.MessageStorage, never, SqlClient.SqlClient | ShardingConfig> =>
+}): Layer.Layer<MessageStorage.MessageStorage, never, SqlClient.SqlClient | ShardingConfig | Crypto.Crypto> =>
   Layer.effect(MessageStorage.MessageStorage, make(options)).pipe(
     Layer.provide(Snowflake.layerGenerator)
   )

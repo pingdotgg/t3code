@@ -1,0 +1,15 @@
+{
+  "name": "xver-01-beta-39",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "alc": "alchemy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "alchemy": "2.0.0-beta.39",
+    "effect": "4.0.0-beta.66",
+    "@effect/platform-bun": "4.0.0-beta.66",
+    "@effect/platform-node": "4.0.0-beta.66"
+  }
+}

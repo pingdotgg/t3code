@@ -1,2 +1,3 @@
-export * from "./AnalyticsEngineDataset.ts";
-export * from "./AnalyticsEngineDatasetBinding.ts";
+export * from "./Dataset.ts";
+export * from "./WriteDataset.ts";
+export * from "./WriteDatasetBinding.ts";

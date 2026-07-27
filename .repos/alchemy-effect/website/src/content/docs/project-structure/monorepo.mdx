@@ -1,0 +1,63 @@
+---
+title: Monorepo
+description: Two ways to organize an Alchemy monorepo — one Stack at the workspace root, or one Stack per package wired with typed references.
+---
+
+A monorepo is a workspace with a backend package and a frontend
+that calls it. The one decision Alchemy adds: **where do the
+Stacks live?**
+
+## Option A — Single Stack
+
+```sh
+.
+├── package.json     # workspaces: ["frontend", "backend"]
+├── alchemy.run.ts   # the one Stack — deploys both packages
+├── backend/         # Worker + API schema + typed client
+└── frontend/        # React app, built by the Stack
+```
+
+One `alchemy.run.ts` at the workspace root deploys everything in
+one plan. The frontend reads the Worker's URL directly off the
+in-memory Output — no references, no deploy ordering.
+
+Walkthrough: [Single Stack](/project-structure/monorepo-single-stack).
+
+## Option B — Multiple Stacks
+
+```sh
+.
+├── package.json           # workspaces: ["frontend", "backend"]
+├── backend/
+│   ├── alchemy.run.ts     # Backend Stack
+│   └── src/Stack.ts       # typed handle the frontend imports
+└── frontend/
+    └── alchemy.run.ts     # Frontend Stack — yield* Backend
+```
+
+Each package owns its own Stack. The frontend reads the backend's
+deployed outputs through a typed cross-stack reference, so each
+package deploys and destroys independently.
+
+Walkthrough: [Multiple Stacks](/project-structure/monorepo-multi-stack).
+
+## How to choose
+
+- Start with a **Single Stack** — one plan, one state file, no
+  ordering constraints.
+- Go **Multiple Stacks** when packages deploy on different
+  cadences (different teams, different CI), or the backend has
+  consumers beyond this frontend.
+- Go **Multiple Stacks** when you need to `destroy` one package
+  without touching the other.
+
+## Where next
+
+- [File layout](/project-structure/file-layout) — the single-package layout
+  both options build on.
+- [Single Stack](/project-structure/monorepo-single-stack) — the full
+  two-package walkthrough.
+- [Multiple Stacks](/project-structure/monorepo-multi-stack) — typed Stack
+  handles and cross-stack references.
+- [References](/infrastructure-as-code/references) — when to split
+  Stacks and how to pin stages.

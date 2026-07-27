@@ -1,4 +1,4 @@
-import { type Cause, Context, Effect, Layer, MutableRef, Option, Queue, Schedule, Schema, Stream } from "effect"
+import { type Cause, Context, Effect, Latch, Layer, MutableRef, Option, Queue, Schedule, Schema, Stream } from "effect"
 import type { Envelope } from "effect/unstable/cluster"
 import { ClusterSchema, Entity } from "effect/unstable/cluster"
 import { MemoryTransaction } from "effect/unstable/cluster/MessageStorage"
@@ -58,6 +58,7 @@ export class TestEntityState extends Context.Service<TestEntityState>()("TestEnt
     >()
     const defectTrigger = MutableRef.make(false)
     const layerBuilds = MutableRef.make(0)
+    const buildLatch = Latch.makeUnsafe(true)
 
     return {
       messages,
@@ -65,7 +66,8 @@ export class TestEntityState extends Context.Service<TestEntityState>()("TestEnt
       envelopes,
       interrupts,
       defectTrigger,
-      layerBuilds
+      layerBuilds,
+      buildLatch
     } as const
   })
 }) {
@@ -77,6 +79,7 @@ export const TestEntityNoState = TestEntity.toLayer(
     const state = yield* TestEntityState
 
     MutableRef.update(state.layerBuilds, (count) => count + 1)
+    yield* state.buildLatch.await
 
     const never = (envelope: any) =>
       Effect.suspend(() => {
@@ -130,3 +133,19 @@ export const TestEntityNoState = TestEntity.toLayer(
 )
 
 export const TestEntityLayer = TestEntityNoState.pipe(Layer.provideMerge(TestEntityState.layer))
+
+export const CallerId = Context.Service<never, string>(
+  "effect/test/cluster/CallerId"
+)
+
+export const ContextBleedEntity = Entity.make("ContextBleedEntity", [
+  Rpc.make("ReadCaller", { success: Schema.String }).annotate(ClusterSchema.Persisted, false),
+  Rpc.make("ReadCallerPersisted", { success: Schema.String }).annotate(ClusterSchema.Persisted, true)
+])
+
+const readCaller = () => Effect.map(Effect.serviceOption(CallerId), Option.getOrElse(() => "none"))
+
+export const ContextBleedLayer = ContextBleedEntity.toLayer({
+  ReadCaller: readCaller,
+  ReadCallerPersisted: readCaller
+})

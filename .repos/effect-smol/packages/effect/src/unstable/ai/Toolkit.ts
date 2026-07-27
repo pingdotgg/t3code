@@ -1,80 +1,11 @@
 /**
- * The `Toolkit` module groups AI `Tool` definitions into a single typed service
- * that can execute tool calls by name. A toolkit is the runtime bridge between
- * declarative tool schemas and the handler functions your application provides
- * for a language model workflow.
+ * Groups AI tools together with their handlers.
  *
- * **Mental model**
- *
- * - A `Tool` describes one callable operation: its name, parameter schema,
- *   success schema, and failure behavior.
- * - A `Toolkit` is a record of tools that also carries the handler requirements
- *   needed to execute those tools.
- * - `toolkit.toLayer(...)` and `toolkit.toHandlers(...)` bind handlers into
- *   `Context`, so yielding a toolkit produces a value with a `handle` function.
- * - `handle` validates parameters, runs the matching handler, and returns a
- *   `Stream` of preliminary and final encoded results.
- *
- * **Common tasks**
- *
- * - Build a toolkit from tools: {@link make}
- * - Merge independently defined toolkits: {@link merge}
- * - Provide handlers with `toolkit.toLayer(...)` or `toolkit.toHandlers(...)`
- * - Emit progress from a long-running handler with `context.preliminary(...)`
- *
- * **Gotchas**
- *
- * - Tool names are runtime lookup keys. When toolkits are merged, later tools
- *   replace earlier tools with the same name.
- * - Handler output is validated and encoded against the tool schemas; invalid
- *   output is reported as an AI error.
- * - The result of `handle` is a stream because handlers can emit preliminary
- *   results before the final value.
- *
- * **Example** (Creating and implementing toolkits)
- *
- * ```ts
- * import { Effect, Schema, Stream } from "effect"
- * import { Tool, Toolkit } from "effect/unstable/ai"
- *
- * const GetCurrentTime = Tool.make("GetCurrentTime", {
- *   description: "Get the current timestamp",
- *   success: Schema.Number
- * })
- *
- * const GetWeather = Tool.make("GetWeather", {
- *   description: "Get weather for a location",
- *   parameters: Schema.Struct({ location: Schema.String }),
- *   success: Schema.Struct({
- *     temperature: Schema.Number,
- *     condition: Schema.String
- *   })
- * })
- *
- * const MyToolkit = Toolkit.make(GetCurrentTime, GetWeather)
- *
- * const MyToolkitLayer = MyToolkit.toLayer({
- *   GetCurrentTime: () => Effect.succeed(1_704_067_200_000),
- *   GetWeather: ({ location }) =>
- *     Effect.succeed({
- *       temperature: 72,
- *       condition: `sunny in ${location}`
- *     })
- * })
- *
- * const program = Effect.gen(function*() {
- *   const toolkit = yield* MyToolkit
- *   const stream = yield* toolkit.handle("GetWeather", {
- *     location: "San Francisco"
- *   })
- *   const results = yield* Stream.runCollect(stream)
- *
- *   return Array.from(results, ({ result }) => result)
- * }).pipe(Effect.provide(MyToolkitLayer))
- *
- * console.log(Effect.runSync(program))
- * // [{ temperature: 72, condition: "sunny in San Francisco" }]
- * ```
+ * A toolkit connects `Tool` schemas to the handler functions an application
+ * provides for a language model workflow. It can build a handler context or
+ * layer and execute tool calls by name. Execution validates parameters, runs the
+ * handler, encodes the result, supports preliminary streamed results, and
+ * applies the tool's failure mode.
  *
  * @since 4.0.0
  */
@@ -84,6 +15,7 @@ import * as Effect from "../../Effect.ts"
 import * as Effectable from "../../Effectable.ts"
 import * as Fiber from "../../Fiber.ts"
 import { identity } from "../../Function.ts"
+import * as InternalRecord from "../../internal/record.ts"
 import * as Layer from "../../Layer.ts"
 import * as Predicate from "../../Predicate.ts"
 import * as Queue from "../../Queue.ts"
@@ -174,6 +106,10 @@ export interface Toolkit<in out Tools extends Record<string, Tool.Any>> extends
  * @since 4.0.0
  */
 export interface HandlerContext<Tool extends Tool.Any> {
+  /**
+   * The unique identifier of the tool call, when available.
+   */
+  readonly toolCallId?: string | undefined
   /**
    * Emit a preliminary result during long-running tool calls.
    *
@@ -268,7 +204,11 @@ export interface WithHandler<in out Tools extends Record<string, Tool.Any>> {
     /**
      * Parameters to pass to the tool handler.
      */
-    params: Tool.Parameters<Tools[Name]>
+    params: Tool.Parameters<Tools[Name]>,
+    /**
+     * The unique identifier of the tool call.
+     */
+    toolCallId?: string
   ) => Effect.Effect<
     Stream.Stream<
       Tool.HandlerResult<Tools[Name]>,
@@ -326,8 +266,8 @@ const Proto = {
         return schemas
       }
 
-      const handle = Effect.fnUntraced(function*(name: string, params: unknown) {
-        const tool = tools[name]
+      const handle = Effect.fnUntraced(function*(name: string, params: unknown, toolCallId?: string) {
+        const tool = Object.hasOwn(tools, name) ? tools[name] : undefined
 
         yield* Effect.annotateCurrentSpan({
           tool: name,
@@ -371,6 +311,7 @@ const Proto = {
           readonly preliminary: boolean
         }, Cause.Done>()
         const context: HandlerContext<any> = {
+          toolCallId,
           preliminary: (result) =>
             Effect.asVoid(Queue.offer(queue, {
               result,
@@ -459,8 +400,10 @@ const Proto = {
       const handlers = Effect.isEffect(build) ? yield* build : build
       const context = new Map<string, unknown>()
       for (const [name, handler] of Object.entries(handlers)) {
-        const tool = this.tools[name]!
-        context.set(tool.id, { name, handler, context: services })
+        const tool = Object.hasOwn(this.tools, name) ? this.tools[name] : undefined
+        if (tool !== undefined) {
+          context.set(tool.id, { name, handler, context: services })
+        }
       }
       return Context.makeUnsafe(context)
     })
@@ -487,7 +430,7 @@ const resolveInput = <Tools extends ReadonlyArray<Tool.Any>>(
 ): Record<string, Tools[number]> => {
   const output = {} as Record<string, Tools[number]>
   for (const tool of tools) {
-    output[tool.name] = tool
+    InternalRecord.assignProperty(output, tool.name, tool)
   }
   return output
 }
@@ -497,8 +440,8 @@ const resolveInput = <Tools extends ReadonlyArray<Tool.Any>>(
  *
  * **When to use**
  *
- * Use as a starting point for building toolkits or as a default value. Can
- * be extended using the merge function to add tools.
+ * Use when you need an empty starting point for building toolkits or a default
+ * toolkit value that can be extended with `merge`.
  *
  * @category constructors
  * @since 4.0.0
@@ -616,7 +559,7 @@ export const merge = <const Toolkits extends ReadonlyArray<Any>>(
   const tools = {} as Record<string, any>
   for (const toolkit of toolkits) {
     for (const [name, tool] of Object.entries(toolkit.tools)) {
-      tools[name] = tool
+      InternalRecord.assignProperty(tools, name, tool)
     }
   }
   return makeProto(tools) as any

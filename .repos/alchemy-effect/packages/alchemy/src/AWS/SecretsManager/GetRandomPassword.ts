@@ -1,14 +1,34 @@
 import * as secretsmanager from "@distilled.cloud/aws/secrets-manager";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 
 /**
  * Runtime binding for `secretsmanager:GetRandomPassword`.
+ *
+ * Account-level operation (no target secret): bind it with no arguments to
+ * get a callable that generates cryptographically strong random passwords —
+ * typically paired with `PutSecretValue` for rotation. Provide the
+ * implementation with
+ * `Effect.provide(AWS.SecretsManager.GetRandomPasswordHttp)`.
+ * @binding
+ * @section Generating Passwords
+ * @example Generate and Store a New Password
+ * ```typescript
+ * // init — account-level, no resource argument
+ * const getRandomPassword = yield* AWS.SecretsManager.GetRandomPassword();
+ * const putSecretValue = yield* AWS.SecretsManager.PutSecretValue(secret);
+ *
+ * // runtime — generate, then rotate the secret to it
+ * const generated = yield* getRandomPassword({
+ *   PasswordLength: 32,
+ *   ExcludePunctuation: true,
+ * });
+ * yield* putSecretValue({ SecretString: generated.RandomPassword });
+ * ```
  */
-export class GetRandomPassword extends Binding.Service<
+export interface GetRandomPassword extends Binding.Service<
   GetRandomPassword,
+  "AWS.SecretsManager.GetRandomPassword",
   () => Effect.Effect<
     (
       request?: secretsmanager.GetRandomPasswordRequest,
@@ -17,49 +37,8 @@ export class GetRandomPassword extends Binding.Service<
       secretsmanager.GetRandomPasswordError
     >
   >
->()("AWS.SecretsManager.GetRandomPassword") {}
+> {}
 
-export const GetRandomPasswordLive = Layer.effect(
-  GetRandomPassword,
-  Effect.gen(function* () {
-    const Policy = yield* GetRandomPasswordPolicy;
-    const getRandomPassword = yield* secretsmanager.getRandomPassword;
-
-    return Effect.fn(function* () {
-      yield* Policy();
-      return Effect.fn(function* (
-        request: secretsmanager.GetRandomPasswordRequest = {},
-      ) {
-        return yield* getRandomPassword(request);
-      });
-    });
-  }),
+export const GetRandomPassword = Binding.Service<GetRandomPassword>(
+  "AWS.SecretsManager.GetRandomPassword",
 );
-
-export class GetRandomPasswordPolicy extends Binding.Policy<
-  GetRandomPasswordPolicy,
-  () => Effect.Effect<void>
->()("AWS.SecretsManager.GetRandomPassword") {}
-
-export const GetRandomPasswordPolicyLive =
-  GetRandomPasswordPolicy.layer.succeed(
-    Effect.fn(function* (host) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.SecretsManager.GetRandomPassword())`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["secretsmanager:GetRandomPassword"],
-                Resource: ["*"],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `GetRandomPasswordPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

@@ -1,0 +1,259 @@
+---
+title: React to GitHub events from a Worker
+description: Subscribe a Cloudflare Worker to GitHub repository webhooks with typed payloads — alchemy provisions the webhook and verifies delivery signatures.
+sidebar:
+  order: 20
+---
+
+A push lands on `main`, a pull request opens, a release tag appears —
+and you want code to run. `GitHub.consumeRepositoryEvents` subscribes
+a Cloudflare Worker to a repository's webhooks: alchemy provisions
+the webhook on the repo, points it at the Worker, verifies each
+delivery's signature, and hands your handler a fully typed payload.
+
+This event source is **Cloudflare-only today** — see
+[the note below](#cloudflare-only-today).
+
+## 1. Subscribe to push events
+
+Call `consumeRepositoryEvents` in the Worker's init phase with the
+repository and the events you want, plus a handler that runs once per
+delivery:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as GitHub from "alchemy/GitHub";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    yield* GitHub.consumeRepositoryEvents(
+      {
+        owner: "my-org",
+        repository: "my-repo",
+        events: ["push"],
+      },
+      (event) => Effect.log(`received ${event.name} (${event.id})`),
+    );
+
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("ok");
+      }),
+    };
+  }),
+);
+```
+
+`events` defaults to `["push"]`; pass `["*"]` to receive everything
+GitHub emits. The handler receives each delivery as a typed
+`WebhookEvent` and returns an `Effect` — more on the payload types
+below.
+
+## 2. Provide the Cloudflare runtime layer
+
+`consumeRepositoryEvents` is host-agnostic — it requires a
+`RepositoryEventSource` implementation. Provide the Cloudflare one on
+the Worker:
+
+```diff lang="typescript"
+ export default Cloudflare.Worker(
+   "Worker",
+   { main: import.meta.url },
+   Effect.gen(function* () {
+     // ...
+-  }),
++  }).pipe(Effect.provide(Cloudflare.Workers.GitHubRepositoryEventSourceLive)),
+ );
+```
+
+`GitHubRepositoryEventSourceLive` does both halves: at deploy time it
+provisions the repository webhook pointing at this Worker, and at
+runtime it registers a `fetch` listener that claims the webhook's
+delivery path and forwards each verified delivery to your handler.
+Requests on any other path fall through to the Worker's own `fetch`.
+
+## 3. Add GitHub providers to the Stack
+
+The webhook is a GitHub resource, so the Stack needs GitHub providers
+alongside Cloudflare's:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as GitHub from "alchemy/GitHub";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import Worker from "./src/worker.ts";
+
+export default Alchemy.Stack(
+  "GitHubEvents",
+  {
+    providers: Layer.mergeAll(Cloudflare.providers(), GitHub.providers()),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const worker = yield* Worker;
+    return { url: worker.url.as<string>() };
+  }),
+);
+```
+
+`GitHub.providers()` resolves credentials from the environment, a
+stored PAT, or the `gh` CLI — see [GitHub setup](/github/setup). The
+token needs `repo` scope (admin access to the repository) to manage
+webhooks.
+
+## 4. Verify deliveries with a secret
+
+Without a secret, anyone who learns the delivery URL can forge
+events. Pass one and alchemy rejects any delivery whose
+`X-Hub-Signature-256` header doesn't match:
+
+```diff lang="typescript"
++import * as Config from "effect/Config";
+
+   Effect.gen(function* () {
++    const secret = yield* Config.redacted("GITHUB_WEBHOOK_SECRET");
++
+     yield* GitHub.consumeRepositoryEvents(
+       {
+         owner: "my-org",
+         repository: "my-repo",
+         events: ["push"],
++        secret,
+       },
+       (event) => Effect.log(`received ${event.name} (${event.id})`),
+     );
+```
+
+The webhook is provisioned with the secret, so GitHub signs every
+delivery with `HMAC-SHA256`; the Worker recomputes the signature over
+the raw body and compares in constant time, answering `401` on a
+mismatch. `Config.redacted` reads the value from your `.env` at
+deploy time and binds it as a Worker secret — see
+[Secrets & env](/cloudflare/security/secrets-env).
+
+## 5. Deploy
+
+```sh
+alchemy deploy
+```
+
+On deploy, alchemy creates a `GitHub.Webhook` on the repository whose
+delivery URL is the Worker's URL plus a deterministic per-repo path
+(`/__alchemy/github/{owner}/{repository}` — override with the `path`
+prop). The webhook is updated in place on subsequent deploys and
+deleted when the stack is destroyed. Push a commit and watch the
+handler log the delivery.
+
+## What alchemy automates
+
+One `consumeRepositoryEvents` call replaces the usual webhook
+plumbing:
+
+- **Provisioning** — a [`GitHub.Webhook`](/providers/github/webhook)
+  resource is created on the repo, wired to the Worker's URL. You
+  never paste a URL into repo settings.
+- **Secret distribution** — the signing secret is bound onto the
+  Worker as a secret under a deterministic env name; the runtime
+  reads it back to verify signatures.
+- **Routing** — the runtime only claims `POST`s on the delivery
+  path (`405` for other methods, `202` once a delivery is accepted);
+  every other request reaches your own `fetch` handler untouched.
+- **Signature verification** — `HMAC-SHA256` over the raw body,
+  compared in constant time against `X-Hub-Signature-256`.
+
+## Typed payloads
+
+`event` is Octokit's `EmitterWebhookEvent` — a discriminated union of
+`{ id, name, payload }` keyed on `name`, narrowed to the events you
+selected. A `switch` on `event.name` narrows `payload` exhaustively:
+
+```typescript
+yield* GitHub.consumeRepositoryEvents(
+  {
+    owner: "my-org",
+    repository: "my-repo",
+    events: ["push", "pull_request"],
+  },
+  (event) => {
+    switch (event.name) {
+      case "push":
+        return Effect.log(`push to ${event.payload.ref}`);
+      case "pull_request":
+        return Effect.log(`PR: ${event.payload.pull_request.title}`);
+    }
+  },
+);
+```
+
+Selecting `["*"]` (or omitting `events`) widens the union back to
+every GitHub event name.
+
+## Case study: a release-blogging agent
+
+The [`cloudflare-agent` example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-agent)
+uses this event source as the front door of an autonomous pipeline:
+a Worker consumes push events on the alchemy repo, filters for
+release commits on `main`, and hands each one to a Durable Object
+that drives an AI agent to write the release blog post.
+
+The filter is ordinary handler code over the typed `push` payload:
+
+```typescript
+// src/ReleaseService.ts
+yield* GitHub.consumeRepositoryEvents(
+  {
+    owner: "alchemy-run",
+    repository: "alchemy",
+    events: ["push"],
+  },
+  (event) => {
+    const title = event.payload.head_commit?.message.split("\n")[0] ?? "";
+    const isRelease =
+      event.payload.ref === "refs/heads/main" &&
+      title.startsWith("chore(release):");
+
+    return isRelease
+      ? versions.getByName(event.payload.head_commit!.id).generateBlog({
+          input: event.payload,
+        })
+      : Effect.log(`skipping ${event.payload.head_commit?.id}`);
+  },
+);
+```
+
+Worth reading in the example:
+
+- `src/ReleaseService.ts` — the Worker above; each release commit is
+  routed to a Durable Object keyed by commit hash.
+- `src/ReleaseVersion.ts` — the per-release Durable Object that
+  forwards the payload to the agent.
+- `src/ReleaseBlogger.ts` — an `Alchemy.Agent` whose prompt
+  references its tools directly.
+- `src/DevBox.ts` — a Cloudflare Container the agent's file and shell
+  tools execute in.
+
+## Cloudflare-only today
+
+`Cloudflare.Workers.GitHubRepositoryEventSourceLive` is currently the
+only implementation of the `RepositoryEventSource` contract — there
+is no AWS Lambda event source yet. On other hosts you can still
+provision a [`GitHub.Webhook`](/providers/github/webhook) directly
+with any delivery URL, but signature verification and routing are
+yours to implement.
+
+## Where next
+
+- [GitHub provider](/github) — repositories, Actions secrets and
+  variables, and the rest of the CI/CD glue.
+- [Workers](/cloudflare/compute/workers) — the host this event source runs
+  on.
+- [Webhook API reference](/providers/github/webhook) — the resource
+  provisioned under the hood.

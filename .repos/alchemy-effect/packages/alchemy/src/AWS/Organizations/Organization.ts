@@ -21,14 +21,36 @@ export interface Organization extends Resource<
   "AWS.Organizations.Organization",
   OrganizationProps,
   {
+    /**
+     * ID of the organization (e.g. `o-exampleorgid`).
+     */
     organizationId: OrganizationId;
+    /**
+     * ARN of the organization.
+     */
     organizationArn: OrganizationArn;
+    /**
+     * Feature set enabled on the organization (`ALL` or
+     * `CONSOLIDATED_BILLING`).
+     */
     featureSet: organizations.OrganizationFeatureSet | undefined;
+    /**
+     * ARN of the management account.
+     */
     managementAccountArn: string | undefined;
+    /**
+     * 12-digit ID of the management account.
+     */
     managementAccountId: string | undefined;
+    /**
+     * Email address of the management account.
+     */
     managementAccountEmail:
       | organizations.Organization["MasterAccountEmail"]
       | undefined;
+    /**
+     * Policy types available to the organization.
+     */
     availablePolicyTypes: organizations.PolicyTypeSummary[];
   },
   never,
@@ -40,7 +62,7 @@ export interface Organization extends Resource<
  *
  * This is a singleton-style resource. If an organization already exists,
  * Alchemy adopts and reconciles it instead of creating a second one.
- *
+ * @resource
  * @section Creating An Organization
  * @example Full Features Organization
  * ```typescript
@@ -64,6 +86,15 @@ export const OrganizationProvider = () =>
           const org = yield* readOrganization();
           return org?.Id && org.Arn ? toAttrs(org) : undefined;
         }),
+        // Account singleton: there is at most one organization per management
+        // account and no list API. `describeOrganization` (via `readOrganization`)
+        // returns the single org, or the typed `AWSOrganizationsNotInUseException`
+        // is caught to `undefined` when the account isn't a management account.
+        list: () =>
+          Effect.gen(function* () {
+            const org = yield* readOrganization();
+            return org?.Id && org.Arn ? [toAttrs(org)] : [];
+          }),
         reconcile: Effect.fn(function* ({ news, session }) {
           const desiredFeatureSet = news.featureSet ?? "ALL";
 

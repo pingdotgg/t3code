@@ -1,11 +1,11 @@
-import { Region } from "@distilled.cloud/aws/Region";
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
-import type { Providers } from "../Providers.ts";
 import { AWSEnvironment, type AccountID } from "../Environment.ts";
+import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
 import { createManagedTags, createName, retryConcurrent } from "./common.ts";
 
@@ -31,11 +31,17 @@ export interface AlarmMuteRule extends Resource<
   "AWS.CloudWatch.AlarmMuteRule",
   AlarmMuteRuleProps,
   {
+    /** Physical name of the mute rule. */
     alarmMuteRuleName: AlarmMuteRuleName;
+    /** ARN of the mute rule. */
     alarmMuteRuleArn: AlarmMuteRuleArn;
+    /** Current status of the mute rule. */
     status: string | undefined;
+    /** The mute type of the rule. */
     muteType: string | undefined;
+    /** The full mute rule description as last read from CloudWatch. */
     alarmMuteRule: cloudwatch.GetAlarmMuteRuleOutput;
+    /** Tags on the mute rule, including the internal Alchemy ownership tags. */
     tags: Record<string, string>;
   },
   never,
@@ -43,19 +49,32 @@ export interface AlarmMuteRule extends Resource<
 > {}
 
 /**
- * A CloudWatch alarm mute rule.
- *
+ * A CloudWatch alarm mute rule — suppresses alarm actions on a recurring
+ * schedule (e.g. maintenance windows) instead of manually disabling and
+ * re-enabling alarm actions.
+ * @resource
  * @section Creating Mute Rules
  * @example Scheduled Mute
  * ```typescript
  * const rule = yield* AlarmMuteRule("NightlyMute", {
  *   Rule: {
  *     Schedule: {
- *       Expression: "cron(0 2 * * ? *)",
+ *       Expression: "0 2 * * SUN",
  *       Duration: "PT1H",
  *     },
  *   },
  * });
+ * ```
+ *
+ * @section Reading Mute Rules at Runtime
+ * @example Read the Mute Rule from a Function
+ * ```typescript
+ * // init — bind the rule to the function (see GetAlarmMuteRule)
+ * const getAlarmMuteRule = yield* AWS.CloudWatch.GetAlarmMuteRule(rule);
+ *
+ * // runtime
+ * const result = yield* getAlarmMuteRule();
+ * const schedule = result.Rule?.Schedule;
  * ```
  */
 export const AlarmMuteRule = Resource<AlarmMuteRule>(
@@ -66,14 +85,16 @@ export const AlarmMuteRuleProvider = () =>
   Provider.effect(
     AlarmMuteRule,
     Effect.gen(function* () {
-      const region = yield* Region;
-      const { accountId } = yield* AWSEnvironment;
-
       const createMuteRuleName = (id: string, props: { name?: string } = {}) =>
         createName(id, props.name, 255);
 
       const alarmMuteRuleArn = (name: string) =>
-        `arn:aws:cloudwatch:${region}:${accountId}:alarm-mute-rule:${name}` as AlarmMuteRuleArn;
+        AWSEnvironment.current.pipe(
+          Effect.map(
+            (env) =>
+              `arn:aws:cloudwatch:${env.region}:${env.accountId}:alarm-mute-rule:${name}` as AlarmMuteRuleArn,
+          ),
+        );
 
       const readAlarmMuteRule = Effect.fn(function* (name: string) {
         const output = yield* cloudwatch
@@ -117,6 +138,40 @@ export const AlarmMuteRuleProvider = () =>
             (yield* createMuteRuleName(id, olds ?? {}));
           return yield* readAlarmMuteRule(name);
         }),
+        // AWS account/region collection: `listAlarmMuteRules` paginates every
+        // mute rule in the region. The summary only carries the ARN, so we
+        // derive the name from it and re-read each rule to return the full
+        // `Attributes` shape (identical to `read`).
+        list: () =>
+          Effect.gen(function* () {
+            const summaries = yield* cloudwatch.listAlarmMuteRules
+              .pages({})
+              .pipe(
+                Stream.runCollect,
+                Effect.map((chunk) =>
+                  Array.from(chunk).flatMap(
+                    (page) => page.AlarmMuteRuleSummaries ?? [],
+                  ),
+                ),
+              );
+
+            const rows = yield* Effect.forEach(
+              summaries,
+              (summary) => {
+                const name =
+                  summary.AlarmMuteRuleArn?.split(":alarm-mute-rule:")[1];
+                if (!name) {
+                  return Effect.succeed(undefined);
+                }
+                return readAlarmMuteRule(name);
+              },
+              { concurrency: 10 },
+            );
+
+            return rows.filter(
+              (row): row is NonNullable<typeof row> => row !== undefined,
+            );
+          }),
         reconcile: Effect.fn(function* ({ id, news, output, session }) {
           // Observe — pin the physical name from `output` if we already
           // have one; otherwise derive it from desired props.
@@ -139,7 +194,7 @@ export const AlarmMuteRuleProvider = () =>
             }),
           );
 
-          yield* session.note(alarmMuteRuleArn(name));
+          yield* session.note(yield* alarmMuteRuleArn(name));
 
           const state = yield* readAlarmMuteRule(name);
           if (!state) {

@@ -12,8 +12,8 @@ const PHASES: { id: Phase; label: string }[] = [
 ];
 
 const RESOURCES = [
-  { id: "Photos", type: "Cloudflare.R2Bucket" },
-  { id: "Sessions", type: "Cloudflare.KVNamespace" },
+  { id: "Photos", type: "Cloudflare.R2.Bucket" },
+  { id: "Sessions", type: "Cloudflare.KV.Namespace" },
   { id: "Api", type: "Cloudflare.Worker" },
 ];
 

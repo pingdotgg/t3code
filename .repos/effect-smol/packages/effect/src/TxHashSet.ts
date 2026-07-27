@@ -1,23 +1,14 @@
 /**
- * The `TxHashSet` module provides a transactional hash set for storing unique
- * values inside Effect transactions. A `TxHashSet<A>` wraps a `HashSet<A>` in a
- * transactional reference, so reads and writes can be composed with other
- * transactional operations and committed atomically.
+ * Transactional hash sets for storing unique values inside Effect
+ * transactions.
  *
- * **Common tasks**
- *
- * - Create transactional sets with {@link empty}, {@link make}, or {@link fromIterable}
- * - Mutate an existing set with {@link add}, {@link remove}, and {@link clear}
- * - Query membership and size with {@link has}, {@link size}, and {@link isEmpty}
- * - Derive new sets with {@link map}, {@link filter}, {@link union}, {@link intersection}, and {@link difference}
- * - Fold or collect values with {@link reduce} and {@link toHashSet}
- *
- * **Gotchas**
- *
- * - Mutation operations update the same transactional set; transform operations
- *   return a new `TxHashSet`
- * - Operations are `Effect` values and must be yielded, piped, or run to take effect
- * - Use `Effect.tx` when several operations must observe and commit one atomic transaction
+ * A `TxHashSet` keeps an immutable `HashSet` inside a `TxRef`, so membership
+ * checks and updates can commit atomically with other transactional operations.
+ * Use it when several pieces of shared transactional state must change
+ * together, such as adding a value only after checking related state. The
+ * module includes the usual set operations, including adding, removing,
+ * membership checks, set algebra, mapping, filtering, reducing, and conversion
+ * back to `HashSet`.
  *
  * @since 2.0.0
  */
@@ -146,7 +137,7 @@ export declare namespace TxHashSet {
    * console.log(processFruit("apple")) // Processing apple
    * ```
    *
-   * @category type-level
+   * @category utility types
    * @since 4.0.0
    */
   export type Value<T> = T extends TxHashSet<infer V> ? V : never

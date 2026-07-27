@@ -1,8 +1,9 @@
 import * as AWS from "@/AWS";
 import { ServerCertificate, VirtualMFADevice } from "@/AWS/IAM";
-import * as Test from "@/Test/Vitest";
+import * as Provider from "@/Provider";
+import * as Test from "@/Test/Alchemy";
 import * as IAM from "@distilled.cloud/aws/iam";
-import { describe, expect } from "@effect/vitest";
+import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { testCertificateBody, testPrivateKey } from "./fixtures.ts";
 
@@ -62,6 +63,40 @@ describe("AWS.IAM device and server certificate resources", () => {
         ServerCertificateName: certificate.serverCertificateName,
       }).pipe(Effect.option);
       expect(deleted._tag).toBe("None");
+    }),
+  );
+
+  test.provider("list enumerates the deployed server certificate", (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const certificate = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* ServerCertificate("ListServerCertificate", {
+            certificateBody: testCertificateBody,
+            privateKey: testPrivateKey,
+            tags: {
+              env: "test",
+            },
+          });
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(ServerCertificate);
+      const all = yield* provider.list();
+
+      const found = all.find(
+        (cert) =>
+          cert.serverCertificateArn === certificate.serverCertificateArn,
+      );
+      expect(found).toBeDefined();
+      expect(found?.serverCertificateName).toBe(
+        certificate.serverCertificateName,
+      );
+      expect(found?.certificateBody).toBe(testCertificateBody);
+      expect(found?.tags).toMatchObject({ env: "test" });
+
+      yield* stack.destroy();
     }),
   );
 

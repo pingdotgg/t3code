@@ -1,0 +1,54 @@
+<svg viewBox="0 0 800 420" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace">
+  <!-- Standalone social-media version of the generation-loop diagram.
+       Self-contained brand colors (parchment / moss / walnut / honey);
+       the blog renders the theme-aware LoopDiagram.astro component instead. -->
+  <defs>
+    <marker id="arrow-moss" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5c7a3e"/>
+    </marker>
+    <marker id="arrow-honey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#d49a2a"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="800" height="420" fill="#fbf6ea"/>
+
+  <text x="400" y="64" font-size="20" font-weight="600" fill="#2a2620" text-anchor="middle">Looping the generation of IaC and SDKs</text>
+
+  <g transform="translate(20, 110)">
+    <!-- nodes -->
+    <g stroke-width="1.5">
+      <rect x="20" y="30" width="200" height="56" rx="8" fill="#fffaf0" stroke="#5c7a3e" stroke-opacity="0.4"/>
+      <rect x="300" y="30" width="200" height="56" rx="8" fill="#fffaf0" stroke="#5c7a3e" stroke-opacity="0.4"/>
+      <rect x="580" y="30" width="160" height="56" rx="8" fill="#edecdc" stroke="#5c7a3e"/>
+      <rect x="300" y="170" width="200" height="56" rx="8" fill="#faeed8" stroke="#d49a2a"/>
+    </g>
+    <g fill="#2a2620" font-size="14" font-weight="600" text-anchor="middle">
+      <text x="120" y="53">write resources</text>
+      <text x="120" y="73">+ live tests</text>
+      <text x="400" y="53">run against</text>
+      <text x="400" y="73">the real API</text>
+      <text x="660" y="53">ship IaC</text>
+      <text x="660" y="73">+ truthful SDK</text>
+      <text x="400" y="193">patch the SDK,</text>
+      <text x="400" y="213">regenerate</text>
+    </g>
+
+    <!-- forward flow -->
+    <g stroke="#5c7a3e" stroke-opacity="0.6" stroke-width="1.5" fill="none">
+      <line x1="220" y1="45" x2="296" y2="45" marker-end="url(#arrow-moss)"/>
+      <line x1="500" y1="58" x2="576" y2="58" marker-end="url(#arrow-moss)"/>
+    </g>
+    <text x="538" y="44" fill="#85714f" font-size="12" text-anchor="middle">all green</text>
+
+    <!-- feedback loop -->
+    <g stroke="#d49a2a" stroke-width="1.5" fill="none">
+      <line x1="420" y1="86" x2="420" y2="166" marker-end="url(#arrow-honey)"/>
+      <path d="M300,198 H262 V70 H296" marker-end="url(#arrow-honey)"/>
+    </g>
+    <text x="430" y="130" fill="#b0812a" font-size="12">unmatched error</text>
+    <text x="252" y="130" fill="#b0812a" font-size="12" text-anchor="end">retest</text>
+  </g>
+
+  <text x="400" y="392" font-size="13" fill="#85714f" text-anchor="middle">alchemy.run</text>
+</svg>

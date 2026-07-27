@@ -1,27 +1,11 @@
 /**
- * Shared utilities for reading and decoding incoming HTTP messages.
+ * Common model for incoming HTTP messages.
  *
- * `HttpIncomingMessage` is the common body-and-header surface used by HTTP
- * server requests and client responses. It keeps transport-specific metadata in
- * the surrounding request and response modules while this module focuses on
- * headers, optional remote address information, byte streams, buffered body
- * views, and schema decoders for JSON bodies, URL-encoded bodies, and headers.
- *
- * Use these helpers in middleware, route handlers, client response processing,
- * and adapters when code should work with any incoming message instead of a
- * concrete request or response type. Body access is effectful because reading,
- * parsing, and decoding can fail; use `stream` when bytes should stay
- * streaming, and use `text`, `json`, `urlParamsBody`, or `arrayBuffer` when a
- * buffered view is appropriate. Some runtimes expose bodies as one-shot Web
- * streams, so prefer one body representation per message and let each
- * implementation's cached accessors handle repeated reads where available.
- *
- * Headers use the HTTP `Headers` module's lowercase, single-value map, so
- * repeated values may already have been combined or normalized by the adapter.
- * Decode headers with `schemaHeaders` when their shape matters. For form
- * bodies, `urlParamsBody` handles URL-encoded payloads; multipart support lives
- * on `HttpServerRequest`, with `MaxBodySize` providing the shared limit
- * reference used by multipart parsing.
+ * `HttpIncomingMessage` is used by server requests and client responses to
+ * expose headers, an optional remote address, and body accessors. This module
+ * provides decoders for JSON bodies, URL-encoded bodies, and headers, plus the
+ * shared body-size setting and inspection helper used by request and response
+ * implementations.
  *
  * @since 4.0.0
  */
@@ -77,7 +61,7 @@ export interface HttpIncomingMessage<E = unknown> extends Inspectable.Inspectabl
  * @category schemas
  * @since 4.0.0
  */
-export const schemaBodyJson = <S extends Schema.Top>(schema: S, options?: ParseOptions | undefined) => {
+export const schemaBodyJson = <S extends Schema.Constraint>(schema: S, options?: ParseOptions | undefined) => {
   const decode = Schema.decodeEffect(Schema.toCodecJson(schema))
   return <E>(
     self: HttpIncomingMessage<E>
@@ -94,10 +78,9 @@ export const schemaBodyJson = <S extends Schema.Top>(schema: S, options?: ParseO
 export const schemaBodyUrlParams = <
   A,
   I extends Readonly<Record<string, string | ReadonlyArray<string> | undefined>>,
-  RD,
-  RE
+  RD
 >(
-  schema: Schema.Codec<A, I, RD, RE>,
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ) => {
   const decode = UrlParams.schemaRecord.pipe(
@@ -114,8 +97,8 @@ export const schemaBodyUrlParams = <
  * @category schemas
  * @since 4.0.0
  */
-export const schemaHeaders = <A, I extends Readonly<Record<string, string | undefined>>, RD, RE>(
-  schema: Schema.Codec<A, I, RD, RE>,
+export const schemaHeaders = <A, I extends Readonly<Record<string, string | undefined>>, RD>(
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ) => {
   const decode = Schema.decodeUnknownEffect(schema)

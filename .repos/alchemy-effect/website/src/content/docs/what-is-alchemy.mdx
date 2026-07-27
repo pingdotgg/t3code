@@ -1,11 +1,9 @@
 ---
 title: What is Alchemy?
 description: Alchemy is an Infrastructure-as-Effects framework that combines cloud infrastructure and application logic into a single type-safe program powered by Effect.
-sidebar:
-  order: 0
 ---
 
-Alchemy is an **Infrastructure-as-Effects** framework. It extends
+Alchemy is an **[Infrastructure-as-Effects](/infrastructure-as-effects)** framework. It extends
 Infrastructure-as-Code by combining your cloud resources and the
 application logic that uses them into a single, type-safe program
 powered by [Effect](https://effect.website).
@@ -28,11 +26,11 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import Worker from "./src/worker.ts";
 
-const Bucket = Cloudflare.R2Bucket("Bucket");
+const Bucket = Cloudflare.R2.Bucket("Bucket");
 
 export default Alchemy.Stack(
   "MyApp",
-  { providers: Cloudflare.providers() },
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
   Effect.gen(function* () {
     const bucket = yield* Bucket;
     const worker = yield* Worker;
@@ -50,9 +48,9 @@ import { Bucket } from "./bucket.ts";
 
 export default Cloudflare.Worker(
   "Worker",
-  { main: import.meta.path },
+  { main: import.meta.url },
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
 
     return {
       fetch: Effect.gen(function* () {
@@ -66,10 +64,7 @@ export default Cloudflare.Worker(
 );
 ```
 
-The Bucket resource, the Worker resource, and the runtime fetch
-handler all live in the same codebase, composed with the same
-`yield*` syntax. There's no separate "infra" project — it's one
-program.
+There's no separate "infra" project — it's one program.
 
 ## Type safety
 
@@ -77,8 +72,7 @@ Alchemy uses TypeScript and Effect's type system to catch mistakes at
 compile time. If you forget to provide the right providers for your
 resources, the compiler tells you:
 
-```typescript twoslash
-// @errors: 2322
+```typescript
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
@@ -88,9 +82,11 @@ export default Alchemy.Stack(
   "MyApp",
   {
     providers: Layer.empty,
+    // @error: ts(2322) Type 'Layer<never, never, never>' is not assignable to type 'Layer<NoInfer<Providers>, never, StackServices>'.
+    // @error:   Type 'Providers' is not assignable to type 'never'.
   },
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2Bucket("Bucket");
+    const bucket = yield* Cloudflare.R2.Bucket("Bucket");
   }),
 );
 ```
@@ -106,8 +102,8 @@ databases, queues, workers, IAM roles, DNS records, and more. Each
 resource is declared as an Effect and `yield*`-ed inside a Stack:
 
 ```typescript
-const bucket = yield* Cloudflare.R2Bucket("Bucket");
-const db = yield* Cloudflare.D1Database("DB");
+const bucket = yield* Cloudflare.R2.Bucket("Bucket");
+const db = yield* Cloudflare.D1.Database("DB");
 const queue = yield* AWS.SQS.Queue("Jobs");
 ```
 
@@ -116,24 +112,24 @@ declare them in separate files and import them from anywhere:
 
 ```typescript
 // src/bucket.ts
-export const Bucket = Cloudflare.R2Bucket("Bucket");
+export const Bucket = Cloudflare.R2.Bucket("Bucket");
 ```
 
 ```typescript
 // src/worker.ts
 import { Bucket } from "./bucket.ts";
-const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
 ```
 
 ## Bindings
 
 A **Binding** connects a resource to a Worker or Lambda. A single
-`bind()` call hands your handler a typed client and — at deploy time
+binding call hands your handler a typed client and — at deploy time
 — wires up the permissions, environment variables, and platform
 bindings that client needs:
 
 ```typescript
-const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
 
 // later, inside fetch:
 yield* bucket.put("hello.txt", "world");
@@ -143,7 +139,7 @@ yield* bucket.put("hello.txt", "world");
 `env.BUCKET`, no `BUCKET_NAME` lookup, and no hand-written IAM policy
 — the binding **is** the client.
 
-On AWS, `bind()` emits least-privilege IAM scoped to the exact
+On AWS, the binding emits least-privilege IAM scoped to the exact
 resource ARN. On Cloudflare, it attaches the native Worker binding
 (R2, KV, D1, Durable Object). The runtime API is identical, so code
 written against one consumes the other.
@@ -152,7 +148,7 @@ Bindings also enable **circular references** between resources —
 Worker A can hold a typed client to Worker B and vice versa — which
 plain props, a directed acyclic graph, can't express.
 
-See [Bindings](/concepts/binding) for event sources, sinks, and the
+See [Bindings](/infrastructure-as-effects/binding) for event sources, sinks, and the
 deploy-time mechanics.
 
 ## Stacks and stages
@@ -174,22 +170,15 @@ environments never interfere with each other.
 A **Provider** teaches Alchemy how to manage a resource type. Behind
 every resource is a provider implementing four lifecycle operations:
 
-- **`read`** — look up the resource's live state in the cloud. It
-  tells the engine whether the resource exists and whether we own
-  it.
-- **`diff`** — compare the desired props against the previous ones
-  and decide whether the change is a no-op, an in-place update, or a
-  full replacement.
-- **`reconcile`** — make the cloud match the desired state. One flow
-  handles first-time creation, updates, and adoption: observe the
-  live state, create the resource if it's missing, sync any drifted
-  fields, and return the output attributes.
-- **`delete`** — remove the resource. Idempotent, so "already gone"
-  counts as success.
+- **`read`** — look up the resource's live state in the cloud.
+- **`diff`** — decide whether a change is a no-op, an update, or a replacement.
+- **`reconcile`** — make the cloud match the desired state.
+- **`delete`** — remove the resource; idempotent.
 
 The engine drives these in a **plan → apply** loop: `read` and
 `diff` build the plan, then `reconcile` and `delete` apply it in
-dependency order.
+dependency order. See [Providers](/infrastructure-as-code/provider) and
+[Resource lifecycle](/infrastructure-as-code/resource-lifecycle).
 
 Providers are Effect Layers, wired into a Stack with
 `Cloudflare.providers()` or `AWS.providers()`:
@@ -197,7 +186,7 @@ Providers are Effect Layers, wired into a Stack with
 ```typescript
 Alchemy.Stack(
   "App",
-  { providers: Cloudflare.providers() } /* ... */,
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
 );
 ```
 
@@ -205,9 +194,9 @@ The type system checks the wiring — using a Cloudflare resource
 without `Cloudflare.providers()`, or providing the wrong cloud's
 providers, is a compile-time error. To support a new cloud or
 third-party API, see [Writing a Custom Resource
-Provider](/guides/custom-provider).
+Provider](/infrastructure-as-code/custom-provider).
 
-## Two styles: Effect and Async
+## Two styles: Effect and async
 
 Alchemy supports two styles for writing Workers:
 
@@ -217,9 +206,9 @@ composable retries, and bindings resolved through the Effect system:
 ```typescript
 export default Cloudflare.Worker(
   "Worker",
-  { main: import.meta.path },
+  { main: import.meta.url },
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2Bucket.bind(Bucket);
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
     return {
       fetch: Effect.gen(function* () {
         // Effect-native runtime code
@@ -258,10 +247,9 @@ export default {
 Both styles use the same infrastructure declarations, the same CLI,
 and the same deployment pipeline. Choose whichever fits your team.
 
-## What's next
+## Where next
 
-- [Get Started](/getting-started) — install and deploy in two minutes
-- [Tutorial](/tutorial/part-1) — hands-on walkthrough from zero to
-  CI/CD
-- [Migrating from v1](/guides/migrating-from-v1) — upgrade from
+- [Getting started](/getting-started) — install and deploy in two minutes
+- Pick your provider: [Cloudflare](/cloudflare) or [AWS](/aws)
+- [Migrating from v1](/migrating-from-v1) — upgrade from
   Alchemy v1

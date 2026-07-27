@@ -294,8 +294,23 @@ describe("remainder", () => {
     assertNegativeZero(N.remainder(-4, 2))
   })
 
+  it("preserves the dividend sign with negative divisors", () => {
+    assert.strictEqual(N.remainder(5, -2), 1)
+    assert.strictEqual(N.remainder(-5, -2), -1)
+    assertNegativeZero(N.remainder(-4, -2))
+  })
+
   it("returns NaN when the divisor is zero", () => {
     assertNaN(N.remainder(5, 0))
+    assertNaN(N.remainder(Number("1e-101"), 0))
+  })
+
+  it("returns NaN for non-finite operands", () => {
+    assertNaN(N.remainder(NaN, 1))
+    assertNaN(N.remainder(Infinity, 1))
+    assertNaN(N.remainder(-Infinity, 1))
+    assertNaN(N.remainder(1, Infinity))
+    assertNaN(N.remainder(1, -Infinity))
   })
 
   it("handles small floats / scientific notation", () => {
@@ -308,8 +323,51 @@ describe("remainder", () => {
     assert.strictEqual(N.remainder(3e-7, divisor), 0)
 
     // Invalid — 2.5 and 1.5 are not integers
-    assert.notStrictEqual(N.remainder(2.5e-7, divisor), 0)
-    assert.notStrictEqual(N.remainder(1.5e-7, divisor), 0)
+    assert.strictEqual(N.remainder(2.5e-7, divisor), 5e-8)
+    assert.strictEqual(N.remainder(1.5e-7, divisor), 5e-8)
+  })
+
+  it("preserves signs in scientific notation", () => {
+    const divisor = 1e-7
+
+    assert.strictEqual(N.remainder(-2.5e-7, divisor), -5e-8)
+    assert.strictEqual(N.remainder(2.5e-7, -divisor), 5e-8)
+    assert.strictEqual(N.remainder(-2.5e-7, -divisor), -5e-8)
+    assertNegativeZero(N.remainder(-0, divisor))
+  })
+
+  it("handles scientific notation beyond the toFixed precision limit", () => {
+    const divisor = Number("1e-101")
+
+    assert.strictEqual(N.remainder(0, divisor), 0)
+    assert.strictEqual(N.remainder(divisor, divisor), 0)
+    assert.strictEqual(N.remainder(Number("3e-101"), divisor), 0)
+    assert.strictEqual(N.remainder(Number("2.5e-101"), divisor), Number("5e-102"))
+    assertNegativeZero(N.remainder(Number("-3e-101"), divisor))
+  })
+
+  it("handles subnormal values", () => {
+    const min = Number.MIN_VALUE
+
+    assert.strictEqual(N.remainder(min, min), 0)
+    assert.strictEqual(N.remainder(min * 2, min), 0)
+    assert.strictEqual(N.remainder(min, min * 2), min)
+  })
+
+  it("preserves nonzero subnormal remainders", () => {
+    const divisor = Number("1e-323")
+
+    assert.strictEqual(N.remainder(Number("1.042e-321"), divisor), Number.MIN_VALUE)
+    assert.strictEqual(N.remainder(Number("-1.042e-321"), divisor), -Number.MIN_VALUE)
+  })
+
+  it("handles large values formatted in scientific notation", () => {
+    const large = Number("1e21")
+
+    assert.strictEqual(N.remainder(large, 2), 0)
+    assert.strictEqual(N.remainder(large, 3), 1)
+    assert.strictEqual(N.remainder(3, large), 3)
+    assertNegativeZero(N.remainder(-large, 2))
   })
 })
 

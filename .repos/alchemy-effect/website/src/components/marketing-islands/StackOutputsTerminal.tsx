@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Line, sleep, TermChrome, useSpinner } from "./_terminal";
 
 const RESOURCES = [
-  { id: "Bucket", type: "Cloudflare.R2Bucket" },
+  { id: "Bucket", type: "Cloudflare.R2.Bucket" },
   { id: "Worker", type: "Cloudflare.Worker" },
 ];
 

@@ -29,6 +29,8 @@ This document maps v3 Schema APIs to their v4 equivalents. Simple renames and ar
 | `RedactedFromSelf`                              | `Redacted`                                                                    | rename            |
 | `Redacted`                                      | `RedactedFromValue`                                                           | rename            |
 | `EitherFromSelf`                                | `Result`                                                                      | rename            |
+| `DateFromNumber`                                | `DateFromMillis`                                                              | rename            |
+| `Date`                                          | `DateFromString`                                                              | restructure       |
 | `TaggedError`                                   | `TaggedErrorClass`                                                            | rename            |
 | `decodeUnknown`                                 | `decodeUnknownEffect`                                                         | rename            |
 | `decode`                                        | `decodeEffect`                                                                | rename            |
@@ -86,6 +88,30 @@ The following `*FromSelf` schemas have been renamed to drop the suffix:
 
 `DateFromSelf` → `Date`, `DurationFromSelf` → `Duration`, `ChunkFromSelf` → `Chunk`, `ReadonlyMapFromSelf` → `ReadonlyMap`, `ReadonlySetFromSelf` → `ReadonlySet`, `HashMapFromSelf` → `HashMap`, `HashSetFromSelf` → `HashSet`, `BigDecimalFromSelf` → `BigDecimal`, `CauseFromSelf` → `Cause`, `ExitFromSelf` → `Exit`, `OptionFromSelf` → `Option`, `RegExpFromSelf` → `RegExp`
 
+### `Date` encoded contract
+
+**Migration: restructure**
+
+In v3, `Schema.Date` decoded an ISO date string to a `Date` and rejected invalid dates. In v4, `Schema.Date` is the renamed `Schema.DateFromSelf`, so it expects a valid `Date` as its encoded value. Existing code can still type-check after upgrading while no longer accepting the same input.
+
+v3
+
+```ts
+import { Schema } from "effect"
+
+const DateFromIsoString = Schema.Date
+```
+
+v4
+
+```ts
+import { Schema } from "effect"
+
+const DateFromIsoString = Schema.DateFromString
+```
+
+`Schema.DateFromString` preserves the string-to-`Date` transformation and rejects strings that produce invalid dates.
+
 ### Filter renames
 
 All filters have been renamed with an `is` prefix and now use `check(...)` or `pipe(Schema.check(...))`:
@@ -99,6 +125,40 @@ Note: `positive`, `negative`, `nonNegative`, `nonPositive` have been removed in 
 `equivalence` → `toEquivalence`, `arbitrary` → `toArbitrary`, `pretty` → `toFormatter`, `standardSchemaV1` → `toStandardSchemaV1`
 
 ## Detailed migrations
+
+### Redacted
+
+**Migration: rename with behavior distinction**
+
+In v3, `Schema.Redacted(value)` decoded the raw encoded value and wrapped the decoded value in `Redacted`.
+
+In v4, that behavior is named `Schema.RedactedFromValue(value)`.
+
+v3
+
+```ts
+import { Schema } from "effect"
+
+const schema = Schema.Redacted(Schema.String)
+const decode = Schema.decodeSync(schema)
+
+decode("secret")
+```
+
+v4
+
+```ts
+import { Redacted, Schema } from "effect"
+
+const schema = Schema.RedactedFromValue(Schema.String)
+const decode = Schema.decodeSync(schema)
+
+const redacted = decode("secret")
+console.log(Redacted.value(redacted))
+// secret
+```
+
+`Schema.Redacted(value)` in v4 is the replacement for v3 `Schema.RedactedFromSelf(value)`: it expects the input to already be a `Redacted` value, so both `Type` and `Encoded` are `Redacted<...>`.
 
 ### asserts signature
 
@@ -186,6 +246,8 @@ const schema = Schema.TemplateLiteral([Schema.String, ".", Schema.String])
 const parser = Schema.TemplateLiteralParser(schema.parts)
 ```
 
+Behavior note: `TemplateLiteral` and `TemplateLiteralParser` match parts semantically. Checks on string, number, and bigint schema parts are applied while matching each segment, so refined parts can reject strings that would match the broader primitive shape.
+
 ### format
 
 **Migration: manual**
@@ -206,7 +268,7 @@ v4
 ```ts
 import { Schema, SchemaRepresentation } from "effect"
 
-const doc = SchemaRepresentation.fromAST(Schema.String.ast)
+const doc = SchemaRepresentation.toRepresentation(Schema.String.ast)
 const multi = SchemaRepresentation.toMultiDocument(doc)
 const codeDoc = SchemaRepresentation.toCodeDocument(multi)
 console.log(codeDoc.codes[0].Type)
@@ -293,6 +355,8 @@ import { Schema } from "effect"
 
 const schema = Schema.Record(Schema.String, Schema.Number)
 ```
+
+Behavior note: dynamic record key schemas select matching own properties before the value schema is applied. Refined key schemas such as `Schema.String.check(...)`, `Schema.Int`, or checked template literals ignore properties that do not match the key schema; they do not validate the value at those ignored keys. For transformed key schemas, selection is based on encoded property names before selected keys are decoded.
 
 ### pick / omit
 

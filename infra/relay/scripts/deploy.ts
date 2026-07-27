@@ -4,7 +4,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { AdoptPolicy } from "alchemy/AdoptPolicy";
 import { AlchemyContext, AlchemyContextLive } from "alchemy/AlchemyContext";
 import * as Apply from "alchemy/Apply";
-import { provideFreshArtifactStore } from "alchemy/Artifacts";
+import { ArtifactStore, createArtifactStore, provideFreshArtifactStore } from "alchemy/Artifacts";
 import { AuthProviders } from "alchemy/Auth/AuthProvider";
 import { CredentialsStoreLive } from "alchemy/Auth/Credentials";
 import { ProfileLive } from "alchemy/Auth/Profile";
@@ -260,6 +260,7 @@ const writeGithubEnvFile = Effect.fn("relay.deploy.writeGithubEnvFile")(function
 
 const deployBaseServices = Layer.mergeAll(
   Layer.succeed(AuthProviders, {}),
+  Layer.succeed(ArtifactStore, createArtifactStore()),
   Layer.provideMerge(AlchemyContextLive, PlatformServices),
   Layer.provide(ProfileLive, PlatformServices),
   Layer.provide(CredentialsStoreLive, PlatformServices),

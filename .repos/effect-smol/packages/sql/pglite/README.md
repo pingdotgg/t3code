@@ -1,6 +1,6 @@
 # `@effect/sql-pglite`
 
-An `@effect/sql` implementation using the `@electric-sql/pglite` library.
+An Effect SQL implementation using the `@electric-sql/pglite` library.
 
 ## Documentation
 

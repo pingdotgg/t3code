@@ -1,5 +1,6 @@
 {
   "$schema": "https://dprint.dev/schemas/v0.json",
+  "incremental": false,
   "includes": ["**/*.{ts,tsx,js,jsx,json,md}"],
   "indentWidth": 2,
   "lineWidth": 120,

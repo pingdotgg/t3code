@@ -1,21 +1,8 @@
 /**
- * React hooks for reading, writing, mounting, refreshing, and subscribing to
- * Effect atoms from the registry provided by `RegistryContext`.
- *
- * **Common tasks**
- *
- * - Read atom values in React components with {@link useAtomValue}
- * - Read and write writable atoms with {@link useAtom}
- * - Write without subscribing to the value with {@link useAtomSet}
- * - Seed registry-local initial values with {@link useAtomInitialValues}
- * - Integrate `AsyncResult` atoms with React Suspense through {@link useAtomSuspense}
- * - Subscribe to atom changes or derive stable `AtomRef` properties
- *
- * **Gotchas**
- *
- * - Hooks use the current `RegistryContext`, so each provider has an independent atom registry
- * - Writable atoms are mounted by the write-oriented hooks before updates are sent
- * - Suspense support throws promises for initial or waiting `AsyncResult` values and defects for failures unless `includeFailure` is enabled
+ * React hooks for working with Effect atoms from components. The hooks read,
+ * write, mount, refresh, and subscribe to atoms from `RegistryContext`, handle
+ * `AsyncResult` atoms with React Suspense, and expose helpers for reading and
+ * deriving `AtomRef` values.
  *
  * @since 4.0.0
  */

@@ -1,28 +1,12 @@
 /**
- * Schema-aware persisted queues for background work.
+ * Stores schema-encoded queue work in persistent storage.
  *
- * A `PersistedQueue` stores JSON-encoded values in a named queue and lets
- * workers `take` one value at a time inside a scoped processing window. It is
+ * A `PersistedQueue<A>` keeps JSON-encoded values in a named queue and lets
+ * workers take one value at a time inside a scoped processing window. It is
  * useful for durable handoffs, background jobs, outbox-style integrations, and
- * workloads where failed work should be retried across fibers, process
- * restarts, or multiple workers sharing Redis or SQL.
- *
- * Delivery is at-least-once: a handler that fails, is interrupted, or loses its
- * backing-store lock may see the same element again until `maxAttempts` is
- * reached. Use stable custom ids when offering idempotent work, and choose ids
- * that are collision-free for the backing store because stores can enforce
- * uniqueness at the queue, prefix, or table level. Ordering is intentionally a
- * store-level concern; retries, lock expiration, polling, and multiple workers
- * can move entries behind newer work, so handlers should not rely on strict
- * FIFO processing.
- *
- * Values are encoded and decoded with the supplied schema using the JSON codec,
- * so schema services must be available when offering and taking values. Changing
- * a queue name, schema, Redis prefix, SQL table, or id format is a persistence
- * migration: old entries may decode differently, stop being visible, or collide
- * with new entries. The memory store is process-local and volatile, while Redis
- * and SQL stores use leases that should be tuned for the expected processing
- * time.
+ * work that should retry across fibers, process restarts, or multiple workers.
+ * This module includes a queue factory, store service, id-based de-duplication,
+ * retry handling, and in-memory, Redis, and SQL-backed store layers.
  *
  * @since 4.0.0
  */
@@ -114,13 +98,13 @@ export interface PersistedQueue<in out A, out R = never> {
 /**
  * Service for constructing named `PersistedQueue` instances from schemas.
  *
- * @category Factory
+ * @category services
  * @since 4.0.0
  */
 export class PersistedQueueFactory extends Context.Service<
   PersistedQueueFactory,
   {
-    readonly make: <S extends Schema.Top>(options: {
+    readonly make: <S extends Schema.Constraint>(options: {
       readonly name: string
       readonly schema: S
     }) => Effect.Effect<PersistedQueue<S["Type"], S["EncodingServices"] | S["DecodingServices"]>>
@@ -134,7 +118,7 @@ export class PersistedQueueFactory extends Context.Service<
  * @category accessors
  * @since 4.0.0
  */
-export const make = <S extends Schema.Top>(options: {
+export const make = <S extends Schema.Constraint>(options: {
   readonly name: string
   readonly schema: S
 }): Effect.Effect<
@@ -152,14 +136,14 @@ export const make = <S extends Schema.Top>(options: {
  * assigned an id when needed, and acknowledged or retried according to the
  * `take` handler's exit.
  *
- * @category Factory
+ * @category constructors
  * @since 4.0.0
  */
 export const makeFactory = Effect.gen(function*() {
   const store = yield* PersistedQueueStore
 
   return PersistedQueueFactory.of({
-    make<S extends Schema.Top>(options: {
+    make<S extends Schema.Constraint>(options: {
       readonly name: string
       readonly schema: S
     }) {
@@ -186,19 +170,13 @@ export const makeFactory = Effect.gen(function*() {
             }
           ),
         take: (f, opts) =>
-          Effect.uninterruptibleMask(Effect.fnUntraced(function*(restore) {
-            const scope = yield* Scope.make()
+          Effect.scopedWith(Effect.fnUntraced(function*(scope) {
             const item = yield* store.take({
               name: options.name,
               maxAttempts: opts?.maxAttempts ?? 10
-            }).pipe(
-              Scope.provide(scope),
-              restore
-            )
+            }).pipe(Scope.provide(scope))
             const decoded = yield* decodeUnknown(item.element)
-            const exit = yield* Effect.exit(restore(f(decoded, { id: item.id, attempts: item.attempts })))
-            yield* Scope.close(scope, exit)
-            return yield* exit
+            return yield* f(decoded, { id: item.id, attempts: item.attempts })
           }))
       })
     }
@@ -208,7 +186,7 @@ export const makeFactory = Effect.gen(function*() {
 /**
  * Provides `PersistedQueueFactory` using the current `PersistedQueueStore`.
  *
- * @category Factory
+ * @category layers
  * @since 4.0.0
  */
 export const layer: Layer.Layer<
@@ -244,7 +222,7 @@ export class PersistedQueueError extends Schema.ErrorClass<PersistedQueueError>(
 )({
   _tag: Schema.tag("PersistedQueueError"),
   message: Schema.String,
-  cause: Schema.optional(Schema.Defect)
+  cause: Schema.optional(Schema.Defect())
 }) {
   /**
    * Marks this value as a persisted queue error for runtime guards.
@@ -305,7 +283,7 @@ export class PersistedQueueStore extends Context.Service<
  * The store is process-local and volatile; failed takes are requeued until the
  * configured maximum attempts is reached.
  *
- * @category Store
+ * @category store
  * @since 4.0.0
  */
 export const layerStoreMemory: Layer.Layer<
@@ -379,7 +357,7 @@ export const layerStoreMemory: Layer.Layer<
  * refreshes locks while items are being processed, and moves exhausted items
  * to a failed queue.
  *
- * @category Store
+ * @category store
  * @since 4.0.0
  */
 export const makeStoreRedis = Effect.fnUntraced(function*(
@@ -524,7 +502,7 @@ export const makeStoreRedis = Effect.fnUntraced(function*(
             id,
             JSON.stringify({ id, element, attempts: 0 })
           )
-          : redis.send("LPUSH", `${prefix}${name}`, JSON.stringify({ id, element, attempts: 0 })),
+          : redis.send("RPUSH", `${prefix}${name}`, JSON.stringify({ id, element, attempts: 0 })),
         ({ cause }) =>
           new PersistedQueueError({
             message: "Failed to offer element to persisted queue",
@@ -629,7 +607,9 @@ local key_pending = KEYS[2]
 local prefix = ARGV[1]
 
 local entries = redis.call("HGETALL", key_pending)
-for id, payload in pairs(entries) do
+for i = 1, #entries, 2 do
+  local id = entries[i]
+  local payload = entries[i + 1]
   local lock_key = prefix .. id .. ":lock"
   local exists = redis.call("EXISTS", lock_key)
   if exists == 0 then
@@ -689,7 +669,7 @@ redis.call("DEL", key_lock)
 redis.call("HDEL", key_pending, id)
 redis.call("RPUSH", key_failed, payload)
 `,
-    numberOfKeys: 2
+    numberOfKeys: 3
   }
 )
 
@@ -740,7 +720,7 @@ end
 /**
  * Provides a Redis-backed `PersistedQueueStore` using `makeStoreRedis`.
  *
- * @category Store
+ * @category store
  * @since 4.0.0
  */
 export const layerStoreRedis: (
@@ -765,7 +745,7 @@ export const layerStoreRedis: (
  * per-worker locks, refreshes active locks while scoped takes are running, and
  * retries or completes rows according to the processing exit.
  *
- * @category Store
+ * @category store
  * @since 4.0.0
  */
 export const makeStoreSql: (
@@ -952,10 +932,12 @@ export const makeStoreSql: (
   const elementIds = new Set<number>()
   const refreshLocks: Effect.Effect<void, SqlError> = Effect.suspend((): Effect.Effect<void, SqlError> => {
     if (elementIds.size === 0) return Effect.void
+    const ids = Array.from(elementIds)
     return sql`
       UPDATE ${tableNameSql}
       SET acquired_at = ${sqlNow}
-      WHERE acquired_by = ${workerIdSql}
+      WHERE sequence IN (${sql.literal(ids.join(","))})
+      AND acquired_by = ${workerIdSql}
     `
   })
   const complete = (sequence: number, attempts: number) => {
@@ -1126,7 +1108,7 @@ export const makeStoreSql: (
           takenLatch.closeUnsafe()
           for (let i = 0; i < results.length; i++) {
             const element = results[i]
-            element.element = JSON.parse(element.element)
+            elementIds.add(element.sequence)
           }
           yield* Queue.offerAll(queue, results)
           yield* takenLatch.await
@@ -1181,7 +1163,11 @@ export const makeStoreSql: (
                   : retry(element.sequence, element.attempts + 1, cause),
               onSuccess: () => complete(element.sequence, element.attempts + 1)
             }))
-          )
+          ),
+          Effect.map((element) => ({
+            ...element,
+            element: JSON.parse(element.element)
+          }))
         )
       )
   })
@@ -1195,7 +1181,7 @@ class QueueKey extends Data.Class<{
 /**
  * Provides a SQL-backed `PersistedQueueStore` using `makeStoreSql`.
  *
- * @category Store
+ * @category store
  * @since 4.0.0
  */
 export const layerStoreSql: (

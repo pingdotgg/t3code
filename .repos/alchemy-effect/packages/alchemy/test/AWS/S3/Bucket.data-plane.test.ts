@@ -1,8 +1,8 @@
 import * as AWS from "@/AWS";
 import { Bucket } from "@/AWS/S3";
-import * as Test from "@/Test/Vitest";
+import * as Test from "@/Test/Alchemy";
 import * as S3 from "@distilled.cloud/aws/s3";
-import { expect } from "@effect/vitest";
+import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -10,13 +10,19 @@ import * as Schedule from "effect/Schedule";
 const { test } = Test.make({ providers: AWS.providers() });
 
 const deployTestBucket = (stack: Test.ScratchStack) =>
-  stack.deploy(
-    Effect.gen(function* () {
-      return yield* Bucket("DataPlaneTestBucket", {
-        forceDestroy: true,
-      });
-    }),
-  );
+  Effect.gen(function* () {
+    // Leading destroy: reconcile away any partial deployment left by a
+    // previously crashed run (the auto-generated physical name is
+    // deterministic, so the re-deploy below re-adopts and owns it).
+    yield* stack.destroy();
+    return yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* Bucket("DataPlaneTestBucket", {
+          forceDestroy: true,
+        });
+      }),
+    );
+  });
 
 test.provider("listObjectsV2 - list objects in bucket", (stack) =>
   Effect.gen(function* () {
@@ -347,9 +353,7 @@ const assertBucketDeleted = Effect.fn(function* (bucketName: string) {
     Effect.flatMap(() => Effect.fail(new BucketStillExists())),
     Effect.retry({
       while: (e) => e._tag === "BucketStillExists",
-      schedule: Schedule.exponential(100).pipe(
-        Schedule.both(Schedule.recurs(10)),
-      ),
+      schedule: Schedule.max([Schedule.exponential(100), Schedule.recurs(10)]),
     }),
     Effect.catchTag("NotFound", () => Effect.void),
     Effect.catch(() => Effect.void),

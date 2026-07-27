@@ -1,53 +1,12 @@
 /**
- * The `Response` module defines Effect AI's provider-neutral representation of
- * model output. Text, reasoning, tool calls, tool results, files, source
- * citations, metadata, finish information, usage, and provider errors are all
- * modeled as typed response parts.
+ * Defines a shared data model for AI model output.
  *
- * **Mental model**
- *
- * - A response is an ordered sequence of parts.
- * - Non-streaming responses use complete parts such as `TextPart`,
- *   `ReasoningPart`, `ToolCallPart`, `ToolResultPart`, and `FinishPart`.
- * - Streaming responses use start, delta, and end parts for text, reasoning,
- *   and tool parameters before final tool-call or finish parts appear.
- * - Tool-aware schemas are built from a toolkit, so tool call parameters and
- *   tool result payloads stay aligned with each tool definition.
- *
- * **Common tasks**
- *
- * - Construct individual parts with {@link makePart}, {@link toolCallPart},
- *   {@link toolResultPart}, or {@link toolApprovalRequestPart}.
- * - Decode or encode parts with {@link Part}, {@link StreamPart}, or
- *   {@link AllParts}.
- * - Read completion metadata from {@link FinishPart}, {@link FinishReason},
- *   and {@link Usage}.
- *
- * **Gotchas**
- *
- * - `metadata` is reserved for provider-specific JSON and defaults to an empty
- *   object.
- * - Streaming text, reasoning, and tool parameter deltas are incremental events;
- *   accumulate them before treating them as final content.
- * - Tool result parts encode success and failure values according to the
- *   corresponding tool schemas.
- *
- * **Example** (Constructing response parts)
- *
- * ```ts
- * import { Response } from "effect/unstable/ai"
- *
- * const text = Response.makePart("text", {
- *   text: "The weather is sunny today."
- * })
- *
- * const toolCall = Response.toolCallPart({
- *   id: "call_123",
- *   name: "GetWeather",
- *   params: { city: "San Francisco" },
- *   providerExecuted: false
- * })
- * ```
+ * Responses are represented as typed parts so different providers can expose
+ * text, reasoning, tool calls, files, sources, metadata, finish information, and
+ * errors through one shape. The same model is used for complete responses and
+ * streaming responses, where start, delta, and end parts describe content as it
+ * arrives. This module also carries provider metadata and schemas used by tools
+ * that need to validate response parts.
  *
  * @since 4.0.0
  */
@@ -1423,7 +1382,7 @@ export interface ToolCallPartMetadata extends ProviderMetadata {}
  * @category schemas
  * @since 4.0.0
  */
-export const ToolCallPart: <const Name extends string, Params extends Schema.Top>(
+export const ToolCallPart: <const Name extends string, Params extends Schema.Constraint>(
   name: Name,
   params: Params
 ) => Schema.Struct<
@@ -1438,7 +1397,7 @@ export const ToolCallPart: <const Name extends string, Params extends Schema.Top
       Schema.$Record<Schema.String, Schema.Codec<Schema.Json>>
     >
   }
-> = <const Name extends string, Params extends Schema.Top>(
+> = <const Name extends string, Params extends Schema.Constraint>(
   name: Name,
   params: Params
 ) =>
@@ -1636,7 +1595,11 @@ export interface ToolResultPartMetadata extends ProviderMetadata {}
  * @category schemas
  * @since 4.0.0
  */
-export const ToolResultPart: <const Name extends string, Success extends Schema.Top, Failure extends Schema.Top>(
+export const ToolResultPart: <
+  const Name extends string,
+  Success extends Schema.Constraint,
+  Failure extends Schema.Constraint
+>(
   name: Name,
   success: Success,
   failure: Failure
@@ -1674,8 +1637,8 @@ export const ToolResultPart: <const Name extends string, Success extends Schema.
   >
 > = <
   const Name extends string,
-  Success extends Schema.Top,
-  Failure extends Schema.Top
+  Success extends Schema.Constraint,
+  Failure extends Schema.Constraint
 >(
   name: Name,
   success: Success,
@@ -2172,7 +2135,7 @@ export const HttpRequestDetails = Schema.Struct({
   method: Schema.Literals(["GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS", "TRACE"]),
   url: Schema.String,
   urlParams: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
-  hash: Schema.UndefinedOr(Schema.String),
+  hash: Schema.optional(Schema.String),
   headers: Schema.Record(
     Schema.String,
     Schema.Union([
@@ -2209,7 +2172,7 @@ export const HttpRequestDetails = Schema.Struct({
  * @since 4.0.0
  */
 export const HttpResponseDetails = Schema.Struct({
-  status: Schema.Number,
+  status: Schema.Int,
   headers: Schema.Record(
     Schema.String,
     Schema.Union([
@@ -2250,19 +2213,19 @@ export interface ResponseMetadataPart extends BasePart<"response-metadata", Resp
   /**
    * Optional unique identifier for this specific response.
    */
-  readonly id: string | undefined
+  readonly id?: string | undefined
   /**
    * Optional identifier of the AI model that generated the response.
    */
-  readonly modelId: string | undefined
+  readonly modelId?: string | undefined
   /**
    * Optional timestamp when the response was generated.
    */
-  readonly timestamp: DateTime.Utc | undefined
+  readonly timestamp?: DateTime.Utc | undefined
   /**
    * Optional HTTP request details for the request made to the AI provider.
    */
-  readonly request: typeof HttpRequestDetails.Type | undefined
+  readonly request?: typeof HttpRequestDetails.Type | undefined
 }
 
 /**
@@ -2309,10 +2272,10 @@ export interface ResponseMetadataPartMetadata extends ProviderMetadata {}
  */
 export const ResponseMetadataPart: Schema.Struct<{
   readonly type: Schema.tag<"response-metadata">
-  readonly id: Schema.UndefinedOr<Schema.String>
-  readonly modelId: Schema.UndefinedOr<Schema.String>
-  readonly timestamp: Schema.UndefinedOr<Schema.DateTimeUtcFromString>
-  readonly request: Schema.UndefinedOr<typeof HttpRequestDetails>
+  readonly id: Schema.optional<Schema.String>
+  readonly modelId: Schema.optional<Schema.String>
+  readonly timestamp: Schema.optional<Schema.DateTimeUtcFromString>
+  readonly request: Schema.optional<typeof HttpRequestDetails>
   readonly "~effect/ai/Content/Part": Schema.withDecodingDefaultKey<Schema.tag<"~effect/ai/Content/Part">>
   readonly metadata: Schema.withDecodingDefault<
     Schema.$Record<Schema.String, Schema.Codec<Schema.Json>>
@@ -2320,10 +2283,10 @@ export const ResponseMetadataPart: Schema.Struct<{
 }> = Schema.Struct({
   ...BasePart.fields,
   type: Schema.tag("response-metadata"),
-  id: Schema.UndefinedOr(Schema.String),
-  modelId: Schema.UndefinedOr(Schema.String),
-  timestamp: Schema.UndefinedOr(Schema.DateTimeUtcFromString),
-  request: Schema.UndefinedOr(HttpRequestDetails)
+  id: Schema.optional(Schema.String),
+  modelId: Schema.optional(Schema.String),
+  timestamp: Schema.optional(Schema.DateTimeUtcFromString),
+  request: Schema.optional(HttpRequestDetails)
 }).annotate({ identifier: "ResponseMetadataPart" }) satisfies Schema.Codec<
   ResponseMetadataPart,
   ResponseMetadataPartEncoded
@@ -2405,19 +2368,19 @@ export class Usage extends Schema.Class<Usage>("effect/ai/AiResponse/Usage")({
     /**
      * The number of non-cached input (i.e. prompt) tokens used.
      */
-    uncached: Schema.UndefinedOr(Schema.Number),
+    uncached: Schema.optional(Schema.Int),
     /**
      * The total of number of input (i.e. prompt) tokens used.
      */
-    total: Schema.UndefinedOr(Schema.Number),
+    total: Schema.optional(Schema.Int),
     /**
      * The number of cached input (i.e. prompt) tokens read.
      */
-    cacheRead: Schema.UndefinedOr(Schema.Number),
+    cacheRead: Schema.optional(Schema.Int),
     /**
      * The number of cached input (i.e. prompt) tokens written.
      */
-    cacheWrite: Schema.UndefinedOr(Schema.Number)
+    cacheWrite: Schema.optional(Schema.Int)
   }),
   /**
    * Information about the output (i.e. response) tokens used.
@@ -2426,15 +2389,15 @@ export class Usage extends Schema.Class<Usage>("effect/ai/AiResponse/Usage")({
     /**
      * The total of number of output (i.e. response) tokens used.
      */
-    total: Schema.UndefinedOr(Schema.Number),
+    total: Schema.optional(Schema.Int),
     /**
      * The number of text tokens used.
      */
-    text: Schema.UndefinedOr(Schema.Number),
+    text: Schema.optional(Schema.Int),
     /**
      * The number of reasoning tokens used.
      */
-    reasoning: Schema.UndefinedOr(Schema.Number)
+    reasoning: Schema.optional(Schema.Int)
   })
 }) {}
 
@@ -2480,7 +2443,7 @@ export interface FinishPart extends BasePart<"finish", FinishPartMetadata> {
   /**
    * Optional HTTP response details from the AI provider.
    */
-  readonly response: typeof HttpResponseDetails.Type | undefined
+  readonly response?: typeof HttpResponseDetails.Type | undefined
 }
 
 /**
@@ -2537,7 +2500,7 @@ export const FinishPart: Schema.Struct<{
     "unknown"
   ]>
   readonly usage: typeof Usage
-  readonly response: Schema.UndefinedOr<typeof HttpResponseDetails>
+  readonly response: Schema.optional<typeof HttpResponseDetails>
   readonly "~effect/ai/Content/Part": Schema.withDecodingDefaultKey<Schema.tag<"~effect/ai/Content/Part">>
   readonly metadata: Schema.withDecodingDefault<
     Schema.$Record<Schema.String, Schema.Codec<Schema.Json>>
@@ -2547,7 +2510,7 @@ export const FinishPart: Schema.Struct<{
   type: Schema.tag("finish"),
   reason: FinishReason,
   usage: Usage,
-  response: Schema.UndefinedOr(HttpResponseDetails)
+  response: Schema.optional(HttpResponseDetails)
 }).annotate({ identifier: "FinishPart" }) satisfies Schema.Codec<FinishPart, FinishPartEncoded>
 
 // =============================================================================

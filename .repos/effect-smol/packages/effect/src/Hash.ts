@@ -1,53 +1,11 @@
 /**
- * The `Hash` module computes Effect hash values and defines the interface for
- * objects that want to provide their own hash implementation. Hashes are small
- * numeric fingerprints used by Effect data structures to bucket values quickly;
- * they are not cryptographic digests and they are not proof that two values are
- * equal.
- *
- * **Mental model**
- *
- * - {@link hash} dispatches by JavaScript type and handles primitives,
- *   arrays, typed arrays, maps, sets, plain objects, dates, regular
- *   expressions, and custom hashable objects
- * - Objects can implement {@link Hash} by defining a method at {@link symbol}
- * - Structural object hashes are cached, so repeated hashing of the same object
- *   is cheap after the first computation
- * - {@link random} gives reference-stable hash values for values that should
- *   be hashed by identity
- * - Lower-level helpers such as {@link combine}, {@link string},
- *   {@link number}, {@link structure}, {@link structureKeys}, and
- *   {@link array} are useful when implementing custom hashes
- *
- * **Quickstart**
- *
- * **Example** (Implementing a custom hash)
- *
- * ```ts
- * import { Hash } from "effect"
- *
- * class UserKey implements Hash.Hash {
- *   constructor(
- *     readonly id: string,
- *     readonly region: string
- *   ) {}
- *
- *   [Hash.symbol](): number {
- *     return Hash.combine(Hash.string(this.region))(Hash.string(this.id))
- *   }
- * }
- *
- * const value = Hash.hash(new UserKey("user-1", "eu"))
- * ```
- *
- * **Gotchas**
- *
- * - Hash collisions are possible; hash-based collections also need equality
- *   semantics to decide whether two values are actually the same
- * - Do not mutate an object after hashing it structurally, because the cached
- *   hash can become stale
- * - Use {@link random} or a custom {@link Hash} implementation for mutable
- *   objects that should be compared by reference identity
+ * Computes Effect hash values and defines the interface for objects that want
+ * to provide their own hash implementation. Hashes are small numeric
+ * fingerprints used by Effect data structures to bucket values quickly; they
+ * are not cryptographic digests and they are not proof that two values are
+ * equal. The module also includes helpers for primitive, structure, array, and
+ * reference-based hashes, plus functions for combining and optimizing numeric
+ * hash values.
  *
  * @since 2.0.0
  */
@@ -400,7 +358,8 @@ export const number = (n: number) => {
  *
  * **When to use**
  *
- * Use to hash a string directly.
+ * Use when you need a string field to contribute to a custom structural hash
+ * implementation.
  *
  * **Details**
  *

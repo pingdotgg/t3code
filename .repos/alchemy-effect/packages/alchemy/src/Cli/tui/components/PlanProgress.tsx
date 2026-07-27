@@ -270,8 +270,8 @@ export function PlanProgress(props: PlanProgressProps): JSX.Element {
           const icon = taskIcon(row.action, status, spinner);
           const label =
             row.action === "delete"
-              ? status === "deleted"
-                ? "deleted"
+              ? status === "deleted" || status === "retained"
+                ? status
                 : "drop"
               : status === "ran"
                 ? row.action === "noop"
@@ -365,6 +365,8 @@ function statusColor(
     case "deleting":
     case "deleted":
       return "red";
+    case "retained":
+      return "gray";
     case "running":
     case "ran":
       return "cyan";
@@ -386,7 +388,7 @@ function taskIcon(
   if (status === "fail") return "✗";
   if (status === "skipped") return "•";
   if (status === "ran") return action === "noop" ? "•" : "✓";
-  if (status === "deleted") return "✓";
+  if (status === "deleted" || status === "retained") return "✓";
   if (action === "delete") return "-";
   if (action === "noop") return "•";
   return "λ";

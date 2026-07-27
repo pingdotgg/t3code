@@ -1,0 +1,182 @@
+---
+title: MySQL
+description: PlanetScale MySQL (Vitess) as Stack resources — databases, branches, and passwords, with SQL migrations per branch and a straight line into Cloudflare Hyperdrive.
+---
+
+PlanetScale MySQL is Vitess-backed serverless MySQL with cheap,
+instant database branches. In alchemy the database, its branches, and
+the passwords that grant access are all resources in your Stack —
+three types: `MySQLDatabase`, `MySQLBranch`, and `MySQLPassword`.
+
+Using Postgres instead? See [Postgres](/planetscale/data/postgres). New
+here? [Set up credentials](/planetscale/setup) first.
+
+## Create a database
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Planetscale from "alchemy/Planetscale";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Planetscale.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const database = yield* Planetscale.MySQLDatabase("app-db", {
+      region: { slug: "us-east" },
+      clusterSize: "PS_10",
+    });
+
+    return { databaseId: database.id, name: database.name };
+  }),
+);
+```
+
+`clusterSize` is required — `"PS_10"`, `"PS_20"`, up through
+`"PS_2800"`, or `"PS_DEV"` for development workloads. No `name`
+needed: alchemy generates a unique lowercase name from the app,
+stage, and logical ID. `region` cannot be changed after creation —
+changing it replaces the database.
+
+## Branch the database
+
+A `MySQLBranch` is a fork of the database's schema (branched from
+`parentBranch`, default `"main"`):
+
+```typescript
+const branch = yield* Planetscale.MySQLBranch("app-branch", {
+  database,
+  isProduction: false,
+});
+```
+
+Non-production branches run on the `PS_DEV` size. `parentBranch`
+also accepts another `MySQLBranch` resource, so you can stack
+branches off each other.
+
+Production branches take a `clusterSize` and can enable safe
+migrations:
+
+```typescript
+const prod = yield* Planetscale.MySQLBranch("prod-branch", {
+  database,
+  isProduction: true,
+  clusterSize: "PS_10",
+  safeMigrations: true,
+});
+```
+
+Changing `clusterSize` on a deployed production branch resizes it in
+place; toggling `safeMigrations` syncs on the next deploy.
+
+## Grant access with a password
+
+A `MySQLPassword` mints credentials scoped to one branch and one
+role:
+
+```typescript
+const password = yield* Planetscale.MySQLPassword("app-password", {
+  database,
+  branch,
+  role: "readwriter",
+});
+```
+
+`role` is `"reader"`, `"writer"`, `"admin"`, or `"readwriter"`.
+Optional `ttl` (seconds) expires the password automatically, and
+`cidrs` restricts which IP ranges may use it:
+
+```typescript
+const admin = yield* Planetscale.MySQLPassword("admin-password", {
+  database,
+  role: "admin", // branch defaults to "main"
+  ttl: 86400,
+  cidrs: ["203.0.113.0/24"],
+});
+```
+
+The attributes give you `host`, `username`, and `password` — the
+plaintext is `Redacted` so it never leaks into logs or state dumps.
+Changing `role`, `ttl`, `replica`, or the target database/branch
+replaces the password with a freshly minted one.
+
+## Connect from Cloudflare
+
+The password's `origin` attribute is the exact shape
+[Hyperdrive](/cloudflare/data/hyperdrive) accepts, so wiring a Worker to
+the branch is one resource:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+
+const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
+  origin: password.origin,
+});
+```
+
+See the full example —
+[cloudflare-planetscale-mysql-drizzle](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-planetscale-mysql-drizzle)
+— for a Worker querying the branch through Hyperdrive with Drizzle.
+
+## Apply migrations
+
+Point `migrationsDir` at a directory of `.sql` files — on either the
+database (applied to the default branch) or a branch:
+
+```typescript
+const branch = yield* Planetscale.MySQLBranch("app-branch", {
+  database,
+  isProduction: false,
+  migrationsDir: "./migrations",
+});
+```
+
+Files are sorted by numeric prefix (`0001_init.sql`, `0002_...`) and
+applied in order; applied migrations are tracked in a
+`__alchemy_migrations` table so each file runs once. `importFiles`
+lists extra `.sql` files (seed data) applied after migrations and
+re-applied only when their contents change. Full details in
+[Migrations](/planetscale/data/migrations).
+
+## Branch per preview stage
+
+Long-lived stages own the database; ephemeral PR stages reference it
+with `MySQLDatabase.ref` and only create their own branch, password,
+and compute:
+
+```typescript
+const { stage } = yield* Alchemy.Stack;
+
+const database = stage.startsWith("pr-")
+  ? yield* Planetscale.MySQLDatabase.ref("app-db", {
+      stage: `staging-${stage}`,
+    })
+  : yield* Planetscale.MySQLDatabase("app-db", {
+      region: { slug: "us-east" },
+      clusterSize: "PS_10",
+    });
+```
+
+Tearing down a PR stage deletes its branch and password but leaves
+the shared database untouched. The
+[branch from a shared database](/cloudflare/data/branch-from-shared-database)
+guide walks through the whole pattern.
+
+## Where next
+
+- [Migrations](/planetscale/data/migrations) — SQL migrations and seed
+  files in depth.
+- [Hyperdrive](/cloudflare/data/hyperdrive) — pooled edge connections
+  from Workers.
+- [Postgres](/planetscale/data/postgres) — the PostgreSQL side of
+  PlanetScale.
+
+Reference:
+
+- [MySQLDatabase](/providers/planetscale/mysql/mysqldatabase) ·
+  [MySQLBranch](/providers/planetscale/mysql/mysqlbranch) ·
+  [MySQLPassword](/providers/planetscale/mysql/mysqlpassword)

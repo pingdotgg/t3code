@@ -373,6 +373,12 @@ describe("Struct", () => {
     expect(Struct.renameKeys({ a: "a", b: 1, c: true }, { a: "A", b: "B" })).type.toBe<
       { A: string; B: number; c: boolean }
     >()
+    expect(Struct.renameKeys(symbolKeys, { [aSym]: dSym })).type.toBe<
+      { [dSym]: string; [bSym]: number; [cSym]: boolean }
+    >()
+    expect(pipe(symbolKeys, Struct.renameKeys({ [aSym]: dSym }))).type.toBe<
+      { [dSym]: string; [bSym]: number; [cSym]: boolean }
+    >()
   })
 
   it("makeReducer", () => {

@@ -1,0 +1,58 @@
+---
+title: Nuxt
+description: Nuxt is not yet supported by Cloudflare.Website.Vite. For fully static sites, an untested workaround may deploy the nuxt generate output with StaticSite.
+sidebar:
+  order: 10
+---
+
+:::caution[Nuxt is not yet supported]
+`Cloudflare.Website.Vite` cannot deploy Nuxt apps — support is a TODO. Nuxt's
+build is driven by the `nuxi` CLI, not a plain `vite build` of your project
+root, so it falls outside the
+[pure-Vite criterion](/cloudflare/frontend/vite#what-pure-vite-means) the Vite
+resource relies on. There is currently no verified Nuxt deployment with
+Alchemy of any kind.
+:::
+
+## Possible workaround (untested)
+
+For fully static Nuxt sites, `nuxt generate` prerenders the app into a plain
+directory of files under `.output/public`, and
+[`Cloudflare.Website.StaticSite`](/cloudflare/frontend/static-site) deploys
+any directory produced by any build command:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyNuxtSite",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Cloudflare.Website.StaticSite("Website", {
+      command: "nuxt generate",
+      outdir: ".output/public",
+    });
+    return { url: site.url };
+  }),
+);
+```
+
+This is a suggestion, not a verified recipe. Unlike
+[Astro](/cloudflare/frontend/astro) — where the same `StaticSite` workaround
+is proven by alchemy.run itself — no Nuxt project has been deployed with
+Alchemy, so treat this shape as a starting point and verify the deployed
+output yourself.
+
+## What this can't do
+
+A `nuxt generate` output is static files only, so nothing that needs Nuxt's
+Nitro server survives it: no per-request server-side rendering, no
+`server/api` routes, no server middleware. If your app depends on any of
+those, there is no Alchemy deployment path for it today — and even the
+static-generation path above is unverified.

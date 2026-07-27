@@ -8,3 +8,27 @@ packages:
   - packages/sql/*
   - packages/tools/*
   - examples/*
+
+ignoredBuiltDependencies:
+  - core-js
+  - cpu-features
+  - dprint
+  - esbuild
+  - lmdb
+  - msgpackr-extract
+  - msw
+  - protobufjs
+  - sharp
+  - ssh2
+  - unrs-resolver
+  - workerd
+
+onlyBuiltDependencies:
+  - better-sqlite3
+  - tree-sitter
+  - tree-sitter-javascript
+  - tree-sitter-typescript
+
+patchedDependencies:
+  '@changesets/assemble-release-plan': patches/@changesets__assemble-release-plan.patch
+  '@changesets/get-github-info': patches/@changesets__get-github-info.patch

@@ -22,34 +22,39 @@ const CommonProto = {
   }
 }
 
-const SomeProto = Object.assign(Object.create(CommonProto), {
-  _tag: "Some",
-  _op: "Some",
-  [Equal.symbol]<A>(this: Option.Some<A>, that: unknown): boolean {
-    return (
-      isOption(that) && isSome(that) && Equal.equals(this.value, that.value)
-    )
-  },
-  [Hash.symbol]<A>(this: Option.Some<A>) {
-    return Hash.combine(Hash.hash(this._tag))(Hash.hash(this.value))
-  },
-  toString<A>(this: Option.Some<A>) {
-    return `some(${format(this.value)})`
-  },
-  toJSON<A>(this: Option.Some<A>) {
-    return {
-      _id: "Option",
-      _tag: this._tag,
-      value: toJson(this.value)
+// `valueOrUndefined` is folded into the initializer (rather than a separate
+// `Object.defineProperty(SomeProto, ...)` statement) so the whole definition
+// is pure-annotated by the build and tree-shakable.
+const SomeProto = Object.defineProperty(
+  Object.assign(Object.create(CommonProto), {
+    _tag: "Some",
+    _op: "Some",
+    [Equal.symbol]<A>(this: Option.Some<A>, that: unknown): boolean {
+      return (
+        isOption(that) && isSome(that) && Equal.equals(this.value, that.value)
+      )
+    },
+    [Hash.symbol]<A>(this: Option.Some<A>) {
+      return Hash.combine(Hash.hash(this._tag))(Hash.hash(this.value))
+    },
+    toString<A>(this: Option.Some<A>) {
+      return `some(${format(this.value)})`
+    },
+    toJSON<A>(this: Option.Some<A>) {
+      return {
+        _id: "Option",
+        _tag: this._tag,
+        value: toJson(this.value)
+      }
+    }
+  }),
+  "valueOrUndefined",
+  {
+    get() {
+      return this.value
     }
   }
-})
-
-Object.defineProperty(SomeProto, "valueOrUndefined", {
-  get() {
-    return this.value
-  }
-})
+)
 
 const NoneHash = Hash.hash("None")
 const NoneProto = Object.assign(Object.create(CommonProto), {

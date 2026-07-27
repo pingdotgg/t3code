@@ -1,0 +1,141 @@
+---
+title: R2
+description: Cloudflare R2 is object storage — create a bucket, bind it into a Worker with read/write-scoped bindings, and stream objects in and out.
+---
+
+R2 is Cloudflare's object storage: buckets of arbitrarily large
+objects addressed by key, with an S3-compatible API. In alchemy an
+R2 bucket is a one-line resource, and Workers reach it through
+typed, access-scoped bindings.
+
+Reach for R2 whenever you need to store files: uploads, build
+artifacts, media, backups, or document corpora for
+[AI Search](/cloudflare/ai/ai-search).
+
+## Create a bucket
+
+```typescript
+// src/bucket.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Bucket = Cloudflare.R2.Bucket("Bucket");
+```
+
+Yield it inside your Stack:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { Bucket } from "./src/bucket.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const bucket = yield* Bucket;
+
+    return { bucketName: bucket.bucketName };
+  }),
+);
+```
+
+No name required — alchemy generates a unique one from the app,
+stage, and logical ID.
+
+## Bind it to a Worker
+
+Bind the bucket in the Worker's init phase and use the typed client
+in the runtime handlers. This Worker stores objects on `PUT /:key`
+and serves them back on `GET /:key`:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Bucket } from "./bucket.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const key = request.url.split("/").pop()!;
+
+        if (request.method === "PUT") {
+          yield* bucket.put(key, request.stream, {
+            contentLength: Number(request.headers["content-length"] ?? 0),
+          });
+          return HttpServerResponse.empty({ status: 201 });
+        }
+
+        const object = yield* bucket.get(key);
+        if (object === null) {
+          return HttpServerResponse.text("Not found", { status: 404 });
+        }
+        return HttpServerResponse.text(yield* object.text());
+      }).pipe(
+        Effect.catchTag("R2Error", (error) =>
+          Effect.succeed(
+            HttpServerResponse.text(error.message, { status: 500 }),
+          ),
+        ),
+      ),
+    };
+  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
+);
+```
+
+R2 operations can fail with a typed `R2Error` — Effect keeps it in
+the type system until you handle it, here with `Effect.catchTag`.
+[Tutorial part 2](/cloudflare/tutorial/part-2) builds this Worker
+step by step.
+
+## Read, Write, ReadWrite
+
+The bucket capability is split by access level so each Worker gets
+least privilege:
+
+- `Cloudflare.R2.ReadBucket` — `head`, `get`, `list`.
+- `Cloudflare.R2.WriteBucket` — `put`, `delete`, multipart uploads.
+- `Cloudflare.R2.ReadWriteBucket` — both.
+
+Each level has two interchangeable implementations you provide as a
+layer on the Worker:
+
+- **`*BucketBinding`** (`ReadBucketBinding`, `WriteBucketBinding`,
+  `ReadWriteBucketBinding`) — a native R2 binding on the Worker,
+  the default choice.
+- **`*BucketHttp`** (`ReadBucketHttp`, `WriteBucketHttp`,
+  `ReadWriteBucketHttp`) — the same client over Cloudflare's HTTP
+  API with a scoped API token, for when a native binding isn't
+  available.
+
+Your runtime code depends only on the capability
+(`ReadBucket(Bucket)` etc.) — swapping the implementation layer
+doesn't touch the handlers.
+
+## Where next
+
+- [Tutorial part 1](/cloudflare/tutorial/part-1) — deploy your first
+  bucket.
+- [Add AI Search (AutoRAG)](/cloudflare/ai/ai-search) — RAG over
+  documents stored in R2.
+
+Related:
+
+- [Workers](/cloudflare/compute/workers) — how buckets get read and written.
+
+Reference:
+
+- [Bucket API reference](/providers/cloudflare/r2/bucket)

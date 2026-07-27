@@ -1,39 +1,13 @@
 /**
  * ClickHouse driver for Effect SQL, backed by `@clickhouse/client`.
  *
- * Use this module to provide both the ClickHouse-specific
- * {@link ClickhouseClient} service and the generic {@link Client.SqlClient}
- * service. The client is intended for analytical application queries,
- * migrations, background jobs, bulk inserts, and streaming reads that need
- * Effect SQL query compilation, scoped lifecycle management, interruption, and
- * consistent `SqlError` classification for ClickHouse failures.
- *
- * **Mental model**
- *
- * A client owns one scoped `@clickhouse/client` instance and verifies startup
- * with `SELECT 1`. Regular queries use the ClickHouse HTTP `query` API,
- * command-mode effects use `command`, and inserts use `insert`. Interrupting an
- * operation aborts the HTTP request and attempts to kill the generated or
- * supplied `query_id`.
- *
- * **Common tasks**
- *
- * Use {@link layer} with a concrete `ClickhouseClientConfig`,
- * {@link layerConfig} when settings should come from Effect `Config`, and
- * {@link make} when a scoped client value is needed directly. Use
- * `client.param` when a placeholder needs an explicit ClickHouse type,
- * `client.asCommand` for statements that should run through `command`,
- * `client.insertQuery` for bulk inserts, and `client.withClickhouseSettings`
- * or `client.withQueryId` for per-effect request options.
- *
- * **Gotchas**
- *
- * Regular queries read JSON result sets, `executeValues` requests
- * `JSONCompact`, streams request `JSONEachRow`, and `insertQuery` defaults
- * inserts to `JSONEachRow`. The statement compiler emits typed ClickHouse
- * placeholders such as `{p1: Type}`; use `param` when the inferred type is too
- * broad. ClickHouse-specific clauses such as engines, `SETTINGS`, `FORMAT`, or
- * cluster directives must be written explicitly in SQL.
+ * This module provides both the ClickHouse-specific {@link ClickhouseClient}
+ * service and the generic {@link Client.SqlClient} service. `make` creates a
+ * scoped client, checks the connection with `SELECT 1`, maps ClickHouse errors
+ * to `SqlError`, and aborts in-flight queries when interrupted. The
+ * ClickHouse-specific service adds typed parameters, command execution, insert
+ * queries, query id and settings helpers, a statement compiler, and direct or
+ * config-backed layers.
  *
  * @since 4.0.0
  */
@@ -165,7 +139,7 @@ export interface ClickhouseClient extends Client.SqlClient {
  *
  * Use to access or provide a ClickHouse SQL client through the Effect context.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const ClickhouseClient = Context.Service<ClickhouseClient>("@effect/sql-clickhouse/ClickhouseClient")
@@ -315,6 +289,9 @@ export const make = (
       }
       executeValues(sql: string, params: ReadonlyArray<unknown>) {
         return this.run(sql, params, "JSONCompact")
+      }
+      executeValuesUnprepared(sql: string, params: ReadonlyArray<unknown>) {
+        return this.executeValues(sql, params)
       }
       executeUnprepared(sql: string, params: ReadonlyArray<unknown>, transformRows?: any) {
         return this.execute(sql, params, transformRows)

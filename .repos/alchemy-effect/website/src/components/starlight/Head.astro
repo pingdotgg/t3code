@@ -15,9 +15,12 @@ import PostHog from "../analytics/PostHog.astro";
 
 // Starlight injects route data via Astro.locals at runtime; the public
 // types aren't ambient-declared in this project, so we cast through any.
-const { slug } = (Astro.locals as { starlightRoute: { slug: string } }).starlightRoute;
-// Starlight normalizes the index entry's slug to an empty string.
-const ogSlug = slug === "" ? "index" : slug;
+// Starlight ≥0.39 exposes the slug as `id` (the old `slug` field is gone
+// — reading it yields undefined and produced `/og/undefined.png`).
+const { id } = (Astro.locals as { starlightRoute: { id: string } })
+  .starlightRoute;
+// Starlight normalizes the index entry's id to an empty string.
+const ogSlug = id === "" ? "index" : id;
 const ogImage = new URL(`/og/${ogSlug}.png`, Astro.site);
 ---
 
@@ -52,4 +55,22 @@ const ogImage = new URL(`/og/${ogSlug}.png`, Astro.site);
     // `link.href` resolves to the absolute URL including the hash.
     void navigator.clipboard?.writeText(link.href).catch(() => {});
   });
+
+  // Sidebar entries are CSS-truncated with an ellipsis (see custom.css). Give
+  // each link a `title` so hovering reveals the full name in a native tooltip.
+  // Runs on first paint and after every Starlight client-side navigation.
+  const addSidebarTitles = () => {
+    document
+      .querySelectorAll<HTMLAnchorElement>(".sidebar-content a")
+      .forEach((link) => {
+        const text = link.textContent?.trim();
+        if (text && !link.title) link.title = text;
+      });
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", addSidebarTitles);
+  } else {
+    addSidebarTitles();
+  }
+  document.addEventListener("astro:page-load", addSidebarTitles);
 </script>

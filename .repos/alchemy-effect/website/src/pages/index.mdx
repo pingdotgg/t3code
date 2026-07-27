@@ -6,6 +6,7 @@ description: "Alchemy is the IaC tool that's actually TypeScript. Stand up your 
 
 import Section from "../components/marketing/Section.astro";
 import Eyebrow from "../components/marketing/Eyebrow.astro";
+import ProviderMark from "../components/marketing/ProviderMark.astro";
 import Button from "../components/marketing/Button.astro";
 import BetaBadge from "../components/marketing/BetaBadge.astro";
 import DiscordCallout from "../components/marketing/DiscordCallout.astro";
@@ -29,8 +30,8 @@ export const STACK_SRC = `export default Alchemy.Stack(
   "MyApp",
   { providers: Cloudflare.providers() },
   Effect.gen(function* () {
-    const Photos = yield* Cloudflare.R2Bucket("Photos");
-    const Sessions = yield* Cloudflare.KVNamespace("Sessions");
+    const Photos = yield* Cloudflare.R2.Bucket("Photos");
+    const Sessions = yield* Cloudflare.KV.Namespace("Sessions");
     const api = yield* Cloudflare.Worker("Api", {
       main: "./src/worker.ts",
       env: { Photos, Sessions },
@@ -40,7 +41,7 @@ export const STACK_SRC = `export default Alchemy.Stack(
 );`;
 
 export const ASYNC_RUN_SRC = `// alchemy.run.ts — declare resources, attach via env.
-export const Bucket = Cloudflare.R2Bucket("Bucket");
+export const Bucket = Cloudflare.R2.Bucket("Bucket");
 
 export const Worker = Cloudflare.Worker("Worker", {
   main: "./src/worker.ts",
@@ -120,6 +121,33 @@ export const P99Alarm = AWS.CloudWatch.Alarm("p99Latency", {
   </div>
 </Section>
 
+{/* ───── PICK YOUR PROVIDER ───── */}
+
+<Section padding="8px 32px 48px" id="pick-your-cloud">
+  <div style="text-align:center;margin-bottom:20px;">
+    <Eyebrow>pick your provider</Eyebrow>
+  </div>
+  <div class="alc-cloud-cards">
+    <a class="alc-cloud-card" href="/cloudflare">
+      <span class="alc-cloud-card__title"><ProviderMark name="Cloudflare" /> Cloudflare</span>
+      <span class="alc-cloud-card__body">Workers, Durable Objects, D1, R2, Queues, Hyperdrive</span>
+      <span class="alc-cloud-card__cta">Start building &rarr;</span>
+    </a>
+    <a class="alc-cloud-card" href="/aws">
+      <span class="alc-cloud-card__title"><ProviderMark name="AWS" /> AWS</span>
+      <span class="alc-cloud-card__body">Lambda, ECS, EKS, EC2, DynamoDB, S3, SQS, Kinesis</span>
+      <span class="alc-cloud-card__cta">Start building &rarr;</span>
+    </a>
+  </div>
+  <div class="alc-cloud-chips">
+    <span class="alc-cloud-chips__label">Also</span>
+    <a class="alc-cloud-chip" href="/planetscale">PlanetScale</a>
+    <a class="alc-cloud-chip" href="/neon">Neon</a>
+    <a class="alc-cloud-chip" href="/axiom">Axiom</a>
+    <a class="alc-cloud-chip" href="/github">GitHub</a>
+  </div>
+</Section>
+
 <AlchemicalDivider variant="line" />
 
 {/* ───── 1 · STAND UP / TEAR DOWN ───── */}
@@ -129,7 +157,7 @@ export const P99Alarm = AWS.CloudWatch.Alarm("p99Latency", {
     <Eyebrow>plan · deploy · destroy</Eyebrow>
     <h2 class="alc-h2" style="margin:10px 0 12px;">Stand up infrastructure. <span style="color:var(--alc-accent-deep);font-style:italic;">Tear it down just as fast.</span></h2>
     <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:720px;margin:0 auto;">
-      Your whole cloud as one TypeScript program. <code class="alc-code-inline" style="color:var(--alc-accent-deep);">plan</code> previews the diff, <code class="alc-code-inline" style="color:var(--alc-accent-deep);">deploy</code> applies it, <code class="alc-code-inline" style="color:var(--alc-accent-deep);">destroy</code> unwinds it — predictably, every time. <a class="alc-learn-more" href="/concepts/resource-lifecycle">Learn more &rarr;</a>
+      Your whole cloud as one TypeScript program. <code class="alc-code-inline" style="color:var(--alc-accent-deep);">plan</code> previews the diff, <code class="alc-code-inline" style="color:var(--alc-accent-deep);">deploy</code> applies it, <code class="alc-code-inline" style="color:var(--alc-accent-deep);">destroy</code> unwinds it — predictably, every time. <a class="alc-learn-more" href="/infrastructure-as-code/resource-lifecycle">Learn more &rarr;</a>
     </p>
   </div>
 
@@ -174,7 +202,7 @@ reads poorly when stacked above it on narrow screens. */}
       Compose <span style="color:var(--alc-accent-deep);font-style:italic;">Effects</span> and <span style="color:var(--alc-accent-deep);font-style:italic;">Layers</span> into type-safe cloud applications.
     </h2>
     <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:760px;margin:20px auto 0;">
-      <code class="alc-code-inline" style="color:var(--alc-accent-deep);">export default</code> your function and Alchemy derives the rest: <code class="alc-code-inline" style="color:var(--alc-accent-deep);">.bind()</code> generates the IAM and env vars, <code class="alc-code-inline" style="color:var(--alc-accent-deep);">.stream(…).process(…)</code> wires up the event sources. <span style="color:var(--alc-fg-1);font-weight:500;">No more missing policies or subscriptions.</span> <a class="alc-learn-more" href="/concepts/binding">Learn more &rarr;</a>
+      <code class="alc-code-inline" style="color:var(--alc-accent-deep);">export default</code> your function and Alchemy derives the rest: <code class="alc-code-inline" style="color:var(--alc-accent-deep);">.bind()</code> generates the IAM and env vars, <code class="alc-code-inline" style="color:var(--alc-accent-deep);">.stream(…).process(…)</code> wires up the event sources. <span style="color:var(--alc-fg-1);font-weight:500;">No more missing policies or subscriptions.</span> <a class="alc-learn-more" href="/infrastructure-as-effects">Learn more &rarr;</a>
     </p>
   </div>
 
@@ -192,7 +220,7 @@ reads poorly when stacked above it on narrow screens. */}
       Drop down to <code class="alc-code-inline" style="color:var(--alc-accent-deep);">async&nbsp;fetch</code> when you need it.
     </h2>
     <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:760px;margin:0 auto;">
-      Effect is optional. Declare resources, attach them as bindings, and Alchemy infers a fully typed <code class="alc-code-inline">env</code> for your async worker — no codegen, no <code class="alc-code-inline">wrangler types</code>, no manual interfaces. <a class="alc-learn-more" href="/guides/migrating-from-v1">Learn more &rarr;</a>
+      Effect is optional. Declare resources, attach them as bindings, and Alchemy infers a fully typed <code class="alc-code-inline">env</code> for your async worker — no codegen, no <code class="alc-code-inline">wrangler types</code>, no manual interfaces. <a class="alc-learn-more" href="/migrating-from-v1">Learn more &rarr;</a>
     </p>
   </div>
 
@@ -242,7 +270,7 @@ between the two files with a short caption explaining each step. */}
     <Eyebrow>any vite framework · one dev loop · live cloud</Eyebrow>
     <h2 class="alc-h2" style="margin:10px 0 12px;">Bring any frontend. <span style="color:var(--alc-accent-deep);font-style:italic;">Hot-reload the cloud underneath it.</span></h2>
     <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:680px;margin:0 auto;">
-      Vite, Astro, TanStack, SolidStart — frontend, backend, and infra hot-reload together against real R2 / KV / D1. <a class="alc-learn-more" href="/concepts/local-development">Learn more &rarr;</a>
+      Vite, Astro, TanStack, SolidStart — frontend, backend, and infra hot-reload together against real R2 / KV / D1. <a class="alc-learn-more" href="/environments/local-development">Learn more &rarr;</a>
     </p>
   </div>
 
@@ -268,7 +296,7 @@ between the two files with a short caption explaining each step. */}
     <Eyebrow>alchemy test · isolated stages · live cloud</Eyebrow>
     <h2 class="alc-h2" style="margin:10px 0 12px;">Verify against live resources: <span style="color:var(--alc-accent-deep);font-style:italic;">deploy</span> &rarr; <span style="color:var(--alc-accent-deep);font-style:italic;">assert</span> &rarr; <span style="color:var(--alc-accent-deep);font-style:italic;">destroy</span>.</h2>
     <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:720px;margin:0 auto;">
-      Each suite spins up its own isolated stack — live R2, DynamoDB, Workers — runs your assertions, then tears it back down. No mocks to babysit, no drift between fixture and production. <a class="alc-learn-more" href="/concepts/testing">Learn more &rarr;</a>
+      Each suite spins up its own isolated stack — live R2, DynamoDB, Workers — runs your assertions, then tears it back down. No mocks to babysit, no drift between fixture and production. <a class="alc-learn-more" href="/testing">Learn more &rarr;</a>
     </p>
   </div>
 
@@ -297,7 +325,7 @@ between the two files with a short caption explaining each step. */}
     <Eyebrow>github actions · per-pr environments</Eyebrow>
     <h2 class="alc-h2" style="margin:10px 0 12px;">Preview every PR with an <span style="color:var(--alc-accent-deep);font-style:italic;">ephemeral</span> environment.</h2>
     <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:720px;margin:0 auto;">
-      An Alchemy program is just TypeScript — drop one into GitHub Actions to deploy a per-PR stack for review, then let merge or close tear it down. <a class="alc-learn-more" href="/guides/ci">Learn more &rarr;</a>
+      An Alchemy program is just TypeScript — drop one into GitHub Actions to deploy a per-PR stack for review, then let merge or close tear it down. <a class="alc-learn-more" href="/environments/ci">Learn more &rarr;</a>
     </p>
   </div>
 
@@ -313,7 +341,7 @@ between the two files with a short caption explaining each step. */}
     <Eyebrow>observability as iac · otel from effect</Eyebrow>
     <h2 class="alc-h2" style="margin:10px 0 12px;">Dashboards and alarms <span style="color:var(--alc-accent-deep);font-style:italic;">ship with the resources</span>.<HeadingOrnament variant="sol" position="suffix" /></h2>
     <p style="font-size:15.5px;line-height:1.6;color:var(--alc-fg-2);max-width:760px;margin:0 auto;">
-      Effect emits logs, spans, and metrics by default. Wire dashboards and alarms in the same <code class="alc-code-inline" style="color:var(--alc-accent-deep);">alchemy.run.ts</code> as the workers they watch — swap the OTLP exporter for Axiom, Datadog, or anywhere else. <a class="alc-learn-more" href="/concepts/observability">Learn more &rarr;</a>
+      Effect emits logs, spans, and metrics by default. Wire dashboards and alarms in the same <code class="alc-code-inline" style="color:var(--alc-accent-deep);">alchemy.run.ts</code> as the workers they watch — swap the OTLP exporter for Axiom, Datadog, or anywhere else. <a class="alc-learn-more" href="/testing/observability">Learn more &rarr;</a>
     </p>
   </div>
 
@@ -350,7 +378,7 @@ between the two files with a short caption explaining each step. */}
       <Button
         variant="ghost"
         icon="github"
-        href="https://github.com/alchemy-run/alchemy-effect"
+        href="https://github.com/alchemy-run/alchemy"
       >
         GitHub
       </Button>

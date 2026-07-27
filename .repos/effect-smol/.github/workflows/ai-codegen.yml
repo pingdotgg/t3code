@@ -14,6 +14,7 @@ permissions: {}
 jobs:
   codegen:
     name: AI Codegen
+    if: github.repository_owner == 'Effect-Ts'
     runs-on: ubuntu-latest
     permissions:
       contents: write

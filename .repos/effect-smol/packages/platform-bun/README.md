@@ -1,6 +1,6 @@
 # `@effect/platform-bun`
 
-Provides Bun-specific implementations for the abstractions defined in [`@effect/platform`](https://github.com/Effect-TS/effect/tree/main/packages/platform), allowing you to write platform-independent code that runs smoothly in Bun environments.
+Provides Bun-specific implementations for Effect's platform abstractions, allowing you to write platform-independent code that runs smoothly in Bun environments.
 
 ## Documentation
 

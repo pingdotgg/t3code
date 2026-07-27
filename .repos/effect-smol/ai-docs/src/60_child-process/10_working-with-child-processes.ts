@@ -8,7 +8,7 @@ import { Console, Context, Effect, Layer, Schema, Stream, String } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 
 export class DevToolsError extends Schema.TaggedErrorClass<DevToolsError>()("DevToolsError", {
-  cause: Schema.Defect
+  cause: Schema.Defect()
 }) {}
 
 export class DevTools extends Context.Service<DevTools, {

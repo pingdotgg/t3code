@@ -1,0 +1,19 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "alchemy-schema-validation-test", "version": "2.0.0" },
+  "servers": [{ "url": "https://alchemy-test-2.us" }],
+  "paths": {
+    "/alchemy-schema-validation-test/users": {
+      "get": {
+        "operationId": "listUsers",
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/alchemy-schema-validation-test/widgets": {
+      "get": {
+        "operationId": "listWidgets",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}

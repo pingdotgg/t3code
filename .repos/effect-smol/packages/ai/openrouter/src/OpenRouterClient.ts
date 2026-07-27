@@ -1,25 +1,8 @@
 /**
  * The `OpenRouterClient` module provides an Effect service for calling
  * OpenRouter's chat completions API. It wraps the generated OpenRouter HTTP
- * client with Effect-native constructors, layers, typed errors, and streaming
- * support.
- *
- * **Common tasks**
- *
- * - Build a client from explicit options with {@link make}
- * - Provide the client to an application with {@link layer} or {@link layerConfig}
- * - Create non-streaming chat completions with {@link Service.createChatCompletion}
- * - Create server-sent event chat completion streams with
- *   {@link Service.createChatCompletionStream}
- * - Customize authentication, base URL, OpenRouter ranking headers, or the
- *   underlying HTTP client through {@link Options}
- *
- * **Gotchas**
- *
- * - Streaming requests are sent directly to `/chat/completions` with `stream`
- *   and `stream_options.include_usage` enabled by this module.
- * - OpenRouter API failures, HTTP client failures, and schema decoding failures
- *   are mapped into `AiError` values for the exported service methods.
+ * client with Effect-native constructors, layers, authentication and optional
+ * site ranking headers, typed errors, and streaming support.
  *
  * @since 4.0.0
  */
@@ -61,14 +44,14 @@ export interface Service {
   readonly client: Generated.OpenRouterClient
 
   readonly createChatCompletion: (
-    options: typeof Generated.ChatGenerationParams.Encoded
+    options: typeof Generated.ChatRequest.Encoded
   ) => Effect.Effect<
     [body: typeof Generated.SendChatCompletionRequest200.Type, response: HttpClientResponse.HttpClientResponse],
     AiError.AiError
   >
 
   readonly createChatCompletionStream: (
-    options: Omit<typeof Generated.ChatGenerationParams.Encoded, "stream" | "stream_options">
+    options: Omit<typeof Generated.ChatRequest.Encoded, "stream" | "stream_options">
   ) => Effect.Effect<
     [
       response: HttpClientResponse.HttpClientResponse,
@@ -89,7 +72,7 @@ export interface Service {
  * @category models
  * @since 4.0.0
  */
-export type ChatStreamingResponseChunkData = typeof Generated.ChatStreamingResponseChunk.fields.data.Type
+export type ChatStreamingResponseChunkData = typeof Generated.ChatStreamingResponse.fields.data.Type
 
 // =============================================================================
 // Service Identifier
@@ -122,7 +105,7 @@ export class OpenRouterClient extends Context.Service<
 /**
  * Configuration for creating an OpenRouter client.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export type Options = {
@@ -159,8 +142,7 @@ export type Options = {
  *
  * **When to use**
  *
- * Use to construct the OpenRouter client service inside an effect when you need
- * the service value directly.
+ * Use when you need the OpenRouter client service value inside an effect.
  *
  * **Details**
  *
@@ -215,8 +197,18 @@ export const make = Effect.fnUntraced(
         Effect.catchTags({
           SendChatCompletionRequest400: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
           SendChatCompletionRequest401: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
+          SendChatCompletionRequest402: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
+          SendChatCompletionRequest403: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
+          SendChatCompletionRequest404: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
+          SendChatCompletionRequest408: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
+          SendChatCompletionRequest413: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
+          SendChatCompletionRequest422: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
           SendChatCompletionRequest429: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
           SendChatCompletionRequest500: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
+          SendChatCompletionRequest502: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
+          SendChatCompletionRequest503: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
+          SendChatCompletionRequest524: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
+          SendChatCompletionRequest529: (error) => Effect.fail(Errors.mapClientError(error, "createChatCompletion")),
           HttpClientError: (error) => Errors.mapHttpClientError(error, "createChatCompletion"),
           SchemaError: (error) => Effect.fail(Errors.mapSchemaError(error, "createChatCompletion"))
         })
@@ -294,8 +286,8 @@ export const layer = (options: Options): Layer.Layer<OpenRouterClient, never, Ht
  *
  * **When to use**
  *
- * Use when OpenRouter client settings should be read from Effect `Config`
- * values while providing `OpenRouterClient` as a layer.
+ * Use when you need client settings for OpenRouter to be read from Effect
+ * `Config` values while providing `OpenRouterClient` as a layer.
  *
  * **Details**
  *
@@ -364,7 +356,7 @@ export const layerConfig = (options?: {
 // Internal Utilities
 // =============================================================================
 
-const ChatStreamingResponseChunkDataFromString = Schema.fromJsonString(Generated.ChatStreamingResponseChunk.fields.data)
+const ChatStreamingResponseChunkDataFromString = Schema.fromJsonString(Generated.ChatStreamingResponse.fields.data)
 const decodeChatStreamingResponseChunkData = Schema.decodeUnknownEffect(ChatStreamingResponseChunkDataFromString)
 
 const decodeChatCompletionSseData = (

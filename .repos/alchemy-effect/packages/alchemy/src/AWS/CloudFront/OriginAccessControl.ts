@@ -1,5 +1,7 @@
 import * as cloudfront from "@distilled.cloud/aws/cloudfront";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -74,7 +76,7 @@ export interface OriginAccessControl extends Resource<
  *
  * `OriginAccessControl` is the recommended CloudFront access model for private
  * S3 origins and newer signed-origin integrations.
- *
+ * @resource
  * @section Creating Origin Access Controls
  * @example S3 Origin Access Control
  * ```typescript
@@ -92,11 +94,15 @@ export const OriginAccessControlProvider = () =>
     OriginAccessControl,
     Effect.gen(function* () {
       const getByName = Effect.fn(function* (name: string) {
-        const listed = yield* cloudfront.listOriginAccessControls({});
-        const summary =
-          listed.OriginAccessControlList?.Items?.find(
-            (item) => item.Name === name,
-          ) ?? undefined;
+        const summary = yield* cloudfront.listOriginAccessControls
+          .pages({})
+          .pipe(
+            Stream.map((page) => page.OriginAccessControlList?.Items ?? []),
+            Stream.flattenIterable,
+            Stream.filter((item) => item.Name === name),
+            Stream.runHead,
+            Effect.map(Option.getOrUndefined),
+          );
         if (!summary?.Id) {
           return undefined;
         }
@@ -143,6 +149,43 @@ export const OriginAccessControlProvider = () =>
 
       return {
         stables: ["originAccessControlId"],
+        list: () =>
+          cloudfront.listOriginAccessControls.pages({}).pipe(
+            Stream.map((page) => page.OriginAccessControlList?.Items ?? []),
+            Stream.flattenIterable,
+            Stream.filter((summary) => summary.Id !== undefined),
+            Stream.mapEffect((summary) =>
+              Effect.gen(function* () {
+                // Fetch per-item config for the fresh ETag (the list summary
+                // omits it). Tolerate a concurrent delete between list and get.
+                const config = yield* cloudfront
+                  .getOriginAccessControlConfig({ Id: summary.Id! })
+                  .pipe(
+                    Effect.catchTag("NoSuchOriginAccessControl", () =>
+                      Effect.succeed(undefined),
+                    ),
+                  );
+                return toAttrs(
+                  {
+                    Id: summary.Id!,
+                    OriginAccessControlConfig:
+                      config?.OriginAccessControlConfig ?? {
+                        Name: summary.Name,
+                        Description: summary.Description,
+                        OriginAccessControlOriginType:
+                          summary.OriginAccessControlOriginType,
+                        SigningBehavior: summary.SigningBehavior,
+                        SigningProtocol: summary.SigningProtocol,
+                      },
+                  },
+                  config?.ETag,
+                  summary.Name,
+                );
+              }),
+            ),
+            Stream.runCollect,
+            Effect.map((chunk) => Array.from(chunk)),
+          ),
         diff: Effect.fn(function* ({ id, olds, news: _news }) {
           if (!isResolved(_news)) return undefined;
           const news = _news as typeof olds;

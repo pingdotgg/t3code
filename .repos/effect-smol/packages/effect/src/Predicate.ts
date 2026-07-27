@@ -1,66 +1,11 @@
 /**
- * Predicates are small boolean functions for checking values at runtime.
- * Refinements are predicates that also narrow TypeScript types after a
- * successful check. This module provides primitive guards for common JavaScript
- * values and combinators for building larger checks from smaller ones.
+ * Defines runtime checks for values.
  *
- * **Mental model**
- *
- * - A `Predicate<A>` is `(a: A) => boolean`
- * - A `Refinement<A, B>` is `(a: A) => a is B`; when it returns `true`,
- *   TypeScript can treat the value as `B`
- * - Guards such as {@link isString}, {@link isNumber}, and {@link isObject}
- *   refine `unknown` values into useful runtime types
- * - Combinators such as {@link and}, {@link or}, {@link not}, and {@link xor}
- *   build new predicates while preserving refinement information where possible
- * - {@link Tuple} and {@link Struct} lift element and property predicates to
- *   tuple-like arrays and object shapes
- *
- * **Common tasks**
- *
- * - Check primitive runtime types: {@link isString}, {@link isNumber},
- *   {@link isBoolean}, {@link isBigInt}, {@link isSymbol}
- * - Check object-like values: {@link isObject}, {@link isObjectOrArray},
- *   {@link hasProperty}, {@link isTagged}
- * - Combine predicates: {@link and}, {@link or}, {@link not}, {@link xor}
- * - Reuse a predicate on derived input: {@link mapInput}
- * - Compose refinements that narrow in stages: {@link compose}
- * - Validate tuple or object shapes: {@link Tuple}, {@link Struct}
- *
- * **Gotchas**
- *
- * - Predicates only return `true` or `false`; they do not explain why a value
- *   failed a check
- * - {@link isTruthy} uses JavaScript truthiness, so `0`, `""`, and `false`
- *   are rejected
- * - {@link isObject} excludes arrays; use {@link isObjectOrArray} when arrays
- *   should also pass
- * - {@link isIterable} accepts strings because strings are iterable in
- *   JavaScript
- * - {@link isPromise} and {@link isPromiseLike} are structural checks, not
- *   `instanceof` checks
- * - {@link isTupleOf} and {@link isTupleOfAtLeast} check length only, not
- *   element types
- *
- * **Quickstart**
- *
- * **Example** (Filter by a predicate)
- *
- * ```ts
- * import { Predicate } from "effect"
- *
- * const values: Array<unknown> = ["one", 2, "three", null]
- * const strings = values.filter(Predicate.isString)
- *
- * console.log(strings)
- * // Output: ["one", "three"]
- * ```
- *
- * **See also**
- *
- * - {@link Predicate} for plain boolean checks
- * - {@link Refinement} for checks that narrow types
- * - {@link Struct} and {@link Tuple} for checking compound values
+ * A `Predicate<A>` returns `true` or `false` for an `A`. A
+ * `Refinement<A, B>` is a predicate that also narrows the TypeScript type when
+ * it succeeds. This module includes guards for common JavaScript values,
+ * property and tag checks, tuple and struct checks, boolean combinators, and
+ * helpers for composing predicates and refinements.
  *
  * @since 2.0.0
  */
@@ -73,16 +18,16 @@ import type { TupleOf, TupleOfAtLeast } from "./Types.ts"
  *
  * **When to use**
  *
- * Use when you want a reusable boolean check for `A`.
- * - You plan to combine checks with {@link and}/{@link or}.
- * - You want a simple filter predicate for arrays or iterables.
+ * Use when you want a reusable boolean check for `A`, especially when you plan
+ * to combine checks with {@link and}/{@link or} or pass a predicate to arrays
+ * and iterables.
  *
  * **Details**
  *
- * - Returns `true` or `false`; never throws by itself.
- * - Does not narrow types unless you use {@link Refinement}.
+ * A predicate returns `true` or `false` and never throws by itself. It does not
+ * narrow types unless you use `Refinement`.
  *
- * **Example** (Define a predicate)
+ * **Example** (Defining a predicate)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -107,13 +52,13 @@ export interface Predicate<in A> {
  *
  * **When to use**
  *
- * Use when you are defining APIs that abstract over predicates with HKTs.
- * - You need a `TypeLambda` instance for predicate-based type classes.
+ * Use when you are defining APIs that abstract over predicates with HKTs and
+ * need a `TypeLambda` instance for predicate-based type classes.
  *
  * **Details**
  *
- * - Type-only; no runtime value is created.
- * - Does not affect emitted JavaScript.
+ * This is type-only, creates no runtime value, and does not affect emitted
+ * JavaScript.
  *
  * **Example** (Type-level usage)
  *
@@ -137,16 +82,16 @@ export interface PredicateTypeLambda extends TypeLambda {
  *
  * **When to use**
  *
- * Use when you want a runtime check that refines `A` to `B` for TypeScript.
- * - You want to compose multiple type guards with {@link compose}.
- * - You need to guard `unknown` values safely.
+ * Use when you want a runtime check that refines `A` to `B` for TypeScript,
+ * especially when composing type guards with {@link compose} or safely
+ * checking `unknown` values.
  *
  * **Details**
  *
- * - Returns a type predicate (`a is B`).
- * - Use with `if`/`filter` to narrow types.
+ * A refinement returns a type predicate (`a is B`). Use it with `if` or
+ * `filter` to narrow types.
  *
- * **Example** (Narrow unknown)
+ * **Example** (Narrowing unknown values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -174,15 +119,15 @@ export interface Refinement<in A, out B extends A> {
  *
  * **When to use**
  *
- * Use when you need to extract input types from predicate signatures.
- * - You want to write generic helpers over predicate types.
+ * Use when you need to extract input types from predicate signatures while
+ * writing generic helpers over predicate types.
  *
  * **Details**
  *
- * - Type-only; no runtime value is created.
- * - The namespace is erased at runtime.
+ * These utilities are type-only, create no runtime values, and the namespace is
+ * erased at runtime.
  *
- * **Example** (Extract predicate input)
+ * **Example** (Extracting predicate input)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -201,15 +146,15 @@ export declare namespace Predicate {
    *
    * **When to use**
    *
-   * Use when you want to infer the input type from a predicate type.
-   * - You are defining generic utilities over predicates.
+   * Use when you want to infer the input type from a predicate type while
+   * defining generic utilities over predicates.
    *
    * **Details**
    *
-   * - Type-only; no runtime value is created.
-   * - Resolves to `never` if the type does not match `Predicate`.
+   * This is type-only and creates no runtime value. It resolves to `never` if
+   * the type does not match `Predicate`.
    *
-   * **Example** (Infer input)
+   * **Example** (Inferring the input type)
    *
    * ```ts
    * import { Predicate } from "effect"
@@ -220,7 +165,7 @@ export declare namespace Predicate {
    *
    * @see {@link Predicate.Any}
    * @see {@link Refinement.In}
-   * @category type-level
+   * @category utility types
    * @since 3.6.0
    */
   export type In<T extends Any> = [T] extends [Predicate<infer _A>] ? _A : never
@@ -234,9 +179,9 @@ export declare namespace Predicate {
    *
    * **Details**
    *
-   * - Type-only; no runtime value is created.
+   * This is type-only and creates no runtime value.
    *
-   * **Example** (Generic constraint)
+   * **Example** (Using generic constraints)
    *
    * ```ts
    * import { Predicate } from "effect"
@@ -245,7 +190,7 @@ export declare namespace Predicate {
    * ```
    *
    * @see {@link Predicate.In}
-   * @category type-level
+   * @category utility types
    * @since 3.6.0
    */
   export type Any = Predicate<any>
@@ -256,15 +201,15 @@ export declare namespace Predicate {
  *
  * **When to use**
  *
- * Use when you need to extract input/output types from refinement signatures.
- * - You want to write generic helpers over refinements.
+ * Use when you need to extract input and output types from refinement
+ * signatures while writing generic helpers over refinements.
  *
  * **Details**
  *
- * - Type-only; no runtime value is created.
- * - The namespace is erased at runtime.
+ * These utilities are type-only, create no runtime values, and the namespace is
+ * erased at runtime.
  *
- * **Example** (Extract refinement types)
+ * **Example** (Extracting refinement types)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -288,10 +233,10 @@ export declare namespace Refinement {
    *
    * **Details**
    *
-   * - Type-only; no runtime value is created.
-   * - Resolves to `never` if the type does not match `Refinement`.
+   * This is type-only and creates no runtime value. It resolves to `never` if
+   * the type does not match `Refinement`.
    *
-   * **Example** (Infer input)
+   * **Example** (Inferring the input type)
    *
    * ```ts
    * import { Predicate } from "effect"
@@ -302,7 +247,7 @@ export declare namespace Refinement {
    *
    * @see {@link Refinement.Out}
    * @see {@link Predicate.In}
-   * @category type-level
+   * @category utility types
    * @since 3.6.0
    */
 
@@ -317,10 +262,10 @@ export declare namespace Refinement {
    *
    * **Details**
    *
-   * - Type-only; no runtime value is created.
-   * - Resolves to `never` if the type does not match `Refinement`.
+   * This is type-only and creates no runtime value. It resolves to `never` if
+   * the type does not match `Refinement`.
    *
-   * **Example** (Infer output)
+   * **Example** (Inferring the output type)
    *
    * ```ts
    * import { Predicate } from "effect"
@@ -330,7 +275,7 @@ export declare namespace Refinement {
    * ```
    *
    * @see {@link Refinement.In}
-   * @category type-level
+   * @category utility types
    * @since 3.6.0
    */
   export type Out<T extends Any> = [T] extends [Refinement<infer _, infer _B>] ? _B : never
@@ -344,9 +289,9 @@ export declare namespace Refinement {
    *
    * **Details**
    *
-   * - Type-only; no runtime value is created.
+   * This is type-only and creates no runtime value.
    *
-   * **Example** (Generic constraint)
+   * **Example** (Using generic constraints)
    *
    * ```ts
    * import { Predicate } from "effect"
@@ -356,7 +301,7 @@ export declare namespace Refinement {
    *
    * @see {@link Refinement.In}
    * @see {@link Refinement.Out}
-   * @category type-level
+   * @category utility types
    * @since 3.6.0
    */
   export type Any = Refinement<any, any>
@@ -367,15 +312,15 @@ export declare namespace Refinement {
  *
  * **When to use**
  *
- * Use when you have a predicate on `A` and want one on `B` via `B -> A`.
- * - You want to check derived values (lengths, projections, etc.).
+ * Use when you have a predicate on `A` and want to check `B` values by mapping
+ * each `B` to an `A`, such as checking lengths or projections.
  *
  * **Details**
  *
- * - Returns a new predicate that applies `f` before `self`.
- * - No short-circuit beyond what `self` does.
+ * Returns a new predicate that applies `f` before `self`. There is no
+ * additional short-circuiting beyond what `self` does.
  *
- * **Example** (Check string length)
+ * **Example** (Checking string length)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -403,15 +348,15 @@ export const mapInput: {
  *
  * **When to use**
  *
- * Use when you need a runtime check for tuple length.
- * - You want to narrow `ReadonlyArray<T>` to `TupleOf<N, T>`.
+ * Use when you need a `Predicate` guard for exact tuple length that narrows
+ * `ReadonlyArray<T>` to `TupleOf<N, T>`.
  *
  * **Details**
  *
- * - Only checks length, not element types.
- * - Returns a refinement on the array type.
+ * This only checks length, not element types, and returns a refinement on the
+ * array type.
  *
- * **Example** (Exact length)
+ * **Example** (Checking exact length)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -436,15 +381,15 @@ export const isTupleOf: {
  *
  * **When to use**
  *
- * Use when you need a runtime check for tuple-like minimum length.
- * - You want to narrow `ReadonlyArray<T>` to `TupleOfAtLeast<N, T>`.
+ * Use when you need a `Predicate` guard for tuple-like minimum length that
+ * narrows `ReadonlyArray<T>` to `TupleOfAtLeast<N, T>`.
  *
  * **Details**
  *
- * - Only checks length, not element types.
- * - Returns a refinement on the array type.
+ * This only checks length, not element types, and returns a refinement on the
+ * array type.
  *
- * **Example** (Minimum length)
+ * **Example** (Checking minimum length)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -469,15 +414,15 @@ export const isTupleOfAtLeast: {
  *
  * **When to use**
  *
- * Use when you want a predicate that mirrors JavaScript truthiness.
- * - You need to filter out falsy values like `0`, "", and `false`.
+ * Use when you want a predicate that mirrors JavaScript truthiness and filters
+ * out falsy values like `0`, `""`, and `false`.
  *
  * **Details**
  *
- * - Uses `!!input` under the hood.
- * - Treats `0`, "", `false`, `null`, and `undefined` as false.
+ * This uses `!!input` and treats `0`, `""`, `false`, `null`, and `undefined`
+ * as false.
  *
- * **Example** (Filter truthy)
+ * **Example** (Filtering truthy values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -502,13 +447,13 @@ export function isTruthy(input: unknown): boolean {
  *
  * **When to use**
  *
- * Use when you need a runtime guard for `Set` values.
+ * Use when you need a `Predicate` runtime guard for `Set` values.
  *
  * **Details**
  *
- * - Uses `instanceof Set`.
+ * Uses `instanceof Set`.
  *
- * **Example** (Guard a Set)
+ * **Example** (Guarding a Set)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -534,13 +479,13 @@ export function isSet(input: unknown): input is Set<unknown> {
  *
  * **When to use**
  *
- * Use when you need a runtime guard for `Map` values.
+ * Use when you need a `Predicate` runtime guard for `Map` values.
  *
  * **Details**
  *
- * - Uses `instanceof Map`.
+ * Uses `instanceof Map`.
  *
- * **Example** (Guard a Map)
+ * **Example** (Guarding a Map)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -566,14 +511,14 @@ export function isMap(input: unknown): input is Map<unknown, unknown> {
  *
  * **When to use**
  *
- * Use when you need to guard an `unknown` value as a string.
- * - You want to narrow in `if` statements.
+ * Use when you need a `Predicate` guard to narrow an `unknown` value to a
+ * string.
  *
  * **Details**
  *
- * - Uses `typeof input === "string"`.
+ * Uses `typeof input === "string"`.
  *
- * **Example** (Guard string)
+ * **Example** (Guarding strings)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -600,14 +545,14 @@ export function isString(input: unknown): input is string {
  *
  * **When to use**
  *
- * Use when you need to guard an `unknown` value as a number.
+ * Use when you need a `Predicate` guard to narrow an `unknown` value to a
+ * number.
  *
  * **Details**
  *
- * - Uses `typeof input === "number"`.
- * - Does not exclude `NaN` or `Infinity`.
+ * Uses `typeof input === "number"` and does not exclude `NaN` or `Infinity`.
  *
- * **Example** (Guard number)
+ * **Example** (Guarding numbers)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -633,13 +578,14 @@ export function isNumber(input: unknown): input is number {
  *
  * **When to use**
  *
- * Use when you need to guard an `unknown` value as a boolean.
+ * Use when you need a `Predicate` guard to narrow an `unknown` value to a
+ * boolean.
  *
  * **Details**
  *
- * - Uses `typeof input === "boolean"`.
+ * Uses `typeof input === "boolean"`.
  *
- * **Example** (Guard boolean)
+ * **Example** (Guarding booleans)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -665,13 +611,14 @@ export function isBoolean(input: unknown): input is boolean {
  *
  * **When to use**
  *
- * Use when you need to guard an `unknown` value as a bigint.
+ * Use when you need a `Predicate` guard to narrow an `unknown` value to a
+ * bigint.
  *
  * **Details**
  *
- * - Uses `typeof input === "bigint"`.
+ * Uses `typeof input === "bigint"`.
  *
- * **Example** (Guard bigint)
+ * **Example** (Guarding bigints)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -696,13 +643,14 @@ export function isBigInt(input: unknown): input is bigint {
  *
  * **When to use**
  *
- * Use when you need to guard an `unknown` value as a symbol.
+ * Use when you need a `Predicate` guard to narrow an `unknown` value to a
+ * symbol.
  *
  * **Details**
  *
- * - Uses `typeof input === "symbol"`.
+ * Uses `typeof input === "symbol"`.
  *
- * **Example** (Guard symbol)
+ * **Example** (Guarding symbols)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -727,13 +675,14 @@ export function isSymbol(input: unknown): input is symbol {
  *
  * **When to use**
  *
- * Use when you need to guard unknown keys before indexing.
+ * Use when you need a `Predicate` guard for unknown property keys before
+ * indexing.
  *
  * **Details**
  *
- * - Uses {@link isString}, {@link isNumber}, and {@link isSymbol}.
+ * Uses `isString`, `isNumber`, and `isSymbol`.
  *
- * **Example** (Guard property key)
+ * **Example** (Guarding property keys)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -761,13 +710,14 @@ export function isPropertyKey(u: unknown): u is PropertyKey {
  *
  * **When to use**
  *
- * Use when you need to guard an `unknown` value as callable.
+ * Use when you need a `Predicate` guard to narrow an `unknown` value to a
+ * callable function.
  *
  * **Details**
  *
- * - Uses `typeof input === "function"`.
+ * Uses `typeof input === "function"`.
  *
- * **Example** (Guard function)
+ * **Example** (Guarding functions)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -792,13 +742,14 @@ export function isFunction(input: unknown): input is Function {
  *
  * **When to use**
  *
- * Use when you need a guard for optional values.
+ * Use when you need a `Predicate` guard for values that are exactly
+ * `undefined`.
  *
  * **Details**
  *
- * - Uses `input === undefined`.
+ * Uses `input === undefined`.
  *
- * **Example** (Guard undefined)
+ * **Example** (Guarding undefined values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -822,13 +773,14 @@ export function isUndefined(input: unknown): input is undefined {
  *
  * **When to use**
  *
- * Use when you want to filter out `undefined` while preserving other falsy values.
+ * Use when you need a `Predicate` refinement that filters out `undefined`
+ * while preserving other falsy values.
  *
  * **Details**
  *
- * - Returns a refinement that excludes `undefined`.
+ * Returns a refinement that excludes `undefined`.
  *
- * **Example** (Filter undefined)
+ * **Example** (Filtering undefined values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -853,13 +805,13 @@ export function isNotUndefined<A>(input: A): input is Exclude<A, undefined> {
  *
  * **When to use**
  *
- * Use when you need a guard for nullable values.
+ * Use when you need a `Predicate` guard for nullable values.
  *
  * **Details**
  *
- * - Uses `input === null`.
+ * Uses `input === null`.
  *
- * **Example** (Guard null)
+ * **Example** (Guarding null values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -883,13 +835,14 @@ export function isNull(input: unknown): input is null {
  *
  * **When to use**
  *
- * Use when you want to filter out `null` while preserving other falsy values.
+ * Use when you need a `Predicate` refinement that filters out `null` while
+ * preserving other falsy values.
  *
  * **Details**
  *
- * - Returns a refinement that excludes `null`.
+ * Returns a refinement that excludes `null`.
  *
- * **Example** (Filter null)
+ * **Example** (Filtering null values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -914,13 +867,13 @@ export function isNotNull<A>(input: A): input is Exclude<A, null> {
  *
  * **When to use**
  *
- * Use when you want to guard nullish values explicitly.
+ * Use when you need a `Predicate` guard for nullish values.
  *
  * **Details**
  *
- * - Uses `input === null || input === undefined`.
+ * Uses `input === null || input === undefined`.
  *
- * **Example** (Guard nullish)
+ * **Example** (Guarding nullish values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -946,13 +899,14 @@ export function isNullish<A>(input: A): input is A & (null | undefined) {
  *
  * **When to use**
  *
- * Use when you want to filter out nullish values but keep other falsy ones.
+ * Use when you need a `Predicate` refinement that filters out nullish values
+ * but keeps other falsy ones.
  *
  * **Details**
  *
- * - Uses `input != null`.
+ * Uses `input != null`.
  *
- * **Example** (Filter non-nullish)
+ * **Example** (Filtering non-nullish values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -978,13 +932,9 @@ export function isNotNullish<A>(input: A): input is NonNullable<A> {
  *
  * **When to use**
  *
- * Use when you need a predicate that never accepts, e.g. in default branches.
+ * Use when you need a `Predicate` that never accepts, e.g. in default branches.
  *
- * **Details**
- *
- * - Always returns `false`.
- *
- * **Example** (Never matches)
+ * **Example** (Matching no values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1005,13 +955,9 @@ export function isNever(_: unknown): _ is never {
  *
  * **When to use**
  *
- * Use when you need a predicate that always accepts, e.g. as a placeholder.
+ * Use when you need a `Predicate` that always accepts, e.g. as a placeholder.
  *
- * **Details**
- *
- * - Always returns `true`.
- *
- * **Example** (Always matches)
+ * **Example** (Matching every value)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1032,14 +978,14 @@ export function isUnknown(_: unknown): _ is unknown {
  *
  * **When to use**
  *
- * Use when you want to accept plain objects and arrays, but not `null`.
+ * Use when you need a `Predicate` guard that accepts plain objects and arrays,
+ * but not `null`.
  *
  * **Details**
  *
- * - Uses `typeof input === "object" && input !== null`.
- * - Includes arrays.
+ * Uses `typeof input === "object" && input !== null` and includes arrays.
  *
- * **Example** (Object or array)
+ * **Example** (Checking objects or arrays)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1061,7 +1007,8 @@ export function isObjectOrArray(input: unknown): input is { [x: PropertyKey]: un
  *
  * **When to use**
  *
- * Use to narrow unknown input to a non-null, non-array object.
+ * Use to narrow unknown input to a non-null, non-array object with a
+ * `Predicate` guard.
  *
  * **Details**
  *
@@ -1069,7 +1016,7 @@ export function isObjectOrArray(input: unknown): input is { [x: PropertyKey]: un
  * also accepts object instances such as `Date`, `Map`, class instances, and
  * typed arrays. It excludes `null` and arrays.
  *
- * **Example** (Guard object)
+ * **Example** (Guarding objects)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1094,7 +1041,7 @@ export function isObject(input: unknown): input is { [x: PropertyKey]: unknown }
  * **When to use**
  *
  * Use to narrow unknown input to a readonly view of a non-null, non-array
- * object.
+ * object with a `Predicate` guard.
  *
  * **Details**
  *
@@ -1102,7 +1049,7 @@ export function isObject(input: unknown): input is { [x: PropertyKey]: unknown }
  * runtime. This delegates to `isObject`, so class instances and built-in object
  * instances are accepted.
  *
- * **Example** (Readonly object)
+ * **Example** (Checking readonly objects)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1125,13 +1072,14 @@ export function isReadonlyObject(input: unknown): input is { readonly [x: Proper
  *
  * **When to use**
  *
- * Use when you want to accept arrays and functions as well as objects.
+ * Use when you need a `Predicate` guard that accepts arrays and functions as
+ * well as objects.
  *
  * **Details**
  *
- * - Returns `true` for arrays and functions, `false` for `null`.
+ * Returns `true` for arrays and functions, and `false` for `null`.
  *
- * **Example** (Object keyword)
+ * **Example** (Checking object keywords)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1154,15 +1102,15 @@ export function isObjectKeyword(input: unknown): input is object {
  *
  * **When to use**
  *
- * Use when you need to guard property access on `unknown` values.
- * - You want a simple structural guard for objects.
+ * Use when you need a `Predicate` guard for property access on `unknown`
+ * values with a simple structural object check.
  *
  * **Details**
  *
- * - Uses the `in` operator and {@link isObjectKeyword}.
- * - Does not check property value types.
+ * Uses the `in` operator and `isObjectKeyword`. This does not check property
+ * value types.
  *
- * **Example** (Guard property)
+ * **Example** (Guarding object properties)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1194,14 +1142,14 @@ export const hasProperty: {
  *
  * **When to use**
  *
- * Use when you model tagged unions with a `_tag` field.
- * - You want a quick, structural guard for tagged values.
+ * Use when you model tagged unions with a `_tag` field and want a quick
+ * `Predicate` guard for tagged values.
  *
  * **Details**
  *
- * - Uses {@link hasProperty} and strict equality on `_tag`.
+ * Uses `hasProperty` and strict equality on `_tag`.
  *
- * **Example** (Guard tagged)
+ * **Example** (Guarding tagged values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1228,13 +1176,13 @@ export const isTagged: {
  *
  * **When to use**
  *
- * Use when you need to guard errors caught from unknown sources.
+ * Use when you need a `Predicate` guard for errors caught from unknown sources.
  *
  * **Details**
  *
- * - Uses `instanceof Error`.
+ * Uses `instanceof Error`.
  *
- * **Example** (Guard error)
+ * **Example** (Guarding errors)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1257,13 +1205,13 @@ export function isError(input: unknown): input is Error {
  *
  * **When to use**
  *
- * Use when you need to guard binary data at runtime.
+ * Use when you need a `Predicate` runtime guard for binary data.
  *
  * **Details**
  *
- * - Uses `instanceof Uint8Array`.
+ * Uses `instanceof Uint8Array`.
  *
- * **Example** (Guard Uint8Array)
+ * **Example** (Guarding Uint8Array values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1287,13 +1235,13 @@ export function isUint8Array(input: unknown): input is Uint8Array {
  *
  * **When to use**
  *
- * Use when you need to guard dates at runtime.
+ * Use when you need a `Predicate` runtime guard for dates.
  *
  * **Details**
  *
- * - Uses `instanceof Date`.
+ * Uses `instanceof Date`.
  *
- * **Example** (Guard Date)
+ * **Example** (Guarding Date values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1316,14 +1264,13 @@ export function isDate(input: unknown): input is Date {
  *
  * **When to use**
  *
- * Use when you need a guard before iterating an unknown value.
+ * Use when you need a `Predicate` guard before iterating an unknown value.
  *
  * **Details**
  *
- * - Accepts strings as iterable.
- * - Uses {@link hasProperty} for `Symbol.iterator`.
+ * Accepts strings as iterable and uses `hasProperty` for `Symbol.iterator`.
  *
- * **Example** (Guard iterable)
+ * **Example** (Guarding iterables)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1347,13 +1294,13 @@ export function isIterable(input: unknown): input is Iterable<unknown> {
  *
  * **When to use**
  *
- * Use when you need to detect promise instances across realms.
+ * Use when you need a `Predicate` guard for promise instances across realms.
  *
  * **Details**
  *
- * - Structural check for `then` and `catch` functions.
+ * Performs a structural check for `then` and `catch` functions.
  *
- * **Example** (Guard promise)
+ * **Example** (Guarding promises)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1376,13 +1323,14 @@ export function isPromise(input: unknown): input is Promise<unknown> {
  *
  * **When to use**
  *
- * Use when you only need `then` to interop with promise-like values.
+ * Use when you need a `Predicate` guard for promise-like values with a
+ * callable `then` method.
  *
  * **Details**
  *
- * - Structural check for a callable `then`.
+ * Performs a structural check for a callable `then`.
  *
- * **Example** (Guard promise-like)
+ * **Example** (Guarding promise-like values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1405,13 +1353,13 @@ export function isPromiseLike(input: unknown): input is PromiseLike<unknown> {
  *
  * **When to use**
  *
- * Use when you need a runtime guard for regular expressions.
+ * Use when you need a `Predicate` runtime guard for regular expressions.
  *
  * **Details**
  *
- * - Uses `instanceof RegExp`.
+ * Uses `instanceof RegExp`.
  *
- * **Example** (Guard RegExp)
+ * **Example** (Guarding RegExp values)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1434,15 +1382,15 @@ export function isRegExp(input: unknown): input is RegExp {
  *
  * **When to use**
  *
- * Use when you want to chain two refinements for progressive narrowing.
- * - You want a predicate that applies two checks in sequence.
+ * Use when you want to compose two `Predicate` checks in sequence, especially
+ * when chaining refinements for progressive narrowing.
  *
  * **Details**
  *
- * - For refinements, the output type is narrowed by both.
- * - Short-circuits on the first `false`.
+ * For refinements, the output type is narrowed by both checks. Evaluation
+ * short-circuits on the first `false`.
  *
- * **Example** (Compose refinements)
+ * **Example** (Composing refinements)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1476,15 +1424,15 @@ export const compose: {
  *
  * **When to use**
  *
- * Use when you want to validate tuple positions independently.
- * - You want to lift element predicates into a tuple predicate.
+ * Use when you want to validate tuple positions independently by lifting
+ * element predicates into a tuple predicate.
  *
  * **Details**
  *
- * - Returns a refinement if any element predicate is a refinement.
- * - Stops at the first failing element.
+ * Returns a refinement if any element predicate is a refinement. Evaluation
+ * stops at the first failing element.
  *
- * **Example** (Tuple predicate)
+ * **Example** (Checking tuples)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1522,15 +1470,15 @@ export function Tuple<const T extends ReadonlyArray<Predicate.Any>>(
  *
  * **When to use**
  *
- * Use when you want to validate a record shape at runtime.
- * - You want to lift property predicates into an object predicate.
+ * Use when you want to validate a record shape at runtime by lifting property
+ * predicates into an object predicate.
  *
  * **Details**
  *
- * - Returns a refinement if any field predicate is a refinement.
- * - Checks only the specified keys; extra keys are ignored.
+ * Returns a refinement if any field predicate is a refinement. Only the
+ * specified keys are checked, and extra keys are ignored.
  *
- * **Example** (Struct predicate)
+ * **Example** (Checking structs)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1576,9 +1524,9 @@ export function Struct<R extends Record<string, Predicate.Any>>(
  *
  * **Details**
  *
- * - Returns a new predicate that flips the boolean result.
+ * Returns a new predicate that flips the boolean result.
  *
- * **Example** (Negate)
+ * **Example** (Negating a predicate)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1603,15 +1551,15 @@ export function not<A>(self: Predicate<A>): Predicate<A> {
  *
  * **When to use**
  *
- * Use when you want to accept values that satisfy at least one condition.
- * - You want to combine refinements with union narrowing.
+ * Use when you want to combine `Predicate`s with OR, accepting values that
+ * satisfy at least one condition, including refinements that narrow to a union.
  *
  * **Details**
  *
- * - Short-circuits on the first `true`.
- * - For refinements, the output type is a union.
+ * Evaluation short-circuits on the first `true`. For refinements, the output
+ * type is a union.
  *
- * **Example** (Either condition)
+ * **Example** (Checking either condition)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1638,15 +1586,16 @@ export const or: {
  *
  * **When to use**
  *
- * Use when you want to accept values that satisfy multiple conditions.
- * - You want to combine refinements with intersection narrowing.
+ * Use when you want to combine `Predicate`s with AND, accepting values that
+ * satisfy multiple conditions, including refinements that narrow to an
+ * intersection.
  *
  * **Details**
  *
- * - Short-circuits on the first `false`.
- * - For refinements, the output type is an intersection.
+ * Evaluation short-circuits on the first `false`. For refinements, the output
+ * type is an intersection.
  *
- * **Example** (Both conditions)
+ * **Example** (Checking both conditions)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1681,13 +1630,13 @@ export const and: {
  *
  * **When to use**
  *
- * Use when you want an exclusive-or between two conditions.
+ * Use when you want to combine two `Predicate`s with exclusive-or semantics.
  *
  * **Details**
  *
- * - Returns `true` when results differ.
+ * Returns `true` when results differ.
  *
- * **Example** (Exclusive or)
+ * **Example** (Checking exclusive-or conditions)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1714,13 +1663,13 @@ export const xor: {
  *
  * **When to use**
  *
- * Use when you want to check equivalence of two predicates.
+ * Use when you want to check equivalence of two `Predicate`s.
  *
  * **Details**
  *
- * - Returns `true` when both results are equal.
+ * Returns `true` when both results are equal.
  *
- * **Example** (Equivalence)
+ * **Example** (Defining equivalence)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1745,14 +1694,15 @@ export const eqv: {
  *
  * **When to use**
  *
- * Use when you want a rule that only applies when a precondition holds.
- * - You model constraints like "if A then B".
+ * Use when you need to encode logical implication between `Predicate` rules,
+ * where one rule only applies when a precondition holds.
  *
  * **Details**
  *
- * - Returns `true` when the antecedent is `false`.
+ * Models constraints like "if A then B" and returns `true` when the antecedent
+ * is `false`.
  *
- * **Example** (Implication)
+ * **Example** (Checking implication)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1782,13 +1732,13 @@ export const implies: {
  *
  * **When to use**
  *
- * Use when you want the logical NOR of two conditions.
+ * Use when you want to combine two `Predicate`s with logical NOR semantics.
  *
  * **Details**
  *
- * - Returns the negation of {@link or}.
+ * Returns the negation of `or`.
  *
- * **Example** (NOR)
+ * **Example** (Checking NOR conditions)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1816,13 +1766,13 @@ export const nor: {
  *
  * **When to use**
  *
- * Use when you want the logical NAND of two conditions.
+ * Use when you want to combine two `Predicate`s with logical NAND semantics.
  *
  * **Details**
  *
- * - Returns the negation of {@link and}.
+ * Returns the negation of `and`.
  *
- * **Example** (NAND)
+ * **Example** (Checking NAND conditions)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1854,10 +1804,10 @@ export const nand: {
  *
  * **Details**
  *
- * - Short-circuits on the first `false`.
- * - Iterates the collection each time the predicate is called.
+ * Evaluation short-circuits on the first `false`. The collection is iterated
+ * each time the predicate is called.
  *
- * **Example** (All checks)
+ * **Example** (Checking all predicates)
  *
  * ```ts
  * import { Predicate } from "effect"
@@ -1892,10 +1842,10 @@ export function every<A>(collection: Iterable<Predicate<A>>): Predicate<A> {
  *
  * **Details**
  *
- * - Short-circuits on the first `true`.
- * - Iterates the collection each time the predicate is called.
+ * Evaluation short-circuits on the first `true`. The collection is iterated
+ * each time the predicate is called.
  *
- * **Example** (Any check)
+ * **Example** (Checking any predicate)
  *
  * ```ts
  * import { Predicate } from "effect"

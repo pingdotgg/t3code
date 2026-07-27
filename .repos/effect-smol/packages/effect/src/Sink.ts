@@ -1,34 +1,11 @@
 /**
- * The `Sink` module provides composable consumers for `Stream` values. A
- * `Sink<A, In, L, E, R>` pulls input elements of type `In`, may require
- * services `R`, may fail with `E`, and eventually produces a result `A` plus
- * any leftover input `L` that was read but not consumed.
+ * Consumes values from a `Stream` and produces one final result.
  *
- * **Mental model**
- *
- * - A sink is the terminal consumer used by `Stream.run`
- * - Sinks can consume zero, one, many, or all input elements before finishing
- * - Leftovers allow one sink to stop early without losing already-pulled input
- * - Sink composition preserves typed errors and service requirements
- * - Most sinks are built from `Channel` internally, but users compose them with
- *   the higher-level APIs in this module
- *
- * **Common tasks**
- *
- * - Create simple sinks: {@link succeed}, {@link fail}, {@link fromEffect}
- * - Fold input: {@link fold}
- * - Collect values: {@link collect}
- * - Count or drain input: {@link count}, {@link drain}
- * - Transform results: {@link map}, {@link mapEffect}, {@link as}
- * - Adapt input before consumption: {@link mapInput}, {@link mapInputEffect}
- *
- * **Gotchas**
- *
- * - A sink can finish before the stream is exhausted; check leftover-aware
- *   combinators when composing parsers or protocol decoders
- * - `In` is contravariant, so a sink that accepts broader input can be used
- *   where narrower input is expected
- * - Resource and service requirements are tracked in the `R` type parameter
+ * A `Sink` may read no input, a fixed amount of input, or keep reading until a
+ * condition is met. If it reads more than it needs, it can return leftovers so
+ * the stream can continue from those values. Sinks are used to collect, fold,
+ * search, count, or otherwise reduce streamed input, and they can be composed
+ * when a stream needs more than one consuming step.
  *
  * @since 2.0.0
  */
@@ -448,8 +425,8 @@ export declare namespace make {
  *
  * **When to use**
  *
- * Use when the effect needs to provide both the result value and optional
- * leftovers.
+ * Use when you need to create a sink from an effect that returns both the sink
+ * result value and optional leftovers.
  *
  * @category constructors
  * @since 4.0.0
@@ -694,7 +671,7 @@ export const never: Sink<unknown> = fromEffectEnd(Effect.never)
  * instead of being returned to downstream sink composition. This does not
  * continue pulling additional elements from the upstream stream.
  *
- * @category utils
+ * @category filtering
  * @since 2.0.0
  */
 export const ignoreLeftover = <A, In, L, E, R>(self: Sink<A, In, L, E, R>): Sink<A, In, never, E, R> =>
@@ -1073,8 +1050,8 @@ export const mapEffectEnd: {
  *
  * **When to use**
  *
- * Use when transforming a sink result itself is effectful, can fail, or needs
- * services.
+ * Use when you need a sink result transformation that is effectful, can fail,
+ * or requires services.
  *
  * **Details**
  *
@@ -1444,7 +1421,8 @@ const last_ = reduceArray(Option.none<unknown>, (_, arr) => Arr.last(arr))
  *
  * **When to use**
  *
- * Use when consuming all upstream input and only the final element is needed.
+ * Use when you need to consume all upstream input and keep only the final
+ * element.
  *
  * **Details**
  *
@@ -1498,8 +1476,8 @@ export const find: {
  *
  * **When to use**
  *
- * Use when deciding whether an input matches requires an effect, can fail, or
- * needs services.
+ * Use when you need to run effects, fail, or use services while searching for
+ * the first matching input.
  *
  * **Details**
  *
@@ -1551,8 +1529,7 @@ export const count: Sink<number, unknown> = reduceArray(() => 0, (s, arr) => s +
  *
  * **When to use**
  *
- * Use to collect all upstream input elements into a single array when you need
- * a sink result containing the complete input.
+ * Use when you need a sink result containing all upstream input elements.
  *
  * @see {@link take} for collecting only a fixed number of input elements
  *
@@ -1922,7 +1899,7 @@ export const unwrap = <A, In, L, E, R, R2>(
 /**
  * Runs a summary effect when the sink starts and again when it completes.
  *
- * @category utils
+ * @category mapping
  * @since 2.0.0
  */
 export const summarized: {
@@ -1950,7 +1927,7 @@ export const summarized: {
 /**
  * Returns the sink that executes this one and times its execution.
  *
- * @category utils
+ * @category mapping
  * @since 2.0.0
  */
 export const withDuration = <A, In, L, E, R>(

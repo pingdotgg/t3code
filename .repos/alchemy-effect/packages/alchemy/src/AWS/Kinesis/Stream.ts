@@ -1,24 +1,28 @@
 // required to avoid this error in consumers: "The inferred type of 'Records' cannot be named without a reference to '../../@distilled.cloud/aws/node_modules/@types/aws-lambda'. This is likely not portable. A type annotation is necessary.ts(2742)"
 export type * as lambda from "aws-lambda";
 
-import { Region } from "@distilled.cloud/aws/Region";
 import * as kinesis from "@distilled.cloud/aws/kinesis";
 import type * as lambda from "aws-lambda";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+// `Stream` is the resource class name in this file, so alias the Effect
+// `Stream` module to avoid the collision.
+import * as EffectStream from "effect/Stream";
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
-import type { Providers } from "../Providers.ts";
 import {
   createInternalTags,
   diffTags,
   hasAlchemyTags,
   type Tags,
 } from "../../Tags.ts";
+import { toWireHours } from "../../Util/Duration.ts";
 import { AWSEnvironment, type AccountID } from "../Environment.ts";
+import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
 
 export type StreamRecord = lambda.KinesisStreamRecord;
@@ -36,7 +40,13 @@ export type StreamMode = "PROVISIONED" | "ON_DEMAND";
 export type EncryptionType = "NONE" | "KMS";
 
 export type WarmThroughput = {
+  /**
+   * Requested warm throughput in MiBps.
+   */
   targetMiBps?: number;
+  /**
+   * Warm throughput currently provisioned by AWS, in MiBps.
+   */
   currentMiBps?: number;
 };
 
@@ -59,11 +69,12 @@ export type StreamProps = {
    */
   shardCount?: number;
   /**
-   * The number of hours that records remain accessible in the stream.
-   * Valid values range from 24 to 8760.
-   * @default 24
+   * How long records remain accessible in the stream, e.g. `"48 hours"` or
+   * `Duration.hours(48)`. The API stores whole hours; valid values range
+   * from 24 hours to 8760 hours (365 days).
+   * @default "24 hours"
    */
-  retentionPeriodHours?: number;
+  retentionPeriod?: Duration.Input;
   /**
    * If set to true, server-side encryption is enabled on the stream.
    * Uses the AWS managed CMK for Kinesis (`alias/aws/kinesis`) when `kmsKeyId`
@@ -173,7 +184,7 @@ export interface Stream extends Resource<
  * including retention, encryption, monitoring, warm throughput, record size, tags,
  * and stream resource policy. A stream name is auto-generated from the app,
  * stage, and logical ID unless you provide one explicitly.
- *
+ * @resource
  * @section Creating Streams
  * @example On-Demand Stream
  * ```typescript
@@ -187,7 +198,7 @@ export interface Stream extends Resource<
  * const stream = yield* Kinesis.Stream("AnalyticsStream", {
  *   streamMode: "PROVISIONED",
  *   shardCount: 2,
- *   retentionPeriodHours: 48,
+ *   retentionPeriod: "48 hours",
  * });
  * ```
  *
@@ -206,7 +217,7 @@ export interface Stream extends Resource<
  * @example Put a record from a handler
  * ```typescript
  * // init
- * const putRecord = yield* Kinesis.PutRecord.bind(stream);
+ * const putRecord = yield* AWS.Kinesis.PutRecord(stream);
  *
  * return {
  *   fetch: Effect.gen(function* () {
@@ -227,7 +238,9 @@ export interface Stream extends Resource<
  * @example Process stream records
  * ```typescript
  * // init
- * yield* Kinesis.records(stream).process(
+ * yield* Kinesis.consumeStreamRecords(
+ *   stream,
+ *   {},
  *   Effect.fn(function* (record) {
  *     const data = new TextDecoder().decode(record.data);
  *     yield* Effect.log(`Received: ${data}`);
@@ -361,9 +374,22 @@ const readStream = Effect.fn(function* ({
   }
 
   const summary = response.StreamDescriptionSummary;
-  const tagsResponse = yield* kinesis.listTagsForResource({
-    ResourceARN: summary.StreamARN,
-  });
+  // The stream can vanish between the describe above and these follow-up
+  // calls (e.g. another test tears its stream down while `list` hydrates) —
+  // a `ResourceNotFoundException` here just means it's gone, so report it as
+  // missing rather than failing the whole enumeration.
+  const tagsResponse = yield* kinesis
+    .listTagsForResource({
+      ResourceARN: summary.StreamARN,
+    })
+    .pipe(
+      Effect.catchTag("ResourceNotFoundException", () =>
+        Effect.succeed(undefined),
+      ),
+    );
+  if (!tagsResponse) {
+    return undefined;
+  }
   const policyResponse = yield* kinesis
     .getResourcePolicy({
       ResourceARN: summary.StreamARN,
@@ -397,9 +423,7 @@ const waitForStreamActive = (streamName: string) =>
     Effect.retry({
       while: (e: { _tag: string }) =>
         e._tag === "StreamNotActive" || e._tag === "ParseError",
-      schedule: Schedule.exponential(500).pipe(
-        Schedule.both(Schedule.recurs(60)),
-      ),
+      schedule: Schedule.max([Schedule.exponential(500), Schedule.recurs(60)]),
     }),
   );
 
@@ -413,9 +437,7 @@ const waitForStreamDeleted = (streamName: string) =>
     Effect.retry({
       while: (e: { _tag: string }) =>
         e._tag === "StreamStillExists" || e._tag === "ParseError",
-      schedule: Schedule.exponential(500).pipe(
-        Schedule.both(Schedule.recurs(60)),
-      ),
+      schedule: Schedule.max([Schedule.exponential(500), Schedule.recurs(60)]),
     }),
     Effect.catchTag("ResourceNotFoundException", () => Effect.void),
   );
@@ -424,11 +446,34 @@ export const StreamProvider = () =>
   Provider.effect(
     Stream,
     Effect.gen(function* () {
-      const region = yield* Region;
-      const { accountId } = yield* AWSEnvironment;
-
       return {
         stables: ["streamName", "streamArn"],
+        // Enumerate every stream in the ambient account/region. `listStreams`
+        // is paginated; collect every page exhaustively, then hydrate each
+        // stream into the exact `read` Attributes shape (summary + tags +
+        // resource policy) via `readStream` with bounded concurrency. A
+        // stream that disappears between listing and hydration is handled
+        // inside `readStream` (typed `ResourceNotFoundException` -> undefined)
+        // and filtered out.
+        list: () =>
+          Effect.gen(function* () {
+            const streamNames = yield* kinesis.listStreams.pages({}).pipe(
+              EffectStream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) => page.StreamNames ?? []),
+              ),
+            );
+
+            const hydrated = yield* Effect.forEach(
+              streamNames,
+              (streamName) => readStream({ streamName }),
+              { concurrency: 10 },
+            );
+
+            return hydrated.filter(
+              (attrs): attrs is Stream["Attributes"] => attrs !== undefined,
+            );
+          }),
         read: Effect.fn(function* ({ id, olds, output }) {
           const streamName =
             output?.streamName ?? (yield* createStreamName(id, olds ?? {}));
@@ -450,6 +495,7 @@ export const StreamProvider = () =>
           }
         }),
         reconcile: Effect.fn(function* ({ id, news = {}, output, session }) {
+          const { accountId, region } = yield* AWSEnvironment.current;
           yield* assertProvisionedProps(news);
 
           const streamName =
@@ -540,7 +586,7 @@ export const StreamProvider = () =>
 
           // Sync retention period — observed ↔ desired.
           const desiredRetention =
-            news.retentionPeriodHours ?? defaultRetentionPeriodHours;
+            toWireHours(news.retentionPeriod) ?? defaultRetentionPeriodHours;
           if (state.retentionPeriodHours !== desiredRetention) {
             if (desiredRetention > state.retentionPeriodHours) {
               yield* kinesis.increaseStreamRetentionPeriod({

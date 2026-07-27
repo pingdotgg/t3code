@@ -1,0 +1,189 @@
+---
+/**
+ * The API Reference landing: a directory of every provider, linking each
+ * one to its home — the docs hub for providers that have one, the first
+ * reference entry otherwise. Resource counts come from the generated
+ * sidebar (`bun run build:reference`); the directory renders without
+ * counts if it hasn't been generated yet.
+ */
+import { sidebarGroupIcon } from "../docs-icons";
+
+interface SidebarNode {
+  label: string;
+  link?: string;
+  items?: SidebarNode[];
+}
+
+/**
+ * Resolved at BUILD time via Vite's eager glob — a runtime fs read
+ * relative to import.meta.url breaks once this component is bundled
+ * into dist/ (the production /providers page rendered zero cards).
+ * The glob stays graceful when the file hasn't been generated yet
+ * (fresh `astro dev` before `bun run build:reference`).
+ */
+const generatedModules = import.meta.glob<{ default: SidebarNode[] }>(
+  "../generated/providers-sidebar.json",
+  { eager: true },
+);
+
+function generatedSidebar(): SidebarNode[] | undefined {
+  return Object.values(generatedModules)[0]?.default;
+}
+
+const countLinks = (nodes: SidebarNode[]): number =>
+  nodes.reduce(
+    (n, node) =>
+      n + (node.link ? 1 : 0) + (node.items ? countLinks(node.items) : 0),
+    0,
+  );
+
+const firstLink = (nodes: SidebarNode[]): string | undefined => {
+  for (const node of nodes) {
+    if (node.link) return node.link;
+    if (node.items) {
+      const found = firstLink(node.items);
+      if (found) return found;
+    }
+  }
+  return undefined;
+};
+
+/** Every provider has a docs hub: each card links to it. */
+const HUBS: Record<string, { href: string; blurb: string }> = {
+  Cloudflare: {
+    href: "/cloudflare",
+    blurb: "Workers, Durable Objects, D1, R2, Queues, Hyperdrive",
+  },
+  AWS: {
+    href: "/aws",
+    blurb: "Lambda, ECS, EKS, EC2, DynamoDB, S3, SQS, Kinesis",
+  },
+  Planetscale: {
+    href: "/planetscale",
+    blurb: "Serverless MySQL & Postgres with branching workflows",
+  },
+  Neon: { href: "/neon", blurb: "Serverless Postgres with branches per PR" },
+  Axiom: { href: "/axiom", blurb: "Logs, traces, dashboards, and monitors" },
+  GitHub: { href: "/github", blurb: "Repos, secrets, and webhook events" },
+  Docker: {
+    href: "/docker",
+    blurb: "Images, containers, networks, and volumes via the Docker CLI",
+  },
+  Drizzle: {
+    href: "/sql",
+    blurb: "Schemas and migrations as deploy-graph resources",
+  },
+  SQL: {
+    href: "/sql",
+    blurb: "Low-level effect-sql clients — tagged-template SQL as Effects",
+  },
+  Command: {
+    href: "/command",
+    blurb: "Memoized builds, dev servers, and one-off commands",
+  },
+};
+
+const BLURBS: Record<string, string> = {};
+
+const DISPLAY_LABELS: Record<string, string> = { Planetscale: "PlanetScale" };
+
+const providers = generatedSidebar() ?? [];
+const cards = providers.map((p) => {
+  const hub = HUBS[p.label];
+  return {
+    label: DISPLAY_LABELS[p.label] ?? p.label,
+    icon: sidebarGroupIcon(p.label),
+    href: hub?.href ?? firstLink(p.items ?? []) ?? "/providers",
+    blurb: hub?.blurb ?? BLURBS[p.label] ?? "Generated resource reference",
+    count: p.items ? countLinks(p.items) : 0,
+    hasHub: !!hub,
+  };
+});
+---
+
+<div class="alc-provider-directory">
+  {
+    cards.map((card) => (
+      <a class="alc-provider-directory__card" href={card.href}>
+        <span class="alc-provider-directory__title">
+          {card.icon && (
+            <svg
+              aria-hidden="true"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              set:html={card.icon}
+            />
+          )}
+          {card.label}
+        </span>
+        <span class="alc-provider-directory__blurb">{card.blurb}</span>
+        <span class="alc-provider-directory__meta">
+          {card.count > 0 && <span>{card.count} resources</span>}
+          <span class="alc-provider-directory__cta">
+            {card.hasHub ? "Open hub →" : "Browse reference →"}
+          </span>
+        </span>
+      </a>
+    ))
+  }
+</div>
+
+<style>
+  .alc-provider-directory {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 1.5rem;
+  }
+  @media (max-width: 640px) {
+    .alc-provider-directory {
+      grid-template-columns: 1fr;
+    }
+  }
+  .alc-provider-directory__card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 16px 18px;
+    border: 1px solid var(--sl-color-hairline, var(--sl-color-gray-5));
+    border-radius: 10px;
+    text-decoration: none;
+    transition:
+      border-color 0.15s ease,
+      transform 0.15s ease;
+  }
+  .alc-provider-directory__card:hover {
+    border-color: var(--sl-color-accent);
+    transform: translateY(-1px);
+  }
+  .alc-provider-directory__title {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-size: var(--sl-text-lg);
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+  .alc-provider-directory__title svg {
+    flex-shrink: 0;
+    opacity: 0.9;
+  }
+  .alc-provider-directory__blurb {
+    font-size: var(--sl-text-sm);
+    line-height: 1.5;
+    color: var(--sl-color-gray-3);
+  }
+  .alc-provider-directory__meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-top: 2px;
+    font-size: var(--sl-text-xs);
+    color: var(--sl-color-gray-3);
+  }
+  .alc-provider-directory__cta {
+    color: var(--sl-color-accent-high);
+    font-weight: 500;
+  }
+</style>

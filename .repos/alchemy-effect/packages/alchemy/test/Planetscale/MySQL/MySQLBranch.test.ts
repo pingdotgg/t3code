@@ -1,9 +1,9 @@
 import { adopt } from "@/AdoptPolicy";
 import * as Planetscale from "@/Planetscale";
 import * as RemovalPolicy from "@/RemovalPolicy.ts";
-import * as Test from "@/Test/Vitest";
+import * as Test from "@/Test/Alchemy";
 import * as ops from "@distilled.cloud/planetscale/Operations";
-import { describe, expect } from "@effect/vitest";
+import { describe, expect } from "alchemy-test";
 import { Data, Schedule } from "effect";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -17,7 +17,7 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-describe.skipIf(!process.env.PLANETSCALE_TEST)(() => {
+describe.skipIf(!process.env.PLANETSCALE_TEST).concurrent("MySQLBranch", () => {
   test.provider(
     "adopts existing branch when adopt is true",
     (stack) =>
@@ -613,9 +613,10 @@ const waitForBackupSuccess = Effect.fn(function* (
     Effect.retry({
       while: (e): e is BackupNotReady =>
         e instanceof BackupNotReady && e.retryable,
-      schedule: Schedule.exponential(1_000).pipe(
-        Schedule.both(Schedule.recurs(120)),
-      ),
+      schedule: Schedule.max([
+        Schedule.exponential(1_000),
+        Schedule.recurs(120),
+      ]),
     }),
   );
 });

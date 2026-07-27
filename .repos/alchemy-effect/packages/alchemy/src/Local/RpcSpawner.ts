@@ -1,5 +1,6 @@
 import { exitHook } from "@alchemy.run/node-utils/exit-hook";
 import * as Cache from "effect/Cache";
+import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -34,7 +35,7 @@ export interface RpcSpawnPayload extends Pick<
   serverEntryUrl: string;
 }
 
-export const make = Effect.fnUntraced(function* ({
+export const make = Effect.fn(function* ({
   profile,
   envFile,
 }: Pick<RpcServerEnvironment, "profile" | "envFile">) {
@@ -46,7 +47,7 @@ export const make = Effect.fnUntraced(function* ({
     capacity: Infinity,
   });
 
-  const spawn = Effect.fnUntraced(function* ({
+  const spawn = Effect.fn(function* ({
     serverEntryUrl,
     alchemyContext,
     stack,
@@ -78,7 +79,11 @@ export const make = Effect.fnUntraced(function* ({
       }[bin],
       {
         stdout: "pipe",
-        stderr: "inherit",
+        // Piped (NOT inherited) so the child's output routes through the
+        // Effect Console service: raw writes to the parent's fd corrupt the
+        // test runner's reporter/TUI. The drain below is mandatory — an
+        // unread pipe eventually fills and blocks the child.
+        stderr: "pipe",
         detached: false,
         env: {
           [RPC_SERVER_ENVIRONMENT_KEY]: JSON.stringify(environment),
@@ -87,6 +92,13 @@ export const make = Effect.fnUntraced(function* ({
       },
     );
     const handle = yield* spawner.spawn(command);
+    yield* handle.stderr.pipe(
+      Stream.decodeText,
+      Stream.splitLines,
+      Stream.runForEach((line) => Console.error(line)),
+      Effect.ignore,
+      Effect.forkScoped,
+    );
     const unregister = exitHook(() => {
       killProcessGroup(handle.pid, "SIGKILL");
     });
@@ -115,7 +127,7 @@ export const make = Effect.fnUntraced(function* ({
     };
   });
 
-  const register = Effect.fnUntraced(function* (
+  const register = Effect.fn(function* (
     payload: RpcSpawnPayload,
     attempt = 0,
   ): Effect.fn.Return<string, PlatformError> {
@@ -168,13 +180,14 @@ const getRpcAddress = (stdout: Stream.Stream<Uint8Array, PlatformError>) =>
       Stream.splitLines,
       Stream.runForEach((line) => {
         if (done) {
-          console.log(line);
-        } else {
-          const match = line.match(RPC_ADDRESS_REGEX);
-          if (match) {
-            done = true;
-            return Deferred.succeed(address, match[2]);
-          }
+          // Through the Console SERVICE so runners that override it (e.g.
+          // alchemy-test's per-test buffer) capture the sidecar's output.
+          return Console.log(line);
+        }
+        const match = line.match(RPC_ADDRESS_REGEX);
+        if (match) {
+          done = true;
+          return Deferred.succeed(address, match[2]);
         }
         return Effect.void;
       }),

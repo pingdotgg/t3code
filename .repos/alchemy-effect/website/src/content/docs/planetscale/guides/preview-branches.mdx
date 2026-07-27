@@ -1,0 +1,185 @@
+---
+title: Preview branches per PR
+description: Give every pull request its own PlanetScale branch — a long-lived database owned by a staging stage, referenced by ephemeral PR stages that fork, migrate, and tear down a branch each.
+---
+
+PlanetScale's branch model maps directly onto alchemy stages: the
+database is the expensive, long-lived tier; branches are cheap forks.
+Split your stages the same way and every PR gets an isolated schema
+and data set without provisioning a cluster per preview:
+
+- **`staging-*` stages** own the long-lived database.
+- **`pr-*` stages** reference that database and own only the
+  ephemeral pieces — a branch, a credential, and compute.
+
+The pattern is identical for both engines; only the resource names
+and the credential model differ. New here? [Set up
+credentials](/planetscale/setup) first.
+
+## Read the active stage
+
+The create-vs-reference decision keys off the stage being deployed,
+which the `Stack` service exposes:
+
+```typescript
+import * as Alchemy from "alchemy";
+
+const { stage } = yield* Alchemy.Stack;
+```
+
+`stage` is whatever was passed to `alchemy deploy --stage <name>` —
+`dev_sam`, `staging-pr-42`, or `pr-42`.
+
+## Create or reference the database
+
+PR stages reference the database with `PostgresDatabase.ref`; every
+other stage creates it:
+
+```typescript
+import * as Planetscale from "alchemy/Planetscale";
+
+const database = stage.startsWith("pr-")
+  ? yield* Planetscale.PostgresDatabase.ref("app-db", {
+      stage: `staging-${stage}`,
+    })
+  : yield* Planetscale.PostgresDatabase("app-db", {
+      region: { slug: "us-east" },
+      clusterSize: "PS_10",
+    });
+```
+
+`Resource.ref(id, { stage })` reads the deployed resource's
+attributes from another stage's state at plan time — the lookup is
+keyed by `{ stack, stage, id }`, so the logical ID `"app-db"` must
+match what the owning stage created. `database` is typed
+`Planetscale.PostgresDatabase` on both paths, and downstream
+resources don't care which one ran. Note the ref targets
+`staging-${stage}`, not a global `"staging"`: `pr-42` reads from a
+parallel `staging-pr-42` stage, so each PR's data lives in its own
+database. Prefer one database shared by every PR? Use
+`stage: "staging"`.
+
+## A branch per stage
+
+Below the database line, nothing is conditional. Every stage —
+including each PR stage — forks its own branch:
+
+```typescript
+const branch = yield* Planetscale.PostgresBranch("app-branch", {
+  database,
+  migrationsDir: "./migrations",
+});
+```
+
+Branches fork from `main` by default and carry their own
+`migrationsDir`: pending `.sql` files are applied to the branch on
+every deploy, so each preview migrates itself independently — see
+[Migrations](/planetscale/data/migrations) for ordering, hashing, and the
+tracking table. To fork data as well as schema, `seedData:
+"last_successful_backup"` restores the last backup into the new
+branch.
+
+## Mint a per-stage credential
+
+The credential is scoped to the branch, so it's per-stage too:
+
+```typescript
+const role = yield* Planetscale.PostgresRole("app-role", {
+  database,
+  branch,
+  inheritedRoles: ["postgres"],
+});
+```
+
+`role.origin` (direct) and `role.pooledOrigin` (PSBouncer) are what
+you hand to the runtime consumer — see
+[Postgres](/planetscale/data/postgres) for the role model and the
+direct-vs-pooled distinction.
+
+## The MySQL variant
+
+The MySQL (Vitess) family follows the same two tiers with its own
+resource trio — `MySQLDatabase.ref`, a non-production `MySQLBranch`,
+and a `MySQLPassword` in place of the Postgres role:
+
+```typescript
+const database = stage.startsWith("pr-")
+  ? yield* Planetscale.MySQLDatabase.ref("app-db", {
+      stage: `staging-${stage}`,
+    })
+  : yield* Planetscale.MySQLDatabase("app-db", {
+      region: { slug: "us-east" },
+      clusterSize: "PS_10",
+    });
+
+const branch = yield* Planetscale.MySQLBranch("app-branch", {
+  database,
+  isProduction: false,
+  migrationsDir: "./migrations",
+});
+
+const password = yield* Planetscale.MySQLPassword("app-password", {
+  database,
+  branch,
+  role: "readwriter",
+});
+```
+
+Non-production branches run on the `PS_DEV` size, and the password's
+`role` is a Vitess access level (`"reader"`, `"writer"`, `"admin"`,
+`"readwriter"`) rather than inherited Postgres roles. Migrations
+behave slightly differently on Vitess — DDL commits implicitly, so
+prefer one schema change per file — see the engine differences in
+[Migrations](/planetscale/data/migrations).
+
+## Deploy the owner first
+
+A ref can only resolve against state that exists, so the owning
+stage deploys before the PR stage that references it:
+
+```sh
+alchemy deploy --stage staging-pr-42   # creates the database
+alchemy deploy --stage pr-42           # references it, forks a branch
+```
+
+Deploying `pr-42` first fails at plan time with
+`InvalidReferenceError` — there's nothing under
+`{ stack, stage: "staging-pr-42", id: "app-db" }` to read yet.
+
+## Tear down
+
+```sh
+alchemy destroy --stage pr-42
+```
+
+Destroy removes the per-stage resources — branch, credential,
+compute — but leaves the referenced database untouched: the PR stage
+doesn't own it, so it can't delete it.
+
+## Wire it into your runtime
+
+The snippets above end at a credential. Connecting it to compute is
+runtime-specific:
+
+- [Shared database across stages](/cloudflare/data/shared-database)
+  — the general `Resource.ref` pattern, step by step.
+- [Branch from a shared database](/cloudflare/data/branch-from-shared-database)
+  — the full walkthrough of this pattern with a Cloudflare Worker on
+  the other end.
+- [Hyperdrive](/cloudflare/data/hyperdrive) — `role.origin` /
+  `password.origin` plug straight into a
+  `Cloudflare.Hyperdrive.Connection`.
+
+Complete working projects:
+[`cloudflare-planetscale-postgres-drizzle`](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-planetscale-postgres-drizzle)
+and
+[`cloudflare-planetscale-mysql-drizzle`](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-planetscale-mysql-drizzle).
+
+## Where next
+
+- [Drizzle ORM with PlanetScale](/planetscale/guides/drizzle) —
+  generate the migrations each preview branch applies.
+- [Migrations](/planetscale/data/migrations) — how `migrationsDir` files
+  are ordered, hashed, and tracked.
+- [Postgres](/planetscale/data/postgres) and [MySQL](/planetscale/data/mysql)
+  — the two resource families used above.

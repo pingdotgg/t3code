@@ -1,60 +1,9 @@
 /**
- * Operations for working with TypeScript `number` values. Use this module for
- * arithmetic, safe parsing and division, comparisons, range checks, clamping,
- * rounding, and reducers for numeric aggregation.
+ * Works with TypeScript `number` values.
  *
- * **Mental model**
- *
- * Numbers remain plain JavaScript numbers, including `NaN`, `Infinity`, and
- * floating-point behavior. The module adds named operations around that runtime
- * model: arithmetic such as {@link sum}, {@link multiply}, {@link subtract},
- * and {@link remainder}; safety wrappers such as {@link parse} and
- * {@link divide}; range helpers such as {@link between} and {@link clamp}; and
- * instances such as {@link Order} and {@link Equivalence}.
- *
- * **Common tasks**
- *
- * - Coerce, parse, or narrow input: {@link Number}, {@link parse},
- *   {@link isNumber}
- * - Do arithmetic: {@link sum}, {@link multiply}, {@link subtract},
- *   {@link divide}, {@link divideUnsafe}, {@link remainder}, {@link round}
- * - Work with counters and powers: {@link increment}, {@link decrement},
- *   {@link nextPow2}
- * - Compare and bound values: {@link isLessThan}, {@link isGreaterThan},
- *   {@link between}, {@link clamp}, {@link min}, {@link max}, {@link sign}
- * - Aggregate iterables or reducer inputs: {@link sumAll}, {@link multiplyAll},
- *   {@link ReducerSum}, {@link ReducerMultiply}, {@link ReducerMax},
- *   {@link ReducerMin}
- *
- * **Gotchas**
- *
- * - {@link Number} is the native JavaScript constructor. For example,
- *   `Number.Number("")` returns `0`; {@link parse} returns `Option.none()` for
- *   blank strings and invalid numeric text.
- * - {@link divide} returns `Option.none()` only when the divisor is `0`.
- *   Other JavaScript number results, including `NaN`, still follow normal
- *   number semantics.
- * - {@link Equivalence} treats `NaN` as equivalent to `NaN`, unlike `===`.
- * - Reducers have identity values: {@link ReducerSum} starts at `0`,
- *   {@link ReducerMultiply} starts at `1`, {@link ReducerMax} starts at
- *   `-Infinity`, and {@link ReducerMin} starts at `Infinity`.
- *
- * **Quickstart**
- *
- * **Example** (Parsing and bounding a number)
- *
- * ```ts
- * import { Number } from "effect"
- *
- * const parsed = Number.parse("42")
- * console.log(parsed) // Option.some(42)
- *
- * const bounded = Number.clamp(120, { minimum: 0, maximum: 100 })
- * console.log(bounded) // 100
- *
- * const total = Number.sumAll([1, 2, 3])
- * console.log(total) // 6
- * ```
+ * This module exposes the native `Number` constructor together with helpers for
+ * checking, parsing, arithmetic, safe division, comparison, range checks,
+ * clamping, rounding, ordering, equivalence, and numeric aggregation.
  *
  * @since 2.0.0
  */
@@ -227,12 +176,16 @@ export const divide: {
 )
 
 /**
- * Provides an unsafe division operation on `number`s that throws a `RangeError` if the divisor is `0`.
+ * Divides two `number` values without returning an `Option`.
  *
  * **When to use**
  *
- * Use when the divisor is known to be non-zero and division by zero should be a
- * thrown exception.
+ * Use to divide `number` values where the divisor is known to be non-zero and
+ * a plain `number` result is preferred over handling `Option.none`.
+ *
+ * **Gotchas**
+ *
+ * Throws a `RangeError` if the divisor is `0`.
  *
  * **Example** (Dividing numbers unsafely)
  *
@@ -305,8 +258,8 @@ export const decrement = (n: number): number => n - 1
  *
  * **When to use**
  *
- * Use when sorting or comparing numbers through APIs that accept an ordering
- * instance.
+ * Use when you need to sort or compare numbers through APIs that accept an
+ * ordering instance.
  *
  * **Example** (Comparing numbers)
  *
@@ -694,23 +647,42 @@ export const remainder: {
   (divisor: number): (self: number) => number
   (self: number, divisor: number): number
 } = dual(2, (self: number, divisor: number): number => {
-  const selfDecCount = decimalCount(self)
-  const divisorDecCount = decimalCount(divisor)
+  const selfString = self.toString()
+  const divisorString = divisor.toString()
+  if (selfString.includes("e") || divisorString.includes("e")) {
+    if (!globalThis.Number.isFinite(self) || !globalThis.Number.isFinite(divisor) || divisor === 0) {
+      return NaN
+    }
+    return remainderWithScientificNotation(self, divisor)
+  }
+  const selfDecCount = (selfString.split(".")[1] || "").length
+  const divisorDecCount = (divisorString.split(".")[1] || "").length
   const decCount = selfDecCount > divisorDecCount ? selfDecCount : divisorDecCount
   const selfInt = parseInt(self.toFixed(decCount).replace(".", ""))
   const divisorInt = parseInt(divisor.toFixed(decCount).replace(".", ""))
   return (selfInt % divisorInt) / Math.pow(10, decCount)
 })
 
-function decimalCount(n: number): number {
-  const s = n.toString()
-  const eIndex = s.indexOf("e-")
-  if (eIndex !== -1) {
-    const exp = parseInt(s.slice(eIndex + 2))
-    const mantissaDecimals = (s.slice(0, eIndex).split(".")[1] || "").length
-    return mantissaDecimals + exp
+function remainderWithScientificNotation(self: number, divisor: number): number {
+  const [selfCoefficient, selfExponent] = toScientificInteger(self)
+  const [divisorCoefficient, divisorExponent] = toScientificInteger(divisor)
+  const exponent = Math.min(selfExponent, divisorExponent)
+  const selfInteger = selfCoefficient * BigInt(10) ** BigInt(selfExponent - exponent)
+  const divisorInteger = divisorCoefficient * BigInt(10) ** BigInt(divisorExponent - exponent)
+  const out = selfInteger % divisorInteger
+  if (out === BigInt(0)) {
+    return self < 0 || Object.is(self, -0) ? -0 : 0
   }
-  return (s.split(".")[1] || "").length
+  const remainder = globalThis.Number(`${out}e${exponent}`)
+  return remainder === 0 ? Math.sign(self) * globalThis.Number.MIN_VALUE : remainder
+}
+
+function toScientificInteger(n: number): readonly [coefficient: bigint, exponent: number] {
+  const scientific = Math.abs(n).toExponential()
+  const eIndex = scientific.indexOf("e")
+  const digits = scientific.slice(0, eIndex).replace(".", "")
+  const coefficient = BigInt(digits) * (n < 0 ? -BigInt(1) : BigInt(1))
+  return [coefficient, globalThis.Number(scientific.slice(eIndex + 1)) - digits.length + 1]
 }
 
 /**

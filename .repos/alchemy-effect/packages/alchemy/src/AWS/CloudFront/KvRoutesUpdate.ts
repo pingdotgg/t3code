@@ -30,9 +30,21 @@ export interface KvRoutesUpdate extends Resource<
   "AWS.CloudFront.KvRoutesUpdate",
   KvRoutesUpdateProps,
   {
+    /**
+     * The ARN of the key value store holding the routes.
+     */
     store: string;
+    /**
+     * The namespace prefix the routes were written under.
+     */
     namespace: string;
+    /**
+     * The key the route table was written to.
+     */
     key: string;
+    /**
+     * The serialized route table value that was written.
+     */
     entry: string;
   },
   never,
@@ -44,7 +56,7 @@ export interface KvRoutesUpdate extends Resource<
  *
  * The routes array is stored at key `{namespace}:{key}` and supports automatic
  * chunking when the serialized array exceeds 1000 characters.
- *
+ * @resource
  * @section Managing Routes
  * @example Add A Route Entry
  * ```typescript
@@ -187,9 +199,10 @@ export const KvRoutesUpdateProvider = () =>
             while: (error) =>
               error._tag === "ValidationException" &&
               isKvsPreconditionFailed(error),
-            schedule: Schedule.exponential("100 millis").pipe(
-              Schedule.both(Schedule.recurs(24)),
-            ),
+            schedule: Schedule.max([
+              Schedule.exponential("100 millis"),
+              Schedule.recurs(24),
+            ]),
           }),
         );
 
@@ -219,13 +232,19 @@ export const KvRoutesUpdateProvider = () =>
             while: (error) =>
               error._tag === "ValidationException" &&
               isKvsPreconditionFailed(error),
-            schedule: Schedule.exponential("100 millis").pipe(
-              Schedule.both(Schedule.recurs(24)),
-            ),
+            schedule: Schedule.max([
+              Schedule.exponential("100 millis"),
+              Schedule.recurs(24),
+            ]),
           }),
         );
 
       return {
+        // Non-listable: this resource is an update operation that manages a
+        // single route entry inside a JSON array stored at a KV store key. It is
+        // keyed entirely by {store, namespace, key, entry}; there is no API that
+        // enumerates individual route-entry updates, so list returns [].
+        list: () => Effect.succeed([]),
         read: withKvsRegionFn(
           Effect.fn(function* ({ output }) {
             return output;

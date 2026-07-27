@@ -7,23 +7,6 @@
  * boundaries to encode, decode, or validate custom transports that need to
  * interoperate with the built-in unstable devtools client and server.
  *
- * **Mental model**
- *
- * `Request` messages flow from the runtime-side devtools client to the server:
- * `Ping`, `Span`, `SpanEvent`, and `MetricsSnapshot`. `Response` messages flow
- * back from the server: `Pong` and `MetricsRequest`. The `WithoutPing` and
- * `WithoutPong` helper types match the server behavior, where heartbeat
- * messages are handled internally and user handlers see only application-level
- * protocol messages.
- *
- * **Gotchas**
- *
- * These schemas describe transport payloads, not the full in-memory tracer or
- * metric data structures. Ended span exits erase successful values with
- * `Exit.asVoid`, timestamps are represented as `bigint`s, and attributes remain
- * intentionally open-ended. Because this module lives under `unstable`, the
- * protocol shape may change between releases.
- *
  * @since 4.0.0
  */
 import * as Exit from "../../Exit.ts"
@@ -64,7 +47,7 @@ export const SpanStatusEnded = Schema.Struct({
   _tag: Schema.tag("Ended"),
   startTime: Schema.BigInt,
   endTime: Schema.BigInt,
-  exit: Schema.Exit(Schema.Void, Schema.DefectWithStack, Schema.DefectWithStack).pipe(
+  exit: Schema.Exit(Schema.Void, Schema.Defect({ includeStack: true }), Schema.Defect({ includeStack: true })).pipe(
     Schema.decodeTo(
       Schema.Exit(Schema.Unknown, Schema.Unknown, Schema.Unknown),
       SchemaTransformation.transform({
@@ -278,7 +261,7 @@ export const MetricLabel = Schema.Struct({
  */
 export type MetricLabel = Schema.Schema.Type<typeof MetricLabel>
 
-const metric = <Type extends string, State extends Schema.Top>(type: Type, state: State) =>
+const metric = <Type extends string, State extends Schema.Constraint>(type: Type, state: State) =>
   Schema.Struct({
     id: Schema.String,
     type: Schema.tag(type),
@@ -328,7 +311,7 @@ export type Counter = Schema.Schema.Type<typeof Counter>
 export const Frequency = metric(
   "Frequency",
   Schema.Struct({
-    occurrences: Schema.ReadonlyMap(Schema.String, Schema.Number)
+    occurrences: Schema.ReadonlyMap(Schema.String, Schema.Natural)
   })
 )
 
@@ -387,8 +370,8 @@ export type Gauge = Schema.Schema.Type<typeof Gauge>
 export const Histogram = metric(
   "Histogram",
   Schema.Struct({
-    buckets: Schema.Array(Schema.Tuple([Schema.Number, Schema.Number])),
-    count: Schema.Number,
+    buckets: Schema.Array(Schema.Tuple([Schema.Number, Schema.Natural])),
+    count: Schema.Natural,
     min: Schema.Number,
     max: Schema.Number,
     sum: Schema.Number
@@ -422,8 +405,13 @@ export type Histogram = Schema.Schema.Type<typeof Histogram>
 export const Summary = metric(
   "Summary",
   Schema.Struct({
-    quantiles: Schema.Array(Schema.Tuple([Schema.Number, Schema.UndefinedOr(Schema.Number)])),
-    count: Schema.Number,
+    quantiles: Schema.Array(
+      Schema.Tuple([
+        Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+        Schema.UndefinedOr(Schema.Number)
+      ])
+    ),
+    count: Schema.Natural,
     min: Schema.Number,
     max: Schema.Number,
     sum: Schema.Number

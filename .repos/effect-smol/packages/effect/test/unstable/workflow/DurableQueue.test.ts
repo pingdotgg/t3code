@@ -33,8 +33,7 @@ describe("DurableQueue", () => {
     idempotencyKey: ({ id }) => id
   })
 
-  const SuccessWorkflow = Workflow.make({
-    name: "DurableQueueTest/SuccessWorkflow",
+  const SuccessWorkflow = Workflow.make("DurableQueueTest/SuccessWorkflow", {
     payload: {
       id: Schema.String,
       value: Schema.Number
@@ -74,8 +73,7 @@ describe("DurableQueue", () => {
     idempotencyKey: ({ id }) => id
   })
 
-  const FailureWorkflow = Workflow.make({
-    name: "DurableQueueTest/FailureWorkflow",
+  const FailureWorkflow = Workflow.make("DurableQueueTest/FailureWorkflow", {
     payload: {
       id: Schema.String
     },

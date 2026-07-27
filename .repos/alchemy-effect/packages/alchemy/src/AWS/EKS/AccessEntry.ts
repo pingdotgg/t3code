@@ -1,12 +1,13 @@
 import * as eks from "@distilled.cloud/aws/eks";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
-import type { Providers } from "../Providers.ts";
 import { createInternalTags, diffTags, hasAlchemyTags } from "../../Tags.ts";
+import type { Providers } from "../Providers.ts";
 
 export interface AccessPolicyAssociation {
   /**
@@ -54,13 +55,21 @@ export interface AccessEntry extends Resource<
   "AWS.EKS.AccessEntry",
   AccessEntryProps,
   {
+    /** The ARN of the access entry. */
     accessEntryArn: string;
+    /** The name of the EKS cluster the entry grants access to. */
     clusterName: string;
+    /** The IAM principal ARN the entry maps into the cluster. */
     principalArn: string;
+    /** The Kubernetes groups the principal is mapped to. */
     kubernetesGroups: string[];
+    /** The Kubernetes username the principal is mapped to. */
     username: string | undefined;
+    /** The access entry type (e.g. `STANDARD`, `EC2_LINUX`, `FARGATE_LINUX`). */
     type: string | undefined;
+    /** The EKS access policies associated with the entry. */
     accessPolicies: AccessPolicyAssociation[];
+    /** The tags applied to the access entry. */
     tags: Record<string, string>;
   },
   never,
@@ -73,7 +82,7 @@ export interface AccessEntry extends Resource<
  * `AccessEntry` owns both the entry itself and the exact set of associated EKS
  * access policies, making cluster access explicit and updatable after initial
  * cluster bootstrap.
- *
+ * @resource
  * @section Managing Cluster Access
  * @example Grant Read Access to a Role
  * ```typescript
@@ -110,6 +119,39 @@ export const AccessEntryProvider = () =>
       if ((olds.type ?? "STANDARD") !== (news.type ?? "STANDARD")) {
         return { action: "replace" } as const;
       }
+    }),
+    // Enumerate every access entry across every cluster in the account/region.
+    // `listAccessEntries` requires a cluster name, so enumerate clusters first
+    // (`listClusters`), then list access entry principal ARNs per cluster, then
+    // hydrate each one through `readAccessEntry` (describe + associated policies)
+    // to produce the full `read`-shaped Attributes. All pagination is exhausted.
+    list: Effect.fn(function* () {
+      const clusterNames = yield* eks.listClusters.items({}).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) => Array.from(chunk)),
+      );
+
+      const perCluster = yield* Effect.forEach(
+        clusterNames,
+        (clusterName) =>
+          eks.listAccessEntries.items({ clusterName }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) => Array.from(chunk)),
+            Effect.flatMap((principalArns) =>
+              Effect.forEach(
+                principalArns,
+                (principalArn) =>
+                  readAccessEntry({ clusterName, principalArn }),
+                { concurrency: 5 },
+              ),
+            ),
+          ),
+        { concurrency: 5 },
+      );
+
+      return perCluster
+        .flat()
+        .filter((entry): entry is NonNullable<typeof entry> => entry != null);
     }),
     read: Effect.fn(function* ({ id, olds, output }) {
       const state = yield* readAccessEntry({

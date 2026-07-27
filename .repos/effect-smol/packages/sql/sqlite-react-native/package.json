@@ -1,17 +1,17 @@
 {
   "name": "@effect/sql-sqlite-react-native",
-  "version": "4.0.0-beta.73",
+  "version": "4.0.0-beta.102",
   "type": "module",
   "license": "MIT",
   "description": "A SQLite toolkit for Effect",
   "homepage": "https://effect.website",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Effect-TS/effect-smol.git",
+    "url": "https://github.com/Effect-TS/effect.git",
     "directory": "packages/sql/sqlite-react-native"
   },
   "bugs": {
-    "url": "https://github.com/Effect-TS/effect-smol/issues"
+    "url": "https://github.com/Effect-TS/effect/issues"
   },
   "tags": [
     "typescript",
@@ -52,14 +52,13 @@
   "scripts": {
     "codegen": "effect-utils codegen",
     "build": "tsc -b tsconfig.json && pnpm babel",
-    "build:tsgo": "tsgo -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
     "check": "tsc -b tsconfig.json",
     "test": "vitest",
     "coverage": "vitest --coverage"
   },
   "devDependencies": {
-    "@op-engineering/op-sqlite": "15.2.12",
+    "@op-engineering/op-sqlite": "17.1.2",
     "effect": "workspace:^"
   },
   "peerDependencies": {

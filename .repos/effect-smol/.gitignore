@@ -22,6 +22,9 @@ tmp/
 # scratchpad files
 scratchpad/**/*
 
+# Agent instructions
+/AGENTS.md
+
 # lalph
 .lalph/
 .repos/

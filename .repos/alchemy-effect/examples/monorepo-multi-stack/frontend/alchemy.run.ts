@@ -13,7 +13,7 @@ export default Alchemy.Stack(
     // reference the prod stage of the backend
     const backend = yield* Backend;
 
-    const website = yield* Cloudflare.Vite("Website", {
+    const website = yield* Cloudflare.Website.Vite("Website", {
       env: {
         VITE_API_URL: backend.url,
       },

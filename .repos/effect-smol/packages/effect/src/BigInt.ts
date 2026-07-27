@@ -1,69 +1,10 @@
 /**
- * Tools for working with JavaScript `bigint` values in Effect code. The module
- * includes arithmetic, comparisons, range checks, safe conversions, integer
- * square roots, aggregation helpers, and `Order`, `Equivalence`, `Reducer`, and
- * `Combiner` instances for APIs that consume those abstractions.
+ * Works with JavaScript `bigint` values.
  *
- * Reach for `BigInt` when values may exceed JavaScript's safe `number` integer
- * range, when conversions should make failure explicit with `Option`, or when
- * Effect collection APIs need bigint-specific ordering or combining behavior.
- *
- * **Mental model**
- *
- * - Values are native JavaScript `bigint`s; the module does not introduce a
- *   wrapper type.
- * - Binary operations such as {@link sum}, {@link multiply}, {@link subtract},
- *   {@link divide}, {@link min}, and {@link max} are dual and work in
- *   data-first or data-last style.
- * - Safe operations return `Option`, including {@link divide}, {@link sqrt},
- *   {@link fromString}, {@link fromNumber}, and {@link toNumber}.
- * - Unsafe or native operations keep JavaScript behavior, including thrown
- *   errors from {@link BigInt}, {@link divideUnsafe}, {@link sqrtUnsafe}, and
- *   {@link remainder} for invalid inputs.
- *
- * **Common tasks**
- *
- * - Check and construct values: {@link isBigInt}, {@link BigInt},
- *   {@link fromString}, {@link fromNumber}, {@link toNumber}
- * - Do arithmetic: {@link sum}, {@link multiply}, {@link subtract},
- *   {@link divide}, {@link divideUnsafe}, {@link remainder}, {@link increment},
- *   {@link decrement}
- * - Compare and bound values: {@link Order}, {@link Equivalence},
- *   {@link isLessThan}, {@link isLessThanOrEqualTo}, {@link isGreaterThan},
- *   {@link isGreaterThanOrEqualTo}, {@link between}, {@link clamp},
- *   {@link min}, {@link max}
- * - Work with signs and number theory: {@link sign}, {@link abs}, {@link gcd},
- *   {@link lcm}, {@link sqrt}, {@link sqrtUnsafe}
- * - Aggregate many values: {@link sumAll}, {@link multiplyAll},
- *   {@link ReducerSum}, {@link ReducerMultiply}, {@link CombinerMax},
- *   {@link CombinerMin}
- *
- * **Gotchas**
- *
- * - JavaScript does not allow mixing `number` and `bigint` in arithmetic. Use
- *   {@link fromNumber} and {@link toNumber} when crossing that boundary.
- * - JavaScript `bigint` division truncates toward zero, and {@link remainder}
- *   follows JavaScript `%` semantics.
- * - The native {@link BigInt} constructor follows JavaScript coercion rules and
- *   may throw. Use {@link fromString} or {@link fromNumber} when failed
- *   conversion should be represented as `Option.none()`.
- *
- * **Quickstart**
- *
- * **Example** (Safe arithmetic and conversion)
- *
- * ```ts
- * import { BigInt } from "effect"
- *
- * const total = BigInt.sumAll([10n, 20n, 30n])
- * const average = BigInt.divide(total, 3n)
- * const bounded = BigInt.clamp(total, { minimum: 0n, maximum: 50n })
- *
- * console.log(total) // 60n
- * console.log(average) // Option.some(20n)
- * console.log(bounded) // 50n
- * console.log(BigInt.fromString("not an integer")) // Option.none()
- * ```
+ * This module exposes the native `BigInt` constructor together with helpers for
+ * checking, arithmetic, comparison, range checks, safe parsing and conversions
+ * that return `Option`, integer square roots, aggregation, ordering,
+ * equivalence, reducers, and combiners.
  *
  * @since 2.0.0
  */
@@ -141,7 +82,8 @@ export const isBigInt: (u: unknown) => u is bigint = predicate.isBigInt
  *
  * **When to use**
  *
- * Use to add two `bigint` values.
+ * Use when you need a binary addition function for piping or higher-order APIs
+ * instead of the infix addition operator.
  *
  * **Example** (Adding bigints)
  *
@@ -254,8 +196,8 @@ export const divide: {
  *
  * **When to use**
  *
- * Use when the divisor is known to be non-zero and division by zero should be a
- * thrown exception.
+ * Use to divide `bigint` values where the divisor is known to be non-zero and
+ * division by zero should be a thrown exception.
  *
  * **Details**
  *
@@ -333,8 +275,8 @@ export const decrement = (n: bigint): bigint => n - bigint1
  *
  * **When to use**
  *
- * Use when sorting or comparing bigint values through APIs that accept an
- * ordering instance.
+ * Use when you need to sort or compare bigint values through APIs that accept
+ * an ordering instance.
  *
  * **Example** (Comparing bigints with Order)
  *
@@ -526,9 +468,9 @@ export const between: {
  *
  * **Details**
  *
- * - If the `bigint` is less than the `minimum` value, the function returns the `minimum` value.
- * - If the `bigint` is greater than the `maximum` value, the function returns the `maximum` value.
- * - Otherwise, it returns the original `bigint`.
+ * If the `bigint` is less than the minimum, the function returns the minimum.
+ * If the `bigint` is greater than the maximum, the function returns the
+ * maximum. Otherwise, it returns the original `bigint`.
  *
  * **Example** (Clamping a bigint to bounds)
  *
@@ -725,7 +667,9 @@ export const lcm: {
  *
  * **When to use**
  *
- * Use when the input is known to be non-negative and invalid input should throw.
+ * Use when you need to compute an integer square root for a `bigint` that has
+ * already been validated as non-negative, and you want negative input to throw
+ * instead of returning `Option.none`.
  *
  * **Details**
  *
@@ -804,7 +748,8 @@ export const sqrt = (n: bigint): Option.Option<bigint> =>
  *
  * **When to use**
  *
- * Use to sum all `bigint` values in an iterable.
+ * Use when you want an immediate aggregate from an iterable instead of a
+ * folding reducer owned by another API.
  *
  * **Example** (Summing iterable bigints)
  *
@@ -981,12 +926,8 @@ export function fromNumber(n: number): Option.Option<bigint> {
  *
  * **When to use**
  *
- * Use to compute the JavaScript `%` remainder for two `bigint` values.
- *
- * **Details**
- *
- * The result follows JavaScript `%` semantics, including the sign of the
- * dividend.
+ * Use when you want native remainder semantics, including signed remainders and
+ * a thrown division-by-zero error.
  *
  * **Gotchas**
  *

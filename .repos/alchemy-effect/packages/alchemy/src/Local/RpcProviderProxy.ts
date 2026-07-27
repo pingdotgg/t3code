@@ -1,4 +1,4 @@
-import { newWebSocketRpcSession, type RpcStub } from "capnweb";
+import { newWebSocketRpcSession } from "capnweb";
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -26,10 +26,10 @@ export class RpcProviderProxy extends Context.Service<
 
 export const SPAWNER_URL_ENV_KEY = "ALCHEMY_RPC_SPAWNER_URL" as const;
 
-const make = Effect.fnUntraced(function* (spawnerUrl: string) {
+const make = Effect.fn(function* (spawnerUrl: string) {
   const client = yield* HttpClient.HttpClient;
 
-  const getSession = Effect.fnUntraced(
+  const getSession = Effect.fn(
     function* (serverEntryUrl: string) {
       const alchemyContext = yield* AlchemyContext;
       const stack = yield* Stack;
@@ -42,7 +42,7 @@ const make = Effect.fnUntraced(function* (spawnerUrl: string) {
         body: yield* HttpBody.json(payload),
       });
       const websocketUrl = yield* response.text;
-      return newWebSocketRpcSession(websocketUrl) as RpcStub<RpcProxyApi>;
+      return newWebSocketRpcSession<RpcProxyApi>(websocketUrl);
     },
     (effect, serverEntryUrl) =>
       Effect.catch(effect, (error) =>
@@ -64,8 +64,8 @@ const make = Effect.fnUntraced(function* (spawnerUrl: string) {
   });
 
   return RpcProviderProxy.of({
-    get: Effect.fnUntraced(function* (mainUrl, providerName) {
-      const session = yield* cache.lookup(mainUrl);
+    get: Effect.fn(function* (mainUrl, providerName) {
+      const session = yield* Cache.get(cache, mainUrl);
       const provider = yield* Effect.promise(
         () =>
           session.getProvider(providerName) as ReturnType<

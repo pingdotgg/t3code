@@ -1,13 +1,30 @@
 import * as Kinesis from "@distilled.cloud/aws/kinesis";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 
 export interface DescribeLimitsRequest extends Kinesis.DescribeLimitsInput {}
 
-export class DescribeLimits extends Binding.Service<
+/**
+ * Runtime binding for `kinesis:DescribeLimits`.
+ *
+ * An account-level operation (no stream argument) that reports shard quotas
+ * and current usage for the region. Provide the implementation with
+ * `Effect.provide(AWS.Kinesis.DescribeLimitsHttp)`.
+ * @binding
+ * @section Account Settings
+ * @example Check Shard Quota Headroom
+ * ```typescript
+ * // init — account-level binding takes no resource
+ * const describeLimits = yield* AWS.Kinesis.DescribeLimits();
+ *
+ * // runtime
+ * const limits = yield* describeLimits();
+ * const headroom = (limits.ShardLimit ?? 0) - (limits.OpenShardCount ?? 0);
+ * ```
+ */
+export interface DescribeLimits extends Binding.Service<
   DescribeLimits,
+  "AWS.Kinesis.DescribeLimits",
   () => Effect.Effect<
     (
       request?: DescribeLimitsRequest,
@@ -16,44 +33,8 @@ export class DescribeLimits extends Binding.Service<
       Kinesis.DescribeLimitsError
     >
   >
->()("AWS.Kinesis.DescribeLimits") {}
+> {}
 
-export const DescribeLimitsLive = Layer.effect(
-  DescribeLimits,
-  Effect.gen(function* () {
-    const Policy = yield* DescribeLimitsPolicy;
-    const describeLimits = yield* Kinesis.describeLimits;
-
-    return Effect.fn(function* () {
-      yield* Policy();
-      return Effect.fn(function* (request?: DescribeLimitsRequest) {
-        return yield* describeLimits(request ?? {});
-      });
-    });
-  }),
-);
-
-export class DescribeLimitsPolicy extends Binding.Policy<
-  DescribeLimitsPolicy,
-  () => Effect.Effect<void>
->()("AWS.Kinesis.DescribeLimits") {}
-
-export const DescribeLimitsPolicyLive = DescribeLimitsPolicy.layer.succeed(
-  Effect.fn(function* (host) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.Kinesis.DescribeLimits())`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["kinesis:DescribeLimits"],
-            Resource: ["*"],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `DescribeLimitsPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const DescribeLimits = Binding.Service<DescribeLimits>(
+  "AWS.Kinesis.DescribeLimits",
 );

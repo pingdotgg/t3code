@@ -1,0 +1,191 @@
+---
+title: Drizzle ORM with PlanetScale
+description: Manage your PlanetScale schema in TypeScript with Drizzle — migrations generated on deploy (Postgres) or checked in (MySQL), applied through the branch's migrationsDir, connected via role and password origins.
+---
+
+Drizzle pairs with PlanetScale in one deploy-driven flow: your schema
+lives in TypeScript, migration SQL lands in a directory, and the
+database branch applies whatever is pending as part of `alchemy
+deploy`. On Postgres the `Drizzle.Schema` resource regenerates that
+SQL automatically; on MySQL you generate it with `drizzle-kit` and
+check it in. Both engines converge on the same `migrationsDir`
+contract.
+
+## Define the schema
+
+A Drizzle schema is a plain TypeScript module:
+
+```typescript
+// src/schema.ts
+import { pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
+
+export const Users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+```
+
+Nothing PlanetScale-specific here — the same module drives migration
+generation and (in your runtime code) typed queries.
+
+## Register the Drizzle provider
+
+`Drizzle.Schema` ships in its own `providers()` layer, merged
+alongside PlanetScale's:
+
+```typescript
+// alchemy.run.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle";
+import * as Planetscale from "alchemy/Planetscale";
+import * as Layer from "effect/Layer";
+
+providers: Layer.mergeAll(
+  Cloudflare.providers(),
+  Drizzle.providers(),
+  Planetscale.providers(),
+),
+```
+
+The provider needs no credentials — just `drizzle-kit` installed as a
+dev dependency (it's an optional peer of `alchemy`).
+
+## Generate migrations on deploy
+
+`Drizzle.Schema` diffs your schema module against the latest snapshot
+under `out` and, when anything changed, writes a new
+`{timestamp}_migration/{migration.sql, snapshot.json}` directory:
+
+```typescript
+const schema = yield* Drizzle.Schema("app-schema", {
+  schema: "./src/schema.ts",
+  out: "./migrations",
+});
+```
+
+No `drizzle-kit generate` step in CI — the deploy owns it. Removing
+the resource never deletes the migrations directory; the files are
+meant to be checked in.
+
+## Apply them on the branch
+
+Wire the branch's `migrationsDir` to the schema resource's `out`
+output:
+
+```typescript
+const branch = yield* Planetscale.PostgresBranch("app-branch", {
+  database,
+  migrationsDir: schema.out,
+});
+```
+
+Because the branch depends on `schema.out`, alchemy orders
+`Drizzle.Schema` first: it regenerates pending SQL, then the branch
+scans the directory and applies new files transactionally, recording
+each in the `__alchemy_migrations` tracking table. Details in
+[Migrations](/planetscale/data/migrations).
+
+## Connect via `origin` / `pooledOrigin`
+
+A `PostgresRole` mints the branch credential, and its parsed
+connection outputs feed whatever consumes the database:
+
+```typescript
+const role = yield* Planetscale.PostgresRole("app-role", {
+  database,
+  branch,
+  inheritedRoles: ["postgres"],
+});
+
+const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
+  origin: role.origin,
+  caching: { disabled: true },
+});
+```
+
+`role.origin` is the direct connection (port 5432) — use it where the
+consumer pools for you, like Hyperdrive. `role.pooledOrigin` goes
+through PSBouncer (port 6432) — use it where each request would open
+a fresh connection, like Hyperdrive's local-dev origin. See
+[Postgres](/planetscale/data/postgres) for the full role model.
+
+## MySQL: generate and check in migrations
+
+On the MySQL (Vitess) engine, the shipped example generates
+migrations with the `drizzle-kit` CLI and checks them in rather than
+using a `Drizzle.Schema` resource. Add a `drizzle.config.ts`:
+
+```typescript
+// drizzle.config.ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  schema: "./src/schema.ts",
+  out: "./migrations",
+  dialect: "mysql",
+});
+```
+
+Run `drizzle-kit generate` whenever the schema changes (the schema
+itself uses `drizzle-orm/mysql-core` column builders). With no
+`Drizzle.Schema` in the stack, there's no `Drizzle.providers()` layer
+to register either — the branch picks up whatever `.sql` files it
+finds.
+
+## MySQL: apply and connect
+
+The branch takes the checked-in directory directly, and a
+`MySQLPassword` replaces the Postgres role:
+
+```typescript
+const branch = yield* Planetscale.MySQLBranch("app-branch", {
+  database,
+  isProduction: false,
+  migrationsDir: "./migrations",
+});
+
+const password = yield* Planetscale.MySQLPassword("app-password", {
+  database,
+  branch,
+  role: "readwriter",
+});
+
+const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
+  origin: password.origin,
+  caching: { disabled: true },
+});
+```
+
+`password.origin` is a single direct origin — there's no pooled
+variant on this engine. When applying Drizzle-generated files,
+alchemy splits them on Drizzle's `--> statement-breakpoint` marker
+(Vitess rejects the token) and runs each statement individually; see
+the engine differences in [Migrations](/planetscale/data/migrations).
+
+## Wire it into your runtime
+
+Everything above runs at deploy time. Querying from your application
+— `Drizzle.Postgres` over Hyperdrive's connection string, or the
+`mysql2` client on the MySQL side — is covered step by step in the
+[Add Drizzle ORM](/cloudflare/data/drizzle) walkthrough.
+
+Complete working projects:
+[`cloudflare-planetscale-postgres-drizzle`](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-planetscale-postgres-drizzle)
+and
+[`cloudflare-planetscale-mysql-drizzle`](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-planetscale-mysql-drizzle).
+
+## Where next
+
+- [Preview branches per PR](/planetscale/guides/preview-branches) —
+  fork a migrated branch per pull request off a shared database.
+- [Migrations](/planetscale/data/migrations) — ordering, hashing, the
+  tracking table, and seed data.
+- [Drizzle migrations](/sql/drizzle/migrations) — how `Drizzle.Schema`
+  generates and snapshots migration SQL; the PlanetScale-side
+  application mechanics stay here.
+- [Postgres](/planetscale/data/postgres) and [MySQL](/planetscale/data/mysql)
+  — the resource families behind these snippets.

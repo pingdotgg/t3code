@@ -1,0 +1,172 @@
+---
+title: Worker Loader
+description: Load and run ephemeral Workers at runtime from inline source — each in its own sandboxed isolate, with optional outbound-network control and typed RPC entrypoints.
+sidebar:
+  order: 24
+---
+
+A Worker Loader lets a deployed Worker spin up other Workers at
+runtime from inline JavaScript source. Each loaded Worker runs in its
+own isolate with full sandboxing, which makes the binding the
+platform primitive for evaluating user-provided code, running
+untrusted plugins, or executing Workers an AI agent just wrote.
+
+## Bind a loader to a Worker
+
+`yield*` `Cloudflare.WorkerLoader(name)` in the Worker's init phase.
+It registers the `worker_loader` binding on the deployed Worker and
+returns the runtime handle in one step — no layer to provide:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+
+export default Cloudflare.Worker(
+  "LoaderWorker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const loader = yield* Cloudflare.WorkerLoader("LOADER");
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+
+        const worker = yield* loader.load({
+          compatibilityDate: "2026-01-28",
+          mainModule: "worker.js",
+          modules: {
+            "worker.js": `export default {
+              async fetch() {
+                return Response.json({ ok: true });
+              }
+            }`,
+          },
+        });
+
+        return yield* worker.fetch(request).pipe(Effect.orDie);
+      }),
+    };
+  }),
+);
+```
+
+`loader.load()` takes a compatibility date, a main module name, and a
+map of module names to source strings, and returns a stub for the
+freshly loaded Worker. `worker.fetch` speaks Effect-native HTTP —
+it accepts an `HttpClientRequest` (or, as here, forwards the incoming
+server request) and resolves to an `HttpClientResponse`.
+
+## Sandbox the loaded Worker
+
+By default a dynamic Worker can make outbound `fetch` calls like any
+other Worker. Set `globalOutbound: null` to block its network access
+entirely:
+
+```typescript
+const worker = yield* loader.load({
+  compatibilityDate: "2026-01-28",
+  mainModule: "worker.js",
+  modules: {
+    "worker.js": `export default {
+      async fetch(req) {
+        // fetch() calls from here will fail
+        const result = (0, eval)(await req.text());
+        return new Response(String(result));
+      }
+    }`,
+  },
+  globalOutbound: null,
+});
+```
+
+Untrusted code now runs in an isolate that can compute but cannot
+exfiltrate. Passing a `Fetcher` (for example another Worker's service
+binding) instead of `null` routes every outbound request through that
+Worker, so you can allowlist, rewrite, or log the traffic.
+
+## Reuse a Worker by name
+
+`loader.get(name, getCode)` addresses a dynamic Worker by name: if an
+isolate with that name is already warm it is reused, and `getCode` is
+only invoked to (re)supply the source on a cold start. Pass `null`
+as the name for an anonymous, always-fresh Worker:
+
+```typescript
+const worker = yield* loader.get("tenant-42", () => ({
+  compatibilityDate: "2026-01-28",
+  mainModule: "worker.js",
+  modules: { "worker.js": tenantSource },
+}));
+```
+
+`getCode` may also return an `Effect` — useful when the source lives
+in R2 or KV and fetching it is itself effectful.
+
+## Call typed entrypoints
+
+If the dynamic Worker exports named entrypoints, `getEntrypoint`
+returns a typed stub whose methods ride the platform's native JSRPC
+channel:
+
+```typescript
+const worker = yield* loader.load({ ... });
+
+const api = worker.getEntrypoint<{
+  greet: (name: string) => Effect.Effect<string>;
+}>("api");
+
+const greeting = yield* api.greet("world");
+```
+
+The caller supplies the shape as a type argument since there is no
+statically bound class to infer it from. The full pattern — what
+makes a member callable and what crosses the wire — is covered in
+[Schemaless RPC](/cloudflare/apis/schemaless-rpc).
+
+## Declare the binding as env metadata
+
+Workers whose `main` module exports a plain async `fetch` handler
+declare the loader on `env` instead and get Cloudflare's native
+`WorkerLoader` type through `InferEnv`:
+
+```typescript
+// alchemy.run.ts
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: { LOADER: Cloudflare.WorkerLoader() },
+});
+
+export type WorkerEnv = Cloudflare.InferEnv<typeof Worker>;
+```
+
+```typescript
+// src/worker.ts
+import type { WorkerEnv } from "../alchemy.run.ts";
+
+export default {
+  async fetch(req: Request, env: WorkerEnv) {
+    const worker = env.LOADER.get("demo", () => ({
+      compatibilityDate: "2026-01-28",
+      mainModule: "worker.js",
+      modules: {
+        "worker.js": "export default { fetch: () => new Response('ok') }",
+      },
+    }));
+    return worker.getEntrypoint().fetch(req);
+  },
+};
+```
+
+## Where next
+
+- [Workers](/cloudflare/compute/workers) — the two-phase Worker model
+  the binding lives inside.
+- [Schemaless RPC](/cloudflare/apis/schemaless-rpc) — typed calls into
+  dynamically loaded Workers.
+- [Workers for Platforms](/cloudflare/compute/workers-for-platforms) —
+  deploy tenant Workers as persistent resources instead of loading
+  them at runtime.
+- [WorkerLoader API reference](/providers/cloudflare/workers/workerloader) —
+  every option on `load` and `get`.

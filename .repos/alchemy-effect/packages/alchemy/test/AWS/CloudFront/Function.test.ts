@@ -1,13 +1,15 @@
 import * as AWS from "@/AWS";
-import * as Test from "@/Test/Vitest";
+import { Function } from "@/AWS/CloudFront";
+import * as Provider from "@/Provider";
+import * as Test from "@/Test/Alchemy";
 import * as cloudfront from "@distilled.cloud/aws/cloudfront";
-import { expect } from "@effect/vitest";
+import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
-test.provider.skipIf(process.env.ALCHEMY_RUN_LIVE_AWS_WEBSITE_TESTS !== "true")(
+test.provider(
   "create and delete a CloudFront Function with key value store associations",
   (stack) =>
     Effect.gen(function* () {
@@ -45,6 +47,41 @@ test.provider.skipIf(process.env.ALCHEMY_RUN_LIVE_AWS_WEBSITE_TESTS !== "true")(
   { timeout: 300_000 },
 );
 
+// `FunctionConfig.Comment` is patched optional in
+// distilled/packages/aws/patches/cloudfront.json — CloudFront omits `Comment`
+// in `listFunctions` responses for functions created without one, and a
+// comment-less function anywhere in the account used to fail the decode with
+// `SchemaError: Missing key ... FunctionConfig.Comment`.
+test.provider(
+  "list enumerates the deployed CloudFront Function",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* AWS.CloudFront.Function("ListFn", {
+            comment: "list handler",
+            code: `async function handler(event) {
+  return event.request;
+}`,
+          });
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(Function);
+      const all = yield* provider.list();
+
+      expect(all.some((fn) => fn.functionName === deployed.functionName)).toBe(
+        true,
+      );
+
+      yield* stack.destroy();
+      yield* assertFunctionDeleted(deployed.functionName);
+    }),
+  { timeout: 300_000 },
+);
+
 const assertFunctionDeleted = (name: string) =>
   cloudfront
     .describeFunction({
@@ -57,8 +94,9 @@ const assertFunctionDeleted = (name: string) =>
       Effect.retry({
         while: (error) =>
           error instanceof Error && error.message === "FunctionStillExists",
-        schedule: Schedule.fixed("5 seconds").pipe(
-          Schedule.both(Schedule.recurs(24)),
-        ),
+        schedule: Schedule.max([
+          Schedule.fixed("5 seconds"),
+          Schedule.recurs(24),
+        ]),
       }),
     );

@@ -1,0 +1,394 @@
+import * as iam from "@distilled.cloud/aws/iam";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
+import { isResolved } from "../../Diff.ts";
+import * as Provider from "../../Provider.ts";
+import { Resource } from "../../Resource.ts";
+import type { Providers } from "../Providers.ts";
+
+/**
+ * Deleting a service-linked role is asynchronous: `deleteServiceLinkedRole`
+ * returns a deletion task that can end in `FAILED` (usually because the
+ * linked service still has resources using the role). The failure reason —
+ * including the offending resource ARNs, when the service reports them —
+ * is surfaced on this error.
+ */
+export class ServiceLinkedRoleDeletionFailed extends Data.TaggedError(
+  "ServiceLinkedRoleDeletionFailed",
+)<{
+  readonly roleName: string;
+  readonly status: string;
+  readonly reason: string | undefined;
+}> {
+  override get message() {
+    return `IAM service-linked role ${this.roleName} deletion ${this.status}${this.reason ? `: ${this.reason}` : ""}`;
+  }
+}
+
+export interface ServiceLinkedRoleProps {
+  /**
+   * The service principal the role is linked to, e.g.
+   * `autoscaling.amazonaws.com` or `elasticbeanstalk.amazonaws.com`.
+   * The linked service owns the role's name, trust policy, and permissions.
+   */
+  awsServiceName: string;
+  /**
+   * Optional suffix appended to the AWS-generated role name
+   * (`AWSServiceRoleFor<Service>_<customSuffix>`). Only some services allow
+   * suffixes; services that don't reject the create with `InvalidInputException`.
+   * Use a suffix to create multiple service-linked roles for the same service.
+   */
+  customSuffix?: string;
+  /**
+   * Optional description for the role. The description is the only aspect of
+   * a service-linked role IAM allows editing after creation.
+   */
+  description?: string;
+}
+
+export interface ServiceLinkedRole extends Resource<
+  "AWS.IAM.ServiceLinkedRole",
+  ServiceLinkedRoleProps,
+  {
+    /** The name of the service-linked role. */
+    roleName: string;
+    /** The ARN of the service-linked role. */
+    roleArn: string;
+    /** The stable unique ID of the role. */
+    roleId: string | undefined;
+    /** The IAM path of the role. */
+    path: string | undefined;
+    /** The AWS service principal the role is linked to. */
+    awsServiceName: string;
+    /** The custom suffix appended to the role name, if any. */
+    customSuffix: string | undefined;
+    /** The description of the role. */
+    description: string | undefined;
+  },
+  never,
+  Providers
+> {}
+
+/**
+ * An IAM role linked to (and managed by) a specific AWS service.
+ *
+ * The linked service controls the role's trust and permissions policies; the
+ * only mutable aspect is the description. Deletion is asynchronous — the
+ * provider submits a deletion task and waits (bounded) for it to complete,
+ * failing with {@link ServiceLinkedRoleDeletionFailed} when the linked service
+ * still has resources using the role.
+ *
+ * Some services auto-create their service-linked role on first use; deploying
+ * this resource over an existing role adopts it (the create API reports the
+ * collision and the provider converges on the existing role).
+ * @resource
+ * @section Creating Service-Linked Roles
+ * @example Auto Scaling Service-Linked Role
+ * ```typescript
+ * const role = yield* ServiceLinkedRole("AutoScalingRole", {
+ *   awsServiceName: "autoscaling.amazonaws.com",
+ * });
+ * ```
+ *
+ * @example Suffixed Role for a Dedicated Workload
+ * ```typescript
+ * const role = yield* ServiceLinkedRole("WorkloadRole", {
+ *   awsServiceName: "autoscaling.amazonaws.com",
+ *   customSuffix: "analytics",
+ *   description: "Auto Scaling role scoped to the analytics workload",
+ * });
+ * ```
+ */
+export const ServiceLinkedRole = Resource<ServiceLinkedRole>(
+  "AWS.IAM.ServiceLinkedRole",
+);
+
+/**
+ * Derive the custom suffix back out of an `AWSServiceRoleFor..._suffix`
+ * role name. Base (unsuffixed) service-linked role names never contain an
+ * underscore, so everything after the first `_` is the suffix.
+ */
+const suffixFromRoleName = (roleName: string): string | undefined => {
+  const index = roleName.indexOf("_");
+  return index === -1 ? undefined : roleName.slice(index + 1);
+};
+
+const toAttributes = (
+  role: iam.Role,
+  awsServiceName: string,
+): ServiceLinkedRole["Attributes"] => ({
+  roleName: role.RoleName,
+  roleArn: role.Arn,
+  roleId: role.RoleId,
+  path: role.Path,
+  awsServiceName,
+  customSuffix: suffixFromRoleName(role.RoleName),
+  description: role.Description,
+});
+
+export const ServiceLinkedRoleProvider = () =>
+  Provider.effect(
+    ServiceLinkedRole,
+    Effect.gen(function* () {
+      // Service-linked roles live under a deterministic path
+      // (`/aws-service-role/{service}/`), so we can always find ours by
+      // listing that path and matching the (optional) custom suffix — the
+      // role NAME itself is generated by AWS and not derivable up front.
+      const findRole = Effect.fn(function* (props: {
+        awsServiceName: string;
+        customSuffix?: string;
+      }) {
+        const roles = yield* iam.listRoles
+          .pages({ PathPrefix: `/aws-service-role/${props.awsServiceName}/` })
+          .pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) => page.Roles ?? []),
+            ),
+          );
+        return roles.find((role) =>
+          props.customSuffix
+            ? role.RoleName.endsWith(`_${props.customSuffix}`)
+            : !role.RoleName.includes("_"),
+        );
+      });
+
+      const getRole = Effect.fn(function* (roleName: string) {
+        const response = yield* iam
+          .getRole({ RoleName: roleName })
+          .pipe(
+            Effect.catchTag("NoSuchEntityException", () =>
+              Effect.succeed(undefined),
+            ),
+          );
+        return response?.Role;
+      });
+
+      const submitDeletion = Effect.fn(function* (roleName: string) {
+        return yield* iam.deleteServiceLinkedRole({ RoleName: roleName }).pipe(
+          Effect.retry({
+            while: (error) =>
+              error._tag === "LimitExceededException" ||
+              error._tag === "ServiceFailureException",
+            schedule: Schedule.max([
+              Schedule.exponential("500 millis"),
+              Schedule.recurs(6),
+            ]),
+          }),
+          Effect.catchTag("NoSuchEntityException", () =>
+            Effect.succeed(undefined),
+          ),
+        );
+      });
+
+      // Deletion is asynchronous. Poll both task status and the role itself on
+      // a bounded budget (30 × 2s = 60s); observable role absence, not merely
+      // task success/absence, is terminal. IAM can transiently mark a deletion
+      // task FAILED even though immediately resubmitting it succeeds. Treat a
+      // failed or expired task as a request to re-observe and resubmit within
+      // the same budget. If a dependency really remains, every task continues
+      // to fail and the final typed error retains the resource in state.
+      const deleteAndWait = Effect.fn(function* (roleName: string) {
+        let deletionTaskId: string | undefined;
+        let lastStatus = "NOT_SUBMITTED";
+        let lastReason: string | undefined;
+        for (let attempt = 0; attempt < 30; attempt++) {
+          // The role's observable absence is the terminal condition. A newly
+          // submitted deletion task can briefly return NoSuchEntity before
+          // its status record propagates, so task absence alone is not proof.
+          const role = yield* getRole(roleName);
+          if (!role) {
+            return;
+          }
+
+          if (deletionTaskId === undefined) {
+            const submitted = yield* submitDeletion(roleName);
+            deletionTaskId = submitted?.DeletionTaskId;
+            lastStatus = deletionTaskId ? "SUBMITTED" : "NOT_FOUND";
+          }
+
+          if (deletionTaskId !== undefined) {
+            const status = yield* iam
+              .getServiceLinkedRoleDeletionStatus({
+                DeletionTaskId: deletionTaskId,
+              })
+              .pipe(
+                // Both the task record and IAM itself are eventually
+                // consistent. Keep polling the role on transient status-read
+                // failures; never translate them into successful deletion.
+                Effect.catchTag("NoSuchEntityException", () =>
+                  Effect.succeed("TASK_NOT_FOUND" as const),
+                ),
+                Effect.catchTag("ServiceFailureException", () =>
+                  Effect.succeed(undefined),
+                ),
+              );
+            if (status === "TASK_NOT_FOUND") {
+              lastStatus = status;
+              deletionTaskId = undefined;
+            } else if (status !== undefined) {
+              lastStatus = status.Status;
+              if (status.Status === "FAILED") {
+                const usage = (status.Reason?.RoleUsageList ?? [])
+                  .flatMap((entry) => entry.Resources ?? [])
+                  .join(", ");
+                lastReason = [status.Reason?.Reason, usage]
+                  .filter((part) => part)
+                  .join(" — ");
+                // AWS documents that a new request must be submitted after a
+                // failed deletion task. The next bounded iteration does so.
+                deletionTaskId = undefined;
+              }
+            }
+          }
+          yield* Effect.sleep("2 seconds");
+        }
+        return yield* Effect.fail(
+          new ServiceLinkedRoleDeletionFailed({
+            roleName,
+            status: "TIMED_OUT",
+            reason:
+              lastReason ??
+              `deletion task ${deletionTaskId ?? "not returned"} was ${lastStatus}, but role remained observable after 60s`,
+          }),
+        );
+      });
+
+      return {
+        stables: [
+          "roleName",
+          "roleArn",
+          "roleId",
+          "path",
+          "awsServiceName",
+          "customSuffix",
+        ],
+        list: () =>
+          Effect.gen(function* () {
+            // IAM is global; every service-linked role lives under the
+            // `/aws-service-role/` path, with the linked service name as
+            // the next path segment.
+            const roles = yield* iam.listRoles
+              .pages({ PathPrefix: "/aws-service-role/" })
+              .pipe(
+                Stream.runCollect,
+                Effect.map((chunk) =>
+                  Array.from(chunk).flatMap((page) => page.Roles ?? []),
+                ),
+              );
+            return roles.flatMap((role) => {
+              const awsServiceName = role.Path.split("/")[2];
+              return awsServiceName ? [toAttributes(role, awsServiceName)] : [];
+            });
+          }),
+        diff: Effect.fn(function* ({ olds, news }) {
+          if (!isResolved(news)) return;
+          // The linked service and suffix are baked into the AWS-generated
+          // role name — changing either requires a new role.
+          if (olds.awsServiceName !== news.awsServiceName) {
+            return { action: "replace" } as const;
+          }
+          if (
+            (olds.customSuffix ?? undefined) !==
+            (news.customSuffix ?? undefined)
+          ) {
+            return { action: "replace" } as const;
+          }
+        }),
+        read: Effect.fn(function* ({ olds, output }) {
+          // Service-linked roles cannot carry user tags (IAM rejects
+          // modifications beyond the description), so there is no Alchemy
+          // ownership brand — the role is an account singleton per
+          // (service, suffix) and is reported as-is.
+          const role = output?.roleName
+            ? yield* getRole(output.roleName)
+            : olds?.awsServiceName !== undefined
+              ? yield* findRole(olds)
+              : undefined;
+          if (!role) {
+            return undefined;
+          }
+          const awsServiceName =
+            olds?.awsServiceName ??
+            output?.awsServiceName ??
+            role.Path.split("/")[2] ??
+            "";
+          return toAttributes(role, awsServiceName);
+        }),
+        reconcile: Effect.fn(function* ({ news, output, session }) {
+          // Observe — prefer the cached role name; fall back to searching
+          // the service's deterministic path.
+          let observed = output?.roleName
+            ? yield* getRole(output.roleName)
+            : undefined;
+          if (!observed) {
+            observed = yield* findRole(news);
+          }
+
+          // Ensure — create when missing. AWS reports an existing role
+          // (auto-created by the service, or a concurrent reconcile) as
+          // `InvalidInputException`; re-observe and adopt it. If nothing
+          // is found the input really was invalid — rethrow.
+          if (!observed) {
+            const created = yield* iam
+              .createServiceLinkedRole({
+                AWSServiceName: news.awsServiceName,
+                CustomSuffix: news.customSuffix,
+                Description: news.description,
+              })
+              .pipe(
+                Effect.catchTag("InvalidInputException", (error) =>
+                  findRole(news).pipe(
+                    Effect.flatMap((existing) =>
+                      existing
+                        ? Effect.succeed({ Role: existing })
+                        : Effect.fail(error),
+                    ),
+                  ),
+                ),
+              );
+            observed = created.Role;
+          }
+          if (!observed) {
+            return yield* Effect.fail(
+              new Error(
+                `Service-linked role for '${news.awsServiceName}' was created but could not be described`,
+              ),
+            );
+          }
+
+          // Sync description — the only aspect IAM lets us edit on a
+          // service-linked role. Only converge when the user declared one;
+          // an omitted prop leaves the service's default description alone.
+          if (
+            news.description !== undefined &&
+            observed.Description !== news.description
+          ) {
+            yield* iam
+              .updateRole({
+                RoleName: observed.RoleName,
+                Description: news.description,
+              })
+              .pipe(
+                // A few linked services lock the role entirely — treat the
+                // description as service-managed rather than failing.
+                Effect.catchTag(
+                  "UnmodifiableEntityException",
+                  () => Effect.void,
+                ),
+              );
+          }
+
+          // Return fresh attributes.
+          const fresh = (yield* getRole(observed.RoleName)) ?? observed;
+          yield* session.note(fresh.Arn);
+          return toAttributes(fresh, news.awsServiceName);
+        }),
+        delete: Effect.fn(function* ({ output }) {
+          yield* deleteAndWait(output.roleName);
+        }),
+      };
+    }),
+  );

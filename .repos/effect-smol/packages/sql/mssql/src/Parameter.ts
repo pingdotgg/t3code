@@ -7,31 +7,6 @@
  * `Procedure.outputParam` use this metadata, and `MssqlClient.call` forwards it
  * to Tedious when registering input and output parameters.
  *
- * **Mental model**
- *
- * A `Parameter<A>` describes how Tedious should bind a value; it is not the
- * value itself. The `A` type guides the record accepted by
- * `Procedure.compile`, while Tedious validates and encodes the runtime value
- * when the request is executed.
- *
- * **Common tasks**
- *
- * - Annotate inputs that need explicit SQL Server data types, sizes, precision,
- *   scale, or table-valued parameter options.
- * - Define output parameters so `MssqlClient.call` can collect returned values
- *   by name.
- * - Reuse the same metadata shape from direct `make` calls and the `Procedure`
- *   builders.
- *
- * **Gotchas**
- *
- * Names should match the stored procedure parameter name expected by Tedious,
- * normally without a leading `@`. Table-valued parameter values must use
- * Tedious' table shape with `name`, optional `schema`, `columns`, and `rows`.
- * Output parameters are registered without an initial value, so input-output
- * parameters need explicit modeling instead of assuming compiled input values
- * are reused.
- *
  * @see {@link make} for constructing parameter metadata directly.
  *
  * @since 4.0.0

@@ -1,0 +1,116 @@
+---
+title: Turnstile CAPTCHA
+description: Manage Cloudflare Turnstile widgets as resources — deploy a widget, embed its sitekey in HTML, and verify tokens server-side with the redacted secret.
+sidebar:
+  order: 23
+---
+
+Turnstile is Cloudflare's CAPTCHA alternative. A Turnstile widget is
+defined by the hostnames it runs on and its interaction mode;
+Cloudflare assigns two keys in return — a public `sitekey` you embed
+in HTML and a `secret` your server uses to verify the tokens the
+widget produces.
+
+## Create a widget
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "SignupApp",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const widget = yield* Cloudflare.Turnstile.Widget("SignupForm", {
+      domains: ["example.com"],
+      mode: "managed",
+    });
+
+    return {
+      sitekey: widget.sitekey,
+    };
+  }),
+);
+```
+
+`domains` lists the hostnames the widget may run on — subdomains are
+covered automatically. `mode` is `managed` (Cloudflare decides
+whether an interaction is required), `non-interactive` (never asks),
+or `invisible` (no visible widget). If you omit `name`, a unique one
+is generated from the app, stage, and logical ID.
+
+## The two keys
+
+```typescript
+const sitekey = widget.sitekey; // public — render it in your HTML
+const secret = widget.secret; // Redacted<string> — server-side only
+```
+
+The `sitekey` is public and safe to expose as a stack output. The
+`secret` is a `Redacted<string>`: it never prints in logs or
+JSON-serialized output (it renders as `"<redacted>"`), so unwrap it
+with `Redacted.value` at the point where your server actually needs
+the raw string.
+
+## Embed the sitekey
+
+```html
+<script
+  src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+  async
+  defer
+></script>
+<div class="cf-turnstile" data-sitekey="<sitekey from the deploy output>"></div>
+```
+
+The widget runs the challenge in the browser and puts the resulting
+token in a hidden `cf-turnstile-response` form field (or hands it to
+your callback). The token proves nothing by itself — your server must
+verify it.
+
+## Verify tokens server-side
+
+There is no runtime binding for Turnstile — verification is a plain
+HTTPS call from any backend. POST the token together with
+`Redacted.value(secret)` to Cloudflare's
+`https://challenges.cloudflare.com/turnstile/v0/siteverify` endpoint
+and check `success` in the response; see Cloudflare's
+[server-side validation docs](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)
+for the full request/response contract. A Worker is a natural place
+to do this — pass the secret in via the Worker's `env`.
+
+## Updates and replacement
+
+```typescript
+const widget = yield* Cloudflare.Turnstile.Widget("SignupForm", {
+  domains: ["example.com", "app.example.com"],
+  mode: "invisible",
+});
+```
+
+Name, domains, mode, and the clearance settings all mutate in place —
+the widget keeps its `sitekey` and `secret`, so deployed pages keep
+working. Only `region` (default `"world"`) forces a replacement,
+which mints a new sitekey and secret. If the widget is deleted
+out-of-band, the next deploy observes it missing and recreates it
+rather than failing.
+
+:::note
+`botFightMode`, `ephemeralId`, and `offlabel` (hide Cloudflare
+branding) are Enterprise-only settings; `clearanceLevel` controls the
+challenge clearance granted when the widget is embedded on a
+Cloudflare zone.
+:::
+
+## Where next
+
+- [Workers](/cloudflare/compute/workers) — host your siteverify call next to
+  the form it protects.
+- [Secrets & env](/cloudflare/security/secrets-env) — how the widget secret
+  gets into the Worker.
+- [Widget API reference](/providers/cloudflare/turnstile/widget)

@@ -29,13 +29,13 @@ export const CONFIG_SECRET_ENV_KEY = "ALCHEMY_AWS_SECRET_TEST_SOURCE";
 
 export class SecretsTestFunction extends Lambda.Function<SecretsTestFunction>()(
   "SecretsTestFunction",
+) {}
+
+export const SecretsTestFunctionLive = SecretsTestFunction.make(
   {
     main,
     url: true,
   },
-) {}
-
-export const SecretsTestFunctionLive = SecretsTestFunction.make(
   Effect.gen(function* () {
     // Secret from a literal — `Alchemy.Secret` coerces the literal to
     // `Redacted` and the Lambda runtime accessor rebuilds the wrapper
@@ -107,7 +107,7 @@ export const SecretsTestFunctionLive = SecretsTestFunction.make(
             });
           }
           default:
-            return HttpServerResponse.json(
+            return yield* HttpServerResponse.json(
               { error: "Not found", pathname },
               { status: 404 },
             );

@@ -7,23 +7,6 @@
  * and metric snapshots to an external devtools process. Lower-level socket
  * protocol details live in `DevToolsClient`.
  *
- * **Common tasks**
- *
- * - Use {@link layer} when the runtime provides a global `WebSocket`
- * - Use {@link layerWebSocket} when the environment should provide the
- *   `WebSocketConstructor`
- * - Use {@link layerSocket} when an integration already has a `Socket`
- *   transport
- *
- * **Gotchas**
- *
- * - The WebSocket helpers default to `ws://localhost:34437`.
- * - These layers install only the client-side tracer; start or connect the
- *   devtools server separately.
- * - The tracer is scoped to the runtime or layer graph that receives the layer.
- * - This module is under `unstable`, so the transport protocol and exports may
- *   change between releases.
- *
  * @since 4.0.0
  */
 import * as Layer from "../../Layer.ts"

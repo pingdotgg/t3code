@@ -7,35 +7,6 @@
  * dialect-specific tables for the server remote id, per-store sequence state,
  * plaintext entries, and session authentication bindings.
  *
- * **Mental model**
- *
- * Each server store is an append-only SQL sequence. A write transaction ensures
- * the store row exists, locks its next sequence, inserts the plaintext entry
- * rows, advances the sequence, and publishes the committed remote entries to
- * in-process subscribers. A change stream first reads the SQL backlog from the
- * requested sequence, applies compaction, and then continues with entries
- * published by this process.
- *
- * **Common tasks**
- *
- * - Persist an unencrypted event-log server across process restarts.
- * - Use database backup, replication, and transactional ordering for remote
- *   event-log entries.
- * - Choose table names with `entryTablePrefix` and `remoteIdTable`, or tune
- *   insert batching with `insertBatchSize`.
- *
- * **Gotchas**
- *
- * Entry payloads are intentionally written as plaintext bytes. Use this storage
- * only when the database, transport, backups, logs, and operators are trusted,
- * or when encryption is handled outside this module. Live notifications are
- * process-local after the initial SQL backlog read, so multi-process
- * deployments need routing, reconnect/backfill behavior, or an external
- * notification channel for writes made elsewhere. Writes also rely on SQL
- * transactions and store-level locking, so deployments should provision
- * compatible isolation behavior and account for dialect-specific binary and
- * text column limits.
- *
  * @since 4.0.0
  */
 import * as Arr from "../../Array.ts"
@@ -490,17 +461,20 @@ const EntrySql = Schema.Struct({
 
 type EntrySql = Schema.Schema.Type<typeof EntrySql>
 
-const SqlNumber = Schema.Union([Schema.Number, Schema.NumberFromString])
+const SqlNatural = Schema.Union([
+  Schema.Natural,
+  Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))
+])
 
 const RemoteEntrySql = Schema.Struct({
   ...EntrySql.fields,
-  sequence: SqlNumber
+  sequence: SqlNatural
 })
 
 type RemoteEntrySql = Schema.Schema.Type<typeof RemoteEntrySql>
 
 const StoreSequenceSql = Schema.Struct({
-  next_sequence: SqlNumber
+  next_sequence: SqlNatural
 })
 
 const SessionAuthBindingSql = Schema.Struct({

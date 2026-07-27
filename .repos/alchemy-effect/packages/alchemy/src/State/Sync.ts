@@ -13,7 +13,7 @@ import { type StateService } from "./State.ts";
  * Stacks are walked sequentially; stages within a stack and resources
  * within a stage are processed concurrently for throughput.
  */
-export const syncState = Effect.fnUntraced(function* (
+export const syncState = Effect.fn(function* (
   source: StateService,
   destination: StateService,
   options?: {
@@ -36,7 +36,7 @@ export const syncState = Effect.fnUntraced(function* (
 
   yield* Effect.forEach(
     sourceStacks,
-    Effect.fnUntraced(function* (stack) {
+    Effect.fn(function* (stack) {
       const [sourceStages, destStages] = yield* Effect.all([
         source.listStages(stack),
         destination.listStages(stack),
@@ -45,7 +45,7 @@ export const syncState = Effect.fnUntraced(function* (
 
       yield* Effect.forEach(
         stages,
-        Effect.fnUntraced(function* (stage) {
+        Effect.fn(function* (stage) {
           const sourceFqns = yield* source.list({ stack, stage });
           const destFqns = yield* destination.list({ stack, stage });
 
@@ -56,7 +56,7 @@ export const syncState = Effect.fnUntraced(function* (
             [
               Effect.forEach(
                 sourceFqns,
-                Effect.fnUntraced(function* (fqn) {
+                Effect.fn(function* (fqn) {
                   const value = yield* source.get({ stack, stage, fqn });
                   if (value) {
                     yield* destination.set({ stack, stage, fqn, value });

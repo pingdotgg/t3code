@@ -1,0 +1,107 @@
+---
+title: Deploy markers & annotations
+description: Overlay deploys, incidents, and flag flips as vertical markers on Axiom charts — point or range annotations, scoped to one or more datasets, declared as alchemy resources.
+---
+
+An Axiom `Annotation` is a vertical marker overlaid on every chart
+that queries the datasets it names — a deploy, an incident, a
+feature-flag flip, correlated with your telemetry at a glance. In
+alchemy it's one resource: declare it next to the services it
+annotates, and each stage gets its own markers.
+
+You'll need the Axiom provider registered ([setup](/axiom/setup))
+and a dataset to annotate ([ingest](/axiom/data/ingest)).
+
+## Drop a point marker
+
+```typescript
+import * as Axiom from "alchemy/Axiom";
+
+yield* Axiom.Annotation("release-1.2.3", {
+  type: "deploy",
+  title: "Release 1.2.3",
+  datasets: ["my-app-traces"],
+  time: "2026-06-30T14:00:00Z",
+  url: "https://github.com/acme/app/releases/tag/v1.2.3",
+});
+```
+
+`type` and `datasets` are the only required props. `type` is a
+free-form string (`"deploy"`, `"incident"`, …) that groups markers
+visually in the UI; `title`, `description`, and `url` decorate the
+marker's tooltip. `time` is optional — omit it and Axiom stamps the
+annotation with its creation time. Axiom assigns the annotation `id`
+server-side and exposes it as an output.
+
+## Mark a time range
+
+```typescript
+yield* Axiom.Annotation("inc-2026-04-27", {
+  type: "incident",
+  title: "Database failover",
+  datasets: ["my-app-traces"],
+  time:    "2026-04-27T18:05:00Z",
+  endTime: "2026-04-27T18:32:00Z",
+  url: "https://incident.io/incidents/abc123",
+});
+```
+
+Adding `endTime` turns the vertical line into a shaded band — an
+incident window, a maintenance period, a load test. Annotations for
+past events like this are a natural fit for resources: they stay in
+your program, so every stage (and every rebuild of a stage) carries
+the same incident history.
+
+## Scope across datasets
+
+```typescript
+yield* Axiom.Annotation("release-1.2.3", {
+  type: "deploy",
+  title: "Release 1.2.3",
+  datasets: ["my-app-traces", "my-app-logs"],
+  time: "2026-06-30T14:00:00Z",
+});
+```
+
+`datasets` takes any number of dataset names, and the marker renders
+on charts over each of them. One annotation across your traces and
+logs datasets keeps the deploy line in sync on both dashboards —
+declare it once rather than duplicating per dataset.
+
+## Mark each deploy
+
+```typescript
+import pkg from "./package.json" with { type: "json" };
+
+yield* Axiom.Annotation(`deploy-${pkg.version}`, {
+  type: "deploy",
+  title: `Release ${pkg.version}`,
+  datasets: ["my-app-traces"],
+  time: new Date().toISOString(),
+  url: `https://github.com/acme/app/releases/tag/v${pkg.version}`,
+});
+```
+
+Key the logical ID by version: bumping the version creates a fresh
+marker at deploy time, while re-deploying the same version reconciles
+the existing annotation in place instead of piling up duplicates —
+the provider probes Axiom with the server-assigned `id` and only
+creates when nothing is found.
+
+:::note
+Like any resource, an annotation whose logical ID leaves the program
+is deleted on the next deploy — so the version-keyed marker above
+tracks the *current* release per stage, not the full release
+history. For a permanent trail of every past deploy, create
+annotations out-of-band at release time (Axiom's API from CI); keep
+the resource form for markers you want reproducible per stage.
+:::
+
+## Where next
+
+- [Dashboards as code](/axiom/guides/dashboards) — the charts your
+  markers land on, plus saved views.
+- [Ingest](/axiom/data/ingest) — datasets, tokens, and wiring OTEL output
+  into Axiom.
+- [Annotation API reference](/providers/axiom/annotation) — full
+  props and attributes.

@@ -1,35 +1,11 @@
 /**
- * Sink adapters for writing Effect stream chunks into Node writable streams.
+ * Sink adapters for writing Effect chunks into Node writable streams.
  *
- * This module is the writable-stream boundary for Node APIs: push Effect
- * `Stream` or `Channel` chunks into file streams, HTTP request or response
- * bodies, process stdio, sockets, and transform inputs such as compression or
- * encryption streams. It exposes a `Sink` constructor for ordinary stream
- * pipelines plus lower-level `Channel` and pull helpers used by other Node
- * stream adapters.
- *
- * **Mental model**
- *
- * {@link fromWritable} builds a `Sink` for normal stream pipelines.
- * {@link fromWritableChannel} exposes the same bridge as a `Channel`, and
- * {@link pullIntoWritable} is the lower-level loop for adapters that already
- * have a pull and a Node writable. All three write chunks in order and follow
- * Node writable backpressure.
- *
- * **Common tasks**
- *
- * Use {@link fromWritable} to pipe an Effect stream into a Node destination.
- * Use {@link fromWritableChannel} when composing at the `Channel` level. Use
- * {@link pullIntoWritable} inside custom Node stream adapters that need direct
- * control over the upstream pull.
- *
- * **Gotchas**
- *
- * When `write` returns `false`, pulling pauses until `drain` so upstream
- * producers do not overrun the writable buffer. Writable `error` events are
- * mapped through `onError`, and the writable is ended and awaited via `finish`
- * when upstream completes unless `endOnDone` is `false`. Use `endOnDone: false`
- * for externally owned or long-lived writables.
+ * `fromWritable` creates a `Sink`, `fromWritableChannel` creates a lower-level
+ * `Channel`, and `pullIntoWritable` writes from an existing pull loop. All
+ * three adapters respect writable-stream backpressure, map writable errors with
+ * the supplied `onError` function, and can end the writable when the upstream
+ * data is done.
  *
  * @since 4.0.0
  */

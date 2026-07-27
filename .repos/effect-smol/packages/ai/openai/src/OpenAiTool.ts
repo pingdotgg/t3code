@@ -1,27 +1,9 @@
 /**
- * OpenAI provider-defined tools for Effect AI language model requests.
- *
- * This module exposes typed descriptors for OpenAI tools such as code
- * interpreter, file search, image generation, MCP, web search, and shell-like
- * local tools. Each descriptor captures the OpenAI provider name, user-facing
- * configuration arguments, provider call parameters, success output schema, and
- * whether the tool call needs an application-provided handler.
- *
- * **Mental model**
- *
- * Provider-defined tools are not implementations of the capability themselves.
- * They are schemas and metadata that tell the language model provider which
- * tool to make available and tell Effect AI how to decode any tool calls or
- * tool results that come back.
- *
- * **Common tasks**
- *
- * Use hosted or provider-routed tools such as {@link CodeInterpreter},
- * {@link FileSearch}, {@link ImageGeneration}, {@link Mcp}, {@link WebSearch},
- * and {@link WebSearchPreview} to opt into OpenAI-managed capabilities. Use
- * handler-required tools such as {@link ApplyPatch}, {@link Shell}, and
- * {@link LocalShell} only when your application is prepared to execute the
- * requested local operation and enforce its own safety policy.
+ * The `OpenAiTool` module defines OpenAI provider tools for Effect AI language
+ * model requests. It exposes typed descriptors for tools such as Apply Patch,
+ * Code Interpreter, File Search, Image Generation, MCP, Web Search, and
+ * shell-like local tools, including their provider names, configuration
+ * arguments, call parameters, success schemas, and handler requirements.
  *
  * @since 4.0.0
  */

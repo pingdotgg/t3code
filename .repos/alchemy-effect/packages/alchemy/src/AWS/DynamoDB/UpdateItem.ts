@@ -1,8 +1,6 @@
-import * as DynamoDB from "@distilled.cloud/aws/dynamodb";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import type * as DynamoDB from "@distilled.cloud/aws/dynamodb";
+import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Table } from "./Table.ts";
 
 export interface UpdateItemRequest extends Omit<
@@ -10,8 +8,34 @@ export interface UpdateItemRequest extends Omit<
   "TableName"
 > {}
 
-export class UpdateItem extends Binding.Service<
+/**
+ * Runtime binding for `dynamodb:UpdateItem`.
+ *
+ * Bind this operation to a `Table` inside a function runtime to get a callable
+ * that applies an update expression to a single item, automatically injecting
+ * the table name. Provide the `UpdateItemHttp` layer on the Function to
+ * satisfy the binding.
+ * @binding
+ * @section Writing Data
+ * @example Update an Item with an Update Expression
+ * ```typescript
+ * const updateItem = yield* AWS.DynamoDB.UpdateItem(table);
+ *
+ * const response = yield* updateItem({
+ *   Key: {
+ *     pk: { S: "user#123" },
+ *     sk: { S: "profile" },
+ *   },
+ *   UpdateExpression: "SET #name = :name",
+ *   ExpressionAttributeNames: { "#name": "name" },
+ *   ExpressionAttributeValues: { ":name": { S: "Alice" } },
+ *   ReturnValues: "ALL_NEW",
+ * });
+ * ```
+ */
+export interface UpdateItem extends Binding.Service<
   UpdateItem,
+  "AWS.DynamoDB.UpdateItem",
   <T extends Table>(
     table: T,
   ) => Effect.Effect<
@@ -19,49 +43,7 @@ export class UpdateItem extends Binding.Service<
       request: UpdateItemRequest,
     ) => Effect.Effect<DynamoDB.UpdateItemOutput, DynamoDB.UpdateItemError>
   >
->()("AWS.DynamoDB.UpdateItem") {}
-
-export const UpdateItemLive = Layer.effect(
-  UpdateItem,
-  Effect.gen(function* () {
-    const Policy = yield* UpdateItemPolicy;
-    const updateItem = yield* DynamoDB.updateItem;
-
-    return Effect.fn(function* <T extends Table>(table: T) {
-      const TableName = yield* table.tableName;
-      yield* Policy(table);
-      return Effect.fn(function* (request: UpdateItemRequest) {
-        const tableName = yield* TableName;
-        return yield* updateItem({
-          ...request,
-          TableName: tableName,
-        });
-      });
-    });
-  }),
-);
-
-export class UpdateItemPolicy extends Binding.Policy<
-  UpdateItemPolicy,
-  <T extends Table>(table: T) => Effect.Effect<void>
->()("AWS.DynamoDB.UpdateItem") {}
-
-export const UpdateItemPolicyLive = UpdateItemPolicy.layer.succeed(
-  Effect.fn(function* (host, table) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.DynamoDB.UpdateItem(${table}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["dynamodb:UpdateItem"],
-            Resource: [table.tableArn],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `UpdateItemPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+> {}
+export const UpdateItem = Binding.Service<UpdateItem>(
+  "AWS.DynamoDB.UpdateItem",
 );

@@ -2872,55 +2872,47 @@ export const BetaStopReason = Schema.Literals([
   "model_context_window_exceeded"
 ])
 export type Model =
+  | string
+  | "claude-sonnet-5"
+  | "claude-fable-5"
+  | "claude-mythos-5"
+  | "claude-opus-4-8"
+  | "claude-opus-4-7"
+  | "claude-mythos-preview"
   | "claude-opus-4-6"
   | "claude-sonnet-4-6"
-  | "claude-opus-4-5-20251101"
-  | "claude-opus-4-5"
-  | "claude-3-7-sonnet-latest"
-  | "claude-3-7-sonnet-20250219"
-  | "claude-3-5-haiku-latest"
-  | "claude-3-5-haiku-20241022"
   | "claude-haiku-4-5"
   | "claude-haiku-4-5-20251001"
-  | "claude-sonnet-4-20250514"
-  | "claude-sonnet-4-0"
-  | "claude-4-sonnet-20250514"
+  | "claude-opus-4-5"
+  | "claude-opus-4-5-20251101"
   | "claude-sonnet-4-5"
   | "claude-sonnet-4-5-20250929"
-  | "claude-opus-4-0"
-  | "claude-opus-4-20250514"
-  | "claude-4-opus-20250514"
+  | "claude-opus-4-1"
   | "claude-opus-4-1-20250805"
-  | "claude-3-opus-latest"
-  | "claude-3-opus-20240229"
-  | "claude-3-haiku-20240307"
-export const Model = Schema.Literals([
-  "claude-opus-4-6",
-  "claude-sonnet-4-6",
-  "claude-opus-4-5-20251101",
-  "claude-opus-4-5",
-  "claude-3-7-sonnet-latest",
-  "claude-3-7-sonnet-20250219",
-  "claude-3-5-haiku-latest",
-  "claude-3-5-haiku-20241022",
-  "claude-haiku-4-5",
-  "claude-haiku-4-5-20251001",
-  "claude-sonnet-4-20250514",
-  "claude-sonnet-4-0",
-  "claude-4-sonnet-20250514",
-  "claude-sonnet-4-5",
-  "claude-sonnet-4-5-20250929",
-  "claude-opus-4-0",
-  "claude-opus-4-20250514",
-  "claude-4-opus-20250514",
-  "claude-opus-4-1-20250805",
-  "claude-3-opus-latest",
-  "claude-3-opus-20240229",
-  "claude-3-haiku-20240307"
+export const Model = Schema.Union([
+  Schema.String,
+  Schema.Literals([
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-mythos-preview",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-5",
+    "claude-opus-4-5-20251101",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-5-20250929",
+    "claude-opus-4-1",
+    "claude-opus-4-1-20250805"
+  ])
 ]).annotate({
   "title": "Model",
   "description":
-    "The model that will complete your prompt.\\n\\nSee [models](https://docs.anthropic.com/en/docs/models-overview) for additional details and options."
+    "The model that will complete your prompt.\n\nSee [models](https://docs.anthropic.com/en/docs/models-overview) for additional details and options."
 })
 export type BetaMemoryTool_20250818_ViewCommand = {
   readonly "command": "view"
@@ -11088,10 +11080,10 @@ export const make = (
       Stream.unwrap
     )
   const decodeSuccess =
-    <Schema extends Schema.Top>(schema: Schema) => (response: HttpClientResponse.HttpClientResponse) =>
+    <Schema extends Schema.Constraint>(schema: Schema) => (response: HttpClientResponse.HttpClientResponse) =>
       HttpClientResponse.schemaBodyJson(schema)(response)
   const decodeError =
-    <const Tag extends string, Schema extends Schema.Top>(tag: Tag, schema: Schema) =>
+    <const Tag extends string, Schema extends Schema.Constraint>(tag: Tag, schema: Schema) =>
     (response: HttpClientResponse.HttpClientResponse) =>
       Effect.flatMap(
         HttpClientResponse.schemaBodyJson(schema)(response),

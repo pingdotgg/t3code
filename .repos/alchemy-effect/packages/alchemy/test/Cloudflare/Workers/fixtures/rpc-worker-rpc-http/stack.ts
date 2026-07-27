@@ -1,11 +1,11 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@/Cloudflare";
+import * as Alchemy from "@/index";
 import * as Effect from "effect/Effect";
 import RpcWorkerRpcHttpWorker from "./worker.ts";
 
 /**
  * Stack for the {@link Cloudflare.RpcWorker} +
- * {@link Cloudflare.RpcDurableObjectNamespace} combined fixture.
+ * {@link Cloudflare.RpcDurableObject} combined fixture.
  */
 export default Alchemy.Stack(
   "RpcWorkerRpcHttpStack",

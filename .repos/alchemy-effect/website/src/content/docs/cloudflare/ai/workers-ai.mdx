@@ -1,0 +1,210 @@
+---
+title: Run Workers AI models
+description: Bind Workers AI into your Worker with Cloudflare.Workers.AI — run inference and list models directly, or turn the binding into a typed Effect LanguageModel, no gateway required.
+sidebar:
+  order: 4
+---
+
+**Workers AI** runs open-weight models (Llama, Mistral, Whisper,
+embeddings, …) on Cloudflare's GPU fleet, callable from any Worker
+through the native `env.AI` binding. There is no resource to declare
+and nothing to provision — the service is account-level, so the only
+Alchemy piece is the binding itself: `Cloudflare.Workers.AI`.
+
+This is the plain `{ type: "ai" }` Worker binding, the same one you
+would declare in `wrangler.json`. If you want requests routed through
+an **AI Gateway** — caching, rate limiting, retries, a request log —
+use [`Cloudflare.AI.Gateway`](/cloudflare/ai/ai-gateway) instead; the
+binding here talks to Workers AI directly.
+
+## Effect-style Worker
+
+`yield* Cloudflare.Workers.AI()` inside a Worker's Init phase does two
+things: it attaches the `ai` binding to the Worker at deploy time, and
+at runtime it resolves to an Effect-native client whose `run` and
+`models` operations return Effects with a typed `WorkersAIError`
+channel. Provide `Cloudflare.Workers.AIBinding` once at the bottom of
+the Init layer chain, the same way every other Worker binding works:
+
+```typescript
+// src/AiWorker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+
+export default class AiWorker extends Cloudflare.Worker<AiWorker>()(
+  "AiWorker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const ai = yield* Cloudflare.Workers.AI();
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const url = new URL(request.url, "http://worker");
+
+        if (url.pathname === "/run") {
+          const result = yield* ai
+            .run(MODEL, {
+              messages: [{ role: "user", content: "Say hello in one sentence." }],
+              max_tokens: 128,
+            })
+            .pipe(Effect.orDie);
+          return yield* HttpServerResponse.json(result);
+        }
+
+        if (url.pathname === "/models") {
+          const models = yield* ai
+            .models({ search: "llama-3.3" })
+            .pipe(Effect.orDie);
+          return yield* HttpServerResponse.json({
+            names: models.map((m) => m.name),
+          });
+        }
+
+        return HttpServerResponse.text("Not Found", { status: 404 });
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Workers.AIBinding)),
+) {}
+```
+
+`ai.run` is typed by the model catalog from
+`@cloudflare/workers-types`: the model id narrows the `inputs` and
+output types, so `@cf/meta/...` chat models take `messages` /
+`prompt` while embedding models take `text`, checked at compile time.
+`Effect.orDie` collapses `WorkersAIError` to a defect so a model
+failure surfaces as a 500 — for typed handling use
+`Effect.catchTag("WorkersAIError", …)` instead.
+
+## Build a `LanguageModel` layer
+
+`ai.model({...})` turns the binding into an
+[Effect AI](/cloudflare/ai/effect-ai) `LanguageModel` Layer — the
+provider-agnostic service behind `generateText`, `streamText`,
+`Toolkit`, and structured outputs. It is the same adapter that AI
+Gateway's `QueryGateway` uses, minus the gateway routing, so no API
+key and no HTTP client layer are involved:
+
+```typescript
+import { LanguageModel } from "effect/unstable/ai";
+
+Effect.gen(function* () {
+  const ai = yield* Cloudflare.Workers.AI();
+
+  const languageModel = ai.model({
+    model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    parameters: { temperature: 0.7, maxTokens: 1024 },
+  });
+
+  return {
+    fetch: Effect.gen(function* () {
+      const response = yield* LanguageModel.generateText({
+        prompt: "Write a haiku about Effect.",
+      }).pipe(Effect.orDie);
+      return yield* HttpServerResponse.json({
+        text: response.text,
+        usage: {
+          inputTokens: response.usage.inputTokens.total,
+          outputTokens: response.usage.outputTokens.total,
+        },
+      });
+    }).pipe(Effect.provide(languageModel)),
+  };
+}).pipe(Effect.provide(Cloudflare.Workers.AIBinding));
+```
+
+Streaming works the same way as any other provider —
+`LanguageModel.streamText` returns a stream of typed response parts.
+Use `Stream.provide(languageModel)` (the stream-aware equivalent of
+`Effect.provide`) so the model stays available for the lifetime of
+the stream:
+
+```typescript
+import * as Stream from "effect/Stream";
+import * as Sse from "effect/unstable/encoding/Sse";
+
+const stream = LanguageModel.streamText({ prompt }).pipe(
+  Stream.provide(languageModel),
+  Sse.encode,
+);
+
+return HttpServerResponse.stream(stream, {
+  headers: { "content-type": "text/event-stream" },
+});
+```
+
+Because the Layer satisfies Effect's standard `LanguageModel`
+service, swapping Workers AI for OpenAI, Anthropic, or a
+gateway-fronted model later is a layer-level change — the handler
+code doesn't move. See [Effect AI](/cloudflare/ai/effect-ai) for the
+full pattern, including chat persistence.
+
+## Async Workers: bind via `env`
+
+A plain async Worker (no Effect runtime) declares the binding on
+`env` instead.
+`InferEnv` maps it to the native `Ai` runtime handle — exactly what
+`wrangler` would give you:
+
+```typescript
+// src/AiAsyncWorker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const AiAsyncWorker = Cloudflare.Worker("AiAsyncWorker", {
+  main: "./src/handler.ts",
+  env: {
+    AI: Cloudflare.Workers.AI(),
+  },
+});
+
+export type AiAsyncWorkerEnv = Cloudflare.InferEnv<typeof AiAsyncWorker>;
+//   { AI: Ai }
+```
+
+```typescript
+// src/handler.ts
+import type { AiAsyncWorkerEnv } from "./AiAsyncWorker.ts";
+
+export default {
+  async fetch(request: Request, env: AiAsyncWorkerEnv): Promise<Response> {
+    const result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+      messages: [{ role: "user", content: "Say hello in one sentence." }],
+      max_tokens: 128,
+    });
+    return Response.json(result);
+  },
+};
+```
+
+`Cloudflare.Workers.AI()` takes an optional binding name (the `env`
+key it resolves to) and defaults to `"AI"`.
+
+## When to add an AI Gateway
+
+The plain binding is the shortest path to inference, but every
+request goes straight to Workers AI. Put an
+[AI Gateway](/cloudflare/ai/ai-gateway) in front when you want:
+
+- **Caching** — identical prompts served from cache in milliseconds.
+- **Rate limiting and retries** — protect quota, smooth over blips.
+- **A request log** — every prompt, completion, latency, and token
+  count in one dashboard.
+- **Other providers** — one endpoint fronting OpenAI, Anthropic,
+  Bedrock, … alongside Workers AI.
+
+`aiGateway.model({...})` and `ai.model({...})` produce the same
+`LanguageModel` Layer shape, so moving between them is a one-line
+change in the Init phase.
+
+## Where to go next
+
+- [Effect AI](/cloudflare/ai/effect-ai) — the `LanguageModel` /
+  `Chat` pattern this binding plugs into.
+- [Add an AI Gateway](/cloudflare/ai/ai-gateway) — caching, rate
+  limiting, and logs in front of the same models.
+- [API reference: Cloudflare.Workers.AI](/providers/cloudflare/workers/ai)
+  — the full binding surface (`run`, `models`, `model`, `raw`).

@@ -1,41 +1,9 @@
 /**
  * Cluster runner metadata for processes that can host entity shards.
  *
- * A {@link Runner} combines the stable {@link RunnerAddress} used to contact a
- * process, the shard groups that process participates in, and the relative
- * weight used when the sharding service distributes shards across healthy
- * runners.
- *
- * **Mental model**
- *
- * `Runner` is cluster membership data, not a running process handle. The value
- * is persisted, exchanged, encoded, and compared by cluster services so they can
- * decide where entity shards may live. The address identifies the runner, groups
- * limit the shard pools it can join, and weight changes how much ownership it
- * receives relative to the other healthy runners in the same group.
- *
- * **Common tasks**
- *
- * - Construct runner metadata with {@link make}.
- * - Encode and decode runner values at cluster transport or storage boundaries.
- * - Persist or exchange runner records through cluster runner storage.
- * - Tune shard distribution by adjusting the runner's group membership and
- *   relative weight.
- *
- * **Gotchas**
- *
- * - Runner addresses must be stable and unique while a runner is registered,
- *   because they identify the owner used for routing and shard locks.
- * - Weights are relative inside each shard group; changing a weight or group can
- *   rebalance shard ownership when the cluster refreshes its runner view.
- * - Equality and hashing use address and weight. Compare `groups` explicitly
- *   when group membership is the important distinction.
- *
- * **See also**
- *
- * - {@link Runner}
- * - {@link RunnerAddress}
- * - {@link make}
+ * A `Runner` combines the stable `RunnerAddress` used to contact a process, the
+ * shard groups that process participates in, and the relative weight used when
+ * the sharding service distributes shards across healthy runners.
  *
  * @since 4.0.0
  */
@@ -61,7 +29,7 @@ const TypeId = "~effect/cluster/Runner"
 export class Runner extends Schema.Class<Runner>(TypeId)({
   address: RunnerAddress,
   groups: Schema.Array(Schema.String),
-  weight: Schema.Number
+  weight: Schema.Finite
 }) {
   /**
    * Formatter for rendering runner values consistently.

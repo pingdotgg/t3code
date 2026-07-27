@@ -1,12 +1,21 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@/Cloudflare";
 import { Layer } from "effect";
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 import { HttpRouter } from "effect/unstable/http";
+import * as Etag from "effect/unstable/http/Etag";
+import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 
 import { createTask, decodeTask, encodeTask, getTask, Task } from "./api.ts";
+
+const HttpPlatformStub = Layer.succeed(HttpPlatform.HttpPlatform, {
+  fileResponse: () => Effect.die("HttpPlatform.fileResponse not supported"),
+  fileWebResponse: () =>
+    Effect.die("HttpPlatform.fileWebResponse not supported"),
+});
 
 export class TasksDOGroup extends HttpApiGroup.make("TasksDO")
   .add(getTask)
@@ -19,12 +28,12 @@ export class TaskDOApi extends HttpApi.make("TaskDOApi").add(TasksDOGroup) {}
  * Persists tasks in the DO's transactional storage and exposes simple
  * RPC methods that the Worker calls from its HttpApi handlers.
  */
-export default class TasksObject extends Cloudflare.DurableObjectNamespace<TasksObject>()(
+export default class TasksObject extends Cloudflare.DurableObject<TasksObject>()(
   "TasksObject",
   Effect.gen(function* () {
-    return Effect.gen(function* () {
-      const state = yield* Cloudflare.DurableObjectState;
+    const state = yield* Cloudflare.DurableObjectState;
 
+    return Effect.gen(function* () {
       const tasksGroup = HttpApiBuilder.group(
         TaskDOApi,
         "TasksDO",
@@ -51,6 +60,7 @@ export default class TasksObject extends Cloudflare.DurableObjectNamespace<Tasks
       return {
         fetch: HttpApiBuilder.layer(TaskDOApi).pipe(
           Layer.provide(tasksGroup),
+          Layer.provide([Etag.layer, HttpPlatformStub, Path.layer]),
           HttpRouter.toHttpEffect,
         ),
       };

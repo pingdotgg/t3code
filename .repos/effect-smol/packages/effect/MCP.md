@@ -236,25 +236,23 @@ is `"no"`.
 Here's a complete, copy/pastable MCP server example that combines all the concepts:
 
 ```typescript
-import { NodeRuntime, NodeSink, NodeStream } from "@effect/platform-node"
-import { Effect, Layer } from "effect"
-import { Logger } from "effect"
-import { Schema } from "effect/schema"
-import { McpServer, Tool, Toolkit } from "effect/unstable/ai"
+import { NodeRuntime, NodeStdio } from "@effect/platform-node"
+import { Effect, Layer, Logger, Schema } from "effect"
+import { McpSchema, McpServer, Tool, Toolkit } from "effect/unstable/ai"
 
 // Define tools
 const GreetTool = Tool.make("GreetTool", {
   description: "Generate a greeting message",
-  parameters: {
+  parameters: Schema.Struct({
     name: Schema.String,
     style: Schema.Union([Schema.Literal("formal"), Schema.Literal("casual")])
-  },
+  }),
   success: Schema.String
 })
 
 const CalculatorTool = Tool.make("CalculatorTool", {
   description: "Perform basic arithmetic operations",
-  parameters: {
+  parameters: Schema.Struct({
     operation: Schema.Union([
       Schema.Literal("add"),
       Schema.Literal("subtract"),
@@ -263,7 +261,7 @@ const CalculatorTool = Tool.make("CalculatorTool", {
     ]),
     a: Schema.Number,
     b: Schema.Number
-  },
+  }),
   success: Schema.Number
 })
 
@@ -312,7 +310,7 @@ const AnalysisPrompt = McpServer.prompt({
   },
   completion: {
     dataType: () => Effect.succeed(["sales", "users", "metrics"]),
-    focus: () => Effect.succeed(["summary", "details"])
+    focus: () => Effect.succeed(["summary" as const, "details" as const])
   },
   content: ({ dataType, focus }) =>
     Effect.succeed(
@@ -359,12 +357,11 @@ const ServerLayer = Layer.mergeAll(
   Layer.provide(
     McpServer.layerStdio({
       name: "Demo MCP Server",
-      version: "1.0.0",
-      stdin: NodeStream.stdin,
-      stdout: NodeSink.stdout
+      version: "1.0.0"
     })
   ),
-  Layer.provide(Logger.layer([Logger.consolePretty({ stderr: true })]))
+  Layer.provide(NodeStdio.layer),
+  Layer.provide(Layer.succeed(Logger.LogToStderr)(true))
 )
 
 // Run the server

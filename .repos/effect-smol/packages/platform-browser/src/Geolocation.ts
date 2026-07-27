@@ -1,35 +1,12 @@
 /**
  * Browser geolocation integration for Effect programs.
  *
- * This module exposes a `Geolocation` service backed by
- * `navigator.geolocation`. Use it for browser features that need a single
- * position fix, such as nearby search or delivery estimates, or a stream of
- * position updates for navigation, tracking, and location-aware interfaces.
- * Browser failures are represented as typed `GeolocationError` values instead
- * of raw callback errors.
- *
- * **Mental model**
- *
- * - The service delegates to the browser Geolocation API and follows the
- *   browser's permission, privacy, origin, and secure-context rules.
- * - `getCurrentPosition` reads one position fix from the service.
- * - {@link watchPosition} turns browser position callbacks into a `Stream` and
- *   clears the underlying browser watch when the stream is finalized.
- *
- * **Common tasks**
- *
- * - Provide the live browser implementation with {@link layer}.
- * - Read a one-shot position from the `Geolocation` service.
- * - Stream position updates with {@link watchPosition}.
- * - Handle denied permissions, timeouts, and unavailable position data with
- *   {@link GeolocationError}.
- *
- * **Gotchas**
- *
- * - Browsers may prompt the user, reject access outside secure contexts, block
- *   access by permissions policy, or report that position data is unavailable.
- * - {@link watchPosition} uses a sliding buffer; increase `bufferSize` if slow
- *   consumers must not skip older positions.
+ * This module defines a `Geolocation` service backed by
+ * `navigator.geolocation`. The service can read one current position or stream
+ * watched position updates with a sliding buffer. Browser callback failures are
+ * represented as `GeolocationError` values with `PositionUnavailable`,
+ * `PermissionDenied`, or `Timeout` reasons. The module also provides the
+ * browser-backed layer and a `watchPosition` accessor.
  *
  * @since 4.0.0
  */
@@ -89,8 +66,8 @@ export interface Geolocation {
  *
  * **When to use**
  *
- * Use when an Effect needs to access or provide geolocation capabilities
- * through the context.
+ * Use when you need to access or provide geolocation capabilities through
+ * Effect's context.
  *
  * @see {@link layer} for providing the browser-backed geolocation service
  *

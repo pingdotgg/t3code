@@ -1,6 +1,7 @@
 import * as iam from "@distilled.cloud/aws/iam";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -23,13 +24,21 @@ export interface AccessKey extends Resource<
   "AWS.IAM.AccessKey",
   AccessKeyProps,
   {
+    /** The IAM user the access key belongs to. */
     userName: string;
+    /** The access key ID. */
     accessKeyId: string;
+    /** Whether the key is `Active` or `Inactive`. */
     status: iam.StatusType;
+    /** When the access key was created. */
     createDate: Date | undefined;
+    /** The secret access key. AWS only returns it at creation; later reads preserve the originally stored redacted value. */
     secretAccessKey: Redacted.Redacted<string> | undefined;
+    /** When the access key was last used, if ever. */
     lastUsedDate: Date | undefined;
+    /** The AWS service the key last authenticated to. */
     lastUsedServiceName: string | undefined;
+    /** The region of the key's last use. */
     lastUsedRegion: string | undefined;
   },
   never,
@@ -42,7 +51,7 @@ export interface AccessKey extends Resource<
  * `AccessKey` manages long-lived programmatic credentials for an IAM user. The
  * secret access key is only returned during creation, so later reads preserve
  * the originally stored redacted value instead of pretending AWS can return it again.
- *
+ * @resource
  * @section Managing Programmatic Credentials
  * @example Create an Access Key
  * ```typescript
@@ -169,5 +178,48 @@ export const AccessKeyProvider = () =>
           AccessKeyId: output.accessKeyId,
         })
         .pipe(Effect.catchTag("NoSuchEntityException", () => Effect.void));
+    }),
+    // IAM is a global service. `listAccessKeys` requires a `UserName`, so we
+    // enumerate every IAM user first (paginated) and then list the keys for
+    // each user (also paginated) with bounded concurrency. The secret access
+    // key and last-used details are not part of the list metadata — the secret
+    // is only returned at creation and cannot be re-read — so those fields are
+    // left undefined here.
+    list: Effect.fn(function* () {
+      const users = yield* iam.listUsers.pages({}).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) => Array.from(chunk).flatMap((page) => page.Users)),
+      );
+      const perUser = yield* Effect.forEach(
+        users,
+        (user) =>
+          iam.listAccessKeys.pages({ UserName: user.UserName }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                page.AccessKeyMetadata.filter(
+                  (
+                    entry,
+                  ): entry is iam.AccessKeyMetadata & {
+                    AccessKeyId: string;
+                  } => entry.AccessKeyId != null,
+                ).map((entry) => ({
+                  userName: entry.UserName ?? user.UserName,
+                  accessKeyId: entry.AccessKeyId,
+                  status: entry.Status ?? "Active",
+                  createDate: entry.CreateDate,
+                  secretAccessKey: undefined,
+                  lastUsedDate: undefined,
+                  lastUsedServiceName: undefined,
+                  lastUsedRegion: undefined,
+                })),
+              ),
+            ),
+            // The user may be deleted between enumeration and per-user list.
+            Effect.catchTag("NoSuchEntityException", () => Effect.succeed([])),
+          ),
+        { concurrency: 10 },
+      );
+      return perUser.flat();
     }),
   });

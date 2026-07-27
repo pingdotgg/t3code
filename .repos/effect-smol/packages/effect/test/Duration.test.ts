@@ -21,8 +21,12 @@ describe("Duration", () => {
 
     deepStrictEqual(Duration.fromInputUnsafe("1 nano"), Duration.nanos(1n))
     deepStrictEqual(Duration.fromInputUnsafe("10 nanos"), Duration.nanos(10n))
+    deepStrictEqual(Duration.fromInputUnsafe("1.5 nanos"), Duration.nanos(2n))
+    deepStrictEqual(Duration.fromInputUnsafe("-1.5 nanos"), Duration.nanos(-2n))
     deepStrictEqual(Duration.fromInputUnsafe("1 micro"), Duration.micros(1n))
     deepStrictEqual(Duration.fromInputUnsafe("10 micros"), Duration.micros(10n))
+    deepStrictEqual(Duration.fromInputUnsafe("1.5 micros"), Duration.nanos(1500n))
+    deepStrictEqual(Duration.fromInputUnsafe("-1.5 micros"), Duration.nanos(-1500n))
     deepStrictEqual(Duration.fromInputUnsafe("1 milli"), Duration.millis(1))
     deepStrictEqual(Duration.fromInputUnsafe("10 millis"), Duration.millis(10))
     deepStrictEqual(Duration.fromInputUnsafe("1 second"), Duration.seconds(1))
@@ -43,6 +47,9 @@ describe("Duration", () => {
 
     deepStrictEqual(Duration.fromInputUnsafe([500, 123456789]), Duration.nanos(500123456789n))
     deepStrictEqual(Duration.fromInputUnsafe([-500, 123456789]), Duration.nanos(-500000000000n + 123456789n))
+    deepStrictEqual(Duration.fromInputUnsafe([0, 1.5]), Duration.nanos(2n))
+    deepStrictEqual(Duration.fromInputUnsafe([0, -1.5]), Duration.nanos(-2n))
+    deepStrictEqual(Duration.fromInputUnsafe([0.0000000005, 0.5]), Duration.nanos(1n))
     deepStrictEqual(Duration.fromInputUnsafe([Infinity, 0]), Duration.infinity)
     deepStrictEqual(Duration.fromInputUnsafe([-Infinity, 0]), Duration.negativeInfinity)
     deepStrictEqual(Duration.fromInputUnsafe([NaN, 0]), Duration.zero)
@@ -70,6 +77,22 @@ describe("Duration", () => {
     deepStrictEqual(
       Duration.fromInputUnsafe({ microseconds: 100 }),
       Duration.micros(100n)
+    )
+    deepStrictEqual(
+      Duration.fromInputUnsafe({ microseconds: -1.5 }),
+      Duration.nanos(-1500n)
+    )
+    deepStrictEqual(
+      Duration.fromInputUnsafe({ nanoseconds: 1.5 }),
+      Duration.nanos(2n)
+    )
+    deepStrictEqual(
+      Duration.fromInputUnsafe({ nanoseconds: -1.5 }),
+      Duration.nanos(-2n)
+    )
+    deepStrictEqual(
+      Duration.fromInputUnsafe({ milliseconds: 0.0000005, nanoseconds: 0.5 }),
+      Duration.nanos(1n)
     )
     deepStrictEqual(
       Duration.fromInputUnsafe({ days: 1, hours: 2, minutes: 30, seconds: 15 }),
@@ -490,6 +513,8 @@ describe("Duration", () => {
     strictEqual(Duration.nanos(1n).pipe(Duration.toNanosUnsafe), 1n)
     throws(() => Duration.infinity.pipe(Duration.toNanosUnsafe))
     strictEqual(Duration.millis(1.0005).pipe(Duration.toNanosUnsafe), 1_000_500n)
+    strictEqual(Duration.millis(0.0000015).pipe(Duration.toNanosUnsafe), 2n)
+    strictEqual(Duration.millis(-0.0000015).pipe(Duration.toNanosUnsafe), -2n)
     strictEqual(Duration.millis(100).pipe(Duration.toNanosUnsafe), 100_000_000n)
   })
 

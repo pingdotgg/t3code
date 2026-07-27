@@ -14,7 +14,7 @@ export default class Server extends AWS.EC2.Instance<Server>()(
     const network = yield* Network;
 
     return {
-      main: import.meta.filename,
+      main: import.meta.url,
       imageId,
       instanceType: "t3.small",
       subnetId: network.publicSubnetIds[0],
@@ -25,15 +25,15 @@ export default class Server extends AWS.EC2.Instance<Server>()(
   }),
   Effect.gen(function* () {
     const queue = yield* AWS.SQS.Queue("JobsQueue", {
-      receiveMessageWaitTimeSeconds: 20,
-      visibilityTimeout: 60,
+      receiveMessageWaitTime: "20 seconds",
+      visibilityTimeout: "60 seconds",
     });
 
-    yield* AWS.SQS.messages(queue).subscribe((stream) =>
+    yield* AWS.SQS.consumeQueueMessages(queue, (stream) =>
       stream.pipe(Stream.mapEffect(Effect.logInfo), Stream.runDrain),
     );
 
-    const sendMessage = yield* AWS.SQS.SendMessage.bind(queue);
+    const sendMessage = yield* AWS.SQS.SendMessage(queue);
 
     return {
       fetch: Effect.gen(function* () {
@@ -79,9 +79,9 @@ export default class Server extends AWS.EC2.Instance<Server>()(
       Layer.provideMerge(
         Layer.mergeAll(NetworkLive, SQSQueueEventSource),
         Layer.mergeAll(
-          AWS.SQS.DeleteMessageBatchLive,
-          AWS.SQS.ReceiveMessageLive,
-          AWS.SQS.SendMessageLive,
+          AWS.SQS.DeleteMessageBatchHttp,
+          AWS.SQS.ReceiveMessageHttp,
+          AWS.SQS.SendMessageHttp,
         ),
       ),
     ),

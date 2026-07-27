@@ -5,28 +5,6 @@
  * inspect which capabilities a runner made available, or assert registration
  * behavior in tests.
  *
- * **Mental model**
- *
- * Registration is local capability discovery. An `EntityRegistered` event means
- * this runner has installed handlers for an entity type; a `SingletonRegistered`
- * event carries the `SingletonAddress` computed for the singleton name and shard
- * group. Neither event means the runner currently owns the relevant shard or has
- * started processing stored messages.
- *
- * **Common tasks**
- *
- * - Consume `Sharding.getRegistrationEvents` in tests or startup coordination
- * - Match on entity and singleton registrations with the generated `match`
- *   helper
- * - Record registered entity types and singleton addresses for diagnostics
- *
- * **Gotchas**
- *
- * - Events are live in-memory notifications; they are not stored or replayed for
- *   later subscribers
- * - Shard acquisition, singleton execution, and persisted mailbox polling happen
- *   after registration and may move as runner membership changes
- *
  * @since 4.0.0
  */
 import * as Data from "../../Data.ts"

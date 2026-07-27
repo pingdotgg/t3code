@@ -1,25 +1,10 @@
 /**
- * The `NodeCrypto` module implements Effect's `Crypto` service with
- * Node-compatible `node:crypto` APIs. It exports {@link make} as the concrete
- * service value and {@link layer} for providing that service to programs that
- * need cryptographic random bytes, UUID generation, random values, or SHA
- * digests over `Uint8Array` input.
+ * Node-compatible implementation of Effect's `Crypto` service.
  *
- * **Common tasks**
- *
- * - Provide {@link layer} in Node-compatible platform packages and tests
- * - Reuse {@link make} when a surrounding layer already manages service
- *   construction
- * - Compute SHA-1, SHA-256, SHA-384, or SHA-512 digests through
- *   `effect/Crypto` after the layer is provided
- *
- * **Gotchas**
- *
- * - Random bytes come from `node:crypto.randomBytes`
- * - Digests use `node:crypto.createHash`; hash failures become platform
- *   errors
- * - SHA-1 is included for interoperability with existing protocols, not for
- *   new security-sensitive designs
+ * This module builds the service from `node:crypto`, using `randomBytes` for
+ * random data and `createHash` for supported digest algorithms. It exports
+ * `make` as the concrete service value and `layer` for providing it through
+ * Effect context.
  *
  * @since 1.0.0
  */

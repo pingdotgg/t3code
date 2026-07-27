@@ -1,42 +1,12 @@
 /**
- * The `FiberHandle` module provides a scoped handle for managing the lifecycle
- * of at most one fiber at a time. A `FiberHandle<A, E>` can hold one
- * `Fiber<A, E>`; when a new fiber is installed, the previous fiber is
- * interrupted unless the operation is configured with `onlyIfMissing`.
+ * Manages at most one fiber inside a scope.
  *
- * **Mental model**
- *
- * - A handle is either open with zero or one current fiber, or closed by its
- *   surrounding `Scope`
- * - Closing the scope interrupts the current fiber and prevents new work from
- *   being accepted
- * - Completed fibers remove themselves from the handle, so the handle can be
- *   reused for later work
- * - Replacing a fiber uses the handle's internal interruption id, allowing
- *   expected replacement interruptions to be distinguished from real failures
- *
- * **Common tasks**
- *
- * - Create a scoped handle: {@link make}
- * - Fork an effect into the handle: {@link run}
- * - Store an existing fiber: {@link set}
- * - Read or clear the current fiber: {@link get}, {@link clear}
- * - Capture runtime-specific runners: {@link makeRuntime}, {@link runtime}
- * - Run handled effects as Promises: {@link makeRuntimePromise},
- *   {@link runtimePromise}
- * - Wait for failure or closure: {@link join}
- * - Wait until the current fiber is gone: {@link awaitEmpty}
- *
- * **Gotchas**
- *
- * - The handle never contains more than one live fiber; starting or setting
- *   another fiber interrupts the previous one by default
- * - Use `onlyIfMissing` when a call should leave an already running fiber in
- *   place instead of replacing it
- * - `join` observes the handle's failure/close signal; successful fiber
- *   completion only empties the handle
- * - `awaitEmpty` waits for the fiber that is current when it starts; later
- *   calls to {@link run} or {@link set} can install new work
+ * A `FiberHandle<A, E>` can hold one `Fiber<A, E>`. Installing a new fiber
+ * interrupts the previous one unless the operation is configured with
+ * `onlyIfMissing`, and closing the owning scope interrupts the current fiber.
+ * This module includes constructors for handles and scoped runtimes, helpers
+ * for setting, reading, clearing, and running fibers, and operations for joining
+ * the current fiber or waiting until the handle is empty.
  *
  * @since 2.0.0
  */
@@ -235,6 +205,11 @@ export const makeRuntime = <R, E = unknown, A = unknown>(): Effect.Effect<
  * Creates a scoped run function that forks effects into a new `FiberHandle`
  * and returns a `Promise` for each effect result.
  *
+ * **When to use**
+ *
+ * Use when integrating a scoped `FiberHandle` runner with Promise-based APIs
+ * and Promise rejection from squashed failures is the desired boundary.
+ *
  * **Details**
  *
  * Each call stores the fiber in the handle and interrupts the previous fiber
@@ -286,6 +261,11 @@ const isInternalInterruption = Filter.toPredicate(Filter.compose(
 /**
  * Sets the fiber in a FiberHandle. When the fiber completes, it will be removed from the FiberHandle.
  * If a fiber is already running, it will be interrupted unless `options.onlyIfMissing` is set.
+ *
+ * **When to use**
+ *
+ * Use when an existing forked fiber must be installed synchronously into a
+ * handle and immediate interruption of replaced or closed fibers is acceptable.
  *
  * **Example** (Setting a fiber unsafely)
  *
@@ -428,6 +408,11 @@ export const set: {
 /**
  * Retrieves the fiber from the FiberHandle synchronously.
  *
+ * **When to use**
+ *
+ * Use when synchronous inspection of the current fiber is needed and an
+ * `Option` result is enough outside the Effect workflow.
+ *
  * **Example** (Reading the current fiber unsafely)
  *
  * ```ts
@@ -516,10 +501,11 @@ export const clear = <A, E>(self: FiberHandle<A, E>): Effect.Effect<void> =>
     if (self.state._tag === "Closed" || self.state.fiber === undefined) {
       return Effect.void
     }
+    const fiber = self.state.fiber
     return Effect.andThen(
-      restore(Fiber.interruptAs(self.state.fiber, internalFiberId)),
+      restore(Fiber.interruptAs(fiber, internalFiberId)),
       Effect.sync(() => {
-        if (self.state._tag === "Open") {
+        if (self.state._tag === "Open" && self.state.fiber === fiber) {
           self.state.fiber = undefined
         }
       })

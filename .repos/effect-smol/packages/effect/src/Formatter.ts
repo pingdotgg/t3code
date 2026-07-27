@@ -1,54 +1,11 @@
 /**
- * Utilities for converting arbitrary JavaScript values into human-readable
- * strings, with support for circular references, redaction, and common JS
- * types that `JSON.stringify` handles poorly.
+ * Formats JavaScript values into readable strings.
  *
- * Mental model:
- * - A `Formatter<Value, Format>` is a callable `(value: Value) => Format`.
- * - {@link format} is the general-purpose pretty-printer: it handles
- *   primitives, arrays, objects, `BigInt`, `Symbol`, `Date`, `RegExp`,
- *   `Set`, `Map`, class instances, and circular references.
- * - {@link formatJson} is a safe `JSON.stringify` wrapper that silently
- *   drops circular references and applies redaction.
- * - Both functions accept a `space` option for indentation control.
- *
- * Common tasks:
- * - Pretty-print any value for debugging / logging -> {@link format}
- * - Serialize to JSON safely (no circular throws) -> {@link formatJson}
- * - Format a single object property key -> {@link formatPropertyKey}
- * - Format a property path like `["a"]["b"]` -> {@link formatPath}
- * - Format a `Date` to ISO string safely -> {@link formatDate}
- *
- * Gotchas:
- * - {@link format} output is **not** valid JSON; use {@link formatJson} when
- *   you need parseable JSON.
- * - {@link format} calls `toString()` on objects by default; pass
- *   `ignoreToString: true` to disable.
- * - {@link formatJson} silently omits circular references (the key is
- *   dropped from the output).
- * - Values implementing the `Redactable` protocol are automatically
- *   redacted by both {@link format} and {@link formatJson}.
- *
- * **Example** (Pretty-print a value)
- *
- * ```ts
- * import { Formatter } from "effect"
- *
- * const obj = { name: "Alice", scores: [100, 97] }
- * console.log(Formatter.format(obj))
- * // {"name":"Alice","scores":[100,97]}
- *
- * console.log(Formatter.format(obj, { space: 2 }))
- * // {
- * //   "name": "Alice",
- * //   "scores": [
- * //     100,
- * //     97
- * //   ]
- * // }
- * ```
- *
- * See also: {@link Formatter}, {@link format}, {@link formatJson}
+ * `format` is intended for logs, diagnostics, and error messages. It handles
+ * primitives, objects, arrays, dates, regular expressions, maps, sets, class
+ * instances, errors, circular references, and redactable values. `formatJson`
+ * wraps JSON formatting with redaction and circular-reference handling, and the
+ * module also includes helpers for property keys, paths, and dates.
  *
  * @since 4.0.0
  */
@@ -66,7 +23,7 @@ import { getRedacted, redact, symbolRedactable } from "./Redactable.ts"
  *
  * This is a pure callable type and carries no runtime implementation. It is contravariant in `Value` and covariant in `Format`.
  *
- * **Example** (Define a custom formatter)
+ * **Example** (Defining a custom formatter)
  *
  * ```ts
  * import type { Formatter } from "effect"
@@ -91,16 +48,16 @@ export interface Formatter<in Value, out Format = string> {
  *
  * **When to use**
  *
- * Use to pretty-print values for debugging, logging, or error messages.
- * - You need to handle `BigInt`, `Symbol`, `Set`, `Map`, `Date`, `RegExp`,
- *   or class instances that `JSON.stringify` cannot represent.
- * - You want circular references shown as `"[Circular]"` instead of
- *   throwing.
+ * Use when you need to format arbitrary JavaScript values for debugging,
+ * logging, or error messages.
  *
  * **Details**
  *
  * - Output is **not** valid JSON; use {@link formatJson} when you need
  *   parseable JSON.
+ * - Handles `BigInt`, `Symbol`, `Set`, `Map`, `Date`, `RegExp`, and class
+ *   instances that `JSON.stringify` cannot represent.
+ * - Circular references are shown as `"[Circular]"` instead of throwing.
  * - Primitives: stringified naturally (`null`, `undefined`, `123`, `true`).
  *   Strings are JSON-quoted.
  * - Objects with a custom `toString` (not `Object.prototype.toString`):
@@ -112,12 +69,11 @@ export interface Formatter<in Value, out Format = string> {
  * - `Redactable` values are automatically redacted.
  * - Arrays/objects with 0–1 entries are inline; larger ones are
  *   pretty-printed when `space` is set.
- * - Circular references are replaced with `"[Circular]"`.
  * - `space` — indentation unit (number of spaces, or a string like
  *   `"\t"`). Defaults to `0` (compact).
  * - `ignoreToString` — skip calling `toString()`. Defaults to `false`.
  *
- * **Example** (Compact output)
+ * **Example** (Formatting compact output)
  *
  * ```ts
  * import { Formatter } from "effect"
@@ -141,7 +97,7 @@ export interface Formatter<in Value, out Format = string> {
  * // }
  * ```
  *
- * **Example** (Circular reference handling)
+ * **Example** (Handling circular references)
  *
  * ```ts
  * import { Formatter } from "effect"
@@ -288,24 +244,20 @@ function safeToString(input: any): string {
  *
  * **When to use**
  *
- * Use when you need valid JSON output (unlike {@link format}).
- * - The input may contain circular references and you want them silently
- *   omitted rather than throwing a `TypeError`.
+ * Use when you need valid JSON output, unlike `format`, and the input may
+ * contain circular references that should be silently omitted rather than
+ * throwing a `TypeError`.
  *
  * **Details**
  *
- * - Uses `JSON.stringify` internally with a replacer that tracks the
- *   current object ancestry.
- * - Circular references are replaced with `undefined` (omitted from
- *   output).
- * - `Redactable` values are automatically redacted before serialization.
- * - Types not supported by JSON (`BigInt`, `Symbol`, `undefined`,
- *   functions) follow standard `JSON.stringify` behavior (omitted or
- *   `null` in arrays).
- * - `space` — indentation unit (number of spaces, or a string like
- *   `"\t"`). Defaults to `0` (compact).
+ * Uses `JSON.stringify` internally with a replacer that tracks the current
+ * object ancestry. Circular references are replaced with `undefined`, which
+ * omits them from object output. `Redactable` values are automatically redacted
+ * before serialization. Values not supported by JSON, such as `BigInt`,
+ * `Symbol`, `undefined`, and functions, follow standard `JSON.stringify`
+ * behavior. The `space` parameter controls indentation and defaults to `0`.
  *
- * **Example** (Compact JSON)
+ * **Example** (Formatting compact JSON)
  *
  * ```ts
  * import { Formatter } from "effect"
@@ -314,7 +266,7 @@ function safeToString(input: any): string {
  * // {"name":"Alice","age":30}
  * ```
  *
- * **Example** (Circular reference handling)
+ * **Example** (Handling circular references)
  *
  * ```ts
  * import { Formatter } from "effect"

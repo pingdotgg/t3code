@@ -1,0 +1,425 @@
+---
+title: Effect RPC on Lambda
+description: Build a typed RPC API with Effect's Rpc module and deploy it as an AWS Lambda Function behind a Function URL.
+sidebar:
+  order: 7
+---
+
+Effect RPC is a trust-boundary tool: schemas validate every request,
+so reach for it when data needs sanitizing on its way in — a web app
+or an external service calling your Lambda. Internal calls use
+[Schemaless RPC](/apis/schemaless) instead (on AWS, a Lambda Function
+driving a [MicroVM](/aws/compute/microvms)); the
+[RPC overview](/apis) has the full decision.
+
+The [HTTP API guide](/aws/apis/effect-http-api) showed how to
+build REST-style endpoints with schema validation. Effect RPC takes
+a different angle — you define **procedures** instead of HTTP
+endpoints, and you get a fully typed client for free with no URL
+construction or manual serialization.
+[Effect RPC](/apis/effect-rpc) covers the host-agnostic core; this
+page covers the Lambda side — a public Function URL via `url: true`,
+and binding implementations provided with
+`Layer.mergeAll(AWS.DynamoDB.GetItemHttp, AWS.DynamoDB.PutItemHttp)`.
+
+The transport is still HTTP under the hood — the RPC server compiles
+down to the same `HttpEffect` a Lambda's `fetch` expects — so the
+wiring story is identical to the HTTP API guide:
+
+1. **Define schemas outside the Function.** Domain types and tagged
+   errors, importable by both server and client.
+2. **Bind resources and construct handlers inside the Function's
+   Init phase.** `RpcGroup.toLayer` is pure construction — safe at
+   deploy time and at cold start.
+3. **Return `{ fetch }`** where `fetch` is the `HttpEffect` produced
+   by `RpcServer.toHttpEffect`.
+4. **Deploy** and call the procedures from a typed client that
+   shares the exact same `RpcGroup` value.
+
+A complete, runnable version of this app lives at
+[`examples/aws-lambda-rpc`](https://github.com/alchemy-run/alchemy/tree/main/examples/aws-lambda-rpc).
+
+## 1. Define the schemas
+
+Domain model and error types — pure schemas, no runtime concerns:
+
+```typescript
+// src/Job.ts
+import * as Schema from "effect/Schema";
+
+export type JobId = Schema.Schema.Type<typeof JobId>;
+export const JobId = Schema.String.annotate({
+  description: "The ID of the job",
+});
+
+export class Job extends Schema.Class<Job>("Job")({
+  id: JobId,
+  content: Schema.String,
+}) {}
+
+export class JobNotFound extends Schema.TaggedClass<JobNotFound>()(
+  "JobNotFound",
+  { jobId: JobId },
+) {}
+
+export class PutJobFailed extends Schema.TaggedClass<PutJobFailed>()(
+  "PutJobFailed",
+  { message: Schema.String },
+) {}
+```
+
+RPC errors are schema-backed tagged classes. The client receives
+them as typed values you can `catchTag` on — not raw HTTP status
+codes, so there's no `httpApiStatus` annotation here.
+
+## 2. Declare the RPCs
+
+Each `Rpc.make` declares one procedure: a name, a payload schema, a
+success schema, and an error schema. `RpcGroup.make` collects them
+into a single value that both the server and the client will share.
+
+```typescript
+// src/JobRpcs.ts
+import * as Schema from "effect/Schema";
+import { Rpc, RpcGroup } from "effect/unstable/rpc";
+import { Job, JobId, JobNotFound, PutJobFailed } from "./Job.ts";
+
+const getJob = Rpc.make("getJob", {
+  success: Job,
+  error: JobNotFound,
+  payload: {
+    jobId: JobId,
+  },
+});
+
+const createJob = Rpc.make("createJob", {
+  success: JobId,
+  error: PutJobFailed,
+  payload: {
+    content: Schema.String,
+  },
+});
+
+export class JobRpcs extends RpcGroup.make(getJob, createJob) {}
+```
+
+`JobRpcs` is just a value-level description. Nothing executes yet.
+
+## 3. Build the Function
+
+Create `src/JobFunction.ts` with an empty Init phase and a public
+Function URL:
+
+```typescript
+// src/JobFunction.ts
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+
+export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
+  "JobFunction",
+  { main: import.meta.url, url: true },
+  Effect.gen(function* () {
+    return {};
+  }),
+) {}
+```
+
+The generator is the **Init phase**. It runs at *deploy time* (when
+Alchemy plans the stack and collects bindings into IAM policies and
+environment variables) and again *inside the deployed Lambda* at
+cold start. Only do pure construction here — bindings, layers, never
+per-request work.
+
+### 3a. Declare the table and bind operations
+
+Jobs need somewhere durable to live. Yield a DynamoDB `Table` inside
+Init to declare the resource, then bind the two operations the
+handlers will need:
+
+```diff lang="typescript"
+  Effect.gen(function* () {
++   const table = yield* AWS.DynamoDB.Table("JobsTable", {
++     partitionKey: "id",
++     attributes: { id: "S" },
++   });
++
++   const getItem = yield* AWS.DynamoDB.GetItem(table);
++   const putItem = yield* AWS.DynamoDB.PutItem(table);
+
+    return {};
+  }),
+```
+
+Each binding does double duty: at deploy time it attaches a
+least-privilege IAM statement to the function's execution role; at
+runtime it returns a typed callable that injects the table name
+automatically.
+
+### 3b. Construct the handlers inside Init
+
+`JobRpcs.toLayer` takes one handler per procedure and produces a
+`Layer`. Like `HttpApiBuilder.group`, this is pure construction — it
+builds a value, it doesn't run the server. The handlers close over
+the `getItem` / `putItem` bindings from step 3a:
+
+```diff lang="typescript"
+    const getItem = yield* AWS.DynamoDB.GetItem(table);
+    const putItem = yield* AWS.DynamoDB.PutItem(table);
+
++   const handlersLayer = JobRpcs.toLayer({
++     getJob: ({ jobId }) =>
++       getItem({ Key: { id: { S: jobId } } }).pipe(
++         Effect.orDie,
++         Effect.flatMap(({ Item }) =>
++           Item
++             ? Effect.succeed(
++                 new Job({
++                   id: Item.id?.S ?? jobId,
++                   content: Item.content?.S ?? "",
++                 }),
++               )
++             : Effect.fail(new JobNotFound({ jobId })),
++         ),
++       ),
++     createJob: ({ content }) =>
++       Effect.gen(function* () {
++         const jobId = crypto.randomUUID();
++         yield* putItem({
++           Item: {
++             id: { S: jobId },
++             content: { S: content },
++           },
++         });
++         return jobId;
++       }).pipe(
++         Effect.mapError(
++           (error) => new PutJobFailed({ message: error.message }),
++         ),
++       ),
++   });
+
+    return {};
+```
+
+Each handler receives the typed payload and returns an `Effect` that
+either succeeds with the declared success schema or fails with the
+declared error schema. `getJob` uses `Effect.orDie` to turn
+unexpected DynamoDB failures into 500s — `JobNotFound` is the only
+client-visible error. `createJob` maps DynamoDB failures into the
+declared `PutJobFailed` error so the client can match on it.
+
+### 3c. Return `{ fetch }`
+
+`RpcServer.toHttpEffect` converts the `RpcGroup` into the
+`HttpEffect` that `fetch` expects. We provide two layers to it: the
+`handlersLayer` we just built and `RpcSerialization.layerJson`,
+which tells the server to encode and decode messages as JSON (swap
+for `layerNdjson` when you add streaming procedures). Unlike the
+HTTP API approach, RPC doesn't need `HttpPlatform.layer` or
+`Etag.layer` — the RPC server handles message framing internally.
+
+```diff lang="typescript"
+    return {
+-   };
++     fetch: yield* RpcServer.toHttpEffect(JobRpcs).pipe(
++       Effect.provide(
++         Layer.mergeAll(handlersLayer, RpcSerialization.layerJson),
++       ),
++     ),
++   };
+  }).pipe(
++   Effect.provide(
++     Layer.mergeAll(
++       AWS.DynamoDB.GetItemHttp,
++       AWS.DynamoDB.PutItemHttp,
++     ),
++   ),
+  ),
+```
+
+The outer `Effect.provide` supplies the binding implementations —
+`GetItemHttp` / `PutItemHttp` implement the contracts over
+DynamoDB's HTTP API, signed with the Lambda's execution role.
+
+### Putting it together
+
+```typescript
+// src/JobFunction.ts
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import { Job, JobNotFound, PutJobFailed } from "./Job.ts";
+import { JobRpcs } from "./JobRpcs.ts";
+
+export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
+  "JobFunction",
+  { main: import.meta.url, url: true },
+  Effect.gen(function* () {
+    const table = yield* AWS.DynamoDB.Table("JobsTable", {
+      partitionKey: "id",
+      attributes: { id: "S" },
+    });
+
+    const getItem = yield* AWS.DynamoDB.GetItem(table);
+    const putItem = yield* AWS.DynamoDB.PutItem(table);
+
+    const handlersLayer = JobRpcs.toLayer({
+      getJob: ({ jobId }) =>
+        getItem({ Key: { id: { S: jobId } } }).pipe(
+          Effect.orDie,
+          Effect.flatMap(({ Item }) =>
+            Item
+              ? Effect.succeed(
+                  new Job({
+                    id: Item.id?.S ?? jobId,
+                    content: Item.content?.S ?? "",
+                  }),
+                )
+              : Effect.fail(new JobNotFound({ jobId })),
+          ),
+        ),
+      createJob: ({ content }) =>
+        Effect.gen(function* () {
+          const jobId = crypto.randomUUID();
+          yield* putItem({
+            Item: {
+              id: { S: jobId },
+              content: { S: content },
+            },
+          });
+          return jobId;
+        }).pipe(
+          Effect.mapError(
+            (error) => new PutJobFailed({ message: error.message }),
+          ),
+        ),
+    });
+
+    return {
+      fetch: yield* RpcServer.toHttpEffect(JobRpcs).pipe(
+        Effect.provide(
+          Layer.mergeAll(handlersLayer, RpcSerialization.layerJson),
+        ),
+      ),
+    };
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(AWS.DynamoDB.GetItemHttp, AWS.DynamoDB.PutItemHttp),
+    ),
+  ),
+) {}
+```
+
+## 4. Add to the Stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+import JobFunction from "./src/JobFunction.ts";
+
+export default Alchemy.Stack(
+  "JobRpc",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const func = yield* JobFunction;
+    return { url: func.functionUrl };
+  }),
+);
+```
+
+Yielding `JobFunction` deploys the function *and* everything it
+declared inside Init — the DynamoDB table, the generated IAM role
+with the two table-scoped statements, and the Function URL.
+
+## 5. Deploy
+
+```sh
+bun alchemy deploy
+```
+
+## 6. Call it from a typed client
+
+Because `JobRpcs` is just a value, the same group drives a fully
+typed client — no codegen. `client.createJob` accepts
+`{ content: string }` and returns `Effect<JobId, PutJobFailed>`.
+
+```typescript
+// scripts/client.ts
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import { JobRpcs } from "../src/JobRpcs.ts";
+
+const program = Effect.gen(function* () {
+  const client = yield* RpcClient.make(JobRpcs);
+
+  const jobId = yield* client.createJob({ content: "Ship the docs" });
+  console.log("Created:", jobId);
+
+  const job = yield* client.getJob({ jobId });
+  console.log("Fetched:", job.content);
+});
+
+Effect.runPromise(
+  program.pipe(
+    Effect.scoped,
+    Effect.provide(
+      RpcClient.layerProtocolHttp({ url: process.env.JOB_RPC_URL! }).pipe(
+        Layer.provide(FetchHttpClient.layer),
+        Layer.provide(RpcSerialization.layerJson),
+      ),
+    ),
+  ),
+);
+```
+
+Get the URL from the deploy output and run it:
+
+```sh
+JOB_RPC_URL=https://<id>.lambda-url.us-west-2.on.aws bun scripts/client.ts
+```
+
+The errors are typed values: `client.getJob` returns
+`Effect<Job, JobNotFound>`, and you can
+`Effect.catchTag("JobNotFound", ...)` to handle the missing case
+explicitly.
+
+## Choosing an API style
+
+- **External Effect/TypeScript consumers** — this page.
+- **External plain-HTTP consumers** (curl, non-TypeScript clients) —
+  [Effect HTTP API on Lambda](/aws/apis/effect-http-api).
+- **Internal service-to-service calls** —
+  [Schemaless RPC](/apis/schemaless).
+- **The full decision** — [RPC overview](/apis).
+
+## Go further
+
+The full
+[`examples/aws-lambda-rpc`](https://github.com/alchemy-run/alchemy/tree/main/examples/aws-lambda-rpc)
+example grows this app in a few directions: it hides DynamoDB behind
+a cloud-agnostic `JobStorage` service (with a drop-in S3
+implementation), publishes job-created notifications to SNS, fans
+table changes out to SQS via DynamoDB Streams, and adds a CloudWatch
+dashboard and alarm. The
+[Layers](/infrastructure-as-effects/layers) page
+explains the service-Layer pattern it uses.
+
+## Where next
+
+- [Lambda](/aws/compute/lambda) — how the Function class, Function URLs, and
+  the test harness work.
+- [Effect HTTP API on Lambda](/aws/apis/effect-http-api) — the
+  REST-style sibling of this guide, same wiring.
+- [Effect RPC on Workers](/cloudflare/apis/effect-rpc) — the same
+  `RpcGroup` deployed to Cloudflare, plus streaming and Durable
+  Object routing.
+- [DynamoDB](/aws/data/dynamodb) — the table resource and the rest of its
+  bindings.

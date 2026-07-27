@@ -1,37 +1,11 @@
 /**
- * Serialization support for the unstable RPC protocol.
+ * Serializes RPC protocol messages for transports.
  *
- * `RpcSerialization` is the boundary between encoded RPC protocol messages and
- * the bytes or strings carried by a transport. RPC clients and servers use the
- * service to turn `RpcMessage` envelopes into JSON, newline-delimited JSON,
- * JSON-RPC 2.0, or MessagePack payloads, and to parse those payloads back into
- * protocol messages.
- *
- * **Mental model**
- *
- * RPC schemas are responsible for encoding payloads, successes, failures, and
- * stream chunks into transport-safe values. This module then chooses how those
- * values are represented on the wire and whether message boundaries are part of
- * that representation. The parser returned by `makeUnsafe` may be stateful, so
- * transports should create a parser for the lifetime of the stream, connection,
- * or request body they are decoding.
- *
- * **Common tasks**
- *
- * Use `layerJson` or `layerJsonRpc` when the transport already frames each
- * payload, such as ordinary HTTP request and response bodies. Use
- * `layerNdjson`, `layerNdJsonRpc`, or `layerMsgPack` for sockets, workers, and
- * other streaming transports that can receive partial chunks or several
- * messages in one chunk. Provide a custom `RpcSerialization` service when a
- * transport requires a different content type, frame format, or binary codec.
- *
- * **Gotchas**
- *
- * Both ends of the connection must use compatible serialization and framing.
- * `json` and `jsonRpc` expect a complete payload for each decode call, while
- * `ndjson`, `ndJsonRpc`, and `msgPack` keep parser state for incomplete input.
- * JSON is easy to inspect but needs schema encodings for arbitrary binary
- * values; MessagePack is more compact and carries binary data more naturally.
+ * `RpcSerialization` is the boundary between `RpcMessage` envelopes and the
+ * bytes or strings carried by a transport. This module provides built-in
+ * serializers for JSON, newline-delimited JSON, JSON-RPC 2.0, and MessagePack,
+ * including framed formats that can decode multiple messages from streaming
+ * chunks.
  *
  * @since 4.0.0
  */
@@ -154,9 +128,9 @@ export const jsonRpc = (options?: {
     includesFraming: false,
     makeUnsafe: () => {
       const decoder = new TextDecoder()
-      const batches = new Map<string, {
+      const batches = new Map<string | number, {
         readonly size: number
-        readonly responses: Map<string, RpcMessage.FromServerEncoded>
+        readonly responses: Map<string | number, RpcMessage.FromServerEncoded>
       }>()
       return {
         decode: (bytes) => {
@@ -213,9 +187,9 @@ export const ndJsonRpc = (options?: {
 
 function decodeJsonRpcRaw(
   decoded: JsonRpcMessage | Array<JsonRpcMessage>,
-  batches: Map<string, {
+  batches: Map<string | number, {
     readonly size: number
-    readonly responses: Map<string, RpcMessage.FromServerEncoded>
+    readonly responses: Map<string | number, RpcMessage.FromServerEncoded>
   }>
 ) {
   if (Array.isArray(decoded)) {
@@ -247,13 +221,13 @@ function decodeJsonRpcMessage(decoded: JsonRpcMessage): RpcMessage.FromClientEnc
       return requestId ?
         {
           _tag: tag,
-          requestId: String(requestId)
+          requestId
         } as any :
         { _tag: tag } as any
     }
     return {
       _tag: "Request",
-      id: Predicate.isNotNullish(decoded.id) ? String(decoded.id) : "",
+      id: decoded.id ?? "",
       tag: decoded.method,
       payload: decoded.params ?? null,
       headers: decoded.headers ?? [],
@@ -273,13 +247,13 @@ function decodeJsonRpcMessage(decoded: JsonRpcMessage): RpcMessage.FromClientEnc
   } else if (decoded.chunk === true) {
     return {
       _tag: "Chunk",
-      requestId: String(decoded.id),
+      requestId: decoded.id ?? "",
       values: decoded.result as any
     }
   }
   return {
     _tag: "Exit",
-    requestId: String(decoded.id),
+    requestId: decoded.id ?? "",
     exit: decoded.error != null ?
       {
         _tag: "Failure",
@@ -299,9 +273,9 @@ function decodeJsonRpcMessage(decoded: JsonRpcMessage): RpcMessage.FromClientEnc
 
 function encodeJsonRpcRaw(
   response: RpcMessage.FromServerEncoded | RpcMessage.FromClientEncoded,
-  batches: Map<string, {
+  batches: Map<string | number, {
     readonly size: number
-    readonly responses: Map<string, RpcMessage.FromServerEncoded>
+    readonly responses: Map<string | number, RpcMessage.FromServerEncoded>
   }>
 ) {
   if (!("requestId" in response)) {
@@ -324,9 +298,9 @@ function encodeJsonRpcResponse(
     | RpcMessage.FromServerEncoded
     | RpcMessage.FromClientEncoded
     | Array<RpcMessage.FromServerEncoded | RpcMessage.FromClientEncoded>,
-  batches: Map<string, {
+  batches: Map<string | number, {
     readonly size: number
-    readonly responses: Map<string, RpcMessage.FromServerEncoded>
+    readonly responses: Map<string | number, RpcMessage.FromServerEncoded>
   }>
 ) {
   if (Array.isArray(response) === false) {
@@ -367,7 +341,7 @@ function encodeJsonRpcMessage(response: RpcMessage.FromServerEncoded | RpcMessag
         jsonrpc: "2.0",
         method: response.tag,
         params: response.payload,
-        id: response.id !== "" ? Number(response.id) : "",
+        id: response.id,
         headers: response.headers,
         traceId: response.traceId,
         spanId: response.spanId,
@@ -387,21 +361,21 @@ function encodeJsonRpcMessage(response: RpcMessage.FromServerEncoded | RpcMessag
       return {
         jsonrpc: "2.0",
         chunk: true,
-        id: Number(response.requestId),
+        id: response.requestId,
         result: response.values
       }
     case "Exit": {
       if (response.exit._tag === "Success") {
         return {
           jsonrpc: "2.0",
-          id: response.requestId !== "" ? Number(response.requestId) : undefined,
+          id: response.requestId ?? undefined,
           result: response.exit.value
         } as any
       }
       const error = response.exit.cause.find((failure) => failure._tag === "Fail")
       return {
         jsonrpc: "2.0",
-        id: response.requestId !== "" ? Number(response.requestId) : undefined,
+        id: response.requestId ?? undefined,
         error: response.exit._tag === "Failure" ?
           {
             _tag: "Cause",
@@ -514,7 +488,7 @@ export const msgPack: RpcSerialization["Service"] = makeMsgPack({ useRecords: tr
  *
  * **When to use**
  *
- * Use when the transport protocol already provides message framing.
+ * Use when you have a transport protocol that already provides message framing.
  *
  * @see {@link layerNdjson} for transports that need newline-delimited framing
  *
@@ -528,7 +502,7 @@ export const layerJson: Layer.Layer<RpcSerialization> = Layer.succeed(RpcSeriali
  *
  * **When to use**
  *
- * Use when the transport protocol does not provide message framing.
+ * Use when you have a transport protocol that does not provide message framing.
  *
  * @see {@link layerJson} for transports that already provide message framing
  *

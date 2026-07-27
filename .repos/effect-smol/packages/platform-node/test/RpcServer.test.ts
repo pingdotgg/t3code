@@ -1,9 +1,9 @@
 import { NodeHttpServer, NodeSocket, NodeSocketServer } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Cause, Deferred, Effect, Layer } from "effect"
+import { Cause, Deferred, Effect, Fiber, Layer, Ref, Schedule, Schema, Stream } from "effect"
 import { Entity, EntityProxy, EntityProxyServer, Sharding } from "effect/unstable/cluster"
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/unstable/http"
-import { Rpc, RpcClient, RpcSerialization, RpcServer, RpcTest } from "effect/unstable/rpc"
+import { Rpc, RpcClient, RpcGroup, RpcSerialization, RpcServer, RpcTest } from "effect/unstable/rpc"
 import { SocketServer } from "effect/unstable/socket"
 import { e2eSuite, UsersClient } from "./fixtures/rpc-e2e.ts"
 import { RpcLive, User } from "./fixtures/rpc-schemas.ts"
@@ -209,5 +209,84 @@ describe("RpcServer", () => {
         })
         yield* Deferred.await(called)
       }))
+  })
+
+  describe("unknown-tag isolation", () => {
+    const Ticker = Rpc.make("Ticker", {
+      success: Schema.Number,
+      stream: true
+    })
+    const Ghost = Rpc.make("Ghost", {
+      payload: { value: Schema.String },
+      success: Schema.String
+    })
+
+    const serverGroup = RpcGroup.make(Ticker)
+    const clientGroup = RpcGroup.make(Ticker, Ghost)
+
+    const TickerHandlers = serverGroup.toLayer({
+      Ticker: () => Stream.fromSchedule(Schedule.spaced("60 millis"))
+    })
+
+    const IsolationServer = RpcServer.layer(serverGroup).pipe(
+      Layer.provide(TickerHandlers),
+      Layer.provideMerge(RpcServer.layerProtocolSocketServer),
+      Layer.provideMerge(NodeSocketServer.layer({ port: 0 })),
+      Layer.provide(RpcSerialization.layerNdjson)
+    )
+    const IsolationClient = RpcClient.layerProtocolSocket().pipe(
+      Layer.provide(
+        Effect.gen(function*() {
+          const server = yield* SocketServer.SocketServer
+          const address = server.address as SocketServer.TcpAddress
+          return NodeSocket.layerNet({ port: address.port })
+        }).pipe(Layer.unwrap)
+      ),
+      Layer.provide(RpcSerialization.layerNdjson)
+    )
+
+    it.live(
+      "an unknown request tag fails only its own request, not other in-flight streams on the same connection",
+      () =>
+        Effect.gen(function*() {
+          const client = yield* RpcClient.make(clientGroup)
+
+          const received = yield* Ref.make<Array<number>>([])
+
+          const tickerFiber = yield* client.Ticker().pipe(
+            Stream.runForEach((value) => Ref.update(received, (xs) => [...xs, value])),
+            Effect.forkChild
+          )
+
+          yield* Effect.retry(
+            Effect.flatMap(
+              Ref.get(received),
+              (xs) => xs.length >= 2 ? Effect.void : Effect.fail("not enough ticks yet")
+            ),
+            { schedule: Schedule.spaced("50 millis"), times: 200 }
+          )
+
+          const ticksBeforeGhost = (yield* Ref.get(received)).length
+          assert.isAtLeast(ticksBeforeGhost, 2)
+
+          const ghostExit = yield* client.Ghost({ value: "boo" }).pipe(Effect.exit)
+          assert.isTrue(ghostExit._tag === "Failure", "Ghost call should fail with the routing miss")
+
+          yield* Effect.sleep("300 millis")
+
+          const ticksAfterGhost = (yield* Ref.get(received)).length
+          const tickerStatus = tickerFiber.pollUnsafe()
+
+          yield* Fiber.interrupt(tickerFiber)
+
+          assert.isUndefined(tickerStatus, "Ticker stream must still be running after the unknown-tag failure")
+          assert.isAbove(
+            ticksAfterGhost,
+            ticksBeforeGhost,
+            "Ticker stream must keep emitting after the unknown-tag failure"
+          )
+        }).pipe(Effect.provide(IsolationClient.pipe(Layer.provideMerge(IsolationServer)))),
+      { timeout: 30_000 }
+    )
   })
 })

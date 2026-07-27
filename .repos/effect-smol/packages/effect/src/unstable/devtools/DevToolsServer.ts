@@ -7,19 +7,6 @@
  * metrics itself; it gives handlers a typed surface for the telemetry described
  * by `DevToolsSchema`.
  *
- * **Mental model**
- *
- * Each accepted socket becomes one `Client`. Incoming `Ping` requests are
- * answered internally with `Pong`, while all other decoded requests are offered
- * to the client's queue. Handler code reads that queue and sends non-pong
- * responses such as `MetricsRequest` through `Client.send`.
- *
- * **Gotchas**
- *
- * The client queue is scoped to the socket-processing fiber and is shut down
- * when that fiber terminates. Treat it as per-connection state, not as a
- * process-wide telemetry bus.
- *
  * @since 4.0.0
  */
 import * as Effect from "../../Effect.ts"

@@ -1,44 +1,12 @@
 /**
- * The `TxReentrantLock` module provides a transactional read/write lock whose
- * ownership is tracked per fiber. Multiple fibers may hold read locks at the
- * same time, while a write lock gives one fiber exclusive access.
+ * Coordinates shared access inside transactions with read and write locks.
  *
- * **Mental model**
- *
- * The lock stores reader counts and an optional writer count in transactional
- * state. A fiber can reacquire locks it already owns, so nested read or write
- * sections are safe as long as each acquisition is matched by a release. A
- * write acquisition waits when another fiber owns a read or write lock, and a
- * read acquisition waits when another fiber owns the write lock.
- *
- * **Common tasks**
- *
- * - Use `withReadLock` to run an effect that may share access with other
- *   readers.
- * - Use `withWriteLock` or `withLock` to run an effect with exclusive access.
- * - Use `readLock` or `writeLock` when lock ownership should be tied to an
- *   existing scope.
- *
- * **Example** (Protecting a read/write workflow)
- *
- * ```ts
- * import { Effect, Ref, TxReentrantLock } from "effect"
- *
- * const program = Effect.gen(function*() {
- *   const lock = yield* TxReentrantLock.make()
- *   const state = yield* Ref.make(0)
- *
- *   yield* TxReentrantLock.withWriteLock(lock, Ref.update(state, (n) => n + 1))
- *   return yield* TxReentrantLock.withReadLock(lock, Ref.get(state))
- * })
- * ```
- *
- * **Gotchas**
- *
- * - Manual acquisitions are counted; release the same number of times or use
- *   the scoped and `with*` helpers.
- * - Releasing a lock from a fiber that does not own it leaves the lock
- *   unchanged and returns `0`.
+ * A `TxReentrantLock` lets many fibers hold read locks at the same time, or one
+ * fiber hold a write lock for exclusive access. Lock ownership is tracked by
+ * fiber, so a fiber that already holds the lock can acquire it again and later
+ * release each acquisition. Attempts that cannot proceed retry transactionally
+ * until the lock becomes available. This module includes manual, scoped, and
+ * wrapper-style operations for read and write locking.
  *
  * @since 4.0.0
  */
@@ -506,7 +474,8 @@ export const withWriteLock: {
  *
  * **When to use**
  *
- * Use as the short alias for {@link withWriteLock}.
+ * Use when you need to run an effect with exclusive write access through a
+ * `TxReentrantLock` and prefer the concise lock helper.
  *
  * **Example** (Running an effect with exclusive access)
  *

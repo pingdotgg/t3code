@@ -17,8 +17,8 @@ features people actually use.
 
 This page documents exactly what is collected, what is not, where
 it goes, and how to opt out. Source of truth is the code:
-[`Telemetry/Attributes.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/Telemetry/Attributes.ts)
-and [`Cloudflare/StateStore/Api.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/Cloudflare/StateStore/Api.ts).
+[`Telemetry/Attributes.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Telemetry/Attributes.ts)
+and [`Cloudflare/StateStore/Api.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Cloudflare/StateStore/Api.ts).
 
 ## What we collect
 
@@ -46,7 +46,7 @@ Per-operation span attributes:
 
 ### From the Cloudflare State Store
 
-When you deploy the [Cloudflare State Store](/guides/custom-state-store) it runs as a Worker on **your** Cloudflare account. The worker emits OTLP traces/metrics/logs to the same `otel.alchemy.run` relay.
+When you deploy the [Cloudflare State Store](/state-store/custom-state-store) it runs as a Worker on **your** Cloudflare account. The worker emits OTLP traces/metrics/logs to the same `otel.alchemy.run` relay.
 
 Resource attributes (set on every signal from the worker):
 
@@ -87,7 +87,7 @@ hash to count distinct deployments without identifying anyone.
 standard OTLP/HTTP at `/v1/traces`, `/v1/logs`, and `/v1/metrics`,
 attaches an Axiom ingest token server-side, and forwards to our
 Axiom workspace. Source for the relay lives at
-[`stacks/otel/Ingester.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/stacks/otel/Ingester.ts).
+[`stacks/otel/Ingester.ts`](https://github.com/alchemy-run/alchemy/blob/main/stacks/otel/Ingester.ts).
 
 We do not share or sell the data. Aggregated stats may appear in
 public talks, posts, or dashboards.
@@ -146,11 +146,11 @@ NO_TRACK=1 alchemy deploy
 `noTrack` only suppresses the account-hash attribute on state-store
 spans. To stop the worker from emitting signals at all, you'd need
 to remove the OTLP layer in your own fork of `Api.ts`, or run a
-custom HTTP state store via [/guides/custom-state-store](/guides/custom-state-store).
+custom HTTP state store via [/state-store/custom-state-store](/state-store/custom-state-store).
 
 ## Questions
 
 Email [sam@alchemy.run](mailto:sam@alchemy.run) or open an issue at
-[alchemy-run/alchemy-effect](https://github.com/alchemy-run/alchemy-effect/issues).
+[alchemy-run/alchemy](https://github.com/alchemy-run/alchemy/issues).
 
 </div>

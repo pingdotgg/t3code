@@ -1,0 +1,23 @@
+---
+/**
+ * Sidebar override: identical to Starlight's default Sidebar, but rendering
+ * entries through our `SidebarList` (which adds group-heading icons), with
+ * the mobile product switcher on top (the tab bar is desktop-only).
+ */
+import MobileMenuFooter from "@astrojs/starlight/components/MobileMenuFooter.astro";
+import SidebarPersister from "@astrojs/starlight/components/SidebarPersister.astro";
+import MobileTabSwitcher from "./MobileTabSwitcher.astro";
+import SidebarList from "./SidebarList.astro";
+
+const { sidebar } = Astro.locals.starlightRoute;
+---
+
+<MobileTabSwitcher />
+
+<SidebarPersister>
+  <SidebarList sublist={sidebar} />
+</SidebarPersister>
+
+<div class="md:sl-hidden">
+  <MobileMenuFooter />
+</div>

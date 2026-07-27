@@ -1,26 +1,11 @@
 /**
- * Describes typed event groups for the unstable event-log system.
+ * Defines groups of typed events for the unstable event-log system.
  *
- * An `EventGroup` is an immutable catalog of event definitions that belong to one
- * domain, such as an aggregate, workflow, or synced store. Start with `empty`,
- * add tags with their payload, success, and error schemas, and then pass the
- * resulting group to `EventLog.schema` for clients and `EventLog.group` for
- * server-side handlers. The group itself does not execute writes; it preserves
- * the event tags and schema services that the event-log runtime uses later.
- *
- * **Mental model**
- *
- * Each tag in a group is the durable name of an event. Its `primaryKey` function
- * derives the entity or aggregate partition from the decoded payload, while its
- * schemas describe the bytes written to the journal and the typed result returned
- * by the handler.
- *
- * **Gotchas**
- *
- * Keep tags unique within a group and stable once entries have been persisted.
- * Omitted schemas default to `Schema.Void` for payload and success and
- * `Schema.Never` for errors. Use `addError` only for errors shared by every
- * event in the group.
+ * An `EventGroup` collects event definitions that belong together. Start with
+ * `empty`, add events with their payload, success, and error schemas, then use
+ * the group to build clients with `EventLog.schema` and server handlers with
+ * `EventLog.group`. The group only describes events; it does not write or run
+ * them.
  *
  * @since 4.0.0
  */
@@ -199,7 +184,8 @@ const makeProto = <
  *
  * **When to use**
  *
- * Use when call `.add(...)` to add event definitions and build a typed `EventGroup`.
+ * Use when you need the starting `EventGroup` value before adding event
+ * definitions with `.add(...)`.
  *
  * @category constructors
  * @since 4.0.0

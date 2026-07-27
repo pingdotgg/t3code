@@ -18,6 +18,25 @@ describe("VariantSchema", () => {
     assert.deepStrictEqual(Object.keys(Test.extract(struct, "b").fields), ["common", "onlyB", "exceptC"])
     assert.deepStrictEqual(Object.keys(Test.extract(struct, "c").fields), ["common"])
   })
+
+  it("Class preserves class and variant schema behavior", () => {
+    const Test = VariantSchema.make({
+      variants: ["a", "b"],
+      defaultVariant: "a"
+    })
+    class User extends Test.Class<User>("User")({
+      id: Test.FieldOnly(["a"])(Schema.Number),
+      name: Schema.String
+    }) {}
+
+    const user = User.make({ id: 1, name: "Alice" })
+
+    assert.isTrue(user instanceof User)
+    assert.deepStrictEqual(user, new User({ id: 1, name: "Alice" }))
+    assert.deepStrictEqual(Schema.decodeSync(User)({ id: 1, name: "Alice" }), user)
+    assert.deepStrictEqual(Schema.decodeSync(User.b)({ name: "Alice" }), { name: "Alice" })
+    assert.deepStrictEqual(Object.keys(User.fields), ["id", "name"])
+  })
 })
 
 describe("Model", () => {

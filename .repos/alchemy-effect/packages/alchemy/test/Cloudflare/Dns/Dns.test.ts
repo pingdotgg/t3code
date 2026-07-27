@@ -2,8 +2,8 @@ import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
 import * as Core from "@/Test/Core.ts";
-import * as Test from "@/Test/Vitest";
-import { expect } from "@effect/vitest";
+import * as Test from "@/Test/Alchemy";
+import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
@@ -29,7 +29,7 @@ afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 // credentials + account id the lookup needs inside a plain test body.
 const resolveZoneId = Core.withProviders(
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
     const zone = yield* findZoneByName({ accountId, name: zoneName });
     return zone?.id;
   }),
@@ -48,32 +48,35 @@ test(
       "string",
     );
 
-    // Unique per run so repeated runs never collide on record name.
-    const name = `alchemy-dns-test-${Math.random()
-      .toString(36)
-      .slice(2, 10)}.${zoneName}`;
+    // Deterministic record name — the same on every run (never
+    // Date.now()/random). The fixture's /dns route deletes any leftover
+    // record with this name before creating, so a crashed run self-heals
+    // instead of leaking records into the zone.
+    const name = `alchemy-dns-test-crud.${zoneName}`;
 
     const client = yield* HttpClient.HttpClient;
     const res = yield* client
       .get(`${effectUrl}/dns?name=${encodeURIComponent(name)}`)
       .pipe(
-        // Retry only while the worker is still cold-starting (not yet live).
-        // Once it responds 200 or 500 the handler ran, so stop and inspect.
+        // A cold-starting or briefly-unhealthy edge returns 5xx — often a
+        // Cloudflare HTML error page, NOT the worker's structured JSON, so we
+        // must never try to parse it. Treat any non-200 as transient and ride
+        // it out: this covers both cold start and eventual-consistency blips
+        // in the scoped API-token propagation the worker depends on.
         Effect.flatMap((res) =>
-          res.status === 200 || res.status === 500
+          res.status === 200
             ? Effect.succeed(res)
             : Effect.fail(new Error(`Worker not ready: ${res.status}`)),
         ),
+        // Cap exponential backoff at 3s so retries stay bounded.
         Effect.retry({
-          schedule: Schedule.exponential("500 millis"),
-          times: 15,
+          schedule: Schedule.min([
+            Schedule.exponential("500 millis"),
+            Schedule.spaced("3 seconds"),
+          ]),
+          times: 20,
         }),
       );
-
-    if (res.status !== 200) {
-      const err = yield* res.json;
-      throw new Error(`DNS worker failed: ${JSON.stringify(err)}`);
-    }
 
     const body = (yield* res.json) as {
       id: string;

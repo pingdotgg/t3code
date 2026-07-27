@@ -1,9 +1,6 @@
 import * as S3 from "@distilled.cloud/aws/s3";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import * as Output from "../../Output.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Bucket } from "./Bucket.ts";
 
 export interface ListObjectsV2Request extends Omit<
@@ -11,8 +8,29 @@ export interface ListObjectsV2Request extends Omit<
   "Bucket"
 > {}
 
-export class ListObjectsV2 extends Binding.Service<
+/**
+ * Runtime binding for `s3:ListObjectsV2`.
+ *
+ * Bind this operation to a bucket to get a callable that lists objects —
+ * the bucket name is injected automatically and `s3:ListBucket` is granted
+ * on the bucket. Provide the implementation with
+ * `Effect.provide(AWS.S3.ListObjectsV2Http)`.
+ * @binding
+ * @section Listing Objects
+ * @example List Objects Under a Prefix
+ * ```typescript
+ * // init — bind the operation to the bucket
+ * const listObjects = yield* AWS.S3.ListObjectsV2(bucket);
+ *
+ * // runtime — list up to 100 keys under `jobs/`
+ * const result = yield* listObjects({ Prefix: "jobs/", MaxKeys: 100 });
+ * const keys = (result.Contents ?? []).map((object) => object.Key);
+ * // result.IsTruncated + result.NextContinuationToken page through the rest
+ * ```
+ */
+export interface ListObjectsV2 extends Binding.Service<
   ListObjectsV2,
+  "AWS.S3.ListObjectsV2",
   (
     bucket: Bucket,
   ) => Effect.Effect<
@@ -20,48 +38,8 @@ export class ListObjectsV2 extends Binding.Service<
       request?: ListObjectsV2Request,
     ) => Effect.Effect<S3.ListObjectsV2Output, S3.ListObjectsV2Error>
   >
->()("AWS.S3.ListObjectsV2") {}
+> {}
 
-export const ListObjectsV2Live = Layer.effect(
-  ListObjectsV2,
-  Effect.gen(function* () {
-    const bind = yield* ListObjectsV2Policy;
-    const listObjectsV2 = yield* S3.listObjectsV2;
-
-    return Effect.fn(function* (bucket: Bucket) {
-      const BucketName = yield* bucket.bucketName;
-      yield* bind(bucket);
-      return Effect.fn(function* (request?: ListObjectsV2Request) {
-        return yield* listObjectsV2({
-          ...request,
-          Bucket: yield* BucketName,
-        });
-      });
-    });
-  }),
-);
-
-export class ListObjectsV2Policy extends Binding.Policy<
-  ListObjectsV2Policy,
-  (bucket: Bucket) => Effect.Effect<void>
->()("AWS.S3.ListObjectsV2") {}
-
-export const ListObjectsV2PolicyLive = ListObjectsV2Policy.layer.succeed(
-  Effect.fn(function* (host, bucket) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.S3.ListObjectsV2(${bucket}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["s3:ListBucket"],
-            Resource: [Output.interpolate`${bucket.bucketArn}`],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `ListObjectsV2Policy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const ListObjectsV2 = Binding.Service<ListObjectsV2>(
+  "AWS.S3.ListObjectsV2",
 );

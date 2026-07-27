@@ -1,58 +1,11 @@
 /**
- * Represents the outcome of an Effect computation as a plain, synchronously
- * inspectable value.
+ * Represents the result of an Effect computation as a plain value.
  *
- * ## Mental model
- *
- * - `Exit<A, E>` is a union of two cases: `Success<A, E>` and `Failure<A, E>`
- * - A `Success` wraps a value of type `A`
- * - A `Failure` wraps a `Cause<E>`, which may contain typed errors, defects, or interruptions
- * - `Exit` is also an `Effect`, so you can yield it directly inside `Effect.gen`
- * - Constructors mirror the failure modes: {@link fail} for typed errors, {@link die} for defects, {@link interrupt} for fiber interruptions
- * - Use `Exit` when you need to inspect an Effect result without running further effects
- *
- * ## Common tasks
- *
- * - Create a success: {@link succeed}
- * - Create a typed failure: {@link fail}
- * - Create a failure from a Cause: {@link failCause}
- * - Create a defect: {@link die}
- * - Create an interruption: {@link interrupt}
- * - Check the outcome: {@link isSuccess}, {@link isFailure}, {@link match}
- * - Extract values optionally: {@link getSuccess}, {@link getCause}, {@link findErrorOption}
- * - Transform the result: {@link map}, {@link mapError}, {@link mapBoth}
- * - Combine multiple exits: {@link asVoidAll}
- * - Inspect failure categories: {@link hasFails}, {@link hasDies}, {@link hasInterrupts}
- *
- * ## Gotchas
- *
- * - A `Failure` wraps a `Cause<E>`, not a bare `E`. Use Cause utilities to drill into it.
- * - {@link mapError} and {@link mapBoth} only transform typed errors (Fail reasons in the Cause). If the Cause contains only defects or interruptions, the original failure passes through unchanged.
- * - Filter-based APIs ({@link filterSuccess}, {@link filterValue}, etc.) return `Result.fail` values for pipeline composition. They are not `Option` values or Effect failures.
- * - {@link findError} and {@link findDefect} return only the first matching reason from the Cause.
- *
- * ## Quickstart
- *
- * **Example** (Creating and inspecting exits)
- *
- * ```ts
- * import { Exit } from "effect"
- *
- * const success = Exit.succeed(42)
- * const failure = Exit.fail("not found")
- *
- * const message = Exit.match(success, {
- *   onSuccess: (value) => `Got: ${value}`,
- *   onFailure: () => "Failed"
- * })
- * console.log(message) // "Got: 42"
- * ```
- *
- * ## See also
- *
- * - {@link Exit} the core union type
- * - {@link succeed} and {@link fail} the most common constructors
- * - {@link match} for pattern matching on an Exit
+ * An `Exit<A, E>` is either a success with an `A` or a failure with a
+ * `Cause<E>`. The failure cause preserves typed errors, defects, and
+ * interruptions after a workflow has finished. Use this module when completed
+ * Effect results need to be inspected, transformed, filtered, or matched
+ * synchronously as data.
  *
  * @since 2.0.0
  */
@@ -76,9 +29,9 @@ const TypeId = core.ExitTypeId
  *
  * **Details**
  *
- * An `Exit<A, E>` is either:
- * - `Success<A, E>` containing a value of type `A`
- * - `Failure<A, E>` containing a `Cause<E>` describing why the computation failed
+ * An `Exit<A, E>` is either `Success<A, E>` containing a value of type `A`, or
+ * `Failure<A, E>` containing a `Cause<E>` describing why the computation
+ * failed.
  *
  * Since `Exit` is also an `Effect`, you can yield it inside `Effect.gen`.
  *
@@ -179,7 +132,7 @@ export interface Success<out A, out E = never> extends Exit.Proto<A, E> {
  *
  * **Details**
  *
- * - The `Cause<E>` may contain typed errors, defects, or interruptions
+ * The `Cause<E>` may contain typed errors, defects, or interruptions.
  *
  * **Example** (Accessing the failure cause)
  *
@@ -210,8 +163,8 @@ export interface Failure<out A, out E> extends Exit.Proto<A, E> {
  *
  * **When to use**
  *
- * Use to validate unknown values at system boundaries
- * - Works as a type guard, narrowing to `Exit<unknown, unknown>`
+ * Use to validate unknown values at system boundaries and narrow them to
+ * `Exit<unknown, unknown>`.
  *
  * **Details**
  *
@@ -241,8 +194,7 @@ export const isExit: (u: unknown) => u is Exit<unknown, unknown> = core.isExit
  *
  * **When to use**
  *
- * Use to wrap a known success value into an Exit
- * - Use when constructing test data or returning explicit results
+ * Use when you need an Exit that contains a known success value.
  *
  * **Details**
  *
@@ -272,7 +224,8 @@ export const succeed: <A>(a: A) => Exit<A> = core.exitSucceed
  * **When to use**
  *
  * Use when you already have a `Cause<E>` and want to wrap it in an Exit
- * - Use for advanced error handling where you need full control over the Cause structure
+ * for advanced error handling where you need full control over the Cause
+ * structure.
  *
  * **Details**
  *
@@ -302,11 +255,11 @@ export const failCause: <E>(cause: Cause.Cause<E>) => Exit<never, E> = core.exit
  *
  * **When to use**
  *
- * Use when you need expected, recoverable failures
+ * Use when you need to represent an expected typed failure as an `Exit`.
  *
  * **Details**
  *
- * - The error is wrapped in a `Cause.Fail` internally
+ * The error is wrapped in a `Cause.Fail` internally.
  *
  * Returns a `Failure<never, E>`.
  *
@@ -333,11 +286,12 @@ export const fail: <E>(e: E) => Exit<never, E> = core.exitFail
  *
  * **When to use**
  *
- * Use when you need unexpected, unrecoverable errors that should not appear in the typed error channel
+ * Use when you need unexpected, unrecoverable errors that should not appear in
+ * the typed error channel.
  *
  * **Details**
  *
- * - The defect is wrapped in a `Cause.Die` internally
+ * The defect is wrapped in a `Cause.Die` internally.
  *
  * Returns a `Failure<never>` with `E = never`, since defects do not appear in
  * the typed error channel.
@@ -364,13 +318,12 @@ export const die: (defect: unknown) => Exit<never> = core.exitDie
  *
  * **When to use**
  *
- * Use to signal that a fiber was interrupted
+ * Use to signal that a fiber was interrupted.
  *
  * **Details**
  *
- * - Optionally pass a fiber ID to identify which fiber was interrupted
- *
- * Returns a `Failure<never>` with an `Interrupt` cause.
+ * Optionally pass a fiber ID to identify which fiber was interrupted. Returns
+ * a `Failure<never>` with an `Interrupt` cause.
  *
  * **Example** (Creating an interruption Exit)
  *
@@ -396,14 +349,14 @@ export {
    *
    * **When to use**
    *
-   * Use when you need a success Exit but do not care about the value
-   * - Avoids allocating a new Exit for a common case
+   * Use when you need a shared successful `Exit` with no meaningful value.
    *
    * **Details**
    *
-   * Equivalent to `Exit.succeed(undefined)` but shared as a single instance.
+   * Equivalent to `Exit.succeed(undefined)` but shared as a single instance,
+   * avoiding allocation for a common case.
    *
-   * **Example** (Using the void Exit)
+   * **Example** (Referencing the void Exit)
    *
    * ```ts
    * import { Exit } from "effect"
@@ -426,10 +379,10 @@ export {
  *
  * **When to use**
  *
- * Use as a type guard to narrow `Exit<A, E>` to `Success<A, E>`
- * - After narrowing, the `value` property becomes accessible
+ * Use as a type guard to narrow `Exit<A, E>` to `Success<A, E>` and access the
+ * `value` property.
  *
- * **Example** (Narrowing to Success)
+ * **Example** (Narrowing to success)
  *
  * ```ts
  * import { Exit } from "effect"
@@ -454,10 +407,10 @@ export const isSuccess: <A, E>(self: Exit<A, E>) => self is Success<A, E> = effe
  *
  * **When to use**
  *
- * Use as a type guard to narrow `Exit<A, E>` to `Failure<A, E>`
- * - After narrowing, the `cause` property becomes accessible
+ * Use as a type guard to narrow `Exit<A, E>` to `Failure<A, E>` and access the
+ * `cause` property.
  *
- * **Example** (Narrowing to Failure)
+ * **Example** (Narrowing to failure)
  *
  * ```ts
  * import { Exit } from "effect"
@@ -482,14 +435,12 @@ export const isFailure: <A, E>(self: Exit<A, E>) => self is Failure<A, E> = effe
  *
  * **When to use**
  *
- * Use to distinguish typed failures from defects or interruptions
+ * Use to distinguish typed failures from defects or interruptions.
  *
  * **Details**
  *
- * - Returns `false` for successful exits
- *
- * Only checks for `Fail` reasons in the Cause. A Cause with only `Die` or
- * `Interrupt` reasons returns `false`.
+ * Returns `false` for successful exits. Only checks for `Fail` reasons in the
+ * Cause. A Cause with only `Die` or `Interrupt` reasons returns `false`.
  *
  * **Example** (Checking for typed errors)
  *
@@ -514,14 +465,12 @@ export const hasFails: <A, E>(self: Exit<A, E>) => self is Failure<A, E> = effec
  *
  * **When to use**
  *
- * Use to check for unexpected errors
+ * Use to check whether an `Exit` failure cause contains unexpected errors.
  *
  * **Details**
  *
- * - Returns `false` for successful exits
- *
- * Only checks for `Die` reasons in the Cause. A Cause with only `Fail` or
- * `Interrupt` reasons returns `false`.
+ * Returns `false` for successful exits. Only checks for `Die` reasons in the
+ * Cause. A Cause with only `Fail` or `Interrupt` reasons returns `false`.
  *
  * **Example** (Checking for defects)
  *
@@ -546,14 +495,12 @@ export const hasDies: <A, E>(self: Exit<A, E>) => self is Failure<A, E> = effect
  *
  * **When to use**
  *
- * Use to check if a fiber was interrupted
+ * Use to check whether an `Exit` contains fiber interruption.
  *
  * **Details**
  *
- * - Returns `false` for successful exits
- *
- * Only checks for `Interrupt` reasons in the Cause. A Cause with only `Fail`
- * or `Die` reasons returns `false`.
+ * Returns `false` for successful exits. Only checks for `Interrupt` reasons in
+ * the Cause. A Cause with only `Fail` or `Die` reasons returns `false`.
  *
  * **Example** (Checking for interruptions)
  *
@@ -730,8 +677,8 @@ export const filterCause: <A, E>(self: Exit<A, E>) => Result.Result<Cause.Cause<
  *
  * **When to use**
  *
- * Use when composing Exit checks with `Filter` or other `Result`-based
- * filtering APIs and you only need the first typed error in the Cause.
+ * Use when you need the first typed error from an `Exit` as a `Result` for
+ * `Filter` or other `Result`-based filtering APIs.
  *
  * **Details**
  *
@@ -770,8 +717,8 @@ export const findError: <A, E>(input: Exit<A, E>) => Result.Result<E, Exit<A, E>
  *
  * **When to use**
  *
- * Use when composing Exit checks with `Filter` or other `Result`-based
- * filtering APIs and you only need the first defect in the Cause.
+ * Use when you need the first defect from an `Exit` as a `Result` for
+ * `Filter` or other `Result`-based filtering APIs.
  *
  * **Details**
  *
@@ -810,14 +757,13 @@ export const findDefect: <A, E>(input: Exit<A, E>) => Result.Result<unknown, Exi
  *
  * **When to use**
  *
- * Use when you need exhaustive handling of both outcomes
+ * Use when you need exhaustive handling of both `Exit` success and failure
+ * outcomes.
  *
  * **Details**
  *
- * - Calls `onSuccess` with the value if the Exit is a Success
- * - Calls `onFailure` with the Cause if the Exit is a Failure
- *
- * Supports both curried and direct call styles (data-last and data-first).
+ * Calls `onSuccess` with the value if the Exit is a Success, and calls
+ * `onFailure` with the Cause if the Exit is a Failure.
  *
  * **Example** (Matching on an Exit)
  *
@@ -861,10 +807,9 @@ export const match: {
  *
  * **Details**
  *
- * - Has no effect on failures, which pass through unchanged
+ * Failures pass through unchanged.
  *
  * Allocates a new Exit if successful.
- * Supports both curried and direct call styles.
  *
  * **Example** (Mapping over a success)
  *
@@ -896,10 +841,9 @@ export const map: {
  *
  * **Details**
  *
- * - Has no effect on successes, which pass through unchanged
+ * Successes pass through unchanged.
  *
  * Allocates a new Exit if the error is transformed.
- * Supports both curried and direct call styles.
  *
  * **Gotchas**
  *
@@ -934,15 +878,13 @@ export const mapError: {
  *
  * **When to use**
  *
- * Use when you need to remap both channels in one step
+ * Use when you need to remap both channels in one step.
  *
  * **Details**
  *
- * - `onSuccess` transforms the value if the Exit is a Success
- * - `onFailure` transforms the typed error if the Exit is a Failure with a Fail reason
- *
+ * `onSuccess` transforms the value if the Exit is a Success. `onFailure`
+ * transforms the typed error if the Exit is a Failure with a Fail reason.
  * Allocates a new Exit.
- * Supports both curried and direct call styles.
  *
  * **Gotchas**
  *
@@ -985,11 +927,12 @@ export const mapBoth: {
  *
  * **When to use**
  *
- * Use when you only care about whether the computation succeeded or failed, not the value
+ * Use when you need to discard a successful `Exit` value while preserving
+ * whether the `Exit` succeeded or failed.
  *
  * **Details**
  *
- * - Failures pass through unchanged
+ * Failures pass through unchanged.
  *
  * Allocates a new Exit if successful.
  *
@@ -1020,8 +963,8 @@ export const asVoid: <A, E>(self: Exit<A, E>) => Exit<void, E> = effect.exitAsVo
  *
  * **Details**
  *
- * - If all exits are successful, returns a void success
- * - If any exit is a failure, returns a single failure with all error causes combined
+ * If all exits are successful, this returns a void success. If any exit is a
+ * failure, this returns a single failure with all error causes combined.
  *
  * Iterates over the entire collection. Collects all failure causes, not just
  * the first.
@@ -1052,11 +995,12 @@ export const asVoidAll: <I extends Iterable<Exit<any, any>>>(
  *
  * **When to use**
  *
- * Use when you want to optionally extract the value without pattern matching
+ * Use when you need the success value from an `Exit` as an `Option` instead of
+ * pattern matching.
  *
  * **Details**
  *
- * - Returns `Option.some(value)` for a Success, `Option.none()` for a Failure
+ * Returns `Option.some(value)` for a Success and `Option.none()` for a Failure.
  *
  * **Example** (Getting the success value)
  *
@@ -1080,11 +1024,12 @@ export const getSuccess: <A, E>(self: Exit<A, E>) => Option<A> = effect.exitGetS
  *
  * **When to use**
  *
- * Use when you want to optionally inspect the failure cause
+ * Use when you need the failure `Cause` from an `Exit` as an `Option` instead
+ * of pattern matching.
  *
  * **Details**
  *
- * - Returns `Option.some(cause)` for a Failure, `Option.none()` for a Success
+ * Returns `Option.some(cause)` for a Failure and `Option.none()` for a Success.
  *
  * **Example** (Getting the failure cause)
  *
@@ -1108,12 +1053,13 @@ export const getCause: <A, E>(self: Exit<A, E>) => Option<Cause.Cause<E>> = effe
  *
  * **When to use**
  *
- * Use when you want to optionally extract a typed error without dealing with the full Cause
+ * Use when you need the first typed error from an `Exit` as an `Option`,
+ * ignoring successes and non-typed failures.
  *
  * **Details**
  *
- * - Returns `Option.some(error)` if the Cause contains a Fail reason, `Option.none()` otherwise
- * - Returns `Option.none()` for successes, defect-only failures, and interrupt-only failures
+ * Returns `Option.some(error)` if the Cause contains a Fail reason. Successes,
+ * defect-only failures, and interrupt-only failures return `Option.none()`.
  *
  * **Gotchas**
  *

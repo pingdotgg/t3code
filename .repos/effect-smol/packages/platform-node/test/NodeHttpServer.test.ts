@@ -4,12 +4,15 @@ import { assert, describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import * as Duration from "effect/Duration"
 import * as Fiber from "effect/Fiber"
+import * as Latch from "effect/Latch"
 import * as Layer from "effect/Layer"
+import * as ManagedRuntime from "effect/ManagedRuntime"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
 import * as Tracer from "effect/Tracer"
 import {
   Cookies,
+  FetchHttpClient,
   HttpBody,
   HttpClient,
   HttpClientRequest,
@@ -25,6 +28,7 @@ import {
 } from "effect/unstable/http"
 import * as HttpApiError from "effect/unstable/httpapi/HttpApiError"
 import * as Buffer from "node:buffer"
+import * as Http from "node:http"
 
 const Todo = Schema.Struct({
   id: Schema.Number,
@@ -504,6 +508,80 @@ describe("HttpServer", () => {
       assert.strictEqual(res.status, 204)
     }).pipe(Effect.provide(NodeHttpServer.layerTest)))
 
+  it.live("disposes after a client aborts a handler awaiting an upstream request", () => {
+    const upstreamStarted = Latch.makeUnsafe()
+    const upstream = Http.createServer(() => {
+      upstreamStarted.openUnsafe()
+    })
+    const server = Http.createServer()
+    const router = HttpRouter.use((router) =>
+      router.add(
+        "GET",
+        "/",
+        Effect.gen(function*() {
+          const request = yield* HttpServerRequest.HttpServerRequest
+          if (request.method !== "HEAD") {
+            return HttpServerResponse.text("ok")
+          }
+          yield* HttpClient.head(`http://localhost:${tcpPort(upstream)}`)
+          return HttpServerResponse.empty()
+        })
+      )
+    )
+    const runtime = ManagedRuntime.make(
+      Layer.effectDiscard(
+        HttpRouter.serve(router).pipe(
+          Layer.provide(NodeHttpServer.layer(() => server, {
+            port: 0,
+            gracefulShutdownTimeout: "100 millis"
+          })),
+          Layer.provide(FetchHttpClient.layer),
+          Layer.launch,
+          Effect.forkScoped,
+          Effect.asVoid
+        )
+      )
+    )
+
+    return Effect.gen(function*() {
+      yield* Effect.callback<void>((resume) => {
+        upstream.listen(0, () => resume(Effect.void))
+      })
+      yield* Effect.promise(() => runtime.context())
+      yield* Effect.callback<void>((resume) => {
+        if (server.listening) {
+          resume(Effect.void)
+        } else {
+          server.once("listening", () => resume(Effect.void))
+        }
+      })
+
+      const downstreamClosed = Latch.makeUnsafe()
+      const downstream = Http.request({ method: "HEAD", port: tcpPort(server), path: "/" })
+      downstream.on("error", () => {})
+      downstream.on("close", () => downstreamClosed.openUnsafe())
+      downstream.end()
+      yield* upstreamStarted.await
+      downstream.destroy()
+      yield* downstreamClosed.await
+
+      const disposed = yield* Effect.promise(() => runtime.dispose()).pipe(
+        Effect.timeoutOption("2 seconds")
+      )
+      assert.strictEqual(disposed._tag, "Some")
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          upstream.closeAllConnections()
+          upstream.close()
+        }).pipe(
+          Effect.andThen(Effect.promise(() => runtime.dispose())),
+          Effect.timeoutOrElse({ duration: "2 seconds", orElse: () => Effect.void })
+        )
+      )
+    )
+  })
+
   describe("HttpServerRespondable", () => {
     it.effect("error/schema", () =>
       Effect.gen(function*() {
@@ -596,3 +674,9 @@ describe("HttpServer", () => {
       expect(root).toEqual("root")
     }).pipe(Effect.provide(NodeHttpServer.layerTest)))
 })
+
+const tcpPort = (server: Http.Server): number => {
+  const address = server.address()
+  assert(address !== null && typeof address !== "string")
+  return address.port
+}

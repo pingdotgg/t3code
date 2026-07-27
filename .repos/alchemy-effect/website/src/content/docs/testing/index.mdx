@@ -1,0 +1,51 @@
+---
+title: Testing
+description: How Alchemy tests work — real clouds, one Stack deploy per suite, isolated stages, deploy → assert → destroy.
+---
+
+Alchemy tests run against real clouds — no mocks, no emulators. A suite deploys a real Stack once, runs assertions against live resources, and tears it back down: deploy → assert → destroy.
+
+## One deploy per suite
+
+Deploy once in `beforeAll`, share the outputs handle across every test, destroy in `afterAll`:
+
+```typescript
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: Cloudflare.providers(),
+  state: Cloudflare.state(),
+});
+
+const stack = beforeAll(deploy(Stack));
+afterAll(destroy(Stack));
+
+test(
+  "serves the deployed URL",
+  Effect.gen(function* () {
+    const { url } = yield* stack;
+    const res = yield* HttpClient.get(url);
+    expect(res.status).toBe(200);
+  }),
+);
+```
+
+For the full walkthrough, see [Testing a Stack](/testing/testing-a-stack).
+
+For every option, hook, and variant, see the [Test harness](/testing/test-harness) reference.
+
+## Stage isolation
+
+Tests default to the `test` stage, so they never touch your dev or prod deployments. A unique stage per PR lets multiple suites run in parallel against the same account without colliding:
+
+```typescript
+Test.make({ providers, stage: "ci-pr-42" });
+```
+
+The per-call form is covered in [Test harness → stage](/testing/test-harness#stage).
+
+## Where next
+
+- [Testing a Stack](/testing/testing-a-stack) — deploy a Stack and drive it over HTTP, end to end.
+- [Testing Providers](/testing/testing-providers) — exercise a provider's create/update/replace/delete with `test.provider`.
+- [Test harness](/testing/test-harness) — every `Test.make` option, hook, and variant.
+- [Observability](/testing/observability) — wire exporters, monitors, and alarms into the same Stack.
+- [Tutorial Part 3](/cloudflare/tutorial/part-3) — your first integration test, walked through step by step.

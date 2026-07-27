@@ -1,3 +1,4 @@
+import type { ConfigError } from "effect/Config";
 import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import { AlchemyContext } from "./AlchemyContext.ts";
@@ -14,7 +15,7 @@ export const deploy = <A>({
   scope,
   force,
 }: {
-  stack: StackEffect<CompiledStack<A>, Stage | AlchemyContext>;
+  stack: StackEffect<CompiledStack<A>, ConfigError, Stage | AlchemyContext>;
   stage: string;
   dev?: boolean;
   /** See {@link evalStack} — when set, scoped resources outlive `deploy`. */

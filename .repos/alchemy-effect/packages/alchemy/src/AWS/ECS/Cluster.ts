@@ -1,13 +1,15 @@
 import * as ecs from "@distilled.cloud/aws/ecs";
-import { Region } from "@distilled.cloud/aws/Region";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
-import type { Providers } from "../Providers.ts";
 import { createInternalTags, diffTags } from "../../Tags.ts";
 import { AWSEnvironment, type AccountID } from "../Environment.ts";
+import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
 
 export type ClusterName = string;
@@ -49,14 +51,23 @@ export interface Cluster extends Resource<
   "AWS.ECS.Cluster",
   ClusterProps,
   {
+    /** The ARN of the cluster. */
     clusterArn: ClusterArn;
+    /** The name of the cluster. */
     clusterName: ClusterName;
+    /** The current status of the cluster, e.g. `ACTIVE`. */
     status: string;
+    /** The cluster settings, e.g. Container Insights. */
     settings: ecs.ClusterSetting[];
+    /** The execute-command configuration of the cluster. */
     configuration?: ecs.ClusterConfiguration;
+    /** The capacity providers associated with the cluster. */
     capacityProviders: string[];
+    /** The default capacity provider strategy for the cluster. */
     defaultCapacityProviderStrategy: ecs.CapacityProviderStrategyItem[];
+    /** The default Service Connect namespace. */
     serviceConnectDefaults?: ecs.ClusterServiceConnectDefaultsRequest;
+    /** The tags attached to the cluster. */
     tags: Record<string, string>;
   },
   never,
@@ -65,7 +76,7 @@ export interface Cluster extends Resource<
 
 /**
  * An Amazon ECS cluster for running tasks and services.
- *
+ * @resource
  * @section Creating Clusters
  * @example Default Cluster
  * ```typescript
@@ -74,13 +85,15 @@ export interface Cluster extends Resource<
  */
 export const Cluster = Resource<Cluster>("AWS.ECS.Cluster");
 
+class ClusterStillActive extends Data.TaggedError("ClusterStillActive")<{
+  readonly cluster: string;
+  readonly status: string | undefined;
+}> {}
+
 export const ClusterProvider = () =>
   Provider.effect(
     Cluster,
     Effect.gen(function* () {
-      const region = yield* Region;
-      const { accountId } = yield* AWSEnvironment;
-
       const toEcsTags = (tags: Record<string, string>): ecs.Tag[] =>
         Object.entries(tags).map(([key, value]) => ({
           key,
@@ -136,7 +149,11 @@ export const ClusterProvider = () =>
             include: ["SETTINGS", "TAGS", "CONFIGURATIONS"],
           });
           const cluster = described.clusters?.[0];
-          if (!cluster?.clusterArn) {
+          // ECS deletion is a transition to INACTIVE. AWS may continue to
+          // return an inactive cluster from DescribeClusters for a while, but
+          // it is no longer a usable resource and must not be resurrected in
+          // state during refresh.
+          if (!cluster?.clusterArn || cluster.status === "INACTIVE") {
             return undefined;
           }
           return {
@@ -154,7 +171,71 @@ export const ClusterProvider = () =>
             tags: output?.tags ?? {},
           };
         }),
+        list: () =>
+          Effect.gen(function* () {
+            // Enumerate every cluster ARN in the account/region, paginating
+            // listClusters exhaustively.
+            const arns = yield* ecs.listClusters.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) => page.clusterArns ?? []),
+              ),
+            );
+            if (arns.length === 0) {
+              return [];
+            }
+            // describeClusters accepts at most 100 clusters per call; batch.
+            const batches: string[][] = [];
+            for (let i = 0; i < arns.length; i += 100) {
+              batches.push(arns.slice(i, i + 100));
+            }
+            const described = yield* Effect.forEach(
+              batches,
+              (clusters) =>
+                ecs
+                  .describeClusters({
+                    clusters,
+                    include: ["SETTINGS", "TAGS", "CONFIGURATIONS"],
+                  })
+                  .pipe(Effect.map((res) => res.clusters ?? [])),
+              { concurrency: 5 },
+            );
+            return described.flat().flatMap((cluster) => {
+              // DeleteCluster does not immediately erase a cluster. Inactive
+              // clusters can remain discoverable according to the ECS API,
+              // so exclude that terminal state from nuke/provider inventory.
+              if (!cluster.clusterArn || cluster.status === "INACTIVE") {
+                return [];
+              }
+              const tags = Object.fromEntries(
+                (cluster.tags ?? [])
+                  .filter(
+                    (t): t is { key: string; value: string } =>
+                      typeof t.key === "string" && typeof t.value === "string",
+                  )
+                  .map((t) => [t.key, t.value]),
+              );
+              return [
+                {
+                  clusterArn: cluster.clusterArn as ClusterArn,
+                  clusterName: cluster.clusterName!,
+                  status: cluster.status ?? "ACTIVE",
+                  settings: cluster.settings ?? [],
+                  configuration: cluster.configuration,
+                  capacityProviders: cluster.capacityProviders ?? [],
+                  defaultCapacityProviderStrategy:
+                    cluster.defaultCapacityProviderStrategy ?? [],
+                  serviceConnectDefaults: cluster.serviceConnectDefaults
+                    ?.namespace
+                    ? { namespace: cluster.serviceConnectDefaults.namespace }
+                    : undefined,
+                  tags,
+                },
+              ];
+            });
+          }),
         reconcile: Effect.fn(function* ({ id, news, session }) {
+          const { accountId, region } = yield* AWSEnvironment.current;
           const clusterName = yield* toClusterName(id, news);
           const clusterArn =
             `arn:aws:ecs:${region}:${accountId}:cluster/${clusterName}` as ClusterArn;
@@ -241,21 +322,172 @@ export const ClusterProvider = () =>
           };
         }),
         delete: Effect.fn(function* ({ output }) {
-          yield* ecs
-            .deleteCluster({
-              cluster: output.clusterArn,
-            })
-            .pipe(
-              Effect.catchTag("ClusterNotFoundException", () => Effect.void),
-              Effect.catchTag(
-                "ClusterContainsServicesException",
-                () => Effect.void,
+          const cluster = output.clusterArn;
+
+          // Observe mutable associations instead of trusting persisted output:
+          // capacity providers can be attached out of band or output can be
+          // stale after a prior interrupted reconcile.
+          const observedCluster = (yield* ecs.describeClusters({
+            clusters: [cluster],
+          })).clusters?.find((candidate) => candidate.clusterArn === cluster);
+
+          // A cluster cannot be deleted while it still contains services,
+          // running tasks, or registered container instances — empty it
+          // first so deletion actually converges instead of silently
+          // leaving the cluster behind.
+
+          // 1. Delete services (force skips the scale-to-zero dance).
+          const serviceArns = yield* ecs.listServices.pages({ cluster }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) => page.serviceArns ?? []),
+            ),
+            Effect.catchTag("ClusterNotFoundException", () =>
+              Effect.succeed([] as string[]),
+            ),
+          );
+          yield* Effect.forEach(
+            serviceArns,
+            (service) =>
+              ecs.deleteService({ cluster, service, force: true }).pipe(
+                Effect.catchTag(
+                  ["ServiceNotFoundException", "ClusterNotFoundException"],
+                  () => Effect.succeed(undefined),
+                ),
+                Effect.asVoid,
               ),
-              Effect.catchTag(
-                "ClusterContainsTasksException",
-                () => Effect.void,
+            { discard: true },
+          );
+
+          // 2. Stop any remaining standalone tasks.
+          const taskArns = yield* ecs.listTasks.pages({ cluster }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) => page.taskArns ?? []),
+            ),
+            Effect.catchTag("ClusterNotFoundException", () =>
+              Effect.succeed([] as string[]),
+            ),
+          );
+          yield* Effect.forEach(
+            taskArns,
+            (task) =>
+              ecs.stopTask({ cluster, task, reason: "alchemy delete" }).pipe(
+                Effect.catchTag("ClusterNotFoundException", () =>
+                  Effect.succeed(undefined),
+                ),
+                Effect.asVoid,
+              ),
+            { discard: true },
+          );
+
+          // 3. Deregister container instances (EC2 launch type).
+          const instanceArns = yield* ecs.listContainerInstances
+            .pages({ cluster })
+            .pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap(
+                  (page) => page.containerInstanceArns ?? [],
+                ),
+              ),
+              Effect.catchTag("ClusterNotFoundException", () =>
+                Effect.succeed([] as string[]),
               ),
             );
+          yield* Effect.forEach(
+            instanceArns,
+            (containerInstance) =>
+              ecs
+                .deregisterContainerInstance({
+                  cluster,
+                  containerInstance,
+                  force: true,
+                })
+                .pipe(
+                  Effect.catchTag("ClusterNotFoundException", () =>
+                    Effect.succeed(undefined),
+                  ),
+                  Effect.asVoid,
+                ),
+            { discard: true },
+          );
+
+          // 4. Remove custom capacity-provider associations. A cluster with
+          //    an associated provider cannot be deleted even after its
+          //    services, tasks, and container instances have drained.
+          if (
+            (observedCluster?.capacityProviders ?? output.capacityProviders)
+              .length > 0
+          ) {
+            yield* ecs
+              .putClusterCapacityProviders({
+                cluster,
+                capacityProviders: [],
+                defaultCapacityProviderStrategy: [],
+              })
+              .pipe(
+                Effect.retry({
+                  while: (e) =>
+                    e._tag === "UpdateInProgressException" ||
+                    e._tag === "ResourceInUseException",
+                  schedule: Schedule.max([
+                    Schedule.fixed("3 seconds"),
+                    Schedule.recurs(10),
+                  ]),
+                }),
+                Effect.catchTag("ClusterNotFoundException", () => Effect.void),
+              );
+          }
+
+          // 5. Delete the (now empty) cluster. Draining services/tasks is
+          //    asynchronous, so retry the contains-* rejections briefly.
+          yield* ecs
+            .deleteCluster({
+              cluster,
+            })
+            .pipe(
+              Effect.retry({
+                while: (e): boolean =>
+                  e._tag === "ClusterContainsServicesException" ||
+                  e._tag === "ClusterContainsTasksException" ||
+                  e._tag === "ClusterContainsContainerInstancesException" ||
+                  e._tag === "ClusterContainsCapacityProviderException" ||
+                  e._tag === "UpdateInProgressException",
+                schedule: Schedule.max([
+                  Schedule.fixed("3 seconds"),
+                  Schedule.recurs(15),
+                ]),
+              }),
+              Effect.catchTag("ClusterNotFoundException", () => Effect.void),
+            );
+
+          // DeleteCluster's successful response only means that ECS accepted
+          // the transition. Observe the terminal INACTIVE state (or absence)
+          // before reporting deletion so dependent teardown and a following
+          // nuke pass do not race the cluster lifecycle.
+          yield* ecs.describeClusters({ clusters: [cluster] }).pipe(
+            Effect.flatMap((response) => {
+              const observed = response.clusters?.find(
+                (candidate) => candidate.clusterArn === cluster,
+              );
+              return !observed || observed.status === "INACTIVE"
+                ? Effect.void
+                : Effect.fail(
+                    new ClusterStillActive({
+                      cluster,
+                      status: observed.status,
+                    }),
+                  );
+            }),
+            Effect.retry({
+              while: (error) => error instanceof ClusterStillActive,
+              schedule: Schedule.max([
+                Schedule.fixed("2 seconds"),
+                Schedule.recurs(15),
+              ]),
+            }),
+          );
         }),
       };
     }),

@@ -1,55 +1,12 @@
 /**
- * Effect service for reading, writing, inspecting, and watching files.
+ * Defines the portable file system service for Effect programs.
  *
- * The `FileSystem` service is the portable boundary between Effect programs and
- * the host file system. Programs depend on the service from `effect/FileSystem`;
- * platform packages provide concrete layers at the edge. Operations return
- * `Effect`, `Stream`, or `Sink` values and report failures as `PlatformError`
- * instead of throwing.
- *
- * **Mental model**
- *
- * `FileSystem` is a capability, not a global singleton. Request it with
- * `yield* FileSystem.FileSystem` inside an effect, compose file work like any
- * other effect, and provide a platform or test implementation when the program
- * is run. Scoped operations such as `open`, `makeTempFileScoped`, and
- * `makeTempDirectoryScoped` bind resource cleanup to `Scope`.
- *
- * **Common tasks**
- *
- * - Create, copy, rename, remove, chmod, chown, link, and symlink paths.
- * - Read and write whole files as bytes or strings.
- * - Stream large files with `stream` and `sink`, using binary size helpers such
- *   as `KiB` and `MiB` for chunk sizes and offsets.
- * - Inspect metadata with `stat`, check accessibility with `access` or
- *   `exists`, and canonicalize paths with `realPath`.
- * - Watch files or directories with `watch` when the platform implementation
- *   supports it.
- *
- * **Example** (Write and clean up a temporary file)
- *
- * ```ts
- * import { Effect, FileSystem } from "effect"
- *
- * const program = Effect.gen(function*() {
- *   const fs = yield* FileSystem.FileSystem
- *
- *   const directory = yield* fs.makeTempDirectoryScoped()
- *   const path = `${directory}/message.txt`
- *
- *   yield* fs.writeFileString(path, "hello")
- *   return yield* fs.readFileString(path)
- * })
- * ```
- *
- * **Gotchas**
- *
- * Paths are interpreted by the provided implementation, so relative paths, case
- * sensitivity, permissions, links, and watch behavior are platform-dependent.
- * Size options are normalized to branded bigint byte counts; prefer the `Size`,
- * `KiB`, `MiB`, and related helpers for offsets, chunk sizes, and truncation
- * lengths. A program that uses this service still needs a concrete layer, such
- * as `NodeFileSystem.layer`, before it can access the real file system.
+ * `FileSystem` is the boundary between Effect code and the host file system.
+ * Platform packages provide concrete layers, while this module defines the
+ * operations for reading, writing, inspecting, streaming, and watching files.
+ * Operations return `Effect`, `Stream`, or `Sink` values and fail with
+ * `PlatformError`. The module also includes file handles, size helpers, open
+ * flags, watch events, and the watch backend service.
  *
  * @since 4.0.0
  */
@@ -161,6 +118,16 @@ export interface FileSystem {
     uid: number,
     gid: number
   ) => Effect.Effect<void, PlatformError>
+  /**
+   * Glob a directory.
+   */
+  readonly glob: (
+    pattern: string,
+    options?: {
+      readonly root?: string | undefined
+      readonly exclude?: ReadonlyArray<string> | undefined
+    }
+  ) => Effect.Effect<Array<string>, PlatformError>
   /**
    * Checks whether a path exists.
    */
@@ -778,7 +745,7 @@ export type OpenFlag =
  * )
  * ```
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const FileSystem: Context.Service<FileSystem, FileSystem> = Context.Service("effect/platform/FileSystem")
@@ -960,6 +927,9 @@ export const makeNoop = (fileSystem: Partial<FileSystem>): FileSystem =>
     copyFile(path) {
       return Effect.fail(notFound("copyFile", path))
     },
+    glob(pattern) {
+      return Effect.fail(notFound("glob", pattern))
+    },
     exists() {
       return Effect.succeed(false)
     },
@@ -1104,7 +1074,7 @@ export const FileTypeId = "~effect/platform/FileSystem/File"
  * @see {@link File} for the file-handle interface narrowed by this guard
  * @see {@link FileTypeId} for the runtime marker checked by this guard
  *
- * @category File
+ * @category file
  * @since 4.0.0
  */
 export const isFile = (u: unknown): u is File => hasProperty(u, FileTypeId)
@@ -1150,7 +1120,7 @@ export const isFile = (u: unknown): u is File => hasProperty(u, FileTypeId)
  * })
  * ```
  *
- * @category File
+ * @category file
  * @since 4.0.0
  */
 export interface File {
@@ -1181,7 +1151,7 @@ export declare namespace File {
    * File descriptors are numeric handles used by the operating system
    * to identify open files. The branded type ensures type safety.
    *
-   * @category File
+   * @category file
    * @since 4.0.0
    */
   export type Descriptor = Brand.Branded<number, "FileDescriptor">
@@ -1194,7 +1164,7 @@ export declare namespace File {
    * Represents the different types of entries that can exist in a file system,
    * from regular files to special device files and symbolic links.
    *
-   * @category File
+   * @category file
    * @since 4.0.0
    */
   export type Type =
@@ -1249,7 +1219,7 @@ export declare namespace File {
    * })
    * ```
    *
-   * @category File
+   * @category file
    * @since 4.0.0
    */
   export interface Info {

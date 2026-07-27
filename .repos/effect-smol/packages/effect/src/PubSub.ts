@@ -1,60 +1,12 @@
 /**
- * The `PubSub` module provides asynchronous publish-subscribe hubs for
- * broadcasting values to many subscribers. Publishers add messages with
- * {@link publish} or {@link publishAll}; each active {@link Subscription}
- * receives its own copy of every accepted message.
+ * Broadcasts values from publishers to many subscribers.
  *
- * Unlike a queue, subscribers do not compete for messages. A published value is
- * retained until all subscribers that were active for that value have taken it
- * or unsubscribed.
- *
- * **Mental model**
- *
- * - A `PubSub<A>` is the shared publish side, and each `Subscription<A>` is an
- *   independent read side
- * - {@link subscribe} is scoped; leaving the scope automatically unsubscribes
- *   the subscription and releases any retained messages for it
- * - {@link bounded} applies back pressure when the buffer is full,
- *   {@link dropping} drops new messages, and {@link sliding} drops old messages
- * - {@link unbounded} removes the capacity limit but can retain an unbounded
- *   number of messages for slow subscribers
- * - The optional replay buffer lets late subscribers first consume recently
- *   published messages
- *
- * **Common tasks**
- *
- * - Create hubs: {@link bounded}, {@link dropping}, {@link sliding},
- *   {@link unbounded}
- * - Publish values: {@link publish}, {@link publishAll}
- * - Subscribe and consume: {@link subscribe}, {@link take}, {@link takeAll},
- *   {@link takeUpTo}, {@link takeBetween}
- * - Inspect lifecycle and capacity: {@link capacity}, {@link size},
- *   {@link isFull}, {@link isEmpty}, {@link isShutdown}
- * - Stop a hub: {@link shutdown}, {@link awaitShutdown}
- *
- * **Example** (Publishing to one scoped subscriber)
- *
- * ```ts
- * import { Effect, PubSub } from "effect"
- *
- * const program = Effect.scoped(
- *   Effect.gen(function*() {
- *     const pubsub = yield* PubSub.bounded<string>(16)
- *     const subscription = yield* PubSub.subscribe(pubsub)
- *
- *     yield* PubSub.publish(pubsub, "ready")
- *
- *     return yield* PubSub.take(subscription)
- *   })
- * )
- * ```
- *
- * **Gotchas**
- *
- * - `bounded` can suspend publishers when a subscriber is slow
- * - `dropping` and `sliding` can lose messages by design
- * - Replay buffers are for late subscribers; they do not make the hub a
- *   permanent event log
+ * Publishers add messages with `publish` or `publishAll`, and each active
+ * `Subscription` receives its own copy of every accepted message. Unlike a
+ * queue, subscribers do not compete for messages. This module includes bounded,
+ * dropping, sliding, and unbounded hubs, optional replay buffers for late
+ * subscribers, message-taking helpers, capacity and shutdown operations, and
+ * low-level types for custom hub strategies.
  *
  * @since 2.0.0
  */
@@ -663,6 +615,11 @@ export const size = <A>(self: PubSub<A>): Effect.Effect<number> => Effect.sync((
  * Returns the current number of messages retained by the `PubSub` for active
  * subscribers synchronously.
  *
+ * **When to use**
+ *
+ * Use when an immediate `PubSub` size snapshot is needed outside effectful code
+ * and concurrent changes between the check and later use are acceptable.
+ *
  * **Details**
  *
  * Returns `0` after shutdown. Because this is an unsafe synchronous snapshot,
@@ -811,7 +768,7 @@ export const shutdown = <A>(self: PubSub<A>): Effect.Effect<void> =>
  * Checks effectfully whether `shutdown` has been called, returning `true`
  * after shutdown and `false` otherwise.
  *
- * **Example** (Checking whether a PubSub is shutdown)
+ * **Example** (Checking whether a PubSub is shut down)
  *
  * ```ts
  * import { Effect, PubSub } from "effect"
@@ -839,6 +796,11 @@ export const isShutdown = <A>(self: PubSub<A>): Effect.Effect<boolean> => Effect
 /**
  * Checks synchronously whether `shutdown` has been called, returning `true`
  * after shutdown and `false` otherwise.
+ *
+ * **When to use**
+ *
+ * Use when an immediate `PubSub` shutdown-state snapshot is needed outside
+ * effectful code and racing shutdown changes are acceptable.
  *
  * **Example** (Checking shutdown synchronously)
  *
@@ -904,8 +866,8 @@ export const awaitShutdown = <A>(self: PubSub<A>): Effect.Effect<void> => self.s
  *
  * **When to use**
  *
- * Use when publishing from effectful code and the configured PubSub strategy
- * should handle surplus messages.
+ * Use when you need to publish from effectful code and let the configured
+ * PubSub strategy handle surplus messages.
  *
  * **Details**
  *
@@ -968,8 +930,8 @@ export const publish: {
  *
  * **When to use**
  *
- * Use when you need a non-blocking synchronous publish attempt and can handle
- * `false` when the message cannot be accepted immediately.
+ * Use when you need a non-blocking synchronous publish attempt where `false`
+ * is an acceptable result when the message cannot be accepted immediately.
  *
  * **Details**
  *
@@ -1124,7 +1086,7 @@ export const publishAll: {
  * })
  * ```
  *
- * @category subscription
+ * @category subscriptions
  * @since 2.0.0
  */
 export const subscribe = <A>(self: PubSub<A>): Effect.Effect<Subscription<A>, never, Scope.Scope> =>
@@ -1192,7 +1154,7 @@ const unsubscribe = <A>(self: Subscription<A>): Effect.Effect<void> =>
  * })
  * ```
  *
- * @category subscription
+ * @category subscriptions
  * @since 4.0.0
  */
 export const take = <A>(self: Subscription<A>): Effect.Effect<A> =>
@@ -1240,7 +1202,7 @@ export const take = <A>(self: Subscription<A>): Effect.Effect<A> =>
  * })
  * ```
  *
- * @category subscription
+ * @category subscriptions
  * @since 4.0.0
  */
 export const takeAll = <A>(self: Subscription<A>): Effect.Effect<Arr.NonEmptyArray<A>> =>
@@ -1319,7 +1281,7 @@ const pollForItem = <A>(self: Subscription<A>) => {
  * })
  * ```
  *
- * @category subscription
+ * @category subscriptions
  * @since 4.0.0
  */
 export const takeUpTo: {
@@ -1372,7 +1334,7 @@ export const takeUpTo: {
  * })
  * ```
  *
- * @category subscription
+ * @category subscriptions
  * @since 4.0.0
  */
 export const takeBetween: {
@@ -1476,8 +1438,8 @@ export const remaining = <A>(self: Subscription<A>): Effect.Effect<number> =>
  *
  * **When to use**
  *
- * Use when polling from synchronous code and you can handle the `Option.none()`
- * shutdown case directly.
+ * Use when you need synchronous polling outside a managed workflow and want
+ * shutdown observed as data instead of interruption.
  *
  * **Example** (Checking remaining messages synchronously)
  *
@@ -2517,7 +2479,7 @@ export class BackPressureStrategy<in out A> implements PubSub.Strategy<A> {
  *
  * Subscribers may miss messages published while they are subscribed.
  *
- * **Example** (Using a dropping strategy)
+ * **Example** (Applying a dropping strategy)
  *
  * ```ts
  * import { Effect, PubSub } from "effect"
@@ -2604,7 +2566,7 @@ export class DroppingStrategy<in out A> implements PubSub.Strategy<A> {
  * Slow subscribers may miss older messages that are evicted before they are
  * consumed.
  *
- * **Example** (Using a sliding strategy)
+ * **Example** (Applying a sliding strategy)
  *
  * ```ts
  * import { Effect, PubSub } from "effect"

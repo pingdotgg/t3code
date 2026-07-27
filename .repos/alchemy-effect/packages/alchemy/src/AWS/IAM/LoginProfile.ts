@@ -1,6 +1,7 @@
 import * as iam from "@distilled.cloud/aws/iam";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -26,8 +27,11 @@ export interface LoginProfile extends Resource<
   "AWS.IAM.LoginProfile",
   LoginProfileProps,
   {
+    /** The IAM user the login profile belongs to. */
     userName: string;
+    /** When the login profile was created. */
     createDate: Date | undefined;
+    /** Whether the user must set a new password on next sign-in. */
     passwordResetRequired: boolean | undefined;
   },
   never,
@@ -39,7 +43,7 @@ export interface LoginProfile extends Resource<
  *
  * `LoginProfile` manages AWS Management Console access for an IAM user. The
  * password is write-only, so AWS never returns it during later reads.
- *
+ * @resource
  * @section Managing Console Access
  * @example Create a Console Login Profile
  * ```typescript
@@ -146,5 +150,39 @@ export const LoginProfileProvider = () =>
           UserName: output.userName,
         })
         .pipe(Effect.catchTag("NoSuchEntityException", () => Effect.void));
+    }),
+    // There is no list-login-profiles API: a login profile is a per-user
+    // singleton. Enumerate every IAM user (paginated), then probe each with
+    // `getLoginProfile`; users without console access return a typed
+    // `NoSuchEntityException`, which we skip. Bounded concurrency keeps the
+    // fan-out reasonable.
+    list: Effect.fn(function* () {
+      const users = yield* iam.listUsers.pages({}).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) => Array.from(chunk).flatMap((page) => page.Users)),
+      );
+      const profiles = yield* Effect.forEach(
+        users,
+        (user) =>
+          iam.getLoginProfile({ UserName: user.UserName }).pipe(
+            Effect.map((response) => ({
+              userName: response.LoginProfile.UserName,
+              createDate: response.LoginProfile.CreateDate,
+              passwordResetRequired:
+                response.LoginProfile.PasswordResetRequired,
+            })),
+            // The user has no console login profile, or was deleted between
+            // enumeration and the per-user probe.
+            Effect.catchTag("NoSuchEntityException", () =>
+              Effect.succeed(undefined),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      const result: LoginProfile["Attributes"][] = profiles.filter(
+        (profile): profile is NonNullable<typeof profile> =>
+          profile !== undefined,
+      );
+      return result;
     }),
   });

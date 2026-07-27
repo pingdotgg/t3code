@@ -49,15 +49,45 @@ export interface Account extends Resource<
   "AWS.Organizations.Account",
   AccountProps,
   {
+    /**
+     * 12-digit AWS account ID.
+     */
     accountId: AccountId;
+    /**
+     * ARN of the member account.
+     */
     accountArn: AccountArn;
+    /**
+     * Friendly account name.
+     */
     name: organizations.Account["Name"] | undefined;
+    /**
+     * Email address associated with the account.
+     */
     email: organizations.Account["Email"] | undefined;
+    /**
+     * ID of the parent root or OU.
+     */
     parentId: string | undefined;
+    /**
+     * Account status (`ACTIVE`, `SUSPENDED`, or `PENDING_CLOSURE`).
+     */
     status: organizations.AccountStatus | undefined;
+    /**
+     * Account state reported by AWS Organizations.
+     */
     state: organizations.AccountState | undefined;
+    /**
+     * How the account joined the organization (`CREATED` or `INVITED`).
+     */
     joinedMethod: organizations.AccountJoinedMethod | undefined;
+    /**
+     * When the account joined the organization.
+     */
     joinedTimestamp: Date | undefined;
+    /**
+     * Tags on the member account.
+     */
     tags: Record<string, string>;
   },
   never,
@@ -66,6 +96,39 @@ export interface Account extends Resource<
 
 /**
  * A member account created and managed by AWS Organizations.
+ *
+ * Account creation is asynchronous — the provider polls the vending request
+ * until the account ID is assigned. Must be deployed from the organization's
+ * management account. Changing `email` replaces the account; changing `name`
+ * updates it in place.
+ * @resource
+ * @section Creating Member Accounts
+ * @example Account Under the Organization Root
+ * ```typescript
+ * const root = yield* Root("Root", {});
+ *
+ * const dev = yield* Account("Dev", {
+ *   name: "dev",
+ *   email: "aws-dev@example.com",
+ *   parentId: root.rootId,
+ * });
+ * ```
+ *
+ * @example Account Inside an Organizational Unit
+ * ```typescript
+ * const workloads = yield* OrganizationalUnit("Workloads", {
+ *   parentId: root.rootId,
+ *   name: "workloads",
+ * });
+ *
+ * const prod = yield* Account("Prod", {
+ *   name: "prod",
+ *   email: "aws-prod@example.com",
+ *   parentId: workloads.ouId,
+ *   roleName: "OrganizationAccountAccessRole",
+ *   tags: { environment: "prod" },
+ * });
+ * ```
  */
 export const Account = Resource<Account>("AWS.Organizations.Account");
 
@@ -205,6 +268,31 @@ export const AccountProvider = () =>
               ),
           );
         }),
+        // Enumerate every account in the organization (paginated), then
+        // hydrate each into the exact `read` Attributes shape (parent + tags)
+        // with bounded concurrency. Per-item not-found is already typed and
+        // swallowed inside `readAccountById`. When the caller's account is not
+        // the management account of an organization there is nothing to
+        // enumerate, so we return an empty array rather than throwing.
+        list: () =>
+          Effect.gen(function* () {
+            const accounts = yield* listAccounts();
+            const rows = yield* Effect.forEach(
+              accounts,
+              (account) =>
+                account.Id
+                  ? readAccountById(account.Id)
+                  : Effect.succeed(undefined),
+              { concurrency: 10 },
+            );
+            return rows.filter(
+              (row): row is Account["Attributes"] => row !== undefined,
+            );
+          }).pipe(
+            Effect.catchTag("AWSOrganizationsNotInUseException", () =>
+              Effect.succeed([] as Account["Attributes"][]),
+            ),
+          ),
       };
     }),
   );
@@ -303,9 +391,10 @@ const waitForCreateAccount = (requestId: string) =>
   }).pipe(
     Effect.retry({
       while: (error: any) => error?._tag === "CreateAccountInProgress",
-      schedule: Schedule.spaced("2 seconds").pipe(
-        Schedule.both(Schedule.recurs(120)),
-      ),
+      schedule: Schedule.max([
+        Schedule.spaced("2 seconds"),
+        Schedule.recurs(120),
+      ]),
     }),
   );
 
@@ -315,8 +404,6 @@ const retryAccountManagement = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       while: (error: any) =>
         error?._tag === "TooManyRequestsException" ||
         error?._tag === "InternalServerException",
-      schedule: Schedule.exponential(200).pipe(
-        Schedule.both(Schedule.recurs(8)),
-      ),
+      schedule: Schedule.max([Schedule.exponential(200), Schedule.recurs(8)]),
     }),
   );

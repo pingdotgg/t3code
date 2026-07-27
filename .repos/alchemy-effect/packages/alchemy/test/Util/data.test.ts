@@ -5,7 +5,7 @@ import {
   unwrapRedacted,
 } from "@/Util/data";
 import * as Redacted from "effect/Redacted";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "alchemy-test";
 
 describe("data utilities", () => {
   test("isPlainObject accepts object literals", () => {

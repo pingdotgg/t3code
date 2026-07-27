@@ -1,32 +1,12 @@
 /**
- * The `NodeClusterSocket` module provides the Node.js socket transport for
- * Effect Cluster runners. It wires `SocketRunner` to Node TCP sockets, supplies
- * RPC client and server protocol layers, and builds a complete sharding layer
- * with serialization, runner health, runner storage, and message storage.
+ * Node.js socket layers for Effect Cluster runners.
  *
- * **Common tasks**
- *
- * - Run a Node process as a cluster runner over raw TCP sockets with
- *   {@link layer}
- * - Connect a client-only process to an existing socket cluster without
- *   starting a runner server
- * - Use SQL-backed storage for durable multi-process clusters, `local` storage
- *   for short-lived development, or `byo` storage when the deployment owns the
- *   persistence boundary
- * - Check runner health with socket pings or Kubernetes pod readiness through
- *   {@link layerK8sHttpClient}
- *
- * **Gotchas**
- *
- * - `runnerAddress` is the host and port advertised to other runners; set
- *   `runnerListenAddress` when the local bind address differs from the
- *   externally reachable address
- * - The socket transport is point-to-point RPC, not cluster gossip: runner
- *   membership, shard ownership, and persisted delivery are coordinated through
- *   `RunnerStorage`, `MessageStorage`, and `RunnerHealth`
- * - `clientOnly` does not start a socket server or receive shard assignments
- * - Ping health checks use the same socket protocol, so unreachable ports,
- *   firewalls, or serialization mismatches can make a runner appear unhealthy
+ * The main `layer` builds a sharding layer for socket transport, choosing
+ * serialization, runner health checks, runner storage, message storage, and
+ * optional client-only mode from the supplied options. This module also
+ * re-exports the shared socket client and server protocol layers, and provides
+ * Kubernetes-aware Undici dispatcher and HTTP client layers for runner health
+ * checks.
  *
  * @since 4.0.0
  */
@@ -48,6 +28,7 @@ import * as SqlRunnerStorage from "effect/unstable/cluster/SqlRunnerStorage"
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization"
 import type * as SocketServer from "effect/unstable/socket/SocketServer"
 import type { SqlClient } from "effect/unstable/sql/SqlClient"
+import * as NodeCrypto from "./NodeCrypto.ts"
 import * as NodeFileSystem from "./NodeFileSystem.ts"
 import * as NodeHttpClient from "./NodeHttpClient.ts"
 import * as Undici from "./Undici.ts"
@@ -133,7 +114,7 @@ export const layer = <
         ? MessageStorage.layerNoop
         : options?.storage === "byo"
         ? Layer.empty
-        : Layer.orDie(SqlMessageStorage.layer)
+        : Layer.orDie(SqlMessageStorage.layer).pipe(Layer.provide(NodeCrypto.layer))
     ),
     Layer.provide(
       options?.storage === "local"

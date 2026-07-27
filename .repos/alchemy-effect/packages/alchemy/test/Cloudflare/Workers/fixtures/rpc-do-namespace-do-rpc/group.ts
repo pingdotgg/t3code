@@ -4,7 +4,7 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import * as RpcSchema from "effect/unstable/rpc/RpcSchema";
 
 /**
- * Procedures served on each {@link RpcDurableObjectNamespace} instance.
+ * Procedures served on each {@link RpcDurableObject} instance.
  * The DO instance *is* the session, so payloads don't include a per-
  * session id — the keying happens at `getByName(...)`.
  */

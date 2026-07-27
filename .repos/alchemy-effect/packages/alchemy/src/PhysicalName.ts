@@ -1,8 +1,14 @@
+import { createHash } from "node:crypto";
 import * as Effect from "effect/Effect";
 import { base32 } from ".//Util/base32.ts";
 import { InstanceId } from "./InstanceId.ts";
 import { Stack } from "./Stack.ts";
 import { Stage } from "./Stage.ts";
+
+// 8 base32 chars = 40 bits of the sha256 of the full untruncated name,
+// appended when truncation occurs so names that differ only in the truncated
+// portion of the prefix stay distinct.
+const TRUNCATION_HASH_LENGTH = 8;
 
 export const createPhysicalName = Effect.fn(function* ({
   id,
@@ -31,7 +37,9 @@ export const createPhysicalName = Effect.fn(function* ({
   /**
    * Maximum length of the physical name.
    *
-   * If the name exceeds this length, the human-friendly portion of the name will be truncated to maxLength-suffixLength
+   * If the name exceeds this length, the human-friendly prefix is truncated
+   * and a stable hash of the full name is kept alongside the instance suffix
+   * so distinct names never collapse to the same truncated string.
    */
   maxLength?: number;
   /** @default - "-" */
@@ -56,7 +64,25 @@ export const createPhysicalName = Effect.fn(function* ({
   const suffix = randomId.slice(0, suffixLength);
   const name = `${prefix}${suffix}`;
   if (maxLength && name.length > maxLength) {
-    return sanitize(`${prefix.slice(0, maxLength - suffix.length)}${suffix}`);
+    // The instance suffix alone cannot disambiguate: every name derived from
+    // the same resource shares one InstanceId, so two prefixes that differ
+    // only in their truncated tail (e.g. `…-task-role-` vs `…-execution-role-`)
+    // would collapse to the same string. Keep a stable hash of the full name
+    // next to the suffix so truncated names remain unique.
+    const hash = yield* Effect.sync(() =>
+      base32(createHash("sha256").update(name).digest()).slice(
+        0,
+        TRUNCATION_HASH_LENGTH,
+      ),
+    );
+    // The hash is what keeps same-resource names distinct, so it always
+    // survives in full; when maxLength is tight (e.g. DAX's 20-char limit)
+    // the instance suffix shrinks instead — 12 base32 chars still carry 60
+    // bits of instance entropy.
+    const tail = `${hash}${suffix}`.slice(0, maxLength);
+    return sanitize(
+      `${prefix.slice(0, Math.max(0, maxLength - tail.length))}${tail}`,
+    );
   }
   return sanitize(name);
 });

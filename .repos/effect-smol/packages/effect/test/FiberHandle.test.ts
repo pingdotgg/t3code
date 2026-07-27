@@ -87,6 +87,26 @@ describe("FiberHandle", () => {
       strictEqual(fiberA.pollUnsafe(), undefined)
     }))
 
+  it.effect("clear does not remove a newer fiber installed while interrupting the previous one", () =>
+    Effect.gen(function*() {
+      const handle = yield* FiberHandle.make()
+      yield* FiberHandle.run(handle, Effect.uninterruptible(Effect.sleep(200)))
+
+      const clearFiber = yield* Effect.forkChild(FiberHandle.clear(handle), { startImmediately: true })
+      yield* TestClock.adjust(50)
+      const nextFiber = yield* FiberHandle.run(handle, Effect.never)
+      yield* TestClock.adjust(200)
+      yield* Fiber.join(clearFiber)
+
+      const current = FiberHandle.getUnsafe(handle)
+      if (Option.isNone(current)) {
+        assert.fail("expected FiberHandle.clear to preserve the newer fiber")
+        return
+      }
+      strictEqual(current.value, nextFiber)
+      strictEqual(nextFiber.pollUnsafe(), undefined)
+    }))
+
   it.effect("runtime onlyIfMissing", () =>
     Effect.gen(function*() {
       const run = yield* FiberHandle.makeRuntime<never>()

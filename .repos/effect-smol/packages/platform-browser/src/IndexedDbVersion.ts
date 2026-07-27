@@ -106,6 +106,11 @@ const makeProto = <Tables extends IndexedDbTable.AnyWithProps>(options: {
 /**
  * Creates an `IndexedDbVersion` from one or more table definitions.
  *
+ * **When to use**
+ *
+ * Use when you need a typed description of the target IndexedDB schema that a
+ * database migration will materialize.
+ *
  * **Details**
  *
  * The returned version exposes a `tables` map keyed by each table's

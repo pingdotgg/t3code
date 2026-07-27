@@ -1,11 +1,5 @@
 import type * as Response from "effect/unstable/ai/Response"
 
-/** @internal */
-export const ProviderOptionsKey = "@effect/ai-openai-compat/OpenAiLanguageModel/ProviderOptions"
-
-/** @internal */
-export const ProviderMetadataKey = "@effect/ai-openai-compat/OpenAiLanguageModel/ProviderMetadata"
-
 const finishReasonMap: Record<string, Response.FinishReason> = {
   content_filter: "content-filter",
   function_call: "tool-calls",
@@ -15,9 +9,6 @@ const finishReasonMap: Record<string, Response.FinishReason> = {
 }
 
 /** @internal */
-export const escapeJSONDelta = (delta: string): string => JSON.stringify(delta).slice(1, -1)
-
-/** @internal */
 export const resolveFinishReason = (
   finishReason: string | null | undefined,
   hasToolCalls: boolean
@@ -25,7 +16,7 @@ export const resolveFinishReason = (
   if (finishReason == null) {
     return hasToolCalls ? "tool-calls" : "stop"
   }
-  const reason = finishReasonMap[finishReason]
+  const reason = Object.hasOwn(finishReasonMap, finishReason) ? finishReasonMap[finishReason] : undefined
   if (reason == null) {
     return hasToolCalls ? "tool-calls" : "unknown"
   }

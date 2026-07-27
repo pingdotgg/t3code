@@ -1,8 +1,7 @@
 import * as rdsdata from "@distilled.cloud/aws/rds-data";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
+import type { RuntimeContext } from "../../RuntimeContext.ts";
 import type { DBCluster } from "../RDS/DBCluster.ts";
 import type { Secret } from "../SecretsManager/Secret.ts";
 
@@ -18,81 +17,41 @@ export interface ExecuteSqlRequest extends Omit<
 > {}
 
 /**
- * Runtime binding for the deprecated `rds-data:ExecuteSql` API.
+ * Runtime binding for the deprecated `rds-data:ExecuteSql` API (Aurora
+ * Serverless v1 era). Prefer `AWS.RDSData.ExecuteStatement`, which supports
+ * named parameters and transactions.
+ *
+ * Bind it to a Data-API-enabled `DBCluster` and its credentials secret;
+ * provide the implementation with `Effect.provide(AWS.RDSData.ExecuteSqlHttp)`.
+ * @binding
+ * @section Legacy SQL Execution
+ * @example Run Raw SQL Statements
+ * ```typescript
+ * // init
+ * const executeSql = yield* AWS.RDSData.ExecuteSql(db.cluster, {
+ *   secret: db.secret,
+ *   database: "app",
+ * });
+ *
+ * // runtime — statements are passed as a single string, no parameters
+ * const result = yield* executeSql({ sqlStatements: "SELECT 1" });
+ * ```
  */
-export class ExecuteSql extends Binding.Service<
+export interface ExecuteSql extends Binding.Service<
   ExecuteSql,
+  "AWS.RDSData.ExecuteSql",
   (
     cluster: DBCluster,
     options: ExecuteSqlOptions,
   ) => Effect.Effect<
     (
       request: ExecuteSqlRequest,
-    ) => Effect.Effect<rdsdata.ExecuteSqlResponse, rdsdata.ExecuteSqlError>
+    ) => Effect.Effect<
+      rdsdata.ExecuteSqlResponse,
+      rdsdata.ExecuteSqlError,
+      RuntimeContext
+    >
   >
->()("AWS.RDSData.ExecuteSql") {}
+> {}
 
-export const ExecuteSqlLive = Layer.effect(
-  ExecuteSql,
-  Effect.gen(function* () {
-    const Policy = yield* ExecuteSqlPolicy;
-    const executeSql = yield* rdsdata.executeSql;
-
-    return Effect.fn(function* (
-      cluster: DBCluster,
-      options: ExecuteSqlOptions,
-    ) {
-      const clusterArn = yield* cluster.dbClusterArn;
-      const secretArn = yield* options.secret.secretArn;
-      yield* Policy(cluster, options);
-      return Effect.fn(function* (request: ExecuteSqlRequest) {
-        return yield* executeSql({
-          ...request,
-          dbClusterOrInstanceArn: yield* clusterArn,
-          awsSecretStoreArn: yield* secretArn,
-          database: options.database,
-          schema: options.schema,
-        });
-      });
-    });
-  }),
-);
-
-export class ExecuteSqlPolicy extends Binding.Policy<
-  ExecuteSqlPolicy,
-  (cluster: DBCluster, options: ExecuteSqlOptions) => Effect.Effect<void>
->()("AWS.RDSData.ExecuteSql") {}
-
-export const ExecuteSqlPolicyLive = ExecuteSqlPolicy.layer.succeed(
-  Effect.fn(function* (host, cluster, options) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.RDSData.ExecuteSql(${cluster}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["rds-data:ExecuteSql"],
-            Resource: [cluster.dbClusterArn, options.secret.secretArn],
-          },
-        ],
-      });
-      yield* host.bind`Allow(${host}, AWS.SecretsManager.GetSecretValue(${options.secret}))`(
-        {
-          policyStatements: [
-            {
-              Effect: "Allow",
-              Action: [
-                "secretsmanager:GetSecretValue",
-                "secretsmanager:DescribeSecret",
-              ],
-              Resource: [options.secret.secretArn],
-            },
-          ],
-        },
-      );
-    } else {
-      return yield* Effect.die(
-        `ExecuteSqlPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
-);
+export const ExecuteSql = Binding.Service<ExecuteSql>("AWS.RDSData.ExecuteSql");

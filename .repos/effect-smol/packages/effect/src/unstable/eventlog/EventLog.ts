@@ -1,33 +1,11 @@
 /**
- * High-level runtime for writing typed event-log events and replaying replicated
- * journal entries.
+ * Runtime for writing typed events to an event journal.
  *
- * This module connects event definitions, handler layers, an `EventJournal`, and
- * optional remote replicas. Applications define groups with `EventGroup`, build
- * an `EventLogSchema`, register handlers with `group`, and obtain a typed client
- * with `makeClient`; the `EventLog` service then encodes payloads, runs the
- * matching handler, and commits the entry only after the handler succeeds.
- *
- * **Mental model**
- *
- * Local writes are command-like: encode the payload, derive the primary key, run
- * the handler, then commit the journal entry. Remote replay is journal-like:
- * entries are decoded with the same schemas, conflict entries are supplied to
- * handlers, optional compaction can rewrite imported entries, and reactivity keys
- * are invalidated after successful handling.
- *
- * **Common tasks**
- *
- * Use `schema` to combine event groups, `layer` or `layerEventLog` to install
- * the runtime, `group` to register required handlers, `groupCompaction` to
- * collapse remote history before replay, and `groupReactivity` to invalidate
- * projections keyed by event primary key.
- *
- * **Gotchas**
- *
- * Remote synchronization depends on the current `Identity` and `CurrentStoreId`.
- * Keep both stable for replicas that should share a log, and provide handlers for
- * every event tag before writing through a client.
+ * `EventLog` combines event groups, handlers, a journal, local identity,
+ * optional remote replicas, and reactivity hooks. Writers send typed payloads
+ * through a client; the matching handler runs first, and the journal entry is
+ * committed only after the handler succeeds. This module also contains the
+ * layers and helpers needed to assemble that runtime.
  *
  * @since 4.0.0
  */
@@ -35,6 +13,7 @@ import * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
 import * as FiberMap from "../../FiberMap.ts"
 import { constant, identity } from "../../Function.ts"
+import * as InternalRecord from "../../internal/record.ts"
 import * as Layer from "../../Layer.ts"
 import type { Pipeable } from "../../Pipeable.ts"
 import { pipeArguments } from "../../Pipeable.ts"
@@ -66,7 +45,7 @@ import type { EventLogRemote } from "./EventLogRemote.ts"
  * only when the handler succeeds, and exposes access to the underlying journal
  * entries and destroy operation.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export class EventLog extends Context.Service<EventLog, {
@@ -181,7 +160,9 @@ export const layerRegistry = Layer.effect(
       },
       registerReactivity: (keys) =>
         Effect.sync(() => {
-          Object.assign(reactivityKeys, keys)
+          for (const [key, value] of Object.entries(keys)) {
+            InternalRecord.assignProperty(reactivityKeys, key, value)
+          }
         }),
       reactivityKeys
     })
@@ -520,7 +501,7 @@ const handlersProto = {
       handlers: {
         ...this.handlers,
         [tag]: {
-          event: this.group.events[tag],
+          event: Object.hasOwn(this.group.events, tag) ? this.group.events[tag] : undefined!,
           context: this.context,
           handler
         }
@@ -569,7 +550,7 @@ export const group = <Events extends Event.Any, Return>(
       const handlers = Effect.isEffect(result)
         ? (yield* (result as unknown as Effect.Effect<Handlers<any>>))
         : (result as unknown as Handlers<any>)
-      for (const tag in handlers.handlers) {
+      for (const tag of Object.keys(handlers.handlers)) {
         registry.registerHandlerUnsafe({ event: tag, handler: handlers.handlers[tag] })
       }
     })
@@ -606,7 +587,7 @@ export const groupCompaction = <Events extends Event.Any, R>(
       yield* registry.registerCompaction({
         events: Object.keys(group.events),
         effect: Effect.fnUntraced(function*({ entries, write }): Effect.fn.Return<void> {
-          const isEventTag = (tag: string): tag is Event.Tag<Events> => tag in group.events
+          const isEventTag = (tag: string): tag is Event.Tag<Events> => Object.hasOwn(group.events, tag)
           const decodePayload = <Tag extends Event.Tag<Events>>(tag: Tag, payload: Uint8Array) =>
             Schema.decodeUnknownEffect(group.events[tag].payloadMsgPack)(payload).pipe(
               Effect.updateContext((input) => Context.merge(services, input)),
@@ -617,7 +598,7 @@ export const groupCompaction = <Events extends Event.Any, R>(
             tag: Tag,
             payload: Event.PayloadWithTag<Events, Tag>
           ): Effect.fn.Return<void, never, Event.PayloadSchemaWithTag<Events, Tag>["EncodingServices"]> {
-            const event = group.events[tag]
+            const event = Object.hasOwn(group.events, tag) ? group.events[tag] : undefined!
             const entry = new Entry({
               id: makeEntryIdUnsafe({ msecs: timestamp }),
               event: tag,
@@ -696,8 +677,8 @@ export const groupReactivity = <Events extends Event.Any>(
       yield* registry.registerReactivity(keys as Record.ReadonlyRecord<string, ReadonlyArray<string>>)
       return
     }
-    const obj: Record<string, ReadonlyArray<string>> = {}
-    for (const tag in group.events) {
+    const obj: Record<string, ReadonlyArray<string>> = Object.create(null)
+    for (const tag of Object.keys(group.events)) {
       obj[tag] = keys
     }
     yield* registry.registerReactivity(obj)
@@ -763,7 +744,9 @@ export const makeReplayFromRemote = (options: {
         Effect.asVoid
       ) as any
 
-      const keys = options.reactivityKeys[entry.event]
+      const keys = Object.hasOwn(options.reactivityKeys, entry.event)
+        ? options.reactivityKeys[entry.event]
+        : undefined
       if (keys) {
         for (const key of keys) {
           options.reactivity.invalidateUnsafe({
@@ -802,7 +785,9 @@ const make = Effect.gen(function*() {
   const invalidateReactivityEntries = (entries: ReadonlyArray<Entry>) =>
     Effect.sync(() => {
       for (const entry of entries) {
-        const keys = registry.reactivityKeys[entry.event]
+        const keys = Object.hasOwn(registry.reactivityKeys, entry.event)
+          ? registry.reactivityKeys[entry.event]
+          : undefined
         if (!keys) {
           continue
         }
@@ -876,9 +861,10 @@ const make = Effect.gen(function*() {
         Effect.scoped,
         Effect.catchCause(Effect.logError),
         Effect.repeat(
-          Schedule.exponential(200, 1.5).pipe(
-            Schedule.either(Schedule.spaced({ seconds: 10 }))
-          )
+          Schedule.min([
+            Schedule.exponential(200, 1.5),
+            Schedule.spaced({ seconds: 10 })
+          ])
         ),
         Effect.annotateLogs({
           service: "EventLog",
@@ -924,8 +910,11 @@ const make = Effect.gen(function*() {
           Effect.updateContext((input) => Context.merge(handler.context, input)),
           Effect.provideService(Identity, identity),
           Effect.tap(() => {
-            if (registry.reactivityKeys[entry.event]) {
-              for (const key of registry.reactivityKeys[entry.event]) {
+            const keys = Object.hasOwn(registry.reactivityKeys, entry.event)
+              ? registry.reactivityKeys[entry.event]
+              : undefined
+            if (keys) {
+              for (const key of keys) {
                 reactivity.invalidateUnsafe({
                   [key]: [entry.primaryKey]
                 })
@@ -978,9 +967,9 @@ export const layerEventLog: Layer.Layer<EventLog | Registry, never, EventJournal
  *
  * **When to use**
  *
- * Use when an application has an `EventLogSchema` and event-group handler layer
- * and wants one layer that installs the shared `EventLog` runtime and registers
- * the handlers for typed writes.
+ * Use when you need one layer that installs the shared `EventLog` runtime for
+ * an `EventLogSchema` and registers an event-group handler layer for typed
+ * writes.
  *
  * **Details**
  *
