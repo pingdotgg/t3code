@@ -915,7 +915,9 @@ const buildEnabledClaudeMcpServerMap = Effect.fn("buildEnabledClaudeMcpServerMap
   }
 
   const disabled = new Set(claudeSettings.disabledMcpServers);
-  const enabled: Record<string, unknown> = {};
+  // Null prototype: a server literally named `__proto__` would otherwise hit
+  // the inherited setter and vanish from the map.
+  const enabled: Record<string, unknown> = Object.create(null);
   for (const { name, definition } of definitions) {
     if (disabled.has(name)) continue;
     enabled[name] = definition;

@@ -83,8 +83,14 @@ const readJsonObject = Effect.fn("readClaudeJsonObject")(function* (
   filePath: string,
 ): Effect.fn.Return<JsonFileRead, never, FileSystem.FileSystem> {
   const fileSystem = yield* FileSystem.FileSystem;
-  const exists = yield* fileSystem.exists(filePath).pipe(Effect.orElseSucceed(() => false));
-  if (!exists) return { kind: "absent" };
+  // A failed existence check (permissions, transient FS error) is *not* the
+  // same as a missing file: the contents stay unknown, so report `unusable`.
+  const exists: "yes" | "no" | "unknown" = yield* fileSystem.exists(filePath).pipe(
+    Effect.map((value): "yes" | "no" => (value ? "yes" : "no")),
+    Effect.orElseSucceed((): "unknown" => "unknown"),
+  );
+  if (exists === "no") return { kind: "absent" };
+  if (exists === "unknown") return { kind: "unusable" };
 
   const contents = yield* fileSystem
     .readFileString(filePath)

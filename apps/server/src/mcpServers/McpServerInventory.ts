@@ -99,43 +99,46 @@ function claudeTransport(entry: Record<string, unknown>): McpServerTransport {
   return trimmedOrUndefined(entry.url) ? "http" : "stdio";
 }
 
-const discoverClaudeMcpServers = Effect.fn("McpServerInventory.discoverClaudeMcpServers")(
-  function* (
-    instanceId: string,
-    instance: ProviderInstanceConfig,
-    environment: NodeJS.ProcessEnv,
-    cwd: string | undefined,
-  ): Effect.fn.Return<ReadonlyArray<McpServerInventoryEntry>, never, McpInventoryEnv> {
-    const decoded = decodeClaudeSettings(instance.config ?? {});
-    if (decoded._tag === "None") return [];
-    const settings = decoded.value;
+export const discoverClaudeMcpServerEntries = Effect.fn(
+  "McpServerInventory.discoverClaudeMcpServers",
+)(function* (
+  instanceId: string,
+  instance: ProviderInstanceConfig,
+  environment: NodeJS.ProcessEnv,
+  cwd: string | undefined,
+): Effect.fn.Return<ReadonlyArray<McpServerInventoryEntry>, never, McpInventoryEnv> {
+  const decoded = decodeClaudeSettings(instance.config ?? {});
+  if (decoded._tag === "None") return [];
+  const settings = decoded.value;
 
-    const { definitions } = yield* readClaudeMcpServers(settings, environment, cwd);
+  const { complete, definitions } = yield* readClaudeMcpServers(settings, environment, cwd);
 
-    const disabled = new Set(settings.disabledMcpServers);
-    const entries: McpServerInventoryEntry[] = [];
-    for (const { name, scope, sourcePath, definition: entry } of definitions) {
-      const transport = claudeTransport(entry);
-      const command = trimmedOrUndefined(entry.command);
-      const url = trimmedOrUndefined(entry.url);
-      const detail = transport === "stdio" && command ? stdioDetail(command, entry.args) : url;
+  const disabled = new Set(settings.disabledMcpServers);
+  const entries: McpServerInventoryEntry[] = [];
+  for (const { name, scope, sourcePath, definition: entry } of definitions) {
+    const transport = claudeTransport(entry);
+    const command = trimmedOrUndefined(entry.command);
+    const url = trimmedOrUndefined(entry.url);
+    const detail = transport === "stdio" && command ? stdioDetail(command, entry.args) : url;
 
-      entries.push({
-        providerInstanceId: ProviderInstanceId.make(instanceId),
-        harness: instance.driver,
-        harnessDisplayName: harnessDisplayName(instance, "Claude"),
-        name,
-        transport,
-        ...(detail ? { detail } : {}),
-        configPath: sourcePath,
-        scope,
-        enabled: !disabled.has(name),
-        toggleable: true,
-      });
-    }
-    return entries;
-  },
-);
+    entries.push({
+      providerInstanceId: ProviderInstanceId.make(instanceId),
+      harness: instance.driver,
+      harnessDisplayName: harnessDisplayName(instance, "Claude"),
+      name,
+      transport,
+      ...(detail ? { detail } : {}),
+      configPath: sourcePath,
+      scope,
+      // With an unreadable config file the session ignores the disable list
+      // (see `buildEnabledClaudeMcpServerMap`), so a switch here would lie.
+      ...(complete ? {} : { status: "config unreadable" }),
+      enabled: !disabled.has(name),
+      toggleable: complete,
+    });
+  }
+  return entries;
+});
 
 function codexTransport(transport: unknown): {
   readonly transport: McpServerTransport;
@@ -239,7 +242,7 @@ const discoverInstanceMcpServers = Effect.fn("McpServerInventory.discoverInstanc
     McpInventoryEnv | ChildProcessSpawner.ChildProcessSpawner
   > {
     if (instance.driver === "claudeAgent") {
-      return yield* discoverClaudeMcpServers(instanceId, instance, environment, cwd);
+      return yield* discoverClaudeMcpServerEntries(instanceId, instance, environment, cwd);
     }
     if (instance.driver === "codex") {
       return yield* discoverCodexMcpServers(instanceId, instance, environment);

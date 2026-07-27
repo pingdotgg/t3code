@@ -52,12 +52,21 @@ export const mcpServersHttpApiLayer = HttpApiBuilder.group(
           // Re-plan inside the settings write lock: the disable list is a
           // read-modify-write, so planning from a snapshot taken outside the
           // lock could drop a concurrent writer's changes.
+          let applied = false;
           yield* settingsService
             .updateSettingsWith((current) => {
               const plan = planDisabledMcpServersWrite(current, target);
-              return plan.kind === "unsupported" ? undefined : plan.patch;
+              if (plan.kind === "unsupported") return undefined;
+              applied = true;
+              return plan.patch;
             })
             .pipe(Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)));
+
+          // The instance can be removed or re-driven between the pre-check and
+          // the lock; that is a rejected request, not a silent success.
+          if (!applied) {
+            return yield* failEnvironmentInvalidRequest("invalid_command");
+          }
 
           return yield* discoverGlobalMcpInventory();
         }),

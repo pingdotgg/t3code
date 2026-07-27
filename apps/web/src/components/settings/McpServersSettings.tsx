@@ -131,25 +131,27 @@ function EnvironmentMcpInventory({
   const [collapsed, setCollapsed] = useState(false);
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(() => new Set());
   const panelId = useId();
-  // Bumped whenever the connection (or a refresh) replaces the inventory. A
-  // toggle that resolves after a reconnect belongs to a dead generation and
-  // must not write its stale response over the new connection's data.
-  const generationRef = useRef(0);
+  // The connection a request was issued through. A toggle that resolves after
+  // a reconnect belongs to a dead connection and must not write its stale
+  // response over the new one's data. A plain refresh does not invalidate a
+  // toggle — its result is still about this connection's settings.
+  const connectionRef = useRef<unknown>(null);
+  connectionRef.current = Option.isSome(prepared) ? prepared.value : null;
 
   useEffect(() => {
     if (Option.isNone(prepared)) return;
-    const generation = ++generationRef.current;
+    const connection = prepared.value;
     let cancelled = false;
     setState({ status: "loading" });
     void runtime
-      .runPromise(fetchEnvironmentMcpInventory({ prepared: prepared.value }))
+      .runPromise(fetchEnvironmentMcpInventory({ prepared: connection }))
       .then((inventory) => {
-        if (!cancelled && generation === generationRef.current) {
+        if (!cancelled && connection === connectionRef.current) {
           setState({ status: "loaded", inventory });
         }
       })
       .catch((cause: unknown) => {
-        if (!cancelled && generation === generationRef.current) {
+        if (!cancelled && connection === connectionRef.current) {
           setState({ status: "error", message: errorMessage(cause) });
         }
       });
@@ -162,7 +164,7 @@ function EnvironmentMcpInventory({
     (server: McpServerInventoryEntry, enabled: boolean) => {
       if (Option.isNone(prepared)) return;
       const key = mcpServerKey(server);
-      const generation = generationRef.current;
+      const connection = prepared.value;
       setPendingKeys((keys) => new Set(keys).add(key));
       // Optimistic: the switch answers immediately, and the server's fresh
       // inventory replaces this state either way.
@@ -190,7 +192,7 @@ function EnvironmentMcpInventory({
           }),
         )
         .then((inventory) => {
-          if (generation !== generationRef.current) return;
+          if (connection !== connectionRef.current) return;
           // Merge only this row's confirmed value. Replacing the whole
           // inventory would let a slower response for one server overwrite a
           // newer response for another.
@@ -217,7 +219,7 @@ function EnvironmentMcpInventory({
             title: enabled ? "Could not enable server" : "Could not disable server",
             description: errorMessage(cause),
           });
-          if (generation !== generationRef.current) return;
+          if (connection !== connectionRef.current) return;
           setState((current) =>
             current.status === "loaded"
               ? {
