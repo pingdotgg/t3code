@@ -294,6 +294,73 @@ struct ModelPickerCatalogTests {
         #expect(miss.isEmpty)
     }
 
+    @Test("a scoped search that matches nothing widens to the whole catalog")
+    func scopedSearchWidensWhenEmpty() {
+        let items = ModelPickerCatalog.items(
+            from: [
+                option(instance: "codex", modelID: "gpt-5", name: "GPT-5", provider: .codex),
+                option(instance: "claude", modelID: "sonnet-5", name: "Sonnet 5", provider: .claude),
+            ],
+            selectedInstanceID: nil,
+            selectedModelID: nil
+        )
+
+        let inScope = ModelPickerCatalog.searchResults(
+            items, scope: .provider(.codex), query: "gpt")
+        let widened = ModelPickerCatalog.searchResults(
+            items, scope: .provider(.codex), query: "sonnet")
+        let nowhere = ModelPickerCatalog.searchResults(
+            items, scope: .provider(.codex), query: "zzz")
+
+        #expect(inScope.items.map(\.option.modelID) == ["gpt-5"])
+        #expect(inScope.didWidenToAllModels == false)
+        // The search field is the picker's one global affordance, so a model
+        // the scope does not have is still findable by typing its name.
+        #expect(widened.items.map(\.option.modelID) == ["sonnet-5"])
+        #expect(widened.didWidenToAllModels)
+        #expect(nowhere.items.isEmpty)
+        #expect(nowhere.didWidenToAllModels == false)
+    }
+
+    @Test("an empty scope with no query stays empty instead of widening")
+    func emptyScopeWithoutQueryDoesNotWiden() {
+        let items = ModelPickerCatalog.items(
+            from: [
+                option(instance: "codex", modelID: "gpt-5", name: "GPT-5", provider: .codex)
+            ],
+            selectedInstanceID: nil,
+            selectedModelID: nil
+        )
+
+        let noQuery = ModelPickerCatalog.searchResults(items, scope: .favorites, query: "")
+        let allScope = ModelPickerCatalog.searchResults(items, scope: .all, query: "zzz")
+
+        #expect(noQuery.items.isEmpty)
+        #expect(noQuery.didWidenToAllModels == false)
+        #expect(allScope.items.isEmpty)
+        #expect(allScope.didWidenToAllModels == false)
+    }
+
+    @Test("the keyboard highlight moves to the row that took the removed row's place")
+    func highlightFollowsRemovedRow() {
+        let before = ["a", "b", "c"]
+
+        #expect(
+            ModelPickerCatalog.highlightAfterRemoval(
+                previousKeys: before, removedKey: "b", remainingKeys: ["a", "c"]) == "c")
+        // Removing the last row clamps to the new last row.
+        #expect(
+            ModelPickerCatalog.highlightAfterRemoval(
+                previousKeys: before, removedKey: "c", remainingKeys: ["a", "b"]) == "b")
+        #expect(
+            ModelPickerCatalog.highlightAfterRemoval(
+                previousKeys: before, removedKey: "b", remainingKeys: []) == nil)
+        // A key that was never in the list falls back to the top row.
+        #expect(
+            ModelPickerCatalog.highlightAfterRemoval(
+                previousKeys: before, removedKey: "z", remainingKeys: ["a", "c"]) == "a")
+    }
+
     @Test("a repeated recents key yields one row")
     func recentsDeduplicateKeys() {
         let items = ModelPickerCatalog.items(

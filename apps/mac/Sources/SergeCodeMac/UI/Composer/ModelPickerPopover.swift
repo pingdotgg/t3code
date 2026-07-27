@@ -188,8 +188,8 @@ struct ModelPickerPopoverContent: View {
         ModelPickerCatalog.recentItems(allItems, recents: preferences.recents)
     }
 
-    private var visibleItems: [ModelPickerItem] {
-        ModelPickerCatalog.filteredItems(
+    private var results: ModelPickerSearchResults {
+        ModelPickerCatalog.searchResults(
             allItems,
             scope: scope,
             query: searchText,
@@ -197,6 +197,8 @@ struct ModelPickerPopoverContent: View {
             recents: preferences.recents
         )
     }
+
+    private var visibleItems: [ModelPickerItem] { results.items }
 
     /// Sections in display order. While searching, ranking beats grouping, so
     /// the results arrive as one flat list.
@@ -292,12 +294,24 @@ struct ModelPickerPopoverContent: View {
         .onChange(of: scope) { _, _ in resetHighlightToFirstRow() }
     }
 
+    /// Names the scope being searched, since a query is scoped first. It still
+    /// widens to the whole catalog when the scope has no match, and the
+    /// browser says so when that happens.
+    private var searchPlaceholder: String {
+        switch scope {
+        case .all: "Search by model or provider"
+        case .favorites: "Search favorites"
+        case .recents: "Search recently used"
+        case .provider(let provider): "Search \(provider.displayName) models"
+        }
+    }
+
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
-            TextField("Search by model or provider", text: $searchText)
+            TextField(searchPlaceholder, text: $searchText)
                 .textFieldStyle(.plain)
                 .focused($searchFocused)
                 .onSubmit { activateHighlightedRow() }
@@ -430,6 +444,11 @@ struct ModelPickerPopoverContent: View {
 
             Divider().opacity(0.45)
 
+            if results.didWidenToAllModels {
+                widenedSearchNotice
+                Divider().opacity(0.45)
+            }
+
             if visibleItems.isEmpty && clearRow == nil {
                 emptyState
             } else {
@@ -438,6 +457,31 @@ struct ModelPickerPopoverContent: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(Motion.reveal, value: scope)
+        .animation(Motion.reveal, value: results.didWidenToAllModels)
+    }
+
+    /// Shown when the query found nothing in the current scope and the whole
+    /// catalog answered instead — otherwise the widened rows would silently
+    /// contradict the selected sidebar scope.
+    private var widenedSearchNotice: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text("No matches in \(browserTitle) — searching all models")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Button("Browse all") { select(scope: .all) }
+                .buttonStyle(.plain)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(AlpineTheme.forest)
+                .help("Leave this scope and keep browsing every model")
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 30)
+        .background(AlpineTheme.accent.opacity(0.12))
     }
 
     private var browserTitle: String {
@@ -495,8 +539,8 @@ struct ModelPickerPopoverContent: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             if scope != .all {
-                Button("Search all models") {
-                    scope = .all
+                Button("Browse all models") {
+                    select(scope: .all)
                     searchFocused = true
                 }
                 .buttonStyle(.plain)
@@ -533,7 +577,9 @@ struct ModelPickerPopoverContent: View {
     }
 
     private var emptyStateDetail: String {
-        if !searchText.isEmpty { return "Try another search or provider." }
+        // A scoped search widens to the whole catalog before it can come up
+        // empty, so an empty list with a query means no model anywhere matches.
+        if !searchText.isEmpty { return "No model in any provider matches that search." }
         switch scope {
         case .favorites: return "Star a model with ⌘D or its star button to keep it here."
         case .recents: return "Models you pick show up here in the order you used them."
@@ -625,7 +671,20 @@ struct ModelPickerPopoverContent: View {
 
     private func toggleFavorite(_ item: ModelPickerItem) {
         Haptics.play(.toggle)
+        let keysBefore = navigableKeys
         preferences.toggleFavorite(item.id)
+        // Unfavoriting inside the Favorites scope drops the row out from under
+        // the keyboard. Without this the highlight points at a row that is no
+        // longer rendered, and arrows and Return do nothing until the pointer
+        // rescues them.
+        guard let staleKey = highlightedKey else { return }
+        let keysAfter = navigableKeys
+        guard !keysAfter.contains(staleKey) else { return }
+        highlightedKey = ModelPickerCatalog.highlightAfterRemoval(
+            previousKeys: keysBefore, removedKey: staleKey, remainingKeys: keysAfter)
+        if let scrollProxy, let highlightedKey {
+            withAnimation(nil) { scrollProxy.scrollTo(highlightedKey, anchor: .center) }
+        }
     }
 
     private func toggleFavoriteOnHighlightedRow() {

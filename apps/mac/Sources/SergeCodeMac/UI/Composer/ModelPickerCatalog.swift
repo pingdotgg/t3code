@@ -20,6 +20,13 @@ enum ModelPickerScope: Hashable {
     case provider(ProviderKind)
 }
 
+/// Rows to render plus whether they came from outside the selected scope.
+struct ModelPickerSearchResults: Equatable {
+    let items: [ModelPickerItem]
+    /// True when the scope matched nothing and the whole catalog answered instead.
+    let didWidenToAllModels: Bool
+}
+
 enum ModelPickerCatalog {
     static func items(
         from options: [ModelOption],
@@ -74,6 +81,45 @@ enum ModelPickerCatalog {
                 return lhs.index < rhs.index
             }
             .map(\.item)
+    }
+
+    /// What the browser should show for a scope and a query, including whether
+    /// the search had to leave the scope to find anything.
+    ///
+    /// A scoped search that matches nothing widens to the whole catalog rather
+    /// than dead-ending on an empty list: the search field is the one global
+    /// affordance in the picker, so typing a model the current provider does
+    /// not have should find it, not report that it does not exist.
+    static func searchResults(
+        _ items: [ModelPickerItem],
+        scope: ModelPickerScope,
+        query: String,
+        favorites: Set<String> = [],
+        recents: [String] = []
+    ) -> ModelPickerSearchResults {
+        let scoped = filteredItems(
+            items, scope: scope, query: query, favorites: favorites, recents: recents)
+        guard scoped.isEmpty, !normalized(query).isEmpty, scope != .all else {
+            return ModelPickerSearchResults(items: scoped, didWidenToAllModels: false)
+        }
+        let widened = filteredItems(items, scope: .all, query: query)
+        return ModelPickerSearchResults(items: widened, didWidenToAllModels: !widened.isEmpty)
+    }
+
+    /// Where the keyboard highlight lands after the highlighted row leaves the
+    /// list — unfavoriting from the Favorites scope drops the row out from
+    /// under the arrow keys. Takes the row that inherited its position, so
+    /// arrows and Return keep working without needing a hover to recover.
+    static func highlightAfterRemoval(
+        previousKeys: [String],
+        removedKey: String,
+        remainingKeys: [String]
+    ) -> String? {
+        guard !remainingKeys.isEmpty else { return nil }
+        guard let removedIndex = previousKeys.firstIndex(of: removedKey) else {
+            return remainingKeys.first
+        }
+        return remainingKeys[min(removedIndex, remainingKeys.count - 1)]
     }
 
     static func favoriteItems(_ items: [ModelPickerItem], favorites: Set<String>)
