@@ -1058,7 +1058,7 @@ describe("ChatView new-thread parity", () => {
     });
     await setup.waitForFrame(
       (frame) =>
-        frame.includes("Project one — describe the task below.") &&
+        frame.includes("What should we build in Project one?") &&
         frame.includes("effort medium") &&
         frame.includes("▸ Send"),
     );
@@ -1083,7 +1083,7 @@ describe("ChatView new-thread parity", () => {
       await Promise.resolve();
     });
     const frame = await setup.waitForFrame((next) => next.includes("create failed"));
-    expect(frame).toContain("Project one — describe the task below.");
+    expect(frame).toContain("What should we build in Project one?");
     expect(frame).not.toContain("new thread");
     expect(frame).toContain("preserve this new task");
     setup.renderer.destroy();
@@ -1109,7 +1109,9 @@ describe("ChatView new-thread parity", () => {
       setup.mockInput.pressEnter();
       await setup.renderOnce();
     });
-    const frame = await setup.waitForFrame((next) => next.includes("describe the task below"));
+    const frame = await setup.waitForFrame((next) =>
+      next.includes("What should we build in Project one?"),
+    );
     expect(frame).toContain("▸ Send");
     expect(frame).not.toContain("new thread");
     expect(calls).toBe(0);
@@ -1137,7 +1139,7 @@ describe("ChatView new-thread parity", () => {
     });
     await setup.waitForFrame(
       (frame) =>
-        frame.includes("Project one — describe the task below.") &&
+        frame.includes("What should we build in Project one?") &&
         frame.includes("main") &&
         frame.includes("^B Build"),
     );

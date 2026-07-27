@@ -2337,7 +2337,9 @@ export function ChatView({
                   projectHint={selectedProjectTitle}
                   {...(focus === "new"
                     ? {
-                        emptyHint: `${projects[activeProjectIndex]?.title ?? "New thread"} — describe the task below.`,
+                        emptyHint: projects[activeProjectIndex]?.title
+                          ? `What should we build in ${projects[activeProjectIndex].title}?`
+                          : "Select a project to start.",
                       }
                     : {})}
                   width={chatWidth}
