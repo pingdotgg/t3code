@@ -190,9 +190,7 @@ function openCodeCapabilitiesForModel(input: {
     .filter((agent) => agent.name !== "build" && agent.name !== "plan")
     .map((agent) => ({ id: agent.name, label: titleCaseSlug(agent.name) }));
   const agentOptions =
-    customAgentOptions.length > 0
-      ? [{ id: "build", label: "Default", isDefault: true as const }, ...customAgentOptions]
-      : [];
+    customAgentOptions.length > 0 ? [{ id: "build", label: "Default" }, ...customAgentOptions] : [];
   return createModelCapabilities({
     optionDescriptors: [
       ...(variantOptions.length > 0
@@ -213,6 +211,7 @@ function openCodeCapabilitiesForModel(input: {
               label: "Agent",
               type: "select" as const,
               options: agentOptions,
+              currentValue: "build",
             },
           ]
         : []),
