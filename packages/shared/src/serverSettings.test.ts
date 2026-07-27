@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import {
   CustomInstructionsConfig,
   DEFAULT_SERVER_SETTINGS,
+  ServerSettingsPatch,
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -296,5 +297,126 @@ it("replaces token efficiency custom pricing maps so stale model prices are clea
     }).tokenEfficiency.customModelPricing,
   ).toEqual({
     "codex/new": { outputPerMillionUsd: 2 },
+  });
+});
+
+describe("auto-review settings survive a real client patch", () => {
+  const decodePatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+
+  // Byte-for-byte the shape apps/mac emits from LiveBackend.updateSettings.
+  const macClientPatch = {
+    enableAssistantStreaming: true,
+    enableProviderUpdateChecks: true,
+    defaultThreadEnvMode: "local",
+    newWorktreesStartFromOrigin: false,
+    addProjectBaseDirectory: "~/Documents/Dev",
+    autoReview: {
+      enabled: true,
+      mode: "auto",
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      mentionHandle: "surgecode",
+      pollInterval: 60_000,
+      autoFixOriginThread: true,
+      fixModelMode: "custom",
+      fixModelSelection: { instanceId: "claude", model: "opus-5" },
+      maxAttempts: 2,
+      concurrency: 4,
+      fixConcurrency: 3,
+      projects: {},
+    },
+  };
+
+  it("decodes the wire payload without dropping the new keys", () => {
+    const patch = decodePatch(macClientPatch);
+    expect(patch.autoReview?.fixModelMode).toBe("custom");
+    expect(patch.autoReview?.fixModelSelection).toMatchObject({
+      instanceId: "claude",
+      model: "opus-5",
+    });
+    expect(patch.autoReview?.concurrency).toBe(4);
+    expect(patch.autoReview?.fixConcurrency).toBe(3);
+  });
+
+  it("persists them through the merge", () => {
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, decodePatch(macClientPatch));
+    expect(next.autoReview.fixModelMode).toBe("custom");
+    expect(next.autoReview.fixModelSelection).toMatchObject({
+      instanceId: "claude",
+      model: "opus-5",
+    });
+    expect(next.autoReview.concurrency).toBe(4);
+    expect(next.autoReview.fixConcurrency).toBe(3);
+  });
+
+  it("replaces the fix model rather than merging stale options into it", () => {
+    const withOptions = applyServerSettingsPatch(
+      DEFAULT_SERVER_SETTINGS,
+      decodePatch({
+        autoReview: {
+          fixModelMode: "custom",
+          fixModelSelection: {
+            instanceId: "claude",
+            model: "opus-5",
+            options: [{ id: "effort", value: "high" }],
+          },
+        },
+      }),
+    );
+    expect(withOptions.autoReview.fixModelSelection?.options).toHaveLength(1);
+
+    // Switching to a model that carries no options must not leave the old
+    // model's options attached to the new one.
+    const switched = applyServerSettingsPatch(
+      withOptions,
+      decodePatch({
+        autoReview: {
+          fixModelMode: "custom",
+          fixModelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        },
+      }),
+    );
+    expect(switched.autoReview.fixModelSelection).toMatchObject({
+      instanceId: "codex",
+      model: "gpt-5.4",
+    });
+    expect(switched.autoReview.fixModelSelection?.options ?? []).toHaveLength(0);
+  });
+  it("replaces the review model rather than merging stale options into it", () => {
+    const withOptions = applyServerSettingsPatch(
+      DEFAULT_SERVER_SETTINGS,
+      decodePatch({
+        autoReview: {
+          modelSelection: {
+            instanceId: "claude",
+            model: "opus-5",
+            options: [{ id: "effort", value: "high" }],
+          },
+        },
+      }),
+    );
+    expect(withOptions.autoReview.modelSelection.options).toHaveLength(1);
+
+    const switched = applyServerSettingsPatch(
+      withOptions,
+      decodePatch({
+        autoReview: { modelSelection: { instanceId: "codex", model: "gpt-5.4" } },
+      }),
+    );
+    expect(switched.autoReview.modelSelection.options ?? []).toHaveLength(0);
+  });
+
+  it("still replaces the project override map wholesale", () => {
+    const seeded = applyServerSettingsPatch(
+      DEFAULT_SERVER_SETTINGS,
+      decodePatch({ autoReview: { projects: { proj_1: { enabled: false } } } }),
+    );
+    expect(Object.keys(seeded.autoReview.projects)).toEqual(["proj_1"]);
+
+    const replaced = applyServerSettingsPatch(
+      seeded,
+      decodePatch({ autoReview: { projects: { proj_2: { enabled: true } } } }),
+    );
+    // A merge would leave proj_1 behind; the map is client-owned.
+    expect(Object.keys(replaced.autoReview.projects)).toEqual(["proj_2"]);
   });
 });
