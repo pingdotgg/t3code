@@ -86,8 +86,13 @@ export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
           const settings = await window.desktopBridge.getClientSettings();
           if (settings) {
             writeBrowserClientSettings(settings);
+            return settings;
           }
-          return settings;
+          const browserSettings = readBrowserClientSettings();
+          if (browserSettings) {
+            await window.desktopBridge.setClientSettings(browserSettings);
+          }
+          return browserSettings;
         }
         return readBrowserClientSettings();
       },
@@ -101,7 +106,25 @@ export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
       },
       getSavedEnvironmentRegistry: async () => {
         if (window.desktopBridge) {
-          return window.desktopBridge.getSavedEnvironmentRegistry();
+          const records = await window.desktopBridge.getSavedEnvironmentRegistry();
+          if (records.length > 0) {
+            writeBrowserSavedEnvironmentRegistry(records);
+            return records;
+          }
+
+          const browserRecords = readBrowserSavedEnvironmentRegistry();
+          if (browserRecords.length === 0) {
+            return records;
+          }
+
+          await window.desktopBridge.setSavedEnvironmentRegistry(browserRecords);
+          for (const record of browserRecords) {
+            const secret = readBrowserSavedEnvironmentSecret(record.environmentId);
+            if (secret) {
+              await window.desktopBridge.setSavedEnvironmentSecret(record.environmentId, secret);
+            }
+          }
+          return browserRecords;
         }
         return readBrowserSavedEnvironmentRegistry();
       },

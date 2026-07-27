@@ -666,6 +666,83 @@ describe("wsApi", () => {
     expect(removeSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local");
   });
 
+  it("migrates browser client settings when desktop persistence is empty", async () => {
+    const clientSettings = {
+      autoOpenPlanSidebar: false,
+      chatFontSize: 8,
+      statusLineFontSize: 8,
+      codeFontSize: 8,
+      inputFontSize: 8,
+      sidebarFontSize: 7,
+      sidebarTranslucency: "liquid-glass" as const,
+      toolFontSize: 8,
+      confirmThreadArchive: false,
+      confirmThreadDelete: true,
+      codeFont: "jetbrains-mono" as const,
+      diffWordWrap: true,
+      favorites: [],
+      providerModelPreferences: {},
+      sidebarProjectGroupingMode: "repository" as const,
+      sidebarProjectGroupingOverrides: {},
+      sidebarProjectSortOrder: "updated_at" as const,
+      sidebarThreadSortOrder: "updated_at" as const,
+      threadCompletionNotifications: "background-only" as const,
+      timestampFormat: "locale" as const,
+      uiDensity: "compact" as const,
+      uiFont: "dm-sans" as const,
+    };
+    getWindowForTest().localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify(clientSettings),
+    );
+    const setClientSettings = vi.fn().mockResolvedValue(undefined);
+    getWindowForTest().desktopBridge = makeDesktopBridge({
+      getClientSettings: vi.fn().mockResolvedValue(null),
+      setClientSettings,
+    });
+
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi(rpcClientMock as never);
+
+    await expect(api.persistence.getClientSettings()).resolves.toEqual(clientSettings);
+    expect(setClientSettings).toHaveBeenCalledWith(clientSettings);
+  });
+
+  it("migrates browser environments and secrets when desktop persistence is empty", async () => {
+    const environment = {
+      environmentId: EnvironmentId.make("environment-remote"),
+      label: "Remote",
+      httpBaseUrl: "https://remote.example.com",
+      wsBaseUrl: "wss://remote.example.com",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      lastConnectedAt: "2026-07-26T00:00:00.000Z",
+    };
+    getWindowForTest().localStorage.setItem(
+      "t3code:saved-environment-registry:v1",
+      JSON.stringify({
+        version: 1,
+        records: [{ ...environment, bearerToken: "browser-bearer-token" }],
+      }),
+    );
+    const setSavedEnvironmentRegistry = vi.fn().mockResolvedValue(undefined);
+    const setSavedEnvironmentSecret = vi.fn().mockResolvedValue(true);
+    getWindowForTest().desktopBridge = makeDesktopBridge({
+      getSavedEnvironmentRegistry: vi.fn().mockResolvedValue([]),
+      setSavedEnvironmentRegistry,
+      setSavedEnvironmentSecret,
+    });
+
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi(rpcClientMock as never);
+
+    await expect(api.persistence.getSavedEnvironmentRegistry()).resolves.toEqual([environment]);
+    expect(setSavedEnvironmentRegistry).toHaveBeenCalledWith([environment]);
+    expect(setSavedEnvironmentSecret).toHaveBeenCalledWith(
+      "environment-remote",
+      "browser-bearer-token",
+    );
+  });
+
   it("falls back to browser storage for persistence when the desktop bridge is missing", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi(rpcClientMock as never);

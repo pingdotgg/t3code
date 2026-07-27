@@ -39,6 +39,8 @@ Write only the small, concise amount of code needed to solve the problem; avoid 
 - Full-thread diffs must filter checkpoint snapshots to the union of chat-attributed `turnFiles`; raw shared-worktree snapshots include unrelated changes from other chats.
 - Retried sidebar mutations need durable mutation IDs; a lost response can hide a committed reorder, and replaying it without server deduplication can move the thread twice.
 - Packaged Dev builds must write their flavor-specific `productName` into ASAR metadata; Electron derives `app.getName()` from it, and a stale Alpha name makes Dev reuse Alpha's Chromium profile.
+- When canonical and legacy Electron user-data directories both exist, prefer the canonical directory; falling back to legacy can resurrect stale localStorage and hide saved environments.
+- Keep packaged Dev and Alpha state roots flavor-specific (`~/.t3-dev` and `~/.t3-alpha`); sharing `~/.t3` lets concurrent variants migrate and write the same SQLite database.
 - Do not synthesize active virtual agent-run rows for archived parent threads; the sidebar filters archived parents after expansion, which otherwise resurrects their former nested runs as roots on startup.
 
 ## Keep This File Updated
