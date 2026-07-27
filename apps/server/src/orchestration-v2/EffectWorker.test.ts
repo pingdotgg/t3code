@@ -23,6 +23,7 @@ import {
   executorLayer,
   isNonRetryableProviderTurnControlFailure,
   OrchestrationEffectExecutorV2,
+  OrchestrationEffectWorkerError,
   OrchestrationEffectWorkerV2,
   runDaemonWithOptions,
 } from "./EffectWorker.ts";
@@ -175,13 +176,25 @@ it("does not retry pure interrupt races where the turn is already gone", () => {
   );
 });
 
-it.effect("backs off idle safety polls and resets immediately when work is signalled", () =>
+it.effect("uses durable deadlines, notifications, and a slow liveness poll", () =>
   Effect.gen(function* () {
     const attempts = yield* Ref.make(0);
     const available = yield* Queue.unbounded<void>();
+    const now = yield* DateTime.now;
+    const nextClaimableAt = yield* Ref.make<Option.Option<DateTime.Utc>>(
+      Option.some(DateTime.add(now, { milliseconds: 100 })),
+    );
     const worker = OrchestrationEffectWorkerV2.of({
       awaitWork: Queue.take(available),
-      runOnce: Ref.updateAndGet(attempts, (count) => count + 1).pipe(Effect.as(false)),
+      runOnce: Effect.gen(function* () {
+        const count = yield* Ref.updateAndGet(attempts, (current) => current + 1);
+        if (count === 2) {
+          yield* Ref.set(nextClaimableAt, Option.some(DateTime.add(now, { milliseconds: 5_000 })));
+        }
+        if (count === 3) yield* Ref.set(nextClaimableAt, Option.none());
+        return false;
+      }),
+      nextClaimableAt: Ref.get(nextClaimableAt),
       drain: () => Effect.succeed(0),
     });
     const awaitAttempts = Effect.fnUntraced(function* (expected: number) {
@@ -192,38 +205,56 @@ it.effect("backs off idle safety polls and resets immediately when work is signa
 
     yield* runDaemonWithOptions({
       concurrency: 1,
-      idlePollMinMs: 50,
-      idlePollMaxMs: 200,
+      livenessPollIntervalMs: 1_000,
     }).pipe(Effect.provideService(OrchestrationEffectWorkerV2, worker), Effect.forkScoped);
 
     yield* awaitAttempts(1);
-    yield* TestClock.adjust("49 millis");
+    yield* TestClock.adjust("99 millis");
     assert.equal(yield* Ref.get(attempts), 1);
 
     yield* TestClock.adjust("1 millis");
     yield* awaitAttempts(2);
-    yield* TestClock.adjust("99 millis");
+    yield* TestClock.adjust("999 millis");
     assert.equal(yield* Ref.get(attempts), 2);
 
-    yield* TestClock.adjust("1 millis");
+    yield* Queue.offer(available, undefined);
     yield* awaitAttempts(3);
-    yield* TestClock.adjust("199 millis");
+    yield* TestClock.adjust("999 millis");
     assert.equal(yield* Ref.get(attempts), 3);
 
     yield* TestClock.adjust("1 millis");
     yield* awaitAttempts(4);
-    yield* TestClock.adjust("199 millis");
-    assert.equal(yield* Ref.get(attempts), 4);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
 
-    yield* TestClock.adjust("1 millis");
-    yield* awaitAttempts(5);
-    yield* Queue.offer(available, undefined);
-    yield* awaitAttempts(6);
-    yield* TestClock.adjust("49 millis");
-    assert.equal(yield* Ref.get(attempts), 6);
+it.effect("does not hot-loop when a claim fails", () =>
+  Effect.gen(function* () {
+    const attempts = yield* Ref.make(0);
+    const now = yield* DateTime.now;
+    const worker = OrchestrationEffectWorkerV2.of({
+      awaitWork: Effect.never,
+      runOnce: Ref.update(attempts, (count) => count + 1).pipe(
+        Effect.andThen(
+          new OrchestrationEffectWorkerError({
+            operation: "claim",
+            cause: "simulated database failure",
+          }),
+        ),
+      ),
+      nextClaimableAt: Effect.succeed(Option.some(now)),
+      drain: () => Effect.succeed(0),
+    });
 
+    yield* runDaemonWithOptions({
+      concurrency: 1,
+      livenessPollIntervalMs: 1_000,
+    }).pipe(Effect.provideService(OrchestrationEffectWorkerV2, worker), Effect.forkScoped);
+
+    while ((yield* Ref.get(attempts)) < 1) yield* Effect.yieldNow;
+    yield* TestClock.adjust("999 millis");
+    assert.equal(yield* Ref.get(attempts), 1);
     yield* TestClock.adjust("1 millis");
-    yield* awaitAttempts(7);
+    while ((yield* Ref.get(attempts)) < 2) yield* Effect.yieldNow;
   }).pipe(Effect.provide(TestClock.layer())),
 );
 

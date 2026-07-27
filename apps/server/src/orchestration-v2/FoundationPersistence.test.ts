@@ -30,6 +30,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -39,6 +40,7 @@ import { CommandReceiptStoreV2, layer as commandReceiptStoreLayer } from "./Comm
 import { EffectOutboxV2, layer as effectOutboxLayer } from "./EffectOutbox.ts";
 import {
   layerWithOptions as effectWorkerLayerWithOptions,
+  OrchestrationEffectExecutionError,
   OrchestrationEffectExecutorV2,
   OrchestrationEffectWorkerV2,
   runDaemonWithOptions as runEffectWorkerDaemonWithOptions,
@@ -890,6 +892,79 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("ignores deadlines blocked by a running effect on the same thread", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutboxV2;
+      const now = yield* DateTime.now;
+      const future = DateTime.add(now, { seconds: 10 });
+      const commandId = CommandId.make("command:foundation-next-claimable");
+      const blockedThreadId = ThreadId.make("thread:foundation-next-claimable:blocked");
+      yield* outbox.enqueue([
+        {
+          id: "effect:foundation-next-claimable:a1",
+          commandId,
+          threadId: blockedThreadId,
+          request: { type: "terminal.cleanup" },
+        },
+        {
+          id: "effect:foundation-next-claimable:a2",
+          commandId,
+          threadId: blockedThreadId,
+          request: { type: "terminal.cleanup" },
+        },
+        {
+          id: "effect:foundation-next-claimable:b1",
+          commandId,
+          threadId: ThreadId.make("thread:foundation-next-claimable:future"),
+          request: { type: "terminal.cleanup" },
+          availableAt: future,
+        },
+      ]);
+
+      const claimed = yield* outbox.claimNext({
+        workerId: "next-claimable-worker",
+        leaseDurationMs: 30_000,
+      });
+      assert.isTrue(Option.isSome(claimed));
+      if (Option.isNone(claimed)) return;
+      assert.equal(claimed.value.id, "effect:foundation-next-claimable:a1");
+
+      const whileBlocked = yield* outbox.nextClaimableAt;
+      assert.isTrue(Option.isSome(whileBlocked));
+      if (Option.isSome(whileBlocked)) {
+        assert.equal(DateTime.toEpochMillis(whileBlocked.value), DateTime.toEpochMillis(future));
+      }
+
+      yield* outbox.succeed({
+        effectId: claimed.value.id,
+        workerId: "next-claimable-worker",
+      });
+      const afterCompletion = yield* outbox.nextClaimableAt;
+      assert.isTrue(Option.isSome(afterCompletion));
+      if (Option.isSome(afterCompletion)) {
+        assert.isAtMost(DateTime.toEpochMillis(afterCompletion.value), DateTime.toEpochMillis(now));
+      }
+
+      const unblocked = yield* outbox.claimNext({
+        workerId: "next-claimable-worker",
+        leaseDurationMs: 30_000,
+      });
+      assert.isTrue(Option.isSome(unblocked));
+      if (Option.isSome(unblocked)) {
+        assert.equal(unblocked.value.id, "effect:foundation-next-claimable:a2");
+        yield* outbox.succeed({
+          effectId: unblocked.value.id,
+          workerId: "next-claimable-worker",
+        });
+      }
+      yield* outbox.cancelUnsettled({
+        threadId: ThreadId.make("thread:foundation-next-claimable:future"),
+        effectTypes: ["terminal.cleanup"],
+        reason: "Test cleanup.",
+      });
+    }),
+  );
+
   it.effect("does not emit a SQL span for an empty safety claim", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutboxV2;
@@ -913,6 +988,69 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       assert.isTrue(Option.isNone(claim));
       assert.notInclude(spans, "sql.execute");
     }),
+  );
+
+  it.effect("executes a retry at its durable deadline instead of the liveness interval", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutboxV2;
+      const effectId = "effect:foundation-durable-retry-deadline";
+      const commandId = CommandId.make("command:foundation-durable-retry-deadline");
+      const threadId = ThreadId.make("thread:foundation-durable-retry-deadline");
+      const executions = yield* Ref.make(0);
+      const completed = yield* Deferred.make<void>();
+      const executorLayer = Layer.succeed(
+        OrchestrationEffectExecutorV2,
+        OrchestrationEffectExecutorV2.of({
+          execute: () =>
+            Effect.gen(function* () {
+              const attempt = yield* Ref.updateAndGet(executions, (count) => count + 1);
+              if (attempt === 1) {
+                return yield* new OrchestrationEffectExecutionError({
+                  effectId,
+                  effectType: "terminal.cleanup",
+                  cause: "simulated retry",
+                });
+              }
+              yield* Deferred.succeed(completed, undefined);
+            }),
+        }),
+      );
+      const workerLayer = effectWorkerLayerWithOptions({
+        workerId: "durable-retry-deadline-worker",
+      }).pipe(Layer.provide(Layer.merge(Layer.succeed(EffectOutboxV2, outbox), executorLayer)));
+
+      yield* Effect.gen(function* () {
+        yield* runEffectWorkerDaemonWithOptions({
+          concurrency: 1,
+          livenessPollIntervalMs: 30_000,
+        }).pipe(Effect.forkScoped);
+        yield* outbox.enqueue([
+          {
+            id: effectId,
+            commandId,
+            threadId,
+            request: { type: "terminal.cleanup" },
+          },
+        ]);
+        yield* outbox.notifyAvailable();
+
+        let retryScheduled = false;
+        while (!retryScheduled) {
+          const effect = yield* outbox.get(effectId);
+          retryScheduled =
+            Option.isSome(effect) &&
+            effect.value.status === "pending" &&
+            effect.value.attemptCount === 1;
+          if (!retryScheduled) yield* Effect.yieldNow;
+        }
+
+        yield* TestClock.adjust("99 millis");
+        assert.equal(yield* Ref.get(executions), 1);
+        yield* TestClock.adjust("1 millis");
+        yield* Deferred.await(completed);
+        assert.equal(yield* Ref.get(executions), 2);
+      }).pipe(Effect.provide(workerLayer), Effect.scoped);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("runs distinct threads concurrently while serializing effects within a thread", () =>
@@ -985,6 +1123,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
             },
           },
         ]);
+        yield* outbox.notifyAvailable(3);
 
         yield* Effect.all([Deferred.await(startedA1), Deferred.await(startedB1)]);
         assert.isFalse(yield* Deferred.isDone(startedA2));
@@ -1189,6 +1328,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
           OrchestrationEffectWorkerV2.of({
             awaitWork: Effect.void,
             runOnce: Effect.succeed(false),
+            nextClaimableAt: Effect.succeed(Option.none()),
             drain: () => Effect.succeed(0),
           }),
         ),
@@ -1387,6 +1527,7 @@ it.live("keeps claiming new work after repeated idle periods", () =>
             request: { type: "terminal.cleanup" },
           },
         ]);
+        yield* outbox.notifyAvailable();
         const observed = yield* Deferred.await(completion).pipe(Effect.timeoutOption("2 seconds"));
         assert.isTrue(Option.isSome(observed), `worker stopped before idle wave ${wave}`);
       }
