@@ -53,12 +53,14 @@
             // Settled sessions live behind a per-project disclosure, so the
             // outline's terminating rail and the settled band of the meter only
             // exist once something is settled and the disclosure is open.
-            guard await seedSettledSession(multi: multi) else {
+            guard let seeded = await seedSettledSession(multi: multi) else {
                 fail("sidebar-outline-settled", "could not settle a session")
                 return
             }
-            guard await revealSettled(multi: multi, table: table) else {
-                fail("sidebar-outline-settled", "settled disclosure never opened")
+            guard await revealSettled(seeded, in: multi, table: table) else {
+                fail(
+                    "sidebar-outline-settled",
+                    "settled disclosure never opened for \(seeded)")
                 return
             }
 
@@ -124,48 +126,84 @@
         }
 
         /// Settles the first settleable session so the disclosure exists. The
-        /// mock fixture seeds none. Returns whether the model actually reports it
-        /// settled afterwards — the write is asynchronous, so this polls the
-        /// model rather than assuming the round trip is done.
-        private static func seedSettledSession(multi: MultiDeviceModel) async -> Bool {
+        /// mock fixture seeds none.
+        ///
+        /// Returns the id of the project section it landed in, which is what the
+        /// reveal below asserts on — the settle is the only thing this scenario
+        /// knows the state of, so every later expectation is scoped to it rather
+        /// than to whatever else the fixture happens to contain. Nil means the
+        /// model never reported the thread settled; the write is asynchronous,
+        /// so this polls rather than assuming the round trip is done.
+        private static func seedSettledSession(multi: MultiDeviceModel) async -> String? {
             let model = multi.local
             guard
                 let thread = model.threads.first(where: {
                     $0.status != .archived && ThreadInboxSemantics.canSettle($0)
                         && !ThreadInboxSemantics.effectiveSettled($0)
                 })
-            else { return false }
+            else { return nil }
             await model.settleThread(thread)
-            return await UIProbeWait.until {
+            let settled = await UIProbeWait.until {
                 model.threads.contains {
                     $0.id == thread.id && ThreadInboxSemantics.effectiveSettled($0)
                 }
             }
+            guard settled else { return nil }
+            // Matched on the local device explicitly: a group can span machines,
+            // and the same thread id can appear twice when one backend is paired
+            // as both the local server and a remote device.
+            return SidebarProjection.projectGroups(in: multi, scope: .all)
+                .first { group in
+                    group.threads.contains {
+                        $0.thread.id == thread.id && $0.member.location.id == .local
+                    }
+                }?.id
         }
 
-        /// Opens every project's settled disclosure and waits for the rows it
-        /// hides to join the table.
+        /// Opens the settled disclosures and waits for the seeded section's rows
+        /// to join the table.
         ///
-        /// The row count is sampled for stability first: settling removes a row
-        /// from the active list and adds the disclosure toggle, so a count read
-        /// straight after the settle is a number in transit — and a later
-        /// `count > before` check against it would pass on a table that had not
-        /// actually opened.
+        /// Scoped to `groupID` rather than checked as a global row delta, which
+        /// is wrong in both directions. The reveal notification *unions*, so a
+        /// section already open contributes no new rows and a
+        /// `before + settledRows` target is never reached even though the
+        /// outline is correct; meanwhile an unrelated section opening in the
+        /// same pass contributes rows nobody asked for. The section's own report
+        /// of being open is the real assertion, and the row check that follows
+        /// only has to cover the rows that section was actually hiding — none,
+        /// if it was open to begin with.
+        ///
+        /// The count is sampled for stability before the post: settling removes
+        /// a row from the active list and adds the disclosure toggle, so a count
+        /// read straight after the settle is a number in transit.
         private static func revealSettled(
-            multi: MultiDeviceModel, table: NSTableView
+            _ groupID: String, in multi: MultiDeviceModel, table: NSTableView
         ) async -> Bool {
-            let settledRows = SidebarProjection.projectGroups(in: multi, scope: .all)
-                .reduce(0) { $0 + SidebarProjectSummary(group: $1).settled }
-            guard settledRows > 0 else { return false }
+            let wasOpen = UIProbeSidebarState.revealedSettledGroups.contains(groupID)
+            let hidden = wasOpen ? 0 : settledCount(of: groupID, in: multi)
             let before = await UIProbeWait.untilStable { table.numberOfRows }
+
             NotificationCenter.default.post(name: .uiProbeToggleSection, object: "settled")
-            let opened = await UIProbeWait.until {
-                table.numberOfRows >= before + settledRows
+
+            let reported = await UIProbeWait.until {
+                UIProbeSidebarState.revealedSettledGroups.contains(groupID)
             }
+            // `>=`, not `==`: other sections may open in the same pass, and the
+            // model is live — a thread settling mid-toggle adds a row here.
+            // Only a table that grew by *less* than this section was hiding
+            // means the disclosure did not actually render its rows.
+            let landed = await UIProbeWait.until { table.numberOfRows >= before + hidden }
             print(
-                "UIProbe: sidebar-outline settled rows \(before)"
-                    + "→\(table.numberOfRows) (expected +\(settledRows))")
-            return opened
+                "UIProbe: sidebar-outline settled section=\(groupID) "
+                    + "wasOpen=\(wasOpen) rows \(before)→\(table.numberOfRows) "
+                    + "(hiding \(hidden))")
+            return reported && landed
+        }
+
+        private static func settledCount(of groupID: String, in multi: MultiDeviceModel) -> Int {
+            SidebarProjection.projectGroups(in: multi, scope: .all)
+                .first { $0.id == groupID }
+                .map { SidebarProjectSummary(group: $0).settled } ?? 0
         }
 
         /// Lets the row entrance finish so a capture is not a half-faded frame.

@@ -151,6 +151,11 @@ struct SidebarView: View {
                 onForget: { forgetTarget = $0 })
         }
         .navigationTitle("SurgeCode")
+        // Probe hook (see UIProbeHooks): publishes which sections have their
+        // settled disclosure open. A probe drives the disclosure through the
+        // notification below, but it also has to know what the disclosure was
+        // doing before it asked — the reveal unions rather than toggles.
+        .uiProbeRevealedSettled(revealedSettled)
         .onAppear {
             loadCollapsedProjects()
             validateMachineScope()
