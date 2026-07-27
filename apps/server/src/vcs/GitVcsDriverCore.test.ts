@@ -632,11 +632,17 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("gives the post-checkout hook minutes rather than the default git timeout", () => {
-      // A cold `pnpm install` in the archive took 3m22s. Anything at or below
-      // the 30s default fails thread creation and leaves a half-set-up
-      // worktree registered.
+    it.effect("bounds the post-checkout hook without widening the failure domain", () => {
+      // Lower bound: a cold `pnpm install` in the archive took 3m22s, and
+      // anything at or below the 30s default fails thread creation and leaves
+      // a half-set-up worktree registered.
       assert.isAtLeast(WORKTREE_ADD_TIMEOUT_MS, 5 * 60_000);
+      // Upper bound: the hook bounds its own install
+      // (SERGECODE_SETUP_TIMEOUT_SECONDS, 300s) and reports its own failure, so
+      // this only has to outlast that plus git's own work. Growing it further
+      // just means a stuck `git worktree add` blocks thread creation for
+      // longer with nothing to show for it.
+      assert.isAtMost(WORKTREE_ADD_TIMEOUT_MS, 7 * 60_000);
       return Effect.void;
     });
   });

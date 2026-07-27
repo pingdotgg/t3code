@@ -25,7 +25,13 @@ const sh = (command: string, cwd: string) =>
  * plus a `pnpm` stub on PATH so the install path can be asserted without
  * actually resolving a dependency graph.
  */
-function makeRepo(options: { readonly upstreamRemote?: boolean } = {}): string {
+function makeRepo(
+  options: {
+    readonly upstreamRemote?: boolean;
+    /** Body of the `pnpm` stub, so a test can make the install fail or hang. */
+    readonly pnpmStub?: string;
+  } = {},
+): string {
   const repo = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "setup-worktree-"));
   NodeFS.mkdirSync(NodePath.join(repo, "scripts"));
   NodeFS.copyFileSync(scriptPath, NodePath.join(repo, "scripts", "setup-worktree.sh"));
@@ -38,7 +44,10 @@ function makeRepo(options: { readonly upstreamRemote?: boolean } = {}): string {
 
   const stubBin = NodePath.join(repo, "stub-bin");
   NodeFS.mkdirSync(stubBin);
-  NodeFS.writeFileSync(NodePath.join(stubBin, "pnpm"), '#!/bin/sh\necho "stub pnpm $*"\nexit 0\n');
+  NodeFS.writeFileSync(
+    NodePath.join(stubBin, "pnpm"),
+    options.pnpmStub ?? '#!/bin/sh\necho "stub pnpm $*"\nexit 0\n',
+  );
   NodeFS.chmodSync(NodePath.join(stubBin, "pnpm"), 0o755);
 
   sh("git init -q -b main", repo);
@@ -60,7 +69,11 @@ function seedInstall(repo: string): void {
   NodeFS.writeFileSync(NodePath.join(repo, "node_modules", ".sergecode-setup-lock-hash"), hash);
 }
 
-const runIn = (repo: string, args: ReadonlyArray<string> = []) =>
+const runIn = (
+  repo: string,
+  args: ReadonlyArray<string> = [],
+  extraEnv: Record<string, string> = {},
+) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
@@ -71,6 +84,7 @@ const runIn = (repo: string, args: ReadonlyArray<string> = []) =>
         env: {
           ...process.env,
           PATH: `${NodePath.join(repo, "stub-bin")}:${process.env["PATH"] ?? ""}`,
+          ...extraEnv,
         },
       }),
     );
@@ -89,7 +103,7 @@ const runIn = (repo: string, args: ReadonlyArray<string> = []) =>
   });
 
 const withRepo = <A, E, R>(
-  options: { readonly upstreamRemote?: boolean },
+  options: { readonly upstreamRemote?: boolean; readonly pnpmStub?: string },
   use: (repo: string) => Effect.Effect<A, E, R>,
 ) =>
   Effect.acquireUseRelease(
@@ -167,6 +181,40 @@ it.layer(NodeServices.layer)("setup-worktree.sh", (it) => {
         const result = yield* runIn(repo, ["--reinstall-everything"]);
         assert.notStrictEqual(result.exitCode, 0);
         assert.include(result.output, "Usage:");
+      }),
+    ),
+  );
+
+  it.effect("stops an install that outruns its budget instead of hanging the caller", () =>
+    withRepo(
+      // Ignores SIGTERM, so the watchdog has to escalate — the worst case the
+      // budget exists for.
+      { pnpmStub: "#!/bin/sh\ntrap '' TERM\nsleep 60\n" },
+      (repo) =>
+        Effect.gen(function* () {
+          const startedAt = process.hrtime.bigint();
+          const result = yield* runIn(repo, [], { SERGECODE_SETUP_TIMEOUT_SECONDS: "2" });
+          const elapsedSeconds = Number(process.hrtime.bigint() - startedAt) / 1e9;
+
+          assert.strictEqual(result.exitCode, 124);
+          assert.include(result.output, "exceeded 2s and was stopped");
+          assert.include(result.output, "SERGECODE_SETUP_TIMEOUT_SECONDS");
+          // The point of the budget: bounded, not "eventually".
+          assert.isBelow(elapsedSeconds, 30);
+        }),
+    ),
+  );
+
+  it.effect("reports a failing install rather than recording it as a success", () =>
+    withRepo({ pnpmStub: '#!/bin/sh\necho "registry unreachable" >&2\nexit 7\n' }, (repo) =>
+      Effect.gen(function* () {
+        const result = yield* runIn(repo);
+        assert.strictEqual(result.exitCode, 7);
+        assert.include(result.output, "'pnpm install --frozen-lockfile' failed (exit 7)");
+        // No stamp, so the next run retries instead of trusting a bad install.
+        assert.isFalse(
+          NodeFS.existsSync(NodePath.join(repo, "node_modules", ".sergecode-setup-lock-hash")),
+        );
       }),
     ),
   );
