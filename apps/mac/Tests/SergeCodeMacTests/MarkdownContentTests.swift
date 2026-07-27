@@ -180,6 +180,15 @@ struct MarkdownContentTests {
         let markdown = String(repeating: "streamed sentence. ", count: 40)
         let policy = StreamingRevealPolicy(reduceMotion: false, isFinal: true)
         var now = Date(timeIntervalSinceReferenceDate: 0)
+        // The session has to open on a first flush small enough that the view
+        // is plainly watching the stream start; opening it against the whole
+        // message instead is a mount into existing text, which the store
+        // adopts wholesale (see StreamingRevealAdoption).
+        _ = StreamingRevealStore.advance(
+            threadID: "t", messageID: "m",
+            target: String(repeating: "streamed sentence. ", count: 4),
+            at: now, policy: policy)
+        now.addTimeInterval(1.0 / 60)
         _ = StreamingRevealStore.advance(
             threadID: "t", messageID: "m", target: markdown, at: now, policy: policy)
 
@@ -187,7 +196,7 @@ struct MarkdownContentTests {
             AssistantMarkdownRenderPlan.usesStreamingReveal(
                 style: .assistant, messageID: "m", isStreaming: false, reduceMotion: false,
                 hasPendingReveal: StreamingRevealStore.hasPendingReveal(
-                    threadID: "t", messageID: "m", target: markdown))
+                    threadID: "t", messageID: "m", target: markdown, at: now))
         }
 
         #expect(plan())
@@ -197,8 +206,8 @@ struct MarkdownContentTests {
                 threadID: "t", messageID: "m", target: markdown, at: now, policy: policy)
         }
         #expect(
-            StreamingRevealStore.revealed(threadID: "t", messageID: "m", target: markdown)
-                == markdown)
+            StreamingRevealStore.revealed(
+                threadID: "t", messageID: "m", target: markdown, at: now) == markdown)
         #expect(!plan())
     }
 

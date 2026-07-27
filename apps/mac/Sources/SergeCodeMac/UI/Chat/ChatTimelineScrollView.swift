@@ -63,6 +63,25 @@ enum ChatTimelineScrollPolicy {
     ) -> Bool {
         suppressLayoutAnimation && !isIntentionalDisclosure && !isEntranceAnimation
     }
+
+    /// When the timeline must hold its layout perfectly still.
+    ///
+    /// The three long-standing windows are a pending first anchor, a live
+    /// turn, and an in-flight gesture. The fourth is a thread switch: the
+    /// selection renders the retained snapshot, then the refreshed one, while
+    /// VCS status and plan state land on the `ChatScreen` above — and each of
+    /// those carries an `.animation(_, value:)` whose transaction reaches this
+    /// `LazyVStack` and animates the whole stack's layout, right while the
+    /// pin-scroll is chasing the same height. That is what made switching to a
+    /// finished thread judder.
+    static func suppressesLayoutAnimation(
+        hasPendingInitialAnchor: Bool,
+        hasSettledInitialLayout: Bool,
+        threadIsSettled: Bool,
+        isUserScrolling: Bool
+    ) -> Bool {
+        hasPendingInitialAnchor || !hasSettledInitialLayout || !threadIsSettled || isUserScrolling
+    }
 }
 
 /// Scrollable timeline body. Pins to the bottom as new items/deltas arrive,
@@ -96,7 +115,24 @@ struct ChatTimelineScrollView: View {
     /// rewrite the pin.
     @UIState private var scrollPhase: ScrollPhase = .idle
 
+    /// False until the thread's first render has stopped moving. See
+    /// `ChatTimelineScrollPolicy.suppressesLayoutAnimation`.
+    @UIState private var hasSettledInitialLayout = false
+
     private static let bottomAnchorID = "chat-timeline-bottom-anchor"
+
+    /// How long after mount the timeline holds its layout still. Covers the
+    /// retained-snapshot → refreshed-snapshot swap plus the chrome updates
+    /// (VCS status, plan progress) that a selection kicks off above it.
+    private static let initialLayoutSettleWindow: Double = 0.6
+
+    /// How long arriving rows may animate their entrance after the last
+    /// structural change. A `LazyVStack` realizes rows as they scroll into
+    /// view; without a window every row 200 items down would fade in under
+    /// the pointer, including during the programmatic pin-scroll that follows
+    /// a thread switch. Long enough for the clamped stagger plus the row
+    /// curve, so a genuinely arriving row still lands inside it.
+    private static let entranceWindow: Double = 0.5
 
     var body: some View {
         // `threadID` is an immutable input rather than a second read of the
@@ -163,12 +199,17 @@ struct ChatTimelineScrollView: View {
                                 item: item, threadID: threadID, context: rowContext, model: model)
                                 .equatable()
                                 .id(item.id)
-                                // Rise-in is a settled-thread flourish. While the
-                                // agent is working, structural regroups (tool
-                                // bursts collapsing into summary rows) swap many
-                                // identities at once; animating those removals
-                                // blanks the LazyVStack for a frame or two.
-                                .transition(rowTransition)
+                                // Deliberately no `.transition` and no ambient
+                                // `.animation(_, value: displayItems.count)`:
+                                // both only fire by animating the LazyVStack's
+                                // own layout, which re-measures every realized
+                                // row for the duration. `.entrance` below
+                                // covers arrival without that cost, which is
+                                // the reason it exists (see Entrance.swift) —
+                                // running both meant an arriving row animated
+                                // twice, and a hydration swap animated the
+                                // whole stack.
+                                //
                                 // Arrival motion for every row, hydrated or
                                 // agent-produced (SER-144). Safe during a run
                                 // where `rowTransition` is not: entrance only
@@ -209,18 +250,17 @@ struct ChatTimelineScrollView: View {
                     .padding(.vertical, 16)
                     .frame(maxWidth: 840, alignment: .leading)
                     .frame(maxWidth: .infinity)
-                    // Never animate stack layout mid-run or mid-gesture: a row
-                    // landing while the user drags (or while tools regroup)
-                    // re-measures realized rows for the animation duration and
-                    // is what made the transcript judder / blank. Clearing the
-                    // ambient animation stops implicit layout animation, and
-                    // the `.transaction` suppressor below flattens every other
-                    // transaction flowing to the rows — except the two marked
-                    // kinds that are safe mid-run (see shouldFlattenAnimation):
-                    // row entrances, which are render-time transforms only, and
-                    // user-initiated disclosure toggles. Scroll re-anchors opt
-                    // out individually below.
-                    .animation(revealAnimation, value: displayItems.count)
+                    // Never animate stack layout mid-run, mid-gesture, or while
+                    // a selection is still settling: a row landing while the
+                    // user drags (or while tools regroup, or while hydration
+                    // swaps the whole snapshot) re-measures realized rows for
+                    // the animation duration and is what made the transcript
+                    // judder / blank. This flattens every transaction flowing
+                    // to the rows — except the two marked kinds that are safe
+                    // (see shouldFlattenAnimation): row entrances, which are
+                    // render-time transforms only, and user-initiated
+                    // disclosure toggles. Scroll re-anchors opt out
+                    // individually below.
                     .transaction { transaction in
                         if ChatTimelineScrollPolicy.shouldFlattenAnimation(
                             suppressLayoutAnimation: suppressLayoutAnimation,
@@ -244,21 +284,33 @@ struct ChatTimelineScrollView: View {
                     // the way past. Entrance is for content arriving, not for
                     // content being revealed by scrolling.
                     .entranceSuppressed(isUserScrolling)
+                    // The gesture guard above misses the realizations a
+                    // *programmatic* scroll causes — chiefly the pin-scroll
+                    // that lands a thread switch at the tail, which walked the
+                    // viewport across rows that then faded in one by one. The
+                    // window reopens on every structural change, so rows the
+                    // agent actually produces still animate their arrival.
+                    .entranceWindow(
+                        resetOn: displayItems.count, duration: Self.entranceWindow)
                 }
                 // Turn navigation replaces the scrollbar: indicators are
                 // hidden and the leading-edge rail jumps between turns.
                 .scrollIndicators(.hidden)
                 .overlay(alignment: .leading) {
-                    // Tape memo shares the display cache's key: structural
-                    // timeline edits recompute it, streaming refreshes don't.
-                    let tape = RunTapeCache.tape(
+                    // Both halves of the rail share the display cache's key:
+                    // structural timeline edits recompute them, streaming
+                    // refreshes don't. Deriving them inline re-walked the
+                    // whole transcript — collapsing whitespace in every user
+                    // prompt, then rebuilding the tape dictionary — on each of
+                    // the ~30 body evaluations a streaming second produces.
+                    let rail = ChatTurnRailCache.rail(
+                        displayItems: displayItems,
                         timeline: items,
                         threadID: threadKey,
                         structureVersion: model.timelineStructureVersion(threadID: threadID))
                     ChatTurnRail(
-                        turns: ChatTurnRailModel.turns(from: displayItems),
-                        tape: Dictionary(
-                            uniqueKeysWithValues: tape.map { ($0.id, $0) }),
+                        turns: rail.turns,
+                        tape: rail.tape,
                         threadIsSettled: threadIsSettled
                     ) { rowID in
                         // Jumping to a turn is explicit navigation away from
@@ -346,6 +398,14 @@ struct ChatTimelineScrollView: View {
                         proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                     }
                 }
+                // Opens the layout-animation gate once the selection has
+                // stopped moving. The task starts when the scroll view itself
+                // mounts, so a cold thread's window begins at its first real
+                // render rather than expiring behind the loading spinner.
+                .task {
+                    try? await Task.sleep(for: .seconds(Self.initialLayoutSettleWindow))
+                    hasSettledInitialLayout = true
+                }
             }
             .transition(Motion.paneChange)
             }
@@ -393,21 +453,15 @@ struct ChatTimelineScrollView: View {
         }
     }
 
-    /// True while the agent is still writing or the first anchor is pending —
-    /// layout must not animate in those windows.
+    /// True while the agent is writing, the first anchor is pending, a
+    /// gesture is in flight, or the selection has not settled — layout must
+    /// not animate in any of those windows.
     private var suppressLayoutAnimation: Bool {
-        pendingInitialScrollThreadID == threadID || !threadIsSettled || isUserScrolling
-    }
-
-    /// Nil while the initial anchor is still pending, while the user is
-    /// scrolling, and while the agent is working. Animated inserts during a
-    /// live turn are what made structural regroups flash the transcript empty.
-    private var revealAnimation: Animation? {
-        suppressLayoutAnimation ? nil : Motion.reveal
-    }
-
-    private var rowTransition: AnyTransition {
-        suppressLayoutAnimation ? .identity : Motion.rise
+        ChatTimelineScrollPolicy.suppressesLayoutAnimation(
+            hasPendingInitialAnchor: pendingInitialScrollThreadID == threadID,
+            hasSettledInitialLayout: hasSettledInitialLayout,
+            threadIsSettled: threadIsSettled,
+            isUserScrolling: isUserScrolling)
     }
 
     /// Mirrors ToolEventRow's settled rule: once the thread is no longer
