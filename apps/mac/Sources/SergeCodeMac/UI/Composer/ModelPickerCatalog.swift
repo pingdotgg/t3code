@@ -72,6 +72,21 @@ enum ModelPickerCatalog {
         "\(instanceID)/\(normalized(modelID))"
     }
 
+    /// The advertised option a thread's stored selection refers to, matched the
+    /// same normalized way rows are grouped. An exact string match would miss
+    /// on casing or padding drift between what the thread stored and what the
+    /// provider now advertises, and the picker would then open with nothing
+    /// selected and nothing highlighted.
+    static func selectedOption(
+        in options: [ModelOption],
+        instanceID: String?,
+        modelID: String?
+    ) -> ModelOption? {
+        guard let instanceID, let modelID else { return nil }
+        let target = instanceKey(instanceID: instanceID, modelID: modelID)
+        return options.first { instanceKey(for: $0) == target }
+    }
+
     static func filteredItems(
         _ items: [ModelPickerItem],
         scope: ModelPickerScope,

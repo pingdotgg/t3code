@@ -265,10 +265,9 @@ struct ModelPickerPopoverContent: View {
         return keys
     }
 
-    private var selectedOptionID: String? {
-        models.first {
-            $0.instanceID == selectedInstanceID && $0.modelID == selectedModelID
-        }?.id
+    private var selectedOption: ModelOption? {
+        ModelPickerCatalog.selectedOption(
+            in: models, instanceID: selectedInstanceID, modelID: selectedModelID)
     }
 
     /// Where the keyboard starts when the popover opens. The current model
@@ -282,13 +281,10 @@ struct ModelPickerPopoverContent: View {
         return ModelPickerCatalog.firstModelRowKey(in: keys, clearRowKey: Self.clearRowKey)
     }
 
+    /// Rows collapse the instances advertising one model, so the checkmark,
+    /// the opening highlight, and the scroll target are all this row key.
     private var selectedItemKey: String? {
-        guard
-            let option = models.first(where: {
-                $0.instanceID == selectedInstanceID && $0.modelID == selectedModelID
-            })
-        else { return nil }
-        return ModelPickerCatalog.key(for: option)
+        selectedOption.map(ModelPickerCatalog.key(for:))
     }
 
     private var isClearSelected: Bool {
@@ -645,7 +641,7 @@ struct ModelPickerPopoverContent: View {
                             ForEach(section.items) { item in
                                 ModelPickerRow(
                                     item: item,
-                                    isSelected: item.option.id == selectedOptionID,
+                                    isSelected: item.id == selectedItemKey,
                                     isHighlighted: highlightedKey == item.id,
                                     isFavorite: preferences.isFavorite(item.id),
                                     onHover: { hovering in

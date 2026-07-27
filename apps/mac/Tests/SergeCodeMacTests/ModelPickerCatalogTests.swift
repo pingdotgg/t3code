@@ -149,6 +149,34 @@ struct ModelPickerCatalogTests {
                 == ModelPickerCatalog.instanceKey(instanceID: "codex-a", modelID: " gpt-5"))
     }
 
+    @Test("the selected option is found despite casing or padding drift")
+    func selectedOptionLookupNormalizes() {
+        let options = [
+            option(instance: "codex-a", modelID: "GPT-5", name: "GPT-5", provider: .codex),
+            option(instance: "claude", modelID: "sonnet-5", name: "Sonnet 5", provider: .claude),
+        ]
+
+        // The checkmark, the opening highlight, and the scroll target all hang
+        // off this lookup; an exact match would leave the picker showing no
+        // current model at all.
+        #expect(
+            ModelPickerCatalog.selectedOption(
+                in: options, instanceID: "codex-a", modelID: " gpt-5 ")?.modelID == "GPT-5")
+        #expect(
+            ModelPickerCatalog.selectedOption(
+                in: options, instanceID: "codex-a", modelID: "GPT-5")?.instanceID == "codex-a")
+        // A different instance is a different selection, and "nothing
+        // selected" must stay nothing.
+        #expect(
+            ModelPickerCatalog.selectedOption(
+                in: options, instanceID: "codex-b", modelID: "gpt-5") == nil)
+        #expect(
+            ModelPickerCatalog.selectedOption(in: options, instanceID: nil, modelID: nil) == nil)
+        #expect(
+            ModelPickerCatalog.selectedOption(in: options, instanceID: "codex-a", modelID: nil)
+                == nil)
+    }
+
     @Test("keys ignore the provider instance so favorites survive a reconnect")
     func keysAreInstanceIndependent() {
         let first = option(instance: "codex-a", modelID: "GPT-5", name: "GPT-5", provider: .codex)
