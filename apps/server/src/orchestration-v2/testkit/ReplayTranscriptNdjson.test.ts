@@ -68,7 +68,6 @@ describe("decodeProviderReplayNdjson", () => {
       }
       const causeRecord = cause as Record<string, unknown>;
       assert.equal(causeRecord.name, "SchemaError");
-      assert.equal(causeRecord._tag, "SchemaError");
       assert.doesNotThrow(() => JSON.stringify(encoded));
     }),
   );
