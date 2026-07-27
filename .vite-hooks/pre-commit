@@ -1,1 +1,33 @@
+# A thread gets a fresh git worktree, and a worktree that has not been
+# bootstrapped has no node_modules. `core.hooksPath` is an absolute path into
+# the main checkout, so this hook still fires there, but `vp staged` loads THIS
+# worktree's vite.config.ts and dies with "Cannot find package 'vite-plus'" —
+# failing commits of files `vp fmt` would never have touched, Swift included.
+# That unexplained failure is where blanket `git commit --no-verify` came from.
+#
+# `.vite-hooks/post-checkout` bootstraps new worktrees, but it cannot reach the
+# ones that already exist. So bootstrap here too, then run the real check: the
+# gate stays closed either way, and the commit that triggered it is still
+# formatted. Skipping instead would let a fresh worktree commit unformatted
+# code and leave CI to catch what local tooling is supposed to enforce.
+root=$(git rev-parse --show-toplevel 2>/dev/null) || root=.
+
+if [ ! -d "$root/node_modules/vite-plus" ]; then
+  echo "[pre-commit] this worktree has no node_modules; bootstrapping it first." >&2
+  if [ ! -x "$root/scripts/setup-worktree.sh" ]; then
+    echo "[pre-commit] scripts/setup-worktree.sh is missing or not executable." >&2
+    echo "[pre-commit] Install dependencies, then commit again." >&2
+    echo "[pre-commit] To commit without this check: VITE_GIT_HOOKS=0 git commit ..." >&2
+    exit 1
+  fi
+  # setup-worktree.sh bounds its own install and explains its own failures, so
+  # a wedged pnpm cannot hang the commit indefinitely.
+  if ! "$root/scripts/setup-worktree.sh"; then
+    echo "[pre-commit] Bootstrap failed; see the error above." >&2
+    echo "[pre-commit] Fix it and commit again, or run 'pnpm run setup' by hand." >&2
+    echo "[pre-commit] To commit without this check: VITE_GIT_HOOKS=0 git commit ..." >&2
+    exit 1
+  fi
+fi
+
 vp staged

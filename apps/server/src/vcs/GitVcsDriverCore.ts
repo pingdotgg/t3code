@@ -38,6 +38,25 @@ import {
 import { ServerConfig } from "../config.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+/**
+ * Budget a repository's `post-checkout` hook gets, and the reason
+ * `WORKTREE_ADD_TIMEOUT_MS` is larger than the default.
+ *
+ * This mirrors `SERGECODE_SETUP_TIMEOUT_SECONDS` in `scripts/setup-worktree.sh`
+ * (300s), which bounds its own install and reports its own failure. Keeping the
+ * bound in the hook rather than here is what stops a wedged bootstrap from
+ * presenting as an opaque git timeout: the setup step fails first, by name,
+ * with a recovery path.
+ */
+const WORKTREE_BOOTSTRAP_BUDGET_MS = 5 * 60_000;
+/**
+ * `git worktree add` runs `post-checkout`, so it must outlive the bootstrap
+ * that hook performs — plus enough slack for git's own work and for the
+ * hook's SIGTERM/SIGKILL escalation to land. Any longer would widen the
+ * failure domain for no benefit: past this point the hook has already given
+ * up, so a still-running git command means git itself is stuck.
+ */
+export const WORKTREE_ADD_TIMEOUT_MS = WORKTREE_BOOTSTRAP_BUDGET_MS + 60_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
@@ -2254,6 +2273,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       : ["worktree", "add", worktreePath, input.refName];
 
     yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
+      // `git worktree add` fires post-checkout in the new worktree, and this
+      // repo's hook bootstraps it — a `pnpm install` runs inside this command.
+      // That is ~10s against a warm pnpm store and minutes against a cold one,
+      // so the 30s default would fail thread creation with "Git command timed
+      // out." and leave a registered, half-set-up worktree behind. A hook is a
+      // normal thing for a repo to have; the timeout has to allow for one.
+      // The hook is what bounds the slow part, so this is a backstop for git
+      // itself rather than the bootstrap's real deadline.
+      timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
       fallbackErrorDetail: "git worktree add failed",
     });
 

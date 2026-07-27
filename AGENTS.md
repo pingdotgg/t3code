@@ -6,14 +6,126 @@ SergeCode (github.com/SergeSerb2/SergeCode) is a **permanent hard fork** of `pin
 
 - **NEVER EVER open a PR against, merge into, push to, comment on, or otherwise touch `pingdotgg/t3code`.** Not for any reason.
 - All PRs, issues, and pushes go to `SergeSerb2/SergeCode` only. Always pass `--repo SergeSerb2/SergeCode` explicitly to `gh` commands.
-- Do not add a git remote pointing at `pingdotgg/t3code`. If one exists, treat it as an error and remove it.
+- Do not add a git remote pointing at `pingdotgg/t3code`. If one exists, treat it as an error and remove it. `scripts/setup-worktree.sh` refuses to run when it finds one, so a worktree that bootstrapped cleanly has already passed this check.
 - Before creating any PR, verify the base repository is `SergeSerb2/SergeCode`.
+
+## Working in a Fresh Worktree
+
+Each thread gets its own git worktree, which starts with no `node_modules`.
+`scripts/setup-worktree.sh` installs dependencies, links `.env.local` from the
+main checkout, and fails fast if a remote points at the upstream repo.
+`.vite-hooks/post-checkout` runs it automatically when git creates the
+worktree, so normally there is nothing to do. The install is bounded by
+`SERGECODE_SETUP_TIMEOUT_SECONDS` (300s), so a wedged pnpm reports itself
+instead of stalling worktree creation.
+
+If a command fails with `vp: command not found`,
+`Could not resolve 'vite-plus/test/config'`, or `Cannot find module`, that is
+the missing install and not your change. Run `pnpm run setup` and retry —
+do not start debugging the error itself.
+
+### Never run `git stash`
+
+Every worktree shares one stash stack with every other worktree and with the
+main checkout. A stash you push here can be popped by a different agent
+working somewhere else, and the work is then gone from both. 24 threads in the
+archive used it and at least one lost work to it.
+
+If you need a clean tree, commit to your branch instead — a commit is
+recoverable and private to your branch. If you have already stashed and lost
+something, `git fsck --unreachable` plus `git stash store <sha>` can recover
+it.
+
+### `--no-verify` is not the escape hatch for a failing hook
+
+120 commits across 45 threads used `git commit --no-verify`, after which
+nothing in this repo is formatted or linted locally.
+
+An unbootstrapped worktree is no longer a reason to skip it: the pre-commit
+hook bootstraps the worktree itself and then runs the real check. If it does
+fail, the bootstrap failed for a reason worth reading — fix that and commit
+again. If a hook genuinely must be skipped, `VITE_GIT_HOOKS=0 git commit …` is
+the supported way (`.vite-hooks/_/h` honours it), and run `vp fmt` before
+opening the PR.
+
+### A push that fails on credentials is not a missing login
+
+`could not read Username for 'https://github.com'`, `Permission denied
+(publickey)`, and `You are not logged into any GitHub hosts` show up when the
+provider CLI runs with a redirected `HOME` that has no git or gh credentials —
+not because nobody is logged in. Do not run `gh auth login`; it will not fix
+it and it can disturb the real login. Report the failure and hand the push
+back to the user. 22 threads reached the end of their work and stranded there,
+most of them never shipping a PR.
+
+### Start from current `main`
+
+Worktrees are created from whatever `main` pointed at when the thread started,
+and long threads drift. Before you begin substantial work, and again before
+opening the PR, run `git fetch origin && git merge origin/main` (or rebase).
+34 threads in the archive needed a user-prompted "fix the merge conflicts"
+turn, and one bad resolution clobbered `main`.
+
+### Finish the job
+
+A task is not done at the commit. Unless the user said otherwise, push the
+branch and open the PR against `SergeSerb2/SergeCode` in the same turn —
+17 threads stopped after committing and had to be told "push + pr please".
 
 ## Task Completion Requirements
 
-- `vp check` and `vp run typecheck` must pass before considering tasks completed.
-  - If changing native mobile code, `vp run lint:mobile` must also pass.
-- Use `vp test` for the built-in Vite+ test command and `vp run test` when you specifically need the `test` package script.
+### Verify the change, not the monorepo
+
+`pnpm run verify` runs only the checks your diff can possibly have broken: it
+resolves changed files to workspace packages, then runs `vp check` on those
+files, `vp run --filter ...<pkg> typecheck` on those packages and their
+dependents, `vp test related` on the tests that import the changed sources,
+and the Swift suite only when `apps/mac` changed. Use it as the loop you run
+while working.
+
+- `pnpm run verify` — the changed slice. Seconds, not minutes.
+- `pnpm run verify --all` — the full gate. Run it once, before opening the PR.
+- `pnpm run verify --dry-run` — show the plan without running it.
+- A single file is always cheapest to check directly:
+  `vp test run path/to/file.test.ts`.
+
+`vp check` and `vp run typecheck` must pass before a task is complete, and
+`vp run lint:mobile` must also pass when native mobile code changed —
+`pnpm run verify --all` covers all three. Use `vp test` for the built-in
+Vite+ test command and `vp run test` when you specifically need the `test`
+package script.
+
+"Pass" means exit code 0. `vp check` reports a standing baseline of ~22 lint
+warnings that predate your change; they are not errors and not yours. Compare
+the error count, not the warning count.
+
+### Do not re-run a check that cannot have changed
+
+Across the archived threads, 63% of all build/test/check runs happened with no
+file edit since the previous run. Re-running is not free: the full TypeScript
+suite is 411 files, and the Swift suite relinks before it runs.
+
+- Never re-run a suite to "confirm" a result you already have. If nothing was
+  edited, the answer is the same.
+- `swift test` builds first. Do not run `swift build` before it.
+- Re-read the output you already captured instead of re-running the command to
+  see it again.
+
+### macOS app
+
+Use `pnpm run test:mac` (`apps/mac/scripts/swift-test.sh`). A bare
+`swift test --package-path apps/mac` fails on a Command Line Tools toolchain —
+missing `TestingMacros` plugin, then missing `lib_TestingInterop.dylib`, then
+missing `Sparkle.framework` — and the flags that fix it differ between
+Command Line Tools and Xcode. The wrapper resolves them from the active
+toolchain and applies `--no-parallel`.
+
+It forwards arguments, so `pnpm run test:mac --filter SidebarPresentationTests`
+narrows the run — but do not expect much from that. Roughly 90% of a Swift
+test run is compilation and ~10% is execution (509 tests run in 9.8s inside a
+44s invocation), so `--filter` mostly buys you shorter output, not a shorter
+wait. The way to make Swift work cheaper is to run it less often, not to
+narrow it.
 
 ## macOS App Versioning and Release Policy
 

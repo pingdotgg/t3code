@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+# Bootstrap a worktree the moment git creates or switches it.
+#
+# `git worktree add` fires post-checkout in the new worktree with a null
+# previous HEAD, which is exactly when `node_modules` does not exist yet.
+# Running setup here means an agent's first command in a fresh worktree
+# already works, instead of failing on a missing dependency several steps into
+# unrelated work.
+#
+# Args from git: $1 previous HEAD, $2 new HEAD, $3 1 for a branch checkout.
+# File checkouts ($3 = 0) cannot change the lockfile, so they are skipped.
+[ "$3" = "1" ] || exit 0
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -x "$root/scripts/setup-worktree.sh" ] || exit 0
+
+# Never block or fail a checkout on setup: a failed install should surface as a
+# message, not as a half-created worktree.
+"$root/scripts/setup-worktree.sh" || echo "[post-checkout] setup-worktree.sh failed; run it by hand." >&2
+exit 0

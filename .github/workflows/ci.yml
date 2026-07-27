@@ -1,0 +1,48 @@
+name: TypeScript check
+
+# `macOS build check` guards apps/mac, but nothing guarded the TypeScript half
+# of the monorepo, so `main` could sit red without anyone noticing — and it
+# did: two ClaudeAdapter tests failed on `main` from the moment they merged.
+# With no CI, every agent working in a worktree was the test runner, which is
+# also why they run the full suite so often. This job makes green `main` the
+# machine's job again.
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ci-ts-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check, typecheck, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Check (format + lint)
+        run: pnpm exec vp check
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test

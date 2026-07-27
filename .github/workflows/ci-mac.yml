@@ -43,10 +43,11 @@ jobs:
       - name: Build
         run: swift build --package-path apps/mac
 
-      # --no-parallel matches the release job: the suites share process-wide
-      # static caches (TimelineDisplayCache, StreamingMarkdownCache) and are all
-      # @MainActor, so parallel execution only interleaves them at await points
-      # and one suite's resetForTesting() can land inside another's counter
-      # assertions.
+      # swift-test.sh applies --no-parallel (the suites share process-wide
+      # static caches — TimelineDisplayCache, StreamingMarkdownCache — and are
+      # all @MainActor, so parallel execution interleaves them at await points
+      # and one suite's resetForTesting() lands inside another's counter
+      # assertions) plus whichever toolchain search paths this machine needs.
+      # Running the same wrapper agents run locally keeps it from rotting.
       - name: Test
-        run: swift test --package-path apps/mac --no-parallel
+        run: ./apps/mac/scripts/swift-test.sh

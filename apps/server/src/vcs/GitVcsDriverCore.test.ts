@@ -9,7 +9,7 @@ import * as Scope from "effect/Scope";
 
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
-import { splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
+import { splitNullSeparatedGitStdoutPaths, WORKTREE_ADD_TIMEOUT_MS } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -595,6 +595,56 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* fileSystem.exists(worktreePath), false);
       }),
     );
+
+    it.effect("runs the repository's post-checkout hook inside createWorktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const hooksDir = pathService.join(cwd, "custom-hooks");
+        yield* fileSystem.makeDirectory(hooksDir, { recursive: true });
+        const marker = pathService.join(cwd, "post-checkout-ran");
+        yield* fileSystem.writeFileString(
+          pathService.join(hooksDir, "post-checkout"),
+          `#!/bin/sh\nprintf ok > '${marker}'\n`,
+        );
+        yield* fileSystem.chmod(pathService.join(hooksDir, "post-checkout"), 0o755);
+        yield* git(cwd, ["config", "core.hooksPath", hooksDir]);
+
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "hooked-worktree",
+        );
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/hooked",
+        });
+
+        // This is why createWorktree cannot run on the default git timeout:
+        // whatever the hook does — for this repo, a `pnpm install` — happens
+        // inside `git worktree add`, on its clock.
+        assert.equal(yield* fileSystem.exists(marker), true);
+      }),
+    );
+
+    it.effect("bounds the post-checkout hook without widening the failure domain", () => {
+      // Lower bound: a cold `pnpm install` in the archive took 3m22s, and
+      // anything at or below the 30s default fails thread creation and leaves
+      // a half-set-up worktree registered.
+      assert.isAtLeast(WORKTREE_ADD_TIMEOUT_MS, 5 * 60_000);
+      // Upper bound: the hook bounds its own install
+      // (SERGECODE_SETUP_TIMEOUT_SECONDS, 300s) and reports its own failure, so
+      // this only has to outlast that plus git's own work. Growing it further
+      // just means a stuck `git worktree add` blocks thread creation for
+      // longer with nothing to show for it.
+      assert.isAtMost(WORKTREE_ADD_TIMEOUT_MS, 7 * 60_000);
+      return Effect.void;
+    });
   });
 
   describe("commit context", () => {
