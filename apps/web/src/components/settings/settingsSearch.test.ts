@@ -6,51 +6,47 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
   {
     id: "word-wrap",
     title: "Word wrap",
-    description: "Wrap long lines in code blocks.",
     to: "/settings/general",
-    keywords: ["line wrapping"],
   },
   {
     id: "network-access",
     title: "Network access",
-    description: "Make this environment reachable from other devices.",
     to: "/settings/connections",
-    keywords: ["LAN"],
   },
   {
     id: "providers",
     title: "Providers",
-    description: "Configure agent providers and models.",
     to: "/settings/providers",
-    keywords: ["Claude", "Codex"],
   },
   {
     id: "provider-updates",
     title: "Update checks",
-    description: "Check providers for newer versions.",
+    to: "/settings/general",
+  },
+  {
+    id: "automatic-updates",
+    title: "Automatic updates",
     to: "/settings/general",
   },
 ];
 
 describe("searchSettings", () => {
-  it("matches titles, descriptions, sections, and keywords", () => {
+  it("matches only setting titles", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
-    expect(searchSettings("devices", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
-    expect(searchSettings("connections", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
-    expect(searchSettings("claude", ITEMS).map((item) => item.id)).toEqual(["providers"]);
+    expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
+    expect(searchSettings("connections", ITEMS)).toEqual([]);
+    expect(searchSettings("claude", ITEMS)).toEqual([]);
   });
 
-  it("requires every query token to match", () => {
-    expect(searchSettings("network devices", ITEMS).map((item) => item.id)).toEqual([
-      "network-access",
-    ]);
-    expect(searchSettings("network claude", ITEMS)).toEqual([]);
+  it("matches normalized title substrings", () => {
+    expect(searchSettings("  WORD   WRAP  ", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
+    expect(searchSettings("work")).toEqual([]);
   });
 
-  it("ranks title matches ahead of lower-value matches", () => {
-    expect(searchSettings("providers", ITEMS).map((item) => item.id)).toEqual([
-      "providers",
+  it("keeps catalog order for multiple title matches", () => {
+    expect(searchSettings("update", ITEMS).map((item) => item.id)).toEqual([
       "provider-updates",
+      "automatic-updates",
     ]);
   });
 
