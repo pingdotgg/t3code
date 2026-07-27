@@ -27,6 +27,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -304,7 +306,9 @@ const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEdit
 export class ExternalLauncher extends Context.Service<
   ExternalLauncher,
   {
+    readonly availableEditors: Effect.Effect<ReadonlyArray<EditorId>>;
     readonly resolveAvailableEditors: () => Effect.Effect<ReadonlyArray<EditorId>>;
+    readonly streamAvailableEditors: Stream.Stream<ReadonlyArray<EditorId>>;
     /** Launch a URL target in the default browser. */
     readonly launchBrowser: (target: string) => Effect.Effect<void, ExternalLauncherError>;
     /**
@@ -434,6 +438,7 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const availableEditors = yield* SubscriptionRef.make<ReadonlyArray<EditorId>>([]);
 
   const provideCommandResolutionServices = <A, E, R>(
     effect: Effect.Effect<A, E, R | FileSystem.FileSystem | Path.Path>,
@@ -443,8 +448,16 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
+  yield* provideCommandResolutionServices(resolveAvailableEditors()).pipe(
+    Effect.flatMap((editors) => SubscriptionRef.set(availableEditors, editors)),
+    Effect.ignoreCause({ log: true }),
+    Effect.forkScoped,
+  );
+
   return ExternalLauncher.of({
+    availableEditors: SubscriptionRef.get(availableEditors),
     resolveAvailableEditors: () => provideCommandResolutionServices(resolveAvailableEditors()),
+    streamAvailableEditors: SubscriptionRef.changes(availableEditors),
     launchBrowser: (target) =>
       launchBrowser(target).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

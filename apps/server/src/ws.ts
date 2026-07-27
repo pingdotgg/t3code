@@ -1087,7 +1087,7 @@ const makeWsRpcLayer = (
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
           providers,
-          availableEditors: yield* externalLauncher.resolveAvailableEditors(),
+          availableEditors: yield* externalLauncher.availableEditors,
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,
@@ -2019,6 +2019,13 @@ const makeWsRpcLayer = (
                   payload: { settings },
                 })),
               );
+              const availableEditorsUpdates = externalLauncher.streamAvailableEditors.pipe(
+                Stream.map((availableEditors) => ({
+                  version: 1 as const,
+                  type: "availableEditorsUpdated" as const,
+                  payload: { availableEditors },
+                })),
+              );
 
               yield* providerRegistry
                 .refresh()
@@ -2026,7 +2033,10 @@ const makeWsRpcLayer = (
 
               const liveUpdates = Stream.merge(
                 keybindingsUpdates,
-                Stream.merge(providerStatuses, settingsUpdates),
+                Stream.merge(
+                  providerStatuses,
+                  Stream.merge(settingsUpdates, availableEditorsUpdates),
+                ),
               );
 
               return Stream.concat(

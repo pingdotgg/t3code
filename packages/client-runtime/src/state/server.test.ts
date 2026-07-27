@@ -80,6 +80,24 @@ describe("server state projection", () => {
     expect(result.latestEvent.type).toBe("settingsUpdated");
   });
 
+  it("applies editor availability updates without replacing the config snapshot", () => {
+    const snapshot = applyServerConfigProjection(Option.none(), {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    const availableEditors: ServerConfig["availableEditors"] = ["vscode"];
+    const projected = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "availableEditorsUpdated",
+      payload: { availableEditors },
+    });
+
+    const result = Option.getOrThrow(projected);
+    expect(result.config.availableEditors).toBe(availableEditors);
+    expect(result.latestEvent.type).toBe("availableEditorsUpdated");
+  });
+
   it("retains welcome when a ready event follows in the same stream chunk", () => {
     const welcome = {
       environment: {} as ServerLifecycleWelcomePayload["environment"],
