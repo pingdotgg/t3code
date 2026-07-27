@@ -1368,9 +1368,42 @@ export function ChatView({
     return unsubscribe;
   }, [client]);
 
+  const detailIdForTabs = detail?.id ?? null;
+
+  // The live metadata stream only knows sessions attached since server startup.
+  // Ask the backend for persisted terminal identities as well, so a terminal
+  // opened in the web UI before a restart is still present in this tab strip.
+  React.useEffect(() => {
+    if (detailIdForTabs === null) return;
+    let cancelled = false;
+    void client.listTerminalIds(detailIdForTabs).then(
+      (terminalIds) => {
+        if (cancelled || terminalIds.length === 0) return;
+        setKnownTerminals((previous) => {
+          const existing = previous.get(detailIdForTabs) ?? [];
+          const merged = [...existing];
+          for (const terminalId of terminalIds) {
+            if (!merged.includes(terminalId)) merged.push(terminalId);
+          }
+          if (merged.length === existing.length) return previous;
+          const next = new Map(previous);
+          next.set(detailIdForTabs, merged);
+          return next;
+        });
+      },
+      (error) => {
+        if (!cancelled) {
+          store.setStatus(`Could not list terminal instances: ${String(error)}`, "error");
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [client, detailIdForTabs, store]);
+
   // Union discovered ids into the open thread's tabs. tabsWithDiscovered returns
   // the same reference when nothing is new, so updateThreadTabs no-ops then.
-  const detailIdForTabs = detail?.id ?? null;
   React.useEffect(() => {
     if (!terminalOpen || detailIdForTabs === null) return;
     const discovered = knownTerminals.get(detailIdForTabs) ?? [];

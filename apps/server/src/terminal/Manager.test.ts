@@ -655,6 +655,23 @@ it.layer(
     }),
   );
 
+  it.effect("lists persisted terminal histories that have not been attached since restart", () =>
+    Effect.gen(function* () {
+      const { manager, logsDir } = yield* createManager();
+      const primaryHistory = yield* historyLogPath(logsDir);
+      const secondHistory = yield* multiTerminalHistoryLogPath(logsDir, "thread-1", "term-2");
+      const otherThreadHistory = yield* historyLogPath(logsDir, "thread-2");
+      yield* writeFileString(primaryHistory, "old primary history\n");
+      yield* writeFileString(secondHistory, "old second history\n");
+      yield* writeFileString(otherThreadHistory, "other thread\n");
+      yield* manager.open(openInput({ terminalId: "term-3" }));
+
+      const result = yield* manager.list({ threadId: "thread-1" });
+
+      expect(result.terminalIds).toEqual(["term-1", "term-2", "term-3"]);
+    }),
+  );
+
   it.effect("clears transcript and emits cleared event", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, logsDir, getEvents } = yield* createManager();

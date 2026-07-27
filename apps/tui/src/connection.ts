@@ -503,6 +503,8 @@ export interface TuiClient {
   readonly terminalRestart: (input: TerminalRestartInput) => Promise<void>;
   /** Close one terminal session (and its history) for a thread. */
   readonly terminalClose: (threadId: ThreadId, terminalId: string) => Promise<void>;
+  /** List live and persisted terminal identities retained for a thread. */
+  readonly listTerminalIds: (threadId: ThreadId) => Promise<ReadonlyArray<string>>;
   /**
    * Subscribe to the environment's terminal-metadata stream so the UI can
    * discover sessions it didn't open itself (agent-spawned, web-created, or
@@ -986,6 +988,13 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       runtime.runPromise(
         request(WS_METHODS.terminalClose, { threadId, terminalId, deleteHistory: true }).pipe(
           Effect.asVoid,
+        ),
+      ),
+
+    listTerminalIds: (threadId) =>
+      runtime.runPromise(
+        request(WS_METHODS.terminalList, { threadId }).pipe(
+          Effect.map((result) => result.terminalIds),
         ),
       ),
 

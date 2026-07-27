@@ -137,6 +137,7 @@ function fakeClient({
         capabilities: null,
       },
     ] as never,
+  listTerminalIds = async () => [],
 }: {
   readonly detail: OrchestrationThread;
   readonly shellSnapshot?: OrchestrationShellSnapshot;
@@ -153,6 +154,7 @@ function fakeClient({
   readonly listRefs?: TuiClient["listRefs"];
   readonly switchRef?: TuiClient["switchRef"];
   readonly listModels?: TuiClient["listModels"];
+  readonly listTerminalIds?: TuiClient["listTerminalIds"];
 }): {
   readonly client: TuiClient;
   readonly connect: () => void;
@@ -187,6 +189,7 @@ function fakeClient({
     terminalRestart,
     setInteractionMode,
     terminalClose: async () => {},
+    listTerminalIds,
     listModels,
     getServerConfig: async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
     listRefs,
