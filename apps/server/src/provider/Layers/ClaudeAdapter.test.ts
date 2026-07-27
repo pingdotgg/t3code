@@ -149,6 +149,21 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   }
 }
 
+/** Claude config dir holding two user-scoped MCP servers. */
+function makeClaudeMcpHome(): string {
+  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-claude-mcp-"));
+  NodeFS.writeFileSync(
+    NodePath.join(home, ".claude.json"),
+    JSON.stringify({
+      mcpServers: {
+        codegraph: { type: "stdio", command: "codegraph", args: ["serve", "--mcp"] },
+        alpaca: { type: "stdio", command: "uvx", args: ["alpaca-mcp-server"] },
+      },
+    }),
+  );
+  return home;
+}
+
 function makeHarness(config?: {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
@@ -389,6 +404,46 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
       assert.equal(createInput?.options.permissionMode, undefined);
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("leaves MCP resolution to the CLI when nothing is disabled", () => {
+    const harness = makeHarness({ claudeConfig: { homePath: makeClaudeMcpHome() } });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "approval-required",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.strictMcpConfig, undefined);
+      assert.equal(createInput?.options.mcpServers, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("passes only the enabled MCP servers once one is disabled", () => {
+    const harness = makeHarness({
+      claudeConfig: { homePath: makeClaudeMcpHome(), disabledMcpServers: ["alpaca"] },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "approval-required",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.strictMcpConfig, true);
+      assert.deepEqual(Object.keys(createInput?.options.mcpServers ?? {}), ["codegraph"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

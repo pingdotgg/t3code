@@ -5,6 +5,7 @@ import { describe, it } from "vite-plus/test";
 import {
   codexAppServerArgs,
   codexExecLaunchArgs,
+  codexMcpDisableArgs,
   resolveCodexLaunchArgs,
 } from "./codexLaunchArgs.ts";
 
@@ -54,6 +55,24 @@ describe("codexExecLaunchArgs", () => {
   it("does not pair value-taking flags with adjacent flags", () => {
     NodeAssert.deepStrictEqual(codexExecLaunchArgs("--config --strict-config --enable --disable"), [
       "--strict-config",
+    ]);
+  });
+});
+
+describe("codexMcpDisableArgs", () => {
+  it("emits one override per disabled server", () => {
+    NodeAssert.deepStrictEqual(codexMcpDisableArgs(["codegraph", "alpaca"]), [
+      "-c",
+      "mcp_servers.codegraph.enabled=false",
+      "-c",
+      "mcp_servers.alpaca.enabled=false",
+    ]);
+  });
+
+  it("quotes names that are not bare TOML keys and skips blanks", () => {
+    NodeAssert.deepStrictEqual(codexMcpDisableArgs(["  ", "my.server"]), [
+      "-c",
+      'mcp_servers."my.server".enabled=false',
     ]);
   });
 });

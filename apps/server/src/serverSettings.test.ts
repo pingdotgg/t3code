@@ -181,6 +181,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         shadowHomePath: "",
         launchArgs: "",
         customModels: [],
+        disabledMcpServers: [],
       });
       assert.deepEqual(next.providers.claudeAgent, {
         enabled: true,
@@ -188,6 +189,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         homePath: "",
         customModels: ["claude-custom"],
         launchArgs: "",
+        disabledMcpServers: [],
       });
       assert.deepEqual(
         next.textGenerationModelSelection,
@@ -423,6 +425,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         shadowHomePath: "",
         launchArgs: "",
         customModels: [],
+        disabledMcpServers: [],
       });
       assert.deepEqual(next.providers.claudeAgent, {
         enabled: true,
@@ -430,6 +433,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         homePath: "",
         customModels: [],
         launchArgs: "",
+        disabledMcpServers: [],
       });
       assert.deepEqual(next.providers.opencode, {
         enabled: true,

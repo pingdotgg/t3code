@@ -39,6 +39,24 @@ export const codexExecLaunchArgs = (launchArgs?: string) => {
   return execArgs;
 };
 
+/** TOML bare keys; anything else has to be quoted inside the dotted path. */
+const BARE_TOML_KEY = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * Override args that switch off MCP servers the user disabled in T3 Code.
+ * Codex honours `mcp_servers.<name>.enabled` from config, and `-c` overrides
+ * apply on top of `config.toml`, so nothing on disk is rewritten.
+ */
+export const codexMcpDisableArgs = (
+  disabledMcpServers: ReadonlyArray<string>,
+): ReadonlyArray<string> =>
+  disabledMcpServers.flatMap((rawName) => {
+    const name = rawName.trim();
+    if (name.length === 0) return [];
+    const key = BARE_TOML_KEY.test(name) ? name : JSON.stringify(name);
+    return ["-c", `mcp_servers.${key}.enabled=false`];
+  });
+
 export const codexSessionAppServerArgs = (
   appServerArgs: ReadonlyArray<string> | undefined,
   launchArgs: string | undefined,

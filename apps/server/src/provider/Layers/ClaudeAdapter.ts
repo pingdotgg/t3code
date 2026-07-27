@@ -70,6 +70,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { readClaudeMcpServers } from "../../mcpServers/ClaudeMcpConfig.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
@@ -886,6 +887,25 @@ const CLAUDE_SETTING_SOURCES = [
   "project",
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
+
+/**
+ * Configured MCP servers minus the ones disabled in T3 Code, in the shape the
+ * Agent SDK's `mcpServers` option accepts. Paired with `strictMcpConfig` so
+ * this map is the whole set the session sees.
+ */
+const buildEnabledClaudeMcpServerMap = Effect.fn("buildEnabledClaudeMcpServerMap")(function* (
+  claudeSettings: ClaudeSettings,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<Record<string, unknown>, never, FileSystem.FileSystem | Path.Path> {
+  const definitions = yield* readClaudeMcpServers(claudeSettings, environment);
+  const disabled = new Set(claudeSettings.disabledMcpServers);
+  const enabled: Record<string, unknown> = {};
+  for (const { name, definition } of definitions) {
+    if (disabled.has(name)) continue;
+    enabled[name] = definition;
+  }
+  return enabled;
+});
 
 function buildPromptText(
   input: ProviderSendTurnInput,
@@ -3519,6 +3539,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(ultracode ? { ultracode: true } : {}),
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      // Claude Code has no per-server disable flag, so suppressing one means
+      // taking over MCP resolution entirely: pass the surviving servers
+      // explicitly and add `--strict-mcp-config` so the CLI skips its own
+      // config. Only done when something is actually disabled — otherwise a
+      // gap in our reader would silently drop servers the CLI would load.
+      const enabledConfiguredMcpServers =
+        claudeSettings.disabledMcpServers.length > 0
+          ? yield* buildEnabledClaudeMcpServerMap(claudeSettings, claudeEnvironment).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            )
+          : undefined;
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -3544,17 +3576,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         env: claudeEnvironment,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
-        ...(mcpSession
+        ...(enabledConfiguredMcpServers ? { strictMcpConfig: true } : {}),
+        ...(mcpSession || enabledConfiguredMcpServers
           ? {
               mcpServers: {
-                "t3-code": {
-                  type: "http",
-                  url: mcpSession.endpoint,
-                  headers: {
-                    Authorization: mcpSession.authorizationHeader,
-                  },
-                },
-              },
+                ...enabledConfiguredMcpServers,
+                ...(mcpSession
+                  ? {
+                      "t3-code": {
+                        type: "http",
+                        url: mcpSession.endpoint,
+                        headers: {
+                          Authorization: mcpSession.authorizationHeader,
+                        },
+                      },
+                    }
+                  : {}),
+              } as NonNullable<ClaudeQueryOptions["mcpServers"]>,
             }
           : {}),
       };
