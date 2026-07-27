@@ -30,8 +30,14 @@ import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceR
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
+import { LegacyV1ThreadImporter, LegacyV1ThreadImportError } from "./LegacyV1ThreadImporter.ts";
+import {
+  OrchestratorDispatchError,
+  OrchestratorProjectionError,
+  OrchestratorV2,
+} from "./Orchestrator.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
+import { ProjectionMaintenanceV2 } from "./ProjectionMaintenance.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
 import { shellStreamItemFromSnapshot } from "./ShellStream.ts";
@@ -85,6 +91,16 @@ const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
 const TestLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
+  Layer.provide(CheckpointStoreTestLayer),
+  Layer.provide(ServerConfigLayer),
+  Layer.provide(ServerSettingsService.layerTest()),
+  Layer.provide(TestProviderInstanceRegistry),
+  Layer.provide(NodeServices.layer),
+);
+
+const LegacyImportTestLayer = OrchestrationV2LayerLive.pipe(
+  Layer.provide(mcpSessionRegistryTestLayer),
+  Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettingsService.layerTest()),
@@ -158,7 +174,210 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
       assert.deepEqual(projection.runs, []);
     }),
   );
+});
 
+it.layer(LegacyImportTestLayer)("OrchestrationV2 legacy import", (it) => {
+  it.effect("hydrates imported transcripts before commands and propagates hydration failures", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const importer = yield* LegacyV1ThreadImporter;
+      const maintenance = yield* ProjectionMaintenanceV2;
+      const orchestrator = yield* OrchestratorV2;
+      const threadManagement = yield* ThreadManagementService;
+      const metadataThreadId = ThreadId.make("runtime-layer-legacy-metadata-thread");
+      const failureThreadId = ThreadId.make("runtime-layer-legacy-failure-thread");
+      const projectId = ProjectId.make("runtime-layer-legacy-project");
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        ) VALUES (
+          ${projectId},
+          'Legacy project',
+          '/tmp/runtime-layer-legacy-project',
+          '{"instanceId":"codex","model":"gpt-5.4"}',
+          '[]',
+          '2026-01-01T00:00:00.000Z',
+          '2026-01-04T00:00:00.000Z',
+          NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          archived_at,
+          settled_override,
+          settled_at,
+          deleted_at
+        ) VALUES
+          (
+            ${metadataThreadId},
+            ${projectId},
+            'Legacy metadata title',
+            '{"instanceId":"codex","model":"gpt-5.4"}',
+            'full-access',
+            'default',
+            'main',
+            '/tmp/runtime-layer-legacy-project',
+            NULL,
+            '2026-01-01T00:00:00.000Z',
+            '2026-01-04T00:00:00.000Z',
+            NULL,
+            NULL,
+            NULL,
+            NULL
+          ),
+          (
+            ${failureThreadId},
+            ${projectId},
+            'Legacy failure title',
+            '{"instanceId":"codex","model":"gpt-5.4"}',
+            'full-access',
+            'default',
+            'main',
+            '/tmp/runtime-layer-legacy-project',
+            NULL,
+            '2026-01-01T00:00:00.000Z',
+            '2026-01-04T00:00:00.000Z',
+            NULL,
+            NULL,
+            NULL,
+            NULL
+          )
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          turn_id,
+          role,
+          text,
+          attachments_json,
+          is_streaming,
+          created_at,
+          updated_at
+        ) VALUES
+          (
+            'message:runtime-layer-legacy:1',
+            ${metadataThreadId},
+            NULL,
+            'user',
+            'First imported question',
+            '[]',
+            0,
+            '2026-01-01T01:00:00.000Z',
+            '2026-01-01T01:00:00.000Z'
+          ),
+          (
+            'message:runtime-layer-legacy:2',
+            ${metadataThreadId},
+            NULL,
+            'assistant',
+            'First imported answer',
+            '[]',
+            0,
+            '2026-01-02T01:00:00.000Z',
+            '2026-01-02T01:00:00.000Z'
+          ),
+          (
+            'message:runtime-layer-legacy:3',
+            ${metadataThreadId},
+            NULL,
+            'user',
+            'Latest imported question',
+            '[]',
+            0,
+            '2026-01-03T01:00:00.000Z',
+            '2026-01-03T01:00:00.000Z'
+          ),
+          (
+            'message:runtime-layer-legacy:failure',
+            ${failureThreadId},
+            NULL,
+            'user',
+            'Imported context must load before archive',
+            '[]',
+            0,
+            '2026-01-03T01:00:00.000Z',
+            '2026-01-03T01:00:00.000Z'
+          )
+      `;
+
+      yield* importer.reconcileShells;
+      const rebuilt = yield* maintenance.rebuild;
+      assert.isTrue(rebuilt.valid);
+
+      yield* threadManagement.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-legacy-metadata-update"),
+        threadId: metadataThreadId,
+        title: "Updated after import",
+      });
+      const updatedProjection = yield* threadManagement.getThreadProjection(metadataThreadId);
+      assert.equal(updatedProjection.thread.title, "Updated after import");
+      assert.deepEqual(
+        updatedProjection.messages.map((message) => message.text),
+        ["First imported question", "First imported answer", "Latest imported question"],
+      );
+
+      yield* sql`
+        ALTER TABLE projection_thread_messages
+        RENAME TO projection_thread_messages_unavailable
+      `;
+      const { projectionFailure, hydrationFailure } = yield* Effect.all({
+        projectionFailure: threadManagement.getThreadProjection(failureThreadId).pipe(Effect.flip),
+        hydrationFailure: threadManagement
+          .dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make("runtime-layer-legacy-failed-archive"),
+            threadId: failureThreadId,
+          })
+          .pipe(Effect.flip),
+      }).pipe(
+        Effect.ensuring(
+          sql`
+            ALTER TABLE projection_thread_messages_unavailable
+            RENAME TO projection_thread_messages
+          `.pipe(Effect.orDie),
+        ),
+      );
+      assert.instanceOf(projectionFailure, OrchestratorProjectionError);
+      assert.instanceOf(projectionFailure.cause, LegacyV1ThreadImportError);
+      assert.instanceOf(hydrationFailure, OrchestratorDispatchError);
+      assert.instanceOf(hydrationFailure.cause, LegacyV1ThreadImportError);
+
+      const projectionAfterFailure = yield* orchestrator.getThreadProjection(failureThreadId);
+      assert.isNull(projectionAfterFailure.thread.archivedAt);
+
+      yield* threadManagement.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-layer-legacy-retried-archive"),
+        threadId: failureThreadId,
+      });
+      const projectionAfterRetry = yield* threadManagement.getThreadProjection(failureThreadId);
+      assert.isNotNull(projectionAfterRetry.thread.archivedAt);
+    }),
+  );
+});
+
+it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
