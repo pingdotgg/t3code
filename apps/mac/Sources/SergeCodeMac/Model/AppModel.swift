@@ -227,6 +227,12 @@ public final class AppModel {
     /// matching `scopedThreadKey(_:)`.
     @ObservationIgnored private var projectPathByThreadKey: [String: String] = [:]
 
+    /// Owns the model picker's most-recently-used list, updated here rather
+    /// than at the tap so a switch the backend rejected never enters it.
+    /// Internal rather than injected through `init`, which is public and
+    /// cannot take an internal type; tests point it at scratch defaults.
+    @ObservationIgnored var modelPickerPreferences: ModelPickerPreferences = .shared
+
     public init(
         backend: any BackendService,
         deviceID: DeviceID = .local,
@@ -1714,6 +1720,13 @@ public final class AppModel {
             try await backend.setExecutorModel(
                 threadID: threadID, instanceID: instanceID, modelID: modelID,
                 maxSubAgents: maxSubAgents)
+            if let instanceID, let modelID,
+                let option = models.first(where: {
+                    $0.instanceID == instanceID && $0.modelID == modelID
+                })
+            {
+                modelPickerPreferences.recordUsage(for: option)
+            }
         } catch {
             lastError = String(describing: error)
         }
@@ -1723,6 +1736,9 @@ public final class AppModel {
         guard let threadID = selectedThreadID else { return }
         do {
             try await backend.setModel(threadID: threadID, model: model)
+            // Recorded only once the backend accepted the switch: a failed or
+            // rejected change must not promote the model in the picker.
+            modelPickerPreferences.recordUsage(for: model)
         } catch {
             lastError = String(describing: error)
         }
@@ -1766,6 +1782,7 @@ public final class AppModel {
             if let model {
                 usageLimitActions[notice.id] = .switching(modelName: model.displayName)
                 try await backend.setModel(threadID: notice.threadID, model: model)
+                modelPickerPreferences.recordUsage(for: model)
             } else {
                 usageLimitActions[notice.id] = .resuming
             }

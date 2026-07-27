@@ -104,7 +104,7 @@ struct ModelPickerMenu: View {
 
     private func quickSwitchButton(_ item: ModelPickerItem) -> some View {
         Button {
-            ModelPickerPreferences.shared.recordUsage(item.id)
+            // Recency is recorded by `setModel` once the switch lands.
             Task { await model.setModel(item.option) }
         } label: {
             Label(item.option.displayName, systemImage: isCurrent(item.option) ? "checkmark" : "cpu")
@@ -704,7 +704,9 @@ struct ModelPickerPopoverContent: View {
     }
 
     private func select(_ item: ModelPickerItem) {
-        preferences.recordUsage(item.id)
+        // Recency belongs to whoever performs the switch: `AppModel` records
+        // it only after the backend accepts, so a rejected or cancelled change
+        // never promotes a model the thread never ran.
         onSelect(item.option)
     }
 

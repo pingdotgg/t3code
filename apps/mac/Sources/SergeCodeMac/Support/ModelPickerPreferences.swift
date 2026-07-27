@@ -81,6 +81,13 @@ final class ModelPickerPreferences {
         return isNowFavorite
     }
 
+    /// Records a model the backend actually switched to. Call sites hold a
+    /// `ModelOption`, not a row key, so the key derivation lives here rather
+    /// than being repeated at each one.
+    func recordUsage(for option: ModelOption) {
+        recordUsage(ModelPickerCatalog.key(for: option))
+    }
+
     func recordUsage(_ key: String) {
         var updated = recents.filter { $0 != key }
         updated.insert(key, at: 0)
