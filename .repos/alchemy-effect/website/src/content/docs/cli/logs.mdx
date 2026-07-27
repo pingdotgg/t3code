@@ -1,0 +1,47 @@
+---
+title: logs
+description: Fetch historical logs from deployed resources — a batch of past entries, merged and sorted by timestamp.
+---
+
+```sh
+alchemy logs [file] [options]
+```
+
+Fetch historical logs from deployed resources. Unlike [tail](/cli/tail), `logs` fetches a batch of past log entries and exits.
+
+Entries from all resources are merged and sorted by timestamp, color-coded by resource.
+
+`--filter` values are validated against the stack's logical IDs — an unknown ID fails the command and lists the available IDs.
+
+Resources must be deployed and their provider must implement log fetching; if none qualify, the command prints `No resources with logs found. Deploy first, then run logs.` and exits.
+
+## Flags
+
+| Option              | Description                                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------------------- |
+| `--stage <name>`    | Stage to fetch logs from (defaults to `dev_$USER`)                                             |
+| `--filter <ids>`    | Comma-separated logical resource IDs to include                                                |
+| `--limit <n>`       | Number of log entries to fetch (default: 100)                                                  |
+| `--since <time>`    | Fetch logs since this time — a duration (`30m`, `1h`, `2d`; units `s`/`m`/`h`/`d`) or ISO date |
+| `--profile <name>`  | Auth profile to use (defaults to `default` or `$ALCHEMY_PROFILE`)                              |
+| `--env-file <path>` | Load environment variables from a file                                                         |
+| `[file]`            | Stack file to read logs for (defaults to `alchemy.run.ts`)                                     |
+
+## Examples
+
+```sh
+# Last 50 log entries from all resources
+alchemy logs --limit 50
+
+# Logs from the last hour, Worker only
+alchemy logs --filter Worker --since 1h
+
+# Logs from a specific stage since a date
+alchemy logs --stage prod --since 2026-04-01T00:00:00Z
+```
+
+## Where next
+
+- [tail](/cli/tail) — stream live logs instead of fetching a batch
+- [dev](/cli/dev) — run your stack with hot reloading
+- [cloudflare](/cli/cloudflare) — inspect the state-store worker's own logs

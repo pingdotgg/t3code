@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import type { RuntimeContext } from "../../RuntimeContext.ts";
 import { DurableObjectState } from "./DurableObjectState.ts";
 import type { SqlStorageValue } from "./DurableObjectStorage.ts";
 
@@ -21,7 +22,7 @@ CREATE INDEX IF NOT EXISTS idx_alchemy_scheduled_events_run_at
 
 const ensureTable = Effect.gen(function* () {
   const ctx = yield* DurableObjectState;
-  yield* ctx.storage.sql.exec(INIT_TABLE_SQL);
+  void (yield* ctx.storage.sql.exec(INIT_TABLE_SQL));
 });
 
 export interface ScheduledEvent {
@@ -57,7 +58,7 @@ const toScheduledEvent = (row: EventRow): ScheduledEvent => ({
  * @param payload Arbitrary JSON-serialisable data delivered to the alarm handler.
  * @param repeatMs If set, the event re-schedules itself this many ms after each fire.
  */
-export const scheduleEvent = Effect.fnUntraced(function* (
+export const scheduleEvent = Effect.fn(function* (
   id: string,
   runAt: Date,
   payload: unknown,
@@ -81,7 +82,7 @@ export const scheduleEvent = Effect.fnUntraced(function* (
 /**
  * Cancel a previously scheduled event by id. No-op if the event does not exist.
  */
-export const cancelEvent = Effect.fnUntraced(function* (id: string) {
+export const cancelEvent = Effect.fn(function* (id: string) {
   yield* ensureTable;
   const ctx = yield* DurableObjectState;
 
@@ -99,7 +100,7 @@ export const cancelEvent = Effect.fnUntraced(function* (id: string) {
 export const listEvents: Effect.Effect<
   ScheduledEvent[],
   never,
-  DurableObjectState
+  DurableObjectState | RuntimeContext
 > = Effect.gen(function* () {
   yield* ensureTable;
   const ctx = yield* DurableObjectState;
@@ -122,7 +123,7 @@ export const listEvents: Effect.Effect<
  *
  * ```ts
  * alarm: () => Effect.gen(function* () {
- *   const fired = yield* Cloudflare.processScheduledEvents;
+ *   const fired = yield* Cloudflare.Workers.processScheduledEvents;
  *   for (const event of fired) {
  *     // handle each event
  *   }
@@ -132,7 +133,7 @@ export const listEvents: Effect.Effect<
 export const processScheduledEvents: Effect.Effect<
   ScheduledEvent[],
   never,
-  DurableObjectState
+  DurableObjectState | RuntimeContext
 > = Effect.gen(function* () {
   yield* ensureTable;
   const ctx = yield* DurableObjectState;
@@ -167,19 +168,22 @@ export const processScheduledEvents: Effect.Effect<
 /**
  * Set the DO alarm to the earliest pending event, or clear it if none remain.
  */
-const reconcileAlarm: Effect.Effect<void, never, DurableObjectState> =
-  Effect.gen(function* () {
-    const ctx = yield* DurableObjectState;
+const reconcileAlarm: Effect.Effect<
+  void,
+  never,
+  DurableObjectState | RuntimeContext
+> = Effect.gen(function* () {
+  const ctx = yield* DurableObjectState;
 
-    const next = yield* (yield* ctx.storage.sql.exec<{
-      run_at: number;
-    }>(
-      `SELECT run_at FROM alchemy_scheduled_events ORDER BY run_at ASC LIMIT 1`,
-    )).pipe(Stream.take(1), Stream.runHead);
+  const next = yield* (yield* ctx.storage.sql.exec<{
+    run_at: number;
+  }>(
+    `SELECT run_at FROM alchemy_scheduled_events ORDER BY run_at ASC LIMIT 1`,
+  )).pipe(Stream.take(1), Stream.runHead);
 
-    if (Option.isSome(next)) {
-      yield* ctx.storage.setAlarm(next.value.run_at);
-    } else {
-      yield* ctx.storage.deleteAlarm();
-    }
-  });
+  if (Option.isSome(next)) {
+    yield* ctx.storage.setAlarm(next.value.run_at);
+  } else {
+    yield* ctx.storage.deleteAlarm();
+  }
+});

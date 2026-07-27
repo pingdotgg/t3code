@@ -1,5 +1,6 @@
 import * as rds from "@distilled.cloud/aws/rds";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -30,10 +31,25 @@ export interface DBParameterGroup extends Resource<
   "AWS.RDS.DBParameterGroup",
   DBParameterGroupProps,
   {
+    /**
+     * Name of the parameter group.
+     */
     dbParameterGroupName: string;
+    /**
+     * ARN of the parameter group.
+     */
     dbParameterGroupArn: string | undefined;
+    /**
+     * Parameter group family (e.g. `aurora-postgresql16`).
+     */
     family: string;
+    /**
+     * Description of the parameter group.
+     */
     description: string | undefined;
+    /**
+     * Tags on the parameter group.
+     */
     tags: Record<string, string>;
   },
   never,
@@ -41,7 +57,30 @@ export interface DBParameterGroup extends Resource<
 > {}
 
 /**
- * An RDS DB parameter group, useful for Aurora cluster instances.
+ * An RDS DB parameter group — instance-level engine settings, applied to a
+ * `DBInstance` (as opposed to the cluster-wide `DBClusterParameterGroup`).
+ *
+ * Name, family, and description changes force a replacement (RDS has no
+ * modify API for these); tags update in place.
+ * @resource
+ * @section Creating a Parameter Group
+ * @example Parameter Group for Aurora Postgres 16 Instances
+ * ```typescript
+ * const instanceParams = yield* DBParameterGroup("InstanceParams", {
+ *   family: "aurora-postgresql16",
+ *   description: "Instance-level settings for the app database",
+ * });
+ * ```
+ *
+ * @example Attach to an Instance
+ * ```typescript
+ * const writer = yield* DBInstance("Writer", {
+ *   dbClusterIdentifier: cluster.dbClusterIdentifier,
+ *   dbInstanceClass: "db.serverless",
+ *   engine: "aurora-postgresql",
+ *   dbParameterGroupName: instanceParams.dbParameterGroupName,
+ * });
+ * ```
  */
 export const DBParameterGroup = Resource<DBParameterGroup>(
   "AWS.RDS.DBParameterGroup",
@@ -86,6 +125,38 @@ export const DBParameterGroupProvider = () =>
             return { action: "replace" } as const;
           }
         }),
+        list: () =>
+          // AWS account/region collection (pattern (a)): exhaustively paginate
+          // describeDBParameterGroups and map each group to the exact `read`
+          // Attributes shape. `read` derives `tags` from the cached output
+          // (the describe response does not surface tags), so list returns
+          // `tags: {}` to match — a future read/delete can hydrate them.
+          rds.describeDBParameterGroups.pages({}).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.DBParameterGroups ?? [])
+                  .filter(
+                    (
+                      g,
+                    ): g is rds.DBParameterGroup & {
+                      DBParameterGroupName: string;
+                    } =>
+                      g.DBParameterGroupName != null &&
+                      // AWS-managed `default.*` groups cannot be deleted
+                      // (InvalidDBParameterGroupStateFault) — don't enumerate.
+                      !g.DBParameterGroupName.startsWith("default."),
+                  )
+                  .map((g) => ({
+                    dbParameterGroupName: g.DBParameterGroupName,
+                    dbParameterGroupArn: g.DBParameterGroupArn,
+                    family: g.DBParameterGroupFamily ?? "",
+                    description: g.Description,
+                    tags: {} as Record<string, string>,
+                  })),
+              ),
+            ),
+          ),
         read: Effect.fn(function* ({ id, olds, output }) {
           const name =
             output?.dbParameterGroupName ??

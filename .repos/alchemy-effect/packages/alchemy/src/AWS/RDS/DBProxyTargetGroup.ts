@@ -1,5 +1,6 @@
 import * as rds from "@distilled.cloud/aws/rds";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -33,13 +34,37 @@ export interface DBProxyTargetGroup extends Resource<
   "AWS.RDS.DBProxyTargetGroup",
   DBProxyTargetGroupProps,
   {
+    /**
+     * Proxy that owns the target group.
+     */
     dbProxyName: string;
+    /**
+     * Name of the target group (`default` unless overridden).
+     */
     targetGroupName: string;
+    /**
+     * ARN of the target group.
+     */
     targetGroupArn: string | undefined;
+    /**
+     * Status of the target group (e.g. `available`).
+     */
     status: string | undefined;
+    /**
+     * Whether this is the proxy's default target group.
+     */
     isDefault: boolean | undefined;
+    /**
+     * Observed connection pool configuration.
+     */
     connectionPoolConfig: rds.ConnectionPoolConfigurationInfo | undefined;
+    /**
+     * Cluster targets registered with the proxy.
+     */
     dbClusterIdentifiers: string[];
+    /**
+     * Instance targets registered with the proxy.
+     */
     dbInstanceIdentifiers: string[];
   },
   never,
@@ -49,6 +74,32 @@ export interface DBProxyTargetGroup extends Resource<
 /**
  * The proxy target group that registers Aurora clusters or instances behind an
  * RDS Proxy.
+ *
+ * Every `DBProxy` has exactly one `default` target group; this resource
+ * adopts it, tunes its connection pool, and reconciles the registered
+ * cluster/instance targets. Deleting it deregisters the targets rather than
+ * deleting the group itself.
+ * @resource
+ * @section Registering Targets
+ * @example Register a Cluster Behind a Proxy
+ * ```typescript
+ * const targets = yield* DBProxyTargetGroup("ProxyTargets", {
+ *   dbProxyName: proxy.dbProxyName,
+ *   dbClusterIdentifiers: [cluster.dbClusterIdentifier],
+ * });
+ * ```
+ *
+ * @example Tune the Connection Pool
+ * ```typescript
+ * const targets = yield* DBProxyTargetGroup("ProxyTargets", {
+ *   dbProxyName: proxy.dbProxyName,
+ *   dbClusterIdentifiers: [cluster.dbClusterIdentifier],
+ *   connectionPoolConfig: {
+ *     MaxConnectionsPercent: 90,
+ *     MaxIdleConnectionsPercent: 10,
+ *   },
+ * });
+ * ```
  */
 export const DBProxyTargetGroup = Resource<DBProxyTargetGroup>(
   "AWS.RDS.DBProxyTargetGroup",
@@ -138,6 +189,70 @@ export const DBProxyTargetGroupProvider = () =>
 
       return {
         stables: ["dbProxyName", "targetGroupArn", "targetGroupName"],
+        // Target groups are proxy-scoped: `describeDBProxyTargetGroups`
+        // requires a `DBProxyName`, so there is no account-wide enumeration.
+        // Fan out — enumerate every proxy via the paginated `describeDBProxies`,
+        // then list each proxy's target groups and hydrate registered targets
+        // (cluster/instance identifiers) via `describeDBProxyTargets` so each
+        // element matches `read`'s `Attributes` shape exactly. A proxy/target
+        // group deleted between describes surfaces a typed not-found per item
+        // and is dropped.
+        list: () =>
+          Effect.gen(function* () {
+            const proxies = yield* rds.describeDBProxies.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) => page.DBProxies ?? []),
+              ),
+            );
+            const perProxy = yield* Effect.forEach(
+              proxies,
+              (proxy) =>
+                Effect.gen(function* () {
+                  const dbProxyName = proxy.DBProxyName;
+                  if (!dbProxyName) return [];
+                  const groups = yield* rds.describeDBProxyTargetGroups
+                    .pages({ DBProxyName: dbProxyName })
+                    .pipe(
+                      Stream.runCollect,
+                      Effect.map((chunk) =>
+                        Array.from(chunk).flatMap(
+                          (page) => page.TargetGroups ?? [],
+                        ),
+                      ),
+                      Effect.catchTag("DBProxyNotFoundFault", () =>
+                        Effect.succeed([] as rds.DBProxyTargetGroup[]),
+                      ),
+                      Effect.catchTag("DBProxyTargetGroupNotFoundFault", () =>
+                        Effect.succeed([] as rds.DBProxyTargetGroup[]),
+                      ),
+                    );
+                  return yield* Effect.forEach(
+                    groups,
+                    (group) =>
+                      Effect.gen(function* () {
+                        const targetGroupName =
+                          group.TargetGroupName ?? "default";
+                        const { observedClusters, observedInstances } =
+                          yield* readTargets({ dbProxyName, targetGroupName });
+                        return {
+                          dbProxyName: group.DBProxyName ?? dbProxyName,
+                          targetGroupName,
+                          targetGroupArn: group.TargetGroupArn,
+                          status: group.Status,
+                          isDefault: group.IsDefault,
+                          connectionPoolConfig: group.ConnectionPoolConfig,
+                          dbClusterIdentifiers: observedClusters,
+                          dbInstanceIdentifiers: observedInstances,
+                        } satisfies DBProxyTargetGroup["Attributes"];
+                      }),
+                    { concurrency: 10 },
+                  );
+                }),
+              { concurrency: 10 },
+            );
+            return perProxy.flat();
+          }),
         diff: Effect.fn(function* ({ olds, news }) {
           if (!isResolved(news)) return undefined;
           if (olds?.dbProxyName !== news.dbProxyName) {

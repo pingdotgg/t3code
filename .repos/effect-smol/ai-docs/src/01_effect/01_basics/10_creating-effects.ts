@@ -8,12 +8,12 @@ import { Effect, Schema } from "effect"
 
 class InvalidPayload extends Schema.TaggedErrorClass<InvalidPayload>()("InvalidPayload", {
   input: Schema.String,
-  cause: Schema.Defect
+  cause: Schema.Defect()
 }) {}
 
 class UserLookupError extends Schema.TaggedErrorClass<UserLookupError>()("UserLookupError", {
-  userId: Schema.Number,
-  cause: Schema.Defect
+  userId: Schema.Int,
+  cause: Schema.Defect()
 }) {}
 
 class MissingWorkspaceId extends Schema.TaggedErrorClass<MissingWorkspaceId>()("MissingWorkspaceId", {}) {}

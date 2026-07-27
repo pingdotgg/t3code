@@ -1,7 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import { pipeArguments } from "effect/Pipeable";
-import { SingleShotGen } from "effect/Utils";
+import * as Effectable from "effect/Effectable";
 
 export type EffectClass<Shape, A, Err = never, Req = never> = Effect.Effect<
   A,
@@ -22,18 +21,15 @@ export const effectClass: {
   impl === undefined
     ? (innerImpl: any) => effectClass(innerImpl)
     : (Object.assign(
-        class {
-          static asEffect() {
-            return impl;
-          }
-          static [Symbol.iterator]() {
-            return new SingleShotGen(this.asEffect());
-          }
-          static pipe(...fns: any) {
-            return pipeArguments(this, fns);
-          }
-        },
-        impl,
+        class {},
+        // Spreading the Effect prototype onto the class (static side) makes the
+        // class itself a real Effect — `Effect.isEffect(X)` is true, so
+        // `Effect.all([X])` / `Effect.forEach` work — and subclasses
+        // (`class Y extends effectClass(impl)`) inherit the protocol statically.
+        Effectable.Prototype({
+          label: "alchemy/EffectClass",
+          evaluate: () => impl,
+        }),
       ) as unknown as EffectClass<any, any, any, any>)) as any;
 
 export const taggedFunction = <
@@ -43,10 +39,10 @@ export const taggedFunction = <
   tag: Tag,
   fn: Fn,
 ): Tag & Fn => {
+  // The Proxy below forwards every Effect-protocol key to `tag` (already an
+  // Effect), so `asEffect`/`[Symbol.iterator]`/`pipe` need no explicit
+  // override — only `toString` diverges.
   const overrides = {
-    asEffect: () => tag,
-    [Symbol.iterator]: () => tag[Symbol.iterator](),
-    pipe: (...fns: any[]) => pipeArguments(tag, fns as any),
     toString: () => `${tag.toString()}.${fn.name}`,
   };
 
@@ -68,7 +64,7 @@ export const isYieldableEffect = (
   value: unknown,
 ): value is Effect.Effect<unknown, unknown, unknown> =>
   Effect.isEffect(value) &&
-  typeof (value as { [Symbol.iterator]?: unknown })[Symbol.iterator] ===
+  typeof (value as any as { [Symbol.iterator]?: unknown })[Symbol.iterator] ===
     "function";
 
 export type YieldableEffectLike<A = unknown, E = unknown, R = unknown> =
@@ -87,7 +83,8 @@ export const isEffectClassLike = (
 export const isYieldableEffectLike = (
   value: unknown,
 ): value is YieldableEffectLike =>
-  isYieldableEffect(value) || isEffectClassLike(value);
+  (isYieldableEffect(value) || isEffectClassLike(value)) &&
+  !("~alchemy/Kind" in value);
 
 export type UnwrapEffect<T> =
   T extends Effect.Effect<infer A, any, any> ? A : T;
