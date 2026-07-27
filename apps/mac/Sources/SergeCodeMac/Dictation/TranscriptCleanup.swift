@@ -72,10 +72,10 @@ enum TranscriptCleanup {
     /// the speaker may have dictated a line ending in a colon — so it is
     /// only removed when the reply fails vetting with it left on.
     static func accepted(candidate: String, raw: String) -> String? {
-        let stripped = strippingArtifacts(candidate)
         let reference = collapsingRepeats(
             normalizedWords(raw).filter { !fillerWords.contains($0) })
         guard !reference.isEmpty else { return nil }
+        let stripped = strippingArtifacts(candidate, reference: reference)
         for variant in [stripped, strippingPreamble(stripped, reference: reference)]
         where isRewrite(variant, of: reference)
             && !opensAsAssistant(variant, reference: reference) {
@@ -222,11 +222,15 @@ enum TranscriptCleanup {
     /// Undoes the wrappers the model can only have added itself: code
     /// fences, the transcript tags it was shown, and quotes around the whole
     /// reply. The ambiguous preamble line is handled separately.
-    static func strippingArtifacts(_ text: String) -> String {
+    ///
+    /// The first two are pure markup and come off unconditionally. Quotes
+    /// are content, so they get the speaker gate — see
+    /// `strippingWrappingQuotes`.
+    static func strippingArtifacts(_ text: String, reference: [String]) -> String {
         var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         value = strippingCodeFence(value)
         value = strippingTranscriptTags(value)
-        value = strippingWrappingQuotes(value)
+        value = strippingWrappingQuotes(value, reference: reference)
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -286,9 +290,24 @@ enum TranscriptCleanup {
     static let maximumPreambleWords = 8
     private static let sentenceEnders = CharacterSet(charactersIn: ".!?")
 
-    private static func strippingWrappingQuotes(_ text: String) -> String {
-        let pairs: [(Character, Character)] = [("\"", "\""), ("\u{201C}", "\u{201D}"), ("'", "'")]
-        for (open, close) in pairs where text.count > 1 {
+    /// Unwraps a reply the model put in quotes as a whole, having been told
+    /// not to.
+    ///
+    /// Deliberately the narrowest of the strippers, because quote marks are
+    /// content rather than formatting: `normalizedWords` already ignores
+    /// them, so removing a pair buys nothing for vetting and only ever edits
+    /// what lands in the composer. Three things have to hold — the pair has
+    /// to be double quotes, it has to wrap the whole reply with no quote of
+    /// its own kind inside, and the speaker must not have been marking a
+    /// quotation out loud.
+    ///
+    /// Single quotes are never touched. They are apostrophes far more often
+    /// than quotation marks, so a transcript that happens to open and close
+    /// on one would lose the speaker's own punctuation, and the model does
+    /// not wrap its output in them anyway.
+    private static func strippingWrappingQuotes(_ text: String, reference: [String]) -> String {
+        guard !reference.contains(where: quotingWords.contains) else { return text }
+        for (open, close) in wrappingQuotePairs where text.count > 1 {
             guard text.first == open, text.last == close else { continue }
             let inner = String(text.dropFirst().dropLast())
             // Only unwrap a quote that actually wraps the whole thing, not a
@@ -298,6 +317,16 @@ enum TranscriptCleanup {
         }
         return text
     }
+
+    private static let wrappingQuotePairs: [(Character, Character)] = [
+        ("\"", "\""), ("\u{201C}", "\u{201D}"),
+    ]
+
+    /// Said out loud, these mean the speaker is marking a quotation, and the
+    /// marks the cleanup pass renders for them are theirs to keep.
+    private static let quotingWords: Set<String> = [
+        "quote", "quotes", "quoted", "unquote", "endquote",
+    ]
 
     /// Lowercased word tokens with punctuation dropped, so the comparison
     /// ignores exactly the things the cleanup pass is meant to change.

@@ -216,6 +216,38 @@ struct TranscriptCleanupTests {
         #expect(TranscriptCleanup.accepted(candidate: "\"Ship it.\"", raw: raw) == "Ship it.")
     }
 
+    @Test("single quotes are never unwrapped")
+    func keepsSingleQuotes() {
+        // Apostrophes far more often than quotation marks, so a transcript
+        // that opens and closes on one keeps its own punctuation. The model
+        // does not wrap its output this way, so nothing is lost.
+        let quoted = "'Ship it.'"
+        #expect(TranscriptCleanup.accepted(candidate: quoted, raw: "ship it") == quoted)
+    }
+
+    @Test("smart double quotes wrapping the whole reply are stripped")
+    func stripsSmartWrappingQuotes() {
+        #expect(
+            TranscriptCleanup.accepted(candidate: "\u{201C}Ship it.\u{201D}", raw: "ship it")
+                == "Ship it.")
+    }
+
+    @Test("quote marks stay when the speaker was marking a quotation out loud")
+    func keepsQuotesTheSpeakerAskedFor() {
+        // Said aloud, "quote ... end quote" is an instruction to punctuate,
+        // so the marks the cleanup pass renders are the speaker's content
+        // and not a wrapper artifact.
+        let spoken = TranscriptCleanup.normalizedWords("quote ship it now end quote")
+        let candidate = "\"Ship it now.\""
+        #expect(TranscriptCleanup.strippingArtifacts(candidate, reference: spoken) == candidate)
+
+        // Same reply, no spoken quoting — now it reads as the model wrapping
+        // its answer, and comes off.
+        let plain = TranscriptCleanup.normalizedWords("ship it now")
+        #expect(
+            TranscriptCleanup.strippingArtifacts(candidate, reference: plain) == "Ship it now.")
+    }
+
     @Test("quoted speech inside the transcript survives")
     func keepsInternalQuotes() {
         let raw = "he said stop and then she said no and that was that"
