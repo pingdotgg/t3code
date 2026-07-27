@@ -49,7 +49,12 @@ struct StreamingRevealPolicy: Equatable, Sendable {
     /// Roughly two lines of text: long enough that the first reveal starts
     /// with a comfortable runway, short enough that a model emits it in a
     /// second or two. Final targets skip the hold entirely.
-    let warmUpStartBytes = 480
+    ///
+    /// Static as well as instance-readable because `StreamingRevealAdoption`
+    /// reuses it as the "more text than a fresh stream could have buffered"
+    /// threshold, and the two must not drift apart.
+    static let warmUpStartBytes = 480
+    var warmUpStartBytes: Int { Self.warmUpStartBytes }
     /// Floor on reveal speed so a slow trickle still glides instead of
     /// stalling between flushes. ~2 bytes per frame at 120 Hz.
     let minRevealBytesPerSecond = 240.0
@@ -86,14 +91,63 @@ struct StreamingRevealPolicy: Equatable, Sendable {
     }
 }
 
+/// When buffered backlog stops being *arriving* text and has to be adopted
+/// wholesale instead of typed out.
+///
+/// The reveal exists to smooth arrival: bursty ~30 Hz flushes glide onto the
+/// screen instead of jumping. That contract only holds while somebody is
+/// watching. Two situations leave a session holding text nobody saw arrive,
+/// and typing those out is what reads as a finished message regenerating
+/// itself:
+///
+/// 1. The session stopped ticking. A mounted, visible reveal advances every
+///    display frame; a gap means the view driving it went away — the thread
+///    was deselected, or the `LazyVStack` un-realized the row — while the
+///    stream kept running without it.
+/// 2. The session was created against a message that was already substantial,
+///    which is exactly what selecting a thread mid-run does.
+///
+/// Pure and SwiftUI-free for the same reason `StreamingRevealPolicy` is.
+struct StreamingRevealAdoption: Equatable, Sendable {
+    /// Longest gap between ticks that still counts as a live reveal. Two
+    /// 30 Hz flushes are 33 ms apart and a display tick is 8 ms, so this is
+    /// an order of magnitude above anything a watched stream produces while
+    /// staying short enough that a glance away and back adopts.
+    let staleTickInterval: TimeInterval = 0.75
+
+    /// Byte count at or above which a *newly created* session adopts its
+    /// target rather than typing it. A genuinely fresh stream's first render
+    /// happens at its first flush, far below the warm-up buffer; a session
+    /// created against more text than that hold would ever accumulate means
+    /// the view mounted into a message that already existed.
+    let mountAdoptionBytes = StreamingRevealPolicy.warmUpStartBytes
+
+    /// A brand-new session for an already-substantial message adopts it.
+    func shouldAdoptOnCreate(targetUTF8Count: Int) -> Bool {
+        targetUTF8Count >= mountAdoptionBytes
+    }
+
+    /// An existing session that has not ticked recently adopts whatever
+    /// arrived while it was not being driven.
+    func shouldAdoptOnResume(lastTick: Date?, now: Date) -> Bool {
+        guard let lastTick else { return false }
+        return now.timeIntervalSince(lastTick) > staleTickInterval
+    }
+}
+
 /// Per-message reveal state backing the smooth streaming text render.
 ///
 /// Keyed by (scopedThreadKey, messageID) like `StreamingMarkdownCache`, so
 /// the reveal survives view recreation (a `LazyVStack` un-realizing and
-/// re-realizing the tail row mid-stream) instead of rewinding to empty.
+/// re-realizing the tail row mid-stream) instead of rewinding to empty — but
+/// only for as long as something keeps driving it. Once it goes quiet, or
+/// once it opens against a message that already has real text,
+/// `StreamingRevealAdoption` takes over and the store snaps rather than
+/// replaying text nobody was there to watch arrive.
+///
 /// `revealed` is always a grapheme-safe prefix of every target seen so far,
 /// which is exactly the append-only invariant `StreamingMarkdownCache`
-/// requires of its input.
+/// requires of its input; adopting a whole target preserves that.
 @MainActor
 enum StreamingRevealStore {
     private struct SessionKey: Equatable {
@@ -104,16 +158,27 @@ enum StreamingRevealStore {
     private static var sessions: [String: [String: StreamingRevealSession]] = [:]
     private static var insertionOrder: [SessionKey] = []
     private static let maxSessionCount = 8
+    private static let adoption = StreamingRevealAdoption()
 
     /// Times a session detected a non-append-only target and restarted.
     private(set) static var resetCount = 0
+    /// Times a session adopted its target instead of typing it out — the
+    /// thread-switch and scrolled-away cases. Exposed so tests can prove the
+    /// adoption actually fired rather than inferring it from the text.
+    private(set) static var adoptionCount = 0
 
-    /// The currently revealed prefix. Runs the divergence check but does not
-    /// advance the reveal; call `advance` from a display-linked tick for that.
-    static func revealed(threadID: String, messageID: String, target: String) -> String {
-        let session = session(threadID: threadID, messageID: messageID)
+    /// The currently revealed prefix. Runs the divergence and staleness
+    /// checks but does not advance the reveal; call `advance` from a
+    /// display-linked tick for that.
+    static func revealed(
+        threadID: String, messageID: String, target: String, at now: Date = Date()
+    ) -> String {
+        let session = session(threadID: threadID, messageID: messageID, target: target, at: now)
         if diverged(session: session, target: target) {
             reset(session)
+        }
+        if adoption.shouldAdoptOnResume(lastTick: session.lastTick, now: now) {
+            adopt(session, target: target, at: now)
         }
         return session.revealed
     }
@@ -127,9 +192,14 @@ enum StreamingRevealStore {
         at now: Date,
         policy: StreamingRevealPolicy
     ) -> Bool {
-        let session = session(threadID: threadID, messageID: messageID)
+        let session = session(threadID: threadID, messageID: messageID, target: target, at: now)
         if diverged(session: session, target: target) {
             reset(session)
+        }
+        // Nobody drove this session for a while — the thread was deselected,
+        // or the row scrolled out — so the backlog is history, not arrival.
+        if adoption.shouldAdoptOnResume(lastTick: session.lastTick, now: now) {
+            return adopt(session, target: target, at: now)
         }
 
         let targetCount = target.utf8.count
@@ -158,10 +228,20 @@ enum StreamingRevealStore {
     /// the reveal path until the buffered text has fully glided out, so
     /// completion never pops the remaining tail in at once. Creates no
     /// session, so finished messages rendered from history stay settled.
-    static func hasPendingReveal(threadID: String, messageID: String, target: String) -> Bool {
+    ///
+    /// A stale session adopts here rather than reporting backlog: this is the
+    /// question `AssistantMarkdownView.init` asks when a row mounts, and
+    /// answering "yes" for a thread the user left mid-run and came back to
+    /// after it finished is what made a settled message type itself out again.
+    static func hasPendingReveal(
+        threadID: String, messageID: String, target: String, at now: Date = Date()
+    ) -> Bool {
         guard let session = sessions[threadID]?[messageID] else { return false }
         if diverged(session: session, target: target) {
             reset(session)
+        }
+        if adoption.shouldAdoptOnResume(lastTick: session.lastTick, now: now) {
+            adopt(session, target: target, at: now)
         }
         return session.revealedUTF8Count < target.utf8.count
     }
@@ -184,6 +264,7 @@ enum StreamingRevealStore {
         sessions.removeAll(keepingCapacity: true)
         insertionOrder.removeAll(keepingCapacity: true)
         resetCount = 0
+        adoptionCount = 0
     }
 
     /// Edit-in-place and hydration can replace a target rather than append to
@@ -208,6 +289,28 @@ enum StreamingRevealStore {
         session.desiredUTF8Count = 0
         session.fingerprint = []
         resetCount += 1
+    }
+
+    /// Jumps the session straight to `target`, keeping every invariant the
+    /// incremental path maintains (grapheme-safe by construction — a whole
+    /// target always is — and a fingerprint over the new tail). Returns true
+    /// when this actually moved the reveal.
+    @discardableResult
+    private static func adopt(
+        _ session: StreamingRevealSession, target: String, at now: Date
+    ) -> Bool {
+        let count = target.utf8.count
+        guard session.revealedUTF8Count < count else {
+            session.lastTick = now
+            return false
+        }
+        session.revealed = target
+        session.revealedUTF8Count = count
+        session.desiredUTF8Count = count
+        session.fingerprint = Array(target.utf8.suffix(64))
+        session.lastTick = now
+        adoptionCount += 1
+        return true
     }
 
     /// Largest UTF-8 byte count `<= utf8ByteCount` that ends on a `Character`
@@ -236,7 +339,9 @@ enum StreamingRevealStore {
         return target[..<stringIndex].utf8.count
     }
 
-    private static func session(threadID: String, messageID: String) -> StreamingRevealSession {
+    private static func session(
+        threadID: String, messageID: String, target: String, at now: Date
+    ) -> StreamingRevealSession {
         if let existing = sessions[threadID]?[messageID] {
             return existing
         }
@@ -250,6 +355,12 @@ enum StreamingRevealStore {
         }
 
         let created = StreamingRevealSession()
+        // Mounting into a message that already has real text means the view
+        // was not here when it arrived — selecting a thread whose agent is
+        // mid-run. Typing that out from empty is the "regenerating" replay.
+        if adoption.shouldAdoptOnCreate(targetUTF8Count: target.utf8.count) {
+            adopt(created, target: target, at: now)
+        }
         sessions[threadID, default: [:]][messageID] = created
         insertionOrder.append(SessionKey(threadID: threadID, messageID: messageID))
         return created

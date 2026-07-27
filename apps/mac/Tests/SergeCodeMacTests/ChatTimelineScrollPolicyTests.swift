@@ -145,4 +145,44 @@ struct ChatTimelineScrollPolicyTests {
                 isIntentionalDisclosure: true,
                 isEntranceAnimation: false))
     }
+
+    @Test("layout animation is suppressed until a selection has settled")
+    func layoutSuppressionWindows() {
+        // A settled thread, sitting still, with its first layout behind it:
+        // the only state in which the stack may animate at all.
+        #expect(
+            !ChatTimelineScrollPolicy.suppressesLayoutAnimation(
+                hasPendingInitialAnchor: false,
+                hasSettledInitialLayout: true,
+                threadIsSettled: true,
+                isUserScrolling: false))
+        // Just switched threads: hydration swaps the whole snapshot and the
+        // chrome above lands its own animations, while the pin-scroll chases
+        // the resulting height. Hold still.
+        #expect(
+            ChatTimelineScrollPolicy.suppressesLayoutAnimation(
+                hasPendingInitialAnchor: false,
+                hasSettledInitialLayout: false,
+                threadIsSettled: true,
+                isUserScrolling: false))
+        // The three long-standing windows.
+        #expect(
+            ChatTimelineScrollPolicy.suppressesLayoutAnimation(
+                hasPendingInitialAnchor: true,
+                hasSettledInitialLayout: true,
+                threadIsSettled: true,
+                isUserScrolling: false))
+        #expect(
+            ChatTimelineScrollPolicy.suppressesLayoutAnimation(
+                hasPendingInitialAnchor: false,
+                hasSettledInitialLayout: true,
+                threadIsSettled: false,
+                isUserScrolling: false))
+        #expect(
+            ChatTimelineScrollPolicy.suppressesLayoutAnimation(
+                hasPendingInitialAnchor: false,
+                hasSettledInitialLayout: true,
+                threadIsSettled: true,
+                isUserScrolling: true))
+    }
 }

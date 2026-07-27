@@ -99,16 +99,30 @@ private struct OutcomeRippleModifier: ViewModifier {
 private struct PulseGlowModifier: ViewModifier {
     let isActive: Bool
 
+    /// Latched, never cleared. Once a row has pulsed, the animator stays
+    /// mounted so deactivation eases from the current dip back to 1.0 —
+    /// structurally swapping back to plain `content` made a chip caught
+    /// mid-dip jump in opacity. A row that has *never* pulsed has no dip to
+    /// preserve, so it renders as plain content and mounts no animator at
+    /// all: a restored transcript and the settled body of a long tool burst
+    /// are almost entirely such rows, and each one used to host a
+    /// `phaseAnimator` parked forever on a single static phase.
+    @UIState private var hasPulsed = false
+
     func body(content: Content) -> some View {
-        // The animator stays mounted in both states so deactivation eases
-        // from the current dip back to 1.0; structurally swapping to plain
-        // `content` made a chip caught mid-dip jump in opacity.
-        if Motion.reduceMotion {
-            content
-        } else {
-            content.phaseAnimator(isActive ? [0.55, 1.0] : [1.0]) { view, opacity in
-                view.opacity(opacity)
+        let animates = !Motion.reduceMotion && (isActive || hasPulsed)
+        return Group {
+            if animates {
+                content.phaseAnimator(isActive ? [0.55, 1.0] : [1.0]) { view, opacity in
+                    view.opacity(opacity)
+                }
+            } else {
+                content
             }
+        }
+        .onChange(of: isActive, initial: true) { _, active in
+            guard active, !hasPulsed else { return }
+            hasPulsed = true
         }
     }
 }

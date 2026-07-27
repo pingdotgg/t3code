@@ -36,14 +36,77 @@ struct MotionProfile: Equatable, Sendable {
 /// the next state change onward.
 @MainActor
 enum Motion {
+    /// Memoized because this is read from view bodies, not from event
+    /// handlers: every timeline row's entrance and pulse-glow modifier asks
+    /// on each evaluation, and the decorative canvases ask 30 times a second
+    /// for the whole length of a turn. `NSWorkspace` answers from an
+    /// out-of-process accessibility setting, so a long transcript was paying
+    /// thousands of those per second to learn a value that changes when
+    /// someone opens System Settings.
+    ///
+    /// Invalidated by the system's own change notification (see
+    /// `startObservingPreferenceChanges`), so the guarantee that "a settings
+    /// change applies from the next state change onward" is unchanged.
+    private static var cachedReduceMotion: Bool?
+    private static var cachedPlayful: PlayfulMotionProfile?
+    private static var isObservingPreferenceChanges = false
+
     /// Mirrors the system accessibility preference. Also the gate call sites
     /// use for justified ongoing movement such as the active dictation pulse.
     static var reduceMotion: Bool {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if let cachedReduceMotion { return cachedReduceMotion }
+        startObservingPreferenceChanges()
+        let value = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        cachedReduceMotion = value
+        return value
     }
 
     static var profile: MotionProfile {
         MotionProfile(reduceMotion: reduceMotion)
+    }
+
+    /// Current playful policy, memoized alongside `reduceMotion` for the same
+    /// reason — `PlayfulMotionPreferences.isEnabled` is two `UserDefaults`
+    /// lookups and the activity dock's canvases ask on every frame.
+    static var playful: PlayfulMotionProfile {
+        if let cachedPlayful { return cachedPlayful }
+        startObservingPreferenceChanges()
+        let value = PlayfulMotionProfile(
+            reduceMotion: reduceMotion,
+            playfulEnabled: PlayfulMotionPreferences.isEnabled)
+        cachedPlayful = value
+        return value
+    }
+
+    /// Drops both memos. Both are derived from `reduceMotion`, so either
+    /// notification has to clear both.
+    private static func invalidatePreferenceCaches() {
+        cachedReduceMotion = nil
+        cachedPlayful = nil
+    }
+
+    private static func startObservingPreferenceChanges() {
+        guard !isObservingPreferenceChanges else { return }
+        isObservingPreferenceChanges = true
+        for (center, name) in [
+            (NSWorkspace.shared.notificationCenter,
+             NSWorkspace.accessibilityDisplayOptionsDidChangeNotification),
+            (NotificationCenter.default, PlayfulMotionPreferences.didChangeNotification),
+        ] {
+            // `queue: nil` on purpose. `PlayfulMotionPreferences`'s setter
+            // posts synchronously and the surfaces that branch on the
+            // preference observe the very same notification, so an
+            // `OperationQueue`-hopped invalidation could land *after* the
+            // re-render it exists to feed and leave one frame of stale
+            // presentation on screen.
+            center.addObserver(forName: name, object: nil, queue: nil) { _ in
+                guard Thread.isMainThread else {
+                    DispatchQueue.main.async { invalidatePreferenceCaches() }
+                    return
+                }
+                MainActor.assumeIsolated { invalidatePreferenceCaches() }
+            }
+        }
     }
 
     private static var reducedChange: Animation {

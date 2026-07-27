@@ -856,6 +856,7 @@ public final class AppModel {
             pruneTimelineTasks.removeValue(forKey: id)?.cancel()
             TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
             RunTapeCache.evict(threadID: scopedThreadKey(id))
+            ChatTurnRailCache.evict(threadID: scopedThreadKey(id))
             StreamingMarkdownCache.evict(threadID: scopedThreadKey(id))
             StreamingRevealStore.evict(threadID: scopedThreadKey(id))
             if selectedThreadID == id { selectedThreadID = nil }

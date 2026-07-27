@@ -39,6 +39,64 @@ enum ChatTurnRailModel {
     }
 }
 
+/// Memo over the rail's two derivations — the turn list and the run tape
+/// indexed by turn — keyed on `structureVersion` exactly like
+/// `TimelineDisplayCache` and `RunTapeCache`.
+///
+/// Both are pure folds over the transcript, and both were being recomputed on
+/// every body evaluation of `ChatTimelineScrollView`: `preview(of:)` collapses
+/// whitespace in every user prompt (an allocation per prompt), and the tape
+/// dictionary was rebuilt from scratch. A streaming turn evaluates that body
+/// ~30 times a second, so a long thread paid for the whole rail on each delta.
+///
+/// Process-wide static like the other timeline memos; tests reset it and run
+/// `--no-parallel`.
+@MainActor
+enum ChatTurnRailCache {
+    struct Rail {
+        var turns: [ChatTurnRailModel.Turn]
+        /// Cells indexed by the opening user message's row id.
+        var tape: [String: RunTapeCell]
+    }
+
+    private struct Entry {
+        var structureVersion: Int
+        var rail: Rail
+    }
+
+    private static var storage: [String: Entry] = [:]
+    private(set) static var buildCount = 0
+
+    static func rail(
+        displayItems: [TimelineDisplayItem],
+        timeline: [TimelineItem],
+        threadID: String,
+        structureVersion: Int
+    ) -> Rail {
+        if let entry = storage[threadID], entry.structureVersion == structureVersion {
+            return entry.rail
+        }
+        let cells = RunTapeCache.tape(
+            timeline: timeline, threadID: threadID, structureVersion: structureVersion)
+        let rail = Rail(
+            turns: ChatTurnRailModel.turns(from: displayItems),
+            tape: Dictionary(cells.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }))
+        storage[threadID] = Entry(structureVersion: structureVersion, rail: rail)
+        buildCount += 1
+        return rail
+    }
+
+    /// Drop a thread's memo entry (timeline release / eviction / removal).
+    static func evict(threadID: String) {
+        storage.removeValue(forKey: threadID)
+    }
+
+    static func resetForTesting() {
+        storage.removeAll(keepingCapacity: true)
+        buildCount = 0
+    }
+}
+
 /// Codex-style turn navigation rail: a quiet column of notches pinned to the
 /// leading edge of the chat timeline, one per conversation turn. Selecting a
 /// notch scrolls the timeline to that turn's user message.

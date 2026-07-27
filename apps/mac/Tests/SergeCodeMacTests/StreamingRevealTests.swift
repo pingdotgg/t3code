@@ -131,7 +131,7 @@ struct StreamingRevealTests {
                 advanced += 1
             }
             let current = StreamingRevealStore.revealed(
-                threadID: "t", messageID: "m", target: target)
+                threadID: "t", messageID: "m", target: target, at: now)
             #expect(target.hasPrefix(current))
             #expect(current.utf8.count >= seen.utf8.count)
             seen = current
@@ -159,7 +159,7 @@ struct StreamingRevealTests {
                     policy: finalPolicy)
             }
             let revealed = StreamingRevealStore.revealed(
-                threadID: "t", messageID: "m", target: target)
+                threadID: "t", messageID: "m", target: target, at: now)
             #expect(target.hasPrefix(revealed))
             #expect(revealed.utf8.count >= last.utf8.count)
             last = target
@@ -176,7 +176,7 @@ struct StreamingRevealTests {
         _ = StreamingRevealStore.advance(
             threadID: "t", messageID: "m", target: "Hello world", at: now, policy: finalPolicy)
         let before = StreamingRevealStore.revealed(
-            threadID: "t", messageID: "m", target: "Hello world")
+            threadID: "t", messageID: "m", target: "Hello world", at: now)
         #expect(!before.isEmpty)
 
         now.addTimeInterval(1.0 / 60)
@@ -184,7 +184,7 @@ struct StreamingRevealTests {
             threadID: "t", messageID: "m", target: "Jello world", at: now, policy: finalPolicy)
         #expect(StreamingRevealStore.resetCount == 1)
         let after = StreamingRevealStore.revealed(
-            threadID: "t", messageID: "m", target: "Jello world")
+            threadID: "t", messageID: "m", target: "Jello world", at: now)
         #expect("Jello world".hasPrefix(after))
     }
 
@@ -201,6 +201,7 @@ struct StreamingRevealTests {
         #expect(
             StreamingRevealStore.revealed(threadID: "t", messageID: "m", target: "hello world")
                 .isEmpty)
+        StreamingRevealStore.resetForTesting()
 
         // Partially revealed: backlog pending.
         var now = Date(timeIntervalSinceReferenceDate: 0)
@@ -208,7 +209,7 @@ struct StreamingRevealTests {
             threadID: "t", messageID: "m", target: "hello world", at: now, policy: finalPolicy)
         #expect(
             StreamingRevealStore.hasPendingReveal(
-                threadID: "t", messageID: "m", target: "hello world"))
+                threadID: "t", messageID: "m", target: "hello world", at: now))
 
         // Fully drained: nothing pending.
         for _ in 0..<100 {
@@ -217,11 +218,11 @@ struct StreamingRevealTests {
                 threadID: "t", messageID: "m", target: "hello world", at: now, policy: finalPolicy)
         }
         #expect(
-            StreamingRevealStore.revealed(threadID: "t", messageID: "m", target: "hello world")
-                == "hello world")
+            StreamingRevealStore.revealed(
+                threadID: "t", messageID: "m", target: "hello world", at: now) == "hello world")
         #expect(
             !StreamingRevealStore.hasPendingReveal(
-                threadID: "t", messageID: "m", target: "hello world"))
+                threadID: "t", messageID: "m", target: "hello world", at: now))
     }
 
     @Test("finish drops the session so a reused key starts fresh")
@@ -233,13 +234,132 @@ struct StreamingRevealTests {
         _ = StreamingRevealStore.advance(
             threadID: "t", messageID: "m", target: "some text", at: now, policy: finalPolicy)
         #expect(
-            !StreamingRevealStore.revealed(threadID: "t", messageID: "m", target: "some text")
-                .isEmpty)
+            !StreamingRevealStore.revealed(
+                threadID: "t", messageID: "m", target: "some text", at: now).isEmpty)
 
         StreamingRevealStore.finish(threadID: "t", messageID: "m")
         #expect(
-            StreamingRevealStore.revealed(threadID: "t", messageID: "m", target: "some text")
-                .isEmpty)
+            StreamingRevealStore.revealed(
+                threadID: "t", messageID: "m", target: "some text", at: now).isEmpty)
+    }
+
+    // MARK: Adoption
+
+    @Test("a fresh stream's first flush is small enough to still type out")
+    func adoptionLeavesFreshStreamsAlone() {
+        let adoption = StreamingRevealAdoption()
+        // A ~30 Hz flush is tens of bytes; the warm-up buffer is the ceiling
+        // on what a live stream can hold before it starts revealing.
+        #expect(!adoption.shouldAdoptOnCreate(targetUTF8Count: 0))
+        #expect(!adoption.shouldAdoptOnCreate(targetUTF8Count: 120))
+        #expect(!adoption.shouldAdoptOnCreate(targetUTF8Count: adoption.mountAdoptionBytes - 1))
+        // Mounting into a message this long means the view was not here when
+        // the text arrived — selecting a thread whose agent is mid-run.
+        #expect(adoption.shouldAdoptOnCreate(targetUTF8Count: adoption.mountAdoptionBytes))
+        #expect(adoption.shouldAdoptOnCreate(targetUTF8Count: 20_000))
+    }
+
+    @Test("only a gap far longer than a display tick counts as stale")
+    func adoptionResumeRule() {
+        let adoption = StreamingRevealAdoption()
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        // Never ticked: the session is brand new, not stale.
+        #expect(!adoption.shouldAdoptOnResume(lastTick: nil, now: now))
+        // A watched reveal ticks every display frame, and deltas land at
+        // ~30 Hz — both are far inside the window.
+        #expect(!adoption.shouldAdoptOnResume(lastTick: now.addingTimeInterval(-1.0 / 120), now: now))
+        #expect(!adoption.shouldAdoptOnResume(lastTick: now.addingTimeInterval(-1.0 / 30), now: now))
+        #expect(!adoption.shouldAdoptOnResume(lastTick: now.addingTimeInterval(-0.5), now: now))
+        // Nothing drove it for a second: the user was somewhere else.
+        #expect(adoption.shouldAdoptOnResume(lastTick: now.addingTimeInterval(-1), now: now))
+        #expect(adoption.shouldAdoptOnResume(lastTick: now.addingTimeInterval(-30), now: now))
+    }
+
+    @Test("selecting a thread mid-run adopts the message instead of retyping it")
+    func storeAdoptsOnMountIntoLiveMessage() {
+        StreamingRevealStore.resetForTesting()
+        defer { StreamingRevealStore.resetForTesting() }
+
+        // A run the user was not watching has already produced this much.
+        let inFlight = String(repeating: "already streamed ", count: 60) // ~1 KB
+        let now = Date(timeIntervalSinceReferenceDate: 0)
+        #expect(
+            StreamingRevealStore.revealed(
+                threadID: "t", messageID: "m", target: inFlight, at: now) == inFlight)
+        #expect(StreamingRevealStore.adoptionCount == 1)
+        #expect(
+            !StreamingRevealStore.hasPendingReveal(
+                threadID: "t", messageID: "m", target: inFlight, at: now))
+    }
+
+    @Test("text that arrives after an adopted mount still glides")
+    func storeGlidesAfterAdoptedMount() {
+        StreamingRevealStore.resetForTesting()
+        defer { StreamingRevealStore.resetForTesting() }
+
+        let mounted = String(repeating: "already streamed ", count: 60)
+        var now = Date(timeIntervalSinceReferenceDate: 0)
+        _ = StreamingRevealStore.revealed(
+            threadID: "t", messageID: "m", target: mounted, at: now)
+
+        // One more flush lands while the row is on screen: it types out
+        // rather than snapping, which is the whole point of the reveal.
+        let grown = mounted + String(repeating: "and more text ", count: 20)
+        now.addTimeInterval(1.0 / 30)
+        _ = StreamingRevealStore.advance(
+            threadID: "t", messageID: "m", target: grown, at: now, policy: policy)
+        let partial = StreamingRevealStore.revealed(
+            threadID: "t", messageID: "m", target: grown, at: now)
+        #expect(partial.utf8.count > mounted.utf8.count)
+        #expect(partial.utf8.count < grown.utf8.count)
+        #expect(StreamingRevealStore.adoptionCount == 1) // no second adoption
+    }
+
+    @Test("leaving a thread mid-run and returning finished renders settled")
+    func storeAdoptsAfterThreadSwitch() {
+        StreamingRevealStore.resetForTesting()
+        defer { StreamingRevealStore.resetForTesting() }
+
+        // Watching the stream: the reveal is mid-glide and lagging behind.
+        let partialTarget = String(repeating: "watched text ", count: 30)
+        var now = Date(timeIntervalSinceReferenceDate: 0)
+        for _ in 0..<3 {
+            now.addTimeInterval(1.0 / 120)
+            _ = StreamingRevealStore.advance(
+                threadID: "t", messageID: "m", target: partialTarget, at: now, policy: policy)
+        }
+        #expect(
+            StreamingRevealStore.hasPendingReveal(
+                threadID: "t", messageID: "m", target: partialTarget, at: now))
+
+        // The user switches away, the run finishes, and they come back to a
+        // settled thread. Nothing drove the session in between.
+        let finalTarget = partialTarget + String(repeating: "unwatched text ", count: 30)
+        now.addTimeInterval(20)
+        #expect(
+            !StreamingRevealStore.hasPendingReveal(
+                threadID: "t", messageID: "m", target: finalTarget, at: now))
+        #expect(StreamingRevealStore.adoptionCount == 1)
+        // Which means the row renders through the settled full-document path
+        // with the whole message already on screen.
+        #expect(
+            StreamingRevealStore.revealed(
+                threadID: "t", messageID: "m", target: finalTarget, at: now) == finalTarget)
+    }
+
+    @Test("adoption keeps the append-only invariant, so no divergence reset")
+    func storeAdoptionDoesNotDiverge() {
+        StreamingRevealStore.resetForTesting()
+        defer { StreamingRevealStore.resetForTesting() }
+
+        let mounted = String(repeating: "seed ", count: 120) // > warm-up buffer
+        var now = Date(timeIntervalSinceReferenceDate: 0)
+        _ = StreamingRevealStore.revealed(
+            threadID: "t", messageID: "m", target: mounted, at: now)
+        now.addTimeInterval(1.0 / 30)
+        _ = StreamingRevealStore.advance(
+            threadID: "t", messageID: "m", target: mounted + "tail", at: now, policy: policy)
+        #expect(StreamingRevealStore.resetCount == 0)
     }
 
     @Test("evict drops every session for a thread")
@@ -253,7 +373,11 @@ struct StreamingRevealTests {
                 threadID: "t", messageID: message, target: "text", at: now, policy: finalPolicy)
         }
         StreamingRevealStore.evict(threadID: "t")
-        #expect(StreamingRevealStore.revealed(threadID: "t", messageID: "a", target: "text").isEmpty)
-        #expect(StreamingRevealStore.revealed(threadID: "t", messageID: "b", target: "text").isEmpty)
+        #expect(
+            StreamingRevealStore.revealed(
+                threadID: "t", messageID: "a", target: "text", at: now).isEmpty)
+        #expect(
+            StreamingRevealStore.revealed(
+                threadID: "t", messageID: "b", target: "text", at: now).isEmpty)
     }
 }
