@@ -187,10 +187,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : undefined;
   const groupView = use(WorkGroupViewCtx);
   const [expanded, setExpanded] = useState(
-    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
+    () => ctx.workGroupViewState.expandedEntries.has(workEntry.id),
   );
   const toggleExpanded = () => {
     const next = !expanded;
+    if (next) ctx.workGroupViewState.expandedEntries.add(workEntry.id);
+    else ctx.workGroupViewState.expandedEntries.delete(workEntry.id);
     if (groupView) {
       groupView.onToggleEntry(!next);
       if (next) groupView.state.expandedEntries.add(workEntry.id);

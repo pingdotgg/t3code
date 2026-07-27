@@ -23,6 +23,7 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 import { classifyToolActivity, deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
+import { mariaDbPreview } from "./mariaDbPreview.js";
 
 import {
   summarizeT3ToolCalls,
@@ -68,6 +69,17 @@ export function turnItemToolActivityPresentation(item: OrchestrationV2TurnItem) 
         data: { input: { queries: item.patterns } },
       });
     case "dynamic_tool": {
+      const databasePreview = mariaDbPreview(
+        item.toolName,
+        item.input,
+        item.output,
+        item.status === "failed",
+      );
+      if (databasePreview)
+        return {
+          summary: item.title?.trim() || item.toolName || "MariaDB",
+          detail: databasePreview,
+        };
       const ideToolName = item.toolName
         ?.split(/[./]|__/u)
         .at(-1)
@@ -94,12 +106,17 @@ export function turnItemToolActivityPresentation(item: OrchestrationV2TurnItem) 
             if (result !== null) break;
           }
         }
-        const count = typeof result?.totalCount === "number" ? result.totalCount : result?.totalCollected;
-        const usages = typeof count === "number"
-          ? `${count.toLocaleString()} usage${count === 1 ? "" : "s"}`
-          : undefined;
+        const count =
+          typeof result?.totalCount === "number" ? result.totalCount : result?.totalCollected;
+        const usages =
+          typeof count === "number"
+            ? `${count.toLocaleString()} usage${count === 1 ? "" : "s"}`
+            : undefined;
         const detail = [location, usages].filter(Boolean).join(" - ");
-        return { summary: item.title?.trim() || "IDE find references", ...(detail ? { detail } : {}) };
+        return {
+          summary: item.title?.trim() || "IDE find references",
+          ...(detail ? { detail } : {}),
+        };
       }
       if (ideToolName === "ide_reformat_code") {
         const output = asRecord(item.output);

@@ -38,8 +38,12 @@ function commandItem(
 
 describe("turnItemToolActivityPresentation", () => {
   it("summarizes IDE reference locations without output and counts when available", () => {
-    const { type: _type, input: _input, exitCode: _exitCode, ...base } =
-      commandItem() as Extract<OrchestrationV2TurnItem, { type: "command_execution" }>;
+    const {
+      type: _type,
+      input: _input,
+      exitCode: _exitCode,
+      ...base
+    } = commandItem() as Extract<OrchestrationV2TurnItem, { type: "command_execution" }>;
     const item = {
       ...base,
       type: "dynamic_tool" as const,
