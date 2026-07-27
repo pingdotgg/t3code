@@ -43,6 +43,7 @@ import {
   registerHiddenUpdateTap,
   runAppUpdateCheck,
 } from "../updates/app-updates";
+import { resolveMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
@@ -531,18 +532,23 @@ function ConfiguredSettingsRouteScreen() {
 
 function GeneralSettingsSection() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const projectGroupingEnabled = AsyncResult.isSuccess(preferencesResult)
-    ? preferencesResult.value.projectGroupingEnabled !== false
-    : true;
+  const projectGroupingMode = AsyncResult.isSuccess(preferencesResult)
+    ? resolveMobileProjectGroupingSettings(preferencesResult.value).sidebarProjectGroupingMode
+    : "repository";
+  const projectGroupingLabel =
+    projectGroupingMode === "repository"
+      ? "Repository"
+      : projectGroupingMode === "repository_path"
+        ? "Repository path"
+        : "Separate";
 
   return (
     <SettingsSection title="General">
-      <SettingsSwitchRow
+      <SettingsRow
         icon="folder"
         label="Project Grouping"
-        value={projectGroupingEnabled}
-        onValueChange={(value) => savePreferences({ projectGroupingEnabled: value })}
+        value={projectGroupingLabel}
+        target="SettingsProjectGrouping"
       />
     </SettingsSection>
   );

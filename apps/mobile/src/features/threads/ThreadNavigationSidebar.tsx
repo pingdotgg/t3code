@@ -261,8 +261,14 @@ function ThreadNavigationSidebarPane(
         projects,
         environmentId: options.selectedEnvironmentId,
         projectGroupingMode: options.projectGroupingMode,
+        projectGroupingOverrides: options.projectGroupingOverrides,
       }),
-    [options.projectGroupingMode, options.selectedEnvironmentId, projects],
+    [
+      options.projectGroupingMode,
+      options.projectGroupingOverrides,
+      options.selectedEnvironmentId,
+      projects,
+    ],
   );
   const projectFilterOptions = useMemo(
     () =>
@@ -354,6 +360,7 @@ function ThreadNavigationSidebarPane(
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
         projectGroupingMode: options.projectGroupingMode,
+        projectGroupingOverrides: options.projectGroupingOverrides,
       }),
     [
       matchedThreadKeys,

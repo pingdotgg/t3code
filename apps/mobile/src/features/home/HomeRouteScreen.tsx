@@ -80,11 +80,17 @@ export function HomeRouteScreen() {
         projects,
         environmentId: selectedEnvironmentId,
         projectGroupingMode: listOptions.projectGroupingMode,
+        projectGroupingOverrides: listOptions.projectGroupingOverrides,
       }).map((scope) => ({
         key: scope.key,
         label: scope.title,
       })),
-    [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
+    [
+      listOptions.projectGroupingMode,
+      listOptions.projectGroupingOverrides,
+      projects,
+      selectedEnvironmentId,
+    ],
   );
   useEffect(() => {
     if (
@@ -187,6 +193,7 @@ export function HomeRouteScreen() {
           onThreadSortOrderChange={setThreadSortOrder}
           pendingTasks={pendingTasks}
           projectGroupingMode={listOptions.projectGroupingMode}
+          projectGroupingOverrides={listOptions.projectGroupingOverrides}
           projects={projects}
           projectSortOrder={listOptions.projectSortOrder}
           savedConnectionsById={savedConnectionsById}

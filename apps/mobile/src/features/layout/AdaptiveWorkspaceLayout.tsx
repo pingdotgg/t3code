@@ -38,10 +38,14 @@ import { resolveThreadSelectionNavigationAction } from "../../lib/adaptive-navig
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
+  DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
+  resolveMobileProjectGroupingSettings,
+} from "../../state/project-grouping";
+import {
   parseActiveThreadPath,
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
-import { HomeListOptionsProvider, resolveProjectGroupingMode } from "../home/home-list-options";
+import { HomeListOptionsProvider } from "../home/home-list-options";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
@@ -190,15 +194,21 @@ export function AdaptiveWorkspaceLayout(props: {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   if (!AsyncResult.isSuccess(preferencesResult)) {
     return AsyncResult.isFailure(preferencesResult) ? (
-      <AdaptiveWorkspaceLayoutContent {...props} projectGroupingMode="repository" />
+      <AdaptiveWorkspaceLayoutContent
+        {...props}
+        projectGroupingMode={DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS.sidebarProjectGroupingMode}
+        projectGroupingOverrides={
+          DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS.sidebarProjectGroupingOverrides
+        }
+      />
     ) : null;
   }
+  const groupingSettings = resolveMobileProjectGroupingSettings(preferencesResult.value);
   return (
     <AdaptiveWorkspaceLayoutContent
       {...props}
-      projectGroupingMode={resolveProjectGroupingMode(
-        preferencesResult.value.projectGroupingEnabled,
-      )}
+      projectGroupingMode={groupingSettings.sidebarProjectGroupingMode}
+      projectGroupingOverrides={groupingSettings.sidebarProjectGroupingOverrides}
     />
   );
 }
@@ -209,6 +219,7 @@ function AdaptiveWorkspaceLayoutContent(
     readonly pathname: string;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
+    readonly projectGroupingOverrides: Record<string, SidebarProjectGroupingMode>;
   },
 ) {
   const projectGroupingMode = props.projectGroupingMode;
@@ -502,7 +513,10 @@ function AdaptiveWorkspaceLayoutContent(
   );
 
   return (
-    <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
+    <HomeListOptionsProvider
+      projectGroupingMode={projectGroupingMode}
+      projectGroupingOverrides={props.projectGroupingOverrides}
+    >
       <AdaptiveWorkspaceContext.Provider value={contextValue}>
         <View testID="adaptive-workspace-layout" className="flex-1 flex-row">
           {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (
