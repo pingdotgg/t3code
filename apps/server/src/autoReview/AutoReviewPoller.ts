@@ -134,6 +134,7 @@ export const make = (deps: AutoReviewPollerDeps) =>
                   trigger: "mention",
                   commentId: comment.id,
                   modelSelection: policy.modelSelection as ModelSelection,
+                  fixModelSelection: policy.fixModelSelection,
                   maxAttempts: policy.maxAttempts,
                 });
               }
