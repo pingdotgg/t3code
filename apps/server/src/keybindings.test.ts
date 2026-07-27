@@ -454,6 +454,51 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("resets customized keybindings to defaults while keeping script bindings", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+j", command: "terminal.toggle" },
+        { key: "mod+r", command: "script.run-tests.run" },
+      ]);
+
+      const resolved = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        return yield* keybindings.resetKeybindingRulesToDefaults;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(persistedView, [
+        ...Keybindings.DEFAULT_KEYBINDINGS.map(({ key, command }) => ({ key, command })),
+        { key: "mod+r", command: "script.run-tests.run" },
+      ]);
+      assert.isTrue(resolved.some((entry) => entry.command === "script.run-tests.run"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("resets a malformed keybindings config to defaults", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* fs.makeDirectory(path.dirname(keybindingsConfigPath), { recursive: true });
+      yield* fs.writeFileString(keybindingsConfigPath, "{ not an array");
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        return yield* keybindings.resetKeybindingRulesToDefaults;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(
+        persistedView,
+        Keybindings.DEFAULT_KEYBINDINGS.map(({ key, command }) => ({ key, command })),
+      );
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
   it.effect("refuses to overwrite malformed keybindings config", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

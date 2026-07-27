@@ -109,6 +109,10 @@ function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): bool
   );
 }
 
+function isScriptKeybindingRule(rule: KeybindingRule): boolean {
+  return String(rule.command).startsWith("script.");
+}
+
 function keybindingShortcutContext(rule: KeybindingRule): string | null {
   const parsed = parseKeybindingShortcut(rule.key);
   if (!parsed) return null;
@@ -284,6 +288,19 @@ export class Keybindings extends Context.Service<
     readonly removeKeybindingRule: (
       input: ServerRemoveKeybindingInput,
     ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
+
+    /**
+     * Restore every default keybinding, discarding customizations.
+     *
+     * Project script bindings are kept — they have no default to restore, so
+     * dropping them would delete shortcuts the reset cannot give back. A config
+     * that fails to parse is replaced outright, since that is the state the
+     * reset exists to escape.
+     */
+    readonly resetKeybindingRulesToDefaults: Effect.Effect<
+      ResolvedKeybindingsConfig,
+      KeybindingsConfigError
+    >;
   }
 >()("t3/keybindings") {}
 
@@ -698,6 +715,31 @@ const make = Effect.gen(function* () {
           return nextResolved;
         }),
       ),
+    resetKeybindingRulesToDefaults: upsertSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const loaded = yield* Effect.result(loadWritableCustomKeybindingsConfig());
+        const customConfig = loaded._tag === "Success" ? loaded.success : [];
+        const preservedScripts = customConfig.filter((entry) => isScriptKeybindingRule(entry));
+        const nextConfig = [...DEFAULT_KEYBINDINGS, ...preservedScripts];
+        const cappedConfig =
+          nextConfig.length > MAX_KEYBINDINGS_COUNT
+            ? nextConfig.slice(-MAX_KEYBINDINGS_COUNT)
+            : nextConfig;
+        yield* writeConfigAtomically(cappedConfig);
+        const nextResolved = mergeWithDefaultKeybindings(
+          compileResolvedKeybindingsConfig(cappedConfig),
+        );
+        yield* Cache.set(resolvedConfigCache, resolvedConfigCacheKey, {
+          keybindings: nextResolved,
+          issues: [],
+        });
+        yield* emitChange({
+          keybindings: nextResolved,
+          issues: [],
+        });
+        return nextResolved;
+      }),
+    ),
   } satisfies Keybindings["Service"];
 });
 
