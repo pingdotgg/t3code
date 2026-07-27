@@ -83,11 +83,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     isActive={isActive}
                     onClick={() => handleSectionClick(item.to)}
                   >
-                    <Icon
-                      className={
-                        isActive ? "text-sidebar-foreground" : "text-sidebar-muted-foreground/60"
-                      }
-                    />
+                    <Icon />
                     <span className="truncate">{item.label}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

@@ -2293,12 +2293,12 @@ export default function SidebarV2() {
                         className="size-4 shrink-0"
                       />
                     ) : (
-                      <FolderIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+                      <FolderIcon className="size-4 shrink-0" />
                     )}
                     <span className="min-w-0 flex-1 truncate">
                       {scopedProjectGroup?.displayName ?? "All projects"}
                     </span>
-                    <ChevronDownIcon className="-mr-px size-4 shrink-0 text-sidebar-muted-foreground/70" />
+                    <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </MenuTrigger>
                   <MenuPopup align="start" className="w-(--anchor-width)">
                     <MenuRadioGroup
