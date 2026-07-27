@@ -91,7 +91,6 @@ interface HomeScreenProps {
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
-  readonly projectGroupingOverrides: Record<string, SidebarProjectGroupingMode>;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
@@ -303,14 +302,8 @@ export function HomeScreen(props: HomeScreenProps) {
         projects: props.projects,
         environmentId: props.selectedEnvironmentId,
         projectGroupingMode: props.projectGroupingMode,
-        projectGroupingOverrides: props.projectGroupingOverrides,
       }),
-    [
-      props.projectGroupingMode,
-      props.projectGroupingOverrides,
-      props.projects,
-      props.selectedEnvironmentId,
-    ],
+    [props.projectGroupingMode, props.projects, props.selectedEnvironmentId],
   );
   const selectedProjectScope = useMemo(
     () =>
@@ -380,11 +373,9 @@ export function HomeScreen(props: HomeScreenProps) {
         projectSortOrder: props.projectSortOrder,
         threadSortOrder: props.threadSortOrder,
         projectGroupingMode: props.projectGroupingMode,
-        projectGroupingOverrides: props.projectGroupingOverrides,
       }),
     [
       props.projectGroupingMode,
-      props.projectGroupingOverrides,
       props.projectSortOrder,
       props.searchQuery,
       props.selectedEnvironmentId,

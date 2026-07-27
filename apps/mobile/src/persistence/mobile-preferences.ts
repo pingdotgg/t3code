@@ -26,7 +26,6 @@ export interface Preferences {
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
-  readonly projectGroupingOverrides?: Record<string, SidebarProjectGroupingMode>;
   /**
    * Device-local mirror of the web beta's `sidebarV2Enabled`. Mobile has no
    * client-settings sync, so the flat v2 thread list is opted out of per
@@ -85,7 +84,6 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     collapsedProjectGroups?: readonly string[];
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
-    projectGroupingOverrides?: Record<string, SidebarProjectGroupingMode>;
     threadListV2Enabled?: boolean;
   } = {};
 
@@ -122,22 +120,6 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     parsed.projectGroupingMode === "separate"
   ) {
     preferences.projectGroupingMode = parsed.projectGroupingMode;
-  }
-  if (
-    typeof parsed.projectGroupingOverrides === "object" &&
-    parsed.projectGroupingOverrides !== null &&
-    !Array.isArray(parsed.projectGroupingOverrides)
-  ) {
-    const overrides: Record<string, SidebarProjectGroupingMode> = {};
-    for (const [key, value] of Object.entries(parsed.projectGroupingOverrides)) {
-      if (
-        key.trim().length > 0 &&
-        (value === "repository" || value === "repository_path" || value === "separate")
-      ) {
-        overrides[key] = value;
-      }
-    }
-    preferences.projectGroupingOverrides = overrides;
   }
   if (typeof parsed.threadListV2Enabled === "boolean") {
     preferences.threadListV2Enabled = parsed.threadListV2Enabled;

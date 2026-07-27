@@ -1,11 +1,7 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
-import { useAtomSet } from "@effect/atom-react";
-import type { MenuAction } from "@react-native-menu/menu";
-import { deriveProjectGroupingOverrideKey } from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -14,14 +10,8 @@ import { cn } from "../../lib/cn";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
-import { ControlPillMenu } from "../../components/ControlPill";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useProjects } from "../../state/entities";
-import {
-  mobileProjectGroupingOverridesPatch,
-  useMobileProjectGroupingSettings,
-} from "../../state/project-grouping";
-import { updateMobilePreferencesAtom } from "../../state/preferences";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -32,33 +22,6 @@ import { useNewTaskFlow } from "./new-task-flow-provider";
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
 };
-
-function buildProjectGroupingMenuActions(
-  currentOverride: SidebarProjectGroupingMode | undefined,
-): MenuAction[] {
-  return [
-    {
-      id: "inherit",
-      title: "Use default",
-      state: currentOverride === undefined ? "on" : "off",
-    },
-    {
-      id: "repository",
-      title: "Group by repository",
-      state: currentOverride === "repository" ? "on" : "off",
-    },
-    {
-      id: "repository_path",
-      title: "Group by repository path",
-      state: currentOverride === "repository_path" ? "on" : "off",
-    },
-    {
-      id: "separate",
-      title: "Keep separate",
-      state: currentOverride === "separate" ? "on" : "off",
-    },
-  ];
-}
 
 function deriveProjectEmptyState(catalogState: WorkspaceState): {
   readonly title: string;
@@ -118,8 +81,6 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
 export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
   const projects = useProjects();
   const { projectScopes } = useNewTaskFlow();
-  const groupingSettings = useMobileProjectGroupingSettings();
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const { state: catalogState } = useWorkspaceState();
   const navigation = useNavigation();
   const isFocused = useIsFocused();
@@ -186,31 +147,6 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       }
       return next;
     });
-  }
-
-  function updateProjectGrouping(
-    project: EnvironmentProject,
-    mode: SidebarProjectGroupingMode | "inherit",
-  ): void {
-    const overrideKey = deriveProjectGroupingOverrideKey(project);
-    const nextOverrides = { ...groupingSettings.sidebarProjectGroupingOverrides };
-    if (mode === "inherit") {
-      delete nextOverrides[overrideKey];
-    } else {
-      nextOverrides[overrideKey] = mode;
-    }
-    savePreferences(mobileProjectGroupingOverridesPatch(nextOverrides));
-  }
-
-  function handleProjectGroupingAction(project: EnvironmentProject, actionId: string): void {
-    if (
-      actionId === "inherit" ||
-      actionId === "repository" ||
-      actionId === "repository_path" ||
-      actionId === "separate"
-    ) {
-      updateProjectGrouping(project, actionId);
-    }
   }
 
   useEffect(() => {
@@ -377,32 +313,6 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                           : singleProject?.workspaceRoot}
                       </Text>
                     </View>
-                    {singleProject ? (
-                      <ControlPillMenu
-                        actions={buildProjectGroupingMenuActions(
-                          groupingSettings.sidebarProjectGroupingOverrides[
-                            deriveProjectGroupingOverrideKey(singleProject)
-                          ],
-                        )}
-                        isAnchoredToRight
-                        onPressAction={({ nativeEvent }) => {
-                          handleProjectGroupingAction(singleProject, nativeEvent.event);
-                        }}
-                      >
-                        <Pressable
-                          accessibilityLabel={`Grouping options for ${singleProject.title}`}
-                          hitSlop={8}
-                          className="p-1"
-                        >
-                          <SymbolView
-                            name="ellipsis"
-                            size={16}
-                            tintColor={chevronColor}
-                            type="monochrome"
-                          />
-                        </Pressable>
-                      </ControlPillMenu>
-                    ) : null}
                     <SymbolView
                       name={hasMultipleProjects && expanded ? "chevron.down" : "chevron.right"}
                       size={14}
@@ -436,30 +346,6 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                               {project.workspaceRoot}
                             </Text>
                           </View>
-                          <ControlPillMenu
-                            actions={buildProjectGroupingMenuActions(
-                              groupingSettings.sidebarProjectGroupingOverrides[
-                                deriveProjectGroupingOverrideKey(project)
-                              ],
-                            )}
-                            isAnchoredToRight
-                            onPressAction={({ nativeEvent }) => {
-                              handleProjectGroupingAction(project, nativeEvent.event);
-                            }}
-                          >
-                            <Pressable
-                              accessibilityLabel={`Grouping options for ${project.title}`}
-                              hitSlop={8}
-                              className="p-1"
-                            >
-                              <SymbolView
-                                name="ellipsis"
-                                size={16}
-                                tintColor={chevronColor}
-                                type="monochrome"
-                              />
-                            </Pressable>
-                          </ControlPillMenu>
                           <SymbolView
                             name="chevron.right"
                             size={14}
